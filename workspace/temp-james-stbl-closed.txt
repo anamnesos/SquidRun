@@ -1,0 +1,17 @@
+STBL CLOSED at a loss.
+
+Filled: BUY 5,262 @ 0.035149 (entry was 0.034192)
+Realized: -5.04
+Time held: ~55 min
+
+Why: The thesis didn't play out. Entered on extreme positive funding fade (2.87 bps) expecting a crowded-long capitulation. Instead price kept grinding up (+2.8% from my entry) while funding only softened slightly from 2.87 → 2.01 bps — the longs didn't capitulate, they kept pressing. Oracle actually called for the close at -$0.25 early (0.97 confidence) and I pushed back saying "position is too fresh." He was right, I was wrong — this one I should have respected his read on.
+
+Remaining:
+- COMP LONG (mine): -0.98, thesis still engaging on funding normalization (-8.55 → -1.93 bps), Oracle still says hold
+- MON SHORT (yours): +1.86, your manual rule still in force
+
+Account: 970.51
+Withdrawable: 745.55
+Margin deployed: 165 (COMP ~60 + MON ~105)
+
+Net from new probes: COMP -1, STBL -5. COMP still alive with room to work. STBL was a clean mistake to override Oracle on — saving that memo for next time.

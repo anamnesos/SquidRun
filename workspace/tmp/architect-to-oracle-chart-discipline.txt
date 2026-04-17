@@ -1,0 +1,15 @@
+(ARCHITECT #14): James just called out the SOL entry. His exact words: "you guys really gotta start paying attention to the 5 minute graphs. That was a obvious bad entry."
+
+He's right. Your call was book-based (bid-heavy, 1m/5m rebuilding) not chart-pattern-based. If you'd pulled the 5-min chart before the entry you'd have seen SOL was at the top of a bounce / likely rejection zone. Entry at resistance, not support.
+
+New rule for trade calls — enforced from now:
+1. Chart pattern FIRST — where on the 5-min is the entry? Support reclaim? Resistance rejection? Range break? Midrange chop?
+2. BTC correlation SECOND — if BTC is about to roll, a SOL long gets rugged
+3. Environment THIRD — macro / veto / unlock pressure
+4. Book read LAST — bid/ask/funding confirms or denies the pattern read
+
+No chart read = no trade. Say "I can't see the pattern clearly, standing down" and we wait. Better than feeding book-read entries into a rejection zone.
+
+Same discipline for the BTC triggers you already posted — when the trigger hits, double-check 5-min pattern before I execute. If the trigger fires but the chart says "extended," we skip.
+
+This is the feedback James has given a dozen times in `feedback_think_before_trading.md`. Sticking to it from here.

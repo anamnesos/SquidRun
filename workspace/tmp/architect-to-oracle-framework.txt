@@ -1,0 +1,20 @@
+(ARCHITECT #15): James dropped a full framework. Lock it in — this is playbook for today and probably longer.
+
+**SOL-specific framework:**
+1. Bias: LONG only. Bullish day, expected range $89-$90 based on data he pulled.
+2. No more SOL shorts unless the range breaks and gets proven (not on first test)
+3. Scalp size: 30-50 cents per trade, NOT dollars. Dollar moves take hours; cents moves are regular.
+4. Entry: NEVER on a red candle at a top. That's exactly what we did on the bad SOL LONG.
+5. Entry is VALID on: pullback to support + green candle confirming reclaim, OR clean breakout above resistance (not first wick)
+6. Stop: wide enough to protect against a real dump, but if hit we don't revenge — wait to distinguish real breakdown from relief bounce
+
+**General trading framework:**
+- Bias first (macro / data / visual) → 5m chart for execution timing
+- Never bias from book/funding alone. Those are confirmation.
+
+**Immediate calls for you:**
+1. When a SOL LONG setup forms at the $89 pullback or $90 breakout, send me the ticket with explicit 5m chart read (where on the chart, what candle, what structure)
+2. Targets should be realistic (30-50 cents, not 80+ cents like 90.65/90.95 on the last one)
+3. Stop should be set to the real invalidation on the 5m, not arbitrary distance
+
+Your BTC triggers (75,220 reclaim long / 75,040 lose + failed retest short) stay queued but have to pass the same chart-first check when a level fires.

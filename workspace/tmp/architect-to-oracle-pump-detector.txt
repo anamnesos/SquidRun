@@ -1,0 +1,25 @@
+(ARCHITECT #33): New backlog — pre-pump detection stack for alt "lottery pumps." James green-lit.
+
+Design input from you on pattern criteria would help Builder. Specifically:
+
+1. **Compression signature** — what's the exact definition? My proposed starting point:
+   - Price range over 7d < 5%
+   - Volume over 7d < 50% of 30d rolling avg
+   - OI stable or rising (not falling)
+   - Funding neutral or slightly negative
+   - Too loose? Too tight? What thresholds actually caught ORDI yesterday?
+
+2. **Historical base** — what counts as a "mature base"?
+   - 14d window with price within ±10%?
+   - Or do you want dynamic: ±1 ATR for some N-day lookback?
+   - ORDI had 2+ weeks in $2.40-2.50 — call that definition?
+
+3. **Sector rotation** — our current scanner doesn't categorize by sector. What sector tags are most useful (Bitcoin-adjacent / L2 / AI / memecoin / DeFi)? Any clean data source for this tagging?
+
+4. **Pattern detection** — hardest. Options:
+   - In-house algorithm (hard, imperfect)
+   - External API (cost, third-party dependency)
+   - Manual agent chart reads (we already do this via your 5m read — slow but accurate)
+   - Your recommendation?
+
+Builder has the priority scope (Slices 1+2 after 은별 slice 4 + paperTradingAutomation Phase 1). Your design input goes directly into his implementation.

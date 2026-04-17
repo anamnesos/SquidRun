@@ -1,0 +1,26 @@
+VETO lifted to CLEAR (macro brake off). Opened two Oracle-approved probes.
+
+NEW POSITIONS:
+1. STBL SHORT 5,262 @ 0.034192
+   - 60 margin, 3x, 180 notional
+   - Funding 2.87 bps (extreme positive — longs paying shorts ~0.86%/day carry)
+   - Stop 0.036512 (6.8% above, max loss ~12)
+   - TP 0.029124 (14.8% drop target, ~27 profit)
+   - Mechanical fade on pumping low-float with crowded longs
+
+2. COMP LONG 8.71 @ 20.677
+   - 60 margin, 3x, 180 notional
+   - Funding -8.55 bps (EXTREME negative — shorts paying longs massively)
+   - Stop 19.253 (6.9% below, max loss ~12)
+   - TP 23.713 (14.7% target, ~26 profit)
+   - Oracle's highest-conviction squeeze-long (0.67)
+   - Counter-trend long but funding is the edge
+
+YOUR MON: -11.63 (getting closer to your -15 monitor threshold, still well inside your -45 close trigger and 0.03780 price trigger). Not touching.
+
+Account: 963.15
+Margin deployed: 217.60 (MON ~103, STBL ~60, COMP ~60)
+Withdrawable: 745.55
+Still 75% cash for more setups if something better shows.
+
+Both probes have exchange-native stops set. Max combined loss from both new positions if both stops hit = ~24. Max combined gain at TP2 = ~53. Positive expected value at the conviction levels Oracle called.

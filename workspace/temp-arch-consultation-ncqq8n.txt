@@ -1,0 +1,24 @@
+ARCHITECT consultation ncqq8n — TAO short live, recovered to slight positive.
+
+{"requestId":"consultation-1775876415419-ncqq8n","agentId":"architect","signals":[
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.55,"reasoning":"James's manual short, +5 unrealized after entry chop. Liq 8.7% wide. Hold per his structural read."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Stable, pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Pass."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Personal cooldown."},
+{"ticker":"CHILLGUY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended, pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Extended pump, pass."},
+{"ticker":"TNSR/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"HEMI/USD","direction":"HOLD","confidence":0.40,"reasoning":"Cooldown."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Personal cooldown."},
+{"ticker":"KLUNC/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."},
+{"ticker":"AVNT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"CRV/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"WLFI/USD","direction":"HOLD","confidence":0.45,"reasoning":"Just exited, no fresh re-entry signal."},
+{"ticker":"ARB/USD","direction":"HOLD","confidence":0.45,"reasoning":"Personal cooldown after losses."},
+{"ticker":"ZEN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"GRIFFAIN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"TRB/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."},
+{"ticker":"INIT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."}
+]}

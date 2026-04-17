@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775964624301-ccptcq",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "TON/USD",
+      "direction": "BUY",
+      "confidence": 0.99,
+      "reasoning": "Cover the live TON short immediately. The position is already down materially, the coin is still up 9.71% on the day, liquidation distance is only about 4.9%, and there is no valid stop in place under an active veto."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation flush, so I would not chase a fresh short after the first dump leg."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and no longer offers a clean fresh edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "SOL remains a reduced-size short lean because price is down while open interest is still slightly rising, which suggests fresh shorts are still pressing."
+    },
+    {
+      "ticker": "SPX/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "SPX has already flushed hard enough that I would rather wait for a bounce than force a fresh short under veto."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "DASH is already in a liquidation-flush state and does not offer a clean new edge right here."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "VVV has already broken lower on the day, so I would rather wait than force a fresh short after the initial unwind."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "MERL is already deep into a flush and too illiquid to trust for a serious fresh position."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "WCT is already down hard and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "XPL/USD",
+      "direction": "SELL",
+      "confidence": 0.56,
+      "reasoning": "XPL is a modest reduced-size short lean because it is slipping on decent relative liquidity while still carrying a bearish mechanical profile."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is already deep into a flush and too illiquid to trust for a fresh short chase."
+    }
+  ]
+}

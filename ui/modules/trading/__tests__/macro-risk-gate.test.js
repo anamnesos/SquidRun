@@ -20,28 +20,88 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+function toEpochSeconds(value) {
+  return Math.floor(new Date(value).getTime() / 1000);
+}
+
 /**
  * Build a mock fetch that returns predefined data for each API URL pattern.
  */
-function mockFetch({ fearGreed = 50, vix = 18, oil = 70, gdeltArticles = null } = {}) {
+function mockFetch({
+  fearGreed = 50,
+  fearGreedTimestamp = '2026-04-14T00:00:00.000Z',
+  vix = 18,
+  vixDate = '2026-04-13',
+  oil = 70,
+  oilDate = '2026-04-13',
+  liveOil = oil,
+  liveOilObservedAt = '2026-04-14T18:00:00.000Z',
+  liveOilPreviousClose = oil,
+  disableLiveOil = false,
+  gdeltArticles = null,
+} = {}) {
   process.env.FRED_API_KEY = 'test-key';
   const impl = jest.fn(async (url) => {
     if (url.includes('alternative.me')) {
       return {
         ok: true,
-        text: async () => JSON.stringify({ data: [{ value: String(fearGreed) }] }),
+        text: async () => JSON.stringify({
+          data: [{
+            value: String(fearGreed),
+            timestamp: String(toEpochSeconds(fearGreedTimestamp)),
+          }],
+        }),
       };
     }
     if (url.includes('VIXCLS')) {
       return {
         ok: true,
-        text: async () => JSON.stringify({ observations: [{ value: String(vix) }] }),
+        text: async () => JSON.stringify({
+          observations: [
+            { date: vixDate, value: String(vix) },
+            { date: '2026-04-10', value: String(vix - 1) },
+          ],
+        }),
       };
     }
     if (url.includes('DCOILWTICO')) {
       return {
         ok: true,
-        text: async () => JSON.stringify({ observations: [{ value: String(oil) }] }),
+        text: async () => JSON.stringify({
+          observations: [
+            { date: oilDate, value: String(oil) },
+            { date: '2026-04-02', value: String(oil - 1) },
+          ],
+        }),
+      };
+    }
+    if (url.includes('query1.finance.yahoo.com') && url.includes('CL=F')) {
+      if (disableLiveOil) {
+        return {
+          ok: false,
+          text: async () => '{}',
+        };
+      }
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          chart: {
+            result: [{
+              meta: {
+                regularMarketPrice: liveOil,
+                regularMarketTime: toEpochSeconds(liveOilObservedAt),
+                chartPreviousClose: liveOilPreviousClose,
+                previousClose: liveOilPreviousClose,
+              },
+              timestamp: [toEpochSeconds(liveOilObservedAt)],
+              indicators: {
+                quote: [{
+                  close: [liveOil],
+                }],
+              },
+            }],
+          },
+        }),
       };
     }
     if (url.includes('api.gdeltproject.org')) {
@@ -170,24 +230,24 @@ describe('regimeConstraints', () => {
   test('yellow reduces position size and buy confidence', () => {
     const c = regimeConstraints('yellow');
     expect(c.positionSizeMultiplier).toBe(0.5);
-    expect(c.buyConfidenceMultiplier).toBe(0.8);
+    expect(c.buyConfidenceMultiplier).toBe(0.95);
   });
 
-  test('red blocks new longs and boosts defensive sells', () => {
+  test('red keeps longs enabled but trims size hard', () => {
     const c = regimeConstraints('red');
-    expect(c.allowLongs).toBe(false);
-    expect(c.blockNewPositions).toBe(true);
-    expect(c.positionSizeMultiplier).toBe(0.35);
-    expect(c.buyConfidenceMultiplier).toBe(0.6);
-    expect(c.sellConfidenceMultiplier).toBe(1.1);
+    expect(c.allowLongs).toBe(true);
+    expect(c.blockNewPositions).toBe(false);
+    expect(c.positionSizeMultiplier).toBe(0.25);
+    expect(c.buyConfidenceMultiplier).toBe(0.9);
+    expect(c.sellConfidenceMultiplier).toBe(1.05);
   });
 
-  test('stay_cash blocks all new positions', () => {
+  test('stay_cash preserves trading but clamps risk to quarter size', () => {
     const c = regimeConstraints('stay_cash', { crisisType: 'deflationary' });
-    expect(c.allowLongs).toBe(false);
-    expect(c.blockNewPositions).toBe(true);
-    expect(c.positionSizeMultiplier).toBe(0);
-    expect(c.buyConfidenceMultiplier).toBe(0);
+    expect(c.allowLongs).toBe(true);
+    expect(c.blockNewPositions).toBe(false);
+    expect(c.positionSizeMultiplier).toBe(0.25);
+    expect(c.buyConfidenceMultiplier).toBe(0.85);
     expect(c.crisisUniverse).toContain('TLT');
     expect(c.crisisUniverse).not.toContain('XLE');
   });
@@ -218,7 +278,7 @@ describe('normalizeGdeltArticles', () => {
 });
 
 describe('applyMacroRiskToSignal', () => {
-  test('converts BUY to HOLD when longs are blocked', () => {
+  test('preserves BUY in red regime and appends reduced-size guidance', () => {
     const signal = applyMacroRiskToSignal({
       ticker: 'BTC/USD',
       direction: 'BUY',
@@ -229,9 +289,9 @@ describe('applyMacroRiskToSignal', () => {
       constraints: regimeConstraints('red'),
     });
 
-    expect(signal.direction).toBe('HOLD');
-    expect(signal.confidence).toBeGreaterThanOrEqual(0.72);
-    expect(signal.reasoning).toContain('blocks new longs');
+    expect(signal.direction).toBe('BUY');
+    expect(signal.confidence).toBeCloseTo(0.74, 2);
+    expect(signal.reasoning).toContain('trims size to 25% of normal');
   });
 
   test('preserves SELL and boosts defensive confidence in stay_cash', () => {
@@ -250,7 +310,7 @@ describe('applyMacroRiskToSignal', () => {
     expect(signal.reasoning).toContain('defensive');
   });
 
-  test('preserves crisis-universe BUY signals during stay_cash crisis mode', () => {
+  test('preserves BUY signals during stay_cash and trims size instead of blocking', () => {
     const signal = applyMacroRiskToSignal({
       ticker: 'SQQQ',
       direction: 'BUY',
@@ -263,7 +323,24 @@ describe('applyMacroRiskToSignal', () => {
     });
 
     expect(signal.direction).toBe('BUY');
+    expect(signal.confidence).toBeCloseTo(0.69, 2);
     expect(signal.reasoning).toContain('CRISIS mode');
+    expect(signal.reasoning).toContain('trims size to 25% of normal');
+  });
+
+  test('preserves SHORT signals during red regime defensive mode', () => {
+    const signal = applyMacroRiskToSignal({
+      ticker: 'ETH/USD',
+      direction: 'SHORT',
+      confidence: 0.79,
+      reasoning: 'Trend remains weak.',
+    }, {
+      regime: 'red',
+      constraints: regimeConstraints('red'),
+    });
+
+    expect(signal.direction).toBe('SHORT');
+    expect(signal.reasoning).toContain('RED regime permits defensive short exposure');
   });
 });
 
@@ -289,9 +366,16 @@ describe('assessMacroRisk', () => {
     expect(result.strategyMode).toBe('normal');
     expect(result.score).toBeLessThan(40);
     expect(result.indicators.vix.value).toBe(15);
-    expect(result.indicators.vix.source).toBe('api');
+    expect(result.indicators.vix.source).toBe('fred:VIXCLS');
+    expect(result.indicators.vix.observedAt).toBe('2026-04-13T00:00:00.000Z');
+    expect(result.indicators.vix.stale).toBe(false);
     expect(result.indicators.fearGreed.value).toBe(60);
+    expect(result.indicators.fearGreed.source).toBe('alternative_me');
+    expect(result.indicators.fearGreed.observedAt).toBe('2026-04-14T00:00:00.000Z');
     expect(result.indicators.oilPrice.value).toBe(70);
+    expect(result.indicators.oilPrice.source).toBe('yahoo_finance:CL=F');
+    expect(result.indicators.oilPrice.observedAt).toBe('2026-04-14T18:00:00.000Z');
+    expect(result.indicators.oilPrice.stale).toBe(false);
     expect(result.constraints.positionSizeMultiplier).toBe(1.0);
     expect(result.intelligence.geopolitics.source).toBe('gdelt');
     expect(result.fetchedAt).toBeTruthy();
@@ -312,7 +396,7 @@ describe('assessMacroRisk', () => {
     expect(result.regime).toBe('yellow');
     expect(result.strategyMode).toBe('defensive');
     expect(result.constraints.positionSizeMultiplier).toBe(0.5);
-    expect(result.constraints.buyConfidenceMultiplier).toBe(0.8);
+    expect(result.constraints.buyConfidenceMultiplier).toBe(0.95);
   });
 
   test('RED regime with geopolitical conflict', async () => {
@@ -330,10 +414,10 @@ describe('assessMacroRisk', () => {
     expect(result.regime).toBe('red');
     expect(result.strategyMode).toBe('defensive');
     expect(result.score).toBeGreaterThan(60);
-    expect(result.constraints.allowLongs).toBe(false);
-    expect(result.constraints.positionSizeMultiplier).toBe(0.35);
-    expect(result.constraints.buyConfidenceMultiplier).toBe(0.6);
-    expect(result.constraints.sellConfidenceMultiplier).toBe(1.1);
+    expect(result.constraints.allowLongs).toBe(true);
+    expect(result.constraints.positionSizeMultiplier).toBe(0.25);
+    expect(result.constraints.buyConfidenceMultiplier).toBe(0.9);
+    expect(result.constraints.sellConfidenceMultiplier).toBe(1.05);
   });
 
   test('STAY_CASH regime with deep Hormuz conflict tone', async () => {
@@ -353,8 +437,8 @@ describe('assessMacroRisk', () => {
     expect(result.crisisType).toBe('inflationary');
     expect(result.score).toBeGreaterThan(90);
     expect(result.intelligence.geopolitics.stayCashTrigger).toBe(true);
-    expect(result.constraints.buyConfidenceMultiplier).toBe(0);
-    expect(result.constraints.positionSizeMultiplier).toBe(0);
+    expect(result.constraints.buyConfidenceMultiplier).toBe(0.85);
+    expect(result.constraints.positionSizeMultiplier).toBe(0.25);
   });
 
   test('uses fallback values when FRED_API_KEY is missing', async () => {
@@ -378,8 +462,10 @@ describe('assessMacroRisk', () => {
     const result = await assessMacroRisk();
 
     expect(result.indicators.vix.source).toBe('fallback');
+    expect(result.indicators.vix.stale).toBe(true);
     expect(result.indicators.oilPrice.source).toBe('fallback');
-    expect(result.indicators.fearGreed.source).toBe('api');
+    expect(result.indicators.oilPrice.stale).toBe(true);
+    expect(result.indicators.fearGreed.source).toBe('alternative_me');
     // Fallback values are calm, so regime should be green
     expect(result.regime).toBe('green');
   });
@@ -395,6 +481,9 @@ describe('assessMacroRisk', () => {
     expect(result.indicators.vix.source).toBe('fallback');
     expect(result.indicators.fearGreed.source).toBe('fallback');
     expect(result.indicators.oilPrice.source).toBe('fallback');
+    expect(result.indicators.vix.stale).toBe(true);
+    expect(result.indicators.fearGreed.stale).toBe(true);
+    expect(result.indicators.oilPrice.stale).toBe(true);
     expect(result.regime).toBe('green');
   });
 
@@ -416,5 +505,24 @@ describe('assessMacroRisk', () => {
 
     await assessMacroRisk({ skipCache: true });
     expect(fetchImpl).toHaveBeenCalledTimes(8);
+  });
+
+  test('falls back to stale FRED oil and surfaces freshness metadata when live oil is unavailable', async () => {
+    mockFetch({
+      fearGreed: 55,
+      vix: 18,
+      oil: 114.01,
+      oilDate: '2026-04-06',
+      disableLiveOil: true,
+    });
+
+    const result = await assessMacroRisk({ now: '2026-04-14T18:00:00.000Z', skipCache: true });
+
+    expect(result.indicators.oilPrice.value).toBe(114.01);
+    expect(result.indicators.oilPrice.source).toBe('fred:DCOILWTICO:fallback');
+    expect(result.indicators.oilPrice.observedAt).toBe('2026-04-06T00:00:00.000Z');
+    expect(result.indicators.oilPrice.stale).toBe(true);
+    expect(result.indicators.oilPrice.staleReason).toBe('fred_oil_observation_stale');
+    expect(result.reason).toContain('Oil data stale');
   });
 });

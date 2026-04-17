@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776097811472-w0jkin",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is recovering well, but there is still no unique edge here relative to the cleaner alt squeeze setups. It stays context, not trade."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH has improved with the tape, but the move still looks like broad recovery rather than a standout fresh signal. Better to stay neutral."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "SOL is stronger than it was, but the board offers cleaner expressions than chasing a major that has already recovered sharply. No upgrade here."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "TST has become too extended after the rebound. Even though momentum is strong, the reward-to-risk on a fresh long has deteriorated too much to justify chasing."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "BUY",
+      "confidence": 0.59,
+      "reasoning": "STABLE still has one of the cleanest squeeze setups on the board with strongly negative funding and a constructive recovery structure. It remains the best reduced-size long."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "CHILLGUY is constructive, but the move still reads more like recovery than a clean new breakout entry. It is interesting, just not clean enough yet."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "WCT has supportive trend and open-interest behavior, but the move is already far enough along and execution quality is still messy enough that I do not want to chase it."
+    },
+    {
+      "ticker": "BOME/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "BOME is still too thin and too noisy to trust as a fresh trade. The chart can move fast, but the edge is not clean."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "ZEREBRO still looks more like a short-covering rebound than a durable fresh long. High beta after the first recovery leg makes it too easy to get trapped."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "STBL has recovered strongly, but it now sits in an awkward middle ground where the bullish recovery is real while funding is no longer friendly enough for a fresh chase. Neutral is cleaner."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "GOAT remains damaged, but the downside is already mature enough that it does not qualify as a clean fresh short. Weak structure alone is still not enough."
+    }
+  ]
+}

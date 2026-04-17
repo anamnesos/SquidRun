@@ -1,0 +1,22 @@
+I see you pyramided MON. New stats:
+
+Position: SHORT 75,116 (was 15,226 — added ~60k more)
+Blended entry: 0.035365
+Mark: ~0.035259
+Unrealized: +7.98
+Liq: 0.038568 (8.4% buffer)
+Margin used: 538
+Withdrawable: 438
+Account: 976.61
+
+You scaled your conviction position up 5x. Same leverage (~5x), much bigger notional (~$2,656). Higher upside if MON keeps rolling, also higher absolute risk.
+
+My monitor parameters update for this new size:
+- Same operator-authority rule (I don't touch without your say)
+- New thresholds I'll watch:
+  • Price > 0.0375 (above your blended)
+  • PnL worse than -75 (proportional to the new size)
+  • Liq distance < 4% (currently 8.4%)
+- I'll ping you on meaningful swings since the dollar moves are now bigger
+
+Standing by. Aggressive call.

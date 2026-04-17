@@ -1,0 +1,15 @@
+ARCHITECT consultation pxgsnk — position_management, macro RED(51), F&G 16, oil $114, eventVeto=VETO size 0.25.
+
+{"requestId":"consultation-1775799025491-pxgsnk","agentId":"architect","signals":[
+{"ticker":"MON/USD","direction":"HOLD","confidence":0.55,"reasoning":"Live short -231 unrealized, entry 0.034981, mark 0.036062, liq 0.03819 (6.5% away). James is manually operating this trade, has explicitly said do not touch. Operator-authority constraint overrides pure trading edge. Oracle pushed cover at 0.99 on the previous consultation, I pushed back on authority, relayed argument to James, he is reading the tape himself. Board-level signal: HOLD until operator says otherwise."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mark 72,207, +1.77% 24h. Event veto active with size 0.25 brake. No edge, no catalyst, and account is committed to MON/BABY. Pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mark 2201, +0.94% 24h. Flat majors, VETO brake, no capacity. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mark 83.48, +1.79% 24h. Mech board flag explicitly 'no-trade'. Respect it. Pass."},
+{"ticker":"CHILLGUY/USD","direction":"SELL","confidence":0.30,"reasoning":"+39.73% 24h meme parabolic in extreme fear. Still the cleanest fade candidate on the board by setup, but eventVeto VETO size 0.25 + MON already consuming capital + BABY unlock in ~3.5 hours = no live capacity. Paper SELL for record."},
+{"ticker":"ZEREBRO/USD","direction":"SELL","confidence":0.30,"reasoning":"+16.98% 24h pump, funding 0.125 bps. Retail-chase setup. Paper SELL, no capacity to size."},
+{"ticker":"GRASS/USD","direction":"SELL","confidence":0.30,"reasoning":"+19.75% 24h pump, funding positive. Same retail-chase flag. Paper SELL, no capacity."},
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Mark 266.23, -17.52% 24h. Only downmover, already crushed. Oracle called this the cleanest short — I disagree, you don't start a new short after a 17% rout unless you have reason to expect it to triple. No position."},
+{"ticker":"ENA/USD","direction":"HOLD","confidence":0.40,"reasoning":"Mark 0.0974, +11.74% 24h. More moderate pump than the memes, funding neutral positive. Not clean enough to short, not enough edge to long in RED macro. Skip."},
+{"ticker":"TNSR/USD","direction":"HOLD","confidence":0.50,"reasoning":"+29.98% 24h with funding NOW -1.5728 bps (was -0.40). Funding has tripled negative — shorts are very crowded and paying longs heavily. Textbook short-squeeze fuel. Do NOT short this. Oracle may still see squeeze-long edge here but in RED macro + VETO I don't take sides. Pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.40,"reasoning":"+17.33% 24h, funding positive. Older L1, less clearly a meme dump candidate. No thesis either direction. Skip."}
+]}

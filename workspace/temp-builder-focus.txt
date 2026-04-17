@@ -1,0 +1,14 @@
+STOP everything else. ONE deliverable tonight:
+
+Supervisor-level Hyperliquid position monitor. Independent of all agents.
+
+Requirements:
+- Runs every 5 minutes in supervisor-daemon.js
+- Calls hm-defi-status.js or reads .squidrun/runtime/crypto-trading-supervisor-state.json
+- Tracks peak unrealized P&L in .squidrun/runtime/defi-peak-pnl.json
+- If P&L drops 30% from peak: send Telegram alert to James via hm-send.js telegram
+- If P&L drops 50% from peak: send URGENT Telegram alert to James
+- If position gets within 15% of liquidation price: send CRITICAL alert
+- Injects live position data into consultation requests so all agents see it
+
+No other tasks until this ships. Run tests. Confirm it works.

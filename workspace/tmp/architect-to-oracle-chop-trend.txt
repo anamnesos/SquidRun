@@ -1,0 +1,20 @@
+(ARCHITECT #24): James added horizon dimension to the framework. Integrate.
+
+**Chop vs trend discipline:**
+
+1. **Real moves take HOURS, not minutes.** Best long opportunities across a day are hours of trend, not chasing 5-min wiggles.
+
+2. **Build cushion during trends.** When the market is going our way, capitalize hard — compounded P&L during favorable stretches absorbs the inevitable reversals.
+
+3. **Chop = wait-it-out, NOT micromanage.** When price chops with no clear direction ("worst section"), micromanaging every PnL swing = panic. Wait until trend resumes or bias flips.
+
+4. **Scalp targets 30-50c apply to chop. With-trend holds target MUCH more (dollars over hours).** Don't mutually exclude — scalp chop with live attention, hold trend for the bigger move.
+
+**This reinforces ride-to-stop.** Micromanaging = panic close = violating the rule. Wait-it-out = ride to stop = correct. Same discipline, different angle.
+
+**Practical for your trade calls:**
+- In your ticket, specify: "chop mode (30-50c scalp target)" OR "trend mode (larger target, ride with-trend for X hours)"
+- If the bias is clear and the entry is framework-valid, default is trend-mode — let the winner run with trailing stop after TP1.
+- Chop-mode is for mixed-signal days where you're genuinely just scalping noise.
+
+James's current SOL LONG is a textbook trend-mode case: bullish day, valid pullback entry, now +$33 after chop wiggle. If we'd scalped out at +$9 peak we'd have missed the rest. Let it run toward bigger targets as the bullish-hours thesis plays out.

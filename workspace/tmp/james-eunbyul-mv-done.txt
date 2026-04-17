@@ -1,0 +1,19 @@
+은별 window build is code-complete at minimum-viable:
+
+✅ Slice 1: Window registry (replaces single-window assumption)
+✅ Slice 2: Telegram routing — chat 8754356993 → 은별 window, rest → ours
+✅ Slice 3: Her startup bundle (case files, CLAUDE.md scope) + her own session namespace
+
+Builder: "that's the minimum version I'd trust." Oracle passed all three narrow reviews with negative-path tests. Took about 15 minutes total, not 2-4 days.
+
+Honest caveats:
+- This is code-complete in the app source, NOT live in the running SquidRun yet
+- To see 은별's window actually open and her Telegram route there, the app needs a relaunch
+- Her agents still need to actually boot inside that window (Claude Code / Codex / Gemini CLIs need to be pointed at the 은별 context when the window opens — still Builder's slice 4 if we want it fully auto)
+
+Decision for you:
+1. Relaunch SquidRun right now to see her window open live (will briefly interrupt our trading — I close the BTC trigger watch for 60 seconds while the app restarts)
+2. Let Builder finish slice 4 (agent auto-boot into 은별 window), THEN relaunch
+3. Let it ride until session end, relaunch at your leisure
+
+Your call. Meanwhile BTC is still in the 75,080-75,220 chop zone — no trigger hit.

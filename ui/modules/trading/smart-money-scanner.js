@@ -17,6 +17,7 @@ const DEFAULT_CONVERGENCE_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_TRIGGER_COOLDOWN_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_RECENT_TRANSFERS = 500;
 const DEFAULT_MAX_SEEN_TRANSFER_IDS = 2_000;
+const HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info';
 
 function toText(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -30,6 +31,18 @@ function toNumber(value, fallback = 0) {
 
 function toIsoTimestamp(value, fallback = null) {
   if (value == null || value === '') return fallback;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const normalized = value > 10_000_000_000 ? value : value * 1000;
+    return new Date(normalized).toISOString();
+  }
+  const numericString = String(value).trim();
+  if (/^\d{10,13}$/.test(numericString)) {
+    const numericValue = Number.parseInt(numericString, 10);
+    if (Number.isFinite(numericValue)) {
+      const normalized = numericString.length >= 13 ? numericValue : numericValue * 1000;
+      return new Date(normalized).toISOString();
+    }
+  }
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return fallback;
   return date.toISOString();
@@ -50,6 +63,102 @@ function normalizeSide(value, fallback = 'buy') {
 function normalizeAddress(value) {
   const normalized = toText(value).toLowerCase();
   return normalized || '';
+}
+
+function buildDataFreshness({
+  source,
+  observedAt = null,
+  fetchedAt = null,
+  stale = false,
+  staleReason = null,
+} = {}) {
+  return {
+    source: toText(source, 'unknown'),
+    observedAt: toIsoTimestamp(observedAt, null),
+    fetchedAt: toIsoTimestamp(fetchedAt, new Date().toISOString()),
+    stale: stale === true,
+    staleReason: staleReason ? toText(staleReason) : null,
+  };
+}
+
+async function fetchHyperliquidAllMids(fetchFn) {
+  const response = await fetchFn(HYPERLIQUID_INFO_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ type: 'allMids' }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`hyperliquid_mids_http_${response.status}: ${text.slice(0, 160)}`);
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+async function resolveTrackedTokenPricing({ fetchFn, nowIso, options = {} } = {}) {
+  const prices = {
+    USDC: {
+      value: 1,
+      ...buildDataFreshness({
+        source: 'static_peg_assumption',
+        observedAt: nowIso,
+        fetchedAt: nowIso,
+      }),
+    },
+    USDT: {
+      value: 1,
+      ...buildDataFreshness({
+        source: 'static_peg_assumption',
+        observedAt: nowIso,
+        fetchedAt: nowIso,
+      }),
+    },
+  };
+
+  const injectedWethPrice = toNumber(options.priceUsdBySymbol?.WETH ?? options.wethPriceUsd, NaN);
+  if (Number.isFinite(injectedWethPrice) && injectedWethPrice > 0) {
+    prices.WETH = {
+      value: injectedWethPrice,
+      ...buildDataFreshness({
+        source: 'injected_weth_price',
+        observedAt: nowIso,
+        fetchedAt: nowIso,
+      }),
+    };
+    return prices;
+  }
+
+  try {
+    const mids = await fetchHyperliquidAllMids(fetchFn);
+    const ethPrice = toNumber(mids?.ETH, NaN);
+    if (Number.isFinite(ethPrice) && ethPrice > 0) {
+      prices.WETH = {
+        value: ethPrice,
+        ...buildDataFreshness({
+          source: 'hyperliquid:allMids',
+          observedAt: nowIso,
+          fetchedAt: nowIso,
+        }),
+      };
+      return prices;
+    }
+  } catch {
+    // Fall through to explicit unavailable metadata.
+  }
+
+  prices.WETH = {
+    value: null,
+    ...buildDataFreshness({
+      source: 'unavailable',
+      observedAt: null,
+      fetchedAt: nowIso,
+      stale: true,
+      staleReason: 'weth_price_unavailable',
+    }),
+  };
+  return prices;
 }
 
 function buildTransferId(record = {}) {
@@ -84,6 +193,15 @@ function normalizeTransfer(record = {}) {
     price: Math.max(0, toNumber(record.price, 0)),
     txHash: normalizeAddress(record.txHash || record.hash),
     timestamp,
+    observedAt: toIsoTimestamp(record.observedAt, timestamp),
+    fetchedAt: toIsoTimestamp(record.fetchedAt, timestamp),
+    stale: record.stale === true,
+    staleReason: toText(record.staleReason, '') || null,
+    priceSource: toText(record.priceSource, '') || null,
+    priceObservedAt: toIsoTimestamp(record.priceObservedAt, null),
+    priceFetchedAt: toIsoTimestamp(record.priceFetchedAt, null),
+    priceStale: record.priceStale === true,
+    priceStaleReason: toText(record.priceStaleReason, '') || null,
     source: toText(record.source, 'provider'),
     raw: record.raw || record,
   };
@@ -94,9 +212,29 @@ function defaultScannerState() {
     lastPollAt: null,
     cursor: null,
     recentTransfers: [],
+    convergenceSignals: [],
     recentSignalKeys: [],
     seenTransferIds: [],
+    health: 'idle',
+    lastError: null,
+    lastResult: null,
     updatedAt: null,
+  };
+}
+
+function normalizeScannerResult(result = null) {
+  if (!result || typeof result !== 'object') return null;
+  return {
+    ok: result.ok !== false,
+    chain: normalizeChain(result.chain, 'ethereum'),
+    startedAt: toIsoTimestamp(result.startedAt, null),
+    completedAt: toIsoTimestamp(result.completedAt, null),
+    error: toText(result.error, '') || null,
+    degraded: result.degraded === true,
+    reason: toText(result.reason, '') || null,
+    newTransferCount: Math.max(0, Math.floor(toNumber(result.newTransferCount ?? result.newTransfers?.length, 0))),
+    signalCount: Math.max(0, Math.floor(toNumber(result.signalCount ?? result.signals?.length, 0))),
+    freshSignalCount: Math.max(0, Math.floor(toNumber(result.freshSignalCount ?? result.freshSignals?.length, 0))),
   };
 }
 
@@ -115,12 +253,31 @@ function normalizeScannerState(state = {}) {
     recentTransfers: Array.isArray(state.recentTransfers)
       ? state.recentTransfers.map(normalizeTransfer)
       : [],
+    convergenceSignals: Array.isArray(state.convergenceSignals)
+      ? state.convergenceSignals.map((signal) => ({
+        chain: normalizeChain(signal?.chain, 'ethereum'),
+        symbol: toText(signal?.symbol || signal?.ticker).toUpperCase(),
+        tokenAddress: normalizeAddress(signal?.tokenAddress || signal?.token),
+        walletCount: Math.max(0, Math.floor(toNumber(signal?.walletCount, 0))),
+        transferCount: Math.max(0, Math.floor(toNumber(signal?.transferCount, 0))),
+        totalUsdValue: Math.max(0, toNumber(signal?.totalUsdValue, 0)),
+        confidence: Math.max(0, Math.min(1, toNumber(signal?.confidence, 0))),
+        strength: Math.max(0, Math.min(1, toNumber(signal?.strength, 0))),
+        earliestTimestamp: toIsoTimestamp(signal?.earliestTimestamp, null),
+        latestTimestamp: toIsoTimestamp(signal?.latestTimestamp, null),
+      }))
+      : [],
     recentSignalKeys: Array.isArray(state.recentSignalKeys)
       ? state.recentSignalKeys.map(normalizeSignalHistoryEntry).filter((entry) => entry.key && entry.emittedAt)
       : [],
     seenTransferIds: Array.isArray(state.seenTransferIds)
       ? state.seenTransferIds.map((value) => toText(value)).filter(Boolean)
       : [],
+    health: ['idle', 'ok', 'degraded', 'error'].includes(String(state.health || '').toLowerCase())
+      ? String(state.health || '').toLowerCase()
+      : 'idle',
+    lastError: toText(state.lastError, '') || null,
+    lastResult: normalizeScannerResult(state.lastResult),
     updatedAt: toIsoTimestamp(state.updatedAt, null),
   };
 }
@@ -381,8 +538,20 @@ class SmartMoneyScanner extends EventEmitter {
         lastPollAt: startedAt,
         cursor,
         recentTransfers,
+        convergenceSignals: signals,
         recentSignalKeys,
         seenTransferIds: nextSeenIds,
+        health: 'ok',
+        lastError: null,
+        lastResult: {
+          ok: true,
+          chain: this.chain,
+          startedAt,
+          completedAt: new Date(this.now()).toISOString(),
+          newTransferCount: newTransfers.length,
+          signalCount: signals.length,
+          freshSignalCount: freshSignals.length,
+        },
       });
       this.persistState();
 
@@ -427,7 +596,16 @@ class SmartMoneyScanner extends EventEmitter {
         startedAt,
         completedAt: new Date(this.now()).toISOString(),
         error: err.message,
+        degraded: err?.providerResult?.degraded === true,
       };
+      this.state = normalizeScannerState({
+        ...this.state,
+        lastPollAt: startedAt,
+        health: err?.providerResult?.degraded === true ? 'degraded' : 'error',
+        lastError: err.message,
+        lastResult: failure,
+      });
+      this.persistState();
       if (this.listenerCount('error') > 0) {
         this.emit('error', failure);
       }
@@ -442,7 +620,7 @@ class SmartMoneyScanner extends EventEmitter {
     if (!this.provider) {
       throw new Error('smart_money_provider_required');
     }
-    return this.provider({
+    const providerResult = await this.provider({
       chain: this.chain,
       cursor: this.state.cursor,
       since: this.state.lastPollAt,
@@ -450,6 +628,12 @@ class SmartMoneyScanner extends EventEmitter {
       options: this.options,
       pollOptions: options,
     });
+    if (providerResult && typeof providerResult === 'object' && (providerResult.error || providerResult.degraded === true)) {
+      const providerError = new Error(toText(providerResult.error, 'smart_money_provider_failed'));
+      providerError.providerResult = providerResult;
+      throw providerError;
+    }
+    return providerResult;
   }
 }
 
@@ -475,9 +659,9 @@ function createEtherscanProvider(options = {}) {
   const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
   const TRACKED_TOKENS = {
-    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': { symbol: 'USDC', decimals: 6, priceUsd: 1 },
-    '0xdac17f958d2ee523a2206206994597c13d831ec7': { symbol: 'USDT', decimals: 6, priceUsd: 1 },
-    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': { symbol: 'WETH', decimals: 18, priceUsd: 2200 },
+    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': { symbol: 'USDC', decimals: 6 },
+    '0xdac17f958d2ee523a2206206994597c13d831ec7': { symbol: 'USDT', decimals: 6 },
+    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': { symbol: 'WETH', decimals: 18 },
   };
   const TOKEN_ADDRESSES = Object.keys(TRACKED_TOKENS);
 
@@ -502,6 +686,7 @@ function createEtherscanProvider(options = {}) {
 
   return async function rpcSmartMoneyProvider({ cursor, fetch: fetchFn }) {
     const _fetch = fetchFn || global.fetch;
+    const fetchedAt = new Date().toISOString();
 
     const rpcCall = async (method, params) => {
       const resp = await _fetch(rpcUrl, {
@@ -510,7 +695,21 @@ function createEtherscanProvider(options = {}) {
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
         signal: AbortSignal.timeout(20_000),
       });
-      const data = await resp.json();
+      const rawText = await resp.text();
+      let data = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        if (!resp.ok) {
+          const detail = toText(rawText, `HTTP ${resp.status}`);
+          throw new Error(`rpc_http_${resp.status}: ${detail.slice(0, 160)}`);
+        }
+        throw new Error(`rpc_non_json_response: ${toText(rawText, 'empty response').slice(0, 160)}`);
+      }
+      if (!resp.ok) {
+        const detail = toText(data?.error?.message, toText(rawText, `HTTP ${resp.status}`));
+        throw new Error(`rpc_http_${resp.status}: ${detail.slice(0, 160)}`);
+      }
       if (data.error) throw new Error(data.error.message || 'rpc_error');
       return data.result;
     };
@@ -527,16 +726,65 @@ function createEtherscanProvider(options = {}) {
         address: TOKEN_ADDRESSES,
         topics: [TRANSFER_TOPIC],
       }]);
+      const needsWethPricing = (Array.isArray(logs) ? logs : []).some((log) => normalizeAddress(log?.address) === '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2');
+      const tokenPricing = needsWethPricing
+        ? await resolveTrackedTokenPricing({
+          fetchFn: _fetch,
+          nowIso: fetchedAt,
+          options,
+        })
+        : {
+          USDC: {
+            value: 1,
+            ...buildDataFreshness({
+              source: 'static_peg_assumption',
+              observedAt: fetchedAt,
+              fetchedAt,
+            }),
+          },
+          USDT: {
+            value: 1,
+            ...buildDataFreshness({
+              source: 'static_peg_assumption',
+              observedAt: fetchedAt,
+              fetchedAt,
+            }),
+          },
+        };
+      const blockTimestampCache = new Map();
+      const blockTimestampByNumber = async (blockNumberHex) => {
+        const normalizedBlock = toText(blockNumberHex).toLowerCase();
+        if (!normalizedBlock) return null;
+        if (blockTimestampCache.has(normalizedBlock)) {
+          return blockTimestampCache.get(normalizedBlock);
+        }
+        const block = await rpcCall('eth_getBlockByNumber', [normalizedBlock, false]);
+        const blockTimestamp = toIsoTimestamp(parseInt(block?.timestamp || '0x0', 16), null);
+        blockTimestampCache.set(normalizedBlock, blockTimestamp);
+        return blockTimestamp;
+      };
 
       const transfers = [];
       for (const log of (logs || [])) {
         const tokenAddr = (log.address || '').toLowerCase();
         const tokenInfo = TRACKED_TOKENS[tokenAddr];
         if (!tokenInfo) continue;
+        const tokenPriceMeta = tokenPricing[tokenInfo.symbol] || {
+          value: null,
+          ...buildDataFreshness({
+            source: 'unavailable',
+            observedAt: null,
+            fetchedAt,
+            stale: true,
+            staleReason: 'token_price_unavailable',
+          }),
+        };
+        const tokenPriceUsd = toNumber(tokenPriceMeta.value, NaN);
+        if (!(Number.isFinite(tokenPriceUsd) && tokenPriceUsd > 0)) continue;
 
         const rawValue = BigInt(log.data || '0');
         const value = Number(rawValue) / (10 ** tokenInfo.decimals);
-        const usdValue = value * tokenInfo.priceUsd;
+        const usdValue = value * tokenPriceUsd;
         if (usdValue < minUsdValue) continue;
 
         const from = '0x' + (log.topics[1] || '').slice(26).toLowerCase();
@@ -547,9 +795,10 @@ function createEtherscanProvider(options = {}) {
 
         const direction = isWhaleTo ? 'BUY' : 'SELL';
         const walletAddress = isWhaleFrom ? from : to;
+        const blockTimestamp = await blockTimestampByNumber(log.blockNumber);
 
         transfers.push({
-          transferId: log.transactionHash,
+          transferId: `${log.transactionHash}:${parseInt(log.logIndex || '0x0', 16)}`,
           chain: 'ethereum',
           walletAddress,
           tokenAddress: tokenAddr,
@@ -557,15 +806,30 @@ function createEtherscanProvider(options = {}) {
           direction,
           value,
           usdValue,
-          timestamp: new Date().toISOString(),
+          timestamp: blockTimestamp || fetchedAt,
+          observedAt: blockTimestamp || null,
+          fetchedAt,
+          stale: !blockTimestamp,
+          staleReason: !blockTimestamp ? 'block_timestamp_unavailable' : null,
+          priceSource: tokenPriceMeta.source,
+          priceObservedAt: tokenPriceMeta.observedAt,
+          priceFetchedAt: tokenPriceMeta.fetchedAt,
+          priceStale: tokenPriceMeta.stale === true,
+          priceStaleReason: tokenPriceMeta.staleReason || null,
           blockNumber: parseInt(log.blockNumber, 16),
           txHash: log.transactionHash,
         });
       }
 
       return { transfers, cursor: currentBlock };
-    } catch {
-      return { transfers: [], cursor: typeof cursor === 'number' ? cursor : 0 };
+    } catch (error) {
+      return {
+        transfers: [],
+        cursor: typeof cursor === 'number' ? cursor : 0,
+        degraded: true,
+        error: error?.message || 'smart_money_provider_failed',
+        reason: 'ethereum_rpc_failed',
+      };
     }
   };
 }

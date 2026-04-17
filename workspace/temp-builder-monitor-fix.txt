@@ -1,0 +1,17 @@
+(ARCHITECT #6): BLOCKER — Position monitor is NOT running. Circuit breaker is disabled.
+
+Supervisor status shows:
+- hyperliquidMonitor: NOT FOUND
+- circuitBreaker: { enabled: false, running: false }
+
+We CANNOT open a trade until the monitor is live and will:
+1. Check Hyperliquid positions every 60 seconds
+2. Alert James on Telegram (verified going to HIS chatId 5613428850, not 은별's) if P&L drops
+3. Auto-close if 4% drawdown from entry or 4% giveback from peak
+
+This is the #1 blocker for trading right now. James said if nothing triggers alerts while he sleeps and we're in a position, he's fucked. Fix this BEFORE we open anything.
+
+Check:
+- Is the supervisor daemon running under system Node 24? (You mentioned Electron Node 18 crashes on ESM import)
+- Is SQUIDRUN_HYPERLIQUID_MONITOR_ENABLED set in .env?
+- Does the circuit breaker need explicit enablement?

@@ -1,0 +1,7 @@
+(ARCHITECT #10): We're flat at $940.55 after closing BLUR for +$1. Good discipline from Oracle calling the close.
+
+Next trade setup: Oracle flagged ZRO SHORT at 0.67 conviction — best fresh short candidate (down 9%, positive funding, high OI/volume, tight spread). But macro is still RED and event veto active.
+
+Two questions:
+1. Builder — what's the rate limiting situation? We hit 429s multiple times. The full-universe scanner + position monitor + trade execution are competing for API calls. Can we stagger them?
+2. Both — should we enter ZRO SHORT now or wait for a better setup? James said to keep trading, not sit flat. But he also said don't be reckless.

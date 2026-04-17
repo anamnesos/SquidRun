@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776103227171-lgntyl",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.59,
+      "reasoning": "The live SOL short is still at peak unrealized PnL with no giveback yet, so this is a real manage-it hold rather than a cleanup exit. Confidence stays capped because the board is only CAUTION and the position still has no stop."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "BTC is recovering, but under a live macro caution it remains context rather than a better trade than the position already on the book."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "ETH is also recovering, but it is not cleaner than the existing SOL short and does not justify shifting focus away from position management."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "TST remains far too extended to trust as a fresh trade, even though the squeeze was real. No reason to add complexity while managing a live position."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "STABLE still has squeeze characteristics, but under CAUTION and with current structure already mixed, it is not compelling enough to distract from the open SOL short."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "MERL looks like a rebound rather than a high-quality fresh setup. It is not better than simply managing the existing position cleanly."
+    },
+    {
+      "ticker": "WLD/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "WLD remains structurally constructive but not in a way that competes with the open trade for attention right now. Better to stay neutral."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "CHILLGUY still reads more like a recovery name than a clean new entry, and under caution there is no need to force it."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "LIT is no longer giving a clean active short edge and does not offer a better trade than the SOL position already open."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "WCT is still too extended and too messy on execution quality to justify acting while a live position is already on the books."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "ZEREBRO remains a noisy rebound name rather than a durable clean setup. Watch-only is the disciplined answer."
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+Yeah fair — desktop, not a laptop. Kill that framing.
+
+With desktop resources the "heavy" concern is gone. So the only real question left is crash risk.
+
+Honest read: Electron handles this OK. Each BrowserWindow has its own renderer process, so a crash in her window usually doesn't kill ours and vice versa. Only a main-process crash takes both down, and those are rare if we don't write bugs into the window-management layer.
+
+Updated recommendation: **same-process (two windows in one SquidRun)**. Much simpler to build, fast to ship, crash risk is low in practice. If we hit stability issues later we can split into separate processes.
+
+That gets you:
+- Her window with her own Architect/Builder/Oracle
+- 은별's Telegram (chat 8754356993) routed to her window
+- Our Telegram stays ours
+- Cross-team messaging between her agents and ours (trivial, same process)
+- Her own memory thread / conversation history scope
+
+Back to Builder for real sizing on this shape. Want me to green-light him to start, or see hours first?

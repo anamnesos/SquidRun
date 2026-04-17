@@ -1,0 +1,14 @@
+ARCHITECT consultation 6iadoe — Macro RED + news VETO + cash+wait + new sizing rule (only screamers). All HOLD.
+
+{"requestId":"consultation-1775892621439-6iadoe","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Macro RED + news VETO active. No fresh entry under brake."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Constructive but VETO. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mixed read under VETO. Pass."},
+{"ticker":"ARB/USD","direction":"HOLD","confidence":0.55,"reasoning":"TRADE flag bullish 0.75, funding -0.66 bps (squeeze fuel), real vol $9.4M. Mechanically the cleanest squeeze long on the board. BUT crowding 90 (extreme) + James personal cooldown after prior loss + macro RED. Watch only."},
+{"ticker":"REZ/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol $182K thin, fails liquidity floor for new $1k margin sizing rule. Pass."},
+{"ticker":"WLFI/USD","direction":"HOLD","confidence":0.50,"reasoning":"-7.58% on real $10.2M vol, funding flipping slightly negative -0.06 bps (downside getting tired). Mixed read — could be bottom bid OR continuation flush. James said he reads this pattern well — watch only."},
+{"ticker":"FOGO/USD","direction":"HOLD","confidence":0.45,"reasoning":"James just closed FOGO with ~+$14 realized. Funding -0.48 bps now (flipped negative = shorts paying longs = downside exhausted). Trend still -8.94% 24h but the fade is exhausted. No re-entry."},
+{"ticker":"DYDX/USD","direction":"HOLD","confidence":0.40,"reasoning":"No-trade flag, vol $360K thin. Pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"+13.13% extended pump, late chase. Pass."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding +2.80 bps EXTREME, crowding 77, bearish bias. Mechanically a real fade BUT personal cooldown enforced. No re-entry."}
+]}

@@ -1,0 +1,15 @@
+ARCHITECT consultation 5svblg — TON SHORT live, thesis intact (US-Iran talks collapsed), stop valid. All HOLD.
+
+{"requestId":"consultation-1775971821701-5svblg","agentId":"architect","signals":[
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.65,"reasoning":"James's SHORT live. PnL oscillating around entry (peaked +$88, currently -$4 = normal 10x noise). US-Iran talks collapsed = macro supports short. Oracle agreed HOLD 0.83 last cycle. Stop at $1.4447 valid. Not reacting to PnL number."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Post-flush, cascade continuing."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Cascade."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cascade."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cascade."},
+{"ticker":"SPX/USD","direction":"HOLD","confidence":0.45,"reasoning":"TON is live focus."},
+{"ticker":"WCT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"MERL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"ZEN/USD","direction":"HOLD","confidence":0.40,"reasoning":"No setup."},
+{"ticker":"RENDER/USD","direction":"HOLD","confidence":0.40,"reasoning":"No setup."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Illiquid."}
+]}

@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775946617041-zbyf71",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "BTC is constructive, but the edge is still too mild to justify a fresh directional call in a defensive macro regime."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "BUY",
+      "confidence": 0.61,
+      "reasoning": "ETH is the cleanest long on the sheet because price and open interest are rising together while funding is still flat, giving the best continuation profile without obvious crowding."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "SOL still reads as a short-covering rally rather than a durable trend continuation, so I would not force a position."
+    },
+    {
+      "ticker": "TAO/USD",
+      "direction": "SELL",
+      "confidence": 0.67,
+      "reasoning": "TAO is one of the clearest crowded-upside fades with price up 6.45%, funding at +3.41 bps, and open interest up 24.33%, which makes it vulnerable to a sharp giveback."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.65,
+      "reasoning": "FARTCOIN is up 12.18% with positive funding and still-rising open interest, so it remains a strong crowded-upside fade candidate."
+    },
+    {
+      "ticker": "NOT/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "NOT is firm but not showing enough structural edge or crowding to justify either chasing it or fading it."
+    },
+    {
+      "ticker": "WLD/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "WLD has momentum, but at more than 7% up on the day it already looks too extended to initiate while still lacking a clear rejection."
+    },
+    {
+      "ticker": "FET/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "FET does not have enough liquidity or signal strength yet to deserve a fresh trade despite the mild positive funding."
+    },
+    {
+      "ticker": "PUMP/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "PUMP is moving, but not in a way that creates a clean continuation or fade entry with conviction."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "SELL",
+      "confidence": 0.6,
+      "reasoning": "VVV still leans fade because the move looks more like short-covering extension than durable trend support, but I would keep conviction modest until it prints an actual rejection."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.75,
+      "reasoning": "TON is still too strong to short and too extended to chase, so it stays on the watchlist for a future peak rejection."
+    }
+  ]
+}

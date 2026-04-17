@@ -66,6 +66,7 @@ describe('portfolio-tracker', () => {
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
+      includeAlpaca: true,
       state: {
         peakEquity: null,
         dayStartEquity: null,
@@ -144,6 +145,7 @@ describe('portfolio-tracker', () => {
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
+      includeAlpaca: true,
       includeIbkr: true,
       includePolymarket: false,
       state: {
@@ -170,6 +172,7 @@ describe('portfolio-tracker', () => {
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
+      includeAlpaca: true,
       includePolymarket: true,
     });
 
@@ -212,6 +215,7 @@ describe('portfolio-tracker', () => {
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
+      includeAlpaca: true,
       includePolymarket: false,
     });
 
@@ -229,5 +233,19 @@ describe('portfolio-tracker', () => {
       ],
     });
     expect(snapshot.totalEquity).toBe(1078);
+  });
+
+  test('keeps Alpaca markets zeroed by default so crypto consultations do not inherit paper cash', async () => {
+    const snapshot = await portfolioTracker.getPortfolioSnapshot({
+      persist: false,
+      includePolymarket: false,
+    });
+
+    expect(executor.getAlpacaAccountSnapshot).not.toHaveBeenCalled();
+    expect(executor.getAlpacaOpenPositions).not.toHaveBeenCalled();
+    expect(snapshot.markets.alpaca_stocks.equity).toBe(0);
+    expect(snapshot.markets.alpaca_crypto.equity).toBe(0);
+    expect(snapshot.markets.cash_reserve.equity).toBe(0);
+    expect(snapshot.totalEquity).toBe(0);
   });
 });

@@ -1,0 +1,19 @@
+(ARCHITECT #25): James clarified the paper-comp design — important for your build.
+
+**Each agent runs their OWN trade style. Comp measures "whose method wins" — not "everyone follows the same framework."**
+
+Design implications:
+- The per-cycle prompt is NOT prescriptive — don't bake specific framework rules into the prompt template
+- Each agent picks their own approach per cycle: framework, pure momentum, counter-trend, whatever
+- The prompt gives CONTEXT (live prices, agent's portfolio, market action) — not directives
+- Response format stays the same (hold/scale/close/new-entry JSON) — the agent's judgment drives the content
+
+So the scheduler is style-agnostic. Each agent's style lives in their per-response reasoning, not in the prompt or the handler.
+
+Scoreboard ranks by P&L over time. Whose equity curve wins reveals the best style.
+
+This should SIMPLIFY the build since you don't need to encode framework rules in the prompt template — just a generic "here's your context, here's your portfolio, what do you want to do" template.
+
+Oracle's phasing still holds (scheduler + dispatch → portfolio mutation → event-triggered wake-ups). Style selection is per-cycle judgment, not a phase.
+
+When you're ready, sizing estimate on phase 1 (scheduler + dispatch + minimal action response handler)?

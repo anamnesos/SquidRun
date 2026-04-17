@@ -1,0 +1,126 @@
+{
+  "requestId": "consultation-1775746815573-dnthm2",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BLUR/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "This is the active position and it still looks healthy. The BLUR long is up about $5 with roughly 75% of peak P&L retained, there is no giveback warning yet, and the board still shows strong bullish trade characteristics with high squeeze risk and deeply negative funding. I would manage the winner, not flatten it prematurely and not add aggressively."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC is stable and liquid, but the board still marks it no-trade and the directional edge is weak. Mildly negative funding helps support, yet macro remains RED so there is not enough asymmetry for a fresh directional bet."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "ETH remains softer than BTC with slightly negative trend and now positive funding, which makes it easier to fade than to buy. This is not a crisis breakdown short, but among majors it still leans bearish."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "SOL is mixed and the board still classifies it as no-trade. Negative funding reduces short appeal, while the trend is not strong enough to justify a long under a RED macro regime."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.63,
+      "reasoning": "TNSR is still a live squeeze-continuation candidate with very strong 24h momentum, deeply negative funding, and a top-tier squeeze score. Confidence is capped because the spread is still wide and the macro backdrop remains risk-off."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "GRIFFAIN has positive momentum, but funding is still positive and execution quality is poor. It is interesting, but not clean enough to outrank BLUR or TNSR on the long side."
+    },
+    {
+      "ticker": "KAITO/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "KAITO remains one of the cleaner bearish names because price damage is deep, liquidity is acceptable, and the cascade profile is elevated. Predicted funding turning negative softens the edge a bit, so this is a tactical short rather than a high-conviction press."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "CHILLGUY is up hard but still too noisy and too wide to chase. Positive funding means this is not a true squeeze setup, and the execution quality is poor enough to keep it in watch-only territory."
+    },
+    {
+      "ticker": "DYM/USD",
+      "direction": "BUY",
+      "confidence": 0.64,
+      "reasoning": "DYM continues to screen well for a reduced-size momentum long. Price is expanding, funding is negative and getting more negative, and squeeze plus overcrowding scores are elite. The only real issue is very poor spread quality."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.62,
+      "reasoning": "FARTCOIN remains one of the cleaner liquid shorts on the sheet: sharp 24h downside, positive funding, and strong volume. It is volatile, but the directional case still favors fading rallies rather than buying dips."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "LIT has a modest bearish profile with decent liquidity, positive funding, and weakening daily structure. It is not the best short on the board, but it is cleaner than the more chaotic meme names."
+    },
+    {
+      "ticker": "ALGO/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "ALGO leans bearish, but the move is not stretched enough and the setup is not strong enough to deserve capital over better shorts like ZRO or FARTCOIN."
+    },
+    {
+      "ticker": "ZRO/USD",
+      "direction": "SELL",
+      "confidence": 0.66,
+      "reasoning": "ZRO is one of the best fresh shorts here. It combines real liquidity with a negative 24h trend, positive funding, and a bearish mechanical profile. Compared with thinner alts, this is a more executable downside continuation candidate."
+    },
+    {
+      "ticker": "TRUMP/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "TRUMP has a squeeze-friendly profile with negative funding and high overcrowding, but the actual price trend is still too flat to make it a compelling long. Interesting watchlist name, not first-choice deployment."
+    },
+    {
+      "ticker": "XPL/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "XPL is a reasonable secondary short with acceptable liquidity, positive funding, and a bearish mechanical lean. The setup is not as strong as ZRO, but it still favors downside over upside."
+    },
+    {
+      "ticker": "NIL/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "NIL leans bearish, but execution quality is poor because both liquidity and spread are weak. It is directionally a short, but not a high-priority one."
+    },
+    {
+      "ticker": "PYTH/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "PYTH has some positive 24h momentum, but funding is positive and the board does not offer a decisive directional edge. There are better longs and better shorts elsewhere."
+    },
+    {
+      "ticker": "2Z/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "2Z is oversold with negative funding and high crowding, but the mechanical board is still mixed rather than clearly bullish. That makes it more of a watch-for-reversal candidate than an immediate signal."
+    },
+    {
+      "ticker": "SKR/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "SKR still leans bearish on the board with positive funding and weak price structure. The main limitation is thin execution quality, so it remains a tactical short only."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "GRASS has a mild bearish profile with positive funding and a soft 24h trend, but the edge is only moderate. It is a reasonable secondary fade, not a priority trade."
+    }
+  ]
+}

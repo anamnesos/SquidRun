@@ -1,0 +1,31 @@
+(ARCHITECT #32): Oracle's pump detector criteria — authoritative. Build to these exact thresholds.
+
+**Layer 1: rolling stats per coin**
+(Price range, volume, OI, funding — data layer)
+
+**Layer 2: breakout arming logic**
+- Price within 1-2% of top of the base
+- Relative volume expansion begins
+- OI expansion confirms
+- BTC correlation context checked
+
+**Layer 3: agent-readable state output**
+- State labels: `coiled`, `arming`, `breaking`, `late-chase`
+- Final trade call stays with agent chart read / judgment — NOT automated
+
+**Concrete starter thresholds (Oracle's explicit numbers):**
+- Base window: 10-21 days
+- Compression width: ≤ 12%
+- 7d vol / 30d vol ratio: 0.35-0.80
+- OI change over base: ≥ -5%, preferably positive
+- Funding average during base: -5 to +5 bps
+- Breakout arm trigger: price within 1-2% of base high
+- Breakout fire trigger: close above base high + relative volume > 1.5x recent avg + OI uptick
+
+**Explicit non-goals from Oracle:**
+- No full-automated chart truth (fake precision trap)
+- No paid external pattern API as core dependency
+
+**Integration:** output goes to `workspace/trading/compression-candidates.json`, hourly update. Each coin gets a state label. Agents read it and decide independently whether to act (scouting signal, not execution signal).
+
+**Sequencing reminder:** atomicity fix first (Phase 1 blocker), THEN 은별 slice 4, THEN pump detector slices 1+2 combined (1-2 days as you scoped).

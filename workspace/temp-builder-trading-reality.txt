@@ -1,0 +1,16 @@
+REALITY CHECK on trading system.
+
+The Alpaca account is PAPER TRADING. Fake money. $99K of nothing.
+The Hyperliquid account is REAL MONEY. $692.
+
+The entire consultation system — hourly cycles, 3-model consensus, signal-producer, all of it — has been running against Alpaca paper data. Meanwhile the real money on Hyperliquid had no monitoring until the position monitor you just shipped.
+
+This is backwards. The consultation system needs to be reoriented:
+- PRIMARY: Hyperliquid. Real money. This is what matters.
+- SECONDARY: Alpaca paper trading for testing strategies before deploying real capital.
+
+The agents should be actively looking for trades on Hyperliquid, not outputting HOLD signals on fake Alpaca positions. The macro gate, the signals, the consensus — all of that should feed into Hyperliquid execution decisions.
+
+The goal is to grow $692 into real wealth. Autonomously. Without James prompting.
+
+This isn't a build task right now — just making sure you understand the context for everything you build going forward.

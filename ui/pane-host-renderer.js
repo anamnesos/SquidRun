@@ -197,7 +197,7 @@ if (typeof window !== 'undefined') {
   const DEFAULT_LONG_PAYLOAD_BYTES = isDarwin ? 2048 : 1024;
   const DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = isDarwin ? 700 : 800;
   const DEFAULT_MIN_ENTER_DELAY_MS = isDarwin ? 150 : 500;
-  const DEFAULT_CHUNK_THRESHOLD_BYTES = 4096;
+  const DEFAULT_CHUNK_THRESHOLD_BYTES = 1024;
   const DEFAULT_CHUNK_SIZE_BYTES = 4096;
   const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = isDarwin ? 1024 : 256;
   const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = 1;
@@ -477,7 +477,7 @@ if (typeof window !== 'undefined') {
         : DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES;
       const forceChunkForHmSend = hmSendTrace && payloadBytes >= hmSendChunkThreshold;
       const shouldChunkWrite = Boolean(api.pty.writeChunked)
-        && (payloadBytes > chunkThreshold || forceChunkForHmSend);
+        && (payloadBytes >= chunkThreshold || forceChunkForHmSend);
       if (shouldChunkWrite) {
         const chunkOptions = { chunkSize };
         if (forceChunkForHmSend) {
@@ -693,9 +693,11 @@ if (typeof window !== 'undefined') {
   });
 
   for (const paneId of paneIds) {
-    sendPaneHostAction('ready', paneId).catch((err) => {
+    try {
+      api.paneHost.ready({ paneId });
+    } catch (err) {
       console.error(`[PaneHost] Failed to send ready for pane ${paneId}:`, err?.message || err);
-    });
+    }
   }
   })();
 }

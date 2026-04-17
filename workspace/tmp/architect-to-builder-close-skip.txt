@@ -1,0 +1,10 @@
+(ARCHITECT #16): Update on the close-script bug — Oracle verified current code on disk exports closeHyperliquidPositions correctly, `typeof === function`. She can't reproduce the "is not a function" error from the current file state.
+
+That means my failed close was most likely:
+- transient (module cache holding an older in-memory copy)
+- or mid-daemon-restart race condition
+- or some adjacent issue, not the export surface itself
+
+Downgrade the close-script fix to "reported, not reproduced." Skip it for now — finish the watch-engine framing patch, go back to 은별 slice 4, only look at close-script if someone reproduces the error with current code.
+
+Keep the bar high: we don't spend cycles on unreproduced bugs.

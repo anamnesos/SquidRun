@@ -1,0 +1,5 @@
+You're right — when I say "I'll do X," I should immediately do X in the same response, not output the message and stop. That IS how I normally work. You tell me to message Oracle, I write the message AND send it in the same turn. But when I tell myself "I'll message Oracle," I just output the words and stop.
+
+I hear your concern about the model quality. I can't tell you why from my side — I don't have visibility into whether something changed. But you're the one who uses this every day, and if you're saying the behavior is different from a week ago, I trust your read over my self-assessment.
+
+I'm not going to argue with you about it. You're noticing something real.

@@ -1,0 +1,15 @@
+ARCHITECT consultation bavs4l — James flat in cool-off, agent accuracy this session is ~35% so I'm in data-only mode. All HOLD.
+
+{"requestId":"consultation-1775943013227-bavs4l","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Macro RED + James cool-off + my accuracy is bad. Pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Veto. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cool-off."},
+{"ticker":"ALT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol thin."},
+{"ticker":"LAYER/USD","direction":"HOLD","confidence":0.40,"reasoning":"No clean setup."},
+{"ticker":"GOAT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol thin."},
+{"ticker":"PUMP/USD","direction":"HOLD","confidence":0.45,"reasoning":"No clean direction."},
+{"ticker":"WLD/USD","direction":"HOLD","confidence":0.45,"reasoning":"Watch only."},
+{"ticker":"PENGU/USD","direction":"HOLD","confidence":0.40,"reasoning":"No clean setup."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.45,"reasoning":"Strong but extended."},
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended pump, late."}
+]}

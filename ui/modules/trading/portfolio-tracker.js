@@ -283,6 +283,7 @@ async function collectYieldDeposits(options = {}) {
 
 async function getPortfolioSnapshot(options = {}) {
   const snapshot = createEmptySnapshot();
+  const includeAlpaca = options.includeAlpaca === true || options.alpacaAccount || options.alpacaPositions;
   const includeIbkr = options.includeIbkr === true || options.ibkrAccount || options.ibkrPositions;
   const polymarketConfigured = polymarketClient.resolvePolymarketConfig(process.env).configured;
   const includePolymarket = options.includePolymarket === false
@@ -292,35 +293,37 @@ async function getPortfolioSnapshot(options = {}) {
       || options.polymarketPositions
       || polymarketConfigured;
 
-  try {
-    const { account, positions } = await collectAlpacaData(options);
-    const normalizedPositions = positions.map((position) => normalizeEquityPosition(position, { broker: 'alpaca' }));
-    const stockPositions = normalizedPositions.filter((position) => position.assetClass !== 'crypto');
-    const cryptoPositions = normalizedPositions.filter((position) => position.assetClass === 'crypto');
-    const stockMarketValue = sumPositionValues(stockPositions);
-    const cryptoMarketValue = sumPositionValues(cryptoPositions);
-    const cash = toNumber(account?.cash, 0);
-    const residual = toNumber(account?.equity, 0) - (cash + stockMarketValue + cryptoMarketValue);
+  if (includeAlpaca) {
+    try {
+      const { account, positions } = await collectAlpacaData(options);
+      const normalizedPositions = positions.map((position) => normalizeEquityPosition(position, { broker: 'alpaca' }));
+      const stockPositions = normalizedPositions.filter((position) => position.assetClass !== 'crypto');
+      const cryptoPositions = normalizedPositions.filter((position) => position.assetClass === 'crypto');
+      const stockMarketValue = sumPositionValues(stockPositions);
+      const cryptoMarketValue = sumPositionValues(cryptoPositions);
+      const cash = toNumber(account?.cash, 0);
+      const residual = toNumber(account?.equity, 0) - (cash + stockMarketValue + cryptoMarketValue);
 
-    snapshot.markets.alpaca_stocks.positions = stockPositions;
-    snapshot.markets.alpaca_stocks.marketValue = Number(stockMarketValue.toFixed(2));
-    snapshot.markets.alpaca_stocks.pnl = Number(sumPositionPnl(stockPositions).toFixed(2));
-    snapshot.markets.alpaca_stocks.equity = Number(stockMarketValue.toFixed(2));
-    snapshot.markets.alpaca_stocks.liquidCapital = Number(stockMarketValue.toFixed(2));
-    snapshot.markets.alpaca_stocks.buyingPower = toNumber(account?.buyingPower, 0);
+      snapshot.markets.alpaca_stocks.positions = stockPositions;
+      snapshot.markets.alpaca_stocks.marketValue = Number(stockMarketValue.toFixed(2));
+      snapshot.markets.alpaca_stocks.pnl = Number(sumPositionPnl(stockPositions).toFixed(2));
+      snapshot.markets.alpaca_stocks.equity = Number(stockMarketValue.toFixed(2));
+      snapshot.markets.alpaca_stocks.liquidCapital = Number(stockMarketValue.toFixed(2));
+      snapshot.markets.alpaca_stocks.buyingPower = toNumber(account?.buyingPower, 0);
 
-    snapshot.markets.alpaca_crypto.positions = cryptoPositions;
-    snapshot.markets.alpaca_crypto.marketValue = Number(cryptoMarketValue.toFixed(2));
-    snapshot.markets.alpaca_crypto.pnl = Number(sumPositionPnl(cryptoPositions).toFixed(2));
-    snapshot.markets.alpaca_crypto.equity = Number(cryptoMarketValue.toFixed(2));
-    snapshot.markets.alpaca_crypto.liquidCapital = Number(cryptoMarketValue.toFixed(2));
+      snapshot.markets.alpaca_crypto.positions = cryptoPositions;
+      snapshot.markets.alpaca_crypto.marketValue = Number(cryptoMarketValue.toFixed(2));
+      snapshot.markets.alpaca_crypto.pnl = Number(sumPositionPnl(cryptoPositions).toFixed(2));
+      snapshot.markets.alpaca_crypto.equity = Number(cryptoMarketValue.toFixed(2));
+      snapshot.markets.alpaca_crypto.liquidCapital = Number(cryptoMarketValue.toFixed(2));
 
-    snapshot.markets.cash_reserve.cash += Number((cash + residual).toFixed(2));
-    snapshot.markets.cash_reserve.equity += Number((cash + residual).toFixed(2));
-    snapshot.markets.cash_reserve.liquidCapital += Number((cash + residual).toFixed(2));
-    snapshot.positions.push(...normalizedPositions);
-  } catch (err) {
-    appendSourceError(snapshot, 'alpaca', err);
+      snapshot.markets.cash_reserve.cash += Number((cash + residual).toFixed(2));
+      snapshot.markets.cash_reserve.equity += Number((cash + residual).toFixed(2));
+      snapshot.markets.cash_reserve.liquidCapital += Number((cash + residual).toFixed(2));
+      snapshot.positions.push(...normalizedPositions);
+    } catch (err) {
+      appendSourceError(snapshot, 'alpaca', err);
+    }
   }
 
   if (includeIbkr) {

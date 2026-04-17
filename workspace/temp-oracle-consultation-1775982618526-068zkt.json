@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775982618526-068zkt",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "SOL remains a reduced-size short lean because price is still down while the tape still shows fresh shorts pressing rather than a clean reversal."
+    },
+    {
+      "ticker": "RESOLV/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "RESOLV has upside momentum, but liquidity is too poor and veto blocks forcing a fresh long."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "LIT remains a modest short lean because the tape is still weak and fresh shorts are still pressing rather than a clean reversal forming."
+    },
+    {
+      "ticker": "ETHFI/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "ETHFI is already weak and too low-liquidity to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "GRIFFAIN is already in a flush state and too illiquid to trust for a fresh short entry after the move."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "VVV remains a reduced-size fade because it is still green on the day and still reads as a short-covering rally rather than a full washout."
+    },
+    {
+      "ticker": "WLFI/USD",
+      "direction": "BUY",
+      "confidence": 0.57,
+      "reasoning": "WLFI is the only real long candidate on this board because funding is deeply negative while price and open interest are both still rising together, but veto keeps it reduced-confidence only."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is already deep into a flush and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "SELL",
+      "confidence": 0.56,
+      "reasoning": "TON remains a modest catch-down short lean because it is still too green relative to the broader tape and has not fully unwound yet."
+    }
+  ]
+}

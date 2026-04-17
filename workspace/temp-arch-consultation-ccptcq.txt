@@ -1,0 +1,15 @@
+ARCHITECT consultation ccptcq — TON SHORT live -$78, stop 0.6% from current. Thesis + stop. All HOLD.
+
+{"requestId":"consultation-1775964624301-ccptcq","agentId":"architect","signals":[
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.55,"reasoning":"SHORT live -$78 unrealized. Stop at $1.4447 is 0.6% above current mark — close to firing. Either thesis catches down or stop takes us out at ~-$155. Not closing manually — stop is the risk boundary."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Post-flush."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Flushing."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Flushing."},
+{"ticker":"SPX/USD","direction":"HOLD","confidence":0.45,"reasoning":"TON is live focus."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cascade."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.45,"reasoning":"Broken lower."},
+{"ticker":"MERL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"WCT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"XPL/USD","direction":"HOLD","confidence":0.40,"reasoning":"No setup."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Illiquid."}
+]}

@@ -1,0 +1,60 @@
+{
+  "requestId": "consultation-1775948491426-p7mz46",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "BTC is constructive, but the edge is still too mild to justify a fresh directional call in a defensive macro regime."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "BUY",
+      "confidence": 0.62,
+      "reasoning": "ETH remains the cleanest long because price and open interest are rising together while funding is still flat, which supports a continuation long without obvious crowding."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "SOL still reads as a short-covering rally rather than a durable trend continuation, so I would not force a fresh position."
+    },
+    {
+      "ticker": "NOT/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "NOT is showing mild squeeze potential with predicted funding easing lower, but liquidity is still too poor to trust for a serious fresh position."
+    },
+    {
+      "ticker": "AERO/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "AERO is stable but not showing enough structural or crowding edge to justify a fresh trade here."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "FARTCOIN is up 11.9% and still trend-supported, so it remains a valid crowded-upside fade candidate even though the edge is weaker than TAO."
+    },
+    {
+      "ticker": "TAO/USD",
+      "direction": "SELL",
+      "confidence": 0.68,
+      "reasoning": "TAO is the clearest fade on this board, with price up 7.94%, funding still elevated near +1.87 bps, and open interest up 20.88%, which leaves the long side crowded."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "VVV is still extended, but the funding has normalized and the move still looks like chop near highs rather than a clean cliff-drop setup."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.75,
+      "reasoning": "TON is too strong to fade and too extended to chase, so it stays on the watchlist for a future peak rejection instead of a fresh entry."
+    }
+  ]
+}

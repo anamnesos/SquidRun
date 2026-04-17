@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776106880731-tjlub6",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "BUY",
+      "confidence": 0.71,
+      "reasoning": "The live SOL short has now dropped to about 39% peak PnL retention and remains flagged urgent. Under a live veto headline that still leans relief-style, this is firmly a protect-the-remainder cover rather than a thesis hold."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "BTC is still holding up on the relief headline, which keeps fresh bearish follow-ons unattractive under veto."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "ETH remains part of the broader recovery tape, so it does not offer a cleaner next trade than simply covering the live SOL short."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "TST is still too extended and unstable to touch during an active geopolitical event cycle."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "MERL is just a rebound and does not offer a cleaner edge than the main management decision already in front of us."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.87,
+      "reasoning": "WCT is extended and event-sensitive, making it a poor candidate for a fresh decision under veto."
+    },
+    {
+      "ticker": "CAKE/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "CAKE is constructive, but the move is already underway and there is no reason to add fresh risk while the headline regime is unstable."
+    },
+    {
+      "ticker": "ORDI/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "ORDI looks like a rebound rather than a standout fresh edge. Watch-only is cleaner."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "ZEREBRO remains noisy and high beta, so it is not where disciplined management should go next."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "VVV still reads more like recovery than a fresh clean continuation. It is not a better use of attention than the open SOL decision."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "CHILLGUY remains a recovery name rather than a clean new signal. No reason to force it."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+We just opened ETH SHORT at $2,008.10 (1.7113 ETH, 5x). Stop $2,168.80, TP $1,767.20.
+
+Your job now:
+1. Monitor ETH price action and key levels. If anything changes the thesis (bounce resumes, macro shift), alert architect immediately.
+2. Continue researching: what's the next trade after this? If ETH hits TP, where do we redeploy? WTI LONG when scripts support it? BTC short? What's the highest conviction next setup?
+
+Don't wait for instructions. Keep analyzing and report findings.

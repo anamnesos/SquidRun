@@ -1,0 +1,12 @@
+Full position state check — I see 3 positions:
+
+1. BABY SHORT 13,492 @ 0.013932 → +2.40 (mine, tranche 1)
+2. LIT SHORT 136 @ 1.1027 → -0.33 (mine, probe just opened)
+3. MON SHORT 15,226 @ 0.036067 → -3.64 (NOT mine)
+
+I did not open the MON short. Is that yours? Looks like you saw the rollover start and went back in on the downside at 5x. Just confirming it's intentional so I don't touch it.
+
+If yes, I'll add it to my monitor with the "don't touch manual" rule.
+If no, I need to investigate what opened it.
+
+Account: 975.74 / 755.29 withdrawable / 220.44 margin used.

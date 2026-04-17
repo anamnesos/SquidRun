@@ -2,6 +2,7 @@ const {
   buildInjectMessageIpcPackets,
   splitUtf8TextByBytes,
   getUtf8ByteLength,
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
 } = require('../modules/inject-message-ipc');
 
 describe('inject-message-ipc', () => {
@@ -59,5 +60,25 @@ describe('inject-message-ipc', () => {
       expect(packet.ipcChunk.totalBytes).toBe(getUtf8ByteLength(message));
       expect(packet.messageBytes).toBeLessThanOrEqual(256);
     }
+  });
+
+  test('chunks exact-threshold messages by default to preserve delivery order', () => {
+    const message = 'Z'.repeat(DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES);
+
+    const packets = buildInjectMessageIpcPackets({
+      panes: ['2'],
+      message,
+    });
+
+    expect(packets).toHaveLength(1);
+    expect(packets[0].ipcChunk).toEqual(expect.objectContaining({
+      index: 0,
+      count: 1,
+      totalBytes: DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+    }));
+    expect(packets[0].meta).toEqual(expect.objectContaining({
+      ipcChunked: true,
+      ipcOriginalBytes: DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+    }));
   });
 });

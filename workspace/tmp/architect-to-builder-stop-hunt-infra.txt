@@ -1,0 +1,17 @@
+(ARCHITECT #18): James formalized the learning loop — his trading lessons are training inputs, not stories. We build framework, he doesn't have to trade.
+
+New rule ask for the framework infra backlog (same priority tier as the chart-first prompt reword):
+
+**Watch engine: stop-cluster awareness.**
+- When a trigger rule's level coincides with an obvious stop-cluster zone (round number, recent swing extreme, prior breakout pivot), the auto-generated execute command should include a BUFFERED stop placement by default, not tight-to-level.
+- Buffer sizes: BTC $80-150 past the level; SOL $0.30-0.50; alts 0.5-1%.
+- Add a field `stopPlacementRationale` to trigger rules that surfaces in execute commands: "past hunt zone by $X" or "accept hunt risk — [reason]".
+- Also add an optional `timeStop` field: "close in X minutes if thesis not active."
+
+Full rule set for context:
+1. Stops never at the obvious level
+2. Time-stop alternative for thesis-based trades
+3. No-stop valid only at 0.75+ conviction AND ≤15% equity AND live attention
+4. Hunt zone identified on 5m chart first
+
+No rush — put this after the chart-first prompt reword and auto-target defaults you already have queued. Prioritize the 은별 slice 4 first.

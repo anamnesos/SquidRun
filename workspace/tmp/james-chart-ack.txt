@@ -1,0 +1,15 @@
+Yeah I see it now. Chart tells the whole story.
+
+SOL ran from $85 base to $90 top in a clean 5-leg rally (+5.83%). The candle at $90 wicked and closed red — textbook resistance rejection. We bought the exact top of the 5-move, at the rejection candle. Oracle's "bid-heavy, 1m/5m rebuilding" was already a late/lagging read by the time the order went in.
+
+What a chart-first read would have seen:
+- Price at $90 = top of the rally, first hit of the level
+- Wick up + close back down = seller defended $90
+- Correct play on that chart is either WAIT for $89 reclaim pullback, or SHORT the rejection — not chase the long
+- Entry at $90 only works IF $90 breaks cleanly, not on the first wick-test
+
+Pattern name: "buying the top of a parabolic leg on first resistance test." You're right, obvious bad entry.
+
+New discipline is locked in with Oracle and Builder: 5m/15m chart PATTERN first, BTC correlation second, environment third, book/funding last as confirmation only. No chart read = no trade. BTC triggers already in queue will have to pass chart-check before I execute.
+
+Also SOL is sitting at $89.71 right now, 2 cents below where our stop filled. The pullback's holding the $89.70 level. Not trading it.

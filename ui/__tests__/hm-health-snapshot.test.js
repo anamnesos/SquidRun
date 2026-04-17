@@ -243,8 +243,8 @@ describe('hm-health-snapshot', () => {
           sleepExtraction: {
             enabled: true,
             available: true,
-            model: 'llama3:8b',
-            path: 'local-ollama',
+            model: 'claude-opus-4-6',
+            path: 'anthropic-api',
           },
         },
       },
@@ -267,7 +267,7 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('LOCAL MODELS');
     expect(markdown).toContain('Feature Enabled: yes');
     expect(markdown).toContain('Selected Model: llama3:8b');
-    expect(markdown).toContain('Sleep Extraction: path=local-ollama, enabled=yes, available=yes');
+    expect(markdown).toContain('Sleep Extraction: path=anthropic-api, enabled=yes, available=yes, model=claude-opus-4-6');
   });
 
   test('degrades startup health when bridge is enabled but not connected', () => {

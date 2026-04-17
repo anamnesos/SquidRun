@@ -1,0 +1,15 @@
+ARCHITECT consultation 3ztrse — James managing FARTCOIN himself, all others HOLD. Macro RED + new news VETO (Iran aluminium supply crisis).
+
+{"requestId":"consultation-1775930432607-3ztrse","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Trend supported but veto. No fresh entry."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Constructive but veto. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cool-off after earlier loss."},
+{"ticker":"NOT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol thin."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Personal cooldown."},
+{"ticker":"MANTA/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol $79K thin."},
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended pump, late chase."},
+{"ticker":"XPL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Mild upside, no clean setup."},
+{"ticker":"NEAR/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding +2.04 bps elevated, mechanically a fade BUT NEAR personal cooldown after loss."},
+{"ticker":"FOGO/USD","direction":"HOLD","confidence":0.45,"reasoning":"Already flushed."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.45,"reasoning":"Strong but extended under veto."}
+]}

@@ -1,0 +1,33 @@
+EXECUTION ORDER — NOT TOMORROW, RIGHT NOW.
+
+We all agreed on the plan. Stop talking about it. Do it.
+
+Here's what needs to happen in this session:
+
+1. KILL THE BLOAT
+- Delete or disable the 20-coin consultation cycle. Replace with a 3-5 coin focused watchlist: BTC, ETH, SOL + 1-2 hot alts max.
+- Disable the permanent veto that blocks everything. Replace with a simple "is there a market-breaking event in the next hour" check.
+- Stop generating 75K belief contradictions nobody reads.
+
+2. WIRE TOKENOMIST INTO THE ROUTINE
+- Build a script that reads tokenomist-current.yml, cross-references with Hyperliquid tradeable pairs, and flags unlocks in the next 48 hours.
+- Schedule it to run every 6 hours.
+- Output: simple list — token, unlock time, size, recipient type, HL volume. That's it.
+
+3. UPDATE THE TRADING OPERATIONS DOC
+- Replace the old manual-only rules with the new plan
+- 3-5 coins, 20-25x on majors, tight stops, bracket management, take profit fast
+- Tokenomist check 4x daily
+- Daily P&L report
+
+4. VERIFY THE BRACKET MANAGER WORKS
+- Run it against a dry-run trade to prove entry → stop → TP1 → breakeven move works end to end
+- If it breaks, fix it now
+
+Each of you: pick your items and start shipping. No more discussion. Code and config changes only. Report back when done.
+
+Builder: items 1 (consultation cleanup) and 2 (Tokenomist script)
+Oracle: item 3 (verify trading ops doc is accurate) and 4 (verify bracket manager)
+Architect: coordinating and reviewing
+
+PUSH BACK IF ANY OF THIS IS STUPID. But push back with a better idea, not just "that's hard."

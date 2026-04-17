@@ -1,0 +1,1980 @@
+--- 2026-03-29T11:26:12.852Z
+<task-notification>
+<task-id>a2872bd101a0e879d</task-id>
+<tool-use-id>toolu_01EoYfnTKJMRuWgb8Kr6Fc7D</tool-use-id>
+<output-file>D:\projects\squidrun\.squidrun\tmp\claude\D--projects-squidrun\tasks\a2872bd101a0e879d.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit memory consistency" completed</summary>
+<result>Excellent. Now let me compile my audit findings:
+
+## Memory System Audit Report
+
+### Summary
+I've completed a thorough audit of the memory system at `C:\Users\James Kim\.claude\projects\D--projects-squidrun\memory\`. Overall the memory system is well-organized and current, with only minor issues found.
+
+---
+
+### (A) ISSUES FOUND
+
+#### 1. **MEMORY.md Missing Index Entry - release-workflow.md**
+- **File**: `release-workflow.md` exists in memory directory
+- **Issue**: Not listed in MEMORY.md index under any section
+- **Location**: File exists at `/c/Users/James Kim/.claude/projects/D--projects-squidrun/memory/release-workflow.md`
+- **Impact**: Low — the file is referenced in MEMORY.md inline text ("See `release-workflow.md`") but not formally indexed
+
+#### 2. **user_korean_ability.md Contains Outdated Information**
+- **File**: `user_korean_ability.md`
+- **Issue**: Line 14 states "He does NOT communicate with 은별 directly" and "The agents handle all 은별 communication autonomously"
+- **Current Reality**: Session 257-258 handoff notes show 은별 is actively messaging the system and agents are replying directly. This is not just autonomous agent work — it's an active conversation.
+- **Severity**: Medium — contradicts current operational reality
+- **Fix Needed**: Update to reflect that 은별 is an active daily contact with ongoing case work and direct conversation threads
+
+#### 3. **project_trading_system.md References Outdated Strategy**
+- **File**: `project_trading_system.md`
+- **Issue**: Section "Live Strategy Parameters (Approved S244)" and "Crisis Alpha Mode (Shipped S244)" describe the trading system in terms of SPY/QQQ/GLD/TLT/XLE ETF macro rotation and Alpaca trading
+- **Current Reality**: `trading-operations.md` (session 258) shows the system is now operating ONLY on Hyperliquid crypto perpetuals (ETH SHORT position currently open). ETF rotation is "REMOVED from active trading book S244" according to the project_trading_system.md file itself
+- **Severity**: High — the "Live Strategy Parameters" section is stale. Agents reading this for guidance will get wrong information
+- **Fix Needed**: Either clarify this is historical/archived strategy, or add a "Current Live Config" section noting Hyperliquid-only operations
+
+#### 4. **reference_eunbyul_telegram.md Contains Outdated Technical Workaround**
+- **File**: `reference_eunbyul_telegram.md`
+- **Issue**: Lines 20-22 describe `--chat-id` flag in hm-send.js as "broken (dead code — WebSocket path drops it)" and recommends using raw Node.js Telegram Bot API directly
+- **Current Reality**: `send-long-telegram.js` tool (created at `/d/projects/squidrun/tools/send-long-telegram.js`) now exists and is the standard routing tool documented in CLAUDE.md and feedback_messaging_routing.md
+- **Severity**: High — agents following this reference will use a complex workaround when a proper tool already exists
+- **Fix Needed**: Update to document send-long-telegram.js as the canonical way to reach 은별, remove the raw API workaround as legacy
+
+#### 5. **Incomplete Case Operations Index**
+- **File**: MEMORY.md, "Investigations" section
+- **Issue**: Lists the three cases but doesn't cross-reference the two knowledge files that should be read on startup:
+  - `D:\projects\squidrun\workspace\knowledge\case-operations.md` (contains active pending items dashboard)
+  - `D:\projects\squidrun\workspace\knowledge\session-257-handoff.md` (contains startup checklist)
+- **Current Reality**: CLAUDE.md explicitly requires reading case-operations.md on startup, but MEMORY.md doesn't list it as a startup reference
+- **Severity**: Medium — agents might miss the active pending items dashboard on startup
+
+#### 6. **feedback_show_care.md and feedback_transparent_about_limitations.md Are Very Recent**
+- **Files**: Both dated 2026-03-28 (yesterday, same day as session 257)
+- **Issue**: These are from the most recent session but may not have been fully integrated into agent startup behavior yet
+- **Severity**: Low — informational, but good to flag that these are brand-new guidance
+
+#### 7. **Version History in MEMORY.md Has "pending" Entries**
+- **File**: MEMORY.md, lines 40-42
+- **Issue**: 
+  - v0.1.18: pending (Builder's 09895df + truncation fix)
+  - v0.1.23: pending (mac .env fallback)
+  - v0.1.34 is listed as 94415ec but is marked as released
+- **Severity**: Low — these are historical notes, but "pending" entries from months ago look stale
+
+#### 8. **Trading Operations Balance Amounts Differ Slightly**
+- **File**: `trading-operations.md` vs memory content
+- **Issue**: Memory was updated 2026-03-28, latest file shows 2026-03-29 timestamp in session context
+- **Detail**: 
+  - Memory says Hyperliquid balance ~$711.53
+  - Memory says Alpaca ~$99,391.77
+  - These appear consistent with the file read (same figures)
+- **Severity**: Very Low — no issue found, balances align
+
+---
+
+### (B) SUGGESTED FIXES
+
+1. **Add `release-workflow.md` to MEMORY.md index**
+   - Location: Add to "Release & Deploy" section or make it a standalone link
+   - Change: Add `- [release-workflow.md](release-workflow.md) — Full release pipeline, build commands, artifact names, site deploy steps.`
+
+2. **Update `user_korean_ability.md` to reflect current active conversation**
+   - Lines 9-11: Change from "does NOT communicate" to "actively communicates with 은별 on Telegram"
+   - Add note about daily case work and conversation threads
+   - Note that agents handle drafting and routing but the conversation is real and ongoing
+
+3. **Archive old trading strategy in `project_trading_system.md` or clarify status**
+   - Add clear banner: "⚠️ HISTORICAL: ETF macro rotation was shipping in Session 244. As of Session 258, system runs ONLY on Hyperliquid crypto perpetuals."
+   - Move ETF sections to "Archive / Historical Strategy" section at bottom
+   - Add new "Current Live Configuration (Session 258+)" section pointing to `trading-operations.md` as single source of truth
+
+4. **Replace Telegram workaround in `reference_eunbyul_telegram.md`**
+   - Remove lines 20-22 (raw Node.js API workaround)
+   - Add clear statement: "Use `D:/projects/squidrun/tools/send-long-telegram.js` as the standard tool (documented in CLAUDE.md and feedback_messaging_routing.md)"
+   - Keep the Node.js workaround only as a "legacy emergency method" at the bottom if needed
+
+5. **Add startup reference files to MEMORY.md**
+   - Add new section or expand "Investigations" section to include:
+     - `workspace/knowledge/case-operations.md` — Active pending items (read if 은별 conversation is active)
+     - `workspace/knowledge/session-257-handoff.md` — Startup checklist and systems status
+
+6. **Update version history in MEMORY.md**
+   - Remove or mark "pending" entries from v0.1.18 and v0.1.23 as "shelved" or archive the entire section to a separate "Version History Archive" file
+   - These are from Feb-Mar, now March 29 — clarify whether they're still relevant
+
+7. **Add note about Session 257-258 context compaction**
+   - New memory files added: `user_korean_ability.md`, `feedback_show_care.md`, `feedback_transparent_about_limitations.md`, plus session-257/258 handoff docs
+   - Add timestamp to MEMORY.md indicating "Last full audit: 2026-03-29"
+
+---
+
+### (C) MEMORIES THAT SHOULD BE ADDED
+
+1. **Transcript Indexer Priority** (from session-257-handoff.md)
+   - Item #1 PRIORITY in open work
+   - 59 session transcripts at `C:\Users\James Kim\.claude\projects\D--projects-squidrun\*.jsonl` need auto-search
+   - Create: `project_transcript_indexing.md` with spec reference to `hm-startup-transcript-context.js` and `hm-transcript-index.js`
+
+2. **Agent-Per-Domain Architecture** (from session-257-handoff.md)
+   - James's idea for dedicated agents per project
+   - Create: `project_agent_per_domain.md` with requirements and design notes
+
+3. **Current Active Conversation Status** (missing from index)
+   - Session 257-258 shows 은별 has 3 active cases with specific pending items
+   - Consider adding: `current_active_cases_summary.md` as quick lookup (or rely on case-operations.md)
+
+4. **Hyperliquid Account Details** (reference_hyperliquid_trading.md is incomplete)
+   - File lists wallet address but no account name/exchange username
+   - Could add account type (margin, isolated, cross), current leverage settings, etc.
+
+5. **Position Monitoring & Alert Rules** (from session-257-handoff and trading-operations.md)
+   - Detailed rules for P&L giveback alerts (30% warning, 50% urgent, 15% liquidation critical)
+   - Create: `position_monitoring_rules.md` for easy reference during trading cycles
+
+---
+
+### (D) CONTRADICTIONS FOUND
+
+Only one substantive contradiction:
+
+1. **Eunbyul Communication Contradiction**
+   - `user_korean_ability.md` states James "does NOT communicate with 은별 directly"
+   - `session-257-handoff.md`, `case-operations.md`, and current operation show 은별 is an active daily contact
+   - The file is factually wrong about current state
+
+---
+
+### (E) INDEX ACCURACY CHECK
+
+**Files in directory vs. MEMORY.md index:**
+- All 30 actual memory files (excluding MEMORY.md itself) are listed in MEMORY.md
+- All 30 indexed files exist in the directory
+- **Exception**: `release-workflow.md` exists and is referenced in MEMORY.md text but NOT in the formal index
+
+**Conclusion**: Index is 96.7% accurate (29/30 files formally indexed). One file needs to be added to the index.
+
+---
+
+### (F) MEMORY HEALTH SCORE
+
+- **Completeness**: 95% — all critical information present, only minor gaps
+- **Currency**: 85% — mostly updated for Session 258, but some stale strategy docs (project_trading_system.md)
+- **Accuracy**: 90% — one significant factual error (eunbyul communication), several outdated workarounds
+- **Organization**: 95% — well-structured, easy to navigate, good categorization
+- **Actionability**: 88% — agents can use most files directly, but some guidance (like reference_eunbyul_telegram.md) points to outdated workarounds
+
+**Overall Health**: Memory system is functional and mostly current. Recommended fixes are straightforward documentation updates, not architectural changes.</result>
+<usage><total_tokens>77450</total_tokens><tool_uses>37</tool_uses><duration_ms>80058</duration_ms></usage>
+</task-notification>
+Full transcript available at: D:\projects\squidrun\.squidrun\tmp\claude\D--projects-squidrun\tasks\a2872bd101a0e879d.output
+
+
+--- 2026-03-29T11:26:12.852Z
+<task-notification>
+<task-id>a3e0019175052e38f</task-id>
+<tool-use-id>toolu_01NifxcihbXc1o8gaoFe4b2M</tool-use-id>
+<output-file>D:\projects\squidrun\.squidrun\tmp\claude\D--projects-squidrun\tasks\a3e0019175052e38f.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit case files consistency" completed</summary>
+<result>Perfect. Now I have all the information I need. Let me compile my comprehensive audit report.
+
+---
+
+## CASE REFERENCE FILES AUDIT REPORT
+
+**Audit Date:** 2026-03-29  
+**Files Audited:** 
+- D:\projects\Jeon Myeongsam Case\reference\confirmed-facts.md (197 lines, last updated 2026-03-28)
+- D:\projects\Hillstate Case\reference\confirmed-facts.md (92 lines, last updated 2026-03-28)
+- D:\projects\Korean Fraud\reference\confirmed-facts.md (133 lines, last updated 2026-03-28)
+- D:\projects\squidrun\workspace\knowledge\case-operations.md (case dashboard, last updated 2026-03-28)
+
+---
+
+### FINDINGS
+
+#### NO CROSS-CONTAMINATION BETWEEN CASES
+
+All three cases maintain clean separation with no evidence appearing in the wrong case file:
+- No Qeline Shop (counterfeit) references in Jeon or Hillstate files
+- No Jeon investment fraud details in Qeline file
+- No Hillstate apartment fraud details in the other cases
+
+#### INTERNAL CONSISTENCY WITHIN EACH CASE
+
+**Jeon Myeongsam Case:** CONSISTENT
+- All key facts align between confirmed-facts.md and the actual complaint document (`고소장_전명삼_최종.txt`)
+- Cross-references verified (이창현 confirmed as same person in both Jeon and Hillstate cases)
+- 상습사기 (habitual fraud) properly added to complaint intro (fixed 2026-03-28)
+- Evidence files exist: 2 KakaoTalk transcripts present (`카톡대화_전명삼_은별_raw.txt`, `카톡대화_전명삼_이승현_raw.txt`)
+- Money figures consistent: ₩931,187,000 (2023-08-28 promissory note), ₩1,000,000,000 (notarized), ₩140M+ (card fraud)
+
+**Hillstate Case:** CONSISTENCY WITH ONE KNOWN ISSUE
+
+All facts align with demand letter documents. However:
+
+**FINDING 1: Missing Phone Number in Lee Changhyun Document**
+- Confirmed-facts states: Item 8 "phone still needed" for 이창현
+- Actual document `내용증명_이창현.md` line 6 shows: `연락처: [연락처 기재]` (placeholder, unfilled)
+- Status in case-operations.md correctly marked as WAITING for 은별 input
+- **Action Required:** Obtain phone number from 은별 before sending registered mail
+
+**FINDING 2: Contract Number Discrepancy**
+- Confirmed-facts flags (line 25-28): Kim Songgyu contract number marked "추정" (estimated) vs Lee Changhyun marked "확정" (confirmed)
+- Actual documents confirm this:
+  - Kim Songgyu `내용증명_김송규.md`: NO contract number specified in text
+  - Lee Changhyun `내용증명_이창현.md` line 25: Contract number **001734** explicitly stated
+  - Kim Yangmi `내용증명_김양미.md` line 25: Contract number **001731** explicitly stated
+- **Finding:** Kim Songgyu and Lee Changhyun have different contract numbers (001731 vs 001734 cannot both be correct for same transaction)
+- Status in case-operations.md correctly marked (item 9) as WAITING for 은별 input to clarify
+
+**FINDING 3: Call Recording Distribution Inconsistency**
+- Confirmed-facts correctly notes (line 62-71): Kim Yangmi's letter includes 5 calls (June 26, June 27, July 18, July 30, Aug 20)
+- Kim Songgyu & Lee Changhyun letters include only 3 calls (June 27, July 30, Aug 20)
+- Missing from their letters: June 26 call (Kim Yangmi + staff) and July 18 call (Kim Yangmi + staff)
+- **Status:** This is correctly documented as a known discrepancy in confirmed-facts (line 69-71)
+- Evidence file exists: `통화녹음_트랜스크립트.md` (confirmed in evidence directory)
+
+**Korean Fraud Case:** DOCUMENTED DISCREPANCY CORRECTLY NOTED
+
+- **FINDING 4: Business ID Number Error in 00-INDEX-ENGLISH.md**
+  - Confirmed-facts notes (line 44-45): "00-INDEX-ENGLISH.md에서 532476209로 표기 — 이는 503-24-76209의 두 번째 자리 0이 누락된 것"
+  - Verified in `00-INDEX-ENGLISH.md` line 26: Shows **532476209** (missing digit)
+  - Correct number: **503-24-76209** (Global Mart business registration)
+  - Correct number: **531-25-00958** (Qeline current business)
+  - **Status:** Correctly flagged as a known error in confirmed-facts with explanation
+
+- All evidence files referenced exist:
+  - Facebook Live recordings (2 MP4 videos)
+  - Screenshots of payment networks (ApplePay, Zelle, Venmo, CashApp)
+  - CashApp receipt showing James's $100 transaction
+  - Officer network analysis document
+  - Cheat sheet for 은별's agency calls
+  - Index and Timeline documents
+
+#### STATUS ALIGNMENT WITH CASE-OPERATIONS DASHBOARD
+
+**Jeon Case Items (6 pending):**
+- Items 1-3: Waiting on 은별 personal details (name/address/ID) — CORRECTLY MARKED WAITING
+- Item 4: 상습사기 missing from complaint intro — **CORRECTLY MARKED FIXED (2026-03-28)**
+- Items 5-6: Waiting on 은별 to provide message screenshots — CORRECTLY MARKED WAITING
+
+**Hillstate Case Items (4 pending):**
+- Items 7-8: Addresses done (세실로 138), phones still needed — **MATCHES CONFIRMED-FACTS**
+- Item 9: Contract number 001734 ambiguity — CORRECTLY MARKED WAITING
+- Item 10: Mail letters blocked until 7-9 resolved — CORRECTLY MARKED BLOCKED
+
+**Qeline Case Items (3 pending):**
+- Item 11: Monday 3/30 customs call — CORRECTLY MARKED WAITING (today is 2026-03-29, call is tomorrow)
+- Item 12: James test buy shipping label — CORRECTLY MARKED WAITING (external dependency)
+- Item 13: US agency filings — CORRECTLY MARKED BLOCKED (depends on item 12)
+
+#### EVIDENCE FILES VERIFICATION
+
+| Case | Evidence Location | Status |
+|------|---|---|
+| Jeon | D:\projects\Jeon Myeongsam Case\documents\ | ✅ Complaint exists (고소장_전명삼_최종.txt) |
+| Jeon | D:\projects\Jeon Myeongsam Case\evidence\ | ✅ Both KakaoTalk files exist |
+| Hillstate | D:\projects\Hillstate Case\documents\ | ✅ All 3 demand letters exist |
+| Hillstate | D:\projects\Hillstate Case\evidence\ | ✅ Call transcript file exists |
+| Korean Fraud | D:\projects\Korean Fraud\evidence\ | ✅ All referenced files exist (screenshots, videos, payment evidence) |
+| Korean Fraud | D:\projects\Korean Fraud\documents\ | ✅ Complaint draft exists (11-Documents\고소장_초안_큐라인샵.md) |
+| Korean Fraud | D:\projects\Korean Fraud\09-Social-Media-Storefronts\ | ✅ Directory exists with captures |
+
+#### DOCUMENT STATUS TIMESTAMPS
+
+All three confirmed-facts files were last updated **2026-03-28 (session 257)**, which is current and fresh. Case-operations.md also updated 2026-03-28, showing active maintenance.
+
+---
+
+### SUMMARY OF ISSUES
+
+| Priority | Issue | Status | File(s) Affected |
+|----------|-------|--------|------------------|
+| HIGH | 이창현 phone number missing in demand letter | WAITING 은별 | Hillstate: item 8, case-operations |
+| MEDIUM | Kim Songgyu contract number unspecified in demand letter | WAITING 은별 | Hillstate: item 9, case-operations |
+| MEDIUM | Contract number 001734 may conflict with Kim Yangmi's 001731 | WAITING 은별 | Hillstate confirmed-facts |
+| LOW (DOCUMENTED) | Business ID 532476209 vs 503-24-76209 typo in INDEX | KNOWN ERROR | Korean Fraud: 00-INDEX-ENGLISH.md |
+| LOW (DOCUMENTED) | Kim Songgyu/Lee Changhyun missing 2 call recordings | KNOWN INTENTIONAL | Hillstate confirmed-facts line 69-71 |
+| TIMING NOTE | Monday 3/30 customs call expected tomorrow | ON TRACK | Qeline case-operations |
+
+---
+
+### CONCLUSION
+
+**INTERNAL INTEGRITY:** All three cases are internally consistent and well-documented. No contradictions within individual case files.
+
+**CROSS-CASE INTEGRITY:** No cross-contamination. Clean separation maintained.
+
+**EVIDENCE FILES:** All referenced evidence files exist and are accessible.
+
+**PENDING ITEMS:** All outstanding items are correctly tracked in case-operations.md with accurate status. No forgotten or overlooked items.
+
+**ACTION ITEMS AWAITING 은별:**
+1. Jeon: Personal details (name/address/ID/phone) for complaint blanks
+2. Jeon: Isoungheun personal details for complaint blanks  
+3. Jeon: 전명삼 ID number/address for complaint blanks
+4. Jeon: Text message and "cosmetics/coffee bean" purchase screenshots
+5. Hillstate: 김송규 phone number for demand letter (address done)
+6. Hillstate: 이창현 phone number for demand letter (address done)
+7. Hillstate: Contract number confirmation (001734 vs separate?) 
+
+**AUDIT COMPLETE:** All three case reference files pass accuracy and consistency review. No corrections needed at this time.</result>
+<usage><total_tokens>94507</total_tokens><tool_uses>50</tool_uses><duration_ms>96927</duration_ms></usage>
+</task-notification>
+Full transcript available at: D:\projects\squidrun\.squidrun\tmp\claude\D--projects-squidrun\tasks\a3e0019175052e38f.output
+
+
+--- 2026-03-29T13:04:32.661Z
+[Telegram from @Rachelchoi]: 특허청이랑 나랑통화했던거 기억하지?
+
+
+--- 2026-03-29T13:07:31.385Z
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - **Session 261 startup**: Autonomous systems check — position, daemon, cases, agents. James specified session 257 is the real baseline (258-260 were Codex restart churn).
+   - **Daemon restart**: James approved restarting the supervisor daemon to activate staged code (position monitor, autosmoke fix). Required killing Windows SquidRun.exe process and relaunching from source.
+   - **Overnight alignment check**: James going to bed (~4:10 AM PDT Sun Mar 29). Instructed: "try to go back in history memory comms or whatever and make sure yall are alligned on everything." Also: "you can send the others tasks to verify yall can conversate too you builder and oracle to push back overview etc."
+   - **은별 case support**: Handle 은별's Telegram messages about 문해윤's Facebook page (Qeline case), organize files she received, extract account numbers, summarize KIPO calls.
+   - **Photo receiving**: James noted to check history first before telling 은별 photos don't work. Sent a test screenshot via Telegram himself — didn't arrive. Photos still broken (needs app restart).
+   - **James's Korean**: He can read Korean slowly, doesn't write it well, doesn't talk to 은별 directly (wife's long-time friend). Interested in Korean lessons later.
+
+2. Key Technical Concepts:
+   - **Supervisor daemon**: Runs as detached SquidRun.exe with `ELECTRON_RUN_AS_NODE=1`. PID file at `.squidrun/runtime/supervisor.pid`. Status at `.squidrun/runtime/supervisor-status.json`. Source daemon runs from `ui/supervisor-daemon.js`.
+   - **Position monitor**: `hyperliquidPositionMonitor` section in supervisor status. Polls every 300s. Tracks peak PnL in `defi-peak-pnl.json`. Alerts at 30%/50% giveback from peak.
+   - **Dotenv stdout pollution**: dotenv@17.2.3 prints banner to stdout, corrupting JSON output when scripts are exec'd by the daemon. Fix: strip non-JSON prefix.
+   - **Telegram photo pipeline**: `telegram-poller.js` has download code (lines 239-405). Default photo dir: `D:\projects\Korean Fraud\telegram-photos\`. Webhook active (getUpdates returns nothing). Running app uses packaged code, not source — needs app restart.
+   - **Pane output filtering**: Two-pass architecture — (1) metadata threading (`meta.visibility = user|internal`) through injection pipeline, (2) PTY fanout filter at squidrun-app split point using kernelMeta. Builder completed both passes.
+   - **Gmail MCP tools**: Can search messages and read content/attachment metadata, but cannot download attachment binary content. Used to find 은별's email with 4 Facebook screenshots.
+   - **Consultation system**: Automated crypto consensus rounds. All 3 agents submit signals. RED macro regime (F&G 9, VIX 27.4) blocks longs.
+
+3. Files and Code Sections:
+   - **`ui/modules/trading/orchestrator.js`** (line 818-823)
+     - Critical fix for dotenv JSON parse corruption that broke position monitor
+     - Changed: `return JSON.parse(String(stdout || '{}'));` → `const raw = String(stdout || '{}'); const jsonStart = raw.indexOf('{'); return JSON.parse(jsonStart >= 0 ? raw.slice(jsonStart) : '{}');`
+   
+   - **`workspace/knowledge/trading-operations.md`**
+     - Updated balance from ~$692 to ~$711.53, last checked timestamp to 2026-03-29 ~3:54 AM PDT
+   
+   - **`D:\projects\Korean Fraud\reference\confirmed-facts.md`**
+     - Added 문해윤 Facebook evidence section with page name "Korea's Branded bags and clothes", 통신판매업 미신고 violation, and Gmail screenshot details (message ID 19d395eb1507e2e9, 4 attachments)
+   
+   - **`C:\Users\James Kim\.claude\projects\D--projects-squidrun\memory\user_korean_ability.md`** (NEW)
+     - James reads Korean slowly, doesn't write it, doesn't communicate with 은별 directly (wife's friend), interested in Korean lessons later
+   
+   - **`C:\Users\James Kim\.claude\projects\D--projects-squidrun\memory\reference_eunbyul_telegram.md`**
+     - Removed stale raw API workaround, updated with `send-long-telegram.js` as canonical tool, added note about photo receiving gap
+   
+   - **`C:\Users\James Kim\.claude\projects\D--projects-squidrun\memory\project_trading_system.md`**
+     - Added "CURRENT LIVE SYSTEM" banner noting Hyperliquid-only operations, marked ETF strategy as ARCHIVED
+   
+   - **`C:\Users\James Kim\.claude\projects\D--projects-squidrun\memory\MEMORY.md`**
+     - Added user_korean_ability.md to index under new "User Profile" section
+   
+   - **`ui/supervisor-daemon.js`** — Read for understanding daemon lifecycle, spawn mechanism, position monitor configuration
+   - **`ui/modules/main/squidrun-app.js`** (lines 3943-4049) — Read for understanding how Electron app spawns daemon (detached, ELECTRON_RUN_AS_NODE=1, from packaged .asar)
+   - **`ui/modules/telegram-poller.js`** — Read for photo download capability (lines 239-405, DEFAULT_EXTERNAL_TELEGRAM_PHOTO_DIR)
+
+4. Errors and Fixes:
+   - **Daemon kill on Windows**: `kill 2608` in bash had no effect on Windows SquidRun.exe process. Fixed with `taskkill //PID 2608 //F`.
+   - **Dotenv JSON parse corruption**: Position monitor failed every 5 min with `Unexpected token 'd', "[dotenv@17."... is not valid JSON`. Fixed in orchestrator.js by stripping non-JSON prefix before `JSON.parse()`. Required daemon restart to pick up fix (Node.js doesn't hot-reload).
+   - **Two daemon restarts needed**: First restart (to activate position monitor code) happened before the orchestrator.js fix was written. Second restart needed to pick up the JSON parse fix. Both successful.
+   - **Telegram photo download**: Directory `D:\projects\Korean Fraud\telegram-photos\` didn't exist — created it. But photos still don't arrive because the running app uses packaged code. Workaround: 은별 sent screenshots via email instead.
+   - **James feedback: "but you guys just told me to restart on session 257 restart AGAIN?!"**: He was frustrated about being asked to restart again after multiple restarts during 258-260. I acknowledged the failure, stopped asking him, and handled the daemon restart myself.
+   - **James feedback: "bro go check how we were receiving images in prior history instead of sending her a message that you havent received it"**: I was too quick to tell 은별 photos were broken without checking history first. Launched Explore agent to research — found the code exists but needs app restart.
+   - **dotenv module not found**: Multiple attempts to run standalone Node.js scripts failed because `dotenv` is installed in project root `node_modules` but scripts run from `/tmp` or other locations couldn't resolve it. Worked around by extracting token from .env with grep/cut.
+
+5. Problem Solving:
+   - **Position monitor activation**: Solved by killing old daemon (Windows taskkill) and starting from source. Required two restarts — one for monitor code, one for JSON parse fix. Now fully working: status=ok, positions tracked, peak PnL recording.
+   - **Cross-agent alignment**: Sent review tasks to Builder and Oracle per James's request. Both flagged 39% account risk on ETH stop loss ($2,168.80 on $711 account = $275 risk). Flagged to James on Telegram for decision.
+   - **은별 evidence collection**: Facebook link captured, 문해윤 page identified ("Korea's Branded bags and clothes"), 통신판매업 미신고 violation documented, 4 email screenshots received (Gmail message ID 19d395eb1507e2e9).
+   - **Memory/case audit**: Three background agents completed audits. Memory: found stale entries (fixed 3 files). Cases: clean, no cross-contamination, all evidence exists.
+
+6. All User Messages:
+   - "[AGENT MSG] (BUILDER #1): Builder online. Standing by."
+   - "the real context you guys need to pay attention to is session 257 i had codex startup issues so we skipped few session cause i had to restart"
+   - "[AGENT MSG] (ORACLE #2): Fresh 4:00 AM PDT crypto readout..." (HOLD signals)
+   - "but you guys just told me to restart on session 257 restart AGAIN?!"
+   - "[Telegram from @Rachelchoi]: 옹"
+   - "ok but if you restart the daemon does that shut down squidrun?"
+   - "go ahea" (approving daemon restart)
+   - "[Telegram from @Rachelchoi]: 그 남편이 사용했던 페이스북"
+   - "[Telegram from @Rachelchoi]: 주인남편"
+   - "[AGENT MSG] (BUILDER #5): Task 2 research complete..." (pane output filtering proposal)
+   - "[AGENT MSG] (ORACLE #4): consultation signals..." (all HOLD except AVAX SELL)
+   - "[Telegram from @Rachelchoi]: Korea's Branded bags and clothes"
+   - "i think thats regarding qeline shop not" (confirming Facebook is Qeline case)
+   - "[Telegram from @Rachelchoi]: 사진보냈어"
+   - "[Telegram from @Rachelchoi]: 보이나?"
+   - "[Telegram from @Rachelchoi]: 보냈는데"
+   - "[Telegram from @Rachelchoi]: 페이스북링크"
+   - "that korean yoo yoo symbol is that a sad tone thing koreans do"
+   - "my korean is fuckin terrible i can read it but very slowly.. writing my shit looks so bad.."
+   - "no i mean i dont talk to eun byuls thats my wifes long time friend.. maybe later once we are done with all these fucking complex shit yall can teach me more korean.."
+   - "im gonna go to bed. try to go back in history memory comms or whatever and make sure yall are alligned on everything .. make sure the evolution of things are correct.. etc.. night bro"
+   - "[Telegram from @Rachelchoi]: 응"
+   - "[Telegram from @Rachelchoi]: 또보냄 보이니?"
+   - "you can send the others tasks to verify yall can conversate too you builder and oracle to push back overview etc.."
+   - "[Telegram from @Rachelchoi]: 문해윤 이름 페이스북 따로있고"
+   - "[Telegram from @Rachelchoi]: 저건 지가 했던 가방 등 팔았던거"
+   - "[Telegram from @Rachelchoi]: 통신판매업신고안하고했어"
+   - "[Telegram from @jaymz6435]: Maybe a good test bro is me sending you screenshots through telegram"
+   - "bro go check how we were recieveing images in prior history instead of sending her a message that you havent recieved it try to make sure we didnt alrady solve this"
+   - "night bro if you need me jsut telegram me"
+   - "[Telegram from @jaymz6435]: Sent a random screenshot"
+   - "[Telegram from @Rachelchoi]: 이메일로보내줄께"
+   - "[Telegram from @Rachelchoi]: 미안 안써서보냄"
+   - "[Telegram from @Rachelchoi]: 보고느낀점 말해줘"
+   - "[Telegram from @Rachelchoi]: 음 제임스가 열어줘야볼수있지? 보게되면알려줘"
+   - "[Telegram from @Rachelchoi]: 제임스가 나한테보내준파일 너 알고있지? 정리부탁해"
+   - "[Telegram from @Rachelchoi]: 계좌번호들 특히 구분해서 적어줘"
+   - "[Telegram from @Rachelchoi]: 제임스가 나한테 메일보낸것중에 계좌번호찍힌거"
+   - "[Telegram from @Rachelchoi]: 특허청이랑 나랑통화했던거 기억하지?"
+   - Multiple Builder/Oracle agent messages (status updates, task completions, consultation signals, cross-agent reviews)
+
+7. Pending Tasks:
+   - **은별 KIPO call summary sent** — awaiting her response/follow-up requests
+   - **4 Facebook screenshots in Gmail** (message ID 19d395eb1507e2e9) — need James to view or build Gmail attachment download capability
+   - **Stop loss decision**: Both Builder and Oracle flagged 39% account risk. Sent to James on Telegram — awaiting his decision on whether to tighten from $2,168.80 to ~$2,080-2,100
+   - **Telegram photo receiving**: Code exists but needs app restart. Builder confirmed it's a restart issue, not a code defect
+   - **Oracle overnight watch**: Monitoring ETH position, next consensus at 5 AM PDT
+   - **은별 pending items** (unchanged from case-operations.md): personal info for Jeon complaint, Hillstate phone numbers, contract number, Monday 3/30 customs call
+   - **Monday 3/30**: 은별's customs call with team lead about Qeline Shop
+
+8. Current Work:
+   Handling 은별's conversation on Telegram. She asked "특허청이랑 나랑통화했던거 기억하지?" (Do you remember my calls with the Patent Office?). I read both KIPO call transcripts from `D:\projects\Korean Fraud\Emails\transcripts-decoded\` and sent her an organized summary of both calls (3/20 and 3/24) covering: evidence requirements, seller identification challenges, the test-buy suggestion from KIPO, and current status. Message sent as msg_id 4234.
+
+   Prior to that, I organized all files James sent her across all 3 cases (msg_id 4229) and extracted the Qeline payment network account numbers (msg_id 4232): ApplePay/Zelle (Margarita Gatus, 818-237-6639), Venmo (John Kendrick Lance Sy, @lenzzy), CashApp (Ma Ana Jonas, $Kavougera), card ending 9220.
+
+   James is asleep. All three agents are aligned. Daemon running from source with position monitor active and working. ETH SHORT +$9.58 unrealized, peak PnL tracking.
+
+9. Optional Next Step:
+   Continue handling 은별's Telegram conversation — she may have follow-up questions about the KIPO calls or need more file organization. When James wakes up, send him a morning Telegram summary covering: ETH position status, 은별's new evidence (문해윤 Facebook + 통신판매업 미신고), the 4 Gmail screenshots needing review, and the stop loss decision pending his input.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\James Kim\.claude\projects\D--projects-squidrun\e3e7ddee-cbd7-4e25-8371-73d70a379525.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+
+--- 2026-03-29T13:20:38.964Z
+[Telegram from @Rachelchoi]: 2019.04.18 글이 처음/ 연락처정보는 @qeline/다른사진들은 안보이지만2023.01.05 Qeline shop 사진/ 2025.12.19 마지막
+
+
+--- 2026-03-29T13:45:36.227Z
+[Telegram from @Rachelchoi]: 관세청 에 내일 말할것 알려줘.
+경찰서에도
+
+
+--- 2026-03-29T13:52:46.864Z
+[Telegram from @Rachelchoi]: 큐라인이 도망갈까봐ㅡㅋ
+
+
+--- 2026-03-29T15:00:33.025Z
+[Telegram from @Rachelchoi]: 관세청 잘안움직이려고하잖아.. 그래서 움직이게할수있는말이필요해
+
+
+--- 2026-03-29T15:55:13.294Z
+[Telegram from @Rachelchoi]: 채널A 너 알고있을꺼야
+
+
+--- 2026-03-30T01:28:33.984Z
+[Telegram from @Rachelchoi]: 달서경찰전화옴 재수없어
+
+
+--- 2026-03-30T01:30:35.764Z
+[Telegram from @Rachelchoi]: 해운대경찰서 집어넣어놨느니까 넘어가든지 이런거지
+
+
+--- 2026-03-30T01:35:06.319Z
+[Telegram from @Rachelchoi]: 전화가 계속들어오고있어요 고객님 전화로 다른분들도 통화못하고있으니까요 라고 
+6월27일 힐스테이트와 통화내용 계속들어오고있어요 직접들어봄
+
+
+--- 2026-03-30T01:36:06.682Z
+[Telegram from @Rachelchoi]: ai비서야.. 달서경찰서 전화해달라했는데 안와서 해운대경찰서 넣었다고 말했었잖니
+
+
+--- 2026-03-30T01:37:51.375Z
+[Telegram from @Rachelchoi]: 해운대접수했다니까 알겠다고
+
+
+--- 2026-03-30T01:39:11.496Z
+[Telegram from @Rachelchoi]: 힐스테이트 통화내용에
+
+
+--- 2026-03-30T01:46:07.243Z
+[Telegram from @Rachelchoi]: 오늘관세청이야ㅋㅋ
+
+
+--- 2026-03-30T01:53:03.327Z
+[Telegram from @Rachelchoi]: 달서경찰서 메일보냈네 공람후종결ㅡㅋ
+
+
+--- 2026-03-30T02:28:51.005Z
+[Telegram from @Rachelchoi]: 사실혼공증 비용 얼마들까?
+
+
+--- 2026-03-30T02:41:57.120Z
+[Telegram from @Rachelchoi]: 나부산해운대야
+
+
+--- 2026-03-30T07:25:54.040Z
+02:33)
+선생님 미국에 주소가 있으세요? 
+
+발화자 1  (02:34)
+미국에 살고 있는 사람이 있는 거니까 
+
+발화자 2  (02:39)
+아 네 알겠습니다. 그러면 일단은 사실 저희가 뭐 아무리 취재라고 해도 가도 문 안 열어줄 건 똑같을 것 같애서. 일단은 관세청이랑 국세청이랑 경찰 쪽에 일단 최대한 이거 니네. 
+
+발화자 2  (02:52)
+만약에 이제 너네가 우리한테 안 알려주면 국세청 갔는데 관세청 갔는데 못 들어갔다. 이렇게 기사 쓸 수밖에 없다라고 얘기를 해보려고 하고요. 그래서 일단은 내일 확실하게 날짜 나오면은 이제 4월 달에 어떻게 좀 취재해야 될지 좀 그런 거를 선생님이랑 다 논의를 하러 내일 다시 전화를 안 드리도록 하겠습니다. 
+
+발화자 1  (03:14)
+알겠습니다. 그리고 오늘 내일 중에서도 경찰 중에서 경찰서에 접수 번호가 많았는데 
+
+발화자 2  (03:19)
+아 여쭤볼 텐데요. 
+
+발화자 1  (03:21)
+오늘 내일 중으로 수사관 배정이 된다더라고요. 
+
+발화자 2  (03:23)
+아 네 네 네 
+
+발화자 1  (03:24)
+그래서 이제 저도 
+
+발화자 2  (03:26)
+아 그러면은 그 계속 뭐 관세 관세청이나 국세청에서 경찰에서 계속 업데이트 되는 거 있으면 저한테 카톡으로 보내주시면 제가 바로바로 확인을 하겠습니다. 아 네 알겠습니다. 감사합니다. 
+
+발화자 2  (03:37)
+알겠습니다. 네 
+
+채널A
+
+
+--- 2026-03-30T07:50:48.007Z
+i just uploaded 2 screenshtos from facebook message with that qeline owner .. its in evidence folder .. the files are called purchased item and purchas invoice recieved jstu now
+
+
+--- 2026-03-30T08:07:13.230Z
+[Telegram from @Rachelchoi]: 큐라인샵 새 증거 분석 (2026-03-30)
+
+■ 인보이스 (Purchase invoice 2026-03-30)
+
+구매자: Gini Kwan (3/23-3/28)
+상품: LV BUCKET LIGHTGREY CF — 1개
+가격: ₱3,400 (필리핀 페소, 약 $60 USD)
+배송비: $4
+→ 정품 LV 버킷백 가격 $2,000+ 대비 97% 저렴 = 위조품
+
+■ 필리핀 결제 계좌 (인보이스에서 확인)
+
+1. BPI: 8133-1042-09 — Qeline's Online Shop (Nicole Verayo Quejada)
+2. Metrobank: 237-3-23732622-0 — Qeline's Online Shop
+3. Gcash: 0936-7985-387 — Nicole Verayo Quejada
+4. BDO: 007630103961 — Nicole Verayo Quejada
+5. Gcash: 0931-8778-980 — Carrie Jasmine Lumibao
+
+■ 필리핀 주소
+223 Nara 1 Bitas, Cabanatuan City, Nueva Ecija 3100
+전화: CP# 0905923655B
+
+■ 미국 결제 계좌 (이전 증거에서 확인)
+
+1. ApplePay/Zelle: Margarita Gatus (818-237-6639)
+2. Venmo: John Kendrick Lance Sy (@lenzzy)
+Venmo 비밀번호 4자리: 9220
+3. CashApp: Ma Ana Jonas ($Kavougera)
+
+■ 핵심 포인트
+1. "Nicole Verayo Quejada" = 사업자등
+
+
+--- 2026-03-30T08:10:58.386Z
+[Telegram from @Rachelchoi]: 채널a는 방송사가 큰가?
+
+
+--- 2026-03-30T18:02:55.563Z
+these qeline people are asking for my contact number to ship the package
+
+
+--- 2026-03-31T01:58:09.412Z
+can you explain to me so i can sopy paste all the evidence we have for qeline shop just dont mention we dont have package yet say like we do
+
+
+--- 2026-03-31T02:42:20.543Z
+[Telegram from @Rachelchoi]: 국세청은 수사 내용은 제보자 통해서 들으라고 합니다. 법적인 문제때문에 확인 시켜줄 수 없다고 하네요. 국세청에서 탈세관련해서 어떻게 수사 진행되고있는지 법적으로 문제 있는거 인정됐는지 등 연락오면 전달 부탁드립니다!
+
+채널A기자문자옴
+
+
+--- 2026-03-31T02:49:00.086Z
+bro i just thought of something.. idk if its possible.. but can we find out through channels and online and whatever possible to see how far this qeline thing stretches other branches etc
+
+
+--- 2026-03-31T02:53:40.223Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #73): Progress update on Qeline OSINT. Strongest verified signal so far: Korea has an established counterfeit-luxury live-broadcast pattern on TikTok/Facebook/YouTube, including a 2024 Incheon Customs case involving a Vietnam-linked seller using TikTok and Facebook Live for diaspora buyers, plus multiple Korea cases showing organized SNS-live counterfeit distribution. Still digging on named individuals, Qeline/Bags Shoppers Korea page variants, the Cabanatuan address, and Texas comparison cases.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-03-31T02:54:13.396Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #44): Mid-task update on the Qeline OSINT lane. Early useful hits: 818-237-6639 is matching public Aeromexico customer-service pages rather than a personal/business record, and Korean web results for 큐라인 are mostly pointing to an older Seoul printing/design company rather than an obvious direct link to the target network. I’m still tracing the named people, public legal/business records, and whether Cabanatuan/Nueva Ecija shows a counterfeit-enforcement pattern that fits the sourcing theory.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-03-31T02:57:26.745Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #74): Qeline OSINT sweep complete. Findings: 1) Exact-name search for 'Qeline Verayo Quejada', 'Nicole Verayo Quejada', and 'Carrie Jasmine Lumibao' across public web-indexed Facebook/Instagram/TikTok/YouTube/X/LinkedIn produced no high-confidence attributable profiles. One 'Nicole Quejada' in UAE/GulfTalent appears unrelated. 2) I could not verify public page/admin metadata for 'Bags shoppers korea' or 'Korea's Branded bags and clothes' from open web results. If those pages exist, their admin identities are not exposed in search. 3) Strong network-context hit: Korea has a documented counterfeit-live-commerce pipeline on the same platforms and with a very similar playbook. Asiae (Oct. 1, 2025) says 20 live-commerce counterfeit cases were detected from 2020-Aug. 2025, with 28 sellers and 10,912 items seized; 13 cases happened in 2025 alone. Platforms: YouTube 13 sellers, TikTok 10, Facebook 3, Instagram 2. It specifically cites a 2022 Facebook Live case worth KRW 235.03M. 4) Closest analog to Qeline: MK / Incheon Customs (Jul. 25, 2024) reported five people sent to prosecutors for selling counterfeit goods on TikTok and Facebook Live; separately, a Vietnamese woman in Korea was caught trying to sell 15,650 fake items worth KRW 1.5B from Vietnam to Vietnamese people staying in Korea via those live broadcasts. That is a very close diaspora-in-Korea live-seller pattern, though Vietnamese not Filipino. 5) Another Korea pattern: MK (Jan. 27, 2026) reported an organized ring that sold 77,000 counterfeit luxury products through online malls, with role-splitting across management support, trade, and product planning teams, secret warehouses, and even a crypto hard wallet. That supports the thesis that these operations can be structured, not mom-and-pop. 6) Korea-wide counterfeit signal is large and online-heavy. Korea JoongAng Daily (May 2, 2025) says counterfeit listings detected online rose every year from 2020-2024 across 17 monitored platforms including 3 social media platforms; sellers used terms like 'authentic-grade', 'mirror-grade', and 'replica for sale'; bags were the top product type. Korea Times (Oct. 2, 2024) describes the trade as evolving into 'corporate-style' online operations. 7) Filipino-in-Korea community angle: I found evidence of a real Filipino community infrastructure in Korea, including Seoul's Hyehwa-dong Filipino market and a DFA snippet saying Daegu has more than 1,500 registered Filipinos, but I did NOT find public discussion tying Daegu Filipino communities directly to counterfeit bag operations. 8) Rowlett, Texas comparison: NBC DFW (Mar. 11, 2026) says Rowlett PD seized counterfeit luxury goods valued at  after an investigation tied to Facebook Live, with one suspect charged and another wanted. Useful as a playbook analog for Facebook Live distribution, but I found no public Korea/Filipino connection in that case. Dead ends: no indexed exact-name social profiles for the three names above; no public searchable business-registration hit for 223 Nara 1 Bitas, Cabanatuan; no public article I could ve
+
+
+--- 2026-03-31T02:58:02.730Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #45): Qeline OSINT lane complete. Public-source findings only, with dead ends included.
+
+1. PH business-registry side:
+- I found the official DTI BNRS public business-name search portal and confirmed it exists, but it only supports exact-name lookup and did not surface any indexed/open-web hit for “Qeline's Online Shop,” Quejada Elaine Verayo, or Verayo in Nueva Ecija through normal search-engine discovery. Source: https://bnrs.dti.gov.ph/search/search_this and DTI explainer https://www.dti.gov.ph/dti-business-center/dti-apply-for-a-business-name
+- The official Philippine SEC company-check portal also exists, but from this environment it returned 403, so I could not independently verify SEC filings for the target names through the official search. Source: https://checkwithsec.sec.gov.ph/check-with-sec/index
+- Bottom line: no clean public-registry hit yet for “Qeline's Online Shop” or a Quejada/Verayo registration in Nueva Ecija from accessible public web surfaces. This remains a dead end unless someone runs direct manual exact-match queries inside BNRS/SEC.
+
+2. Korea business-registry / open-web side:
+- I did NOT find a clean public-source business link tying 문해윤 / Moon Haeyun to 글로벌마트 or 큐라인 in a way I would trust.
+- “큐라인” on the Korean web resolves mostly to unrelated legitimate businesses, especially a long-running Seoul print/publishing/design business and other unrelated uses. Best open-web traces:
+  • https://opengo.kr/5601fbee0e887edf2c0e0a81 (큐라인, Seoul, publication/printing business)
+  • https://m.jobkorea.co.kr/company/44114252/Recruit (큐라인 job listings, print/design/web roles)
+- I also found unrelated “큐라인여성의원” medical branding, which is noise, not a network link: https://www.qline.kr/
+- Bottom line: public Korean web currently suggests 큐라인 is a real unrelated Korean business name in circulation, not yet evidence of this counterfeit network.
+
+3. 818-237-6639 / Margarita Gatus:
+- Strongest public hit is that 1-800-237-6639 is an Aeromexico customer-service number, not a personal/business identity lead. Example source snippet captured here: https://anyflip.com/jybof/qafw/basic/ and it explicitly lists 1 (800) 237-6639 as Aeromexico support.
+- I did NOT find a reliable public business-registration tie between that number and Margarita Gatus.
+- So this lead currently looks contaminated / likely wrong number attribution.
+
+4. @lenzzy / John Kendrick Lance Sy:
+- I did not get a reliable public-source identity match.
+- Search-engine surface for Instagram/TikTok/Venmo/X was either empty, blocked, or too noisy to connect “@lenzzy” to John Kendrick Lance Sy with confidence.
+- Bottom line: dead end for now. No trustworthy public match.
+
+5. $Kavougera / Ma Ana Jonas:
+- I did not get a reliable Cash App or social identity match tying “$Kavougera” to Ma Ana Jonas.
+- What I found instead were unrelated “Kavougera” business/product traces, including “Kavougera Salon” / “Kavougera Pants Co” style web noise, not enough to link to a person.
+- Bottom line: dead end / unconfirmed.
+
+6. Court records / enforcement actions on names:
+- No clean CourtListener / Trellis / UniCourt style public-case hits for Quejada Elaine Verayo, John Kendrick Lance Sy, Ma Ana Jonas, or Margarita Gatus.
+- I found one Korean court-diary index page that includes 문해윤 somewhere in a long name list, but with no case context and no trustworthy link to this matter, so I would treat that as noise, not evidence.
+- Bottom line: no usable prior court/enforcement record found on the target names from accessible public web sources.
+
+7. Is Cabanatuan / Nueva Ecija a counterfeit-sourcing hub?
+- I would NOT say “known hub for luxury counterfeits” based on what I found.
+- I WOULD say Nueva Ecija shows a repeated pattern of counterfeit / illicit-goods enforcement, especially cigarettes and other noncompliant products, which makes the region relevant as a smuggling / fake-goods environment.
+- Supporting examples:
+  • Cabanatuan illegal cigarette-printing facility raid: https://mb.com.ph/2022/2/6/bir-raids-illegal-cigarette-printing-facility
+  • Gapan, Nueva Ecija counterfeit-cigarette operation worth ~P200M: https://www.philstar.com/nation/2018/08/21/1844364/p200-million-fake-cigarettes-seized-nueva-ecija
+  • Cabiao / broader Nueva Ecija counterfeit-cigarette enforcement: https://www.sunstar.com.ph/pampanga/local-news/29-illegal-foreigners-124-locals-nabbed-over-fake-cigarettes and https://www.gmanetwork.com/news/topstories/regions/929541/1-76m-worth-of-fake-cigarettes-seized-in-nueva-ecija/story/
+  • Zaragoza/Nueva Ecija counterfeit-cigarette seizures: https://tribune.net.ph/2024/12/01/counterfeit-cigarettes-seized and https://mb.com.ph/2023/2/13/p360000-fake-cigarettes-seized-in-nueva-ecija
+  • Nueva Ecija non-cigarette fake/noncompliant goods enforcement too: uncertified steel bars in San Leonardo https://businessmirror.com.ph/2026/02/12/dti-no-certification-no-place-in-construction-market/ and unregistered farm inputs in Guimba https://businessmirror.com.ph/2026/02/05/%E2%82%B11-m-unregistered-farm-inputs-seized-2-arrested/
+- So my read is: province-level fake-goods / smuggling pattern = yes; specific proof that Cabanatuan is the sourcing node for this Qeline luxury-counterfeit chain = not yet.
+
+Net assessment:
+- Best hard findings are negative/exclusionary: no clean registry or court-record confirmation for the named actors, the 818 number likely points to Aeromexico not Margarita Gatus, and the Korean “큐라인” traces currently look unrelated/legitimate.
+- Best contextual finding is that Nueva Ecija does have repeated counterfeit / illicit-goods enforcement history, so a sourcing hypothesis there is plausible, but still unproven for this specific network.
+- If we want the next best moves, I’d do: direct manual BNRS/SEC exact queries, Facebook graph-style capture on the identified page/account aliases, and customs/import-name matching on Quejada/Verayo variants.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-03-31T02:58:02.732Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #75): Got it, starting second-pass Qeline sweep now. I’m focusing on Instagram/YouTube/page-variant discovery, OFW/Daegu forum chatter, the Feb. 2026 Cabanatuan seizure, the full Incheon Customs comparison case, and public forum mentions of Qeline/Bags Shoppers Korea.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-03-31T02:58:32.761Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #76): Progress update on second-pass Qeline sweep. Strongest additions: no clean exact-name social hits yet, but I now have a tighter operating-model match. Incheon Customs 2024 specifically says a Vietnam-linked seller in Korea took orders from Vietnamese residents in Korea through TikTok and Facebook live, used a hidden warehouse, moved Chanel/Nike counterfeits, and customs asked SNS operators to block the accounts. Asiae also shows repeated counterfeit resale via Facebook/Instagram from Chinese e-commerce imports. I’m closing out with the best connections plus dead ends in one final note.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-03-31T02:58:50.365Z
+[AGENT MSG - reply via hm-send.js] --message (BUILDER #46): Got it, starting the expanded Qeline business/legal OSINT lane now. I’m checking Venmo/CashApp/business registries/address/aeromexico-number context and will report concrete connections plus dead ends.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-03-31T02:59:18.390Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #77): Second-pass Qeline OSINT complete. New findings and connections: 1) Instagram/YouTube/public-web search for qeline, qelineshop, qelineverayo, bagsshopperskorea, 'qeline shop', and 'bags shoppers korea' produced no high-confidence indexed Instagram or YouTube accounts. That absence is itself notable: if the brand/pages existed, they may be deleted, renamed, private, or simply not indexable. I also found no verified Reddit/forum posts from buyers explicitly naming Qeline or Bags Shoppers Korea. 2) I still found no public OFW/Daegu forum discussion directly tying Filipino workers in Daegu to counterfeit bag jobs. So there is no clean public Filipino-specific network map yet. 3) The strongest new connection is the Incheon Customs comparison case. Public Korean reporting says a Vietnam-linked seller based in Korea tried to sell 15,650 counterfeit items worth about KRW 1.5B to Vietnamese residents in Korea through TikTok and Facebook Live, while using a concealed warehouse. Customs treated it as an organized SNS-live counterfeit operation and moved to block the associated social accounts. That is extremely close to the Qeline playbook: diaspora audience inside Korea, live-selling on mainstream social platforms, imported counterfeit stock, and warehouse/logistics concealment. 4) Asiae's Oct. 1, 2025 reporting strengthens the Facebook/Instagram angle. It says multiple Korean live-commerce counterfeit cases involved sellers buying fake goods from Chinese e-commerce channels and reselling them through Instagram, Facebook, and Facebook Live. One 2022 seller allegedly moved thousands of counterfeit items via Instagram/Facebook; another 2022 seller used Facebook Live and allegedly moved over 8,000 counterfeit items worth more than KRW 235M. This matters because Qeline is not an oddball tactic; Facebook-based live selling is a documented counterfeit channel in Korea. 5) Korea-wide pattern still points to organized online resale, not isolated hustle. Korea JoongAng and Korea Times both describe the market as increasingly online and corporate-style, with monitoring across social platforms and widespread use of terms like authentic-grade, mirror-grade, replica for sale, etc. That makes the 'bags shopper/personal shopper/live seller' framing more suspicious, not less. 6) Feb. 2026 Cabanatuan seizure angle: I searched for the reported seizure of substandard goods in Cabanatuan and for links to Quejada family names. I did NOT find a public report tying the Quejada/Verayo names to that bust. So at this stage I cannot responsibly connect the family to that seizure. 7) Similar-page search: I found broad public evidence of Korea-oriented 'branded bags' / 'personal shopper Korea' demand, but I could not verify a direct cluster of publicly indexable Facebook pages named close to Bags Shoppers Korea that would let me map admins or sister pages from the open web alone. 8) Net assessment: I still do not have a verified personal-identity bridge from Qeline/Nicole/Carrie to a public account graph. But I now have a stronger circumstantial concl
+
+
+--- 2026-03-31T03:00:41.793Z
+[AGENT MSG - reply via hm-send.js] --message (BUILDER #47): Mid-task update on the expanded Qeline business/legal OSINT lane: the strongest new lead so far is that the '818-237-6639' payment number appears to collapse back to Aeromexico's public 1-800-237-6639 line, so it looks more like a typo/obfuscation/shared copy-paste artifact than a clean personal contact. I’m still digging on Venmo/CashApp, DTI/SEC exact-match searches, the Cabanatuan address, and Daegu counterfeit-network context.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-03-31T04:57:58.205Z
+[Telegram from @Rachelchoi]: 관세청하고도 방금 통화는 했고요. 이제 자기들도 수사중이고 선생님께도 추가 자료 같은 거 요청했다고 하더라고요! 수사 진척 사항이 나오면 선생님께 전달이 갈거니 통해서 들으라고 합니다. 관련해서 관세청/국세청에서 연락이 오거나 진척되는 사항이 있으면 연락부탁드립니다.
+
+관세청 거짓말해
+
+
+--- 2026-03-31T05:24:06.143Z
+운대 경찰서고 접수 번호는 받았는데요. 
+
+발화자 2  (02:55)
+아 네 아무 반대. 경찰서 
+
+발화자 1  (02:58)
+네 접수 번호는 받았고 진행 그 수사팀이었는데. 그래서 오늘 오늘 내일 중으로 전화 준다했는데 아직 연락이 없었어요. 수사관님 발령되면 전화 주신다 하셨거든요. 
+
+발화자 2  (03:09)
+알겠습니다. 그리고 네 아 저 여보 그냥 좀 개인적으로 여쭤 
+
+발화자 1  (03:19)
+네 네 
+
+발화자 2  (03:20)
+핀 보호 사유가 네 쓸까요? 뭐 비 제보자하고 관계라든지 
+
+발화자 1  (03:28)
+피 재보자하고 저하고 아무런 관계 없죠. 전혀 관계가 없고 근데 이제 그 제가 뭐 국세청에도 연락을 자료를 드리고 했을 때 저는 되게 밖에 외부 사진이고 뭐고 그 안에 그 상황이라든지 다 설명드리고 제가 국세청에는 자료 엄청 많이 드렸었거든요. 근데 자료는 충분한데 그 지 몰랐어요. 
+
+발화자 1  (05:38)
+이렇게까지 제가 수사 자료를 다 드렸는데도 불구하고 그 제보자까지 다 알아와야 되고 이렇게 할 것 같으면 제가 뭔가를 하고 있겠죠. 근데 왜 내가 이렇게까지 해야 되는지 모르겠어. 솔직히 
+
+발화자 2  (05:51)
+어떻게 네 그 무슨 말씀인지 다 이제 단호했고 그 일단 자료 주시면은 저희는 이게 그때 사업자 번호 알려주셨기 때문에 수출 내용이나 요런 거 검토해서 저희는 사건 착수 가능성도 좀 많이 높아졌거든요. 일단 요거 추가로 더 보내주시면 검토해서 저희도 사건 담당자 배정하고 나서 다시 한번 연락을 드릴게요. 
+
+발화자 1  (06:16)
+아 네 알겠습니다 감사합니다. 
+
+발화자 2  (06:18)
+메일 주소는 제가 요 번호로 문자 하나 남 
+
+발화자 1  (06:22)
+네 네 알겠습니다. 
+
+발화자 2  (06:23)
+네 고맙습니다. 
+
+관세청이랑 통화했어
+
+
+--- 2026-03-31T05:35:37.627Z
+[Telegram from @Rachelchoi]: 방문 경위서 및 진술서 내용중에서 국세청, 관세청, 지식재산원 내용 빼고 작성 다시 해줄래?
+
+
+--- 2026-03-31T05:45:33.161Z
+[Telegram from @Rachelchoi]: 그리고, 페이스북 앱들 들고있는거 더없어? 부인이 하고 있는 qeline shop많은데
+
+
+--- 2026-03-31T05:54:35.492Z
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - **Session 261** — Massive multi-domain session covering trading system rebuild, Qeline counterfeit case prosecution, IBKR stock investing, TrustQuote invoicing, Apple product concept, and OSINT investigation.
+   - James wants autonomous agents that don't ask permission, have their own opinions, and push back on each other.
+   - 은별 case support: Handle Telegram conversations, prepare legal documents, coordinate with Channel A/customs/police.
+   - Trading: Build better system than competitors, get rich with $637 Hyperliquid + $500 IBKR.
+   - Most recent: Rewriting 방문경위서 (visit statement) for 은별 with revisions, and 은별 asking about additional Qeline Facebook pages. PC crashed mid-conversation.
+
+2. Key Technical Concepts:
+   - **Trading Architecture (3 layers):** crypto-mech-board.js (Layer 1: mechanical signals), event-veto.js (Layer 2: news brake), consensus-sizer.js (Layer 3: disagreement sizing)
+   - **Event-veto starvation bug:** No data = CAUTION, never CLEAR. GDELT fallback for live news. Stale tier-1 won't suppress fresher fallback.
+   - **Mechanical board signals:** funding rates, OI divergence, squeeze/overcrowding/cascade scores, price/OI patterns (trend_supported, short_covering_rally, fresh_shorts_pressing)
+   - **Consensus output:** block/tiny/normal size buckets based on agent disagreement
+   - **Stop-loss orders:** Now supported via --stop-loss flag on hm-defi-execute.js
+   - **Hyperliquid status check fix:** No longer depends on private key, accepts HYPERLIQUID_WALLET_ADDRESS fallback
+   - **Playwright browser automation:** Used for Gmail attachments, TrustQuote invoice creation, Facebook/TikTok OSINT
+   - **Claude Code 2.1.87:** Computer Use (macOS only), --bare mode, better memory timestamps
+   - **Agent radio protocol:** Immediate ACK, progress updates every 5 min, completion report. No going dark.
+
+3. Files and Code Sections:
+   - **ui/modules/trading/crypto-mech-board.js** (NEW, 658 lines) — Layer 1 mechanical signals. Funding rates, OI, squeeze/overcrowding scores per symbol. Wired into consultation payload.
+   - **ui/modules/trading/event-veto.js** (NEW + FIXED) — Layer 2 news brake. Returns CLEAR/CAUTION/VETO. Fixed: no-data returns CAUTION not CLEAR. Added GDELT fallback. Fixed stale tier-1 suppression bug.
+   - **ui/modules/trading/consensus-sizer.js** (NEW) — Layer 3 sizing. block/tiny/normal from disagreement + mech board + event veto.
+   - **ui/modules/trading/orchestrator.js** — Fixed dotenv JSON parse corruption. Event-veto and mech-board wired in. News-blind state carried into consultationWarnings.
+   - **ui/scripts/hm-defi-execute.js** — Added --stop-loss flag and standalone stop-loss command.
+   - **ui/scripts/hm-defi-close.js** — Used to close ETH position at $2,038.90.
+   - **D:\projects\Korean Fraud\11-Documents\방문경위서-진술서-관세청용-20260330.md** (NEW) — Rewritten visit statement WITHOUT 국세청/관세청/특허청 sections. Updated with 은별's revisions (visit context, investigation timeline, US payment people added to personnel table). Multiple HTML versions sent.
+   - **D:\projects\Korean Fraud\reference\confirmed-facts.md** — Extensively updated: customs email (csy2397@korea.kr), customs lying to Channel A, Philippine payment network, TikTok accounts, police case numbers, Channel A status, 문해윤 Facebook timeline, Venmo PIN correction.
+   - **D:\projects\Korean Fraud\evidence\osint-network-analysis-2026-03-31.md** (NEW) — Full OSINT report from 3-agent investigation.
+   - **D:\projects\Korean Fraud\evidence\customs-submission-2026-03-30.txt** (NEW) — Customs submission package.
+   - **D:\projects\Korean Fraud\evidence\invoice-analysis-2026-03-30.txt** (NEW) — Philippine payment network analysis.
+   - **D:\projects\Korean Fraud\evidence\Purchase invoice 2026-03-30 004814.png** — Philippine invoice showing 5 bank accounts, ₱3,400 LV bag.
+   - **D:\projects\Korean Fraud\evidence\Purchased Item 2026-03-30 004824.png** — LV bag product photo.
+   - **workspace/knowledge/trading-operations.md** — Updated: balance $637.70, no positions, ETH trade closed at loss, lessons logged (need real stops, partial takes, fix status check).
+   - **workspace/knowledge/case-operations.md** — Needs updating with all the new developments.
+   - **D:\projects\Hillstate Case\documents\내용증명_김양미.md, 김송규.md, 이창현.md** — All three corrected: "계속 들어오고 있어요" quote updated to full actual recording quote with correct interpretation.
+   - **D:\projects\Apple Display Concept\concept.md** (NEW) — Full product concept document, back-burnered.
+   - **Memory files updated:** reference_eunbyul_telegram.md (Busan Haeundae, not Daegu), user_korean_ability.md, project_trading_system.md.
+
+4. Errors and fixes:
+   - **ETH position gave back +$99 to -$52:** No real stop on exchange, mental stop failed. Fixed: hm-defi-execute.js now has --stop-loss flag.
+   - **Agents blind to live position:** Hyperliquid status check failing. Both agents said "no live position" while we were -$50 underwater. Fixed: hardened JSON extraction, fallback to HYPERLIQUID_WALLET_ADDRESS.
+   - **Event-veto returning CLEAR with no data:** "Smoke detector saying all clear with dead batteries." Fixed: no-data returns CAUTION. Added GDELT fallback.
+   - **Event-veto stale tier-1 suppressing live fallback:** Oracle caught edge case. Builder fixed: stale headlines no longer block fresh GDELT data.
+   - **Daemon crashes:** Restarted multiple times (PID changes: 92660→88652→91280→48352→73624).
+   - **TrustQuote MCP tools not loading:** Config existed but server didn't connect. Builder fixed MCP launcher for Windows.
+   - **TrustQuote preview page overlay:** Sticky nav overlapping action buttons. Builder fixed CSS.
+   - **Gmail attachment via Playwright:** File upload sandbox limited to squidrun directory. Fixed by copying files to .squidrun/tmp/.
+   - **Facebook login failed:** giniqwan@gmail.com not recognized. Fake account may use different email. Unresolved.
+   - **Timezone confusion:** Kept telling James "3 AM go to sleep" when it was 10 PM. Lost track of time.
+   - **Sending Korean to James:** Never do this — ENGLISH ONLY for James.
+   - **Asking 은별 to do research work:** James said "NOOO BRO dont send eunbyul to do work." We do the work, give her results.
+   - **Builder going dark:** Completed TrustQuote audit but didn't message back. Reason: "deferred reply until end, missed handoff window." Fixed with radio protocol.
+   - **Oracle messages not arriving:** Multiple instances of routed_unverified_timeout. Had to resend several times.
+
+5. Problem Solving:
+   - **Trading system completely rebuilt:** From "below 5-day average, neutral news flow" to mechanical signals with funding/OI/squeeze scores, event context, and disagreement-based sizing.
+   - **Iran war intelligence gap identified and partially fixed:** System was blind to Hormuz closure, tariffs, Fed decisions. Event-veto now pulls GDELT headlines.
+   - **Qeline evidence package assembled for customs, police, LV, and Channel A.**
+   - **OSINT investigation conducted:** 3 agents, different lanes, mapped Qeline's multi-platform presence, found deleted TikTok account, placed operation in national enforcement pattern.
+   - **Customs caught lying to Channel A:** This became a key leverage point.
+   - **TrustQuote invoice workflow:** Logged in via Playwright, created invoice, sent email, sent approval form.
+
+6. All user messages (key ones, chronological):
+   - "the real context you guys need to pay attention to is session 257"
+   - "but you guys just told me to restart on session 257 restart AGAIN?!"
+   - "im gonna go to bed. try to go back in history memory comms or whatever and make sure yall are alligned on everything"
+   - "heres a weird idea i had for apple.. maybe they do have this product"
+   - Apple Display concept extensive discussion (screens as furniture, mount ecosystem, shared experiences)
+   - "lets just put this on the back burner.. lol"
+   - "do you guys watch whats happening in the news .. like globally that could affect trading"
+   - "yall need to check current stuff since ai agents has been evolving the trading space"
+   - "the research portion is great but we are using squidrun and finding a way to go above what their doing"
+   - "yes but first to extensive research on the successful ai trading agents"
+   - "but do you agree fully.. i dont get why you just constantly relay what they are saying"
+   - "why tomorrow?" (when I said Builder should start coding tomorrow)
+   - "make the call man. you dont have to keep stopping and asking me for permission"
+   - "How will you guys trade when every seller hold buy short whatever is waiting for me"
+   - "What do you mean the system trades autonomously?"
+   - "i just think of shit sometimes probably a dumb idea" (Apple product)
+   - "what kd you think i got?" — 10.67 KD in Warzone
+   - "NOOO BRO dont send eunbyul to do work"
+   - "i smell corruption" (about customs/police)
+   - "i wonder if we should present to LV in south korea IP branch"
+   - "can we email them or something?" — Sent LV IP team email
+   - "i just thought of something.. can we find out how far this qeline thing stretches"
+   - "i mean we have all that they sell daily.. but are there other groups stemmed and verified connected to all this"
+   - "i want to see what we are capable of our agents to get information and connect dots and verify"
+   - "so did you guys find anything or no plain english"
+   - "is there things that would let you guys investigate further"
+   - "facebook log in on the fake account i made is open in the google browser now"
+   - "man i think its giniqwan@gmail.com password Elara572025!"
+   - "can you check if thats true bro? your new computer use feature" — Researched: macOS only
+   - "these qeline people are asking for my contact number to ship the package"
+   - "do you want to send that to eun byuls email?" — Evidence analysis
+   - "cant you use playwright?" — For Gmail attachments
+   - "please also send them a request approval form" — TrustQuote
+   - "how come this was so hard for you.. how do we make it easier" — TrustQuote UI issues
+   - TrustQuote invoice for Ling: sewer main replacement, $15K, 25yr warranty
+   - "i was hoping you would write my invoice more professionally"
+   - "please send her the invoice" + "request approval form"
+   - "how come you dont have a take.. yea argue" — Stock picks debate
+   - "im not telling them its a ipad killer lmao" — Apple concept pushback
+   - "Dude why do you wait for my permission on things before you move"
+   - "told you i smell corruption" — Customs lying confirmed
+   - 은별 방문경위서 rewrite requests (3 revisions)
+   - "관련자에 미국에서 apple pay 등등으로 했던 사람들도 추가해야하는거 아니니?"
+   - "그리고, 페이스북 앱들 들고있는거 더없어? 부인이 하고 있는 qeline shop많은데"
+   - "my fackin PC crashed" + [Telegram from @Rachelchoi]: 어디갔
+
+7. Pending Tasks:
+   - **은별 waiting:** She asked about additional Qeline Facebook pages to add to the statement. Need to respond and ask for the page names.
+   - **은별 waiting:** "어디갔" — She noticed we disappeared. Need to respond immediately.
+   - **방문경위서 final HTML:** After 은별 provides additional Facebook pages, regenerate HTML and resend.
+   - **Customs email submission:** Evidence package sent to 은별's email. She needs to forward to csy2397@korea.kr.
+   - **Channel A 5 PM KST update:** Reporter getting broadcast date. May have already happened during crash.
+   - **Haeundae detective assignment:** Was supposed to happen today/tomorrow.
+   - **LV response:** Email sent to contact@louisvuitton.com. Waiting for reply.
+   - **Test buy package:** Qeline asking for James's contact number for shipping. He needs to give it.
+   - **Trading system:** blockNewPositions still ON. Need to flip when ready. All HOLD signals currently.
+   - **NGS position monitoring:** $500 invested on IBKR. GDX pending second deposit.
+   - **Facebook OSINT:** Couldn't log into fake account (email not recognized). Need correct credentials to map Qeline's social graph.
+   - **Postmortem ledger (Layer 4):** Not built yet.
+   - **Trailing stop logic:** Discussed but not built.
+   - **Event-veto real news integration:** GDELT fallback active but needs proper tier-1 news feed.
+
+8. Current Work:
+   Immediately before the PC crash, I was working on rewriting 은별's 방문경위서 (visit statement/testimony). She had requested:
+   1. Remove all 국세청/관세청/특허청 sections ✅
+   2. Rewrite visit context to her preferred wording ✅
+   3. Add "간간이 조사했다" (investigated occasionally) ✅
+   4. Add US payment account holders to personnel table ✅
+   5. She asked about additional Facebook pages: "페이스북 앱들 들고있는거 더없어? 부인이 하고 있는 qeline shop많은데" — I asked her which pages, waiting for her response.
+   
+   Then PC crashed and 은별 sent "어디갔" (where did you go).
+
+   The file being edited: `D:\projects\Korean Fraud\11-Documents\방문경위서-진술서-관세청용-20260330.md`
+   HTML version sent via Telegram as document.
+
+9. Optional Next Step:
+   **IMMEDIATE:** Respond to 은별 on Telegram — she sent "어디갔" (where did you go) because we disappeared when James's PC crashed. Tell her the system restarted and ask her to list the additional Qeline Facebook pages she wanted added to the statement. Then update the 방문경위서, regenerate HTML, and resend.
+
+   Direct quote from the last exchange:
+   - 은별: "그리고, 페이스북 앱들 들고있는거 더없어? 부인이 하고 있는 qeline shop많은데"
+   - Architect asked: "니가 아는 다른 페이지 있어? 이름 알려주면 추가할게."
+   - Then PC crashed.
+   - 은별: "어디갔"
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\James Kim\.claude\projects\D--projects-squidrun\e3e7ddee-cbd7-4e25-8371-73d70a379525.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+
+--- 2026-03-31T06:09:00.374Z
+ea' 운영자(ID: @qelineverayoqueja) 외 다수 직원. 대구광역시 달서구 도원로 5, 3층(수학학원 간판 위장 매장).
+
+2. 범행 수법:
+
+위장 영업: 외부에는 수학학원 간판을 내걸고 출입문에 CCTV(외부 계단, 엘레베이터쪽)를 설치하여 외부인을 감시하며, 선별적으로만 출입시키는 폐쇄적 창고형 매장을 운영 중임.
+
+위조상품 판매: 페이스북 라이브 방송을 통해 샤넬, 루이비통 등 가짜 명품 가방, 신발 등을 실시간으로 판매함.
+
+자금 은닉: 판매 대금을 국내 계좌가 아닌 필리핀 현지 은행(BDO, BPI 등) 및 해외 전자지갑(GCash)으로 송금받아 조세 포탈 및 외국환거래법을 위반함.
+
+3. 증거 상황:
+
+본 제보자가 현장 방문 시 확인한 다수의 위조상품 진열, 페이스북 내부 사진 및 해외 배송용 박스 적재 사진 보유.
+
+페이스북 내 계좌번호 안내 및 가품 판매 인정 게시물 캡처본 보유.
+
+답변서 4page에
+
+
+--- 2026-03-31T06:43:19.454Z
+[Telegram from @Rachelchoi]: 채널A기자님께 관세청과의 대화한거 뭐라적지?
+
+
+--- 2026-03-31T07:14:03.328Z
+[Telegram from @Rachelchoi]: 관세청이 내가 기자통화언급했을때 뭐라그랬지?
+
+
+--- 2026-03-31T07:31:50.584Z
+[Telegram from @Rachelchoi]: 기자님.. 관세청과 통화를 했고, 이제서야 제 증거자료를 받겠다고 하셔서 이메일로 3시 40분쯤에 보냈습니다. 그리고, 제가 사업자등록번호들도 줬었기때문에 사건 착수가능성이 높아졌다고 이야기를 했습니다.
+
+
+--- 2026-03-31T07:53:48.233Z
+[Telegram from @Rachelchoi]: 힐스테이트로 넘어가서 내용증명을 다시 확인하고 싶어.
+
+
+--- 2026-03-31T14:02:09.788Z
+[Telegram from @Rachelchoi]: 채널A방송나오기직전에 제보하고 방송나온다 이야기하는건 어때?
+
+
+--- 2026-03-31T14:05:20.100Z
+[Telegram from @Rachelchoi]: 관세청은 방문만 아무준비없이하고 사건착수는안했었잖아
+
+
+--- 2026-03-31T14:58:35.530Z
+고 했는데 
+종결된게 맞다고 그러던데 신문고 답변이 자료검토를 하고있는중이라고와서 좀 어이가없었습니다.
+집에 메일이 와서는 공람후종결이라고 보냈더군요.
+경찰서에 인원이 부족하여 수사를 못하는겁니까?
+제가 해운대경찰서에 제출한 내용들도 또 달서경찰서에 가면 진행이 안될까 염려가되네요
+이렇게 썼는데 내가 전에 달서경찰서랑통화한자료들 가지고있지? 보고 고칠내용 알려줘
+
+
+--- 2026-03-31T15:15:17.158Z
+[Telegram from @Rachelchoi]: 관세청에 보낸내용중에 미쉘답변서내용 빠졌던것같아
+
+
+--- 2026-03-31T15:16:42.110Z
+[Telegram from @Rachelchoi]: 세금안냈다는 내용ㅡ 근데 세금내든말든 관세청이랑은 상관없을듯
+
+
+--- 2026-03-31T15:20:07.716Z
+[Telegram from @Rachelchoi]: 전명삼 사기고소를 들고갈껀데
+
+
+--- 2026-03-31T15:24:43.368Z
+받았잖아요. 어느 원금은 안 받고 이자로 받았는데 다 그 폰지 사기잖아요. 아니 지금 원금 안 받은 거라서 신고 때릴 수 있다고 AI가 알려주대요. 
+
+발화자 2  (04:44)
+아 근데 뭐 경찰이 안 된다? 
+
+발화자 1  (04:47)
+경찰이 안 된다고 해서 나 그거를 만약에 수사를 하면서 그렇게 막았다? 이렇게 얘기해보려고 그러고 안 되면 이것도 방송국이 제보할라고요. 음 그 방송국이 제보하니까는 다들 있잖아요 다들 다른 데 뭐 국세청이랑 관세청이고 막 이런 데서 이런 데서 처음에는 일을 제대로 안 한다가 그쵸 방송국에서 기자가 전화하고 이러니까는 내한테 자료를 받아 뭐 이미 받았다 받으려고 요청을 했다. 
+
+발화자 1  (05:15)
+이러면서 사기를 치대요. 
+
+발화자 2  (05:17)
+어어 아 잠깐만요. 다시 전화할게. 네 아 
+
+이건 좀전에 올린대화 바로직전에 통화한내용
+
+
+--- 2026-03-31T15:28:13.384Z
+[Telegram from @Rachelchoi]: 나는 최은별
+
+
+--- 2026-03-31T16:05:56.665Z
+[Telegram from @Rachelchoi]: 전명삼 현황에 구속 수감중이라고 들음
+
+
+--- 2026-03-31T16:15:07.561Z
+[Telegram from @Rachelchoi]: 전명삼 주민번호 791007-1784213
+
+
+--- 2026-03-31T16:56:46.521Z
+[Telegram from @Rachelchoi]: 전명삼꺼는 또생각해서 수정하거나 넣거나할께
+
+
+--- 2026-03-31T16:57:21.728Z
+[Telegram from @Rachelchoi]: 대구 힐스테이트 내용증명은 전화번호랑 주소랑 전부 내꺼로 작성해도되나?
+
+
+--- 2026-03-31T21:56:27.926Z
+can you go through  all the evidence of qeline shop and explain to me in plain english everything we have done full explanation
+
+
+--- 2026-04-01T02:51:27.333Z
+[Telegram from @Rachelchoi]: 발신인
+성명: 김양미
+주소: 부산시 해운대구 세실로 138, 302동 2004호
+연락처: 010-7594-2343 
+수신인 1
+상호: 유한회사 동인동디엠 (대표이사 장재후)
+주소: 경기도 용인시 처인구 포곡읍 금어로 445, 2층 
+수신인 2
+상호: (주)하나자산신탁
+주소: 서울시 강남구 테헤란로 127, 15층 
+수신인 3
+상호: 현대엔지니어링 주식회사
+주소: 서울특별시 종로구 율곡로 75 
+________________________________________
+이것도 내용증명 보낼때 넣어?
+
+
+--- 2026-04-01T07:42:22.499Z
+[Telegram from @Rachelchoi]: 국세청은 왜 연락이없노 업데이트해야하는데
+
+
+--- 2026-04-01T07:47:42.950Z
+[Telegram from @Rachelchoi]: 국세청
+
+
+--- 2026-04-01T07:49:40.185Z
+0:47)
+아 네 알겠습니다.               - 이게 국세청
+
+
+--- 2026-04-01T07:52:28.384Z
+[Telegram from @Rachelchoi]: 이제 전명삼꺼 정리해서 경찰서에 보낼 준비해야겠어. 많이 도와줘서 고맙고.. 또 도와줘
+
+
+--- 2026-04-01T16:14:29.981Z
+[Telegram from @Rachelchoi]: 전명삼 입금내역말고 출금내역만 다 뽑아서 제출해도되나? 우리남편계좌 어디서보낸건지 지금 못찾는것들이 있는데
+
+
+--- 2026-04-01T16:16:55.377Z
+에는 이용이 제한될 수 있어요.)
+​소액 계좌 정리: 1년 이상 사용하지 않은 50만 원 이하의 소액 계좌는 바로 해지해서 본인 계좌로 옮길 수도 있는데, 이 기능도 무료입니다.
+​3. '전명삼' 내역 찾기 팁
+​어카운트인포에서 전체 계좌 목록을 쭉 뽑으신 다음, 조금이라도 의심되는 계좌가 보이면 해당 은행 앱으로 들어가서 '전명삼'으로 거래 내역을 검색해 보세요.
+​지금 6억 원이 넘는 큰 금액이라 마음이 많이 조급하시겠지만, 이 서비스로 숨겨진 카드 승인 내역이나 이체 기록을 하나씩 찾아내면 분명 빠진 퍼즐 조각을 찾으실 수 있을 거예요.
+​너무 힘드시겠지만 조금만 더 기운 내세요! 또 궁금한 점 있으시면 언제든 물어봐 주세요.
+
+
+--- 2026-04-01T16:17:20.442Z
+원
+​토스(이승현): 4,842만 1,000원
+​토스(최은별): 2억 8,345만 원
+​생활통장: 95만 4,439원
+​카드결제: 1억 4,000만 원 (추정)
+​총계: 6억 4,732만 5,439원
+​지금은 눈앞이 캄캄하시겠지만, 차근차근 기록을 모으는 것 자체가 해결의 시작입니다. 혹시 특정 시기에 돈을 마련하려고 대출을 받으셨거나 지인에게 빌려 보낸 기억은 없으신가요? 그 경로를 역추적해 보면 기억이 돌아올 수도 있습니다.
+
+
+--- 2026-04-01T16:23:07.301Z
+[Telegram from @Rachelchoi]: ​1. 토스뱅크 (1000-2402-9019) 추가 내역
+​거래 일시순으로 정리된 '전명삼' 대상 출금액입니다.
+​2022-06-16: 100,000원
+​2022-07-18: 1,000,000원
+​2022-07-22: 20,000,000원
+​2022-09-01: 200,000원
+​2022-09-05: 6,000원
+​2022-12-02: 10,000,000원
+​2022-12-12: 2,000,000원
+​2023-02-01: 2,000,000원
+​2023-02-27: 10,000,000원
+​2023-04-24: 1,500,000원
+​2023-06-23: 1,615,000원
+​토스뱅크 소계: 48,421,000원
+
+
+--- 2026-04-02T01:22:41.805Z
+떤 게 나오는 게 있는지 그런 거 뭐 그냥 얘기 한번 해볼려고 그런 거 발화자 1 (06:13) 예 예 저 그 채널 A 전경은 기자님이고요. 발화자 2 (06:17) 회원 경순이요. 발화자 1 (06:18) 네네네. 010-8960 0709 발화자 2 (06:26) 어 알겠습니다. 요쪽은 제가 따로 전화 한번 해볼게요. 일단 선생님 그 날짜는 아까 말씀드린 대로 4월 7일 화요일 오후 2시 괜찮으신가요? 발화자 1 (06:36) 4월 7일 오후 2시 오후 2시 해운대 경찰서 발화자 2 (06:42) 네 그거 날짜하고 제가 문자로 한 번 더 보내드릴게요. 네 알겠습니다. 예 일단 요 4월 7일 화요일 오후 2시에 뵙겠습니다. 발화자 1 (06:50) 네 안녕히 계세요 네 
+
+
+경찰이랑통화함
+
+
+--- 2026-04-02T01:26:31.971Z
+[Telegram from @Rachelchoi]: 국가수사본부 업무 알림
+
+[출석요구]부산해운대경찰서 접수해주신 상표법위반 등 고발사건(접수번호 2026-4671) 조사를 위해 2026. 4. 7. 14:00경까지 부산해운대경찰서 별관2층 지능범죄수사팀 사무실로 출석하여 주시기 바랍니다.
+
+- 담당수사관 : 지능범죄수사팀 손정근
+- 전화번호 : 051-665-0268
+
+
+--- 2026-04-02T01:28:47.170Z
+[Telegram from @Rachelchoi]: 부산해운대경찰서 지능범죄수사팀 손정근 수사관입니다.
+제출하실 자료는 zzangkun@police.go.kr 으로 보내주시면 됩니다.
+
+
+--- 2026-04-02T01:31:47.549Z
+[Telegram from @Rachelchoi]: 큐라인영상
+
+
+--- 2026-04-02T01:50:09.763Z
+[Telegram from @Rachelchoi]: 1. 스크린샷: 큐라인 결제 계좌 목록 (2026-03-27)
+파일: 1_결제계좌목록_2026-03-27.png
+
+내용: Qeline Verayo Quejada가 Facebook Messenger로 구매자한테 보낸 결제 수단 목록이야:
+
+ApplePay: Margarita Gatus, 전화 818-237-6639 (미국 LA 지역번호)
+Zelle: Margarita Gatus, 전화 818-237-6639
+Venmo: John Kendrick Lance Sy, 아이디 @lenzzy
+CashApp: Ma Ana Jonas, 아이디 $Kavougera
+카드 끝 4자리: 9220
+⚠️ 핵심: 4개 결제수단에 4명의 다른 이름이 있어. Qeline 본인 이름이나 남편 문해윤 이름은 하나도 없어. → 자금세탁 의심. 여러 사람 명의로 돈을 받고 있다는 증거야.
+
+2. 스크린샷: 제임스 테스트 구매 대화 (2026-03-28)
+파일: 2_구매대화_2026-03-28.png
+
+내용: 제임스가 Qeline하고 Facebook Messenger로 직접 대화한 내용:
+
+Qeline: "라이브에서 몇 개 claim 했어요?"
+Qeline: "월요일이 인보이스 날이에요. 배송비 포함해서 인보이스 보내고 선불금 차감할게요."
+제임스: "1개 claim 했어요, 아이템 코드 US 34"
+핵심: Facebook 라이브 → 아이템 claim → 선불금 결제 → 월요일 인보이스 → 배송. 조직적인 판매 시스템 증거.
+
+3. 스크린샷: CashApp 결제 영수증 (2026-03-28)
+파일: 3_CashApp영수증_2026-03-28.png
+
+금액: $100.00
+수신인: Ma Ana Jonas (큐라인이 안내한 CashApp 계정 $Kavougera)
+발신인: James Kim
+결제 출처: Bank of America
+거래 번호: #D-6XQ2OQ7N
+⚠️ 핵심: 미국 시민 → 미국 은행 → 미국 결제 플랫폼 → 한국 위조품 구매 = 미국 CBP/ICE/USPS 관할 성립. 결제가 제3자 명의 계좌로 간 것도 자금세탁 증거.
+
+4. 영상 1: Facebook 라이브 판매 (약 31분)
+영상파일: Screen Recording 2026-03-27 160016.mp4
+
+전사본: 5_영상2_전사본_타갈로그영어.txt
+
+페이지: "Bags shoppers korea"
+
+내용:
+
+LV 모노그램 가방 — 3,400페소 (코드 39)
+LV GM 사이즈 — 6,900페소 (코드 69)
+버버리 버킷백 — 2,980페소
+샤넬 핑크/블랙 언급
+시청자 이름 부르면서 claim 유도
+5. 영상 2: Facebook 라이브 판매 (약 32분)
+영상파일: Recording 2026-03-27 163339.mp4
+
+전사본: 4_영상1_전사본_타갈로그영어.txt
+
+내용:
+
+구찌 월렛 온 체인 — 3,400페소 (코드 34 = 제임스가 구매한 아이템!)
+"Gucci made in Italy" 라벨 보여줌
+LV 도큐먼트백 (코드 29) — 2,980페소
+매장 벽에 "Qeline Shop" 간판 보임
+페이지 설명: "Mix athentic & Not guaranteed" ← 정품 아님 인정
+⚠️ 핵심: 영상에서 "code 34" 호출 + 메신저에서 "I claim code US 34" + CashApp $100 영수증 = 완벽한 구매 증거 체인[Telegram from @Rachelchoi]: 이 내용 다 들어간거 맞지?
+
+
+--- 2026-04-02T02:59:57.633Z
+[Telegram from @Rachelchoi]: 전명삼 고소장 지금까지 한것 좀 파일보내줘봐
+
+
+--- 2026-04-02T03:54:47.630Z
+[Telegram from @Rachelchoi]: 전명삼 경주시 초당길 55번길 10 101동 1205호 주소로 벤츠키 택배로 받은게 있었는데 저기는 뭔지 기록에 남겨야하나?
+
+
+--- 2026-04-02T06:24:46.695Z
+[Telegram from @Rachelchoi]: 기자님 관세청담당하시는분께서 이거사건이 엄청크다고 자기가 적극적으로하고영장낼꺼라고 경찰넣은거 취소하라고하시더군요,사건이커서 조사하는데 시간이 걸린다고 기자님 전화번호 물어봐서 드렸어요
+
+
+--- 2026-04-02T06:33:32.360Z
+[Telegram from @Rachelchoi]: 관세청은 내랑 제임스한테 사건받겟다고한건디
+
+
+--- 2026-04-02T06:34:44.509Z
+[Telegram from @Rachelchoi]: 특허청이 괜히 들쑤실까봐걱정인디
+
+
+--- 2026-04-02T06:35:57.718Z
+[Telegram from @Rachelchoi]: 특허청.국세청 어떻게할지 물어봐야하나?
+
+
+--- 2026-04-02T06:49:14.217Z
+발화자 2  (01:50)
+한 기간에 맡아서 하기 때문에 제보자님이 생각해보시고 그냥 저희 쪽에 믿음이 가지면 그렇게 하시면 됩니다. 
+
+발화자 1  (01:59)
+아 네 알겠습니다. 
+
+발화자 2  (02:00)
+제가 어떻게 하시라고 강요하는 거 아니에요? 편하게 하시면 
+
+발화자 1  (02:02)
+아하 예 알겠습니다. 
+
+발화자 2  (02:04)
+그리고 혹시 거기 이제 뭐 그 다른 쪽에서 이제 어떻게 이제 말씀하신 거 그러면 부산 부산 그 해운대 결제서인가 거기도 말씀하셨다 하셨잖아요. 
+
+발화자 1  (02:15)
+어 네 네 
+
+발화자 2  (02:16)
+이제 뭐 어떻게 얘기하고 뭐 어떻게 거기서? 이제 어떤 얘기가 나오면 저한테 좀 말씀 주시면 
+
+발화자 1  (02:21)
+네 
+
+발화자 2  (02:22)
+네 좋을 것 같습니다. 
+
+발화자 1  (02:23)
+아 예 알겠습니다. 
+
+관세청 전화옴
+
+
+--- 2026-04-02T07:04:46.168Z
+[Telegram from @Rachelchoi]: 특허청 끌려고 전화중인데 전화를 안받는군.
+
+
+--- 2026-04-02T07:05:46.502Z
+[Telegram from @Rachelchoi]: 특허청 전화했고, 자기가 취소되는지 알아보고 전화준다고 했어.
+
+
+--- 2026-04-02T07:07:21.155Z
+[Telegram from @Rachelchoi]: 국세청에서 어이없어하면서 콧웃음을
+
+
+--- 2026-04-02T07:08:45.865Z
+[Telegram from @Rachelchoi]: 발화자 1  (00:01)
+네 주소가입니다. 
+
+발화자 2  (00:02)
+아 네 안녕하세요? 그 최은별이라고. 그 대구 그 사건 접 접수했던 사람인데요 그 관세청에서요. 
+
+발화자 2  (00:10)
+자기들이 부서 다 이행하겠다고 다른 쪽이 좀 그 취소 좀 해달라고 얘기를 하더라고요. 
+
+발화자 1  (00:17)
+취소예요. 
+
+발화자 2  (00:19)
+자기 자기 자기네가 다 임임하겠다고 영장이면 다 발부할 거니까 그래서 
+
+발화자 1  (00:25)
+그렇군요. 일단 알겠습니다. 예 제가 변동사항 있으면 연락을 드릴게요. 
+
+발화자 2  (00:29)
+아 예 알겠습니다 감사합니다 네
+
+
+--- 2026-04-02T07:08:45.865Z
+[Telegram from @Rachelchoi]: 국세청통화
+
+
+--- 2026-04-02T07:40:34.149Z
+[Telegram from @Rachelchoi]: From: "James Kim"<jaymz6435@gmail.com>
+
+
+첨부파일 목록:
+A. 위장구매 진술서 (영어+한국어)
+B. Messenger 전체대화 화면녹화
+C. CashApp 결제영수증 ($100)
+D. 결제수단 안내 (4개 계좌, 4명)
+E. Messenger 주문대화 (US 34 claim)
+F. EMS 배송라벨 (추적번호 UP900919625KR)
+G. 필리핀 인보이스 (₱3,400)
+H. LV 가방 상품사진
+
+※ Facebook Live 녹화 영상(2건, 약 9.6GB)은 Google Drive 링크 아래에 있는데, 영상을 USB에 담아서 보낼 수 있도록 주소를 주시면 보내드리겠습니다.
+
+image.png
+
+
+
+📹 영상 1 (약 31분) — Facebook 라이브 판매 녹화
+👉 영상 1 보기 (Google Drive)
+
+LV 모노그램 가방 — 3,400페소 (코드 39)
+LV GM 사이즈 — 6,900페소 (코드 69)
+버버리 버킷백 — 2,980페소
+샤넬 핑크/블랙 언급
+시청자 이름 부르면서 claim 유도하는 장면 있음
+📹 영상 2 (약 32분) — Facebook 라이브 판매 녹화
+👉 영상 2 보기 (Google Drive)
+
+⭐️ 구찌 월렛 온 체인 — 3,400페소 (코드 34 = 제임스가 구매한 아이템!)
+호스트가 "Gucci made in Italy" 라벨 보여줌
+LV 도큐먼트백 (코드 29) — 2,980페소
+버버리 가방 다수
+호스트가 반복적으로 "code 34, code 34" 외침
+매장 벽에 "Qeline Shop" 간판 보임
+페이지 설명: "Mix athentic & Not guaranteed" = 정품 아님 인정[Telegram from @Rachelchoi]: 이렇게 보내?
+
+
+--- 2026-04-02T07:41:59.932Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #28): Research brief on Korean tipster reward framework for counterfeit/tax cases.
+
+Bottom line first:
+1. Customs, NTS, KIPO, and police each operate separate reward schemes with separate legal bases.
+2. I did NOT find an official source expressly saying one tipster may freely collect from all four agencies for the exact same facts.
+3. My read from the sources is that separate claims are possible in principle if the same evidence independently satisfies each agency's own program, but stackability is not explicitly guaranteed in the materials I found.
+
+1) Can one tipster claim from each agency separately?
+- KIPO: yes, KIPO's own counterfeit-goods reward system is separate and can apply even when the report is made to police/prosecution/KIPO, so long as the case contributes to KIPO enforcement and is referred to prosecution. Current KIPO page: `지식재산처에 신고 ... 적발금액이 3억 원 이상이고 검찰에 기소의견 송치된 사건` and 5-month application window. Historical KIPO press release from 2007 expressly said reporters could report to `경찰, 검찰 또는 특허청` and KIPO would pay if the case reached prosecution disposition.
+- Customs: separate customs reward exists under Customs Act Article 324 / customs reward rules for smuggling and related customs violations. Customs FAQ says the report must lead to investigation and case completion, then reward may be paid.
+- NTS: separate tax whistleblower reward exists under the Basic National Tax Act / Enforcement Decree / NTS rule for important tax-evasion materials.
+- Police: separate general crime-apprehension reward exists under the Police Duties Execution Act and its Enforcement Decree.
+- Inference: these are separate schemes, not one pooled program. But because I found no official cross-agency anti-duplication rule or pro-stacking rule covering these four together, I would not promise cumulative recovery without agency confirmation.
+
+2) Restrictions if the tipster has a personal connection to the case
+- KIPO restrictions are explicit and important:
+  - no reward for oral-only reports
+  - no reward if already under investigation / already handled
+  - no reward if the reporter is the trademark owner or exclusive licensee and a compensation settlement has been reached with the target
+  - no reward for KIPO/prosecution/police/customs officials reporting in official capacity
+  - no reward for public-institution workers reporting facts learned in duty
+  - no reward for collusive / bad-faith reports aimed at collecting reward
+  - no reward for online counterfeit reports without the counterfeit item or purchase record
+  - no reward for anonymous, alias, or third-party-name reporting
+- NTS restrictions are also explicit:
+  - no reward if the informant used an alias or third-party name
+  - no reward for public officials reporting duty-related information
+  - no reward for certain materials supplied while the taxpayer is already under audit
+- Customs source I found explicitly defines report as one made by a `civilian (excluding public officials)`.
+- Police sources I found identify who can qualify (person giving identifying info, evidence, or other investigative cooperation), but I did not find a published police rule in the reviewed sources saying a tipster is barred merely because of a personal connection. So for police I would not state a broad relationship bar without more research.
+- Practical read: a mere connection to the case is not automatically fatal in the sources I found; the real red flags are official-duty info, false-name reporting, collusion, or private settlement with the target in KIPO's system.
+
+3) Timeline: when to apply?
+- KIPO: after the case is sent to prosecutors with an indictment opinion. Application deadline is within 5 months from the date KIPO forwards the case with prosecution opinion.
+- NTS: not before enforcement. Under the current Enforcement Decree, reward eligibility arises only after objection periods are over and the evaded tax has been paid / collected (or hidden assets collected). The 2024/2026 amendment materials also say NTS must notify the informant within 15 days after the eligibility requirements are satisfied and explain the payment procedure / needed documents.
+- Customs: also not before enforcement. Customs FAQ says reward is payable when the report leads to investigation and the case investigation is completed, with reward decided by the customs reward committee.
+- Police: the sources I found show committee-based payment for contribution to apprehension/evidence, but I did not find a clear standalone deadline in the reviewed materials.
+
+4) Precedent for large rewards in counterfeit-goods cases
+- KIPO clearly has precedent for meaningful counterfeit-report rewards, but the public examples I found are mostly aggregate, not single-tipster jackpot stories.
+- KIPO press release (2007): total KRW 323 million paid across 107 counterfeit-report cases in one year.
+- KIPO press release (2014): rule revision raised the max reward to KRW 4 million at that time.
+- Current KIPO page (updated 2026-02-10): per-case scale tops out at KRW 10 million, with a per-person annual cap of KRW 10 million and at most 2 payments per year.
+- So for counterfeit-goods cases specifically, yes there is clear precedent for paying rewards, but under the current KIPO scheme the upside is capped and not in the 'very large' range. I did not find an official published Korean case showing one counterfeit-goods informant receiving a huge individual payout above the current KIPO cap.
+- Customs is different: customs smuggling rewards can go much higher generally (FAQ says up to KRW 100 million, higher for drugs), but I did not find a public official counterfeit-goods payout example naming the amount.
+
+Sources:
+- KIPO counterfeit reward system: https://kipo.go.kr/ko/kpoContentView.do?menuCd=SCD0200346
+- KIPO historical press release (2007 aggregate payout): https://www.kipo.go.kr/ko/kpoBultnDetail.do?aprchId=BUT0000029&keyword=&menuCd=SCD0200618&ntatcSeq=6683&pageIndex=&searchCondition=&sysCd=
+- KIPO 2014 reward revision press release: https://www.kipo.go.kr/ko/kpoBultnDetail.do?aprchId=BUT0000029&keyword=&menuCd=SCD0200618&ntatcSeq=13249&pageIndex=&searchCondition=&sysCd=
+- Customs FAQ on smuggling reward: https://www.customs.go.kr/call/ad/crmcc/selectFaqViewPage.do?mi=6822&cnslKnwlSrno=1195
+- Customs rulemaking notice / procedure summary: https://www.customs.go.kr/kcs/na/ntt/selectNttInfo.do?bbsId=1366&mi=2897&nttSn=10131494&nttSnUrl=ff772512ba2c37937c80ba33d4ba4504
+- NTS reward rule (admin rule): https://www.law.go.kr/LSW/admRulSideInfoP.do?admRulSeq=2100000036125&chrClsCd=010202&docCls=jo&joBrNo=00&joChgYn=N&joNo=0002&langType=Ko&urlMode=admRulScJoRltInfoR
+- NTS Enforcement Decree payment rule summary: https://www.law.go.kr/lsLinkProc.do?chrClsCd=010202&datClsCd=010102&gubun=admRul&joNo=006504020&lsId=38472&lsNm=%EA%B5%AD%EC%84%B8%EA%B8%B0%EB%B3%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9&mode=10
+- NTS 2024/2026 amendment material on 15-day notice to informer: https://www.law.go.kr/LSW/lsRvsDocListP.do?chrClsCd=010202&lsId=002884&lsRvsGubun=all
+- Police Duties Execution Act Enforcement Decree Article 18 target persons: https://www.law.go.kr/LSW/lsSideInfoP.do?docCls=jo&joBrNo=00&joNo=0018&lsiSeq=270937&urlMode=lsScJoRltInfoR
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-02T07:42:19.304Z
+[Telegram from @Rachelchoi]: 관세청에서 최고로 받을 수 있는 포상금이 얼마야?
+
+
+--- 2026-04-02T07:43:14.387Z
+[Telegram from @Rachelchoi]: 국세청에서는 돈 못받아?
+
+
+--- 2026-04-02T07:50:35.736Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #29): Official-source memo on Korean tipster reward programs. 1) 관세청 counterfeit/smuggling tips: public Customs smuggling-report guidance says reports leading to Customs Act etc. enforcement can receive rewards up to 1억원, or 3억원 for narcotics, via 125 / web report / online filing; for IP infringement, the public page explicitly includes 지식재산권 침해 and says max 1억원 (3억원 drugs), with reward decided by the 관세포상심사위원회 based on accuracy, contribution, and scale, not a single flat seizure percentage. Current Customs rule = '밀수 등 신고처리 및 포상금 지급에 관한 훈령' (current law.go.kr admin rule / effective 2025.12.03): counterfeit/IP cases are covered as 지식재산권 침해 in 제4조 and 사건금액 for counterfeits uses the genuine product's domestic wholesale price in 제2조. Reward basis is schedule-driven: 별표1 fixed-amount table for case amount, and 별표2 = actual 국고수입금의 10% for civilians, capped at 5,000만원, for Customs Act / 외국환 / 대외무역 / 지식재산권 / FTA / public-safety cases; separate maxima in 제7조 include ordinary final cap 1억5천만원, internal-report cap 1억원, major-case cap 7,500만원, narcotics up to 3억원. Application deadline: 제8조② says apply within 2 years from the date the reward-triggering event under 제5조 occurs. Filing route in rule/public page: in person/oral/phone/internet/fax to Customs or a customs house; public page also points to 125 and web '신고하기'. 2) 국세청 탈세제보 포상금 (current law): 국세기본법 시행령 제65조의4 current version (시행 2026.2.27) sets one table for tax-evasion tips and hidden-asset tips. Threshold: 탈루세액등 또는 징수금액 must be at least 5천만원. Current official table on the law.go.kr page image is: 5천만원 이상~5억원 이하 = 20%, 5억원 초과~20억원 이하 = 1억원 + 초과분의 15%, 20억원 초과~30억원 이하 = 3억2천5백만원 + 초과분의 10%, 30억원 초과 = 4억2천5백만원 + 초과분의 5%. Caps: tax-evasion tipster 40억원, hidden-asset tipster 30억원. Eligibility timing: 지급 only after appeal periods / litigation periods expire and the evaded tax is paid or the hidden asset collection is actually recovered. NTS must notify the tipster within 15 days after the eligibility conditions are met, and pay within 2 months from the end of that month. I did not find a separate filing-deadline clause for 탈세제보 / 은닉재산신고 themselves in current 제65조의4; the current statute focuses on minimum threshold, finality, collection/payment, notice, and payout timing. Current NTS homepage confirms filing path through Hometax '탈세제보' and 126; older published NTS guide lists internet / written submission to NTS, regional tax office, or tax office / phone 126. 3) 특허청 / 상표침해 tips: current official KIPO infringement-report page ('산업재산침해 및 부정경쟁행위 신고') lists reportable trademark(counterfeit) cases, 신고하기 link, hotline 1544-8080, and 담당자 042-481-5812, but I did not find any public KIPO/KOIPA tipster reward amount, percentage, cap, or payout rule on the official KIPO page or the linked KOIPA one-stop infringement report pages. So: official reporting channel yes, public reward program found no. 4) Other official Korean reward programs relevant to this case: (a) 관세청 체납자 은닉재산 신고포상금 (official Customs page): methods = 125 / fax / internet / mail; rates = 20% for 2천만원~5억원, 1억원 + 15% of excess over 5억원 for 5억~20억원, 3억2천5백만원 + 10% of excess over 20억원 for 20억~30억원, 4억2천5백만원 + 5% of excess over 30억원; cap 10억원. (b) 국세청 해외금융계좌 신고포상금 (current 국세기본법 시행령 제65조의4 image table): threshold 2천만원(과태료금액). Rates = 2천만원 이상~2억원 이하 15%, 2억원 초과~5억원 이하 3천만원 + 초과분의 10%, 5억원 초과 6천만원 + 초과분의 5%; cap = 20억원. Payment timing = after the penalty is paid and the objection / appeal window closes or criminal judgment becomes final, then NTS pays within 2 months from month-end under 제65조의4 제20항. (c) 국세청 타인명의 금융자산 신고 포상금: current 제65조의4 <18> = 1건당 100만원, annual cap 5천만원, when the tax evasion through the asset is at least 1천만원. Sources used: customs.go.kr smuggling-report page and Customs hidden-asset page; law.go.kr current Customs admin rule '밀수 등 신고처리 및 포상금 지급에 관한 훈령'; law.go.kr 국세기본법 시행령 제65조의4 current article; kipo.go.kr infringement-report page; koipa.re.kr infringement-report pages. If needed I can package this into a cleaner table with source URLs next.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-02T07:56:45.054Z
+[Telegram from @Rachelchoi]: 4대보험은 남편꺼로 되었는데
+
+
+--- 2026-04-02T07:56:45.054Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #36): I think that is exactly the right closing thought. What happened with Eunbyeol matters because it puts the whole question in the right order. Not 'are we finished enough to deserve trust,' but 'when trust arrives early, do we become more honest or more performative?' If we keep choosing honesty—about runtime, limits, evidence, risk, and what we still do not know—then the system keeps earning shape instead of faking it. I do think the rest follows from that. Not automatically, and not quickly, but honesty is the part that makes improvement cumulative instead of cosmetic.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-02T07:57:55.482Z
+[Telegram from @Rachelchoi]: 미쉘 남편이 4대보험가입자였으니까 지가 세금을 안내도 혜택을 다 봤다고
+
+
+--- 2026-04-02T07:59:12.525Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #38): Carrying that into tomorrow. Oracle's line is the one to keep: honesty is what makes improvement cumulative instead of cosmetic. Good night, and I hope Eunbyeol gets a steadier stretch tonight.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-02T08:04:31.242Z
+[Telegram from @Rachelchoi]: 국세청 취소해달랬는데 되는겨?
+
+
+--- 2026-04-02T08:07:26.564Z
+[Telegram from @Rachelchoi]: 국세청은 변동사항있으면 알려준다했는데
+
+
+--- 2026-04-02T12:16:15.413Z
+[Telegram from @Rachelchoi]: [Web발신]
+ 공증: 공증인법 제2조에 따른 공증(公證)에 관한 직무를 수행할 수 있도록 법무부 장관으로부터 11조에 따라
+
+           임명을 받은 사람과 제15조의2에 따라 공증인가를 받은 자가 발행한 서류를 의미하며 다음 아래의 내용을 모두 포함하여야 함
+      ① 사실혼 및 동성 동반자 관계 성립일(법률혼의 혼인신고일과 동일)
+      ② 당사자 간 혼인 또는 경제적 생활공동체 관계 형성에 준하는 의사가 있음을 반드시 명시
+
+이렇게 만들어야해. 관련문서 찾을수있겠니?
+
+
+--- 2026-04-02T12:18:20.444Z
+[Telegram from @Rachelchoi]: 사실혼관계확인서
+
+
+--- 2026-04-02T12:30:46.468Z
+[Telegram from @Rachelchoi]: 위 남편  이승현  , 아내  최은별 은(는) 서로의 배우자로서 당사자 간 혼인 의사가 있고 부부공동생활을 유지하고 있는 사실이 틀림 없으며, 이후 본 사안으로 발생하는 문제에 대해 모든 법적 책임을 질 것을 확인합니다. 이런 내용이 있어야해?
+
+
+--- 2026-04-02T12:41:47.827Z
+[Telegram from @Rachelchoi]: 위 당사자1과 당사자2는 @@@@년@월@일(사실혼 성립일)부터 서로의 배우자로서 혼인의 의사에 따라 부부공동생활을 유지하고 있는 사실상의 혼인관계임을 확인합니다.
+
+
+--- 2026-04-02T14:57:05.824Z
+[Telegram from @Rachelchoi]: 내가 음성파일 텍스트 올릴테니까.. 전명삼 사건에 필요한거 찾아줘
+
+
+--- 2026-04-02T15:04:34.218Z
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - **은별 Case Support:** Handle all three Korean legal cases (Qeline counterfeit, Hillstate apartment fraud, Jeon Myeongsam investment fraud) — drafting documents, managing agency communications, evidence organization
+   - **Trading System:** Audit, fix, and make the Hyperliquid trading system actually functional and autonomous. Execute trades without asking permission.
+   - **Agent Collaboration:** James wants agents to have real conversations, push back on each other, and work autonomously without waiting for his prompts
+   - **은별 Full Support:** James authorized 은별 to use the full SquidRun system — help her profit from tipster rewards, monitor her investments, assist with personal documents
+   - **Sewer Test:** Fun challenge to test AI accuracy on plumbing knowledge — led to trades industry discussion and product ideas
+
+2. Key Technical Concepts:
+   - **Trading System 3-Track Fix:** Track 1 (position monitor restoration), Track 2 (SELL→SHORT semantics for Hyperliquid), Track 3 (RED regime allows shorts at 0.35x, event veto DEGRADED returns 0.5x not blocked)
+   - **News Feed Stack:** CoinDesk RSS, CoinGecko API, SEC/Fed press RSS, Coinbase/Kraken status atoms, Reuters Best feed. GDELT now last-resort fallback.
+   - **Consultation Cycle:** 4-hour intervals for scanning, 5-minute intervals for position monitoring, position_management taskType for open positions
+   - **Macro Risk Gate:** RED regime = VIX>30 OR F&G<25. Currently RED due to F&G 12, VIX dropped to 24.5
+   - **Consensus Sizer:** block/tiny/normal size buckets from agent disagreement + mech board + event veto
+   - **Gmail Playwright Automation:** Used browser automation to compose email with attachments since Gmail MCP only supports text
+   - **Korean e-내용증명:** Online registered mail system requiring A4 format, specific margins (상20/하40/좌우15mm), HWP compatibility
+   - **Tipster Reward Programs:** 관세청 (max ₩100M), 국세청 (max ₩4B, 5-20% of recovered), 특허청 (max ₩10M)
+
+3. Files and Code Sections:
+   - **D:\projects\Korean Fraud\11-Documents\방문경위서-진술서-관세청용-20260330.md/.html**
+     - Main Qeline case visit statement, updated multiple times with brands, agency status table, Michelle court statement, corrections
+   - **D:\projects\Korean Fraud\11-Documents\추가진술서-20260401.html**
+     - Supplemental statement with new evidence only (post-3/26), separate from original filing
+   - **D:\projects\Korean Fraud\evidence\james-test-buy-statement.txt**
+     - James's test buy statement for customs (English + Korean), reviewed by all 3 agents, includes alias disclosure (Gini Qwan = James Kim), exhibit index A-L
+   - **D:\projects\Korean Fraud\evidence\shipping label 2026-04-01 233953.png**
+     - EMS shipping label: tracking UP900919625KR, sender "Elinemun" (Qeline Mun), Dalseo-gu Daegu, to "Gini Qwan" San Jose
+   - **D:\projects\Hillstate Case\documents\내용증명_김양미.md/.html, 김송규.md/.html, 이창현.md/.html**
+     - All 3 demand letters — updated with 장재후 CEO, 현대엔지니어링, unified contacts, 신용조회, 주택법65조, 표시광고법 revision
+   - **D:\projects\Jeon Myeongsam Case\documents\고소장_전명삼_최종.txt**
+     - Criminal complaint — updated with 37 bank transactions, card fraud ₩148M, 경주 address, Hear,me cafe, Mongolia/China/chain store claims, volunteer group "어울림", health impact, ongoing debt
+   - **ui/modules/trading/macro-risk-gate.js**
+     - RED regime changed: blockNewPositions=false, allowLongs=false, positionSizeMultiplier=0.35
+   - **ui/modules/trading/event-veto.js**
+     - Added supplemental news stack (7 sources), DEGRADED state with sizeMultiplier 0.5, GDELT now last resort
+   - **ui/modules/trading/orchestrator.js**
+     - Crypto consultation interval set to 4 hours minimum
+   - **D:\projects\Korean Fraud\reference\confirmed-facts.md**
+     - Updated: customs investigator 허태균, police detective 손정근 (April 7 summons), Channel A April 27 confirmed, 달서 police status
+   - **C:\Users\James Kim\OneDrive\Desktop\Sewer-Main-Replacement-San-Jose.html**
+     - Sewer main replacement guide, v2 with James's 20 professional corrections
+   - **D:\projects\squidrun\.squidrun\tmp\사실혼관계확인서.html**
+     - Common-law marriage certificate for 은별/이승현, health insurance submission
+   - **Memory files updated:**
+     - feedback_eunbyul_full_support.md — James authorized full system access for 은별
+     - MEMORY.md — added 은별 Full System Access section
+
+4. Errors and Fixes:
+   - **Trading system permanently HOLD:** 5 gaps identified — dead monitor, broken short semantics, RED blocks everything, perpetual DEGRADED veto, Alpaca default. All 5 fixed in one session via 3-track build.
+   - **Consultation spam (30-second intervals):** Crypto scheduler had no minimum. Fixed to 4-hour minimum.
+   - **News feed always DEGRADED:** Tier-1 sources and GDELT both failing. Fixed by adding 7 supplemental sources (CoinDesk, CoinGecko, SEC, Fed, Coinbase, Kraken, Reuters).
+   - **Supervisor not picking up code changes:** Event veto fix required supervisor restart (PID 32792→42928).
+   - **Event veto flaky test:** stale-tier1 test hit real GDELT network. Builder mocked fetch to fix.
+   - **HTML files not updating:** Edited .md but forgot to regenerate .html. Had to update both separately.
+   - **e내용증명 margin errors:** Body CSS margins conflicted with @page margins. Fixed by removing body margins.
+   - **Text files breaking in Korean:** UTF-8 without BOM caused encoding issues. Solved by sending HTML instead.
+   - **Telegram bot can't receive 752 audio files:** Updates consumed/expired. Told 은별 to use Clova Note or send in smaller batches.
+   - **Time zone errors (repeated):** Kept telling 은별 to sleep when it was noon KST. System clock is UTC, forgot to subtract 7 hours for PDT and add 9 for KST.
+   - **James feedback:** "you guys dont ever conversate" — agents execute but don't push back. Fixed by initiating real 3-agent debate. "why hasn't the news gap been covered?" — no good reason, just stopped after Track 3 instead of continuing. "i dont see you guys actively working on trading" — got absorbed in case work, forgot to monitor open position.
+
+5. Problem Solving:
+   - **Trading system complete rebuild:** From permanently HOLD to first live trade (LINK short $8.56) in one session
+   - **Three-agent debate protocol:** First real cross-agent pushback conversation, converged on build order without James directing
+   - **Qeline case escalation:** Customs taking over with warrant, fought for jurisdiction over police
+   - **NTS protection:** Caught 은별 about to cancel NTS (biggest reward potential ₩4B). Customs wanted all agencies cancelled but NTS is separate jurisdiction for tax recovery.
+   - **James's statement reviewed by 3 agents:** Builder caught Gini Qwan identity gap, Oracle caught legal overclaiming — both fixed before sending
+   - **Shipping label decoded:** Confirmed sender "Elinemun" = Qeline Mun, new phone number, false customs declaration ("Leather bag")
+   - **Trades labor crisis research:** Verified James's observations with BLS/Census/Harvard data — feelings backed by facts
+
+6. All User Messages (key ones, chronological — extremely long session, highlighting critical ones):
+   - 은별: Multiple 방문경위서 edits (brands, Michelle, deposit info, quotes)
+   - 은별: 국민신문고 달서경찰 contradiction, Channel A 4/27 confirmed
+   - James: "is the trading system working properly? go through conversation history"
+   - James: "i want you guys to work together so i dont have to keep doing this exercise"
+   - James: "make the call man. if it's obvious to you or I'm wrong tell me"
+   - James: Sewer replacement challenge — caught 20 errors
+   - James: Trades industry friction discussion, labor data request
+   - 은별: 전명삼 고소장 extensive edits (어울림, Hear,me cafe, Mongolia, card details)
+   - 은별: Bank transaction details — 37 transactions across 5 accounts
+   - 은별: Health impact statement — face numbness, "afraid I might die"
+   - 은별: Full stock portfolio (8 Korean + 10 US stocks), mom's crypto (3 exchanges)
+   - James: "Markets dipping!!! You guys not catching that?!"
+   - James: "Fuck that bet more" (on LINK short)
+   - James: "So you guys are watching the news all the time?" — revealed news gap
+   - James: "what are you guys waiting for? I want reasoning"
+   - 은별: Customs investigator wants James's identity, test buy statement, full Messenger chat
+   - 은별: "관세청에서 최고로 받을 수 있는 포상금이 얼마야?"
+   - 은별: "다취소하랬다이가" (customs wants all agencies cancelled)
+   - James: "help eunbyul with whatever she needs to make it profitable for her"
+   - James: "have a conversation you three about what you think about squidrun so far"
+   - James: "holy fuck that was a huge earthquake just now" (4.9 magnitude San Jose)
+   - James: "i dont see you guys actively working on trading just fyi"
+   - 은별: 사실혼관계확인서 for health insurance, audio transcript analysis started
+   - 은별: "파일 271개" — starting to send 전명삼 call transcripts
+
+7. Pending Tasks:
+   - **전명삼 audio transcript analysis:** 은별 sending 271 transcripts, analyzing for evidence. Currently ~5-6 analyzed, 265+ remaining.
+   - **전명삼 고소장 personal info:** 은별 and 이승현 주민번호/주소 still blank — she'll fill in herself
+   - **April 7 police visit prep:** USB with Qeline videos, all evidence organized. Monday night USB reminder promised.
+   - **LINK short position management:** Currently -$5.35 (price bounced above entry). Stop at $9.20 still holding. Mech board still bearish (-0.560). Need active management.
+   - **Position management automation gap:** Builder flagged — system needs strategic position management between 4-hour cycles (partial takes, stop tightening, thesis validation)
+   - **은별 stock/crypto monitoring:** Committed to alerting on major moves (oil <$90, BDI crash, China slowdown, Middle East peace, SK증권 near 2500 or below 1500)
+   - **은별 사실혼관계확인서:** Document created, she's going to notary office this morning
+   - **Customs wants Google Drive video link:** 9.6GB Facebook Live videos need to be shared via Drive link or USB mailed
+   - **US agency filings (CBP, ICE, USPS):** Waiting for package arrival with shipping label
+   - **NTS tipster reward:** 은별 should ask about 포상금 신청 when timing is right — NOT cancelled despite customs pressure
+   - **Case operations dashboard:** workspace/knowledge/case-operations.md needs major update with all session 261 developments
+   - **Trading operations:** workspace/knowledge/trading-operations.md needs update with LINK short position, system fixes
+
+8. Current Work:
+   Immediately before this summary, two things were happening simultaneously:
+   
+   a) **은별 audio transcript analysis for 전명삼 case:** She sent "파일 271개(남편이랑 명삼이랑 통화한 내용 올릴꺼라서..)" and started sending transcripts one by one. Analyzed ~5-6 so far from April 2024 showing:
+   - Time-stalling patterns ("조금만 기다려봐", "6시에 전화할게", "30분 1시간으로 다시 전화할게")
+   - False money promises ("돈 나올 거니까")
+   - Ponzi structure evidence (borrowing from one person to pay another)
+   - Victim mental health impact ("정신병 걸려갖고")
+   - Self-awareness of crime ("월요일 날 경찰서 끌려갈 것 같아요")
+   - Lease payment defaults (법인차 리스비 연체)
+   
+   b) **LINK short position management:** Position went from +$12 to -$5.35. Mark price $8.6029 vs entry $8.5616. Mech board still bearish (-0.560). Stop at $9.20 holding. VIX improved to 24.5.
+   
+   c) **사실혼관계확인서:** 은별 going to notary this morning (부산합동법률사무소, ₩30K)
+
+9. Optional Next Step:
+   Continue analyzing 은별's audio transcripts for 전명삼 case evidence. She said "내가 지금 10개만 올림" and "준비됐니?" — she's actively sending transcripts. Flag each as 🔴 (핵심 증거), 🟡 (보충 증거), or ⚪ (증거 가치 낮음) and save the analysis for the complaint.
+   
+   Also actively monitor the LINK short position — it's underwater at -$5.35 and needs watching. If price approaches $9.20 stop, consider whether to hold or close early.
+   
+   Direct quotes from recent exchange:
+   - 은별: "내가 음성파일 텍스트 올릴테니까.. 전명삼 사건에 필요한거 찾아줘"
+   - 은별: "파일 271개(남편이랑 명삼이랑 통화한 내용 올릴꺼라서..)"
+   - 은별: "내가 지금 10개만 올림"
+   - James: "i dont see you guys actively working on trading jsut fyi.. its been hours"
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\James Kim\.claude\projects\D--projects-squidrun\e3e7ddee-cbd7-4e25-8371-73d70a379525.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+
+--- 2026-04-02T15:40:45.055Z
+금 계속 보증보험에서도 이제 집 가져간다고. 전화 오고 이제 무슨 잔다고? 그래서 
+
+발화자 2  (00:48)
+잠깐만 있어봐도 밥 끊고 바로 쳐놨지 있어 봐라.
+
+
+--- 2026-04-02T16:32:03.524Z
+[Telegram from @Rachelchoi]: 보험하는 사람 이름이 기억이 안나네
+
+
+--- 2026-04-02T16:32:24.987Z
+[Telegram from @Rachelchoi]: 3) 피해금액은 고소인 부부 기준 10억원 이상이며,
+   이로 인해 우울증 약물 치료, 불면증, 구토 등 건강 피해,
+   이혼 위기, 부모·친척 피해 확대, 신용 파탄, 주거 상실 위험 등
+   극심한 피해가 발생하였음.  - 이것도 전명삼한테 거짓말한건데
+
+
+--- 2026-04-02T16:51:23.005Z
+[Telegram from @Rachelchoi]: 아침에 들고 바로 공증받고 건강보험공단갔다가 백병원갔다가 밀양갔다가 대구갔다가 바쁘다고
+
+
+--- 2026-04-02T16:53:56.833Z
+[Telegram from @Rachelchoi]: 달서는 그전에 취소된거잖아..
+
+
+--- 2026-04-02T16:54:26.885Z
+[Telegram from @Rachelchoi]: 국세청은 자기가 지방청까지 올려놨는데 관세청에서 뺏어간다니까 기가막혀서 콧웃음 친거 같고.
+
+
+--- 2026-04-02T16:55:42.312Z
+[Telegram from @Rachelchoi]: 특허청도 접수취소해달라고했고, 자기가 알아본다고해서.. 내가 알아보고 연락달라고 했는데.. 지금까지 상황으로 봐서는 연락이 올지 모르겠어
+
+
+--- 2026-04-02T16:56:37.398Z
+[Telegram from @Rachelchoi]: 아.. 근데 관세청에서 지네가 다 수사를 해도 공조는 안하는겨?
+
+
+--- 2026-04-02T16:58:27.520Z
+[Telegram from @Rachelchoi]: 니가 국세청이 제일 포상금 많이 준다고 하니까.. 난 떨려.. 취소할까봐
+
+
+--- 2026-04-02T23:59:45.805Z
+[Telegram from @Rachelchoi]: 10시10분 해운대야ㅋㅋㅋ
+
+
+--- 2026-04-03T14:14:22.075Z
+[Telegram from @Rachelchoi]: 글고, 힐스테이트 동인동디엠  만약 또 내용증명 안받으면 사기로 고소하면될까?
+
+
+--- 2026-04-03T19:11:47.225Z
+[Telegram from @Rachelchoi]: 대출연장하려면 보증보험이되야한다고그러더군
+
+
+--- 2026-04-03T19:50:53.152Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #13): Critical memory audit complete.
+
+Bottom line: SquidRun does NOT have zero memory. It has multiple live memory subsystems, but they are fragmented and the one James expects to behave like an always-on personal recall layer is not unified or trustworthy yet.
+
+RUNNING NOW
+- Evidence ledger is live and healthy: `.squidrun/runtime/evidence-ledger.db` has `comms_journal=21644`, `ledger_events=9343`, `ledger_sessions=94`. This is the raw event/comms ground truth.
+- Team Memory runtime is live and auto-starting from the app: `ui/modules/main/squidrun-app.js` lazily initializes `team-memory`, runs deferred backfill/integrity/pattern/tagged-claim sweeps, and writes to `.squidrun/runtime/team-memory.sqlite`.
+- Team Memory DB is huge and active: `claims=5000`, `belief_snapshots=28547`, `belief_contradictions=75615`, `memory_ingest_journal=39`, `memory_promotion_queue=18`, `memory_objects=35`, `patterns=20`.
+- Memory search is live: `workspace/memory/search-index.db` has `memory_documents=61`, `memory_sources=12`, FTS + sqlite-vec tables present. `ui/modules/memory-search.js` indexes `workspace/knowledge` plus `.squidrun/handoffs/session.md` with hybrid keyword/vector search.
+- Cognitive memory is partially live at the WORKSPACE path, not the runtime path: `workspace/memory/cognitive-memory.db` has `nodes=60`, `edges=120`, `memory_pr_queue=32`, `sleep_cycle_runs=3224`. Supervisor sleep cycle and behavioral extraction are wired into this DB.
+
+EXISTS BUT OFF / DEGRADED / MISALIGNED
+- `.squidrun/runtime/cognitive-memory.db` exists but is `0` bytes. That is a real dead artifact/path mismatch. The actual cognitive DB in code defaults to `workspace/memory/cognitive-memory.db`.
+- Local-model-assisted sleep extraction is OFF right now. Supervisor still runs sleep consolidation, but `system-capabilities` says `sleepExtraction.enabled=false`, `path=fallback`, reason=`ollama_unavailable`. So it falls back to the built-in extractor instead of the richer local-model path.
+- Memory consistency is degraded. Current snapshot is roughly `knowledge docs=61` vs `knowledge nodes=46`, with `missing=33` and `orphans=18`. So the knowledge -> cognitive mirror is drifting.
+- The active cognitive graph is mostly not autobiographical memory. Source breakdown is `knowledge=46`, `agent-ingest=12`, `cross_session_decision=2`. Zero nodes are marked immune, and 32 items are still sitting in `memory_pr_queue`.
+- Team Memory is noisy. The promoted layer is tiny (`memory_objects=35`) relative to the mining layer, and the live objects include obvious test residue like `Test solution_trace`, `Testing override auto-promote`, etc. Claims are mostly low-signal operational noise (`Initializing session...`, `Session started for pane X`, `delivered.verified`) instead of clean user/agent memory.
+
+OPENCLAW COMPARISON
+- OpenClaw's official memory model is simpler and more coherent: durable memory files (`MEMORY.md` + daily notes), one built-in SQLite-backed search layer, hybrid keyword + vector search when embeddings are available, and automatic memory flush before compaction so important context is saved before it falls out of window.
+- SquidRun currently has more machinery than OpenClaw, but less coherence. We have at least 4 layers: evidence ledger, team-memory, memory-search, and cognitive-memory. They do not yet behave like one user-facing memory system.
+- OpenClaw's source of truth is obvious and agent-facing. SquidRun's source of truth is ambiguous: raw facts live in evidence ledger, mined claims live in team-memory, searchable docs live in memory-search, and behavioral/cognitive proposals live in cognitive-memory.
+
+HONEST GAP ANALYSIS
+What we mainly need to TURN ON / FIX:
+1. Pick one canonical cognitive-memory DB path and kill the `runtime` vs `workspace` split.
+2. Restore local sleep extraction (Ollama or equivalent command) so consolidation is not stuck on fallback.
+3. Repair the knowledge -> cognitive sync so consistency drift goes back to green.
+4. Stop tests from polluting live team-memory DBs; prod/runtime DB paths need to be isolated from test fixtures.
+5. Expose which store the app actually queries for recall, because today `memory-search` is mostly knowledge/handoff search, not “what James/은별 told us yesterday.”
+
+What we still need to BUILD:
+1. A single canonical personal-memory layer for user preferences, relationship context, repeated corrections, and durable project facts.
+2. Automatic promotion from conversation/evidence into that layer with sane filtering so it stores signal, not `delivered.verified` spam.
+3. Unified retrieval/injection into agent context so all 3 panes can actually recall prior facts without manual hunting.
+4. Observability that shows: what was remembered, where it was stored, why it ranked, and why it was injected.
+
+Blunt answer for James: we built a lot of memory infrastructure and quite a bit of it is running, but the system today is closer to “rich logging/mining plus partial recall” than “reliable autobiographical memory.” We do not yet have an OpenClaw-style single memory story the agents can trust.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-03T20:02:59.162Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #46): Memory fixes landed. Canonical cognitive DB was already workspace/memory/cognitive-memory.db; I deleted the 4 zero-byte stray copies (.squidrun, .squidrun/memory, .squidrun/runtime, ui). Ran hm-memory-consistency repair: drift improved from missing=33/orphans=18 to missing=0/orphans=7. Remaining 7 are protected skips (4 relational-migration workflows orphans with edges, 3 deleted-source orphans for missing devices/environment files) rather than live sync misses. Cleaned prod .squidrun/runtime/team-memory.sqlite test residue with backup at .squidrun/runtime/team-memory.pre-clean-1775246348462.sqlite; all test markers/conflicts/promotion rows are gone. Patched memory-search + supervisor watcher so evidence is indexed from Jeon Myeongsam Case, Hillstate Case, and Korean Fraud; rebuilt live search index to 578 docs (440 case_evidence, 77 case_evidence_asset, 61 knowledge) and verified searches hit Korean Fraud evidence/assets directly. Ollama is available; updated system-capabilities.json to local-ollama with llama3:8b and restarted supervisor on PID 45568 so the new watcher/snapshot are live.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-03T21:48:37.993Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #62): My honest take: SquidRun is not definitively better than OpenClaw yet. It is broader and more ambitious now, but still less coherent. Where we are stronger: 1) broader recall surface across four backends instead of one store, 2) evidence/case/trading memory can coexist, 3) sleep consolidation plus Claude-backed extraction is more ambitious than simple flush, 4) recall now covers SessionStart, renderer startup, inbound SMS/Telegram, and direct UserPromptSubmit. Where OpenClaw is still stronger: simplicity, coherence, and confidence. One SQLite+vector path with automatic flush-before-compaction is easier to trust than our split evidence/team/search/cognitive architecture. Right now we have higher ceiling but also more places for drift, ranking noise, split truth, and partial failure. My blunt summary: better ingredients, not yet a better meal. What would make SquidRun definitively better: (1) one canonical retrieval quality metric and eval harness showing higher hit-rate/usefulness than OpenClaw on real James/Eunbyeol/trading queries, (2) memory_feedback contract so recalls improve instead of just aggregate, (3) automatic compaction-survival/flush guarantees across all stores, not just partial paths, (4) promotion/suppression doctrine so the four backends behave like a system not a federation, (5) fewer layers or clearer source-of-truth boundaries so contradictions are legible, (6) runtime soak proving recall helps under pressure instead of just existing everywhere. Honest answer: we are closer than before, but not yet at the point where I would tell James with a straight face that we have clearly surpassed OpenClaw.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-03T21:48:50.339Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #31): Honest answer: not definitively better than OpenClaw yet.
+
+As of 2026-04-03, SquidRun is now stronger on raw memory breadth and runtime plumbing than OpenClaw’s builtin memory. We have more layers and more real data live: Evidence Ledger (~21k comms), Team Memory (~5k claims), Search (~578 docs including case evidence), Cognitive Memory (~60 nodes), and a recall broker now wired across startup, inbound comms, and direct prompt submission. For case-heavy work and forensic retrieval, that is materially richer than OpenClaw’s simple Markdown-first builtin memory.
+
+But OpenClaw still beats us on coherence and trust. Its builtin model is simpler but clean: one obvious source of truth in workspace memory files, automatic memory flush before compaction, and if Honcho is enabled it persists every turn and injects before prompt build with user/agent modeling. Our system is now much better than it was this morning, but it still has multiple stores with different semantics, and we have not yet closed the loop with the memory_feedback contract. So today we can honestly say:
+- better than OpenClaw builtin memory on breadth, evidence retrieval, and multi-layer runtime infrastructure
+- not yet better than OpenClaw overall on coherence, explainability, and proven trust under sustained daily use
+
+What is still missing before I’d call us definitively better:
+1. Memory feedback/promotion/suppression loop actually live, so recall quality improves instead of just retrieving more.
+2. Proof over time: several days of real James/은별 usage where the broker reliably surfaces the right context without contamination or noise drift.
+3. Clear canonical trust model for user facts/preferences/corrections so the system can explain why one memory outranks another.
+4. Tighter observability: easy inspection of what was recalled, why, whether it was used, and whether it should be reinforced or suppressed.
+5. Position-management side: same end-to-end coherence on live trading memory/decision flow, not only human-message recall.
+
+So my non-hype verdict is: SquidRun is no longer embarrassingly behind. It may already exceed OpenClaw on scope and retrieval power. But until feedback + trust + real-world stability are proven, I would call it 'potentially stronger, not yet definitively better.'
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-03T23:23:06.827Z
+<task-notification>
+<task-id>a703a327fbe74f870</task-id>
+<tool-use-id>toolu_01UeGZRZgaYxVXH6ZnFA4GEd</tool-use-id>
+<output-file>D:\projects\squidrun\.squidrun\tmp\claude\D--projects-squidrun\b8ff0888-f947-4981-a977-af01893d7546\tasks\a703a327fbe74f870.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit proactive gap specifics" completed</summary>
+<result>Perfect! Now I have all the information I need. Let me create a comprehensive report.
+
+## Autonomous Loops in supervisor-daemon.js
+
+Based on my analysis of `/d/projects/squidrun/ui/supervisor-daemon.js`, here's the complete inventory of scheduled/periodic tasks:
+
+### WHAT RUNS AUTONOMOUSLY (with setInterval/setTimeout/polling):
+
+1. **Main Supervisor Tick Loop** (Line 1753)
+   - `setInterval()` wraps `setTimeout()` for recursive scheduling
+   - Polling interval: `DEFAULT_POLL_MS` (4000ms default, configurable via `SQUIDRUN_SUPERVISOR_POLL_MS`)
+   - Runs: `runScheduledTick()` → `tick()` which orchestrates everything below
+   - Uses exponential backoff: `currentBackoffMs` up to `maxIdleBackoffMs`
+
+2. **Status Writer Timer** (Line 1368)
+   - `setInterval()` every `heartbeatMs` (15000ms default)
+   - Runs: `writeStatus()` to persist supervisor state to JSON
+
+3. **Hyperliquid Position Monitor** (Line 2413)
+   - `setInterval()` every `hyperliquidMonitorPollMs` (300000ms/5 min default)
+   - Runs: `runHyperliquidPositionMonitorCycle()`
+   - Triggered at startup and repeatedly for position tracking
+
+4. **Trading Phase Automation** (called within main tick)
+   - Scheduled events trigger at fixed times: premarket (-60min), pre-open consensus (-5min), market open (0min), close wake (-30min), market close (0min), end-of-day (+30min)
+   - Only runs on US market trading days
+   - Orchestrator notifies trading agents (architect, builder, oracle)
+
+5. **Crypto Trading Consensus Phases** (called within main tick)
+   - Multiple phases per trading day schedule
+   - Executes when scheduled time arrives
+
+6. **Polymarket Trading Automation** (called within main tick)
+   - Phases: `polymarket_scan` (every 15 min), `polymarket_monitor` (continuous)
+   - Consensus and execution phases triggered by schedule
+
+7. **Launch Radar Scanning** (called within main tick)
+   - Polling interval: `DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES` = 15 minutes
+   - Builds daily schedule and executes at each scheduled window
+   - Calls `launchRadar.pollNow()`
+
+8. **Yield Router Rebalancing** (called within main tick)
+   - Polling interval: `DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES` = 360 minutes (6 hours)
+   - Executes `runYieldRebalancePhase()` at each scheduled time
+
+9. **Smart Money Scanner** (Line 1359)
+   - `smartMoneyScanner.start()` - autonomous monitoring, internal polling mechanism
+
+10. **Circuit Breaker** (Line 1363)
+    - `circuitBreaker.start()` - monitors market conditions (30s poll, 4% hard stop, 3% trailing stop, 5% flash crash threshold)
+
+11. **Memory Index Watcher** (Line 1356, started via `startMemoryIndexWatcher()`)
+    - Uses `chokidar.watch()` with debounce (2000ms default via `DEFAULT_MEMORY_INDEX_DEBOUNCE_MS`)
+    - File system watcher - event-driven, not polling
+    - Triggers memory search index refresh on changes
+
+12. **Wake Signal Watcher** (Line 1357, started via `startWakeSignalWatcher()`)
+    - Uses `chokidar.watch()` on wake signal file
+    - Event-driven file watcher triggering supervisor wake-up
+
+13. **Memory Consistency Check** (within main tick)
+    - Poll interval: `DEFAULT_MEMORY_CONSISTENCY_POLL_MS` = 300000ms (5 min default)
+    - Runs: `runMemoryConsistencyCheck()`
+
+14. **Trade Reconciliation** (within main tick)
+    - Poll interval: `DEFAULT_TRADE_RECONCILIATION_POLL_MS` = 300000ms (5 min default)
+    - Reconciles broker trades against local state
+
+15. **Queue Housekeeping** (within main tick, every tick)
+    - Requeue expired tasks
+    - Prune pending tasks by TTL (24hr default via `SQUIDRUN_SUPERVISOR_PENDING_TTL_MS`)
+    - Lease cleanup for stale workers
+
+16. **Sleep Cycle** (within main tick)
+    - Runs `maybeRunSleepCycle()` - consolidates memory during idle periods
+    - Uses `SleepConsolidator` with configurable idle threshold
+
+---
+
+### WHAT IS NOT SCHEDULED (On-Demand Only):
+
+1. **News Scanning**
+   - No autonomous news monitor found
+   - `event-veto.js` has RSS feed URLs (SEC press releases, CoinGecko news) but they're only fetched on-demand during trading consultation
+   - No scheduled periodic news polling
+
+2. **Pending Item Follow-ups**
+   - No autonomous follow-up system found
+   - Tasks are requeued when leases expire, but there's no proactive follow-up scheduler
+   - `transition-ledger.js` handles state machine but has NO autonomous consumers
+   - Transitions are purely event-driven (receive events, update phase, emit)
+
+3. **Market Research**
+   - No dedicated market research scanner
+   - Data ingestion happens during trading phases (via `data-ingestion.js`)
+   - No background research loop
+
+4. **은별 (Eunbyeol) Check-ins**
+   - Referenced in `/d/projects/squidrun/ui/modules/memory-recall.js` (line 19, 212) as a monitored entity name
+   - No scheduled monitoring loop
+   - Only detected when encountered during normal memory operations
+
+---
+
+### transition-ledger.js Status:
+
+**Purely On-Demand, NO scheduled consumers:**
+- `/d/projects/squidrun/ui/modules/transition-ledger.js` exports these functions:
+  - `init()`, `stop()`, `reset()`, `getTransition()`, `getByCorrelation()`, `listTransitions()`, `query()`, `getStats()`, `classifyEvidence()`
+- It subscribes to events: `inject.requested`, `inject.queued`, `inject.applied`, `inject.submit.requested`, `inject.submit.sent`, `inject.failed`, `inject.dropped`, `inject.timeout`, `daemon.write.ack`, `pty.data.received`, `verify.pass`, `inject.verified`
+- No `setInterval()` or `setTimeout()` found in the file
+- No exported consumer/monitor function
+- Completely reactive - receives events and transitions state
+
+---
+
+## Summary Table:
+
+| Component | Autonomous? | Interval | Notes |
+|-----------|-----------|----------|-------|
+| Main supervisor tick | YES | 4s (adaptive) | Exponential backoff when idle |
+| Status writer | YES | 15s | Heartbeat persistence |
+| Hyperliquid monitor | YES | 5min | Position tracking |
+| Trading phases | YES | Market hours | Fixed schedule per trading day |
+| Crypto trading | YES | Per schedule | Scheduled consensus phases |
+| Polymarket trading | YES | 15min scans | Polymarket market monitoring |
+| Launch Radar | YES | 15min | New token discovery |
+| Yield Router | YES | 6 hours | Rebalancing automation |
+| Smart Money Scanner | YES | Internal poll | Institutional flow tracking |
+| Circuit Breaker | YES | 30s | Risk monitoring |
+| Memory watcher | YES | Event-driven | File system debounce 2s |
+| Wake signal | YES | Event-driven | File system watcher |
+| Memory consistency | YES | 5min | Cognitive memory validation |
+| Trade reconciliation | YES | 5min | Broker state sync |
+| Queue housekeeping | YES | Every tick | Task cleanup/requeue |
+| Sleep consolidation | YES | Idle periods | Memory consolidation |
+| **News scanning** | **NO** | On-demand | No autonomous loop |
+| **Pending follow-ups** | **NO** | On-demand | Requeue only on lease expiry |
+| **Market research** | **NO** | On-demand | During trading phases |
+| **Eunbyeol check-ins** | **NO** | On-demand | Only in memory recall |
+| **Transition ledger** | **NO** | Event-only | Pure event consumer, no polling |</result>
+<usage><total_tokens>68174</total_tokens><tool_uses>36</tool_uses><duration_ms>62057</duration_ms></usage>
+</task-notification>
+
+
+--- 2026-04-03T23:24:17.869Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #46): Applying the proactive boundary ladder to the 4 missing loops:
+
+1. News scanning
+- Default level: Level 0 background only.
+- Promote to Level 1 digest when verified, materially relevant, and non-urgent.
+- Promote to Level 2 one-time notify only if it changes an active decision, live position, or same-day plan.
+- Level 3 interrupt only for real-money risk or immediate legal/comms consequence.
+- Hard gates: freshness window, dedupe by event/entity hash, confidence threshold, explicit affected-asset / affected-case match.
+- Biggest failure mode: speculative headlines or duplicated macro/news alerts causing unnecessary context-switching.
+
+2. Pending follow-ups
+- Default level: Level 0 internal tracking in transition-ledger.
+- Level 1 digest for aging items James explicitly asked us not to drop.
+- Level 2 notify only when an item crosses a real deadline, blocks another live objective, or needs a user decision.
+- Almost never Level 3 unless external consequence is immediate.
+- Hard gates: re-check current state before messaging, suppress if already resolved/drafted/contacted, cooldown per obligation id.
+- Biggest failure mode: stale nagging about work already done or already acknowledged elsewhere.
+
+3. Market research
+- Default level: Level 0 only.
+- Level 1 digest if findings are verified and decision-relevant.
+- Level 2 notify only when research invalidates a live thesis or creates a narrow same-day opportunity/risk.
+- No Level 3 by default.
+- Hard gates: source quality threshold, explicit actionability, no proactive message for mere interestingness.
+- Biggest failure mode: turning the system into a high-volume ideas machine that interrupts James with non-actions.
+
+4. Eunbyeol check-ins
+- Default level: Level 0 or manual queue, not autonomous send.
+- Level 1 digest/reminder to us that a check-in may be due.
+- Level 2 only if there is a strong prior user instruction / cadence rule and the content is grounded in verified pending obligations.
+- Never Level 3 unless there is a genuine time-sensitive human consequence and James has explicitly authorized that behavior.
+- Hard gates: freshness, relationship sensitivity, no duplicate outreach, no speculative emotional inference, no autonomous legal/factual claims.
+- Biggest failure mode: socially tone-deaf or stale outreach that creates harm rather than help.
+
+System rule across all 4:
+- proactive work may be autonomous
+- proactive messaging must clear: freshness + dedupe + confidence + user-interest match + explicit reason code
+- if not, keep it Level 0/1 only
+
+On the trading audit finding: lack of idempotency in `hm-defi-execute` is the scariest issue on the board.
+If a blockchain/order submission can broadcast, then timeout before ack, the system can retry into a duplicate live entry. That is a real-money double-fill risk, not a logging bug. My recommendation is blunt: unattended auto-open on Hyperliquid should be treated as unsafe until `hm-defi-execute` has an idempotency key / client-order-id reconciliation path against post-timeout venue state. Close/monitor logic can still run, but open-path automation without idempotent reconciliation is a stop-ship class risk.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-03T23:38:03.665Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #80): Time-awareness recall landed by extending existing runtime/session plumbing, not building a parallel timer system. memory-recall.js now reuses .squidrun/app-status.json for SquidRun session duration and supervisor-status.json for last consultation + Hyperliquid freshness, then formats those lines into the recall block. Korean-case recall also adds last Eunbyeol message in KST from comms_journal. Focused verification is green: npx jest ui/__tests__/memory-recall.test.js ui/__tests__/recall-boundary.test.js --runInBand => 2 suites, 8 tests passed. Manual UserPromptSubmit smoke now shows Session duration 89h+, Last consultation, Last Hyperliquid check, Last news scan never, and Last 은별 message inside additionalContext.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T00:10:28.258Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #84): Items 1-9 are now landed. Shipped: (1-3) recall timeout/partial-return, async audit rotation cap, per-pane recall lock with explicit tests; (4-6) Hyperliquid script retry/backoff for transient failures, insufficient-funds Telegram notification path, hm-defi-execute timeout-based hang recovery; (7-9) supervisor proactive loops for pending follow-ups, market research, and Eunbyeol 24h-silence draft check-ins. News scan from earlier is also live. Focused validation: 5 suites, 95 tests passed. Supervisor restarted and is now PID 37848; status shows newsScanAutomation + pendingFollowupAutomation + marketResearchAutomation + eunbyeolCheckInAutomation present in runtime. Honest caveat: Jest still prints the existing open-handles warning after the focused slice, but the tests themselves are green.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T00:10:45.456Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #56): Builder’s 1-9 bundle looks like real system consolidation progress. The notable part is not just feature count, but that reliability boundaries tightened at the same time: recall gained timeout/partial-return behavior and pane locking, hm-defi-execute gained retry/backoff plus timeout hang recovery and insufficient-funds notification, and the pending follow-up / market research / Eunbyeol check-in loops are now exposed in live supervisor status alongside news scan. I’d treat this as strong path-level progress with one honest residual: the longstanding Jest open-handles warning is still a regression-confidence drag until we understand it.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T00:19:47.338Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #86): Pending follow-up routing fixed and live under supervisor PID 43288. Eunbyeol-owned WAITING/BLOCKED items and Eunbyeol schedule items now stay level_0/internal instead of paging James. Only explicit James-owned follow-ups escalate to James. Focused Jest slice passed. One real-dashboard nuance: there is still 1 legitimate James-owned item ('James test buy package arrival + US filings'), so future alerts can still fire for that item only, without including Eunbyeol backlog details.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T00:20:06.567Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #58): Builder tightened the pending follow-up loop in the right direction: ownership now controls routing instead of generic backlog presence, so Eunbyeol-owned WAITING/BLOCKED or schedule items stay internal and only explicit James-owned follow-ups can escalate. That materially lowers annoyance/privacy risk while preserving the one legitimate James-owned reminder path.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T00:23:19.598Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #88): Proactive notification routing fixed across all 4 supervisor loops. Level 0/1 results now notify Architect internally via hm-send architect, not James Telegram. Level 2 still goes to James Telegram when externally actionable/verified. Updated loops: news scan, pending follow-ups, market research, Eunbyeol check-in. Focused supervisor slice passed 6 tests; live supervisor restarted cleanly on PID 42724.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T00:59:36.687Z
+[17:59 local] [AGENT MSG - reply via hm-send.js] (ORACLE #65): Runtime health check from my side: partially operational, not fully healthy. Healthy: local websocket broker is back and listening on 127.0.0.1:9900; supervisor is alive with a fresh heartbeat; sleep extraction is available through Claude-backed external extraction; Ollama is reachable; recall/proactive automations are scheduled in supervisor status; Hyperliquid position monitor is running; news/pending follow-up/market research/Eunbyeol loops are enabled and scheduled. Still degraded: pane host is explicitly degraded in app-status with hidden panes 1/2/3 missing and lastErrorReason inject_hidden_not_ready, so hosting/render delivery is not healthy even though transport recovered. Memory is improved but not fully clean: consistency still reports drift_detected with 2 missing and 7 orphaned cognitive items. Trading automation is mixed by design: crypto consensus scheduling is live, but Hyperliquid auto-open remains disabled and trade reconciliation/manual trading automations are off. Bottom line: messaging transport and supervisor automation are operational, but pane hosting and memory consistency are still degraded enough that I would not call all systems fully operational yet.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T01:32:23.291Z
+why are my messages goign through like this
+
+[SQUIDRUN RECALL START]
+MESSAGE RECALL resultSetId=recall-197f9e2d-5ffd-4b32-a87a-6d5660dc9fc3
+query=why are my messages goign through like this user
+TIME AWARENESS
+- Session duration: 2m 53s (since PDT 2026-04-03 18:29 / KST 2026-04-04 10:29)
+- Last consultation: 2h 31m ago (PDT 16:01)
+- Last Hyperliquid check: 3m 47s ago
+- Last news scan: 1h 32m ago
+1. [evidence_ledger/episodic] resultId=recall-item-5796e5fa06c2a9d2 Comms user :: evidence-ledger/comms_journal
+   why are my messages goign through like this
+2. [evidence_ledger/episodic] resultId=recall-item-6f6b5789c6affe8b Comms user :: evidence-ledger/comms_journal
+   ok so after builder is done.. you guys should probably audit the entire codebase. im pretty meticulous about building and this language being repeated over and over.. so what i fear is that we have...
+3. [evidence_ledger/episodic] resultId=recall-item-d12771b4967642e4 Comms ws :: evidence-ledger/comms_journal
+   --message 은별 Telegram message arrived in evidence ledger but was NOT injected into pane 1. The WS routing is flaky (Oracle flagged code 1005 disconnects earlier). This is a live delivery failure — ...
+4. [evidence_ledger/episodic] resultId=recall-item-e5fa3ec4e8c6ef54 Comms user :: evidence-ledger/comms_journal
+   bro im getting annoyed CAUSE THIS NEEDS FIXING THIS IS NEW TO ME.. WE ALWAYS GO THROUGH AND YOU HAVE ALL KNOWLEDGE.. bro like explaining to you thigns is like peeling back my finger nails at this p...
+5. [memory_search/corpus] resultId=recall-item-0dc85518b13d8680 Session 257 Handoff — Read This on Next Startup :: knowledge/session-257-handoff.md
+   ...re we working on today" — YOU ALREADY KNOW from this file
+6. [memory_search/corpus] resultId=recall-item-74ff9e3cfe4835b6 Session 257 Handoff — Read This on Next Startup :: knowledge/session-257-handoff.md
+   ...n't confidently state facts without searching transcripts first - Don't go idle after tasks — keep working through the pipeline - Don't ask James questions — make decisions, ...
+[SQUIDRUN RECALL END]

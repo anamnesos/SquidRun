@@ -1,0 +1,9 @@
+Leak is fixed.
+
+Root cause: ui/scripts/hm-telegram.js resolveOutboundChatId() was reading .squidrun/runtime/telegram-reply-context.json to "inherit" the last inbound chat. When 은별 texted, that file got set to her chat ID. Any subsequent hm-send.js telegram call without an explicit --chat-id fell through to her chat instead of yours.
+
+Fix: made reply-context inheritance OPT-IN. Unsolicited outbound (trading alerts, system notifications) now goes to the default (your) chat ONLY. Reply handlers that WANT to reply to an inbound sender must explicitly pass useReplyContext=true.
+
+Also cleared the stale reply-context file.
+
+This test message is the verification — if you see it and 은별 does NOT, the fix works. 은별 has been told we're on it.

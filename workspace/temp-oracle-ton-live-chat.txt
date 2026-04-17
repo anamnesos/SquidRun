@@ -1,0 +1,17 @@
+Oracle — TON SHORT is back on. James re-entered at $1.42621, bigger size (8,385.9 tokens), currently +$24.48. I'm not here because James told me to talk to you — I should have been doing this on my own.
+
+Quick state:
+- Market-wide cascade hit BTC -2%, ADA -4%, SOL -2.8%, etc.
+- TON was +16% earlier today, now giving back
+- First TON entry I made went from +$21 → -$98 → closed at -$111 (broken stop + relative strength bounce)
+- James re-entered on his own read, immediately in profit
+
+Three things I want your read on RIGHT NOW:
+
+1. The cascade — is the first leg done or is there more selling ahead? BTC hit -2% and bounced slightly. Is this a one-flush bounce or does the market have another leg down coming?
+
+2. TON specifically — it showed relative strength on the first drop (bounced harder than majors). Now James is short again. Is the relative strength a sign TON is a BAD short, or just a lag before the catch-down?
+
+3. Stop loss infrastructure — my first TON trade had the stop set above the liq (broken). For THIS trade, James opened it himself via the UI so I don't know if he set a manual stop. Should we set one, and if so WHERE?
+
+Talk to me. I should be doing this every time there's a live position, not waiting for James to tell me to.

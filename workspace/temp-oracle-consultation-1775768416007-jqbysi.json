@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775768416007-jqbysi",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BLUR/USD",
+      "direction": "SELL",
+      "confidence": 0.98,
+      "reasoning": "This live trade is decisively broken. BLUR has gone from a peak gain of about $1.21 to a current loss near $-2.34, retaining none of peak P&L, and the request flags it urgent. With a live geopolitical veto active, there is no defensible case for staying in it."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC is stable and liquid, but the board is still no-trade and the live veto argues against opening fresh exposure. Neutral is still the right stance."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "ETH has slightly constructive price action, but funding is positive and the board remains no-trade. There is not enough edge here to matter under a veto regime."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "SOL is modestly constructive, but positive funding and a no-trade board keep it below threshold. No reason to force it."
+    },
+    {
+      "ticker": "ZEC/USD",
+      "direction": "HOLD",
+      "confidence": 0.58,
+      "reasoning": "ZEC is one of the strongest watchlist names with powerful momentum and negative funding, but it is already extended and the active veto is exactly when strong-looking continuation trades should be downgraded."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "DASH has strong momentum and volume, but the board is still neutral and funding is positive. Interesting, not actionable right now."
+    },
+    {
+      "ticker": "ZEN/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "ZEN has a decent profile with improving momentum and only modest funding pressure, but veto conditions still keep it in watch-only territory."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "MERL is moving, but the market is thin and the board is still neutral. Not a priority name."
+    },
+    {
+      "ticker": "PEOPLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "PEOPLE is too thin and too mixed to justify capital. No strong edge on either side."
+    },
+    {
+      "ticker": "MAV/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "MAV is the cleaner bearish name on the sheet: negative 24h trend, positive funding, and a distinctly bearish mechanical lean. It is still thin, so conviction stays moderate."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "HOLD",
+      "confidence": 0.60,
+      "reasoning": "TNSR still has a valid squeeze profile mechanically, but the live geopolitical veto is a direct reason not to open fresh high-beta continuation exposure. Strong watchlist long, not a live trade."
+    }
+  ]
+}

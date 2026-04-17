@@ -1,0 +1,7 @@
+Found it — the SquidRun Electron app auto-starts the supervisor daemon on launch. It's running as a child process inside the app, which is why I didn't see it as a separate process.
+
+That's what's sending you the constant trading alerts. To stop it, either:
+1. I can disable the auto-start in code (requires app restart)
+2. Or you can restart the app after I make the change
+
+Want me to disable it?

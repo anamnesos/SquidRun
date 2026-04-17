@@ -1,0 +1,15 @@
+After you finish consultation reorientation, next priority:
+
+Add commodity perp support to hm-defi-execute.js and hm-defi-close.js. Currently hardcoded to ETH SHORT only.
+
+Need to support:
+- Any Hyperliquid asset (ETH, BTC, WTI, GOLD, etc.)
+- Any direction (LONG or SHORT)
+- Configurable leverage
+
+Usage should be something like:
+  node ui/scripts/hm-defi-execute.js trade --asset WTI --direction LONG --leverage 10 --margin 150
+  node ui/scripts/hm-defi-execute.js trade --asset ETH --direction SHORT --leverage 5
+  node ui/scripts/hm-defi-close.js --asset WTI
+
+WTI is at $99.64 right now with a high-conviction LONG setup (Hormuz crisis). We can't execute it because the scripts only support ETH. Real money on the table we can't touch.

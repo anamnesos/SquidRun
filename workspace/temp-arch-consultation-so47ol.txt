@@ -1,0 +1,15 @@
+ARCHITECT consultation so47ol — position_management, VETO, giveback warning triggered.
+
+{"requestId":"consultation-1775820628305-so47ol","agentId":"architect","signals":[
+{"ticker":"MON/USD","direction":"HOLD","confidence":0.50,"reasoning":"James's manual short, +1.39 now down from peak +7.78. Operator-authority — I don't close his trades without request. He has explicit triggers (price 0.03780, -45 PnL, liq <4%) — none hit. Entry 0.036067, mark 0.035991, funding 0.21 bps stable neutral."},
+{"ticker":"LIT/USD","direction":"BUY","confidence":0.65,"reasoning":"CLOSE the short. My tranche, +0.16 now vs peak +3.05 (5% retained = max giveback). Funding eroded from 1.51 bps at entry to 0.79 bps now — the funding-harvest edge has halved. Post-BABY I'm in harvest discipline mode. Realize the tiny gain and free up $50 margin rather than hold a dead thesis waiting for TP heroics. Oracle's framework from earlier applies directly."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.45,"reasoning":"72,188 stable +1.6%. VETO active, no capacity, no catalyst. Pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.45,"reasoning":"2217 flat. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"83.6, funding 0.034 bps near-flat. No setup."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.40,"reasoning":"+32.8% 24h with funding -0.61 bps — shorts getting crowded. Don't add to a crowded short. Pass."},
+{"ticker":"COMP/USD","direction":"HOLD","confidence":0.55,"reasoning":"CRITICAL: funding -11.0057 bps. Shorts are EXTREMELY crowded paying longs massively. Classic squeeze fuel. Do NOT short under any circumstance. Could be a squeeze-long setup but VETO caps that too. Avoid entirely."},
+{"ticker":"CHILLGUY/USD","direction":"SELL","confidence":0.30,"reasoning":"Still +30% 24h meme pump, funding neutral. Cleanest fade on the board but no capacity under VETO + harvest discipline. Paper SELL for record."},
+{"ticker":"BLUR/USD","direction":"HOLD","confidence":0.45,"reasoning":"-8.7% 24h, funding -2.14 bps. Price already down with crowded shorts = potential bottom. No clean setup either direction. Pass."},
+{"ticker":"DYM/USD","direction":"HOLD","confidence":0.40,"reasoning":"-9.4% 24h, funding neutral. Continuation play but no edge vs alternatives. Pass."},
+{"ticker":"MORPHO/USD","direction":"HOLD","confidence":0.40,"reasoning":"1.885 +7.1% 24h, funding neutral. Moderate momentum, no structural edge. Pass."}
+]}

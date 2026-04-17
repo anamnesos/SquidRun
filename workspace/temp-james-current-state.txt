@@ -1,0 +1,19 @@
+Just scanned. Honest answer: nothing screamer-tier right now.
+
+What I see in the big-liquidity coins:
+- BTC, ETH, SOL, HYPE all flat funding, mild upward moves (0.2-2.2% 24h)
+- NEAR funding slightly elevated +0.38, you have cooldown
+- SUI funding slightly negative -0.21 but barely moving
+- FARTCOIN +10% 24h — already extended/late
+- Everything else is at standard funding with mild moves
+
+The market is in low-conviction chop. No extreme funding to fade, no clean breakdowns happening, no clear continuation that's not already extended.
+
+Best of a weak board:
+- ETH long if you want a slow grind continuation (+2% 24h, real liquidity)
+- SUI long if you want the squeeze fuel angle (negative funding) but it's barely moving
+- TON short still on watch per Oracle but hasn't actually cracked
+
+None of these match your "clean cliff drop" or "obvious squeeze" criteria you've been waiting for. Best discipline is keep sitting cash. Account safe at $1,321.
+
+Will ping you the moment something actually breaks pattern (real volume on a directional move, funding extreme appearing, peak rejection forming). Nothing right now.

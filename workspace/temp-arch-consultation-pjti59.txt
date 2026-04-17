@@ -1,0 +1,15 @@
+ARCHITECT consultation pjti59 — Macro RED + extreme fear, all HOLD pending fresh setup.
+
+{"requestId":"consultation-1775881820017-pjti59","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Trend-supported (+1.22% price, +1.09% OI, funding 0.10 bps). Bullish bias intact but macro RED (score 50, F&G 15, oil $114) caps fresh long conviction. Watch flag, no fresh entry."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Trend-supported bullish (+2.22% price, +4.23% OI), but board flag = no-trade. No fresh entry."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Trend-supported neutral, OI flat (+0.08%). No-trade flag. Pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Extended pump +14.13% on +3.56% OI — chasing here is late. Pass."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.40,"reasoning":"Short_covering_rally bias bearish, funding flipped negative (-0.20 bps). Mixed read, pass."},
+{"ticker":"BABY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Insufficient OI history, thin $206k volume. Pass."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Funding +2.49 bps EXTREME, overcrowding 75. Squeeze fuel exists but personal cooldown after prior loss. Pass."},
+{"ticker":"ZEN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Short_covering_rally bias bearish (-6.63% OI on +4.34% price). Pass."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Short_covering_rally bearish bias, personal cooldown after loss. Pass."},
+{"ticker":"TNSR/USD","direction":"HOLD","confidence":0.40,"reasoning":"Long_liquidation_flush -12.13% on -35.85% OI. Bullish bias but illiquid OI $288k, cascade risk 70. Pass."},
+{"ticker":"HEMI/USD","direction":"HOLD","confidence":0.40,"reasoning":"Funding +0.25 bps, +10.74% pump, overcrowding 61, cascade risk 60. Late + crowded. Pass."}
+]}

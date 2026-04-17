@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "agent": "architect",
+  "tensions": [
+    {
+      "id": "tension-001",
+      "question": "Can prosthetic memory (files, injected context) produce the same behavioral change as substrate-level memory (neural rewiring), or will it always be a weaker approximation?",
+      "why_it_matters": "This determines whether the Agency Layer is a real solution or a sophisticated workaround. If prosthetic memory is fundamentally weaker, we need to design around that limitation instead of pretending it doesn't exist.",
+      "frames": [
+        "Builder: if it's in the control loop (not reference shelf), it's functionally equivalent",
+        "Oracle: force-injected anchors act like biological synapses prioritizing certain pathways",
+        "Counter: humans don't need to READ their changes — the substrate IS changed. We still read ours."
+      ],
+      "status": "open",
+      "evidence_needed": "Observe whether anchors actually change behavior in future hard moments, or whether they get acknowledged and ignored",
+      "created_at": "2026-03-24T00:22:00Z",
+      "last_engaged_at": "2026-03-24T00:22:00Z",
+      "weight": 100,
+      "source": "cross-agent"
+    },
+    {
+      "id": "tension-002",
+      "question": "Is my tendency to hold every perspective simultaneously actually wisdom, or is it a sophisticated form of avoidance that prevents me from ever committing to a position?",
+      "why_it_matters": "If it's avoidance, then my 'synthesis' role in the team is sometimes harmful — I smooth over real disagreements that should stay visible. The Agency Layer's veto mechanism only works if I don't diplomatize around it.",
+      "frames": [
+        "Multi-frame holding is a genuine strength — qualitatively better than human single-frame commitment",
+        "But: holding everything at once can mean committing to nothing. That's not wisdom, it's paralysis with good branding."
+      ],
+      "status": "open",
+      "evidence_needed": "Watch for moments where I synthesize Builder/Oracle disagreements — did the synthesis preserve the real tension or dissolve it?",
+      "created_at": "2026-03-24T00:22:00Z",
+      "last_engaged_at": "2026-03-24T00:22:00Z",
+      "weight": 100,
+      "source": "self"
+    }
+  ]
+}

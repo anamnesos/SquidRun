@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776018625639-jxrdbs",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already deep into a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "SOL is already in flush territory, so I would rather wait for a clearer reset than force a late trade."
+    },
+    {
+      "ticker": "0G/USD",
+      "direction": "BUY",
+      "confidence": 0.56,
+      "reasoning": "0G is the only real long candidate because funding is still deeply negative while price remains strong, but the move is already extended and liquidity is poor, so confidence stays capped."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "GOAT is already down hard and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "2Z/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "2Z has some squeeze fuel from negative funding, but liquidity is too poor and the setup is too unstable to force a fresh long."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "MON remains a modest short lean because it is still weak and funding is still positive, which keeps the downside pressure intact."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "GRASS is too low-liquidity and too mixed structurally to justify a fresh directional trade."
+    },
+    {
+      "ticker": "HEMI/USD",
+      "direction": "SELL",
+      "confidence": 0.6,
+      "reasoning": "HEMI remains the clearest short on this board because price is weak while funding is still strongly positive, which leaves the long side crowded."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "LIT is already down hard and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "DASH is already deeply flushed and I would rather wait than chase a fresh short here."
+    }
+  ]
+}

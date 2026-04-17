@@ -691,7 +691,7 @@ class TeamMemoryClaims {
 
     const placeholders = uniqueIds.map(() => '?').join(', ');
     const rows = this.db.prepare(`
-      SELECT c.id, c.claim_type, c.statement, c.supersedes, c.status, cs.scope
+      SELECT c.id, c.claim_type, c.statement, c.supersedes, c.status, c.owner, c.confidence, c.created_at, c.updated_at, cs.scope
       FROM claims c
       LEFT JOIN claim_scopes cs ON cs.claim_id = c.id
       WHERE c.id IN (${placeholders})
@@ -706,6 +706,10 @@ class TeamMemoryClaims {
         statement: row.statement || '',
         supersedes: row.supersedes || null,
         status: row.status || 'proposed',
+        owner: normalizeRole(asString(row.owner, '').toLowerCase(), asString(row.owner, '').toLowerCase() || 'system'),
+        confidence: normalizeConfidence(row.confidence, 1.0),
+        createdAt: asTimestamp(row.created_at, 0),
+        updatedAt: asTimestamp(row.updated_at, 0),
         isSuperseded: false,
         scopes: new Set(),
       };
@@ -1010,6 +1014,10 @@ class TeamMemoryClaims {
       ORDER BY bc.detected_at DESC, bc.id DESC
       LIMIT ?
     `).all(...params, limit);
+    const includeClaimDetails = parseBoolean(filters.includeClaimDetails ?? filters.include_claim_details, false) === true;
+    const claimDetails = includeClaimDetails
+      ? this.getClaimDetailsForIds(rows.flatMap((row) => [row.claim_a, row.claim_b]))
+      : null;
 
     return {
       ok: true,
@@ -1025,9 +1033,32 @@ class TeamMemoryClaims {
         resolvedAt: row.resolved_at === null || row.resolved_at === undefined
           ? null
           : Number(row.resolved_at),
+        ...(includeClaimDetails
+          ? {
+            claimADetails: claimDetails.get(row.claim_a) || null,
+            claimBDetails: claimDetails.get(row.claim_b) || null,
+          }
+          : {}),
       })),
       total: rows.length,
     };
+  }
+
+  resolveContradictionsByIds(contradictionIds = [], nowMs = Date.now()) {
+    if (!Array.isArray(contradictionIds) || contradictionIds.length === 0) return 0;
+    const ids = [...new Set(contradictionIds.map((id) => asString(id, '')).filter(Boolean))];
+    if (ids.length === 0) return 0;
+
+    const placeholders = ids.map(() => '?').join(', ');
+    const resolvedAt = asTimestamp(nowMs);
+    const result = this.db.prepare(`
+      UPDATE belief_contradictions
+      SET resolved_at = ?
+      WHERE resolved_at IS NULL
+        AND id IN (${placeholders})
+    `).run(resolvedAt, ...ids);
+
+    return Number(result?.changes || 0);
   }
 
   updateClaimStatus(claimId, newStatus, changedBy, reason = null, nowMs = Date.now()) {

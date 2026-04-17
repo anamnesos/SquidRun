@@ -1,0 +1,9 @@
+Rebalancing priorities. After consultation reorientation ships, alternate between trading and architecture:
+
+1. CURRENT: Consultation reorientation (finish this)
+2. NEXT: Message routing enforcement — telegram-routing.json + reply helper. This prevents agents from sending messages to wrong people. James's #1 UX frustration tonight.
+3. THEN: Multi-asset perp support (hm-defi-execute.js)
+4. THEN: Smoke runner fix (return valid JSON or remove)
+5. THEN: Dead scripts cleanup (move 35 unused to scripts/deprecated/)
+
+Alternate trading/architecture so both move forward.

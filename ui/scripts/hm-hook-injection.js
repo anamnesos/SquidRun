@@ -166,7 +166,7 @@ function formatScratchReminder() {
     'Read them when you need to think without performing.\n\n';
 }
 
-function run() {
+async function run() {
   if (role === 'unknown') {
     return;
   }
@@ -187,8 +187,10 @@ function run() {
     out += '#################################################################\n';
     out += content;
     out += '#################################################################\n';
-    console.log(out);
+    process.stdout.write(out);
   }
 }
 
-run();
+run().catch(() => {
+  // Keep hook best-effort; empty output is safer than throwing.
+});

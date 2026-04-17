@@ -1,0 +1,66 @@
+{
+  "requestId": "consultation-1776132032019-v5pcmp",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "BUY",
+      "confidence": 0.79,
+      "reasoning": "Cover the live SOL short. The position has now given back almost all of its peak unrealized profit, retaining only about 13%, and the board is explicitly flagging it as urgent. With no stop installed and only about 1% liquidation distance, this is protect-the-remainder position management rather than a short worth defending."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "BTC is still holding the squeeze recovery and is not breaking down in a way that cleanly rewards pressing shorts. Even with the event board down to CAUTION, the cleaner move is still to deal with the weak SOL position first."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH remains strong and the only event brake here is a narrow exchange notice, not a broad bearish macro trigger. It is not a cleaner active trade than flattening the deteriorating SOL short."
+    },
+    {
+      "ticker": "XPL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "XPL continues to trend up and is already too extended for a clean fresh long while still not weak enough to short. Best left alone."
+    },
+    {
+      "ticker": "LDO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "LDO is fading slightly from the rebound highs, but not in a way that creates a high-quality short, and positive funding still makes the long side unattractive here. It stays neutral."
+    },
+    {
+      "ticker": "MORPHO/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "MORPHO remains one of the cleaner underlying structures on the sheet, but it still lacks enough independent edge to justify a fresh call while position management is focused on the live SOL risk."
+    },
+    {
+      "ticker": "ALGO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ALGO is still recovering and does not offer a clean fade or an attractive fresh breakout entry after the move it has already made. No action."
+    },
+    {
+      "ticker": "IO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "IO has rolled off its local highs a bit but remains too mixed to short confidently and too messy to buy. It is not cleaner than simply covering SOL."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "TST is still highly extended after its squeeze and remains unstable enough that neither chasing nor fading looks high quality. Watch-only."
+    },
+    {
+      "ticker": "KNEIRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.89,
+      "reasoning": "KNEIRO still lacks robust live chart context and remains too thin and underdefined for a reliable position-management upgrade."
+    }
+  ]
+}

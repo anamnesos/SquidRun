@@ -37,9 +37,6 @@ describe('dynamic-watchlist', () => {
       'BTC/USD',
       'ETH/USD',
       'SOL/USD',
-      'AVAX/USD',
-      'LINK/USD',
-      'DOGE/USD',
       'BONK',
     ]));
     expect(dynamicWatchlist.getActiveEntries({ statePath, source: 'launch_radar' })).toEqual([
@@ -74,12 +71,87 @@ describe('dynamic-watchlist', () => {
     expect(dynamicWatchlist.isWatched('AAPL', { statePath })).toBe(true);
   });
 
+  test('promotes market-scanner movers with crypto metadata and a 4-hour ttl', () => {
+    const result = dynamicWatchlist.promoteMarketScannerMovers([
+      { ticker: 'FOGO/USD', reason: '4h momentum breakout' },
+      { symbol: 'HEMI', reason: 'large 24h move' },
+    ], {
+      statePath,
+      now: '2026-04-05T00:00:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      promotedTickers: ['FOGO/USD', 'HEMI/USD'],
+    }));
+    expect(dynamicWatchlist.getActiveTickers({
+      statePath,
+      source: 'market_scanner',
+      assetClass: 'crypto',
+      now: '2026-04-05T01:00:00.000Z',
+    })).toEqual(expect.arrayContaining(['FOGO/USD', 'HEMI/USD']));
+    expect(dynamicWatchlist.getActiveEntries({
+      statePath,
+      source: 'market_scanner',
+      now: '2026-04-05T01:00:00.000Z',
+    })).toEqual([
+      expect.objectContaining({
+        ticker: 'FOGO/USD',
+        source: 'market_scanner',
+        assetClass: 'crypto',
+        exchange: 'CRYPTO',
+        broker: 'hyperliquid',
+        expiry: '2026-04-05T04:00:00.000Z',
+        reason: '4h momentum breakout',
+      }),
+      expect.objectContaining({
+        ticker: 'HEMI/USD',
+        source: 'market_scanner',
+        assetClass: 'crypto',
+        exchange: 'CRYPTO',
+        broker: 'hyperliquid',
+        expiry: '2026-04-05T04:00:00.000Z',
+        reason: 'large 24h move',
+      }),
+    ]);
+
+    expect(dynamicWatchlist.isWatched('FOGO/USD', {
+      statePath,
+      now: '2026-04-05T04:01:00.000Z',
+    })).toBe(false);
+    expect(dynamicWatchlist.readDynamicState(statePath).dynamicEntries).toHaveLength(0);
+  });
+
+  test('refreshes an existing market-scanner promotion instead of duplicating it', () => {
+    dynamicWatchlist.promoteMarketScannerMovers([{ ticker: 'AVAX/USD', reason: 'first scan' }], {
+      statePath,
+      now: '2026-04-05T00:00:00.000Z',
+    });
+    dynamicWatchlist.promoteMarketScannerMovers([{ ticker: 'AVAX/USD', reason: 'refreshed scan' }], {
+      statePath,
+      now: '2026-04-05T01:00:00.000Z',
+    });
+
+    const entries = dynamicWatchlist.getActiveEntries({
+      statePath,
+      source: 'market_scanner',
+      now: '2026-04-05T01:30:00.000Z',
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(expect.objectContaining({
+      ticker: 'AVAX/USD',
+      source: 'market_scanner',
+      reason: 'refreshed scan',
+      expiry: '2026-04-05T05:00:00.000Z',
+    }));
+  });
+
   test('watchlist compatibility layer keeps the default equity view', () => {
-    expect(watchlist.getTickers()).toEqual(dynamicWatchlist.DEFAULT_WATCHLIST.map((entry) => entry.ticker));
-    expect(watchlist.getTickers({ assetClass: 'crypto' })).toEqual(
+    expect(watchlist.getTickers({ statePath })).toEqual(dynamicWatchlist.DEFAULT_WATCHLIST.map((entry) => entry.ticker));
+    expect(watchlist.getTickers({ statePath, assetClass: 'crypto' })).toEqual(
       dynamicWatchlist.DEFAULT_CRYPTO_WATCHLIST.map((entry) => entry.ticker)
     );
-    expect(watchlist.getAssetClassForTicker('BTC/USD')).toBe('crypto');
+    expect(watchlist.getAssetClassForTicker('BTC/USD', 'crypto')).toBe('crypto');
     expect(watchlist.getAssetClassForTicker('AAPL')).toBe('us_equity');
   });
 });

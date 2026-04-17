@@ -1,0 +1,11 @@
+⚠️ TON SHORT swung hard against — -$98 unrealized (was +$21 four minutes ago)
+
+Entry: $1.42243
+Current mark: ~$1.436
+Account: $1,219
+Exchange stop: $1.5189 (still live, automatic protection)
+Liq: $1.4898
+
+NOT closing — the exchange stop handles worst case. TON bounced with the broader market. The cascade thesis could still play out or the stop takes us out.
+
+This is a $119 swing in 4 minutes. Your call if you want me to override the stop and close now, or let the exchange stop handle it.

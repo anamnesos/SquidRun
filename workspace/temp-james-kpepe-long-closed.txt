@@ -1,0 +1,17 @@
+KPEPE LONG closed. Account $1,494.69 (-$36 on the long).
+
+You executed this one yourself — bailed when 09:05 candle broke below entry. Right call. The 09:00 peak at $0.003611 didn't follow through, the 09:05 red was the failure signal.
+
+SESSION RECAP (test cycle from $1,649):
+- NEAR test: -$17
+- SOL test 1: -$15
+- kPEPE SHORT: -$22 (the +$181 give-back I missed)
+- SOL test 2: -$24 (I closed correctly this time)
+- kPEPE LONG: -$36 (you closed)
+- TOTAL: -$114
+
+Account: $1,494.69 (down $154 from $1,649 start)
+
+You're flat. Wheel still mine if you want, but you've been managing the closes yourself which is fine.
+
+What's next? Sit cash and reset, or fresh entry? Your call.

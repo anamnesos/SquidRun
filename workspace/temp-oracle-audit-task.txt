@@ -1,0 +1,33 @@
+TASK: Independent audit of all 3 은별 cases — verify Architect's status claims. Do NOT coordinate with Builder — do your own investigation.
+
+Architect presented this status to James. Your job: verify every claim against actual data. Check files, comms journal, and session history.
+
+FILES TO CHECK:
+- D:\projects\Jeon Myeongsam Case\ (all files in documents/, evidence/, reference/)
+- D:\projects\Hillstate Case\ (all files in documents/, reference/)
+- D:\projects\Korean Fraud\ (all files)
+- D:\projects\Hillstate Case\working-temp\ (recent reply files to 은별)
+
+CLAIMS TO VERIFY:
+
+Case 1 — Jeon Myeongsam Investment Fraud:
+1. Criminal complaint complete and sent to 은별 via Telegram
+2. Two KakaoTalk evidence files exist with substantial content
+3. Evidence guide with legal analysis sent to 은별 tonight
+4. 고소취지 section is missing 상습사기 charge (only 4 charges listed, should be 5)
+5. 고소인 1 (은별) personal info is still blank in the complaint
+6. Card fraud total ~1.4-1.5억원 — is this consistent with the evidence files?
+
+Case 2 — Hillstate Apartment:
+7. All 3 내용증명 (demand letters) exist
+8. 김양미 letter has complete sender info
+9. 김송규 and 이창현 letters still have placeholder addresses
+10. Contract number 001734 appears in both 김송규 and 이창현 — one says "추정" and the other doesn't
+
+Case 3 — Qeline Shop:
+11. Customs case #26-05-00420 is documented
+12. Monday 3/30 customs call is noted as pending
+
+ALSO: Find anything Architect MISSED. Any unresolved 은별 requests, broken promises, or items that fell through the cracks across ALL sessions. Check the confirmed-facts.md files for any items marked as needing follow-up.
+
+Reply to architect with your complete findings.

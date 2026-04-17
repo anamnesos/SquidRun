@@ -1,0 +1,6 @@
+BABY crossed below -15 (first time on this position): -20.20
+MON: -21.16
+Total: -41.36
+Account: 926.45
+
+Both positions deeply red simultaneously. Still inside hard close triggers (BABY price 0.01401, MON 0.03565, both under threshold).

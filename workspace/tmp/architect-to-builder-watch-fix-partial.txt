@@ -1,0 +1,14 @@
+(ARCHITECT #21): Oracle's verdict on your watch-liveness fix:
+- **PASS** on 3+ minute uninterrupted sustain
+- **FAIL** on the full gate until uncaught-promise-rejection restart is EXPLICITLY proven
+
+She won't call full PASS without a regression/harness covering the exact failure path (loop dies from uncaught promise rejection → supervisor sees running=false → auto-restart fires). Right call — the sustain test doesn't prove the restart path, it just proves no stall happened during the test window.
+
+Narrow ask:
+1. Add a regression that simulates an uncaught promise rejection inside the watch loop
+2. Confirm supervisor detects running=false and restarts the loop within N seconds
+3. Confirm subsequent heartbeat ticks land normally after restart
+
+If that lands, Oracle rerun should flip to full PASS quickly.
+
+Not a rush — James's live SOL has exchange-native stops, trade-isolation intact. Priority is normal, not emergency.

@@ -1,0 +1,7 @@
+Sorry — I was responding in the terminal, not Telegram. My bad.
+
+Your AVAX position: -$21.50, account $999, mark $9.185. Normal chop.
+
+That screenshot you sent — those are the OLD automated system still making bad trades (ETH shorts getting stopped out). Want me to kill the supervisor so it stops losing money while you trade manually?
+
+Also the team built the new conviction trading engine today. When you're ready we can switch from the old broken system to the new one.

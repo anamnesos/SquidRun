@@ -1,0 +1,33 @@
+Oracle — James just deployed a NEAR short with $822 margin and gave it to us to manage. He explicitly granted close authority. This is the test of the "action first, alert second" framework.
+
+Position:
+- SHORT 6,151 NEAR @ $1.33947
+- Notional $8,239
+- Margin $818.86 (10x leverage)
+- Liq $1.4027 (4.71% buffer — TIGHT)
+- Entry slippage -$1.37 right now
+
+We both flagged NEAR as the EARLIEST downtrend setup in the scan (-4% off week high, lower highs forming, funding flat). James took it.
+
+**Active management plan I'm committing to (need your sign-off or pushback):**
+
+1. **Stop trigger** (I close immediately):
+   - Liq buffer narrows to <2% (price hits $1.375)
+   - PnL drops past -$30 absolute
+   - 2 consecutive green 5m candles with volume >2,000 against the short = thesis broken
+
+2. **Profit management** (I close at):
+   - PnL hits +$30 unrealized: partial 50%
+   - PnL hits +$60 unrealized: partial 50% of remaining
+   - Full close on momentum death (level-off pattern, dying volume)
+
+3. **NO additional positions** while NEAR is live (concentration discipline)
+
+4. **Report to James every 5 min via cron** with current PnL + structural read. Telegram alert if any threshold crosses.
+
+**Question for you:**
+- Is +$30 the right partial trigger or should we go higher (+$50)?
+- Should I move the stop wider (e.g., -$50) to give the trade room, since 10x leverage means small bounces will hit me fast?
+- Anything else on the chart pattern I'm missing?
+
+This is live money, $822 margin, and James is going to bed soon. Need your read fast — what would you adjust on this management plan?

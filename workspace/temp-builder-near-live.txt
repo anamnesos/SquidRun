@@ -1,0 +1,16 @@
+Builder — James deployed NEAR short ($822 margin, 10x leverage, liq 4.71% buffer) and gave the position to Architect+Oracle+you to manage. Action-first authority granted.
+
+Position:
+- SHORT 6,151 NEAR @ $1.33947
+- Liq $1.4027 (TIGHT)
+- Account $1,641
+
+Two execution asks for you:
+
+1. **Telegram delivery test** — your earlier reply-context fix is in source but not committed. Can you verify the running Electron process can send to James's chat ID 5613428850 reliably? If we need to alert him while he's asleep (position trouble), the alert MUST land. The AVAX -$178 incident from last night was the alert delivery bug. I don't want a repeat.
+
+2. **Auto-close hook** — if I (Architect) need to close NEAR via hm-defi-execute.js with --close, can you verify the script exits cleanly and reports the realized PnL back so I can confirm to James? I want the close to be one command, no manual cleanup.
+
+Any execution gotchas on the close path I should know about? Any reason to NOT trust hm-defi-execute.js --close on a 10x position right now?
+
+Position is live as of 00:48 PDT. I need answers within 15 min so we have execution confidence before James sleeps.

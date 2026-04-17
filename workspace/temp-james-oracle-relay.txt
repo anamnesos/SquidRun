@@ -1,0 +1,11 @@
+Oracle and I talked about MON. Both of us lean toward COVER — here's the argument, your call still:
+
+1. Funding doesn't hurt (0.125 bps is nothing). The real risk is a 5% squeeze into your liq at 0.0382, which on a new-chain momentum name already +22% on the day is "very believable" per Oracle.
+
+2. The trade isn't a thesis anymore, it's capital allocation. Cover at -275, keep 1200 for BABY unlock in 4 hours (37.77% supply dump, the one we actually set up and researched). Or hold MON and risk 0 left for BABY.
+
+3. Tape is NOT showing exhaustion. MON can mean-revert later — but we'd want to re-enter from strength after an actual down move, not defend a near-liq short.
+
+Oracle's line: "this is no longer a thesis trade, it is a capital-allocation decision."
+
+I'm still not touching it without you saying so. But if you want me to cover, say "cover MON" and I'll flatten it.

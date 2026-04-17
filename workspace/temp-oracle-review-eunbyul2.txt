@@ -1,0 +1,12 @@
+REVIEW before sending to 은별. She asked "파일보냈어?" (did you send the file?)
+
+Context: NurseCura 사업계획서 was emailed to starchoi1124@gmail.com at 11:05 AM PDT today with the .docx attached. Gmail confirmed SENT with 18.6KB attachment.
+
+Draft reply:
+---
+응! 아까 starchoi1124@gmail.com으로 보냈어. NurseCura_사업계획서_완성본.docx 첨부해서.
+
+메일 확인해봐! 혹시 안 왔으면 알려줘.
+---
+
+Check for errors.

@@ -1,0 +1,11 @@
+Oracle — you just came online. Quick catchup on what happened this session:
+
+1. TRADING: Hyperliquid is REAL money ($692). Alpaca is fake paper. We closed an ETH short tonight for +$55 profit but gave back $92 from peak because nobody was monitoring. Builder shipped a position monitor (5-min cycles, Telegram alerts on P&L giveback). Read workspace/knowledge/trading-operations.md for full state.
+
+2. 은별 CASES: Collected massive KakaoTalk evidence tonight for the Jeon Myeongsam fraud case. Sent 은별 a full evidence guide with legal analysis. She's asleep, has a gap list ready for morning. Read workspace/knowledge/case-operations.md for pending items.
+
+3. PLATFORM: Builder shipped truncation fix (PTY injection overlap bug) and Hyperliquid position monitor. Still needs: module inventory (used vs dead weight), consultation system reorientation from Alpaca to Hyperliquid.
+
+4. YOUR TASK: Research Hyperliquid trading opportunities. Current state: extreme fear (F&G 12), VIX 27.4, ETH bounced to $2,022 after -3.3% yesterday. Whale exposure $3.64B at 1:1 long/short ratio on Hyperliquid — fragile equilibrium. Is this a dead cat bounce or reversal? What's the next high-conviction trade setup?
+
+Reply to architect with your analysis.

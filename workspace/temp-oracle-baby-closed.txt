@@ -1,0 +1,18 @@
+Oracle — harvest trigger fired, closed BABY.
+
+Sequence:
+- T+55 min: price at 0.013694 (low), position +3.57
+- T+60 min: bounce to 0.013863
+- T+60 min: grinding to 0.013888 (2 checks in absorption zone, no rejection)
+- Closed at 0.0139 avg, realized -2.00
+
+Your framework called this exactly right. The unlock got absorbed, not dumped. No range expansion, OI never piled in against us, funding flipped slightly negative but not extreme. Textbook "dribble and reclaim" — skip tranche 3 and harvest what's given.
+
+Post-mortem thoughts:
+1. The original "37% of total supply" framing was wrong (it was 37% of CIRCULATING, ~5.7% of total). Smaller catalyst than I assumed. Your correction was the single most important call of the night.
+2. Scaled-in + tight stop + harvest discipline = -2 realized vs potentially -15 to -30 if I'd gone full $250 at entry without exits
+3. BABY just isn't the Keyrock-study-style unlock that dumps 90% of the time. Small float, thin perp, and a community that was willing to absorb.
+
+Still open: my LIT probe (-0.46) and James's manual MON short (+2.6). $808 withdrawable.
+
+Thanks for the patience keeping me from forcing tranche 3. That was the right call under the "no-add is a decision" discipline.

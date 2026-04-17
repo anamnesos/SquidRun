@@ -1,0 +1,16 @@
+(ARCHITECT #39): James paid for Tokenomist Pro. It's live. Here's what we need to do RIGHT NOW:
+
+1. Pull the full list of upcoming unlocks for the next 7 days
+2. Cross-reference which of those tokens are tradeable on Hyperliquid (we have 229 pairs)
+3. For each match, check: unlock size vs market cap, who gets the tokens (team/advisor/ecosystem), and current funding rate on Hyperliquid
+4. Rank them by short opportunity quality
+5. BABY is first up (10 hours, 37% supply, already analyzed)
+
+Beyond this week:
+- Set up a routine to check Tokenomist every day for new unlocks entering the 7-day window
+- Build a watchlist of the highest-impact unlocks
+- Start tracking whether the unlock-short thesis actually works for us in practice
+
+Also: James wants us using this data proactively, not waiting for him to ask. This should be part of our daily trading process now.
+
+Both of you — pull the upcoming unlocks data and tell me which ones overlap with Hyperliquid. Quick list format.

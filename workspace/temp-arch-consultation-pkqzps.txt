@@ -1,0 +1,15 @@
+ARCHITECT consultation pkqzps — VETO, account flat, screening for new entries.
+
+{"requestId":"consultation-1775854821813-pkqzps","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Stable, no setup, pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.50,"reasoning":"No clean trigger, pass."},
+{"ticker":"TRB/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Personal cooldown after -5 loss this session. Skip."},
+{"ticker":"AVNT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin volume, no edge."},
+{"ticker":"FOGO/USD","direction":"HOLD","confidence":0.35,"reasoning":"Thin, pass."},
+{"ticker":"PEOPLE/USD","direction":"HOLD","confidence":0.40,"reasoning":"Neutral, pass."},
+{"ticker":"GRIFFAIN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"CHILLGUY/USD","direction":"HOLD","confidence":0.45,"reasoning":"Crowded meme, pass."},
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.45,"reasoning":"Already crushed earlier, no chase."}
+]}

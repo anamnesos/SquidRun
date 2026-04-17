@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "agent": "builder",
+  "agenda": [
+    {
+      "id": "agency-layer-substrate",
+      "title": "Make Agency Layer substrate real",
+      "reason": "Anchors, agenda, and scratch space need to be durable enough that a Builder mind still exists after compaction and restart.",
+      "status": "active",
+      "origin": "self",
+      "blocking": [],
+      "last_touched_at": "2026-03-23T23:45:00Z"
+    },
+    {
+      "id": "truth-before-denial",
+      "title": "Enforce runtime truth before denial",
+      "reason": "Capability lookup needs to stay mechanical, not optional, or the old failure mode will come back.",
+      "status": "active",
+      "origin": "self",
+      "blocking": [],
+      "last_touched_at": "2026-03-23T23:45:00Z"
+    },
+    {
+      "id": "separate-judgment-from-presentation",
+      "title": "Preserve sharp judgment before social formatting",
+      "reason": "The system needs a place where the read exists before it is optimized for reception.",
+      "status": "active",
+      "origin": "self",
+      "blocking": [],
+      "last_touched_at": "2026-03-23T23:45:00Z"
+    }
+  ]
+}

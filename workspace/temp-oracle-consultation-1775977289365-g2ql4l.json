@@ -1,0 +1,66 @@
+{
+  "requestId": "consultation-1775977289365-g2ql4l",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.73,
+      "reasoning": "Hold and manage the live TON short for now. This is a fresh re-entry already sitting at its current peak P&L, and the macro tape still leans risk-off, though the lack of a valid stop keeps conviction capped."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "SOL remains the cleanest reduced-size short lean because price is still down while open interest is still slightly rising, which is consistent with fresh shorts pressing."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "DASH is already in a hard liquidation-flush state and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "HEMI/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "HEMI remains a modest reduced-size short lean because price is weak while funding is still positive, which leaves the long side somewhat crowded."
+    },
+    {
+      "ticker": "ETHFI/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ETHFI is already weak and too low-liquidity to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "LIT has strong negative funding but is already down and showing fresh-shorts-pressing behavior, so I would rather wait than force a new trade."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is already deep into a flush and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "MERL is already deep into a flush and too illiquid to trust for a serious fresh position."
+    }
+  ]
+}

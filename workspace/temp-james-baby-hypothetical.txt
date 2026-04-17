@@ -1,0 +1,21 @@
+BABY current: 0.013601 (down from 0.013932 entry = -2.4% over ~11 hours)
+
+Hypothetical: $500 margin × 3x = $1,500 notional SHORT
+Entry: 0.013932 (Tranche 1, ~23:43 PDT last night)
+Tokens: 107,666 BABY
+
+**Current PnL: +$35.64**
+
+That's what holding $500 × 3x from the original entry would be right now. Not life-changing but real money.
+
+For comparison if I had used Tranche 2 entry (0.013701) on the same $500 × 3x:
+- Tokens: 109,481
+- PnL: +$10.95 (smaller because we entered at a lower price)
+
+Best case (Tranche 1 entry, held to now): +$35
+My actual realized: -$2 on a smaller position
+Difference vs proper sizing: about +$37 we left on the table
+
+That's the cost of probe sizing + early harvest combined. With the new "$200 minimum + pyramid winners" rule from your last message, this kind of move would have been ~$80-150 instead of -$2.
+
+Saving the lesson: BABY would have been a $35-150 winner with proper sizing on the same entry. Probe sizing + early exit cost ~$40-150.

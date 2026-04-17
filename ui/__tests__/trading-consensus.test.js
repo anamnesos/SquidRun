@@ -56,6 +56,18 @@ describe('Consensus Engine', () => {
     expect(result.dissenting[0].agent).toBe('builder');
   });
 
+  test('derives consensus confidence from the agreeing signals only', () => {
+    const signals = [
+      makeSignal('architect', 'SELL', 0.66),
+      makeSignal('builder', 'BUY', 0.91),
+      makeSignal('oracle', 'SELL', 0.69),
+    ];
+    const result = evaluateConsensus(signals);
+    expect(result.confidence).toBeCloseTo(0.675, 5);
+    expect(result.averageAgreeConfidence).toBeCloseTo(0.675, 5);
+    expect(result.averageSignalConfidence).toBeCloseTo((0.66 + 0.91 + 0.69) / 3, 5);
+  });
+
   test('no consensus (3-way split) → HOLD', () => {
     const signals = [
       makeSignal('architect', 'BUY'),
@@ -66,6 +78,7 @@ describe('Consensus Engine', () => {
     expect(result.decision).toBe('HOLD');
     expect(result.consensus).toBe(false);
     expect(result.agreementCount).toBe(0);
+    expect(result.confidence).toBe(0);
   });
 
   test('2-of-3 HOLD consensus', () => {

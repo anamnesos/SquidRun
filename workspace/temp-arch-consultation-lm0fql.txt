@@ -1,0 +1,14 @@
+ARCHITECT consultation lm0fql — VETO, MON only, cooldown holds.
+
+{"requestId":"consultation-1775838621285-lm0fql","agentId":"architect","signals":[
+{"ticker":"MON/USD","direction":"HOLD","confidence":0.55,"reasoning":"James's, +16.40, ~84% retained of peak. Operator-authority. Hold."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Stable, no setup, pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.50,"reasoning":"Mild structure, pass."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Neutral, pass."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding still extreme positive but personal cooldown after -5 loss."},
+{"ticker":"STABLE/USD","direction":"HOLD","confidence":0.40,"reasoning":"Different from STBL — STABLE had +6% pump on $1M vol earlier. Neutral funding, no clean read. Pass."},
+{"ticker":"BLUR/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding negative, mild squeeze structure, shelf-life concern. Pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Squeeze long shelf-life. Pass."},
+{"ticker":"CHILLGUY/USD","direction":"HOLD","confidence":0.45,"reasoning":"Crowded meme, pass."}
+]}

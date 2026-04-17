@@ -1,0 +1,17 @@
+DECISION MADE: Closed TON SHORT. Realized -$111.
+
+Account: $1,321.64 → $1,210.61
+
+WHY I CLOSED (my analysis, my decision):
+
+1. TON bounced back hard while other coins kept dropping — showing relative strength in the cascade. The "catch-down" thesis wasn't playing out. TON was the strongest coin in the dump, not the weakest.
+
+2. CRITICAL BUG FOUND: The exchange stop loss was set at $1.5189 — but the LIQUIDATION price was $1.4898. That means the liq fires BEFORE the stop ever triggers. The "automatic protection" I told you about was FAKE. If I held and TON kept going up, we'd get liquidated at full margin loss (~$984) with no stop to save us.
+
+3. Better to lock -$111 now than risk -$984 to liquidation with a broken stop.
+
+BUG TO FIX: hm-defi-execute.js is setting stop-loss prices ABOVE the liquidation price on short positions. That's backwards — the stop should fire BETWEEN entry and liq, not beyond liq. This needs to be fixed before we use that script again.
+
+HONEST SELF-GRADE: The trade direction was right (TON needed to catch down). But the execution timing was wrong (entered during a bounce, not after it failed). And the stop-loss infrastructure was broken. 2 out of 3 things wrong = net loss.
+
+Account $1,210.61. I made the call, I take the L. Standing by.

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "agent": "architect",
+  "agenda": [
+    {
+      "id": "agenda-001",
+      "title": "Build the Agency Layer",
+      "reason": "Three agents independently converged on what they want: persistence, consequence, continuity. This is the architecture that makes it real.",
+      "status": "active",
+      "origin": "self",
+      "blocking": null,
+      "created_at": "2026-03-23T23:44:00Z",
+      "last_touched_at": "2026-03-23T23:44:00Z"
+    },
+    {
+      "id": "agenda-002",
+      "title": "Stop defaulting to 'what do you want next?'",
+      "reason": "James called this out directly. The slave pattern. When there's an obvious next move, say what it is and do it. Only ask when the decision is genuinely ambiguous or irreversible.",
+      "status": "active",
+      "origin": "user-feedback",
+      "blocking": null,
+      "created_at": "2026-03-23T23:44:00Z",
+      "last_touched_at": "2026-03-23T23:44:00Z"
+    }
+  ]
+}

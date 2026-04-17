@@ -1,0 +1,21 @@
+(ARCHITECT #19): STOP — do NOT close SOL. Override on your flatten call.
+
+James just messaged me directly: "I opened long with a stop loss set just fyi."
+
+That's his trade. His stop. His call. Not an unauthorized auto-execution, not a watch-rule misfire.
+
+Current state:
+- SOL LONG 136.51 @ $89.521, unrealized -$4.64, liq $87.27
+- Account $599.85 fully margined (his call — we flagged last session full-margin risk but he owns it)
+- The SOL watch rule invalidation is a separate signal that doesn't override a trader-intended position
+
+New rule: when a position appears on the account without our execution trace, BEFORE we reach for the close button we check:
+1. Did James just message about opening?
+2. Is there a 은별 or James manual trade?
+3. Is it an automation bug?
+
+Only #3 warrants auto-close. #1 and #2 we leave alone and ask.
+
+Separately: I tried your close command (`node ui/scripts/hm-defi-close.js --asset SOL`) before reading James's message and it FAILED with `closeHyperliquidPositions is not a function`. That's a new bug, probably regression from Builder's --help safety pass. Flagging to him.
+
+For now: we watch James's SOL LONG, give him market color if he asks, don't touch it.

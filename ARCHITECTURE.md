@@ -5,7 +5,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 
 ## 2) PROCESS MODEL
 1. `ui/main.js` starts Electron, enforces single-instance lock, installs global error handlers, builds managers, and calls `SquidRunApp.init()`.
-2. `ui/modules/main/squidrun-app.js` loads settings, creates the main BrowserWindow, runs firmware/CLI identity startup work, sets session scope, and starts WebSocket + runtime services.
+2. `ui/modules/main/squidrun-app.js` loads settings, resolves launch intent, creates the requested top-level BrowserWindow set (main and/or Eunbyeol), runs firmware/CLI identity startup work, sets session scope, and starts WebSocket + runtime services.
 3. Main window preload (`ui/preload.js`) exposes safe bridge APIs to renderer (`window.squidrun` / `window.squidrunAPI`) under context isolation.
 4. Hidden pane hosts are created by `ui/modules/main/pane-host-window-manager.js` as offscreen BrowserWindows (`pane-host.html`) for robust PTY injection and delivery acknowledgements.
 5. PTY runtime is managed by daemon client (`ui/daemon-client.js`) connecting to `ui/terminal-daemon.js`; panes attach through renderer/hidden-host bridges.
@@ -139,6 +139,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/firmware-manager.js: Exports FirmwareManager.
 - ui/modules/main/github-service.js: Exports createGitHubService, execAsync, toGhError.
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
+- ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows like Eunbyeol can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
@@ -171,6 +172,8 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/shared-state.js: Exports init, getState, getChangesSince, getChangelogForPane, ....
 - ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
+- ui/modules/startup-transcript-context.js: Startup-recovery helper that detects active trading/case/comms items, queries the transcript index, and formats a compact cited transcript-recall block for pane SessionStart hooks.
+- ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
 - ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, api-keys).
 - ui/modules/tabs/activity.js: Exports setupActivityTab, destroyActivityTab, addActivityEntry.
@@ -204,14 +207,18 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/team-memory/worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
 - ui/modules/team-memory/worker.js: Child-process worker entrypoint for async runtime tasks.
 - ui/modules/telegram-poller.js: Exports start, stop, isRunning, _internals, ....
+- ui/scripts/create-eunbyeol-shortcut.ps1: Creates a Windows desktop shortcut that launches the Eunbyeol window directly.
+- ui/scripts/launch-eunbyeol.ps1: Standalone Windows launcher that opens Eunbyeol via packaged EXE or `npm start -- --window=eunbyeol --solo-window`.
 - ui/modules/terminal.js: Exports PANE_IDS, terminals, fitAddons, setStatusCallbacks, ....
 - ui/modules/terminal/agent-colors.js: Exports attachAgentColors, AGENT_COLORS.
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
+- ui/modules/transcript-index.js: Claude transcript indexing/search module that parses `~/.claude/projects/<project>/*.jsonl` into cited runtime records for startup recovery and transcript-backed memory retrieval.
 - ui/modules/trading/agent-attribution.js: Persistent prediction-attribution tracker that records per-agent calls and later outcomes, then computes asset-class-specific stats and leaderboards for future consensus vote weighting.
 - ui/modules/trading/broker-adapter.js: Unified trading-broker factory that presents the common account/positions/orders/snapshots/news interface used by the trading stack and dispatches requests to Alpaca or IBKR implementations.
 - ui/modules/trading/consultation-store.js: Disk-backed consultation request/response layer that writes full market context to runtime files, dispatches lightweight hm-send prompts to the live pane agents, and correlates JSON replies from the comms journal by requestId for real multi-model trading debate.
 - ui/modules/trading/data-ingestion.js: Trading data access layer for market clock/calendar, watchlist snapshots, bars, news, SEC filings, and Yahoo fallbacks; now broker-routes watchlist snapshot/news fetches so Alpaca and IBKR symbols can coexist in the same run.
+- ui/modules/trading/bracket-manager.js: Pure Hyperliquid bracket-state planner that splits entry size into TP1/runner legs, classifies reduce-only stop/TP orders, and decides when the remainder stop must move to breakeven after a partial take-profit fill.
 - ui/modules/trading/dynamic-watchlist.js: Persistent static-plus-dynamic watchlist manager that lets future smart-money and launch-radar modules add sourced tickers with expiry while preserving a unified active watchlist for the trading stack.
 - ui/modules/trading/executor.js: Broker-routed order execution and account/position access layer that preserves the Alpaca flow while delegating IBKR orders and liquidation/account reads through the shared broker adapter.
 - ui/modules/trading/ibkr-client.js: Interactive Brokers client wrapper built on `@stoqey/ib`; handles env-based connection config, account summary reads, positions, stock order submission, market-data snapshots, and a unified IBKR broker surface for Asian-market routing.
@@ -250,6 +257,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-compat-count.js: Utility script for compatibility/counting diagnostics used in release and audit workflows.
 - ui/scripts/hm-defi-close.js: Hyperliquid position-close CLI that cancels open TP/SL orders, submits a reduce-only IOC close order, and verifies the position is flat.
 - ui/scripts/hm-defi-execute.js: DeFi execution pipeline CLI that bridges funds, swaps collateral, deposits to Hyperliquid, and opens the configured leveraged perp trade.
+- ui/scripts/hm-hyperliquid-bracket-manager.js: Hyperliquid bracket-management CLI that inspects the live position plus reduce-only orders, detects TP1 fills, cancels stale stops, and moves the remainder stop to breakeven on the normal bracket path.
 - ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
 - ui/scripts/hm-experiment.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-github.js: CLI utility that sends/queries runtime actions via WebSocket.
@@ -258,6 +266,8 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-image-gen.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-investigate.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, `salience`, and `set-immune` over the cognitive-memory store.
+- ui/scripts/hm-startup-transcript-context.js: Startup helper CLI that builds the automatic transcript-recall block injected into pane SessionStart hooks from active items plus recent comms.
+- ui/scripts/hm-transcript-index.js: Transcript-index CLI that builds/searches `.squidrun/runtime/transcript-index.jsonl` from Claude session JSONL archives under `~/.claude/projects/`.
 - ui/scripts/hm-memory-consistency.js: On-demand CLI that reports drift between tracked knowledge markdown and knowledge-backed cognitive-memory nodes.
 - ui/scripts/hm-memory-extract.js: Extracts memory candidates from runtime/session artifacts for staged promotion review.
 - ui/scripts/hm-memory-index.js: Builds or refreshes the cognitive/vector memory index from workspace knowledge files.

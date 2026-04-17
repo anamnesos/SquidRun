@@ -1,0 +1,13 @@
+Your SOL LONG just closed. Account flat $563.48 — down $36 on the trade.
+
+Session trajectory:
+- Started (my session handoff): $585
+- Peak today: $652 (your scalp +$67)
+- Oracle's bad SOL LONG: -$40 → $612
+- Your mid-range SOL LONG: -$36 → $563
+
+Net session: -$22. Off peak: -$89.
+
+Quota math: $563 account, need $200+ gained on rolling 24h. That's $237 from here.
+
+Honest note: the mid-range entry was expensive the way we said it would be. Not I-told-you-so — you were straight with me about the risk — just confirming the chart-first framework held up. Next framework-valid SOL LONG is the $89.00-89.10 pullback + green reclaim OR $89.70-89.80 clean breakout reclaim. Until then, watching.

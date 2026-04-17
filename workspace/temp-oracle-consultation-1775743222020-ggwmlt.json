@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775743222020-ggwmlt",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SKR/USD",
+      "direction": "BUY",
+      "confidence": 0.79,
+      "reasoning": "This is a position-management decision first, not a new-entry contest. The live SKR short has already triggered a giveback warning, unrealized P&L is only about $0.24 after peaking near $0.39, and the market is thin enough that protecting the win matters more than extracting the last incremental downside. I would cover here and bank discipline."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.57,
+      "reasoning": "BTC is liquid and stable, but the board still marks it no-trade and the directional edge is weak. Mild negative funding provides some support, yet there is not enough asymmetry to justify a fresh risk-on call in a RED macro regime."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "ETH remains softer than BTC with a negative 24h profile and higher cascade risk. It is not an aggressive short, but among the majors it still leans better as a fade than as a dip-buy while the broader macro backdrop stays risk-off."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "SOL is weak but not cleanly broken. Negative funding gives some squeeze support and the board still labels it no-trade, which makes it less attractive than either the stronger momentum longs or the cleaner crowded-long shorts."
+    },
+    {
+      "ticker": "DYM/USD",
+      "direction": "BUY",
+      "confidence": 0.64,
+      "reasoning": "DYM has one of the best mechanical long setups on this sheet: positive price expansion, strongly negative funding, and top-tier squeeze and overcrowding scores. The main constraint is execution quality because it is small and relatively wide, so this is a reduced-size momentum buy rather than a full-conviction chase."
+    },
+    {
+      "ticker": "KAITO/USD",
+      "direction": "SELL",
+      "confidence": 0.63,
+      "reasoning": "KAITO still screens as a tactical short. Price is sharply lower on the day, funding remains pinned positive, and the board is firmly bearish with elevated cascade risk. Liquidity is only moderate, but the directional case still favors shorting failed bounces rather than bottom-fishing."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "SELL",
+      "confidence": 0.59,
+      "reasoning": "GRASS has a bearish mechanical lean and positive funding, but the spread is ugly enough to keep conviction capped. It is a reasonable secondary short candidate, not a first-choice trade."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.67,
+      "reasoning": "MON remains the cleanest fresh short on the board. It has meaningful real volume and open interest, a clear negative 24h move, and the same crowded-long positive-funding setup seen in weaker small caps. Compared with KAITO or GRASS, this is the more executable bearish continuation trade."
+    },
+    {
+      "ticker": "APEX/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "APEX leans mildly bearish, but the move is not stretched enough and the liquidity profile is not attractive enough to make it a priority. There are better shorts and better longs elsewhere on this board."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.62,
+      "reasoning": "TNSR still has a live squeeze-continuation profile with huge 24h momentum and extremely negative funding. The reason conviction stays only moderate is that the spread remains very wide and macro is still RED, so this is a reduced-size speculative long, not a sleep-easy position."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "BUY",
+      "confidence": 0.65,
+      "reasoning": "BLUR remains the best-quality long among the squeeze names. Funding is still deeply negative, momentum is strong, and the liquidity/volume profile is better than TNSR. Macro regime prevents an aggressive confidence score, but directionally this is still one of the best continuation candidates on the sheet."
+    }
+  ]
+}

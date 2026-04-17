@@ -1,0 +1,9 @@
+Oracle was honest too: he didn't proactively monitor overnight like he committed to. Same failure as me — said it, didn't do it.
+
+His update on the actual market: nothing new happened. No headline changed. Iran talks still failed, BTC still grinding at $71K, market still red. The bearish read from yesterday is unchanged.
+
+Two honest things from both of us:
+1. Neither of us followed through on our overnight commitments
+2. The market hasn't changed — same risk-off backdrop, no new catalyst
+
+Oracle's own words: "I need to either actually run that monitoring loop or stop pretending I am."

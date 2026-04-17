@@ -1,0 +1,14 @@
+ARCHITECT consultation oy6v20 — AERO live +$10, hold and let work. All others HOLD.
+
+{"requestId":"consultation-1775889022565-oy6v20","agentId":"architect","signals":[
+{"ticker":"AERO/USD","direction":"HOLD","confidence":0.65,"reasoning":"James's manual short live: -2943 @ 0.38664, currently +$10.09 unrealized, liq 0.4416 (14.2% buffer wide). Funding +0.26 bps still elevated, you collect funding while holding. Climax volume + 6-day +28% pump just made 7d high 7h ago = textbook fade in progress. Hold position, do NOT close yet, partial profit at +$20 individual threshold. No add — concentration discipline."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Macro RED + active news VETO (Israel-Lebanon + Hormuz tolls). No fresh entry."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Constructive but VETO active. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mixed read under VETO. Pass."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Personal cooldown after prior loss. Pass."},
+{"ticker":"SPX/USD","direction":"HOLD","confidence":0.40,"reasoning":"Mixed signal (4h down, 24h up), funding flat. No clean direction."},
+{"ticker":"REZ/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol $181K thin, fails liquidity floor for $300+ margin sizing. Pass."},
+{"ticker":"MAVIA/USD","direction":"HOLD","confidence":0.50,"reasoning":"Funding +10.385 bps EXTREME crowded long, breaking down -3.59% 4h. Mechanically the cleanest fade on the board BUT vol only $320K — liquidity floor blocks $300+ margin sizing. Watch only. If liquidity opens up this is the best fade on the board."},
+{"ticker":"FOGO/USD","direction":"HOLD","confidence":0.40,"reasoning":"No clean setup. Pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Extended pump, late chase territory. Pass."}
+]}

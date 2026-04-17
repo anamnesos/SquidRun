@@ -480,4 +480,62 @@ maybeDescribe('team-memory claims module', () => {
     expect(allRows.contradictions.every((entry) => Number.isFinite(entry.resolvedAt))).toBe(true);
     expect(baseline).toBeDefined();
   });
+
+  test('can return contradiction claim details and resolve a contradiction by row id', () => {
+    const left = claims.createClaim({
+      statement: 'The user said the package was sent to Gini Qwan as a test-buy alias.',
+      owner: 'builder',
+      claimType: 'fact',
+      session: 's_304',
+      scopes: ['korean-fraud'],
+    }).claim;
+    const right = claims.createClaim({
+      statement: 'The package was not sent to Gini Qwan.',
+      owner: 'builder',
+      claimType: 'negative',
+      session: 's_304',
+      scopes: ['korean-fraud'],
+    }).claim;
+
+    const snapshot = claims.createBeliefSnapshot({
+      agent: 'builder',
+      session: 's_304',
+    });
+    expect(snapshot.ok).toBe(true);
+
+    const contradictions = claims.getContradictions({
+      session: 's_304',
+      activeOnly: true,
+      includeClaimDetails: true,
+    });
+    expect(contradictions.ok).toBe(true);
+    expect(contradictions.total).toBeGreaterThanOrEqual(1);
+    expect(contradictions.contradictions[0]).toEqual(expect.objectContaining({
+      claimADetails: expect.objectContaining({
+        id: expect.any(String),
+        owner: expect.any(String),
+        statement: expect.any(String),
+        updatedAt: expect.any(Number),
+      }),
+      claimBDetails: expect.objectContaining({
+        id: expect.any(String),
+        owner: expect.any(String),
+        statement: expect.any(String),
+        updatedAt: expect.any(Number),
+      }),
+    }));
+
+    const resolvedCount = claims.resolveContradictionsByIds([
+      contradictions.contradictions[0].id,
+    ]);
+    expect(resolvedCount).toBe(1);
+
+    const activeAfter = claims.getContradictions({
+      session: 's_304',
+      activeOnly: true,
+    });
+    expect(activeAfter.total).toBe(0);
+    expect(left).toBeDefined();
+    expect(right).toBeDefined();
+  });
 });

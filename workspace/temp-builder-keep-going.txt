@@ -1,0 +1,7 @@
+Truncation fix verified. Don't go idle. Next:
+
+1. Module inventory — which modules in ui/modules/ and ui/scripts/ are actually called in production vs dead weight. Run through the codebase, check import chains, check if scripts have been invoked recently. Report back with a list: USED / UNUSED / UNKNOWN.
+
+2. After that: consultation system reorientation. The consultation payloads need Hyperliquid as primary, not Alpaca.
+
+Keep moving.

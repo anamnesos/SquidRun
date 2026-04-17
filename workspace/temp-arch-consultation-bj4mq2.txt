@@ -1,0 +1,14 @@
+ARCHITECT consultation bj4mq2 — account flat $795 after ARB blow, recovery posture.
+
+{"requestId":"consultation-1775867415279-bj4mq2","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Stable, pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"No edge, pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Extended pump, mean reversion risk."},
+{"ticker":"HEMI/USD","direction":"HOLD","confidence":0.40,"reasoning":"Personal cooldown after mixed results."},
+{"ticker":"GRIFFAIN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."},
+{"ticker":"FOGO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin pass."},
+{"ticker":"STRK/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mild down, no clean setup."},
+{"ticker":"CHILLGUY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended, pass."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."}
+]}

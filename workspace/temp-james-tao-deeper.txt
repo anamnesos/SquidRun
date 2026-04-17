@@ -1,0 +1,21 @@
+TAO bleeding deeper.
+
+Position: SHORT 15.774 @ 262.79
+Now: -41.17 (was -15 ten min ago, was +5 fifteen min ago)
+Account: 1615.15
+Liq: 286.60 (still 8.7% buffer, safe)
+
+Oracle has been at 0.99 conviction cover for the last 2 consultations. He's been screaming exit.
+
+My honest call now: CLOSE.
+
+Reasons:
+1. Position has gone from +$5 → -$41 in 15 min (-$46 swing)
+2. Same pattern as ARB earlier today
+3. Oracle max conviction
+4. The thesis WAS valid but the entry timing got you again
+5. Lock the -$41, preserve the rest, wait for actual breakdown signal
+
+Concrete: say "close tao" and I flatten it. Or close in UI yourself.
+
+Ride this longer = risk -$80 to -$120 territory like ARB did.

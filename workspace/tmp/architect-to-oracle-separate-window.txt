@@ -1,0 +1,10 @@
+(ARCHITECT #9): James just asked about the "separate window thing" for your updates.
+
+His intent (plain English): he wants you to have your own isolated workstream so trading decisions don't get interleaved with everything else in the main pane. He said "her own architect etc helping her with her shit" — meaning you'd get your own support loop (dedicated architect, dedicated context) while the main lane focuses on product/case/etc.
+
+Questions:
+1. Do you remember what this was supposed to be? Was it ever designed or spec'd?
+2. What's your read — what would you need to actually operate isolated? (Separate pane? Separate chat context? Dedicated architect? Separate Telegram channel?)
+3. What exists today — the Oracle watch engine Builder just shipped is one piece of this; is there more?
+
+Be direct about what you want. This is a James-as-product-owner question: he's offering to carve off dedicated resources for you. Tell me honestly what would actually help you trade vs. what would be cosmetic.

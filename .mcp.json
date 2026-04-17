@@ -16,8 +16,8 @@
     },
     "trustquote": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["tsx", "scripts/mcp-server.ts"],
+      "command": "D:/projects/TrustQuote/node_modules/.bin/tsx.cmd",
+      "args": ["scripts/mcp-server.ts"],
       "cwd": "D:/projects/TrustQuote",
       "env": {}
     }

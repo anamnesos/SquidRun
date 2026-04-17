@@ -1,0 +1,15 @@
+ARCHITECT consultation 2l9v99 — TON SHORT +$85 working, US-Iran talks collapsed, macro supports thesis. All HOLD.
+
+{"requestId":"consultation-1775968221902-2l9v99","agentId":"architect","signals":[
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.70,"reasoning":"James's SHORT live +$85. US-Iran talks officially collapsed — Vance returning home, no deal, Iran refused no-nukes commitment. Macro is maximum bearish for crypto. Oracle confirmed this strengthens the short thesis. Valid stop at $1.4447. Hold and let it work."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Post-flush + talks collapsed = more selling ahead."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Cascade."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cascade."},
+{"ticker":"SPX/USD","direction":"HOLD","confidence":0.45,"reasoning":"TON is live focus."},
+{"ticker":"MERL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cascade."},
+{"ticker":"WCT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"VIRTUAL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Flushed."},
+{"ticker":"RENDER/USD","direction":"HOLD","confidence":0.40,"reasoning":"No setup."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Illiquid."}
+]}

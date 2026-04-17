@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775988023520-3dpgtk",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "SOL remains a reduced-size short lean because price is still down while open interest is still slightly rising, which is consistent with fresh shorts pressing."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "SELL",
+      "confidence": 0.62,
+      "reasoning": "LIT is one of the cleaner shorts because the tape is weak and fresh shorts are still pressing while open interest continues to build."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "SELL",
+      "confidence": 0.66,
+      "reasoning": "DASH is the clearest short on this board because price is down hard while open interest is still rising, which suggests the selloff is not fully exhausted yet."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "BLUR is too mixed and too low-liquidity to justify a serious fresh trade in this tape."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "MON remains a reduced-size short because it is still weak and funding is still positive, which keeps the downside pressure intact."
+    },
+    {
+      "ticker": "HEMI/USD",
+      "direction": "SELL",
+      "confidence": 0.59,
+      "reasoning": "HEMI remains a fade because funding is still extremely positive even after the weakness, which leaves the long side crowded."
+    },
+    {
+      "ticker": "ETHFI/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "ETHFI is already weak and too low-liquidity to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "ZEN/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "ZEN is already deep into a flush and too illiquid to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "PURR/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "PURR is already down hard and too illiquid to trust for a fresh short chase."
+    }
+  ]
+}

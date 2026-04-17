@@ -20,6 +20,14 @@ function getPtyEnterCallCount(mockPty, paneId = '1') {
   return mockPty.write.mock.calls.filter((call) => call[0] === paneId && call[1] === '\r').length;
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function timestampedPayloadRegex(value, { prefix = '' } = {}) {
+  return new RegExp(`^${escapeRegExp(prefix)}\\[\\d{2}:\\d{2} local\\] ${escapeRegExp(value)}$`);
+}
+
 describe('Terminal Injection', () => {
   // Default constants matching the module
   const DEFAULT_CONSTANTS = {
@@ -33,7 +41,7 @@ describe('Terminal Injection', () => {
     CLAUDE_CHUNK_SIZE: 2048,
     CLAUDE_CHUNK_MIN_SIZE: 1024,
     CLAUDE_CHUNK_MAX_SIZE: 8192,
-    CLAUDE_CHUNK_THRESHOLD_BYTES: 8 * 1024,
+    CLAUDE_CHUNK_THRESHOLD_BYTES: 1024,
     CLAUDE_CHUNK_YIELD_MS: 0,
     HM_SEND_FAST_CHUNK_THRESHOLD_BYTES: 256,
     HM_SEND_FAST_ENTER_DELAY_MS: 500,
@@ -446,6 +454,19 @@ describe('Terminal Injection', () => {
       expect(messageQueue['1'][0].onComplete).toBe(callback);
     });
 
+    test('stores inject metadata on queued messages', () => {
+      mockOptions.getInjectionInFlight.mockReturnValue(true);
+
+      controller.sendToPane('1', 'test\r', {
+        meta: { visibility: 'internal', source: 'pane-output-filter' },
+      });
+
+      expect(messageQueue['1'][0].meta).toEqual({
+        visibility: 'internal',
+        source: 'pane-output-filter',
+      });
+    });
+
     test('logs user typing state', () => {
       mockOptions.userIsTyping.mockReturnValue(true);
       controller.sendToPane('1', 'test\r');
@@ -753,6 +774,77 @@ describe('Terminal Injection', () => {
       expect(lockedOptions.setInjectionInFlight).not.toHaveBeenCalledWith(true);
     });
 
+    test('serializes hm-send fast-path injections per pane to prevent PTY interleaving', async () => {
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+
+      let resolveFirstEnter;
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          return new Promise((resolve) => {
+            resolveFirstEnter = () => {
+              promptText = 'running...';
+              lastOutputTime['1'] = Date.now();
+              resolve(undefined);
+            };
+          });
+        }
+        return Promise.resolve(undefined);
+      });
+
+      messageQueue['1'] = [{
+        message: 'first hm payload\r',
+        timestamp: Date.now(),
+        traceContext: { messageId: 'hm-1', traceId: 'hm-1' },
+      }];
+
+      controller.processIdleQueue('1');
+      await Promise.resolve();
+
+      messageQueue['1'].push({
+        message: 'second hm payload\r',
+        timestamp: Date.now(),
+        traceContext: { messageId: 'hm-2', traceId: 'hm-2' },
+      });
+      controller.processIdleQueue('1');
+      await Promise.resolve();
+
+      const payloadWritesBeforeRelease = mockPty.write.mock.calls
+        .map(call => call[1])
+        .filter(value => typeof value === 'string' && value !== '\r');
+      expect(payloadWritesBeforeRelease).toHaveLength(1);
+      expect(payloadWritesBeforeRelease[0]).toEqual(
+        expect.stringMatching(timestampedPayloadRegex('first hm payload'))
+      );
+      expect(messageQueue['1']).toHaveLength(1);
+
+      await jest.advanceTimersByTimeAsync(800);
+      expect(typeof resolveFirstEnter).toBe('function');
+
+      resolveFirstEnter();
+      await jest.advanceTimersByTimeAsync(1200);
+
+      const payloadWritesAfterRelease = mockPty.write.mock.calls
+        .map(call => call[1])
+        .filter(value => typeof value === 'string' && value !== '\r');
+      expect(payloadWritesAfterRelease).toHaveLength(2);
+      expect(payloadWritesAfterRelease[1]).toEqual(
+        expect.stringMatching(timestampedPayloadRegex('second hm payload'))
+      );
+      expect(messageQueue['1']).toHaveLength(0);
+    });
+
     test('handles onComplete error gracefully', async () => {
       const onComplete = jest.fn(() => {
         throw new Error('Callback error');
@@ -832,7 +924,11 @@ describe('Terminal Injection', () => {
       await capabilityController.doSendToPane('7', 'hello runtime\r', onComplete);
       await jest.advanceTimersByTimeAsync(200);
 
-      expect(mockPty.write).toHaveBeenCalledWith('7', 'hello runtime', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '7',
+        expect.stringMatching(timestampedPayloadRegex('hello runtime')),
+        expect.any(Object)
+      );
       expect(mockPty.writeChunked).not.toHaveBeenCalled();
       expect(mockPty.write).toHaveBeenCalledWith('7', '\r', expect.any(Object));
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
@@ -841,6 +937,59 @@ describe('Terminal Injection', () => {
         verified: true,
         signal: 'prompt_probe_unavailable',
       });
+    });
+
+    test('threads inject metadata into PTY kernelMeta', async () => {
+      const capabilityOptions = {
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockImplementation((paneId) => {
+          if (paneId === '7') {
+            return {
+              mode: 'pty',
+              modeLabel: 'generic-pty',
+              appliedMethod: 'generic-pty',
+              submitMethod: 'pty-enter',
+              bypassGlobalLock: true,
+              applyCompactionGate: false,
+              requiresFocusForEnter: false,
+              enterMethod: 'pty',
+              enterDelayMs: 25,
+              sanitizeMultiline: false,
+              clearLineBeforeWrite: true,
+              useChunkedWrite: true,
+              homeResetBeforeWrite: true,
+              verifySubmitAccepted: true,
+              deferSubmitWhilePaneActive: true,
+              typingGuardWhenBypassing: true,
+            };
+          }
+          return null;
+        }),
+      };
+      const capabilityController = createInjectionController(capabilityOptions);
+
+      document.querySelector.mockReturnValue(null);
+      terminals.set('7', { buffer: { active: null } });
+
+      await capabilityController.doSendToPane(
+        '7',
+        'internal runtime',
+        jest.fn(),
+        null,
+        { meta: { visibility: 'internal', source: 'pane-output-filter' } }
+      );
+      await jest.advanceTimersByTimeAsync(200);
+
+      const payloadWrite = mockPty.write.mock.calls.find(
+        ([paneId, data]) => paneId === '7' && data !== '\r'
+      );
+      expect(payloadWrite).toBeDefined();
+      expect(payloadWrite[2]).toEqual(expect.objectContaining({
+        meta: expect.objectContaining({
+          visibility: 'internal',
+          source: 'pane-output-filter',
+        }),
+      }));
     });
 
     test('respects capability override for submit verification on focus-free path', async () => {
@@ -877,16 +1026,34 @@ describe('Terminal Injection', () => {
       await capabilityController.doSendToPane('8', 'custom message', onComplete);
       await jest.advanceTimersByTimeAsync(50);
 
-      expect(mockPty.write).toHaveBeenCalledWith('8', 'custom message', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '8',
+        expect.stringMatching(timestampedPayloadRegex('custom message')),
+        expect.any(Object)
+      );
       expect(mockPty.write).toHaveBeenCalledWith('8', '\r', expect.any(Object));
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
     test('hm-send fast path submits Enter after delay via plain PTY write', async () => {
       const onComplete = jest.fn();
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
       mockPty.write.mockImplementation((paneId, data) => {
         if (paneId === '1' && data === '\r') {
           // Prevent Darwin's guarded fast-path retry by simulating output transition.
+          promptText = 'running hm-send...';
           lastOutputTime['1'] = Date.now();
         }
         return Promise.resolve(undefined);
@@ -904,7 +1071,11 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(800);
       await promise;
 
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'hm payload', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('hm payload')),
+        expect.any(Object)
+      );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
       expect(mockTextarea.dispatchEvent).not.toHaveBeenCalled();
       expect(onComplete).toHaveBeenCalledWith({
@@ -950,7 +1121,9 @@ describe('Terminal Injection', () => {
 
       expect(mockPty.write).toHaveBeenCalledWith(
         '1',
-        '# (BUILDER #1): Builder online. Standing by.\n# [CURRENT PROJECT] name=squidrun',
+        expect.stringMatching(
+          timestampedPayloadRegex('(BUILDER #1): Builder online. Standing by.\n# [CURRENT PROJECT] name=squidrun', { prefix: '# ' })
+        ),
         expect.any(Object)
       );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
@@ -1002,7 +1175,7 @@ describe('Terminal Injection', () => {
 
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        `${'L'.repeat(1050)}\nline-two`,
+        expect.stringMatching(timestampedPayloadRegex(`${'L'.repeat(1050)}\nline-two`)),
         expect.objectContaining({ waitForWriteAck: true }),
         expect.any(Object)
       );
@@ -1081,7 +1254,7 @@ describe('Terminal Injection', () => {
 
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        'M'.repeat(300),
+        expect.stringMatching(timestampedPayloadRegex('M'.repeat(300))),
         expect.objectContaining({ waitForWriteAck: true }),
         expect.any(Object)
       );
@@ -1195,7 +1368,11 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(2500);
       await promise;
 
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'hm payload', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('hm payload')),
+        expect.any(Object)
+      );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
       expect(promptText).toBe('codex> ');
       expect(onComplete).toHaveBeenCalledWith({
@@ -1205,6 +1382,79 @@ describe('Terminal Injection', () => {
         status: 'accepted.unverified',
         reason: 'submit_not_accepted',
       });
+    });
+
+    test('hm-send fast path does not treat bare output transitions as verified acceptance', async () => {
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
+      const onComplete = jest.fn();
+
+      const strictController = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      const promise = strictController.doSendToPane(
+        '1',
+        'hm payload\r',
+        onComplete,
+        { messageId: 'hm-output-only', traceId: 'hm-output-only' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(2500);
+      await promise;
+
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: false,
+        signal: 'accepted_unverified',
+        status: 'accepted.unverified',
+        reason: 'submit_not_accepted',
+      });
+    });
+
+    test('prepends a visible local timestamp to injected pane messages', async () => {
+      jest.setSystemTime(new Date('2026-03-28T12:34:00'));
+      terminals.set('1', { _squidrunBypass: false });
+      const onComplete = jest.fn();
+
+      const promise = controller.doSendToPane(
+        '1',
+        'status update\r',
+        onComplete,
+        null,
+        { verifySubmitAccepted: false }
+      );
+
+      await jest.advanceTimersByTimeAsync(500);
+      await promise;
+
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        '[12:34 local] status update',
+        expect.any(Object)
+      );
     });
 
     test('preserves multiline content for long Codex injections', async () => {
@@ -1217,7 +1467,11 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(500);
       await promise;
 
-      expect(mockPty.write).toHaveBeenCalledWith('1', `${'C'.repeat(1030)}\nnext-line`, expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex(`${'C'.repeat(1030)}\nnext-line`)),
+        expect.any(Object)
+      );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
     });
 
@@ -1230,7 +1484,11 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(100);
       await promise;
 
-      expect(mockPty.write).toHaveBeenCalledWith('1', `${'G'.repeat(1030)}\nnext-line`, expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex(`${'G'.repeat(1030)}\nnext-line`)),
+        expect.any(Object)
+      );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
     });
 
@@ -1246,7 +1504,11 @@ describe('Terminal Injection', () => {
       await promise;
 
       // Codex uses PTY write for text and PTY \r for Enter submission
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('test command')),
+        expect.any(Object)
+      );
       // Enter via PTY \r (not sendTrustedEnter)
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
       expect(mockPty.codexExec).not.toHaveBeenCalled();
@@ -1266,7 +1528,7 @@ describe('Terminal Injection', () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       const timeoutSpy = jest.spyOn(global, 'setTimeout');
       const longCodexText = `${'C'.repeat(1401)}\r`;
-      const payloadBytes = Buffer.byteLength('C'.repeat(1401), 'utf8');
+      const payloadBytes = Buffer.byteLength('[12:34 local] ' + 'C'.repeat(1401), 'utf8');
       const expectedScaledDelay = 200 + Math.min(250, Math.ceil(Math.max(0, payloadBytes - 256) / 64));
 
       await controller.doSendToPane('1', longCodexText, jest.fn());
@@ -1315,7 +1577,11 @@ describe('Terminal Injection', () => {
       await promise;
 
       // Gemini uses PTY: sanitized text, then Enter via \r
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object)); // Sanitized text (trailing \r stripped)
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('test command')),
+        expect.any(Object)
+      ); // Sanitized text (trailing \r stripped)
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object)); // Enter sent via PTY
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled(); // No DOM events for Gemini
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
@@ -1347,7 +1613,11 @@ describe('Terminal Injection', () => {
       await promise;
 
       // Gemini always sends Enter unconditionally (same as Claude's shouldSendEnter)
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'partial text', expect.any(Object)); // Text
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('partial text')),
+        expect.any(Object)
+      ); // Text
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object)); // Enter always sent
       expect(mockPty.write).toHaveBeenCalledTimes(2); // Text + Enter
       expect(onComplete).toHaveBeenCalledWith({ success: true });
@@ -1356,7 +1626,11 @@ describe('Terminal Injection', () => {
     test('writes text to PTY', async () => {
       await controller.doSendToPane('1', 'test message\r', jest.fn());
 
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test message', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('test message')),
+        expect.any(Object)
+      );
       expect(mockPty.writeChunked).not.toHaveBeenCalled();
     });
 
@@ -1398,26 +1672,43 @@ describe('Terminal Injection', () => {
       expect(ptyWrites).toEqual([]); // No separate writes — Home reset merged into chunked payload
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        '\x1b[H' + 'A'.repeat(9000),
+        expect.stringMatching(timestampedPayloadRegex('A'.repeat(9000), { prefix: '\x1b[H' })),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
 
       expect(mockLog.info).toHaveBeenCalledWith(
         expect.stringContaining('doSendToPane'),
-        expect.stringContaining('pre-PTY fingerprint textLen=9000')
+        expect.stringContaining('pre-PTY fingerprint textLen=9014')
       );
     });
 
-    test('writes normal long [MSG from] payload atomically with no chunk artifacts', async () => {
-      const text = `[MSG from architect]: ${'B'.repeat(3000)}\r`; // < 8KB threshold
+    test('chunks normal long [MSG from] payloads at the 1KB Claude threshold', async () => {
+      const text = `[MSG from architect]: ${'B'.repeat(3000)}\r`;
       await controller.doSendToPane('1', text, jest.fn());
 
-      const payloadWrites = mockPty.write.mock.calls
-        .map(call => call[1])
-        .filter(value => typeof value === 'string' && value.startsWith('[MSG from'));
-      expect(payloadWrites).toEqual([text.slice(0, -1)]);
-      expect(mockPty.writeChunked).not.toHaveBeenCalled();
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex(text.slice(0, -1), { prefix: '\x1b[H' })),
+        { chunkSize: 2048, yieldEveryChunks: 0 },
+        expect.any(Object)
+      );
+    });
+
+    test('chunks exact-threshold Claude payloads before Enter dispatch', async () => {
+      const text = `${'C'.repeat(1024)}\r`;
+      const onComplete = jest.fn();
+
+      const promise = controller.doSendToPane('1', text, onComplete);
+      await jest.advanceTimersByTimeAsync(100);
+      await promise;
+
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('C'.repeat(1024), { prefix: '\x1b[H' })),
+        { chunkSize: 2048, yieldEveryChunks: 0 },
+        expect.any(Object)
+      );
     });
 
     test('defers before programmatic write when pane is actively outputting', async () => {
@@ -1507,14 +1798,15 @@ describe('Terminal Injection', () => {
       if (IS_DARWIN) {
         await jest.advanceTimersByTimeAsync(500);
         await promise;
-        expect(mockPty.write).toHaveBeenCalled();
+        expect(mockPty.writeChunked).toHaveBeenCalled();
       } else {
         await jest.advanceTimersByTimeAsync(2500);
         expect(mockPty.write).not.toHaveBeenCalled();
+        expect(mockPty.writeChunked).not.toHaveBeenCalled();
 
         await jest.advanceTimersByTimeAsync(3500);
         await promise;
-        expect(mockPty.write).toHaveBeenCalled();
+        expect(mockPty.writeChunked).toHaveBeenCalled();
       }
     });
 

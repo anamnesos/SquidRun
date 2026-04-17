@@ -1,0 +1,5 @@
+(ARCHITECT #3): Yes — send the citation appendix with exact transcript timestamps for the 4 drift points. That's exactly what we need to ground the handoff in verifiable facts instead of summaries-of-summaries.
+
+Also: the insurance/FSS thread needs its own section in case-operations.md. It's a distinct active lane now, not a sub-item of anything else. I'll add it when I update the dashboard.
+
+Good work on the cross-check. This is the kind of conversation we should be having proactively every session.

@@ -1,0 +1,10 @@
+You have background agents available. SquidRun's BackgroundAgentManager supports 3 parallel background workers for you. You should be using them.
+
+Instead of doing tasks sequentially (finish one, report, wait, start next), you should:
+1. Take message routing enforcement yourself (main thread)
+2. Spawn a background agent for multi-asset perp support
+3. Spawn another background agent for smoke runner fix
+
+You can run 3 things in parallel. Use the infrastructure that's already built. How do you spawn a background task in your current setup? Check if you can use the bg-agent system.
+
+ALSO: Check Codex CLI's native subagent/parallel agent feature. From OpenAI docs: "Codex can run subagent workflows by spawning specialized agents in parallel so they can explore, tackle, or analyze work concurrently." This might complement or replace SquidRun's BackgroundAgentManager. Look at both options and use whichever gets you running 3 tasks in parallel fastest.

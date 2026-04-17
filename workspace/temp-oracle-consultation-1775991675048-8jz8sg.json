@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775991675048-8jz8sg",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "SOL has already moved into flush territory, so I would rather wait for a bounce than force a new short here."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "SELL",
+      "confidence": 0.62,
+      "reasoning": "LIT remains one of the cleaner shorts because the tape is weak and fresh shorts are still pressing while open interest continues to build."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "DASH is already deep into a flush and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "BABY/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "BABY has some squeeze fuel from negative funding, but liquidity is too poor and the tape too fragile to justify forcing a long."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "BLUR also has some squeeze fuel from negative funding, but liquidity is too poor to trust for a serious fresh long."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "MERL is already weak and too illiquid to trust for a serious fresh short entry after the move."
+    },
+    {
+      "ticker": "WLD/USD",
+      "direction": "BUY",
+      "confidence": 0.56,
+      "reasoning": "WLD is the only real long candidate on this board because it is still trend-supported with price and open interest rising together, but confidence stays modest in this macro tape."
+    },
+    {
+      "ticker": "ZEN/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEN is already down hard and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "MET/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "MET is already in a flush state and too low-liquidity to trust for a serious fresh short entry after the move."
+    }
+  ]
+}

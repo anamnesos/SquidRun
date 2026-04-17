@@ -11,6 +11,8 @@ const path = require('path');
 
 /** @type {import('node:sqlite').DatabaseSync | null} */
 let _db = null;
+const ALLOWED_TRADE_DIRECTIONS = Object.freeze(['BUY', 'SELL', 'SHORT', 'COVER']);
+const TRADE_DIRECTION_CHECK_SQL = `CHECK(direction IN (${ALLOWED_TRADE_DIRECTIONS.map((value) => `'${value}'`).join(',')}))`;
 
 const TRADE_TABLE_COLUMNS = Object.freeze([
   'id',
@@ -47,7 +49,7 @@ const TRADES_TABLE_SQL = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
     ticker TEXT NOT NULL,
-    direction TEXT NOT NULL CHECK(direction IN ('BUY','SELL')),
+    direction TEXT NOT NULL ${TRADE_DIRECTION_CHECK_SQL},
     shares REAL NOT NULL,
     price REAL NOT NULL,
     stop_loss_price REAL,
@@ -92,7 +94,7 @@ function ensureSchema(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp TEXT NOT NULL DEFAULT (datetime('now')),
       ticker TEXT NOT NULL,
-      direction TEXT NOT NULL CHECK(direction IN ('BUY','SELL')),
+      direction TEXT NOT NULL ${TRADE_DIRECTION_CHECK_SQL},
       shares REAL NOT NULL,
       price REAL NOT NULL,
       stop_loss_price REAL,
@@ -146,6 +148,26 @@ function ensureSchema(db) {
       opened_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS execution_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      market_date TEXT,
+      phase TEXT NOT NULL,
+      report_type TEXT,
+      ticker TEXT NOT NULL,
+      direction TEXT,
+      broker TEXT,
+      asset_class TEXT,
+      status TEXT,
+      ok INTEGER NOT NULL DEFAULT 0,
+      trade_id INTEGER,
+      entry_price REAL,
+      exit_price REAL,
+      realized_pnl REAL,
+      confidence REAL,
+      report_json TEXT NOT NULL
+    );
   `);
 
   migrateLegacySchemaIfNeeded(db);
@@ -157,6 +179,11 @@ function ensureSchema(db) {
   ensureColumnExists(db, 'daily_summary', 'best_trade_pnl', 'REAL');
   ensureColumnExists(db, 'daily_summary', 'worst_trade_ticker', 'TEXT');
   ensureColumnExists(db, 'daily_summary', 'worst_trade_pnl', 'REAL');
+  ensureColumnExists(db, 'execution_reports', 'report_type', 'TEXT');
+  ensureColumnExists(db, 'execution_reports', 'entry_price', 'REAL');
+  ensureColumnExists(db, 'execution_reports', 'exit_price', 'REAL');
+  ensureColumnExists(db, 'execution_reports', 'realized_pnl', 'REAL');
+  ensureColumnExists(db, 'execution_reports', 'confidence', 'REAL');
 }
 
 function closeDb() {
@@ -230,7 +257,11 @@ function migrateLegacySchemaIfNeeded(db) {
 function requiresTradesMigration(tableSql = '') {
   const normalized = String(tableSql || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return false;
-  return /\bstatus\s+TEXT\b[^,]*\bCHECK\s*\(\s*status\s+IN\s*\(/i.test(normalized);
+  const hasLegacyStatusCheck = /\bstatus\s+TEXT\b[^,]*\bCHECK\s*\(\s*status\s+IN\s*\(/i.test(normalized);
+  const directionMatch = normalized.match(/\bdirection\s+TEXT\b[^,]*\bCHECK\s*\(\s*direction\s+IN\s*\(([^)]*)\)\)/i);
+  const directionSql = String(directionMatch?.[1] || '');
+  const missingDirection = ALLOWED_TRADE_DIRECTIONS.some((direction) => !new RegExp(`'${direction}'`, 'i').test(directionSql));
+  return hasLegacyStatusCheck || missingDirection;
 }
 
 function requiresPositionsMigration(tableSql = '') {
@@ -243,13 +274,17 @@ function requiresPositionsMigration(tableSql = '') {
  * Record a trade execution.
  */
 function recordTrade(db, trade) {
+  const direction = String(trade.direction || '').trim().toUpperCase();
+  if (!ALLOWED_TRADE_DIRECTIONS.includes(direction)) {
+    throw new Error(`Unsupported trade direction for journal: ${trade.direction}`);
+  }
   const stmt = db.prepare(`
     INSERT INTO trades (ticker, direction, shares, price, stop_loss_price, total_value, consensus_detail, risk_check_detail, status, alpaca_order_id, notes)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   return stmt.run(
     trade.ticker,
-    trade.direction,
+    direction,
     trade.shares,
     trade.price,
     trade.stopLossPrice || null,
@@ -305,7 +340,7 @@ function recordDailySummary(db, summary) {
       worst_trade_pnl,
       notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   return stmt.run(
     summary.date,
@@ -324,6 +359,103 @@ function recordDailySummary(db, summary) {
     summary.worstTradePnl ?? null,
     summary.notes || null,
   );
+}
+
+function recordExecutionReport(db, report = {}) {
+  const payload = {
+    ...report,
+    timestamp: report.timestamp || new Date().toISOString(),
+  };
+  const entryPrice = Number.isFinite(Number(
+    payload.entryPrice
+      ?? payload.referencePrice
+      ?? payload.postTradeReport?.entry?.price
+      ?? payload.execution?.entryPrice
+      ?? payload.execution?.referencePrice
+  ))
+    ? Number(
+      payload.entryPrice
+        ?? payload.referencePrice
+        ?? payload.postTradeReport?.entry?.price
+        ?? payload.execution?.entryPrice
+        ?? payload.execution?.referencePrice
+    )
+    : null;
+  const exitPrice = Number.isFinite(Number(
+    payload.exitPrice
+      ?? payload.postTradeReport?.exit?.price
+      ?? payload.execution?.exitPrice
+  ))
+    ? Number(
+      payload.exitPrice
+        ?? payload.postTradeReport?.exit?.price
+        ?? payload.execution?.exitPrice
+    )
+    : null;
+  const realizedPnl = Number.isFinite(Number(payload.realizedPnl ?? payload.postTradeReport?.realizedPnl))
+    ? Number(payload.realizedPnl ?? payload.postTradeReport?.realizedPnl)
+    : null;
+  const confidence = Number.isFinite(Number(
+    payload.confidence
+      ?? payload.consensus?.averageAgreeConfidence
+      ?? payload.consensus?.confidence
+      ?? payload.postTradeReport?.confidence
+  ))
+    ? Number(
+      payload.confidence
+        ?? payload.consensus?.averageAgreeConfidence
+        ?? payload.consensus?.confidence
+        ?? payload.postTradeReport?.confidence
+    )
+    : null;
+  const stmt = db.prepare(`
+    INSERT INTO execution_reports (
+      timestamp,
+      market_date,
+      phase,
+      report_type,
+      ticker,
+      direction,
+      broker,
+      asset_class,
+      status,
+      ok,
+      trade_id,
+      entry_price,
+      exit_price,
+      realized_pnl,
+      confidence,
+      report_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  return stmt.run(
+    payload.timestamp,
+    payload.marketDate || null,
+    payload.phase || 'unknown',
+    payload.reportType || null,
+    payload.ticker || '',
+    payload.direction || null,
+    payload.broker || null,
+    payload.assetClass || null,
+    payload.status || null,
+    payload.ok ? 1 : 0,
+    payload.tradeId ?? null,
+    entryPrice,
+    exitPrice,
+    realizedPnl,
+    confidence,
+    JSON.stringify(payload)
+  );
+}
+
+function getExecutionReports(db, limit = 50) {
+  return db.prepare(`
+    SELECT *
+    FROM execution_reports
+    ORDER BY timestamp DESC, id DESC
+    LIMIT ?
+  `).all(limit);
 }
 
 /**
@@ -468,7 +600,9 @@ function getPerformanceStats(db) {
     SELECT
       COUNT(*) as total_trades,
       SUM(CASE WHEN direction = 'BUY' THEN 1 ELSE 0 END) as buys,
-      SUM(CASE WHEN direction = 'SELL' THEN 1 ELSE 0 END) as sells
+      SUM(CASE WHEN direction = 'SELL' THEN 1 ELSE 0 END) as sells,
+      SUM(CASE WHEN direction = 'SHORT' THEN 1 ELSE 0 END) as shorts,
+      SUM(CASE WHEN direction = 'COVER' THEN 1 ELSE 0 END) as covers
     FROM trades WHERE status = 'FILLED'
   `).get();
 
@@ -484,11 +618,13 @@ module.exports = {
   recordTrade,
   recordConsensus,
   recordDailySummary,
+  recordExecutionReport,
   upsertPosition,
   closePosition,
   getOpenPositions,
   getRecentTrades,
   getAllTrades,
+  getExecutionReports,
   getTradeById,
   getPendingTrades,
   updateTrade,

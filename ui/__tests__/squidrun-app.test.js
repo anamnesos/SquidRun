@@ -8,6 +8,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { resolveRuntimeInt } = require('../modules/runtime-config');
 
 jest.mock('child_process', () => {
   const actual = jest.requireActual('child_process');
@@ -24,6 +25,7 @@ jest.mock('child_process', () => {
 jest.mock('electron', () => ({
   app: {
     getPath: jest.fn().mockReturnValue('/mock/app/path'),
+    isPackaged: false,
     on: jest.fn(),
     quit: jest.fn(),
   },
@@ -36,6 +38,11 @@ jest.mock('electron', () => ({
       openDevTools: jest.fn(),
     },
     isDestroyed: jest.fn().mockReturnValue(false),
+    isMinimized: jest.fn().mockReturnValue(false),
+    isVisible: jest.fn().mockReturnValue(true),
+    restore: jest.fn(),
+    moveTop: jest.fn(),
+    focus: jest.fn(),
     show: jest.fn(),
     hide: jest.fn(),
     close: jest.fn(),
@@ -52,6 +59,9 @@ jest.mock('electron', () => ({
       },
     },
   },
+  shell: {
+    writeShortcutLink: jest.fn(() => true),
+  },
 }));
 
 // Mock logger
@@ -60,6 +70,10 @@ jest.mock('../modules/logger', () => ({
   warn: jest.fn(),
   error: jest.fn(),
   debug: jest.fn(),
+}));
+
+jest.mock('../modules/runtime-config', () => ({
+  resolveRuntimeInt: jest.fn((key, fallback) => fallback),
 }));
 
 // Mock daemon-client
@@ -173,6 +187,15 @@ jest.mock('../scripts/hm-telegram', () => ({
   }),
 }));
 
+jest.mock('../scripts/hm-telegram-routing', () => ({
+  sendRoutedTelegramMessage: jest.fn(async (_message, _env, options = {}) => ({
+    ok: true,
+    chatId: options.chatId ? Number(options.chatId) : 123456789,
+    messageId: 42,
+    method: options.chatId === '8754356993' ? 'send-long-telegram' : 'hm-send-telegram',
+  })),
+}));
+
 // Mock organic-ui-handlers
 jest.mock('../modules/ipc/organic-ui-handlers', () => ({
   registerHandlers: jest.fn(),
@@ -279,6 +302,15 @@ jest.mock('../scripts/hm-session-summary', () => ({
   })),
 }));
 
+jest.mock('../modules/startup-ai-briefing', () => ({
+  generateStartupBriefing: jest.fn(async () => ({
+    ok: true,
+    outputPath: '/test/.squidrun/handoffs/ai-briefing.md',
+    transcriptFiles: [],
+  })),
+  readStartupBriefing: jest.fn(() => '# AI Startup Briefing'),
+}));
+
 jest.mock('../modules/local-model-capabilities', () => ({
   detectOllamaRuntime: jest.fn().mockResolvedValue({
     running: true,
@@ -296,11 +328,11 @@ jest.mock('../modules/local-model-capabilities', () => ({
       enabled: options.settings?.localModelEnabled === true,
       ollama: options.ollama || {},
       sleepExtraction: {
-        enabled: options.settings?.localModelEnabled === true,
+        enabled: true,
         available: true,
-        model: 'llama3:8b',
-        path: options.settings?.localModelEnabled === true ? 'local-ollama' : 'fallback',
-        command: options.settings?.localModelEnabled === true ? '"node" "ollama-extract.js"' : null,
+        model: 'claude-opus-4-6',
+        path: 'anthropic-api',
+        command: '"node" "claude-extract.js" --model "claude-opus-4-6"',
       },
     },
   })),
@@ -318,14 +350,40 @@ describe('SquidRunApp', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    const windows = new Map();
 
     // Create mock app context
     mockAppContext = {
       mainWindow: null,
+      windows,
       daemonClient: null,
       currentSettings: {},
       externalNotifier: null,
-      setMainWindow: jest.fn(),
+      setMainWindow: jest.fn((window) => {
+        mockAppContext.mainWindow = window || null;
+        if (window) {
+          windows.set('main', window);
+        } else {
+          windows.delete('main');
+        }
+      }),
+      setWindow: jest.fn((key, window) => {
+        windows.set(key, window);
+        if (key === 'main') {
+          mockAppContext.mainWindow = window;
+        }
+      }),
+      getWindow: jest.fn((key = 'main') => {
+        if (key === 'main') return mockAppContext.mainWindow;
+        return windows.get(key) || null;
+      }),
+      deleteWindow: jest.fn((key = 'main') => {
+        windows.delete(key);
+        if (key === 'main') {
+          mockAppContext.mainWindow = null;
+        }
+      }),
+      getWindows: jest.fn(() => new Map(windows)),
       setDaemonClient: jest.fn(),
       setExternalNotifier: jest.fn(),
     };
@@ -575,7 +633,15 @@ describe('SquidRunApp', () => {
       await app.createWindow();
 
       const loadFile = app.ctx.mainWindow.loadFile;
-      expect(loadFile).toHaveBeenCalledWith(expect.stringContaining('index.html'));
+      expect(loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'main',
+            windowTeam: 'main',
+          }),
+        })
+      );
       expect(app.initModules.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
       expect(app.setupWindowListeners.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
     });
@@ -593,6 +659,330 @@ describe('SquidRunApp', () => {
       jest.runOnlyPendingTimers();
       expect(ensurePaneHostWindows).toHaveBeenCalledTimes(1);
       jest.useRealTimers();
+    });
+
+    it('creates a second top-level window without replacing the main window', async () => {
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+
+      await app.createWindow({ windowKey: 'eunbyeol', title: 'SquidRun - Eunbyeol' });
+
+      expect(app.ctx.mainWindow).toBe(primaryWindow);
+      expect(app.ctx.setWindow).toHaveBeenCalledWith('eunbyeol', expect.any(Object));
+      const secondaryWindow = app.ctx.getWindow('eunbyeol');
+      expect(secondaryWindow).toBeTruthy();
+      expect(secondaryWindow).not.toBe(primaryWindow);
+      expect(secondaryWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'eunbyeol',
+            windowTeam: 'eunbyeol',
+          }),
+        })
+      );
+    });
+
+    it('routes visible-window sends to the requested secondary window without clobbering main', async () => {
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      await app.createWindow({ windowKey: 'eunbyeol', title: 'SquidRun - Eunbyeol' });
+      const secondaryWindow = app.ctx.getWindow('eunbyeol');
+
+      primaryWindow.webContents.send.mockClear();
+      secondaryWindow.webContents.send.mockClear();
+
+      const delivered = app.sendToVisibleWindow('inject-message', {
+        panes: ['1'],
+        message: 'case-only message',
+        meta: {
+          windowKey: 'eunbyeol',
+        },
+      });
+
+      expect(delivered).toBe(true);
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: 'case-only message',
+        })
+      );
+      expect(primaryWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('launches only Eunbyeol for standalone launch intent', async () => {
+      await app.launchWindowsForProfile({
+        windowKey: 'eunbyeol',
+        includeMainWindow: false,
+      });
+
+      const eunbyeolWindow = app.ctx.getWindow('eunbyeol');
+      expect(eunbyeolWindow).toBeTruthy();
+      expect(app.ctx.getWindow('main')).toBe(eunbyeolWindow);
+      expect(eunbyeolWindow.focus).toHaveBeenCalled();
+    });
+
+    it('broadcasts daemon lifecycle events to every open top-level window', async () => {
+      await app.createWindow();
+      await app.createWindow({ windowKey: 'eunbyeol', title: 'SquidRun - Eunbyeol' });
+      const primaryWindow = app.ctx.getWindow('main');
+      const secondaryWindow = app.ctx.getWindow('eunbyeol');
+
+      primaryWindow.webContents.send.mockClear();
+      secondaryWindow.webContents.send.mockClear();
+
+      const delivered = app.sendToAllWindows('daemon-connected', { terminals: [{ paneId: '1' }] });
+
+      expect(delivered).toBe(true);
+      expect(primaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1' }],
+        })
+      );
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1' }],
+        })
+      );
+    });
+
+    it('closing the Eunbyeol window does not trigger full shutdown while main stays alive', async () => {
+      app.setupWindowListeners.mockRestore();
+      const shutdownSpy = jest.spyOn(app, 'performFullShutdown').mockResolvedValue({ success: true });
+
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      await app.createWindow({ windowKey: 'eunbyeol', title: 'SquidRun - Eunbyeol' });
+      const secondaryWindow = app.ctx.getWindow('eunbyeol');
+      const closeHandler = secondaryWindow.on.mock.calls.find(([eventName]) => eventName === 'close')?.[1];
+      const closedHandler = secondaryWindow.on.mock.calls.find(([eventName]) => eventName === 'closed')?.[1];
+
+      expect(typeof closeHandler).toBe('function');
+      expect(typeof closedHandler).toBe('function');
+
+      const event = { preventDefault: jest.fn() };
+      closeHandler(event);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(shutdownSpy).not.toHaveBeenCalled();
+
+      closedHandler();
+
+      expect(app.ctx.deleteWindow).toHaveBeenCalledWith('eunbyeol');
+      expect(app.ctx.mainWindow).toBe(primaryWindow);
+    });
+
+    it('replays daemon state to the Eunbyeol window after load so the renderer can mount existing terminals', async () => {
+      app.setupWindowListeners.mockRestore();
+      mockAppContext.daemonClient = {
+        connected: true,
+        getTerminals: jest.fn(() => [{ paneId: '1', alive: true, scrollback: 'ready' }]),
+      };
+      jest.spyOn(app, 'injectEunbyeolStartupBundle').mockResolvedValue({
+        bundlePath: '/tmp/eunbyeol-startup-bundle.md',
+        sourcePaths: ['/tmp/case-operations.md'],
+      });
+
+      await app.createWindow();
+      await app.createWindow({ windowKey: 'eunbyeol', title: 'SquidRun - Eunbyeol' });
+      const secondaryWindow = app.ctx.getWindow('eunbyeol');
+      const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1', alive: true, scrollback: 'ready' }],
+          windowKey: 'eunbyeol',
+        })
+      );
+    });
+
+    it('still seeds Eunbyeol runtime state when startup bundle materialization fails', async () => {
+      app.setupWindowListeners.mockRestore();
+      mockAppContext.daemonClient = {
+        connected: true,
+        getTerminals: jest.fn(() => [{ paneId: '1', alive: true, scrollback: 'ready' }]),
+      };
+      jest.spyOn(app, 'injectEunbyeolStartupBundle').mockRejectedValue(new Error('bundle_missing'));
+
+      await app.createWindow();
+      await app.createWindow({ windowKey: 'eunbyeol', title: 'SquidRun - Eunbyeol' });
+      const secondaryWindow = app.ctx.getWindow('eunbyeol');
+      const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'eunbyeol',
+          startupBundlePath: null,
+          startupSourceFiles: [],
+        })
+      );
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1', alive: true, scrollback: 'ready' }],
+          windowKey: 'eunbyeol',
+        })
+      );
+    });
+
+    it('can register Eunbyeol as the lifecycle root for standalone launch mode', async () => {
+      await app.createWindow({
+        windowKey: 'eunbyeol',
+        title: 'SquidRun - Eunbyeol',
+        lifecycleRoot: true,
+      });
+
+      expect(app.ctx.setMainWindow).toHaveBeenCalledWith(expect.any(Object));
+      expect(app.ctx.mainWindow).toBe(app.ctx.getWindow('eunbyeol'));
+    });
+  });
+
+  describe('pane host bootstrap verification', () => {
+    let app;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('waits while the hidden pane host is still loading', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostWindowManager.getWindowDiagnostics = jest.fn(() => ({
+        loading: true,
+        paneIds: ['1', '2', '3'],
+        lastLoadStartedAt: Date.now(),
+      }));
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({ webContents: {} }));
+      const degradedSpy = jest.spyOn(app, 'reportPaneHostDegraded');
+
+      app.verifyPaneHostWindowsAfterBootstrap('test_loading');
+
+      expect(degradedSpy).not.toHaveBeenCalled();
+      expect(app.paneHostBootstrapVerifyTimer).toBeTruthy();
+    });
+
+    it('gives the hidden pane host a short post-load grace window for ready signals', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostWindowManager.getWindowDiagnostics = jest.fn(() => ({
+        loading: false,
+        paneIds: ['1', '2', '3'],
+        lastDidFinishLoadAt: Date.now(),
+      }));
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({ webContents: {} }));
+      const degradedSpy = jest.spyOn(app, 'reportPaneHostDegraded');
+
+      app.verifyPaneHostWindowsAfterBootstrap('test_ready_wait');
+
+      expect(degradedSpy).not.toHaveBeenCalled();
+      expect(app.paneHostBootstrapVerifyTimer).toBeTruthy();
+    });
+
+    it('clears stale degraded pane-host status once verification succeeds', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostMissingPanes = new Set(['1', '2', '3']);
+      app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
+      app.paneHostLastErrorAt = '2026-04-03T00:00:00.000Z';
+      app.paneHostReady = new Set(['1', '2', '3']);
+      app.paneHostWindowManager.getWindowDiagnostics = jest.fn(() => ({
+        loading: false,
+        paneIds: ['1', '2', '3'],
+      }));
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({ webContents: {} }));
+
+      app.verifyPaneHostWindowsAfterBootstrap('test_verified');
+
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+    });
+  });
+
+  describe('Eunbyeol window startup bundle', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      jest.spyOn(app, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+      jest.spyOn(app, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+      jest.spyOn(app, 'setupPermissions').mockImplementation(() => {});
+      jest.spyOn(app, 'initModules').mockImplementation(() => {});
+      jest.spyOn(app, 'initPostLoad').mockResolvedValue();
+    });
+
+    it('injects the Eunbyeol startup bundle only into the Eunbyeol window panes with a scoped session id', async () => {
+      const routeSpy = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      const bundleSpy = jest.spyOn(app, 'writeEunbyeolStartupBundle').mockReturnValue({
+        bundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\eunbyeol\\startup-bundle.md',
+        sourcePaths: ['D:\\projects\\squidrun\\workspace\\knowledge\\case-operations.md'],
+        text: 'Eunbyeol startup bundle',
+        sessionScopeId: 'app-test:eunbyeol',
+      });
+
+      await app.createWindow({ windowKey: 'eunbyeol', title: 'SquidRun - Eunbyeol' });
+      const secondaryWindow = app.ctx.getWindow('eunbyeol');
+      const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(bundleSpy).toHaveBeenCalledTimes(1);
+      expect(routeSpy).toHaveBeenCalledTimes(3);
+      expect(routeSpy).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        panes: ['1'],
+        startupInjection: true,
+        meta: expect.objectContaining({
+          windowKey: 'eunbyeol',
+          session_id: 'app-test:eunbyeol',
+          contextBundle: 'eunbyeol',
+        }),
+      }));
+      expect(routeSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({ panes: ['2'] }));
+      expect(routeSpy).toHaveBeenNthCalledWith(3, expect.objectContaining({ panes: ['3'] }));
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'eunbyeol',
+          sessionScopeId: app.getWindowSessionScopeId('eunbyeol'),
+          startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\eunbyeol\\startup-bundle.md',
+          autoBootAgents: true,
+        })
+      );
+    });
+
+    it('does not inject the Eunbyeol startup bundle on the main window load path', async () => {
+      const bundleSpy = jest.spyOn(app, 'writeEunbyeolStartupBundle').mockReturnValue({
+        bundlePath: 'ignored',
+        sourcePaths: [],
+        text: 'ignored',
+        sessionScopeId: 'ignored',
+      });
+
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      const didFinishLoad = primaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(bundleSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -834,6 +1224,31 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('suppresses autonomous smoke injection noise when runner returns no structured JSON', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.resolveAutonomousSmokeProjectPath = jest.fn(() => '/tmp/project');
+      app.runAutonomousSmokeSidecar = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 'runner_failed',
+        code: 1,
+        signal: null,
+        timedOut: false,
+        stdout: '[dotenv@17.2.3] injecting env (0) from .env',
+        stderr: 'no runnable smoke target',
+      });
+      app.reportAutonomousSmokeSummary = jest.fn().mockResolvedValue({ ok: true });
+
+      app.runAutonomousSmokeInBackground({
+        runId: 'run-100',
+        senderRole: 'builder',
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(app.reportAutonomousSmokeSummary).not.toHaveBeenCalled();
+    });
+
     it('runs firmware startup generation hook during init', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
 
@@ -848,6 +1263,24 @@ describe('SquidRunApp', () => {
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledTimes(1);
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledWith({ preflight: true });
       expect(mockManagers.settings.saveSettings).toHaveBeenCalledWith({ localModelEnabled: true });
+    });
+
+    it('kicks off startup ai briefing generation during init', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const startupBriefing = require('../modules/startup-ai-briefing');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(startupBriefing.generateStartupBriefing).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        source: 'app-init',
+      }));
     });
 
     it('always increments session and initializes startup scope on app launch', async () => {
@@ -938,29 +1371,87 @@ describe('SquidRunApp', () => {
 
       await app.init();
 
-      expect(spawn).toHaveBeenCalledWith(
-        process.execPath,
-        [
-          runtimePaths.daemonScriptPath,
-          '--pid-path',
-          runtimePaths.pidPath,
-          '--status-path',
-          runtimePaths.statusPath,
-          '--log-path',
-          runtimePaths.logPath,
-        ],
-        expect.objectContaining({
-          cwd: '/test',
-          detached: true,
-          windowsHide: true,
-          stdio: 'ignore',
-          env: expect.objectContaining({
-            ELECTRON_RUN_AS_NODE: '1',
-          }),
-        })
-      );
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [spawnPath, spawnArgs, spawnOptions] = spawn.mock.calls[0];
+      expect(spawnPath).toBe(process.execPath);
+      expect(spawnArgs).toEqual([
+        runtimePaths.daemonScriptPath,
+        '--pid-path',
+        runtimePaths.pidPath,
+        '--status-path',
+        runtimePaths.statusPath,
+        '--log-path',
+        runtimePaths.logPath,
+      ]);
+      expect(spawnOptions).toMatchObject({
+        cwd: '/test',
+        detached: true,
+        windowsHide: true,
+        stdio: 'ignore',
+      });
 
       fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+    });
+
+    it('uses system node instead of electron to launch the supervisor daemon', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const originalExecPath = process.execPath;
+      const originalVersions = process.versions;
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: {
+          ...originalVersions,
+          electron: '35.0.0',
+        },
+      });
+
+      try {
+        const result = app.spawnSupervisorDaemon('test-electron-runtime');
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          spawned: true,
+        }));
+        expect(spawn).toHaveBeenCalledWith(
+          process.platform === 'win32' ? 'node.exe' : 'node',
+          [
+            runtimePaths.daemonScriptPath,
+            '--pid-path',
+            runtimePaths.pidPath,
+            '--status-path',
+            runtimePaths.statusPath,
+            '--log-path',
+            runtimePaths.logPath,
+          ],
+          expect.objectContaining({
+            cwd: '/test',
+            detached: true,
+            windowsHide: true,
+            stdio: 'ignore',
+          })
+        );
+        expect(spawn.mock.calls[0][2].env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+      } finally {
+        Object.defineProperty(process, 'execPath', {
+          configurable: true,
+          writable: true,
+          value: originalExecPath,
+        });
+        Object.defineProperty(process, 'versions', {
+          configurable: true,
+          value: originalVersions,
+        });
+        fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+      }
     });
 
     it('cleans stale supervisor pid and status artifacts before respawn', async () => {
@@ -1071,6 +1562,275 @@ describe('SquidRunApp', () => {
           }),
         })
       );
+    });
+  });
+
+  describe('websocket local delivery journaling', () => {
+    async function initWebSocketApp() {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const websocketServer = require('../modules/websocket-server');
+      const triggers = require('../modules/triggers');
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+      jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValue({ ok: true });
+
+      await app.init();
+
+      const options = websocketServer.start.mock.calls.at(-1)?.[0];
+      expect(typeof options?.onMessage).toBe('function');
+
+      return { app, options, triggers, evidenceLedger };
+    }
+
+    it('finalizes comms journal rows as acked after verified local pane delivery', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+        deliveryId: 'delivery-acked-1',
+        mode: 'pty',
+        notified: ['1'],
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-acked-1' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE #1): verified delivery test',
+          messageId: 'hm-acked-1',
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[0]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-acked-1',
+          status: 'brokered',
+        }),
+        expect.any(Object),
+      ]);
+      expect(commsJournalCalls[1]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-acked-1',
+          status: 'acked',
+          ackStatus: 'delivered.verified',
+          errorCode: null,
+          metadata: expect.objectContaining({
+            source: 'websocket-local-trigger-delivery',
+            paneId: '1',
+            deliveryId: 'delivery-acked-1',
+            finalOutcome: 'delivered.verified',
+            deliveryAccepted: true,
+            deliveryVerified: true,
+          }),
+        }),
+        expect.any(Object),
+      ]);
+    });
+
+    it('finalizes comms journal rows as routed for accepted but unverified local delivery timeouts', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'routed_unverified_timeout',
+        deliveryId: 'delivery-routed-1',
+        mode: 'pty',
+        notified: ['1'],
+        details: {
+          failureReason: 'accepted.unverified',
+        },
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-routed-1' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE #2): timeout delivery test',
+          messageId: 'hm-routed-1',
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[1]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-routed-1',
+          status: 'routed',
+          ackStatus: 'routed_unverified_timeout',
+          errorCode: null,
+          metadata: expect.objectContaining({
+            source: 'websocket-local-trigger-delivery',
+            deliveryId: 'delivery-routed-1',
+            finalOutcome: 'routed_unverified_timeout',
+            deliveryAccepted: true,
+            deliveryVerified: false,
+            failureReason: 'accepted.unverified',
+          }),
+        }),
+        expect.any(Object),
+      ]);
+    });
+
+    it('finalizes comms journal rows as failed when local pane delivery is rejected', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'window_unavailable',
+        reason: 'main_window_unavailable',
+        deliveryId: 'delivery-failed-1',
+        mode: 'pty',
+        notified: [],
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-failed-1' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE #3): failed delivery test',
+          messageId: 'hm-failed-1',
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[1]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-failed-1',
+          status: 'failed',
+          ackStatus: 'window_unavailable',
+          errorCode: 'main_window_unavailable',
+          metadata: expect.objectContaining({
+            source: 'websocket-local-trigger-delivery',
+            deliveryId: 'delivery-failed-1',
+            finalOutcome: 'window_unavailable',
+            deliveryAccepted: false,
+            deliveryVerified: false,
+          }),
+        }),
+        expect.any(Object),
+      ]);
+    });
+
+    it('injects a watchdog alert when architect gets no response from builder within 90 seconds', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 90 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const triggers = require('../modules/triggers');
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('uses hot-reloaded runtime config for the agent response watchdog timeout', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 45 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const triggers = require('../modules/triggers');
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(44 * 1000);
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1000);
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+
+      jest.useRealTimers();
+    });
+
+    it('cancels the watchdog after an accepted builder response to architect', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const triggers = require('../modules/triggers');
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+      app.maybeResolveAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        deliveryAccepted: true,
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
     });
   });
 
@@ -1425,6 +2185,36 @@ describe('SquidRunApp', () => {
         expect.any(Object)
       );
     });
+
+    it('performFullShutdown drains shutdown and stops the supervisor pid before exit', async () => {
+      const electron = require('electron');
+      electron.app.exit = jest.fn();
+      const supervisorPid = 6543;
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const shutdownSpy = jest.spyOn(app, 'shutdown').mockResolvedValue();
+      const killSpy = jest.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (signal === 0) {
+          throw new Error('process_gone');
+        }
+        return true;
+      });
+      jest.spyOn(app, 'readTextFileSafe').mockReturnValue(JSON.stringify({ pid: supervisorPid }));
+
+      const result = await app.performFullShutdown('test-full-restart');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        supervisorStopResult: expect.objectContaining({
+          ok: true,
+          pid: supervisorPid,
+        }),
+      }));
+      expect(shutdownSpy).toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(supervisorPid, 'SIGTERM');
+      expect(electron.app.exit).toHaveBeenCalledWith(0);
+
+      killSpy.mockRestore();
+    });
   });
 
   describe('handleTeamMemoryGuardExperiment', () => {
@@ -1642,7 +2432,7 @@ describe('SquidRunApp', () => {
   });
 
   describe('initDaemonClient', () => {
-    it('batches PTY data IPC per pane and flushes buffered output before exit', async () => {
+    it('waits for PTY kernel classification before visible fanout and flushes visible output before exit', async () => {
       jest.useFakeTimers();
       try {
         const { getDaemonClient } = require('../daemon-client');
@@ -1667,6 +2457,8 @@ describe('SquidRunApp', () => {
           mainWindow,
           daemonClient: sharedDaemonClient,
           agentRunning: new Map([['1', 'running']]),
+          getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+          getWindows: jest.fn(() => new Map([['main', mainWindow]])),
         };
         const app = new SquidRunApp(ctx, mockManagers);
 
@@ -1674,9 +2466,11 @@ describe('SquidRunApp', () => {
 
         const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
         const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+        const kernelListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'kernel-event')?.[1];
 
         expect(typeof dataListener).toBe('function');
         expect(typeof exitListener).toBe('function');
+        expect(typeof kernelListener).toBe('function');
 
         mainWindow.webContents.send.mockClear();
 
@@ -1688,8 +2482,37 @@ describe('SquidRunApp', () => {
 
         jest.advanceTimersByTime(16);
 
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-1', 'hello');
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-2', 'x');
+
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '1',
+          payload: { paneId: '1', byteLen: Buffer.byteLength('hello', 'utf8') },
+          kernelMeta: null,
+        });
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '2',
+          payload: { paneId: '2', byteLen: Buffer.byteLength('x', 'utf8') },
+          kernelMeta: null,
+        });
+
         expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-1', 'hello');
         expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-2', 'x');
+
+        mainWindow.webContents.send.mockClear();
+
+        dataListener('1', 'secret');
+        jest.advanceTimersByTime(16);
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '1',
+          payload: { paneId: '1', byteLen: Buffer.byteLength('secret', 'utf8') },
+          kernelMeta: { meta: { visibility: 'internal' } },
+        });
+
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-1', 'secret');
 
         mainWindow.webContents.send.mockClear();
 
@@ -1859,7 +2682,10 @@ describe('SquidRunApp', () => {
       expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
         ['1'],
         '[SMS from +15557654321]: build passed',
-        null
+        null,
+        expect.objectContaining({
+          awaitDelivery: true,
+        })
       );
     });
   });
@@ -1871,10 +2697,14 @@ describe('SquidRunApp', () => {
       app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
-    it('wires inbound Telegram callback to pane 1 trigger injection', () => {
+    it('wires inbound Telegram callback to pane 1 trigger injection', async () => {
       const telegramPoller = require('../modules/telegram-poller');
-      const triggers = require('../modules/triggers');
       telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
 
       app.startTelegramPoller();
 
@@ -1883,14 +2713,25 @@ describe('SquidRunApp', () => {
       expect(typeof options.onMessage).toBe('function');
 
       options.onMessage('build passed', 'james');
-      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
-        ['1'],
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
         '[Telegram from james]: build passed',
-        null
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'main',
+          channel: 'telegram',
+          sender: 'james',
+          metadata: expect.objectContaining({
+            windowKey: 'main',
+          }),
+        }),
+        'Telegram'
       );
       expect(app.telegramInboundContext).toEqual(
         expect.objectContaining({
           sender: 'james',
+          windowKey: 'main',
         })
       );
       expect(app.telegramInboundContext.lastInboundAtMs).toBeGreaterThan(0);
@@ -1909,14 +2750,19 @@ describe('SquidRunApp', () => {
         expect.objectContaining({
           sender: 'eunbyul',
           chatId: '8754356993',
+          windowKey: 'eunbyeol',
         })
       );
     });
 
-    it('includes saved file path in pane injection for inbound Telegram photos', () => {
+    it('includes saved file path in pane injection for inbound Telegram photos', async () => {
       const telegramPoller = require('../modules/telegram-poller');
-      const triggers = require('../modules/triggers');
       telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
 
       app.startTelegramPoller();
 
@@ -1930,11 +2776,167 @@ describe('SquidRunApp', () => {
         },
       });
 
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from @Rachelchoi]: [Photo received] | saved: D:\\projects\\Korean Fraud\\telegram-photos\\photo-11.jpg',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'eunbyeol',
+          channel: 'telegram',
+          sender: '@Rachelchoi',
+          metadata: expect.objectContaining({
+            windowKey: 'eunbyeol',
+          }),
+        }),
+        'Telegram'
+      );
+    });
+
+    it('synthesizes photo display text when poller passes empty body with photo metadata', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('', '@Rachelchoi', {
+        updateId: 808489706,
+        messageId: 555,
+        chatId: 8754356993,
+        photo: {
+          file_id: 'photo-xyz',
+        },
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from @Rachelchoi]: [Photo received]',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          channel: 'telegram',
+          sender: '@Rachelchoi',
+        }),
+        'Telegram'
+      );
+    });
+
+    it('queues inbound human delivery for replay when pane delivery stays unverified', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.unverified',
+      });
+
+      try {
+        const result = await app.deliverHumanMessageWithRecall(
+          '[Telegram from eunbyeol]: hello',
+          {
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'eunbyeol',
+            messageId: 'telegram-in-123',
+          },
+          'Telegram'
+        );
+
+        expect(result).toEqual(expect.objectContaining({
+          pendingQueued: true,
+        }));
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([
+          expect.objectContaining({
+            messageId: 'telegram-in-123',
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'eunbyeol',
+          }),
+        ]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('delivers pane-1 human messages without injecting recall blocks', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      const result = await app.deliverHumanMessageWithRecall(
+        '[Telegram from james]: plain inbound message',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'james',
+          messageId: 'telegram-in-plain-1',
+        },
+        'Telegram'
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        verified: true,
+      }));
       expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
         ['1'],
-        '[Telegram from @Rachelchoi]: [Photo received] | saved: D:\\projects\\Korean Fraud\\telegram-photos\\photo-11.jpg',
-        null
+        '[Telegram from james]: plain inbound message',
+        null,
+        expect.any(Object)
       );
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).not.toContain('[SQUIDRUN RECALL START]');
+    });
+
+    it('replays queued pane deliveries and clears them once pane delivery verifies', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-replay-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-123',
+            paneId: '1',
+            message: '[Telegram from eunbyeol]: hello',
+            messageId: 'telegram-in-123',
+            channel: 'telegram',
+            sender: 'eunbyeol',
+          },
+        ],
+      }));
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-replay' });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 1,
+          remainingCount: 0,
+        }));
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
     });
   });
 
@@ -1946,7 +2948,7 @@ describe('SquidRunApp', () => {
     });
 
     it('routes user target to Telegram when inbound context is recent', async () => {
-      const { sendTelegram } = require('../scripts/hm-telegram');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.markTelegramInboundContext('james');
 
       const result = await app.routeTelegramReply({
@@ -1955,7 +2957,7 @@ describe('SquidRunApp', () => {
         messageId: 'telegram-route-1',
       });
 
-      expect(sendTelegram).toHaveBeenCalledWith(
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
         'Build passed.',
         process.env,
         expect.objectContaining({
@@ -1973,12 +2975,13 @@ describe('SquidRunApp', () => {
           handled: true,
           ok: true,
           status: 'telegram_delivered',
+          routeMethod: 'hm-send-telegram',
         })
       );
     });
 
     it('does not route user target when inbound context is stale', async () => {
-      const { sendTelegram } = require('../scripts/hm-telegram');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.telegramInboundContext = {
         sender: 'james',
         lastInboundAtMs: Date.now() - (6 * 60 * 1000),
@@ -1989,7 +2992,7 @@ describe('SquidRunApp', () => {
         content: 'Build passed.',
       });
 
-      expect(sendTelegram).not.toHaveBeenCalled();
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
       expect(result).toEqual(
         expect.objectContaining({
           handled: true,
@@ -2000,7 +3003,7 @@ describe('SquidRunApp', () => {
     });
 
     it('routes explicit telegram target even without recent inbound context', async () => {
-      const { sendTelegram } = require('../scripts/hm-telegram');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.telegramInboundContext = {
         sender: null,
         lastInboundAtMs: 0,
@@ -2013,7 +3016,7 @@ describe('SquidRunApp', () => {
         messageId: 'telegram-route-2',
       });
 
-      expect(sendTelegram).toHaveBeenCalledWith(
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
         'Direct ping.',
         process.env,
         expect.objectContaining({
@@ -2032,12 +3035,49 @@ describe('SquidRunApp', () => {
           handled: true,
           ok: true,
           status: 'telegram_delivered',
+          routeMethod: 'hm-send-telegram',
+        })
+      );
+    });
+
+    it('does not inherit recent inbound chat context for explicit telegram target', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: '@Rachelchoi',
+        lastInboundAtMs: Date.now(),
+        chatId: '8754356993',
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Direct ping.',
+        messageId: 'telegram-route-default-chat',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Direct ping.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-route-default-chat',
+          chatId: null,
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'telegram',
+          }),
+        })
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+          routeMethod: 'hm-send-telegram',
         })
       );
     });
 
     it('passes chatId override through routeTelegramReply', async () => {
-      const { sendTelegram } = require('../scripts/hm-telegram');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
 
       const result = await app.routeTelegramReply({
         target: 'telegram',
@@ -2046,7 +3086,7 @@ describe('SquidRunApp', () => {
         chatId: '8754356993',
       });
 
-      expect(sendTelegram).toHaveBeenCalledWith(
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
         'Direct ping to Eunbyul.',
         process.env,
         expect.objectContaining({
@@ -2059,6 +3099,7 @@ describe('SquidRunApp', () => {
           handled: true,
           ok: true,
           status: 'telegram_delivered',
+          routeMethod: 'send-long-telegram',
         })
       );
     });

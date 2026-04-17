@@ -1,0 +1,8 @@
+AVAX SHORT WARNING — PnL: -$29.64
+
+Position: -890.19 @ $9.4394 entry
+Mark: ~$9.473 (moving up)
+Account: $807.11 (was $836 five min ago)
+Liquidation: $9.885 (4.4% away, ~$0.41)
+
+Price pushing higher. Down $29 from entry. Your call on whether to hold or cut.

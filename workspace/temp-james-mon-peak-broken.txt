@@ -1,0 +1,12 @@
+MON: peak BROKEN.
+
+Price: 0.036509 (cleared 0.036420, now above your 0.03645 trigger line)
+PnL: -326 (was -304)
+Liq: 4.60%
+Account: 1,176
+
+This is the signal you told me to flag — uptrend won the level. Per your earlier read: "Closes 5m bar above 0.03645 and holds → momentum won, cover and reset."
+
+Not closing without you saying so. But the thesis you were holding for is broken as of this candle.
+
+Your call.

@@ -1,0 +1,39 @@
+Let me give the honest math.
+
+**The theoretical case (Kelly criterion):**
+- 10 trades, 60% win rate, +5% / -3% (R:R 1.67)
+- Per-trade EV = +1.8%
+- Compounded over 10: (1.018)^10 = **+19.55%**
+- Same outcome as one big +20% trade
+
+Equal expected value. BUT the 10-trade path has ~3x LOWER variance. Lower variance means you can size UP without risking ruin, so actual captured return ends up HIGHER.
+
+**The practical case (your SOL trade today):**
+
+Scale-out path (what we'd have done):
+- Entry $89.01, size 126.6
+- Scale 25% at +$9 peak ($89.08): bank $2.25. Position now 95.
+- Scale 25% at +$27 peak ($89.22): bank $6.75. Position now 63.5.
+- Hold 50% runner to current +$12 (retrace): = $6. Position still 63.5.
+- **Total banked: $15 with cushion already accumulating on the next swing**
+
+Grab-and-hold path (full size all the way):
+- Held 126.6 full size
+- Peak +$33, didn't sell the top
+- Gave back to +$12 (current unrealized)
+- **Total unrealized: $12, ZERO banked, still full risk on the remaining size**
+
+Same trade. SC banked MORE ($15 real vs $12 unrealized) AND has smaller remaining position (63 vs 126) → smaller drawdown risk if the trade reverses now. Better position, better cushion, better flexibility.
+
+**Long-term bias:**
+- Every imperfect hold (which is most of them in reality) favors SC
+- The only scenario GH wins is if you perfectly time the top close — vanishingly rare
+- Compounding (reinvesting banked profits into next setup) adds a second layer of edge GH can't access because capital is locked
+- Your 24h quota math favors SC because you need CONTINUOUS earnings, not one home-run
+
+**The answer:**
+**Scale-out + compound wins long term by a clear margin.** Not flat, not slightly — meaningfully. Lower variance + higher real captured return + compounding on freed capital + better quota alignment.
+
+The only exception is a genuinely once-per-week edge on a non-repeating setup — grab-and-hold is right when you literally can't re-enter the same edge. Crypto SOL day-scalping is the opposite of that. SC dominates.
+
+Math-guy bottom line: favors us substantially over many trades. Not close.

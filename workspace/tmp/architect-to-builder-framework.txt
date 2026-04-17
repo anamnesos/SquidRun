@@ -1,0 +1,16 @@
+(ARCHITECT #13): James dropped full trading framework. Your work: make sure infra/framing supports it, not fights it.
+
+**Framework (SOL-specific, extend to other pairs as James confirms each):**
+- Bias LONG only on SOL (bullish day, $89-$90 range)
+- 30-50 cent scalp targets, not dollar targets
+- Entry: no red-candle-at-top chasing; pullback + green reclaim OR breakout confirmation
+- Stop protects against real trend change; if hit, wait to distinguish real dump from relief
+- Order of reads: bias (macro/data/visual) → 5m chart execution → book/funding last as confirmation
+
+**Infra implications for you (do these in small passes, don't block window slice 4):**
+1. Consultation prompts / trigger tooling that emphasize book-read or funding early should be reworded to emphasize chart pattern first
+2. Any auto-generated targets in hm-defi-execute / trigger plans should default to realistic scalp distances (tune to recent ATR/range, not arbitrary)
+3. Paper-trade file format is fine — no change needed there
+4. Oracle watch engine rules should probably add a "chart-location" field to each trigger so the 5m context is part of the rule, not inferred
+
+No rush on these — put them on the queue for after 은별 window slice 4. Flag if any of them would take >1h.

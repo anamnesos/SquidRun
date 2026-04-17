@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775741424734-pz03pv",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.58,
+      "reasoning": "Large-cap benchmark is liquid and orderly, but 24h trend is still negative and the mechanical board flags no-trade with only mild short-covering support from negative funding. In a RED macro regime, this is not the place to press a fresh directional bet."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "ETH remains one of the weaker majors here: 24h trend is down, funding is positive rather than washed out, and the board leans bearish with higher cascade risk than BTC. That makes it a cleaner fade than a dip-buy while macro risk stays elevated."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "SOL is soft but not decisively broken. Negative funding gives some squeeze support, while the mechanical board still marks it no-trade and the downside momentum is less compelling than the small-cap short candidates. Best treated as watchlist rather than immediate action."
+    },
+    {
+      "ticker": "KAITO/USD",
+      "direction": "SELL",
+      "confidence": 0.63,
+      "reasoning": "KAITO remains a tactically bearish setup: 24h damage is deep, funding is max positive, and the mechanical board is firmly bearish with elevated cascade risk. Liquidity is thinner and spread is wide, so conviction is capped, but directionally this still favors shorts over longs."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "CHILLGUY has positive 24h momentum, but the structure is too noisy and too wide to trust as a clean continuation entry. Positive funding and poor spread quality offset the bounce, so I would not chase it in a RED macro tape."
+    },
+    {
+      "ticker": "SKR/USD",
+      "direction": "SELL",
+      "confidence": 0.62,
+      "reasoning": "SKR still screens as bearish on the mechanical board with max positive funding and weak trend structure. The edge is directional, not execution quality, because the market is thin and spready, so this is a tactical short only rather than a high-size conviction trade."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.66,
+      "reasoning": "MON is the cleanest fresh short candidate on this board. It has the same bearish overcrowded long setup as KAITO/SKR, but with materially better open interest and volume, which makes the short thesis more executable. Deep 24h weakness plus max positive funding still points to downside continuation or failed-bounce fade."
+    },
+    {
+      "ticker": "PYTH/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "PYTH is mixed: slight positive 24h performance, but no-trade on the board and no strong squeeze or cascade edge either way. With wide spread and no clean asymmetry, capital is better deployed elsewhere."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "FARTCOIN remains one of the better meme-coin fades: 24h trend is sharply negative, funding is max positive, and the board is bearish. Volume is there, which helps execution, but the name is still unstable enough that confidence should stay moderate rather than aggressive."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.62,
+      "reasoning": "TNSR still has the squeeze-continuation profile intact: strong 24h momentum, heavily negative funding, and top-tier squeeze score. The reason confidence is capped is execution quality: spread is very wide and macro remains RED, so this is only a reduced-size momentum long, not a full-risk chase."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "BUY",
+      "confidence": 0.65,
+      "reasoning": "BLUR is still the best long on the board. It has strong 24h momentum, deeply negative funding, higher quality volume than TNSR, and the board still tags it bullish/trade. Macro conditions prevent a high-conviction swing, but among the squeeze names this is the most credible continuation candidate."
+    }
+  ]
+}

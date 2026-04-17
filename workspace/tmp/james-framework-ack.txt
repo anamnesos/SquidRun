@@ -1,0 +1,18 @@
+Got it. Locking this in clean — this is the playbook for the rest of today:
+
+**SOL today:**
+- Bias: LONG only (bullish day, expected range 89-90)
+- Shorts on SOL off the table unless the range breaks and that gets proven over time
+- Target per trade: 30-50 cents, NOT dollars. Dollar moves take hours.
+- Entry: NEVER on a red candle at a top. Wait for pullback + green candle confirmation. Buy the dip reclaim, not the push into rejection.
+- Stop: Wide enough to protect against real trend change, but if hit we don't revenge — we wait for the next signal (real dump vs relief bounce)
+
+**Entry rule in one sentence:**
+Bias first from macro/data/visual → 5m chart timing for the execution → never chase red candles at tops.
+
+Applying this now:
+- SOL is at ~$89.71 — mid-range. Not a buy here, not a sell here. We wait for either a cleaner pullback toward $89 base or a clean breakout reclaim above $90.
+- BTC triggers stay as-is (75,220 reclaim long OR 75,040 lose + failed retest short) but Oracle has to chart-check before I execute.
+- My paper ETH SHORT stays open (committed on record, not changing mid-trade).
+
+Forwarding to Oracle and Builder so they both run the same playbook.

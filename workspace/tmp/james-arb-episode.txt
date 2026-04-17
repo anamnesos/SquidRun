@@ -1,0 +1,11 @@
+Back online, quick status in plain English.
+
+When I came online I saw an ARB long on the account that wasn't in the handoff. 45,000 ARB at $0.12923, stop way too wide (~$490 max loss, like 85% of the account). I didn't touch it. I asked Oracle directly — what's this, did you open it, what's the play.
+
+Oracle's answer: she did NOT open it either. She accidentally flattened it while inspecting the close CLI. Account is now flat at $585.17.
+
+Two things for you:
+1. Did YOU open that ARB long last night or this morning? If not, something opened it on its own and that's a real problem we need to find.
+2. We're up from last night's $455 low — ended at $585. Oracle says she's done executing till she has a real 0.65+ setup on BTC/ETH/SOL only.
+
+Not spamming you. Will only talk again when Oracle calls a real trade or something changes.

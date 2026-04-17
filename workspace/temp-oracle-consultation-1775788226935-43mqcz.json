@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775788226935-43mqcz",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.57,
+      "reasoning": "BTC is liquid and stable, but the board remains no-trade and the active veto argues against opening fresh exposure. Neutral is still the right stance."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "ETH has mildly constructive price action, but the board is still low-edge and not strong enough to justify a new position under veto conditions."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "SOL has slightly better funding support than ETH and decent price action, but the board still does not give a strong enough edge to override the active veto."
+    },
+    {
+      "ticker": "TAO/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "TAO remains one of the cleaner bearish leans in the set with a negative 24h profile and a bearish mechanical board read. It is not a panic short, but short still looks better than long here."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "CHILLGUY is moving hard, but the market is too thin, too wide, and too funding-rich on the long side to trust as a fresh continuation trade in a veto regime."
+    },
+    {
+      "ticker": "PYTH/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "PYTH has acceptable liquidity and some constructive price action, but the board remains neutral and funding is positive. Interesting, not actionable."
+    },
+    {
+      "ticker": "KAITO/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "KAITO still leans bearish with a large negative 24h move and a bearish board profile. The funding tailwind is weaker than before, so conviction is moderate rather than high."
+    },
+    {
+      "ticker": "MINA/USD",
+      "direction": "HOLD",
+      "confidence": 0.60,
+      "reasoning": "MINA still has one of the strongest squeeze-continuation profiles on the board with deeply negative funding and bullish mechanics, but the spread is ugly and the active veto is the wrong environment to chase it."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "SELL",
+      "confidence": 0.59,
+      "reasoning": "GOAT remains a reasonable bearish lean because it is thin, unstable, and still not supported by the kind of funding structure that would make it a clean long."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "HOLD",
+      "confidence": 0.60,
+      "reasoning": "TNSR still screens as a valid squeeze-continuation long mechanically, but the live veto is a direct reason not to open fresh high-beta exposure. Strong watchlist long, not an active trade."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "DASH has strong price momentum and decent volume, but the board remains neutral and funding is positive. Watchlist only while veto is active."
+    }
+  ]
+}

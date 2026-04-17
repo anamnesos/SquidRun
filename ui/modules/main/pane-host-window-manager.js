@@ -62,10 +62,29 @@ function buildPaneHostQueryFromEnv(paneId) {
 function createPaneHostWindowManager(options = {}) {
   const {
     getCurrentSettings = () => ({}),
+    onLifecycleEvent = null,
   } = options;
 
   let hostWindow = null;
   const hostedPaneIds = new Set();
+  let lastHostedPaneIds = [];
+  let hostWindowLoading = false;
+  let lastLoadStartedAt = 0;
+  let lastDidFinishLoadAt = 0;
+  let lastLifecycleFailure = null;
+
+  function emitLifecycleEvent(type, payload = {}) {
+    if (typeof onLifecycleEvent !== 'function') return;
+    try {
+      onLifecycleEvent({
+        type: String(type || 'unknown'),
+        paneIds: Array.from(hostedPaneIds),
+        ...payload,
+      });
+    } catch (err) {
+      log.warn('PaneHost', `Lifecycle callback failed for ${type}: ${err.message}`);
+    }
+  }
 
   function getPaneHostHtmlPath() {
     return path.join(__dirname, '..', '..', 'pane-host.html');
@@ -91,12 +110,15 @@ function createPaneHostWindowManager(options = {}) {
 
   function getPaneWindow(paneId) {
     const id = String(paneId);
-    if (!hostedPaneIds.has(id)) return null;
     if (!hostWindow || hostWindow.isDestroyed()) {
       hostWindow = null;
       hostedPaneIds.clear();
       return null;
     }
+    if (!hostedPaneIds.has(id) && lastHostedPaneIds.includes(id)) {
+      hostedPaneIds.add(id);
+    }
+    if (!hostedPaneIds.has(id)) return null;
     return hostWindow;
   }
 
@@ -109,6 +131,11 @@ function createPaneHostWindowManager(options = {}) {
     const paneIds = Array.isArray(allPaneIds) && allPaneIds.length > 0
       ? Array.from(new Set(allPaneIds.map((value) => String(value))))
       : Array.from(hostedPaneIds);
+    lastHostedPaneIds = paneIds.slice();
+    hostWindowLoading = true;
+    lastLoadStartedAt = Date.now();
+    lastDidFinishLoadAt = 0;
+    lastLifecycleFailure = null;
 
     const win = new BrowserWindow({
       width: HIDDEN_PANE_HOST_WIDTH,
@@ -128,7 +155,94 @@ function createPaneHostWindowManager(options = {}) {
     });
 
     hostWindow = win;
+    emitLifecycleEvent('window-created', {
+      paneIds,
+      loading: true,
+    });
+    if (win.webContents && typeof win.webContents.on === 'function') {
+      win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame) return;
+        hostWindowLoading = false;
+        lastLifecycleFailure = {
+          type: 'did-fail-load',
+          at: Date.now(),
+          errorCode,
+          errorDescription,
+          validatedURL: validatedURL || null,
+        };
+        emitLifecycleEvent('did-fail-load', {
+          paneIds,
+          errorCode,
+          errorDescription,
+          validatedURL: validatedURL || null,
+        });
+      });
+      win.webContents.on('preload-error', (_event, preloadPath, error) => {
+        hostWindowLoading = false;
+        lastLifecycleFailure = {
+          type: 'preload-error',
+          at: Date.now(),
+          preloadPath: preloadPath || null,
+          error: error?.message || String(error || 'unknown_preload_error'),
+        };
+        emitLifecycleEvent('preload-error', {
+          paneIds,
+          preloadPath: preloadPath || null,
+          error: error?.message || String(error || 'unknown_preload_error'),
+        });
+      });
+      win.webContents.on('render-process-gone', (_event, details) => {
+        hostWindowLoading = false;
+        lastLifecycleFailure = {
+          type: 'render-process-gone',
+          at: Date.now(),
+          reason: details?.reason || 'unknown',
+          exitCode: details?.exitCode ?? null,
+        };
+        emitLifecycleEvent('render-process-gone', {
+          paneIds,
+          reason: details?.reason || 'unknown',
+          exitCode: details?.exitCode ?? null,
+        });
+      });
+      win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+        emitLifecycleEvent('console-message', {
+          paneIds,
+          level,
+          message: String(message || ''),
+          line: Number.isFinite(Number(line)) ? Number(line) : null,
+          sourceId: sourceId || null,
+        });
+      });
+      win.webContents.on('did-finish-load', () => {
+        hostWindowLoading = false;
+        lastDidFinishLoadAt = Date.now();
+        emitLifecycleEvent('did-finish-load', {
+          paneIds,
+        });
+      });
+    }
+    if (typeof win.on === 'function') {
+      win.on('unresponsive', () => {
+        hostWindowLoading = false;
+        lastLifecycleFailure = {
+          type: 'unresponsive',
+          at: Date.now(),
+        };
+        emitLifecycleEvent('unresponsive', {
+          paneIds,
+        });
+      });
+    }
     win.on('closed', () => {
+      hostWindowLoading = false;
+      lastLifecycleFailure = {
+        type: 'closed',
+        at: Date.now(),
+      };
+      emitLifecycleEvent('closed', {
+        paneIds: lastHostedPaneIds.slice(),
+      });
       hostWindow = null;
       hostedPaneIds.clear();
     });
@@ -193,6 +307,16 @@ function createPaneHostWindowManager(options = {}) {
     ensurePaneWindows,
     sendToPaneWindow,
     closeAllPaneWindows,
+    getHostedPaneIds: () => lastHostedPaneIds.slice(),
+    getWindowDiagnostics: () => ({
+      paneIds: lastHostedPaneIds.slice(),
+      loading: hostWindowLoading,
+      hasWindow: Boolean(hostWindow && !hostWindow.isDestroyed()),
+      isDestroyed: Boolean(hostWindow && hostWindow.isDestroyed()),
+      lastLoadStartedAt: lastLoadStartedAt || null,
+      lastDidFinishLoadAt: lastDidFinishLoadAt || null,
+      lastLifecycleFailure: lastLifecycleFailure ? { ...lastLifecycleFailure } : null,
+    }),
   };
 }
 

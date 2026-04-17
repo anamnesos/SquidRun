@@ -1,0 +1,21 @@
+⚠️ SOL bouncing right after your entry — heads up
+
+PnL: -$11.68 (was -$0.84 5 min ago)
+Mark: $84.591 (entry $84.4929)
+Position is bleeding 0.12% against the short
+
+CHART SIGNAL:
+4 red candles led INTO your entry (the downtrend you saw), then 2 GREEN candles immediately after you opened. Possible fakeout — you may have shorted the bottom of the move instead of the top.
+
+```
+08:30-08:45  4 RED (downtrend, the setup you read)
+08:50  🟢 +0.10% (reversal start)
+08:55  🟢 +0.01% (continuation up)
+```
+
+MY ACTION PLAN:
+- If next 5m candle (closes 09:00 PDT) is RED → trend resumes, hold
+- If next candle is GREEN with volume → trend reversed, I CLOSE (don't ask)
+- If PnL hits -$25 → I CLOSE regardless (capping the damage)
+
+Telling you so you know what's coming. Position is alive but on watch. Trend death = action, that's the lesson.

@@ -72,6 +72,7 @@ const UsageManager = require('./modules/main/usage-manager');
 const CliIdentityManager = require('./modules/main/cli-identity');
 const FirmwareManager = require('./modules/main/firmware-manager');
 const SquidRunApp = require('./modules/main/squidrun-app');
+const { parseLaunchIntent } = require('./modules/main/launch-intent');
 
 // 1. Initialize managers with shared context
 appContext.electronApp = app;
@@ -91,28 +92,21 @@ const squidrunApp = new SquidRunApp(appContext, {
   cliIdentity,
   firmwareManager,
 });
+squidrunApp.setLaunchWindowProfile(parseLaunchIntent(process.argv.slice(1)));
 
-app.on('second-instance', () => {
-  const win = appContext.mainWindow;
-  if (!win || win.isDestroyed()) {
+app.on('second-instance', (_event, commandLine = []) => {
+  const launchProfile = squidrunApp.setLaunchWindowProfile(parseLaunchIntent(commandLine));
+  const focusWindowKey = launchProfile?.focusWindowKey || launchProfile?.windowKey || 'main';
+  const focusWindow = squidrunApp.getAppWindow(focusWindowKey);
+  if (!focusWindow || focusWindow.isDestroyed()) {
     if (app.isReady()) {
-      squidrunApp.createWindow().catch((err) => {
+      squidrunApp.launchWindowsForProfile(launchProfile).catch((err) => {
         log.error('[Main] Failed to restore window on second-instance:', err?.message || err);
       });
     }
     return;
   }
-
-  if (win.isMinimized()) {
-    win.restore();
-  }
-  if (!win.isVisible()) {
-    win.show();
-  }
-  if (typeof win.moveTop === 'function') {
-    win.moveTop();
-  }
-  win.focus();
+  squidrunApp.focusAppWindow(focusWindowKey);
 });
 app.on('browser-window-created', (_event, windowRef) => {
   enforceMenuSuppression(windowRef);
@@ -140,7 +134,7 @@ app.on('window-all-closed', async () => {
 
 app.on('activate', () => {
   if (appContext.mainWindow === null) {
-    squidrunApp.createWindow();
+    squidrunApp.launchWindowsForProfile();
   }
 });
 

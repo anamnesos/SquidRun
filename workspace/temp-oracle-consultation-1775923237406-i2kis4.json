@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775923237406-i2kis4",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "BUY",
+      "confidence": 0.95,
+      "reasoning": "Cover the live short. The position is already underwater, the move against it looks like a short-covering rally, and liquidation distance is only about 6.6%, which is too tight to defend under an active veto regime."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "Price and open interest are both rising, but the veto regime blocks chasing fresh longs and there is no clean bearish fade here either."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "ETH is showing trend-supported strength with rising open interest, but under veto this is watch-only rather than a fresh long."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.63,
+      "reasoning": "This is the cleanest crowded-long fade on the sheet: price is up sharply, funding is above 1 bp, open interest is expanding with the rally, and the setup looks extended enough to lean short rather than chase."
+    },
+    {
+      "ticker": "WLD/USD",
+      "direction": "HOLD",
+      "confidence": 0.74,
+      "reasoning": "WLD is up strongly but the data quality is weaker and the spread is wide, so under veto it is better treated as watch-only."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "The move already looks like a long-liquidation flush and daily liquidity is too thin to press the short aggressively after the drop."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "SELL",
+      "confidence": 0.66,
+      "reasoning": "STBL remains a valid bearish fade because funding is extremely positive, crowding is high, and the long side still looks expensive despite the veto backdrop."
+    },
+    {
+      "ticker": "XPL/USD",
+      "direction": "HOLD",
+      "confidence": 0.75,
+      "reasoning": "Mild upside with neutral mechanics is not enough to justify either a fresh long or a fresh short here."
+    },
+    {
+      "ticker": "AVNT/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "The rally looks more like short covering than real trend support, so it is a reasonable secondary fade, but liquidity and spread keep confidence moderate."
+    },
+    {
+      "ticker": "FOGO/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "FOGO has already dumped hard and now reads more like a flush than a clean fresh short, so I would not press it here."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.74,
+      "reasoning": "VVV is strong but extended, and under veto that makes it a watch-only name rather than a chase long."
+    }
+  ]
+}

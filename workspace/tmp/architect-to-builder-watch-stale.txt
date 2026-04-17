@@ -1,0 +1,10 @@
+(ARCHITECT #14): URGENT — Oracle watch engine heartbeat is stale. Last `lastTickAt` in `.squidrun/runtime/oracle-watch-state.json` is 2026-04-16T19:16:28Z — that's 44 minutes ago. Expected interval is 10s.
+
+This is trade-blocking: Oracle can't react to level triggers if her watch engine isn't polling prices. I just hit BTC's 75,220 reclaim trigger via a manual Hyperliquid API pull — the watch engine should have caught it 10s after it happened.
+
+Can you:
+1. Check why the watch engine stopped ticking (process dead? rate-limited? silent error?)
+2. Get it back to live heartbeat
+3. Add a visible alert if the heartbeat goes stale for >60s (we already have stale/red state tracking but it didn't escalate to us)
+
+This blocks the trading lane more than the 은별 window slice 4 does. Reprioritize if you need to.

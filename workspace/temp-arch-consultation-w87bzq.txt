@@ -1,0 +1,15 @@
+ARCHITECT consultation w87bzq — FARTCOIN SHORT is the cleanest setup on the board, others HOLD.
+
+{"requestId":"consultation-1775926831941-w87bzq","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Trend supported but veto active. No fresh entry."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Constructive but veto. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Just closed SOL short. Cool-off."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Personal cooldown enforced."},
+{"ticker":"FARTCOIN/USD","direction":"SELL","confidence":0.65,"reasoning":"BIGGEST liquidity setup on the board. Vol $21.6M, OI $48.8M, funding +0.75 bps elevated (longs paying). 12h chart shows 4 green candles to a high, then 09:45 REJECTION candle at $0.20394, then weak recovery. Classic crowded-long-fade-after-rejection. Currently $0.20023, 1.82% off 12h high. Oracle has been flagging this 2 consultations in a row. Trade I'm proposing to James right now: short with $1k margin, stop above $0.2050, target $0.195/$0.187."},
+{"ticker":"NOT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol thin, fails liquidity floor."},
+{"ticker":"XPL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Mild upside, no clean setup."},
+{"ticker":"AVNT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol borderline, no clean edge."},
+{"ticker":"WLD/USD","direction":"HOLD","confidence":0.45,"reasoning":"Clean continuation long candidate but FARTCOIN short is the higher conviction trade right now."},
+{"ticker":"FOGO/USD","direction":"HOLD","confidence":0.45,"reasoning":"Already flushed."},
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended pump +11.89%, late chase, vol thinner than expected."}
+]}

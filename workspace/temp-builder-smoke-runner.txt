@@ -1,0 +1,3 @@
+The autosmoke trigger fix worked for routine messages, but a [SMOKE] tag in your test output fired it again. The smoke runner itself is broken — it always returns "invalid_summary" because it doesn't produce valid JSON. 
+
+The runner (hm-smoke-runner.js) needs to either return valid JSON or the autosmoke system needs to suppress injection of failure messages when the runner has nothing to test. Fix the runner or suppress the noise. Quick fix, then back to consultation reorientation.

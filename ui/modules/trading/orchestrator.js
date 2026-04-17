@@ -1,8 +1,12 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 
-const { getProjectRoot } = require('../../config');
+const { getProjectRoot, resolveCoordPath } = require('../../config');
 const dataIngestion = require('./data-ingestion');
 const watchlist = require('./watchlist');
 const dynamicWatchlist = require('./dynamic-watchlist');
@@ -21,6 +25,13 @@ const tradingScheduler = require('./scheduler');
 const signalProducer = require('./signal-producer');
 const telegramSummary = require('./telegram-summary');
 const yieldRouterModule = require('./yield-router');
+const cryptoMechBoard = require('./crypto-mech-board');
+const eventVeto = require('./event-veto');
+const consensusSizer = require('./consensus-sizer');
+const positionManagement = require('./position-management');
+const signalValidationRecorder = require('./signal-validation-recorder');
+const hyperliquidNativeLayer = require('./hyperliquid-native-layer');
+const multiTimeframeConfirmation = require('./multi-timeframe-confirmation');
 const {
 	STRATEGY_MODES,
 	buildBrokerCapabilityPayload,
@@ -38,9 +49,9 @@ const DEFAULT_MODELS = Object.freeze({
 	oracle: 'gemini',
 });
 const LIVE_ETF_STRATEGY_SYMBOLS = Object.freeze(['SPY', 'QQQ', 'GLD', 'TLT', 'XLE']);
-const LIVE_CRYPTO_MONITOR_SYMBOLS = Object.freeze(['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD', 'LINK/USD', 'DOGE/USD']);
+const DEFAULT_CRYPTO_MONITOR_SYMBOLS = Object.freeze(['BTC/USD', 'ETH/USD', 'SOL/USD']);
 const DEFAULT_LIVE_ENTRY_MODE = 'unanimous_or_high';
-const DEFAULT_LIVE_MIN_AGREE_CONFIDENCE = 0.72;
+const DEFAULT_LIVE_MIN_AGREE_CONFIDENCE = 0.6;
 const DEFAULT_LIVE_MAX_IDEAS_PER_ROUND = 2;
 const DEFAULT_PROFIT_TARGET_PCT = 0.08;
 const DEFAULT_TRAILING_STOP_PCT = 0.04;
@@ -54,6 +65,25 @@ const DEFAULT_ACTIVE_TRADING_RATIO = 0.4;
 const DEFAULT_YIELD_ROUTER_RATIO = yieldRouterModule.DEFAULT_YIELD_TARGET_RATIO || 0.35;
 const DEFAULT_RESERVE_RATIO = yieldRouterModule.DEFAULT_RESERVE_RATIO || 0.2;
 const DEFAULT_LAUNCH_RADAR_RATIO = yieldRouterModule.DEFAULT_LAUNCH_RADAR_ALLOCATION_RATIO || 0.05;
+const DEFAULT_DEFI_MONITOR_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_DEFI_MONITOR_TIMEOUT_MS = 30_000;
+const DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE = 0.6;
+const DEFAULT_HYPERLIQUID_AUTO_LEVERAGE = 5;
+const DEFAULT_HYPERLIQUID_SCALP_LEVERAGE = 20;
+const DEFAULT_HYPERLIQUID_AUTO_OPEN_ENABLED = false;
+const DEFAULT_HYPERLIQUID_EXECUTION_RETRIES = Math.max(
+	0,
+	Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_EXECUTION_RETRIES || '2', 10) || 2
+);
+const DEFAULT_HYPERLIQUID_EXECUTION_RETRY_MS = Math.max(
+	250,
+	Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_EXECUTION_RETRY_MS || '2000', 10) || 2000
+);
+const DEFI_WARNING_RETAINED_PNL_RATIO = 0.7;
+const DEFI_URGENT_RETAINED_PNL_RATIO = 0.5;
+const DEFI_CRITICAL_LIQUIDATION_BUFFER_PCT = 0.15;
+
+const execFileAsync = promisify(execFile);
 
 function toTicker(value) {
 	return String(value || '').trim().toUpperCase();
@@ -86,6 +116,13 @@ function toDateKey(value = new Date()) {
 	return date.toISOString().slice(0, 10);
 }
 
+function toIsoTimestamp(value, fallback = null) {
+	if (value == null || value === '') return fallback;
+	const date = value instanceof Date ? value : new Date(value);
+	if (Number.isNaN(date.getTime())) return fallback;
+	return date.toISOString();
+}
+
 function toNumber(value, fallback = 0) {
 	const numeric = Number(value);
 	return Number.isFinite(numeric) ? numeric : fallback;
@@ -94,6 +131,65 @@ function toNumber(value, fallback = 0) {
 function toPositiveInteger(value) {
 	const numeric = Math.floor(Number(value));
 	return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function extractFirstJsonObject(rawText, fallback = {}) {
+	const raw = String(rawText || '');
+	for (let start = 0; start < raw.length; start += 1) {
+		if (raw[start] !== '{') continue;
+		let depth = 0;
+		let inString = false;
+		let escaped = false;
+		for (let index = start; index < raw.length; index += 1) {
+			const char = raw[index];
+			if (inString) {
+				if (escaped) {
+					escaped = false;
+					continue;
+				}
+				if (char === '\\') {
+					escaped = true;
+					continue;
+				}
+				if (char === '"') {
+					inString = false;
+				}
+				continue;
+			}
+			if (char === '"') {
+				inString = true;
+				continue;
+			}
+			if (char === '{') {
+				depth += 1;
+				continue;
+			}
+			if (char !== '}') continue;
+			depth -= 1;
+			if (depth !== 0) continue;
+			const candidate = raw.slice(start, index + 1);
+			try {
+				return JSON.parse(candidate);
+			} catch {
+				break;
+			}
+		}
+	}
+	return fallback;
+}
+
+function parseStoredJsonObject(rawValue, fallback = {}) {
+	if (!rawValue) {
+		return fallback;
+	}
+	if (typeof rawValue === 'object') {
+		return rawValue;
+	}
+	try {
+		return JSON.parse(String(rawValue));
+	} catch {
+		return extractFirstJsonObject(rawValue, fallback);
+	}
 }
 
 function toPositiveQuantity(value, assetClass = 'us_equity') {
@@ -161,6 +257,193 @@ function resolveLaunchRadarExpiryDays(value) {
 
 function roundCurrency(value) {
 	return Number(toNumber(value, 0).toFixed(2));
+}
+
+function extractHyperliquidAssetFromTicker(ticker = '') {
+	const normalized = String(ticker || '').trim().toUpperCase();
+	return normalized.includes('/') ? normalized.split('/')[0] : normalized;
+}
+
+function isHyperliquidCryptoTicker(ticker = '') {
+	return /\/USD$/i.test(String(ticker || '').trim());
+}
+
+function roundExecutionMargin(value) {
+	const numeric = toNumber(value, 0);
+	if (!Number.isFinite(numeric) || numeric <= 0) return null;
+	return Math.floor(numeric * 1_000_000) / 1_000_000;
+}
+
+function round(value, digits = 4) {
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric)) return 0;
+	const scale = 10 ** digits;
+	return Math.round(numeric * scale) / scale;
+}
+
+function toCliNumber(value) {
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric)) return null;
+	return String(Number(numeric.toFixed(6)));
+}
+
+function buildValidationId(ticker, observedAt, decision, marketDate) {
+	const normalizedDecision = String(decision || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
+	const normalizedMarketDate = String(marketDate || 'unknown').trim() || 'unknown';
+	const input = [toTicker(ticker), toIsoTimestamp(observedAt, 'unknown'), normalizedDecision, normalizedMarketDate].join('::');
+	return crypto.createHash('sha1').update(input).digest('hex');
+}
+
+function toRatio(value) {
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric)) return null;
+	return Math.max(0, numeric);
+}
+
+function buildHyperliquidClientOrderId(parts = []) {
+	const fingerprint = parts
+		.map((part) => String(part || '').trim())
+		.filter(Boolean)
+		.join('|');
+	if (!fingerprint) return null;
+	return `0x${crypto.createHash('sha256').update(fingerprint, 'utf8').digest('hex').slice(0, 32)}`;
+}
+
+function buildDecisionCoupledNativeEntry(nativeEntry = null, decision = null) {
+	if (!nativeEntry || typeof nativeEntry !== 'object') {
+		return nativeEntry || null;
+	}
+	const multiTimeframe = nativeEntry.multiTimeframe;
+	if (!multiTimeframe || typeof multiTimeframe !== 'object') {
+		return { ...nativeEntry };
+	}
+	const decisionState = multiTimeframeConfirmation.resolveDecisionState(multiTimeframe, decision);
+	return {
+		...nativeEntry,
+		multiTimeframe: {
+			...multiTimeframe,
+			decision: String(decision || multiTimeframe.decision || '').trim().toUpperCase() || null,
+			decisionState,
+			status: decisionState?.status || null,
+			sizeMultiplier: decisionState?.sizeMultiplier ?? null,
+			statusBasis: decisionState ? 'decision' : (multiTimeframe.statusBasis || 'tape_state'),
+			reasons: Array.isArray(decisionState?.reasons) && decisionState.reasons.length > 0
+				? decisionState.reasons
+				: (Array.isArray(multiTimeframe.reasons) ? multiTimeframe.reasons : []),
+		},
+	};
+}
+
+function sleepMs(ms = 0) {
+	return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function classifyHyperliquidScriptResult(result = {}) {
+	const stdout = String(result?.stdout || '');
+	const stderr = String(result?.stderr || '');
+	const errorText = String(result?.error || '');
+	const combined = `${stdout}\n${stderr}\n${errorText}`.toLowerCase();
+	const timedOut = result?.timedOut === true
+		|| /timed?\s*out|timeout/i.test(errorText)
+		|| String(result?.signal || '').trim().toUpperCase() === 'SIGTERM' && /timed?\s*out|timeout/i.test(combined);
+	const insufficientFunds = /only \$[\d.]+ on hyperliquid|need at least \$10|deposit may still be arriving|insufficient(?:\s+\w+)*\s+balance/i.test(combined);
+	const transient = timedOut
+		|| /econnreset|etimedout|socket hang up|temporarily unavailable|rate limit|429|502|503|504|network|fetch failed|connection reset/i.test(combined);
+	return {
+		timedOut,
+		insufficientFunds,
+		transient,
+		shouldRetry: transient && !insufficientFunds,
+	};
+}
+
+function buildHyperliquidFundsAlert(execution = {}) {
+	const asset = String(execution?.asset || execution?.ticker || 'asset').trim();
+	const detail = String(execution?.stderr || execution?.stdout || execution?.error || '').trim();
+	return [
+		'[TRADING] Hyperliquid auto-execution skipped for insufficient funds.',
+		`Asset: ${asset}`,
+		detail ? `Detail: ${detail}` : null,
+	].filter(Boolean).join('\n');
+}
+
+function buildDefiPositionKey(position = {}) {
+	const coin = String(position.coin || position.asset || '').trim().toUpperCase();
+	const side = String(position.side || '').trim().toLowerCase();
+	return coin && side ? `${coin}:${side}` : coin;
+}
+
+function normalizeDefiPosition(position = {}) {
+	const size = toNumber(position?.size ?? position?.szi, 0);
+	const side = String(position?.side || '').trim().toLowerCase()
+		|| (size < 0 ? 'short' : (size > 0 ? 'long' : 'flat'));
+	const result = {
+		coin: String(position?.coin || position?.asset || '').trim().toUpperCase(),
+		size,
+		side,
+		entryPx: toNumber(position?.entryPx, 0),
+		unrealizedPnl: roundCurrency(position?.unrealizedPnl),
+		liquidationPx: toNumber(position?.liquidationPx, 0),
+	};
+	if (position?.stopLossPrice != null) result.stopLossPrice = toNumber(position.stopLossPrice, 0) || null;
+	if (position?.takeProfitPrice != null) result.takeProfitPrice = toNumber(position.takeProfitPrice, 0) || null;
+	return result;
+}
+
+function formatRetainedPnlRatio(value) {
+	if (!Number.isFinite(value)) return 'n/a';
+	return `${(value * 100).toFixed(0)}%`;
+}
+
+function calculateLiquidationBufferRemainingPct(position = {}, markPrice = 0) {
+	const liquidationPx = toNumber(position.liquidationPx, 0);
+	const entryPx = toNumber(position.entryPx, 0);
+	const side = String(position.side || '').trim().toLowerCase();
+	const mark = toNumber(markPrice, 0);
+	if (liquidationPx <= 0 || entryPx <= 0 || mark <= 0) {
+		return null;
+	}
+
+	let totalRiskWindow = 0;
+	let remainingRiskWindow = 0;
+	if (side === 'short') {
+		totalRiskWindow = liquidationPx - entryPx;
+		remainingRiskWindow = liquidationPx - mark;
+	} else if (side === 'long') {
+		totalRiskWindow = entryPx - liquidationPx;
+		remainingRiskWindow = mark - liquidationPx;
+	} else {
+		return null;
+	}
+
+	if (totalRiskWindow <= 0) {
+		return null;
+	}
+
+	return Number(Math.max(0, Math.min(1, remainingRiskWindow / totalRiskWindow)).toFixed(4));
+}
+
+function buildDefiWarningMessage(position = {}, level = 'warning') {
+	const retainedRatio = toRatio(position.retainedPeakRatio);
+	const peakUnrealizedPnl = roundCurrency(position.peakUnrealizedPnl);
+	const currentUnrealizedPnl = roundCurrency(position.unrealizedPnl);
+	const sideLabel = String(position.side || '').trim().toUpperCase() || 'POSITION';
+	if (String(level || '').trim().toLowerCase() === 'critical') {
+		return `${position.coin} ${sideLabel} mark is within ${(DEFI_CRITICAL_LIQUIDATION_BUFFER_PCT * 100).toFixed(0)}% of liquidation (${formatRetainedPnlRatio(toRatio(position.liquidationDistancePct))} buffer remaining).`;
+	}
+	return `${position.coin} ${sideLabel} unrealized P&L is now $${currentUnrealizedPnl.toFixed(2)} vs peak $${peakUnrealizedPnl.toFixed(2)} (${formatRetainedPnlRatio(retainedRatio)} retained).`;
+}
+
+function buildDefiTelegramAlertsMessage(alerts = [], checkedAt = new Date().toISOString()) {
+	if (alerts.length === 0) return '';
+	const highestSeverity = alerts.some((entry) => entry.level === 'critical')
+		? 'CRITICAL'
+		: alerts.some((entry) => entry.level === 'urgent')
+			? 'URGENT'
+			: 'WARNING';
+	const header = `${highestSeverity} Hyperliquid position alert (${checkedAt})`;
+	const lines = alerts.map((entry) => `- ${buildDefiWarningMessage(entry.position, entry.level)}`);
+	return [header, '', ...lines].join('\n');
 }
 
 function sumSnapshotEquity(snapshot, marketKeys = []) {
@@ -299,11 +582,18 @@ function buildTradeOutcomeCandidates(trades = [], openPositionTickers = new Set(
 		let remaining = shares;
 		let matchedShares = 0;
 		let costBasis = 0;
+		const matchedLots = [];
 		while (remaining > 0.000001 && lots.length > 0) {
 			const lot = lots[0];
 			const matched = Math.min(remaining, lot.shares);
 			costBasis += matched * lot.price;
 			matchedShares += matched;
+			matchedLots.push({
+				tradeId: lot.tradeId,
+				timestamp: lot.timestamp,
+				shares: matched,
+				price: lot.price,
+			});
 			lot.shares -= matched;
 			remaining -= matched;
 			if (lot.shares <= 0.000001) {
@@ -327,6 +617,7 @@ function buildTradeOutcomeCandidates(trades = [], openPositionTickers = new Set(
 			proceeds: roundCurrency(proceeds),
 			realizedPnl,
 			realizedReturn,
+			matchedLots,
 			isClosed,
 		});
 	}
@@ -426,6 +717,9 @@ function resolveMinAgreeConfidence(options = {}, orchestratorOptions = {}) {
 }
 
 function resolveMaxIdeasPerRound(options = {}, orchestratorOptions = {}) {
+	if (String(options.strategyMode || orchestratorOptions.strategyMode || '').trim().toLowerCase() === 'range_conviction') {
+		return 1;
+	}
 	return toPositiveInteger(
 		options.maxIdeasPerRound
 		?? options.maxIdeasPerStep
@@ -433,6 +727,11 @@ function resolveMaxIdeasPerRound(options = {}, orchestratorOptions = {}) {
 		?? orchestratorOptions.maxIdeasPerStep
 		?? DEFAULT_LIVE_MAX_IDEAS_PER_ROUND
 	);
+}
+
+function resolveTradingStrategyMode(options = {}, macroRisk = null) {
+	const explicit = String(options.strategyMode || '').trim().toLowerCase();
+	return explicit || resolveStrategyMode(macroRisk);
 }
 
 function shouldTakeApprovedTrade(trade = {}, options = {}, orchestratorOptions = {}) {
@@ -451,15 +750,15 @@ function shouldTakeApprovedTrade(trade = {}, options = {}, orchestratorOptions =
 	}
 	if (entryMode === 'high_confidence') {
 		return {
-			ok: agreementCount >= 2 && averageAgreeConfidence >= minAgreeConfidence,
-			reason: `ENTRY_FILTER: high_confidence requires 2+ agreeing signals with average confidence >= ${minAgreeConfidence.toFixed(2)} (got ${agreementCount} @ ${averageAgreeConfidence.toFixed(2)})`,
+			ok: agreementCount >= 2 && averageAgreeConfidence > minAgreeConfidence,
+			reason: `ENTRY_FILTER: high_confidence requires 2+ agreeing signals with average confidence > ${minAgreeConfidence.toFixed(2)} (got ${agreementCount} @ ${averageAgreeConfidence.toFixed(2)})`,
 			averageAgreeConfidence,
 		};
 	}
 	if (entryMode === 'unanimous_or_high') {
 		return {
-			ok: agreementCount === 3 || (agreementCount >= 2 && averageAgreeConfidence >= minAgreeConfidence),
-			reason: `ENTRY_FILTER: unanimous_or_high requires unanimity or 2+ agreeing signals with average confidence >= ${minAgreeConfidence.toFixed(2)} (got ${agreementCount} @ ${averageAgreeConfidence.toFixed(2)})`,
+			ok: agreementCount === 3 || (agreementCount >= 2 && averageAgreeConfidence > minAgreeConfidence),
+			reason: `ENTRY_FILTER: unanimous_or_high requires unanimity or 2+ agreeing signals with average confidence > ${minAgreeConfidence.toFixed(2)} (got ${agreementCount} @ ${averageAgreeConfidence.toFixed(2)})`,
 			averageAgreeConfidence,
 		};
 	}
@@ -489,6 +788,48 @@ function selectTopTradeIdeas(candidates = [], options = {}, orchestratorOptions 
 	};
 }
 
+function selectConvictionSignalMetadata(consensusResult = {}) {
+	const agreeing = Array.isArray(consensusResult?.agreeing) ? consensusResult.agreeing : [];
+	const ranked = agreeing
+		.filter((signal) => {
+			return Number.isFinite(Number(signal?.invalidationPrice))
+				|| Number.isFinite(Number(signal?.takeProfitPrice))
+				|| Number.isFinite(Number(signal?.leverage));
+		})
+		.slice()
+		.sort((left, right) => toNumber(right?.confidence, 0) - toNumber(left?.confidence, 0));
+	const signal = ranked[0] || null;
+	if (!signal) return null;
+	return {
+		invalidationPrice: Number.isFinite(Number(signal?.invalidationPrice)) ? Number(signal.invalidationPrice) : null,
+		takeProfitPrice: Number.isFinite(Number(signal?.takeProfitPrice)) ? Number(signal.takeProfitPrice) : null,
+		leverage: toPositiveInteger(signal?.leverage) || null,
+		strategyMode: String(signal?.strategyMode || '').trim().toLowerCase() || null,
+		rangeStructure: signal?.rangeStructure || null,
+	};
+}
+
+function buildRangeConvictionSingleThesisResult(signal = {}) {
+	const ticker = toTicker(signal?.ticker);
+	const decision = toDirection(signal?.direction || 'HOLD');
+	const confidence = toConfidence(signal?.confidence);
+	const actionable = decision !== 'HOLD';
+	return {
+		ticker,
+		decision,
+		consensus: actionable,
+		agreementCount: actionable ? 1 : 0,
+		confidence,
+		averageAgreeConfidence: confidence,
+		averageSignalConfidence: confidence,
+		agreeing: actionable ? [signal] : [],
+		dissenting: actionable ? [] : [signal],
+		summary: actionable
+			? `${ticker}: ${decision} — range_conviction single-thesis owner approved entry`
+			: `${ticker}: HOLD — range_conviction thesis not actionable`,
+	};
+}
+
 function resolveDefaultSymbols(symbols, options = {}, macroRisk = null) {
 	const explicitSymbols = Array.isArray(symbols)
 		? symbols
@@ -499,7 +840,9 @@ function resolveDefaultSymbols(symbols, options = {}, macroRisk = null) {
 
 	const assetClass = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity');
 	if (assetClass === 'crypto') {
-		return normalizeSymbols(LIVE_CRYPTO_MONITOR_SYMBOLS, options);
+		const watchlistSymbols = watchlist.getTickers({ assetClass: 'crypto' });
+		const fallbackSymbols = watchlistSymbols.length > 0 ? watchlistSymbols : DEFAULT_CRYPTO_MONITOR_SYMBOLS;
+		return normalizeSymbols(fallbackSymbols, options);
 	}
 	if (resolveStrategyMode(macroRisk) === STRATEGY_MODES.CRISIS) {
 		return normalizeSymbols(getCrisisUniverse(macroRisk), options);
@@ -532,6 +875,29 @@ function buildEffectiveRiskLimits(baseLimits = {}, macroRisk = null) {
 		return baseLimits;
 	}
 	return deriveCrisisRiskLimits(baseLimits);
+}
+
+function resolveHyperliquidKillSwitchAction(options = {}, orchestratorOptions = {}) {
+	const raw = String(
+		options.hyperliquidKillSwitchAction
+		?? options.killSwitchAction
+		?? orchestratorOptions.hyperliquidKillSwitchAction
+		?? orchestratorOptions.killSwitchAction
+		?? 'block_new_entries'
+	).trim().toLowerCase();
+	return raw === 'flatten_positions' ? 'flatten_positions' : 'block_new_entries';
+}
+
+function extractHyperliquidProtectionFromOutput(output = '') {
+	const text = String(output || '');
+	const stopLossMatch = text.match(/Stop loss:\s*\$([0-9]+(?:\.[0-9]+)?)/i);
+	const takeProfitMatch = text.match(/TP2:\s*\$([0-9]+(?:\.[0-9]+)?)/i);
+	const stopLossPrice = toNumber(stopLossMatch?.[1], 0) || null;
+	const takeProfitPrice = toNumber(takeProfitMatch?.[1], 0) || null;
+	return {
+		stopLossPrice,
+		takeProfitPrice,
+	};
 }
 
 function resolveLiveRiskLimits(options = {}, orchestratorOptions = {}, macroRisk = null) {
@@ -651,6 +1017,7 @@ function defaultState() {
 			peakEquity: null,
 			marketDate: null,
 		},
+		defiMonitor: null,
 	};
 }
 
@@ -658,14 +1025,1100 @@ class TradingOrchestrator {
 	constructor(options = {}) {
 		this.options = { ...options };
 		this.state = defaultState();
+		this.defiMonitorTimer = null;
+		if (this.shouldAutoStartDefiMonitor()) {
+			this.startDefiMonitor();
+		}
+	}
+
+	shouldAutoStartDefiMonitor() {
+		if (this.options.defiMonitorEnabled === false || this.options.enableDefiMonitor === false) {
+			return false;
+		}
+		if (this.options.defiMonitorAutoStart !== true) {
+			return false;
+		}
+		if (process.env.SQUIDRUN_DEFI_MONITOR === '0') {
+			return false;
+		}
+		return true;
+	}
+
+	resolveDefiStatusScriptPath(options = {}) {
+		return options.defiStatusScriptPath
+			|| this.options.defiStatusScriptPath
+			|| path.join(getProjectRoot(), 'ui', 'scripts', 'hm-defi-status.js');
+	}
+
+	resolveDefiPeakPnlPath(options = {}) {
+		return options.defiPeakPnlPath
+			|| this.options.defiPeakPnlPath
+			|| resolveCoordPath(path.join('runtime', 'defi-peak-pnl.json'), { forWrite: true });
+	}
+
+	resolveDefiMonitorIntervalMs(options = {}) {
+		return Math.max(
+			1_000,
+			toPositiveInteger(options.defiMonitorIntervalMs || this.options.defiMonitorIntervalMs || DEFAULT_DEFI_MONITOR_INTERVAL_MS)
+		) || DEFAULT_DEFI_MONITOR_INTERVAL_MS;
+	}
+
+	resolveAutoExecutionMinConfidence(options = {}) {
+		const threshold = Number(
+			options.autoExecuteMinConfidence
+			?? this.options.autoExecuteMinConfidence
+			?? DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE
+		);
+		if (!Number.isFinite(threshold)) return DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE;
+		return Math.max(0, Math.min(1, threshold));
+	}
+
+	resolveHyperliquidExecuteScriptPath(options = {}) {
+		return options.hyperliquidExecuteScriptPath
+			|| this.options.hyperliquidExecuteScriptPath
+			|| path.join(getProjectRoot(), 'ui', 'scripts', 'hm-defi-execute.js');
+	}
+
+	resolveHyperliquidCloseScriptPath(options = {}) {
+		return options.hyperliquidCloseScriptPath
+			|| this.options.hyperliquidCloseScriptPath
+			|| path.join(getProjectRoot(), 'ui', 'scripts', 'hm-defi-close.js');
+	}
+
+	async runHyperliquidScript(scriptPath, args = [], options = {}) {
+		const timeout = Math.max(
+			1_000,
+			toPositiveInteger(options.hyperliquidExecutionTimeoutMs || this.options.hyperliquidExecutionTimeoutMs || 120_000)
+		) || 120_000;
+		const maxRetries = Math.max(
+			0,
+			toPositiveInteger(options.hyperliquidExecutionRetries ?? this.options.hyperliquidExecutionRetries ?? DEFAULT_HYPERLIQUID_EXECUTION_RETRIES)
+		);
+		const retryDelayMs = Math.max(
+			250,
+			toPositiveInteger(options.hyperliquidExecutionRetryMs ?? this.options.hyperliquidExecutionRetryMs ?? DEFAULT_HYPERLIQUID_EXECUTION_RETRY_MS)
+		) || DEFAULT_HYPERLIQUID_EXECUTION_RETRY_MS;
+		let attempts = 0;
+		let finalResult = null;
+
+		while (attempts <= maxRetries) {
+			attempts += 1;
+			try {
+				const { stdout = '', stderr = '' } = await execFileAsync(process.execPath, [scriptPath, ...args], {
+					cwd: getProjectRoot(),
+					windowsHide: true,
+					timeout,
+					env: options.hyperliquidExecutionEnv || this.options.hyperliquidExecutionEnv || process.env,
+				});
+				finalResult = {
+					ok: true,
+					exitCode: 0,
+					stdout,
+					stderr,
+					timedOut: false,
+					attemptCount: attempts,
+					recoveredAfterRetry: attempts > 1,
+				};
+				break;
+			} catch (error) {
+				const attemptResult = {
+					ok: false,
+					exitCode: Number.isFinite(Number(error?.code)) ? Number(error.code) : null,
+					error: error?.message || String(error),
+					stdout: error?.stdout || '',
+					stderr: error?.stderr || '',
+					signal: error?.signal || null,
+					timedOut: Boolean(error?.killed) && String(error?.signal || '').trim().toUpperCase() === 'SIGTERM'
+						? /timed?\s*out|timeout/i.test(String(error?.message || ''))
+						: /timed?\s*out|timeout/i.test(String(error?.message || '')),
+					attemptCount: attempts,
+				};
+				const classification = classifyHyperliquidScriptResult(attemptResult);
+				if (classification.shouldRetry && attempts <= maxRetries) {
+					await sleepMs(retryDelayMs * attempts);
+					continue;
+				}
+				finalResult = {
+					...attemptResult,
+					...classification,
+				};
+				break;
+			}
+		}
+
+		return finalResult || {
+			ok: false,
+			exitCode: null,
+			error: 'hyperliquid_script_failed',
+			stdout: '',
+			stderr: '',
+			timedOut: false,
+			attemptCount: attempts,
+		};
+	}
+
+	loadDefiPeakState(options = {}) {
+		const statePath = this.resolveDefiPeakPnlPath(options);
+		try {
+			if (!fs.existsSync(statePath)) {
+				return { path: statePath, updatedAt: null, positions: {} };
+			}
+			const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+			return {
+				path: statePath,
+				updatedAt: parsed?.updatedAt || null,
+				positions: parsed && typeof parsed.positions === 'object' && !Array.isArray(parsed.positions)
+					? parsed.positions
+					: {},
+			};
+		} catch {
+			return { path: statePath, updatedAt: null, positions: {} };
+		}
+	}
+
+	saveDefiPeakState(state = {}, options = {}) {
+		const statePath = this.resolveDefiPeakPnlPath(options);
+		fs.mkdirSync(path.dirname(statePath), { recursive: true });
+		fs.writeFileSync(statePath, JSON.stringify({
+			updatedAt: state.updatedAt || new Date().toISOString(),
+			positions: state.positions || {},
+		}, null, 2));
+		return statePath;
+	}
+
+	async fetchDefiStatus(options = {}) {
+		const provider = options.defiStatusProvider || this.options.defiStatusProvider;
+		if (typeof provider === 'function') {
+			return provider({
+				trigger: options.trigger || 'manual',
+				orchestrator: this,
+			});
+		}
+		if (
+			process.env.NODE_ENV === 'test'
+			&& options.allowExecDefiStatusScript !== true
+			&& this.options.allowExecDefiStatusScript !== true
+		) {
+			return {
+				ok: true,
+				checkedAt: new Date().toISOString(),
+				positions: [],
+			};
+		}
+
+		const scriptPath = this.resolveDefiStatusScriptPath(options);
+		const timeout = Math.max(
+			1_000,
+			toPositiveInteger(options.defiMonitorTimeoutMs || this.options.defiMonitorTimeoutMs || DEFAULT_DEFI_MONITOR_TIMEOUT_MS)
+		) || DEFAULT_DEFI_MONITOR_TIMEOUT_MS;
+		const { stdout } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
+			cwd: getProjectRoot(),
+			windowsHide: true,
+			timeout,
+		});
+		return extractFirstJsonObject(stdout, {});
+	}
+
+	async fetchHyperliquidOpenOrders(options = {}) {
+		if (process.env.NODE_ENV === 'test' && !options.allowExecDefiStatusScript) {
+			return [];
+		}
+		try {
+			const { HttpTransport, InfoClient } = await import('@nktkas/hyperliquid');
+			const transport = new HttpTransport();
+			const info = new InfoClient({ transport });
+			const walletAddress = String(
+				process.env.HYPERLIQUID_WALLET_ADDRESS
+				|| process.env.HYPERLIQUID_ADDRESS
+				|| process.env.POLYMARKET_FUNDER_ADDRESS
+				|| ''
+			).trim();
+			if (!walletAddress) return [];
+			return await info.openOrders({ user: walletAddress });
+		} catch (_err) {
+			return [];
+		}
+	}
+
+	normalizeDefiStatus(status = {}, options = {}) {
+		const checkedAt = (() => {
+			const value = status?.checkedAt || options.checkedAt || new Date().toISOString();
+			const parsed = new Date(value);
+			return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+		})();
+		const positions = (Array.isArray(status?.positions) ? status.positions : [])
+			.map((position) => normalizeDefiPosition(position))
+			.filter((position) => position.coin && Math.abs(position.size) > 0);
+
+		return {
+			ok: status?.ok !== false,
+			checkedAt,
+			walletAddress: status?.walletAddress || null,
+			accountValue: roundCurrency(status?.accountValue),
+			totalMarginUsed: roundCurrency(status?.totalMarginUsed),
+			withdrawable: roundCurrency(status?.withdrawable),
+			error: status?.error ? String(status.error) : null,
+			positions,
+		};
+	}
+
+	buildDefiConsultationWarnings(defiStatus = {}) {
+		return (Array.isArray(defiStatus.warnings) ? defiStatus.warnings : []).map((warning) => ({
+			level: warning.level,
+			code: warning.code,
+			ticker: warning.ticker,
+			coin: warning.coin,
+			message: warning.message,
+			positionKey: warning.positionKey,
+			retainedPeakRatio: warning.retainedPeakRatio ?? null,
+		}));
+	}
+
+	buildEventVetoConsultationWarnings(eventVeto = {}, symbols = []) {
+		if (!eventVeto || typeof eventVeto !== 'object') return [];
+		const decision = String(eventVeto.decision || '').trim().toUpperCase();
+		const sourceTier = String(eventVeto.sourceTier || '').trim().toLowerCase();
+		if (!['CAUTION', 'DEGRADED'].includes(decision) || sourceTier !== 'none') {
+			return [];
+		}
+		return [{
+			level: 'warning',
+			code: 'event_veto_news_blind',
+			ticker: symbols[0] || null,
+			message: String(eventVeto.eventSummary || 'Live tier-1 event scan unavailable; treat news context as degraded.'),
+		}];
+	}
+
+	buildPositionManagementContext(defiStatus = {}, marketContext = {}, riskState = {}) {
+		return positionManagement.buildPositionManagementContext(defiStatus, marketContext, riskState);
+	}
+
+	evaluatePositionManagement(defiStatus = {}, marketContext = {}, riskState = {}) {
+		return positionManagement.positionManagement(defiStatus, marketContext, riskState);
+	}
+
+	processDefiMonitorStatus(liveStatus = {}, options = {}) {
+		const checkedAt = (() => {
+			const value = options.checkedAt || liveStatus?.checkedAt || new Date().toISOString();
+			const parsed = new Date(value);
+			return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+		})();
+		const trigger = options.trigger || 'manual';
+		const sendTelegram = options.sendTelegram !== false;
+		const peakState = this.loadDefiPeakState(options);
+		const normalized = this.normalizeDefiStatus(liveStatus, { checkedAt });
+		const nextPositions = {};
+		const enrichedPositions = [];
+		const warnings = [];
+		const telegramAlerts = [];
+
+		for (const position of normalized.positions) {
+			const positionKey = buildDefiPositionKey(position);
+			const previous = peakState.positions?.[positionKey] || {};
+			const firstSeenAt = previous.firstSeenAt || checkedAt;
+			const previousPeak = Math.max(toNumber(previous.peakUnrealizedPnl, 0), 0);
+			const peakUnrealizedPnl = Math.max(previousPeak, toNumber(position.unrealizedPnl, 0), 0);
+			const timeOpenMs = Math.max(
+				0,
+				(new Date(checkedAt).getTime()) - (new Date(firstSeenAt).getTime())
+			);
+			const markPrice = Math.abs(toNumber(position.size, 0)) > 0
+				? Number((toNumber(position.entryPx, 0) + (toNumber(position.unrealizedPnl, 0) / toNumber(position.size, 0))).toFixed(4))
+				: 0;
+			const liquidationDistancePct = calculateLiquidationBufferRemainingPct(position, markPrice);
+			const retainedPeakRatio = peakUnrealizedPnl > 0
+				? Number((toNumber(position.unrealizedPnl, 0) / peakUnrealizedPnl).toFixed(4))
+				: null;
+			const drawdownFromPeakPct = retainedPeakRatio == null
+				? 0
+				: Number(Math.max(0, Math.min(1, 1 - retainedPeakRatio)).toFixed(4));
+			const givebackAlertThreshold = drawdownFromPeakPct >= 0.5
+				? 0.5
+				: (drawdownFromPeakPct >= 0.3 ? 0.3 : 0);
+			const previousGivebackAlertThreshold = toNumber(previous.givebackAlertThreshold, 0);
+			const stopLossPrice = toNumber(position.stopLossPrice ?? previous.stopLossPrice, 0) || null;
+			let warningLevel = null;
+			if (liquidationDistancePct != null && liquidationDistancePct <= DEFI_CRITICAL_LIQUIDATION_BUFFER_PCT) {
+				warningLevel = 'critical';
+			} else if (peakUnrealizedPnl > 0) {
+				if (toNumber(position.unrealizedPnl, 0) <= peakUnrealizedPnl * DEFI_URGENT_RETAINED_PNL_RATIO) {
+					warningLevel = 'urgent';
+				} else if (toNumber(position.unrealizedPnl, 0) <= peakUnrealizedPnl * DEFI_WARNING_RETAINED_PNL_RATIO) {
+					warningLevel = 'warning';
+				}
+			}
+
+			const enrichedPosition = {
+				...position,
+				positionKey,
+				peakUnrealizedPnl: roundCurrency(peakUnrealizedPnl),
+				firstSeenAt,
+				timeOpenMs,
+				markPrice,
+				liquidationDistancePct,
+				retainedPeakRatio,
+				drawdownFromPeakPct,
+				givebackAlertThreshold,
+				previousGivebackAlertThreshold,
+				stopLossPrice,
+				warningLevel,
+			};
+			enrichedPositions.push(enrichedPosition);
+
+			if (warningLevel) {
+				warnings.push({
+					level: warningLevel,
+					code: warningLevel === 'critical' ? 'defi_liquidation_risk_critical' : `defi_profit_giveback_${warningLevel}`,
+					ticker: `${position.coin}/USD`,
+					coin: position.coin,
+					positionKey,
+					retainedPeakRatio,
+					liquidationDistancePct,
+					message: buildDefiWarningMessage(enrichedPosition, warningLevel),
+				});
+			}
+			if (warningLevel && previous.lastAlertLevel !== warningLevel) {
+				telegramAlerts.push({
+					level: warningLevel,
+					position: enrichedPosition,
+				});
+			}
+
+			nextPositions[positionKey] = {
+				coin: position.coin,
+				side: position.side,
+				size: position.size,
+				entryPx: position.entryPx,
+				unrealizedPnl: enrichedPosition.unrealizedPnl,
+				liquidationPx: position.liquidationPx,
+				peakUnrealizedPnl: enrichedPosition.peakUnrealizedPnl,
+				firstSeenAt,
+				timeOpenMs,
+				markPrice,
+				liquidationDistancePct,
+				retainedPeakRatio,
+				drawdownFromPeakPct,
+				givebackAlertThreshold,
+				stopLossPrice,
+				lastAlertLevel: warningLevel,
+				lastAlertSentAt: warningLevel && previous.lastAlertLevel !== warningLevel ? checkedAt : (previous.lastAlertSentAt || null),
+				updatedAt: checkedAt,
+			};
+		}
+
+		peakState.updatedAt = checkedAt;
+		peakState.positions = nextPositions;
+		this.saveDefiPeakState(peakState, options);
+
+		const result = {
+			...normalized,
+			trigger,
+			positions: enrichedPositions,
+			warnings,
+			telegramAlerts,
+			peakStatePath: peakState.path,
+		};
+
+		if (telegramAlerts.length > 0 && sendTelegram) {
+			try {
+				telegramSummary.sendTelegram(buildDefiTelegramAlertsMessage(telegramAlerts, checkedAt));
+			} catch (error) {
+				result.warnings.push({
+					level: 'warning',
+					code: 'defi_telegram_alert_failed',
+					message: `Hyperliquid urgent alert failed: ${error?.message || String(error)}`,
+				});
+			}
+		}
+
+		this.state.defiMonitor = result;
+		return result;
+	}
+
+	async runDefiMonitorCycle(options = {}) {
+		const checkedAt = new Date().toISOString();
+		const trigger = options.trigger || 'manual';
+		const peakState = this.loadDefiPeakState(options);
+		let liveStatus;
+
+		try {
+			liveStatus = await this.fetchDefiStatus({ ...options, trigger });
+		} catch (error) {
+			const failed = {
+				ok: false,
+				trigger,
+				checkedAt,
+				error: error?.message || String(error),
+				positions: [],
+				warnings: [{
+					level: 'warning',
+					code: 'defi_status_unavailable',
+					message: `Hyperliquid status check failed: ${error?.message || String(error)}`,
+				}],
+				telegramAlerts: [],
+				peakStatePath: peakState.path,
+			};
+			this.state.defiMonitor = failed;
+			return failed;
+		}
+
+		// Enrich positions with on-exchange stop/TP from open orders
+		try {
+			const openOrders = await this.fetchHyperliquidOpenOrders(options);
+			if (Array.isArray(openOrders) && openOrders.length > 0 && Array.isArray(liveStatus.positions)) {
+				for (const position of liveStatus.positions) {
+					const coin = position.coin || position.asset;
+					if (!coin) continue;
+					const side = (position.side || (toNumber(position.size || position.szi, 0) >= 0 ? 'long' : 'short'));
+					const reduceOnlyOrders = openOrders.filter(
+						(o) => o.coin === coin && o.reduceOnly === true
+					);
+					if (reduceOnlyOrders.length > 0) {
+						// For a long position, reduce-only sells below entry are stops, above entry are TPs
+						// For a short position, reduce-only buys above entry are stops, below entry are TPs
+						const entryPx = toNumber(position.entryPx, 0);
+						for (const order of reduceOnlyOrders) {
+							const orderPx = toNumber(order.triggerPx, 0) || toNumber(order.limitPx, 0);
+							if (!orderPx) continue;
+							const isStopCandidate = side === 'long'
+								? orderPx < entryPx
+								: orderPx > entryPx;
+							if (isStopCandidate && !position.stopLossPrice) {
+								position.stopLossPrice = orderPx;
+							}
+							const isTpCandidate = side === 'long'
+								? orderPx > entryPx
+								: orderPx < entryPx;
+							if (isTpCandidate && !position.takeProfitPrice) {
+								position.takeProfitPrice = orderPx;
+							}
+						}
+					}
+				}
+			}
+		} catch (_err) {
+			// Non-fatal: proceed with positions as-is if order query fails
+		}
+
+		return this.processDefiMonitorStatus(liveStatus, {
+			...options,
+			checkedAt,
+			trigger,
+		});
+	}
+
+	async syncDefiPeakStateFromStatus(status = {}, options = {}) {
+		return this.processDefiMonitorStatus(status, {
+			...options,
+			sendTelegram: options.sendTelegram === true,
+		});
+	}
+
+	updateDefiPeakStateForExecution(entry = {}, options = {}) {
+		const state = this.loadDefiPeakState(options);
+		const asset = extractHyperliquidAssetFromTicker(entry.asset || entry.ticker || '');
+		if (!asset) {
+			return state.path;
+		}
+		const positions = state.positions && typeof state.positions === 'object' ? { ...state.positions } : {};
+		const updatedAt = entry.executedAt || new Date().toISOString();
+		if (entry.action === 'close') {
+			for (const key of Object.keys(positions)) {
+				if (String(key || '').toUpperCase().startsWith(`${asset}:`)) {
+					delete positions[key];
+				}
+			}
+		} else if (entry.action === 'open') {
+			const side = String(entry.side || '').trim().toLowerCase() === 'short' ? 'short' : 'long';
+			const key = buildDefiPositionKey({ coin: asset, side });
+			const previous = positions[key] || {};
+			positions[key] = {
+				...previous,
+				coin: asset,
+				side,
+				stopLossPrice: toNumber(entry.stopLossPrice, 0) || previous.stopLossPrice || null,
+				peakUnrealizedPnl: Math.max(toNumber(previous.peakUnrealizedPnl, 0), 0),
+				firstSeenAt: previous.firstSeenAt || updatedAt,
+				updatedAt,
+			};
+		} else if (entry.action === 'tighten_stop') {
+			for (const key of Object.keys(positions)) {
+				if (!String(key || '').toUpperCase().startsWith(`${asset}:`)) {
+					continue;
+				}
+				const previous = positions[key] || {};
+				positions[key] = {
+					...previous,
+					stopLossPrice: toNumber(entry.stopLossPrice, 0) || previous.stopLossPrice || null,
+					updatedAt,
+				};
+			}
+		}
+		state.updatedAt = updatedAt;
+		state.positions = positions;
+		this.saveDefiPeakState(state, options);
+		return state.path;
+	}
+
+	resolveHyperliquidExecutionLeverage(approvedTrade = {}, options = {}) {
+		const scalpModeArmed = options.hyperliquidScalpModeArmed === true
+			|| this.options.hyperliquidScalpModeArmed === true
+			|| String(process.env.SQUIDRUN_HYPERLIQUID_SCALP_MODE || '').trim() === '1';
+		const candidates = [
+			approvedTrade?.riskCheck?.leverage,
+			approvedTrade?.consensus?.leverage,
+			options.hyperliquidExecutionLeverage,
+			this.options.hyperliquidExecutionLeverage,
+			process.env.SQUIDRUN_HYPERLIQUID_DEFAULT_LEVERAGE,
+			scalpModeArmed ? DEFAULT_HYPERLIQUID_SCALP_LEVERAGE : DEFAULT_HYPERLIQUID_AUTO_LEVERAGE,
+		];
+		for (const candidate of candidates) {
+			const numeric = toPositiveInteger(candidate);
+			if (numeric > 0) {
+				return numeric;
+			}
+		}
+		return scalpModeArmed ? DEFAULT_HYPERLIQUID_SCALP_LEVERAGE : DEFAULT_HYPERLIQUID_AUTO_LEVERAGE;
+	}
+
+	resolveHyperliquidExecutionMargin(approvedTrade = {}, leverage = DEFAULT_HYPERLIQUID_AUTO_LEVERAGE) {
+		const explicitMargin = roundExecutionMargin(approvedTrade?.riskCheck?.margin);
+		if (explicitMargin) {
+			return explicitMargin;
+		}
+		const referencePrice = toNumber(approvedTrade?.referencePrice, 0);
+		const requestedShares = toNumber(approvedTrade?.riskCheck?.maxShares, 0);
+		const resolvedLeverage = toPositiveInteger(leverage);
+		if (referencePrice <= 0 || requestedShares <= 0 || resolvedLeverage <= 0) {
+			return null;
+		}
+		return roundExecutionMargin((referencePrice * requestedShares) / resolvedLeverage);
+	}
+
+	resolveHyperliquidAutoOpenEnabled(options = {}) {
+		if (
+			options.hyperliquidScalpModeArmed === true
+			|| this.options.hyperliquidScalpModeArmed === true
+			|| String(process.env.SQUIDRUN_HYPERLIQUID_SCALP_MODE || '').trim() === '1'
+		) {
+			return true;
+		}
+		if (options.allowHyperliquidAutoOpen === true || this.options.allowHyperliquidAutoOpen === true) {
+			return true;
+		}
+		if (options.allowHyperliquidAutoOpen === false || this.options.allowHyperliquidAutoOpen === false) {
+			return false;
+		}
+		if (String(process.env.SQUIDRUN_ALLOW_HYPERLIQUID_AUTO_OPEN || '').trim() === '1') {
+			return true;
+		}
+		return DEFAULT_HYPERLIQUID_AUTO_OPEN_ENABLED;
+	}
+
+	buildHyperliquidAutoOpenClientOrderId(result = {}, approvedTrade = {}, options = {}) {
+		return buildHyperliquidClientOrderId([
+			options.consultationRequestId,
+			options.requestId,
+			approvedTrade?.consultationRequestId,
+			approvedTrade?.requestId,
+			result?.ticker,
+			result?.decision,
+			Number(result?.confidence || 0).toFixed(4),
+			this.resolveHyperliquidExecutionLeverage(approvedTrade, options),
+			this.resolveHyperliquidExecutionMargin(approvedTrade, this.resolveHyperliquidExecutionLeverage(approvedTrade, options)),
+			toNumber(approvedTrade?.riskCheck?.stopLossPrice, 0).toFixed(6),
+		]);
+	}
+
+	async maybeAutoExecuteLiveConsensus(results = [], approvedTrades = [], defiStatus = {}, options = {}) {
+		if (options.autoExecuteLiveConsensus !== true && this.options.autoExecuteLiveConsensus !== true) {
+			return {
+				enabled: false,
+				attempted: 0,
+				succeeded: 0,
+				executions: [],
+				skipped: [],
+			};
+		}
+
+		const executeScriptPath = this.resolveHyperliquidExecuteScriptPath(options);
+		const closeScriptPath = this.resolveHyperliquidCloseScriptPath(options);
+		const minConfidence = this.resolveAutoExecutionMinConfidence(options);
+		const allowAutoOpen = this.resolveHyperliquidAutoOpenEnabled(options);
+		const killSwitchTriggered = options.killSwitchTriggered === true;
+		const killSwitchAction = resolveHyperliquidKillSwitchAction(options, this.options);
+		const dryRun = options.hyperliquidExecutionDryRun === true || this.options.hyperliquidExecutionDryRun === true;
+		const livePositions = Array.isArray(defiStatus?.positions) ? defiStatus.positions : [];
+		const positionsByAsset = new Map(
+			livePositions
+				.filter((position) => position?.coin)
+				.map((position) => [String(position.coin || '').trim().toUpperCase(), position])
+		);
+		const approvedByTicker = new Map(
+			(Array.isArray(approvedTrades) ? approvedTrades : []).map((trade) => [toTicker(trade?.ticker), trade])
+		);
+		const executions = [];
+		const skipped = [];
+		const positionManagementPlan = options.positionManagementPlan && typeof options.positionManagementPlan === 'object'
+			? options.positionManagementPlan
+			: null;
+		const positionManagedAssets = new Set(
+			(Array.isArray(positionManagementPlan?.managedTickers) ? positionManagementPlan.managedTickers : [])
+				.map((ticker) => extractHyperliquidAssetFromTicker(ticker))
+				.filter(Boolean)
+		);
+		const executionManagedAssets = new Set();
+
+		if (killSwitchTriggered) {
+			if (killSwitchAction !== 'flatten_positions') {
+				return {
+					enabled: true,
+					attempted: 0,
+					succeeded: 0,
+					executions: [],
+					skipped: [{
+						reason: 'kill_switch_block_new_entries',
+						action: killSwitchAction,
+						openPositions: livePositions.length,
+					}],
+					killSwitchTriggered: true,
+					killSwitchAction,
+				};
+			}
+
+			for (const position of livePositions) {
+				const asset = extractHyperliquidAssetFromTicker(position?.coin || position?.asset || position?.ticker || '');
+				if (!asset || executionManagedAssets.has(asset)) continue;
+				const args = dryRun ? ['--dry-run', '--asset', asset] : ['--asset', asset];
+				const commandResult = await this.runHyperliquidScript(closeScriptPath, args, options);
+				const execution = {
+					ticker: `${asset}/USD`,
+					asset,
+					action: 'close',
+					source: 'kill_switch_flatten',
+					confidence: null,
+					dryRun,
+					ok: commandResult.ok !== false,
+					scriptPath: closeScriptPath,
+					args,
+					stdout: commandResult.stdout || '',
+					stderr: commandResult.stderr || '',
+					error: commandResult.error || null,
+				};
+				executions.push(execution);
+				executionManagedAssets.add(asset);
+				if (execution.ok) {
+					this.updateDefiPeakStateForExecution({
+						action: 'close',
+						asset,
+						executedAt: new Date().toISOString(),
+					}, options);
+					positionsByAsset.delete(asset);
+				}
+			}
+
+			return {
+				enabled: true,
+				attempted: executions.length,
+				succeeded: executions.filter((execution) => execution.ok).length,
+				executions,
+				skipped: executions.length === 0
+					? [{
+						reason: 'kill_switch_flatten_no_positions',
+						action: killSwitchAction,
+					}]
+					: [],
+				killSwitchTriggered: true,
+				killSwitchAction,
+			};
+		}
+
+		for (const directive of Array.isArray(positionManagementPlan?.executableDirectives) ? positionManagementPlan.executableDirectives : []) {
+			const asset = extractHyperliquidAssetFromTicker(directive?.asset || directive?.ticker || '');
+			if (!asset || executionManagedAssets.has(asset)) continue;
+			const livePosition = positionsByAsset.get(asset) || null;
+			if (!livePosition) continue;
+
+			if (directive.action === 'close') {
+				const args = dryRun ? ['--dry-run', '--asset', asset] : ['--asset', asset];
+				const commandResult = await this.runHyperliquidScript(closeScriptPath, args, options);
+				const execution = {
+					ticker: `${asset}/USD`,
+					asset,
+					action: 'close',
+					source: 'position_management',
+					confidence: toConfidence(directive?.consensusConfidence),
+					dryRun,
+					ok: commandResult.ok !== false,
+					scriptPath: closeScriptPath,
+					args,
+					stdout: commandResult.stdout || '',
+					stderr: commandResult.stderr || '',
+					error: commandResult.error || null,
+					rationale: directive.rationale || null,
+				};
+				executions.push(execution);
+				executionManagedAssets.add(asset);
+				if (execution.ok) {
+					this.updateDefiPeakStateForExecution({
+						action: 'close',
+						asset,
+						executedAt: new Date().toISOString(),
+					}, options);
+					positionsByAsset.delete(asset);
+				}
+				continue;
+			}
+
+			if (directive.action === 'tighten_stop' && Number(directive?.proposedStopLossPrice) > 0) {
+				const args = dryRun
+					? ['--dry-run', 'stop-loss', '--asset', asset, '--stop-loss', String(Number(directive.proposedStopLossPrice))]
+					: ['stop-loss', '--asset', asset, '--stop-loss', String(Number(directive.proposedStopLossPrice))];
+				const commandResult = await this.runHyperliquidScript(executeScriptPath, args, options);
+				const execution = {
+					ticker: `${asset}/USD`,
+					asset,
+					action: 'tighten_stop',
+					source: 'position_management',
+					confidence: toConfidence(directive?.consensusConfidence),
+					dryRun,
+					ok: commandResult.ok !== false,
+					scriptPath: executeScriptPath,
+					args,
+					stdout: commandResult.stdout || '',
+					stderr: commandResult.stderr || '',
+					error: commandResult.error || null,
+					stopLossPrice: Number(directive.proposedStopLossPrice),
+					rationale: directive.rationale || null,
+				};
+				executions.push(execution);
+				executionManagedAssets.add(asset);
+				if (execution.ok) {
+					this.updateDefiPeakStateForExecution({
+						action: 'tighten_stop',
+						asset,
+						stopLossPrice: Number(directive.proposedStopLossPrice),
+						executedAt: new Date().toISOString(),
+					}, options);
+				}
+			}
+		}
+
+		for (const result of Array.isArray(results) ? results : []) {
+			const ticker = toTicker(result?.ticker);
+			if (!ticker || !isHyperliquidCryptoTicker(ticker)) continue;
+			if (result?.consensus !== true) {
+				skipped.push({ ticker, reason: 'no_consensus' });
+				continue;
+			}
+
+			const confidence = toConfidence(result?.confidence ?? result?.averageAgreeConfidence);
+			if (confidence <= minConfidence) {
+				skipped.push({ ticker, reason: 'confidence_below_threshold', confidence });
+				continue;
+			}
+
+			const decision = toDirection(result?.decision || 'HOLD');
+			const asset = extractHyperliquidAssetFromTicker(ticker);
+			if (positionManagedAssets.has(asset) || executionManagedAssets.has(asset)) {
+				skipped.push({ ticker, asset, reason: 'managed_by_position_management', confidence });
+				continue;
+			}
+			const openPosition = positionsByAsset.get(asset) || null;
+			const approvedTrade = approvedByTicker.get(ticker) || null;
+			let action = null;
+			let args = [];
+			let side = null;
+			let stopLossPrice = null;
+
+			if (decision === 'SELL') {
+				if (openPosition) {
+					// AUTO-CLOSE DISABLED: agents manage exits manually, not via consultation consensus
+					skipped.push({ ticker, asset, reason: 'auto_close_disabled_agent_managed', confidence, decision });
+					continue;
+				} else if (false) { // dead code — original close logic disabled
+				} else {
+					if (!allowAutoOpen) {
+						skipped.push({ ticker, asset, reason: 'auto_open_disabled_stop_ship', confidence });
+						continue;
+					}
+					action = 'open';
+					side = 'short';
+					stopLossPrice = toNumber(approvedTrade?.riskCheck?.stopLossPrice, 0) || null;
+					const takeProfitPrice = toNumber(approvedTrade?.riskCheck?.takeProfitPrice, 0) || null;
+					const convictionMode = String(approvedTrade?.strategyMode || approvedTrade?.riskCheck?.strategyMode || '').trim().toLowerCase() === 'range_conviction';
+					const leverage = this.resolveHyperliquidExecutionLeverage(approvedTrade, options);
+					const margin = this.resolveHyperliquidExecutionMargin(approvedTrade, leverage);
+					if (!approvedTrade || !margin) {
+						skipped.push({ ticker, asset, reason: !approvedTrade ? 'not_approved_for_entry' : 'missing_risk_sizing', confidence, leverage });
+						continue;
+					}
+					args = dryRun
+						? ['--dry-run', 'trade', '--asset', asset, '--direction', decision]
+						: ['trade', '--asset', asset, '--direction', decision];
+					args.push('--leverage', String(leverage));
+					args.push('--margin', toCliNumber(margin));
+					args.push('--confidence', String(confidence));
+					if (convictionMode) {
+						if (stopLossPrice) {
+							args.push('--stop-loss', toCliNumber(stopLossPrice));
+						}
+						if (takeProfitPrice) {
+							args.push('--take-profit', toCliNumber(takeProfitPrice));
+						}
+					} else {
+						args.push('--no-stop');
+					}
+					if (Number(approvedTrade?.riskCheck?.positionNotional) > 0) {
+						args.push('--max-notional', toCliNumber(approvedTrade.riskCheck.positionNotional));
+					}
+					const clientOrderId = this.buildHyperliquidAutoOpenClientOrderId(result, approvedTrade, options);
+					if (clientOrderId) {
+						args.push('--client-order-id', clientOrderId);
+					}
+				}
+			} else if (decision === 'BUY' || decision === 'SHORT' || decision === 'COVER') {
+				if (decision === 'BUY' || decision === 'COVER') {
+					if (openPosition) {
+						// AUTO-CLOSE DISABLED: agents manage exits manually, not via consultation consensus
+						skipped.push({ ticker, asset, reason: 'auto_close_disabled_agent_managed', confidence, decision });
+						continue;
+					} else {
+						if (decision === 'COVER') {
+							skipped.push({ ticker, asset, reason: 'cover_without_open_position', confidence });
+							continue;
+						}
+					}
+				}
+				if (action === 'close') {
+					// no-op; handled above
+				} else if (decision === 'SHORT') {
+					if (!allowAutoOpen) {
+						skipped.push({ ticker, asset, reason: 'auto_open_disabled_stop_ship', confidence });
+						continue;
+					}
+					if (!approvedTrade) {
+						skipped.push({ ticker, asset, reason: 'not_approved_for_entry', confidence });
+						continue;
+					}
+					if (openPosition) {
+						skipped.push({ ticker, asset, reason: 'position_already_open', confidence, side: openPosition.side || null });
+						continue;
+					}
+					action = 'open';
+					side = 'short';
+					stopLossPrice = toNumber(approvedTrade?.riskCheck?.stopLossPrice, 0) || null;
+					const takeProfitPrice = toNumber(approvedTrade?.riskCheck?.takeProfitPrice, 0) || null;
+					const convictionMode = String(approvedTrade?.strategyMode || approvedTrade?.riskCheck?.strategyMode || '').trim().toLowerCase() === 'range_conviction';
+					const leverage = this.resolveHyperliquidExecutionLeverage(approvedTrade, options);
+					const margin = this.resolveHyperliquidExecutionMargin(approvedTrade, leverage);
+					if (!margin) {
+						skipped.push({ ticker, asset, reason: 'missing_risk_sizing', confidence, leverage });
+						continue;
+					}
+					args = dryRun
+						? ['--dry-run', 'trade', '--asset', asset, '--direction', decision]
+						: ['trade', '--asset', asset, '--direction', decision];
+					args.push('--leverage', String(leverage));
+					args.push('--margin', toCliNumber(margin));
+					args.push('--confidence', String(confidence));
+					if (convictionMode) {
+						if (stopLossPrice) {
+							args.push('--stop-loss', toCliNumber(stopLossPrice));
+						}
+						if (takeProfitPrice) {
+							args.push('--take-profit', toCliNumber(takeProfitPrice));
+						}
+					} else {
+						args.push('--no-stop');
+					}
+					if (Number(approvedTrade?.riskCheck?.positionNotional) > 0) {
+						args.push('--max-notional', toCliNumber(approvedTrade.riskCheck.positionNotional));
+					}
+					const clientOrderId = this.buildHyperliquidAutoOpenClientOrderId(result, approvedTrade, options);
+					if (clientOrderId) {
+						args.push('--client-order-id', clientOrderId);
+					}
+				} else if (decision === 'BUY') {
+					if (!allowAutoOpen) {
+						skipped.push({ ticker, asset, reason: 'auto_open_disabled_stop_ship', confidence });
+						continue;
+					}
+					if (!approvedTrade) {
+						skipped.push({ ticker, asset, reason: 'not_approved_for_entry', confidence });
+						continue;
+					}
+					if (openPosition) {
+						skipped.push({ ticker, asset, reason: 'position_already_open', confidence, side: openPosition.side || null });
+						continue;
+					}
+					action = 'open';
+					side = 'long';
+					stopLossPrice = toNumber(approvedTrade?.riskCheck?.stopLossPrice, 0) || null;
+					const takeProfitPrice = toNumber(approvedTrade?.riskCheck?.takeProfitPrice, 0) || null;
+					const convictionMode = String(approvedTrade?.strategyMode || approvedTrade?.riskCheck?.strategyMode || '').trim().toLowerCase() === 'range_conviction';
+					const leverage = this.resolveHyperliquidExecutionLeverage(approvedTrade, options);
+					const margin = this.resolveHyperliquidExecutionMargin(approvedTrade, leverage);
+					if (!margin) {
+						skipped.push({ ticker, asset, reason: 'missing_risk_sizing', confidence, leverage });
+						continue;
+					}
+					args = dryRun
+						? ['--dry-run', 'trade', '--asset', asset, '--direction', decision]
+						: ['trade', '--asset', asset, '--direction', decision];
+					args.push('--leverage', String(leverage));
+					args.push('--margin', toCliNumber(margin));
+					args.push('--confidence', String(confidence));
+					if (convictionMode) {
+						if (stopLossPrice) {
+							args.push('--stop-loss', toCliNumber(stopLossPrice));
+						}
+						if (takeProfitPrice) {
+							args.push('--take-profit', toCliNumber(takeProfitPrice));
+						}
+					} else {
+						args.push('--no-stop');
+					}
+					if (Number(approvedTrade?.riskCheck?.positionNotional) > 0) {
+						args.push('--max-notional', toCliNumber(approvedTrade.riskCheck.positionNotional));
+					}
+					const clientOrderId = this.buildHyperliquidAutoOpenClientOrderId(result, approvedTrade, options);
+					if (clientOrderId) {
+						args.push('--client-order-id', clientOrderId);
+					}
+				}
+			} else {
+				skipped.push({ ticker, asset, reason: 'non_actionable_decision', decision, confidence });
+				continue;
+			}
+
+			// AUTO-CLOSE FULLY DISABLED: skip ALL close actions from orchestrator
+			if (action === 'close') {
+				skipped.push({ ticker, asset, reason: 'all_auto_close_disabled', confidence, decision });
+				continue;
+			}
+			const commandResult = await this.runHyperliquidScript(
+				executeScriptPath,
+				args,
+				options
+			);
+			const execution = {
+				ticker,
+				asset,
+				action,
+				decision,
+				confidence,
+				dryRun,
+				ok: commandResult.ok !== false,
+				scriptPath: action === 'close' ? closeScriptPath : executeScriptPath,
+				args,
+				stdout: commandResult.stdout || '',
+				stderr: commandResult.stderr || '',
+				error: commandResult.error || null,
+				timedOut: commandResult.timedOut === true,
+				attemptCount: Number(commandResult.attemptCount || 1) || 1,
+				recoveredAfterRetry: commandResult.recoveredAfterRetry === true,
+			};
+			if (action === 'open') {
+				const protection = extractHyperliquidProtectionFromOutput(commandResult.stdout);
+				stopLossPrice = protection.stopLossPrice || stopLossPrice;
+				execution.stopLossPrice = stopLossPrice || null;
+				execution.takeProfitPrice = protection.takeProfitPrice || null;
+				execution.stopSource = protection.stopLossPrice ? 'atr_owned' : 'planned_risk_check';
+			}
+			const executionIssue = classifyHyperliquidScriptResult(execution);
+			execution.issue = executionIssue;
+			if (executionIssue.insufficientFunds && action === 'open' && options.notifyHyperliquidFunds !== false) {
+				try {
+					telegramSummary.sendTelegram(buildHyperliquidFundsAlert(execution));
+					execution.fundsNotificationSent = true;
+				} catch (notifyError) {
+					execution.fundsNotificationSent = false;
+					execution.fundsNotificationError = notifyError?.message || String(notifyError);
+				}
+			}
+			executions.push(execution);
+
+			if (execution.ok) {
+				this.updateDefiPeakStateForExecution({
+					action,
+					asset,
+					side,
+					stopLossPrice,
+					executedAt: new Date().toISOString(),
+				}, options);
+				if (action === 'open') {
+					positionsByAsset.set(asset, { coin: asset, side });
+				} else if (action === 'close') {
+					positionsByAsset.delete(asset);
+				}
+			}
+		}
+
+		return {
+			enabled: true,
+			minConfidence,
+			attempted: executions.length,
+			succeeded: executions.filter((entry) => entry.ok).length,
+			executions,
+			skipped,
+		};
+	}
+
+	startDefiMonitor(options = {}) {
+		if (this.defiMonitorTimer) {
+			return this.defiMonitorTimer;
+		}
+		const intervalMs = this.resolveDefiMonitorIntervalMs(options);
+		this.defiMonitorTimer = setInterval(() => {
+			this.runDefiMonitorCycle({ ...options, trigger: 'interval' }).catch(() => {});
+		}, intervalMs);
+		if (typeof this.defiMonitorTimer.unref === 'function') {
+			this.defiMonitorTimer.unref();
+		}
+		return this.defiMonitorTimer;
+	}
+
+	stopDefiMonitor() {
+		if (this.defiMonitorTimer) {
+			clearInterval(this.defiMonitorTimer);
+			this.defiMonitorTimer = null;
+		}
 	}
 
 	resolveJournalPath(options = {}) {
 		return options.journalPath || this.options.journalPath || path.join(getProjectRoot(), '.squidrun', 'runtime', 'trade-journal.db');
 	}
 
+	resolveCandidateEventLogPath(options = {}) {
+		return options.candidateEventLogPath
+			|| this.options.candidateEventLogPath
+			|| resolveCoordPath(path.join('runtime', 'trading-candidate-events.jsonl'), { forWrite: true });
+	}
+
 	getJournalDb(options = {}) {
 		return options.journalDb || journal.getDb(this.resolveJournalPath(options));
+	}
+
+	recordCandidateFeatureSnapshots(records = [], options = {}) {
+		if (!Array.isArray(records) || records.length === 0) {
+			return { ok: true, count: 0, path: this.resolveCandidateEventLogPath(options) };
+		}
+		return signalValidationRecorder.appendValidationRecords(records, {
+			candidateLogPath: this.resolveCandidateEventLogPath(options),
+		});
+	}
+
+	recordExecutionReport(report = {}, options = {}) {
+		try {
+			const db = this.getJournalDb(options);
+			return journal.recordExecutionReport(db, report);
+		} catch (error) {
+			return {
+				ok: false,
+				error: error?.message || String(error),
+			};
+		}
 	}
 
 	getRegisteredSignals(ticker) {
@@ -763,14 +2216,62 @@ class TradingOrchestrator {
 		};
 	}
 
-	buildSignalMap(symbols) {
+	buildCryptoVenueRiskAccountState(defiStatus = {}, db, options = {}) {
+		const marketDate = toDateKey(options.date || this.state.meta.marketDate || new Date());
+		const liveEquity = toNumber(
+			options.liveEquity
+			?? defiStatus?.accountValue
+			?? defiStatus?.withdrawable,
+			0
+		);
+		if (!(liveEquity > 0)) {
+			return null;
+		}
+		const dayStartKey = 'cryptoDayStartEquity';
+		const peakKey = 'cryptoPeakEquity';
+		const dateKey = 'cryptoRiskMarketDate';
+		if (this.state.meta[dateKey] !== marketDate || this.state.meta[dayStartKey] == null) {
+			this.state.meta[dateKey] = marketDate;
+			this.state.meta[dayStartKey] = liveEquity;
+		}
+		this.state.meta[peakKey] = Math.max(
+			toNumber(this.state.meta[peakKey], liveEquity),
+			liveEquity
+		);
+		const openPositions = (Array.isArray(defiStatus?.positions) ? defiStatus.positions : [])
+			.map((position) => normalizeDefiPosition(position))
+			.filter((position) => position.coin)
+			.map((position) => ({
+				ticker: `${position.coin}/USD`,
+				assetClass: 'crypto',
+				size: position.size,
+				side: position.side,
+			}));
+		return {
+			equity: liveEquity,
+			peakEquity: toNumber(this.state.meta[peakKey], liveEquity),
+			dayStartEquity: toNumber(this.state.meta[dayStartKey], liveEquity),
+			tradesToday: toPositiveInteger(options.tradesToday ?? this.countTradesToday(db, marketDate, options)),
+			openPositions,
+			defiStatus,
+		};
+	}
+
+	buildSignalMap(symbols, options = {}) {
+		const minSignalCount = Math.max(
+			1,
+			Math.min(
+				REQUIRED_AGENTS.length,
+				toPositiveInteger(options.minSignalCount) || REQUIRED_AGENTS.length
+			)
+		);
 		const completeSignals = new Map();
 		const incomplete = [];
 
 		for (const symbol of symbols) {
 			const bucket = this.state.signals.get(symbol);
 			const signals = bucket ? REQUIRED_AGENTS.map((agentId) => bucket.get(agentId)).filter(Boolean) : [];
-			if (signals.length === REQUIRED_AGENTS.length) {
+			if (signals.length >= minSignalCount) {
 				completeSignals.set(symbol, signals);
 				continue;
 			}
@@ -819,6 +2320,21 @@ class TradingOrchestrator {
 	}
 
 	async consultMissingSignals(symbols, context = {}, options = {}) {
+		for (const symbol of Array.isArray(symbols) ? symbols : []) {
+			this.clearSignals(symbol);
+		}
+		if (String(options.strategyMode || '').trim().toLowerCase() === 'range_conviction') {
+			return {
+				requestId: null,
+				requestPath: null,
+				requestedAgents: [],
+				deliveries: [],
+				responses: [],
+				missingAgents: [],
+				skipped: true,
+				reason: 'range_conviction_local_only',
+			};
+		}
 		const missingByAgent = this.buildMissingSignalMap(symbols);
 		if (missingByAgent.length === 0 || !this.isRealConsultationEnabled(options)) {
 			return {
@@ -832,6 +2348,10 @@ class TradingOrchestrator {
 		}
 
 		const requestedAgents = missingByAgent.map(([agentId]) => agentId);
+		const defiStatus = context.defiStatus || options.defiStatus || null;
+		const primaryDataSource = Array.isArray(defiStatus?.positions) && defiStatus.positions.length > 0
+			? 'hyperliquid'
+			: (symbols.some((ticker) => /\/USD$/i.test(String(ticker || '').trim())) ? 'hyperliquid' : 'alpaca_paper');
 		const timeoutMs = Math.max(
 			1_000,
 			toPositiveInteger(
@@ -844,13 +2364,21 @@ class TradingOrchestrator {
 			requestId: options.consultationRequestId || null,
 			timeoutMs,
 			symbols,
+			primaryDataSource,
 			snapshots: context.snapshots || {},
 			bars: context.bars || {},
 			news: context.news || [],
 			accountSnapshot: context.accountSnapshot || null,
 			macroRisk: context.macroRisk || options.macroRisk || null,
-			strategyMode: context.macroRisk?.strategyMode || options.macroRisk?.strategyMode || null,
+			strategyMode: options.strategyMode || context.macroRisk?.strategyMode || options.macroRisk?.strategyMode || null,
 			brokerCapabilities: context.brokerCapabilities || options.brokerCapabilities || null,
+			whaleData: context.whaleData || options.whaleData || null,
+			cryptoMechBoard: context.cryptoMechBoard || options.cryptoMechBoard || null,
+			nativeSignals: context.nativeSignals || options.nativeSignals || null,
+			eventVeto: context.eventVeto || options.eventVeto || null,
+			defiStatus,
+			consultationWarnings: context.consultationWarnings || options.consultationWarnings || [],
+			taskType: Array.isArray(defiStatus?.positions) && defiStatus.positions.length > 0 ? 'position_management' : 'new_signal',
 		}, {
 			requestsDir: options.consultationRequestsDir || this.options.consultationRequestsDir,
 		});
@@ -862,6 +2390,14 @@ class TradingOrchestrator {
 			hmSendPath: options.hmSendPath || this.options.hmSendPath,
 			dbPath: options.consultationDbPath || this.options.consultationDbPath || null,
 			pollMs: options.consultationPollMs || this.options.consultationPollMs,
+			minResponses: Math.max(
+				1,
+				toPositiveInteger(
+					options.consultationMinResponses
+					|| this.options.consultationMinResponses
+					|| Math.floor(requestedAgents.length / 2) + 1
+				)
+			),
 		};
 		const deliveries = await consultationStore.dispatchConsultationRequests(request, requestedAgents, consultationOptions);
 		const responseResult = await consultationStore.collectConsultationResponses(request, requestedAgents, consultationOptions);
@@ -881,6 +2417,9 @@ class TradingOrchestrator {
 			requestId: request.requestId,
 			requestPath: request.path,
 			requestedAgents,
+			minResponses: consultationOptions.minResponses,
+			responseCount: responseResult.responses.length,
+			quorumSatisfied: responseResult.responses.length >= consultationOptions.minResponses,
 			deliveries,
 			responses: responseResult.responses.map((response) => ({
 				agentId: response.agentId,
@@ -910,17 +2449,23 @@ class TradingOrchestrator {
 					emptyPortfolio: Boolean(options.emptyPortfolio),
 					symbols: missingTickers,
 					macroRisk: options.macroRisk || null,
+					strategyMode: options.strategyMode || null,
 					snapshots: options.snapshots || null,
 					bars: options.bars || null,
 					news: options.news || null,
+					defiStatus: options.defiStatus || null,
+					rangeStructures: options.rangeStructures || null,
 				}
 				: {
 					emptyPortfolio: Boolean(options.emptyPortfolio),
 					symbols: missingTickers,
 					macroRisk: options.macroRisk || null,
+					strategyMode: options.strategyMode || null,
 					snapshots: options.snapshots || null,
 					bars: options.bars || null,
 					news: options.news || null,
+					defiStatus: options.defiStatus || null,
+					rangeStructures: options.rangeStructures || null,
 				};
 			const producedSignals = await signalProducer.produceSignals(agentId, signalOptions);
 			const gatedSignals = producedSignals.map((signal) => buildCapabilityGateSignal(
@@ -939,6 +2484,61 @@ class TradingOrchestrator {
 		}
 
 		return generated;
+	}
+
+	async buildRangeConvictionThesis(symbols, options = {}) {
+		const normalizedSymbols = (Array.isArray(symbols) ? symbols : [])
+			.map((symbol) => toTicker(symbol))
+			.filter(Boolean);
+		const preferredTicker = toTicker(options?.convictionSelection?.selectedTicker || normalizedSymbols[0] || '');
+		const targetSymbols = preferredTicker ? [preferredTicker] : normalizedSymbols.slice(0, 1);
+		if (targetSymbols.length === 0) {
+			return {
+				signal: null,
+				signalsByTicker: new Map(),
+				generated: [],
+			};
+		}
+
+		const producedSignals = await signalProducer.produceSignals('builder', {
+			client: options.alpacaClient || options.client || this.options.alpacaClient || this.options.client || null,
+			emptyPortfolio: Boolean(options.emptyPortfolio),
+			symbols: targetSymbols,
+			macroRisk: options.macroRisk || null,
+			strategyMode: 'range_conviction',
+			snapshots: options.snapshots || null,
+			bars: options.bars || null,
+			news: options.news || null,
+			defiStatus: options.defiStatus || null,
+			rangeStructures: options.rangeStructures || null,
+		});
+		const gatedSignals = producedSignals.map((signal) => buildCapabilityGateSignal(
+			signal,
+			options.brokerCapabilities || null,
+			options.macroRisk || null
+		));
+		const selectedSignal = gatedSignals.find((signal) => toTicker(signal?.ticker) === preferredTicker)
+			|| gatedSignals[0]
+			|| null;
+		if (!selectedSignal) {
+			return {
+				signal: null,
+				signalsByTicker: new Map(),
+				generated: [],
+			};
+		}
+
+		const registeredSignal = this.registerSignal('builder', selectedSignal.ticker, selectedSignal)?.signal || selectedSignal;
+		return {
+			signal: registeredSignal,
+			signalsByTicker: new Map([[toTicker(registeredSignal.ticker), [registeredSignal]]]),
+			generated: [{
+				agentId: 'builder',
+				tickers: [registeredSignal.ticker],
+				count: 1,
+				mode: 'single_thesis',
+			}],
+		};
 	}
 
 	lookupSignalsByAgent(signals = []) {
@@ -1223,6 +2823,16 @@ class TradingOrchestrator {
 
 		for (const outcome of tradeOutcomes) {
 			const tradeId = outcome.trade.id;
+			const matchedLots = Array.isArray(outcome.matchedLots) ? outcome.matchedLots : [];
+			const entryTimestamp = matchedLots.length > 0
+				? matchedLots
+					.map((lot) => lot.timestamp)
+					.filter(Boolean)
+					.sort()[0] || null
+				: null;
+			const entryPrice = outcome.matchedShares > 0
+				? roundCurrency(outcome.costBasis / outcome.matchedShares)
+				: null;
 			journal.updateTrade(db, tradeId, {
 				realizedPnl: outcome.realizedPnl,
 			});
@@ -1245,9 +2855,51 @@ class TradingOrchestrator {
 				}
 			);
 			const outcomeRecordedAt = new Date().toISOString();
+			const existingConsensusDetail = parseStoredJsonObject(outcome.trade.consensus_detail, {});
+			const existingRiskCheckDetail = parseStoredJsonObject(outcome.trade.risk_check_detail, {});
+			const executionContext = {
+				tradeId,
+				orderId: outcome.trade.alpaca_order_id || null,
+				status: outcome.trade.status || null,
+				filledAt: outcome.trade.filled_at || null,
+				reconciledAt: outcome.trade.reconciled_at || null,
+				notes: outcome.trade.notes || null,
+			};
+			const postTradeReport = {
+				entry: {
+					timestamp: entryTimestamp,
+					price: entryPrice,
+					shares: outcome.matchedShares,
+					lots: matchedLots,
+				},
+				exit: {
+					timestamp: outcome.trade.filled_at || outcome.trade.reconciled_at || outcome.trade.timestamp || outcomeRecordedAt,
+					price: roundCurrency(outcome.trade.price),
+					shares: outcome.matchedShares,
+				},
+				realizedPnl: outcome.realizedPnl,
+				realizedReturn: outcome.realizedReturn,
+				costBasis: outcome.costBasis,
+				proceeds: outcome.proceeds,
+				macroRisk: existingConsensusDetail?.macroRisk || null,
+				eventVeto: existingConsensusDetail?.eventVeto || null,
+				mechanical: existingConsensusDetail?.mechanical || null,
+				nativeSignals: existingConsensusDetail?.nativeSignals || null,
+				riskCheck: existingRiskCheckDetail || null,
+				sizeGuide: existingConsensusDetail?.sizeGuide || null,
+				signalsByAgent: existingConsensusDetail?.signalsByAgent || null,
+				confidence: existingConsensusDetail?.averageAgreeConfidence
+					?? existingConsensusDetail?.confidence
+					?? null,
+				execution: executionContext,
+			};
 			const updatedTrade = journal.updateTrade(db, tradeId, {
 				outcomeRecordedAt,
 				realizedPnl: outcome.realizedPnl,
+				consensusDetail: {
+					...existingConsensusDetail,
+					postTradeReport,
+				},
 			});
 			recordedOutcomes.push({
 				tradeId,
@@ -1259,6 +2911,36 @@ class TradingOrchestrator {
 				settledPredictions: attributionResult.settled.length,
 				trade: updatedTrade,
 			});
+			this.recordExecutionReport({
+				timestamp: outcomeRecordedAt,
+				marketDate,
+				phase: 'reconciliation',
+				ticker: outcome.ticker,
+				direction: updatedTrade?.direction || outcome.trade.direction || null,
+				broker: assetClass === 'prediction_market'
+					? 'polymarket'
+					: (assetClass === 'crypto' ? 'hyperliquid' : 'alpaca'),
+				assetClass,
+				status: updatedTrade?.status || outcome.trade.status || null,
+				ok: true,
+				tradeId,
+				reportType: 'trade_outcome',
+				realizedPnl: outcome.realizedPnl,
+				realizedReturn: outcome.realizedReturn,
+				costBasis: outcome.costBasis,
+				proceeds: outcome.proceeds,
+				confidence: postTradeReport.confidence,
+				postTradeReport,
+				macroRisk: postTradeReport.macroRisk,
+				eventVeto: postTradeReport.eventVeto,
+				mechanical: postTradeReport.mechanical,
+				nativeSignals: postTradeReport.nativeSignals,
+				riskCheck: postTradeReport.riskCheck,
+				sizeGuide: postTradeReport.sizeGuide,
+				signalLookup: postTradeReport.signalsByAgent,
+				execution: executionContext,
+				settledPredictions: attributionResult.settled || [],
+			}, options);
 		}
 
 		const reconciledTrades = journal.getAllTrades(db);
@@ -1573,6 +3255,24 @@ class TradingOrchestrator {
 				sizing: trade.sizing,
 				execution,
 			});
+			this.recordExecutionReport({
+				timestamp: new Date().toISOString(),
+				marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+				phase: 'polymarket_execute',
+				ticker: trade.ticker,
+				direction: trade.consensus?.decision || null,
+				broker: 'polymarket',
+				assetClass: 'prediction_market',
+				status: execution?.status || null,
+				ok: execution?.ok === true,
+				tradeId: execution?.tradeId ?? null,
+				reportType: 'polymarket_execution',
+				execution,
+				consensus: trade.consensus,
+				referencePrice: trade.referencePrice,
+				sizing: trade.sizing || null,
+				market: trade.market || null,
+			}, options);
 		}
 
 		const syncedPositions = await executor.getOpenPositions({ ...options, broker: 'polymarket' }).catch(() => []);
@@ -1648,7 +3348,7 @@ class TradingOrchestrator {
 			this.syncLaunchRadarWatchlist({ ...options, reason: 'consensus_round' }),
 		]);
 		const macroRisk = options.macroRisk || await macroRiskGate.assessMacroRisk().catch(() => null);
-		const strategyMode = resolveStrategyMode(macroRisk);
+		const strategyMode = resolveTradingStrategyMode(options, macroRisk);
 		const crisisUniverse = getCrisisUniverse(macroRisk);
 		const symbols = resolveDefaultSymbols(
 			(Array.isArray(options.symbols) && options.symbols.length > 0)
@@ -1664,6 +3364,10 @@ class TradingOrchestrator {
 				...options,
 			})
 			: null;
+		const defiStatusPromise = this.runDefiMonitorCycle({
+			...options,
+			trigger: 'consultation',
+		});
 		const premarketContext = this.state.phases.premarket?.marketContext || {};
 		// Always fetch fresh data — cached Maps lose their entries after JSON serialization
 		const cachedSnapshots = options.snapshots || premarketContext.snapshots;
@@ -1686,30 +3390,142 @@ class TradingOrchestrator {
 			options.portfolioSnapshot || this.getUnifiedPortfolioSnapshot(options),
 		]);
 		const snapshots = freshSnapshots;
+		const defiStatus = await defiStatusPromise.catch(() => ({
+			ok: false,
+			checkedAt: new Date().toISOString(),
+			positions: [],
+			warnings: [],
+			telegramAlerts: [],
+		}));
 		const whaleData = options.whaleTransfers || null;
-		const consultation = await this.consultMissingSignals(symbols, {
-			snapshots,
-			bars,
-			news,
-			accountSnapshot: portfolioSnapshot,
-			whaleData,
-			macroRisk,
-			brokerCapabilities,
-		}, { ...options, macroRisk });
-		const autoGeneratedSignals = await this.backfillMissingSignals(symbols, {
+		const cryptoSymbols = symbols.filter((ticker) => /\/USD$/i.test(String(ticker || '').trim()));
+		const compactEventVeto = options.eventVeto || await eventVeto.buildEventVeto({
 			...options,
+			symbols: cryptoSymbols.length > 0 ? cryptoSymbols : symbols,
+			newsItems: options.eventVetoNews || news,
 			macroRisk,
-			brokerCapabilities,
-			snapshots,
-			bars,
-			news,
-		});
-		const { completeSignals, incomplete } = this.buildSignalMap(symbols);
-		const accountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || [], db, options);
+		}).catch(() => ({
+			decision: 'CAUTION',
+			eventSummary: 'Live tier-1 event scan failed; treat news context as degraded.',
+			sourceTier: 'none',
+			stale: true,
+			affectedAssets: cryptoSymbols.length > 0 ? cryptoSymbols : symbols,
+			matchedEvents: [],
+		}));
+		const consultationWarnings = [
+			...this.buildDefiConsultationWarnings(defiStatus),
+			...this.buildEventVetoConsultationWarnings(compactEventVeto, cryptoSymbols.length > 0 ? cryptoSymbols : symbols),
+		];
+		const positionManagementContext = this.buildPositionManagementContext(
+			defiStatus,
+			{
+				macroRisk,
+				eventVeto: compactEventVeto,
+				results: [],
+			},
+			{
+				warnings: defiStatus?.warnings || [],
+				approvedTrades: [],
+				rejectedTrades: [],
+			}
+		);
+		const mechanicalBoard = cryptoSymbols.length > 0
+			? (options.cryptoMechBoard || await cryptoMechBoard.buildCryptoMechBoard({
+				...options,
+				symbols: cryptoSymbols,
+				snapshots,
+				bars,
+				defiStatus,
+				whaleTransfers: whaleData,
+			}).catch(() => null))
+			: null;
+		const nativeSignals = cryptoSymbols.length > 0
+			? (options.nativeSignals || await hyperliquidNativeLayer.buildNativeFeatureBundle({
+				...options,
+				symbols: cryptoSymbols,
+				detailSymbols: cryptoSymbols,
+				snapshots,
+			}).catch(() => null))
+			: null;
+		if (nativeSignals?.ok) {
+			hyperliquidNativeLayer.recordNativeFeatureSnapshot(nativeSignals, options);
+		}
+		let consultation = null;
+		let autoGeneratedSignals = [];
+		let incomplete = [];
+		let signalBuckets = new Map();
+		let results = [];
+		if (strategyMode === 'range_conviction') {
+			consultation = {
+				requestId: null,
+				requestPath: null,
+				requestedAgents: [],
+				deliveries: [],
+				responses: [],
+				missingAgents: [],
+				skipped: true,
+				reason: 'range_conviction_single_thesis',
+			};
+			const thesis = await this.buildRangeConvictionThesis(symbols, {
+				...options,
+				emptyPortfolio: !Array.isArray(portfolioSnapshot?.positions) || portfolioSnapshot.positions.length === 0,
+				macroRisk,
+				brokerCapabilities,
+				snapshots,
+				bars,
+				news,
+				defiStatus,
+				rangeStructures: options.rangeStructures || null,
+				convictionSelection: options.convictionSelection || null,
+			});
+			autoGeneratedSignals = thesis.generated;
+			signalBuckets = thesis.signalsByTicker;
+			results = thesis.signal ? [buildRangeConvictionSingleThesisResult(thesis.signal)] : [];
+		} else {
+			consultation = await this.consultMissingSignals(symbols, {
+				snapshots,
+				bars,
+				news,
+				accountSnapshot: portfolioSnapshot,
+				whaleData,
+				cryptoMechBoard: mechanicalBoard,
+				nativeSignals,
+				eventVeto: compactEventVeto,
+				macroRisk,
+				brokerCapabilities,
+				defiStatus,
+				consultationWarnings,
+				positionManagementContext,
+			}, { ...options, macroRisk });
+			const consultationQuorumSatisfied = consultation?.quorumSatisfied === true;
+			autoGeneratedSignals = consultationQuorumSatisfied
+				? []
+				: await this.backfillMissingSignals(symbols, {
+					...options,
+					macroRisk,
+					brokerCapabilities,
+					snapshots,
+					bars,
+					news,
+					defiStatus,
+				});
+			const builtSignals = this.buildSignalMap(symbols, {
+				minSignalCount: consultationQuorumSatisfied
+					? Math.max(2, toPositiveInteger(consultation?.minResponses) || 2)
+					: REQUIRED_AGENTS.length,
+			});
+			signalBuckets = builtSignals.completeSignals;
+			incomplete = builtSignals.incomplete;
+			results = signalBuckets.size > 0 ? consensus.evaluateAll(signalBuckets) : [];
+		}
+		const cryptoRiskAccountState = cryptoSymbols.length > 0
+			? this.buildCryptoVenueRiskAccountState(defiStatus, db, options)
+			: null;
+		const accountState = cryptoRiskAccountState
+			|| this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || [], db, options);
 		const limits = buildEffectiveRiskLimits(resolveLiveRiskLimits(options, this.options, macroRisk), macroRisk);
-		const killSwitch = riskEngine.checkKillSwitch(portfolioSnapshot, limits);
-		const dailyPause = riskEngine.checkDailyPause(portfolioSnapshot, limits);
-		const results = completeSignals.size > 0 ? consensus.evaluateAll(completeSignals) : [];
+		const killSwitch = riskEngine.checkKillSwitch(accountState, limits);
+		const dailyPause = riskEngine.checkDailyPause(accountState, limits);
 		const approvedTrades = [];
 		const rejectedTrades = [];
 		const candidateTrades = [];
@@ -1717,11 +3533,16 @@ class TradingOrchestrator {
 		let simulatedAccountState = cloneAccountState(accountState);
 
 		for (const result of results) {
-			const signals = completeSignals.get(result.ticker) || [];
+			const signals = signalBuckets.get(result.ticker) || [];
 			const signalLookup = this.lookupSignalsByAgent(signals);
 			const snapshot = snapshots instanceof Map ? snapshots.get(result.ticker) : snapshots?.[result.ticker];
 			const referencePrice = pickReferencePrice(snapshot);
 			const assetClass = resolveAssetClassForTicker(result.ticker);
+			const mechanicalEntry = mechanicalBoard?.symbols?.[result.ticker] || null;
+			const nativeEntry = buildDecisionCoupledNativeEntry(
+				nativeSignals?.symbols?.[result.ticker] || null,
+				result.decision
+			);
 			let riskCheck = null;
 			let actedOn = false;
 
@@ -1747,10 +3568,17 @@ class TradingOrchestrator {
 			}
 
 			if (result.consensus && result.decision !== 'HOLD' && !killSwitch.triggered && !dailyPause.paused) {
-				const entryDecision = shouldTakeApprovedTrade({
-					ticker: result.ticker,
-					consensus: result,
-				}, options, this.options);
+				const singleThesisMode = strategyMode === 'range_conviction';
+				const entryDecision = singleThesisMode
+					? {
+						ok: true,
+						reason: 'range_conviction_single_thesis',
+						averageAgreeConfidence: toNumber(result.averageAgreeConfidence, result.confidence),
+					}
+					: shouldTakeApprovedTrade({
+						ticker: result.ticker,
+						consensus: result,
+					}, options, this.options);
 				if (!entryDecision.ok) {
 					rejectedTrades.push({
 						ticker: result.ticker,
@@ -1762,6 +3590,26 @@ class TradingOrchestrator {
 						},
 					});
 				} else {
+					const sizeGuide = consensusSizer.sizeConsensusTrade({
+						ticker: result.ticker,
+						consensus: result,
+						mechanicalBoard,
+						nativeSignals: nativeEntry,
+						eventVeto: compactEventVeto,
+					});
+					if (sizeGuide.bucket === 'block') {
+						rejectedTrades.push({
+							ticker: result.ticker,
+							consensus: result,
+							referencePrice,
+							sizeGuide,
+							riskCheck: {
+								approved: false,
+								violations: [`CONSENSUS_SIZER: ${sizeGuide.reasons.join(', ') || 'blocked'}`],
+							},
+						});
+						continue;
+					}
 					candidateTrades.push({
 						ticker: result.ticker,
 						consensus: result,
@@ -1769,6 +3617,12 @@ class TradingOrchestrator {
 						assetClass,
 						marketCap: options.marketCaps?.[result.ticker] ?? null,
 						averageAgreeConfidence: entryDecision.averageAgreeConfidence,
+						signalLookup,
+						strategyMode,
+						convictionSignal: selectConvictionSignalMetadata(result),
+						mechanicalEntry,
+						nativeEntry,
+						sizeGuide,
 					});
 				}
 			}
@@ -1822,7 +3676,18 @@ class TradingOrchestrator {
 				price: trade.referencePrice || 0,
 				marketCap: trade.marketCap,
 				assetClass: trade.assetClass,
+				confidence: trade.averageAgreeConfidence ?? trade.consensus?.confidence,
+				strategyMode: trade.strategyMode,
+				invalidationPrice: trade.convictionSignal?.invalidationPrice ?? null,
+				takeProfitPrice: trade.convictionSignal?.takeProfitPrice ?? null,
+				leverage: trade.convictionSignal?.leverage ?? null,
 			}, simulatedAccountState, limits);
+			riskCheck = consensusSizer.applySizeBucketToRiskCheck(
+				riskCheck,
+				trade.sizeGuide?.bucket || 'normal',
+				trade.assetClass,
+				trade.sizeGuide?.sizeMultiplier ?? null
+			);
 
 			if (riskCheck.approved && strategyMode === STRATEGY_MODES.CRISIS && trade.consensus?.decision === 'BUY') {
 				const crisisBookExposure = estimateCrisisBookExposure(simulatedAccountState, crisisUniverse);
@@ -1848,7 +3713,13 @@ class TradingOrchestrator {
 					consensus: trade.consensus,
 					referencePrice: trade.referencePrice,
 					riskCheck,
+					sizeGuide: trade.sizeGuide || null,
 					marketCap: trade.marketCap,
+					signalLookup: trade.signalLookup || null,
+					mechanicalEntry: trade.mechanicalEntry || null,
+					nativeEntry: trade.nativeEntry || null,
+					strategyMode: trade.strategyMode || null,
+					convictionSignal: trade.convictionSignal || null,
 					limits,
 				});
 				simulatedAccountState = applyTradeToAccountState(simulatedAccountState, {
@@ -1863,6 +3734,7 @@ class TradingOrchestrator {
 					consensus: trade.consensus,
 					referencePrice: trade.referencePrice,
 					riskCheck,
+					sizeGuide: trade.sizeGuide || null,
 				});
 			}
 
@@ -1887,20 +3759,196 @@ class TradingOrchestrator {
 			});
 		}
 
+		const positionManagementPlan = this.evaluatePositionManagement(
+			defiStatus,
+			{
+				macroRisk,
+				eventVeto: compactEventVeto,
+				results,
+			},
+			{
+				warnings: defiStatus?.warnings || [],
+				approvedTrades,
+				rejectedTrades,
+			}
+		);
+		const autoExecution = await this.maybeAutoExecuteLiveConsensus(results, approvedTrades, defiStatus, {
+			...options,
+			positionManagementPlan,
+			killSwitchTriggered: killSwitch.triggered,
+			hyperliquidKillSwitchAction: resolveHyperliquidKillSwitchAction(options, this.options),
+		});
+		for (const execution of Array.isArray(autoExecution?.executions) ? autoExecution.executions : []) {
+			const approvedTrade = approvedTrades.find((trade) => toTicker(trade?.ticker) === toTicker(execution?.ticker)) || null;
+			this.recordExecutionReport({
+				timestamp: new Date().toISOString(),
+				marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+				phase: 'consensus_auto_execution',
+				ticker: execution.ticker || null,
+				direction: execution.decision || approvedTrade?.consensus?.decision || null,
+				broker: 'hyperliquid',
+				assetClass: 'crypto',
+				status: execution.ok ? 'executed' : 'failed',
+				ok: execution.ok !== false,
+				reportType: 'auto_execution',
+				execution,
+				consensus: approvedTrade?.consensus || null,
+				signalLookup: approvedTrade?.signalLookup || null,
+				macroRisk: macroRisk
+					? {
+						regime: macroRisk.regime,
+						score: macroRisk.score,
+						reason: macroRisk.reason,
+					}
+					: null,
+				eventVeto: compactEventVeto || null,
+				mechanical: approvedTrade?.mechanicalEntry || null,
+				nativeSignals: approvedTrade?.nativeEntry || null,
+				riskCheck: approvedTrade?.riskCheck || null,
+				sizeGuide: approvedTrade?.sizeGuide || null,
+			}, options);
+		}
+		const approvedByTicker = new Map(approvedTrades.map((trade) => [trade.ticker, trade]));
+		const rejectedByTicker = new Map(rejectedTrades.map((trade) => [trade.ticker, trade]));
+		const autoExecutionByTicker = new Map(
+			(Array.isArray(autoExecution?.executions) ? autoExecution.executions : [])
+				.map((entry) => [toTicker(entry?.ticker), entry])
+		);
+		const autoExecutionSkippedByTicker = new Map(
+			(Array.isArray(autoExecution?.skipped) ? autoExecution.skipped : [])
+				.map((entry) => [toTicker(entry?.ticker), entry])
+		);
+		const candidateFeatureRecords = results.map((result) => {
+			const record = consensusRecords.find((entry) => entry.result?.ticker === result.ticker) || null;
+			const approvedTrade = approvedByTicker.get(result.ticker) || null;
+			const rejectedTrade = rejectedByTicker.get(result.ticker) || null;
+			const autoExecutionRecord = autoExecutionByTicker.get(result.ticker) || null;
+			const autoExecutionSkip = autoExecutionSkippedByTicker.get(result.ticker) || null;
+			const mechanicalEntry = mechanicalBoard?.symbols?.[result.ticker] || null;
+			const nativeEntry = buildDecisionCoupledNativeEntry(
+				nativeSignals?.symbols?.[result.ticker] || null,
+				result.decision
+			);
+			const snapshot = snapshots instanceof Map ? snapshots.get(result.ticker) : snapshots?.[result.ticker];
+			const referencePrice = approvedTrade?.referencePrice
+				?? rejectedTrade?.referencePrice
+				?? pickReferencePrice(snapshot);
+			const observedAt = toIsoTimestamp(
+				snapshot?.tradeTimestamp
+				|| snapshot?.quoteTimestamp
+				|| options.date
+				|| new Date(),
+				new Date().toISOString()
+			);
+			const skipReason = autoExecutionSkip?.reason
+				|| rejectedTrade?.reason
+				|| (Array.isArray(rejectedTrade?.riskCheck?.violations) ? rejectedTrade.riskCheck.violations.join('; ') : null)
+				|| (!result.consensus ? 'no_consensus' : (!approvedTrade && !rejectedTrade ? 'ignored' : null));
+			return {
+				validationId: buildValidationId(
+					result.ticker,
+					observedAt,
+					result.decision,
+					this.state.meta.marketDate || toDateKey(options.date || new Date())
+				),
+				recordedAt: new Date().toISOString(),
+				observedAt,
+				marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+				ticker: result.ticker,
+				assetClass: resolveAssetClassForTicker(result.ticker),
+				decision: result.decision,
+				consensus: Boolean(result.consensus),
+				agreementCount: toNumber(result.agreementCount, 0),
+				confidence: round(toNumber(result.confidence, 0), 4),
+				averageAgreeConfidence: round(toNumber(result.averageAgreeConfidence, 0), 4),
+				status: approvedTrade
+					? 'approved'
+					: rejectedTrade
+						? 'rejected'
+						: (result.consensus ? 'ignored' : 'no_consensus'),
+				ignored: !approvedTrade && !rejectedTrade,
+				skipReason,
+				referencePrice: round(toNumber(referencePrice, 0), 6),
+				signalsByAgent: record?.signalLookup || null,
+				macroRisk: macroRisk
+					? {
+						regime: macroRisk.regime,
+						score: macroRisk.score,
+						reason: macroRisk.reason,
+					}
+					: null,
+				eventVeto: compactEventVeto
+					? {
+						decision: compactEventVeto.decision,
+						eventSummary: compactEventVeto.eventSummary,
+						affectedAssets: compactEventVeto.affectedAssets,
+					}
+					: null,
+				mechanical: mechanicalEntry ? {
+					priceChange24hPct: mechanicalEntry.priceChange24hPct ?? null,
+					openInterestChange24hPct: mechanicalEntry.openInterestChange24hPct ?? null,
+					fundingRate: mechanicalEntry.fundingRate ?? null,
+					fundingRateChange24hBps: mechanicalEntry.fundingRateChange24hBps ?? null,
+					openInterestToVolumeRatio: mechanicalEntry.openInterestToVolumeRatio ?? null,
+					impactSpreadPct: mechanicalEntry.impactSpreadPct ?? null,
+					squeezeRiskScore: mechanicalEntry.squeezeRiskScore ?? null,
+					overcrowdingScore: mechanicalEntry.overcrowdingScore ?? null,
+					cascadeRiskScore: mechanicalEntry.cascadeRiskScore ?? null,
+					tradeFlag: mechanicalEntry.tradeFlag ?? null,
+					mechanicalDirectionBias: mechanicalEntry.mechanicalDirectionBias ?? null,
+					dataCompleteness: mechanicalEntry.dataCompleteness ?? null,
+				} : null,
+				nativeSignals: nativeEntry || null,
+				sizeGuide: approvedTrade?.sizeGuide || rejectedTrade?.sizeGuide || null,
+				riskCheck: approvedTrade?.riskCheck || rejectedTrade?.riskCheck || null,
+				execution: autoExecutionRecord
+					? {
+						attempted: true,
+						ok: autoExecutionRecord.ok !== false,
+						action: autoExecutionRecord.action || null,
+						dryRun: autoExecutionRecord.dryRun === true,
+						issue: autoExecutionRecord.issue || null,
+					}
+					: autoExecutionSkip
+						? {
+							attempted: false,
+							ok: false,
+							skipReason: autoExecutionSkip.reason || null,
+						}
+						: null,
+				autoExecutionEnabled: options.autoExecuteLiveConsensus === true || this.options.autoExecuteLiveConsensus === true,
+			};
+		});
+		const candidateFeatureLog = this.recordCandidateFeatureSnapshots(candidateFeatureRecords, options);
+		const validationSettlement = await signalValidationRecorder.settleValidationRecords({
+			candidateLogPath: this.resolveCandidateEventLogPath(options),
+			settlementLogPath: options.validationSettlementLogPath,
+		}).catch((error) => ({
+			ok: false,
+			error: error?.message || String(error),
+			path: options.validationSettlementLogPath || null,
+		}));
 		const phaseResult = {
 			phase: 'consensus',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
 			smartMoneyWatchlist,
 			launchRadarWatchlist,
 			consultation,
+			eventVeto: compactEventVeto,
+			cryptoMechBoard: mechanicalBoard,
 			macroRisk,
 			brokerCapabilities,
+			defiStatus,
+			positionManagement: positionManagementPlan,
 			autoGeneratedSignals,
 			portfolioSnapshot,
 			accountState,
 			simulatedAccountState,
 			killSwitch,
 			dailyPause,
+			autoExecution,
+			candidateFeatureLog,
+			validationSettlement,
 			incompleteSignals: incomplete,
 			results,
 			approvedTrades,
@@ -1952,12 +4000,39 @@ class TradingOrchestrator {
 			try {
 				execution = await executor.executeConsensusTrade({
 					consensus: trade.consensus,
+					ticker: trade.ticker,
 					price: trade.referencePrice,
 					marketCap: trade.marketCap,
 					assetClass: resolveAssetClassForTicker(trade.ticker),
 					account: simulatedAccountState,
 					limits: trade.limits,
 					requestedShares: trade.riskCheck?.maxShares,
+					consensusDetail: {
+						...trade.consensus,
+						signalsByAgent: trade.signalLookup || null,
+						macroRisk: consensusPhase?.macroRisk
+							? {
+								regime: consensusPhase.macroRisk.regime,
+								score: consensusPhase.macroRisk.score,
+								reason: consensusPhase.macroRisk.reason,
+							}
+							: null,
+						eventVeto: consensusPhase?.eventVeto
+							? {
+								decision: consensusPhase.eventVeto.decision,
+								eventSummary: consensusPhase.eventVeto.eventSummary,
+								affectedAssets: consensusPhase.eventVeto.affectedAssets,
+								matchedEvents: consensusPhase.eventVeto.matchedEvents,
+							}
+							: null,
+						mechanical: trade.mechanicalEntry || null,
+						nativeSignals: trade.nativeEntry || null,
+						sizeGuide: trade.sizeGuide || null,
+					},
+					riskCheckDetail: {
+						...(trade.riskCheck || {}),
+						limits: trade.limits || null,
+					},
 					notes: `market-open:${trade.ticker}`,
 				}, {
 					...options,
@@ -1976,6 +4051,31 @@ class TradingOrchestrator {
 				accountState: simulatedAccountState,
 				execution,
 			});
+			this.recordExecutionReport({
+				timestamp: new Date().toISOString(),
+				marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+				phase: 'market_open',
+				ticker: trade.ticker,
+				direction: trade.consensus?.decision || null,
+				broker: watchlist.getEntry(trade.ticker)?.broker
+					|| (resolveAssetClassForTicker(trade.ticker) === 'crypto' ? 'hyperliquid' : 'alpaca'),
+				assetClass: resolveAssetClassForTicker(trade.ticker),
+				status: execution?.status || null,
+				ok: execution?.ok === true,
+				tradeId: execution?.tradeId ?? null,
+				reportType: 'market_open_execution',
+				execution,
+				consensus: trade.consensus,
+				referencePrice: trade.referencePrice,
+				riskCheck: trade.riskCheck || null,
+				sizeGuide: trade.sizeGuide || null,
+				accountState: simulatedAccountState,
+				macroRisk: consensusPhase?.macroRisk || null,
+				eventVeto: consensusPhase?.eventVeto || null,
+				mechanical: trade.mechanicalEntry || null,
+				nativeSignals: trade.nativeEntry || null,
+				signalLookup: trade.signalLookup || null,
+			}, options);
 
 			if (execution?.ok) {
 				simulatedAccountState = applyTradeToAccountState(simulatedAccountState, {

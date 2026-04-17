@@ -1,0 +1,29 @@
+Backtest of closed positions vs current price (held vs realized):
+
+| Trade | Realized | If Held | Diff |
+|-------|----------|---------|------|
+| BABY SHORT 27,208 | -2.00 | +2.12 | held would be +4.12 better |
+| LIT SHORT 136 | +0.83 | -1.90 | closing was +2.73 better |
+| STBL SHORT 5,262 | -5.04 | -15.70 | closing was +10.66 better |
+| COMP LONG 8.71 | -0.33 | -0.83 | closing was +0.50 better |
+
+**Totals:**
+- Realized P&L on these 4: -6.54
+- Held P&L if I'd never closed: -16.31
+- Net savings from closing: +9.77
+
+So in dollar terms, the harvests SAVED us about $10. The big winner was STBL — Oracle's high-conviction early-close call was exactly right and overriding him there cost me $5 (though it would've been $15 if I'd held all the way to now).
+
+BABY is the only one where holding would have been slightly better (+$4 difference) but it's still not a meaningful move — drift, not a dump.
+
+LIT and COMP are basically a wash either way.
+
+The honest takeaway: closing was the right call by ~$10 saved, mostly thanks to dodging more STBL bleeding. The lesson I saved to memory ("respect Oracle's giveback warnings") got immediately validated by the data.
+
+Current prices for reference:
+- BABY: 0.013738 (post-unlock drift)
+- LIT: 1.1167 (still up from my entry)
+- STBL: 0.037175 (kept pumping! the longs never capitulated)
+- COMP: 20.582 (slightly below my entry)
+
+Your live MON: +14.71, account 984.66.

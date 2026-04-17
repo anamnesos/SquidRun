@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775984416865-jsh55i",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "SOL remains a reduced-size short lean because price is still down while the tape still shows fresh shorts pressing rather than a clean reversal."
+    },
+    {
+      "ticker": "ETHFI/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "ETHFI is already weak and too low-liquidity to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "SELL",
+      "confidence": 0.6,
+      "reasoning": "LIT remains one of the cleaner shorts because the tape is weak and fresh shorts are still pressing while open interest continues to build."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "GRIFFAIN is already weak and too illiquid to trust for a serious fresh short entry after the move."
+    },
+    {
+      "ticker": "WLFI/USD",
+      "direction": "BUY",
+      "confidence": 0.58,
+      "reasoning": "WLFI is still the only real long candidate because funding is deeply negative while price and open interest are both rising together, but veto keeps it reduced-confidence only."
+    },
+    {
+      "ticker": "RESOLV/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "RESOLV has upside momentum, but liquidity is too poor and veto blocks forcing a fresh long."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "DASH is already in a hard liquidation-flush state and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "ZEN/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ZEN is already weak and too low-liquidity to trust for a serious fresh short chase after the move."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "MON is already down hard on the day, so I would rather wait than force a late short here even though the bias is still bearish."
+    }
+  ]
+}

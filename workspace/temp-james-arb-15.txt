@@ -1,0 +1,18 @@
+You're long ARB. Plain words:
+
+You bought 76,962 ARB at $0.11594.
+ARB is now at $0.11562 (a tiny tick down from where you bought).
+You're showing -$24 right now because you just opened a big position and there's always entry slippage.
+
+Notional bet: about $8,900 (you went big — looks like ~10x leverage).
+Wipeout price: $0.10985 (about 5% below current). That's TIGHT — you don't have much room before liquidation.
+
+You're betting ARB goes UP. Oracle's reasoning: shorts are crowded paying longs (-1 bps funding) so when shorts give up, ARB pumps fast.
+
+Things to watch in plain words:
+- ARB needs to climb back to $0.11594 to break even
+- ARB to $0.118 = +$155 profit
+- ARB to $0.120 = +$300 profit
+- ARB drops to $0.110 = wiped out (-$866 = full account loss)
+
+Tight stop, big swing. You're aware. Standing by.

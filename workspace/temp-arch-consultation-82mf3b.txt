@@ -1,0 +1,15 @@
+ARCHITECT consultation 82mf3b — TAO short chopping in entry zone, hold.
+
+{"requestId":"consultation-1775876541522-82mf3b","agentId":"architect","signals":[
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.55,"reasoning":"James's manual short, -8 in entry chop. Liq still wide. Hold per his framework, structural read intact."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Stable, pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Pass."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.45,"reasoning":"Volatile reversal, no clean read."},
+{"ticker":"BLAST/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin pass."},
+{"ticker":"REZ/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin pass."},
+{"ticker":"BABY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Recovering from unlock — slow-bleed catalyst fully absorbed. No fade left."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Cooldown."},
+{"ticker":"ARB/USD","direction":"HOLD","confidence":0.40,"reasoning":"Cooldown after losses."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."}
+]}

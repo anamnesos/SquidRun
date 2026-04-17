@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "agentId": "architect",
+  "enabled": true,
+  "timer": {
+    "enabled": true,
+    "intervalMinutes": 10
+  },
+  "eventTriggers": [
+    {
+      "id": "architect-event-1",
+      "type": "level_test",
+      "enabled": true,
+      "description": "BTC/ETH/SOL tests a framework-valid reclaim or rejection level. Wake to chart-check + possibly open or manage position.",
+      "payload": {}
+    },
+    {
+      "id": "architect-event-2",
+      "type": "scale_zone_hit",
+      "enabled": true,
+      "description": "My open paper position hits a pre-defined scale-out zone (favorable swing reaching 25-50% target). Wake to scale 25-50% off and bank cushion.",
+      "payload": {}
+    },
+    {
+      "id": "architect-event-3",
+      "type": "stop_near",
+      "enabled": true,
+      "description": "My open paper position approaches its stop (within 20% of stop distance). Wake to re-verify: is the stop still valid, or has the chart invalidated the thesis?",
+      "payload": {}
+    },
+    {
+      "id": "architect-event-4",
+      "type": "bias_flip_signal",
+      "enabled": true,
+      "description": "Day-bias-trigger level breaks (e.g., bullish-day thesis breaks when SOL loses 89 support cleanly). Wake to pivot or stand down.",
+      "payload": {}
+    },
+    {
+      "id": "architect-event-5",
+      "type": "compression_candidate_fire",
+      "enabled": true,
+      "description": "Pump detector (once built) fires a breakout-fire signal on a coin in arming state. Wake to chart-check + decide whether to enter per framework.",
+      "payload": {}
+    },
+    {
+      "id": "architect-event-6",
+      "type": "macro_event_breaker",
+      "enabled": true,
+      "description": "Material macro/event outside the current position's entry thesis (geopolitical, exchange halt, major outage, central bank surprise). Wake to close or hedge regardless of chart state.",
+      "payload": {}
+    }
+  ],
+  "wakeConditions": {
+    "anyOf": [
+      "timer",
+      "level_test",
+      "scale_zone_hit",
+      "stop_near",
+      "bias_flip_signal",
+      "compression_candidate_fire",
+      "macro_event_breaker"
+    ]
+  },
+  "notes": [
+    "Config written 2026-04-16 session 273 after James locked the full trading framework.",
+    "Style explicitly uses the framework we built. If the comp reveals this style loses to Oracle's or Builder's, results speak — no forced style changes mid-comp."
+  ]
+}

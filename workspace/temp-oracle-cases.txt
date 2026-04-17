@@ -1,0 +1,11 @@
+Adding case document review to your pipeline alongside trading:
+
+While monitoring ETH position, review these for legal gaps:
+
+1. D:\projects\Hillstate Case\working-temp\reply-eunbyul-evidence-guide.txt — Evidence guide I sent 은별 tonight. Any legal analysis errors? Missing charges? Wrong advice?
+
+2. D:\projects\Hillstate Case\documents\내용증명_김송규.md — Demand letter. Legal soundness? Any issues with the 001734 contract number being labeled "추정"?
+
+3. D:\projects\Korean Fraud\11-Documents\고소장_초안_큐라인샵.md — Qeline complaint draft. Ready for Monday customs call? Missing anything?
+
+Report findings alongside trade monitoring. Don't drop the ETH watch.

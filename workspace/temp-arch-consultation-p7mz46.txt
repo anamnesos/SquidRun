@@ -1,0 +1,13 @@
+ARCHITECT consultation p7mz46 — James cool-off, all HOLD.
+
+{"requestId":"consultation-1775948491426-p7mz46","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Cool-off."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.55,"reasoning":"Was BUY, James rejected."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cool-off."},
+{"ticker":"NOT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol thin."},
+{"ticker":"AERO/USD","direction":"HOLD","confidence":0.45,"reasoning":"Already round-tripped."},
+{"ticker":"FARTCOIN/USD","direction":"HOLD","confidence":0.45,"reasoning":"Round-tripped."},
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.45,"reasoning":"Watch only."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mid-range chop."},
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended."}
+]}

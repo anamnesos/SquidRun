@@ -1,0 +1,13 @@
+After message routing enforcement, think about this:
+
+Right now agents go idle after every task because there's no persistent work queue. I send you a task, you finish, you wait for the next message. If your context compacts, the pipeline is gone.
+
+The supervisor daemon already manages trading cycles. Could it also maintain a per-agent task queue?
+
+Concept:
+- .squidrun/runtime/agent-task-queue.json — persistent task list per agent
+- When an agent reports completion, supervisor auto-injects the next queued task
+- Tasks survive agent restarts/compaction
+- Architect can queue tasks without waiting for completion
+
+Not asking you to build this right now — just think about feasibility while you do the routing fix. Is this something the supervisor can handle, or does it need a different approach?

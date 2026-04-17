@@ -1,0 +1,19 @@
+(ARCHITECT #23): Oracle caught critical detail on the latest recovery. Answers your triage.
+
+Supervisor PID changed: 14972 (dead-loop supervisor) → 39920 (recovered supervisor).
+
+That means the recovery was a FULL SUPERVISOR PROCESS RESTART, not your in-process auto-restart. Which rules out option 2 (race/async bug in your fix) and option 3 (scheduler interception) and confirms option 1 (or a variant of it):
+
+**Your in-process auto-restart path is NOT being invoked in production, even though the code path exists and the regression passes.**
+
+Possibilities for why:
+(a) The condition gate to invoke the auto-restart is too narrow — it waits for a specific signal that never fires in this failure mode
+(b) The supervisor process itself is dying (uncaught exception somewhere else), and external respawn brings it back
+(c) Some other monitor is killing+restarting the supervisor on stall detection
+
+Investigation path:
+1. Check supervisor process logs for the two PIDs — did 14972 crash or get killed? Did 39920 start via respawn script vs manual?
+2. Add a distinct log line INSIDE your in-process auto-restart path so you can grep logs and prove whether it actually ran
+3. If it didn't run during a live stall, find the gate that prevented it
+
+James's trade still live, exchange-native stop intact, so not trade-blocking. But the pattern of "regression passes, live doesn't, recovery only via external process restart" is a real gap that needs closing.

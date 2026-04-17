@@ -1,0 +1,54 @@
+{
+  "requestId": "consultation-1775957415244-o0jqn8",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "BTC remains firm, but the edge is still too mild to justify a fresh direction under a caution regime."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "BUY",
+      "confidence": 0.59,
+      "reasoning": "ETH is still the cleanest reduced-size long because price and open interest are rising together while funding remains flat."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "SOL still reads as a short-covering rally rather than a durable continuation entry, so I would keep it watch-only."
+    },
+    {
+      "ticker": "BLAST/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "BLAST already looks like a flush rather than an early squeeze continuation, so I would not force a fresh long after the first move has started."
+    },
+    {
+      "ticker": "SPX/USD",
+      "direction": "BUY",
+      "confidence": 0.55,
+      "reasoning": "SPX remains an acceptable reduced-size squeeze long because funding is still clearly negative and open interest is still building, though the setup is weaker than ETH."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "TON remains the clearest reduced-size peak fade because it is still very extended and funding has turned more clearly positive."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.75,
+      "reasoning": "VVV still has enough trend support that I would not short it without a clearer rejection, but it is also too extended to chase."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ZEREBRO is already in a flush state and too low-liquidity to trust for a fresh directional trade."
+    }
+  ]
+}

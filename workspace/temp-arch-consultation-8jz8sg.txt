@@ -1,0 +1,15 @@
+ARCHITECT consultation 8jz8sg — Flat. All HOLD.
+
+{"requestId":"consultation-1775991675048-8jz8sg","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Post-cascade."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Settling."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Settling."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cooldown."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Flushed."},
+{"ticker":"BABY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"BLUR/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"MERL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"WLD/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mixed."},
+{"ticker":"ZEN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"MET/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."}
+]}

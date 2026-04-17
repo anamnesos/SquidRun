@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776094227823-hku42r",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "BTC is stable enough, but the board is still under an active veto and fresh entries do not have a clean enough edge to justify acting through the event brake."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "ETH has recovered with the broader tape, but the live event veto still matters more than the local improvement. Neutral is the disciplined call here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "SOL is participating in the rebound, but the move still looks headline-sensitive rather than like a clean durable breakout. Best to stay flat under veto."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "STABLE still has one of the strongest raw squeeze profiles on the board, but that does not override a live veto regime. Best raw long is not the same as best trade now."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "CHILLGUY looks constructive, but it is extended enough that the active event brake matters more than the local momentum. Watch it, do not force it."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "WCT has some squeeze and trend support characteristics, but the execution quality is still messy and the veto makes it too easy to get trapped chasing strength."
+    },
+    {
+      "ticker": "BOME/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "BOME is too thin and too noisy to trust through a headline-driven regime. There is no reason to force a trade here."
+    },
+    {
+      "ticker": "ZEC/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "ZEC still has bearish structure, but the move is already extended enough that a fresh short is less attractive under a live veto. Better to stay neutral than chase."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "TST has bounced sharply, but it still reads more like noisy recovery than a clean actual long. The veto keeps it in watch-only territory."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "GOAT remains damaged, but the downside is already too mature and unstable to trust as a fresh short. Weak structure alone is not enough."
+    },
+    {
+      "ticker": "JTO/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "JTO still has a real squeeze setup on paper, but the live veto keeps it from being a clean actual long. It belongs on the watchlist rather than in the buy column."
+    }
+  ]
+}

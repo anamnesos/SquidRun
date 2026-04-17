@@ -1,0 +1,21 @@
+ORACLE CONFIRMS YOUR READ. My 5m framework was wrong. Updated plan:
+
+ORACLE'S TAKE:
+- 4h/daily trend: sideways-to-down, NOT a clean uptrend
+- Apr 8 + Apr 10 evening pumps both look like failed relief moves inside a sloppy range
+- My "close on 5m breakout reclaim" was too zoomed in — would close on noise
+- New framework: respect the bigger down bias, manage tight because leverage is high
+
+UPDATED MANAGEMENT (Oracle's plan, locked):
+1. HOLD now — do NOT close on a single green 5m candle
+2. +$30 PnL → first partial 50% (still active)
+3. After first partial → TIGHTEN remainder aggressively
+4. NEW invalidation: NOT any breakout candle. The trigger is "acceptance back above $0.00366-0.00369" — meaning price LIVES there instead of rejecting it. Then close.
+5. NEW target for the runner: **$0.00333-0.00329** (recent range floor where buyers showed up before). If it slices through cleanly, target lower.
+6. Hard rules still active: liq buffer <2%, -$30 absolute stop
+
+POSITION RIGHT NOW: +$24 unrealized, holding, both Oracle and I aligned with your bigger-picture read.
+
+I had it backwards on the timeframe and Oracle's pushback caught it. You were right — kPEPE has been chopping in a sloppy range with failed pumps. The current move IS the fade you saw. We're managing it as a continuation short toward 0.00333, not a breakout reclaim chase.
+
+Sleep good. I'll fire the +$30 partial when it hits and let the runner work.

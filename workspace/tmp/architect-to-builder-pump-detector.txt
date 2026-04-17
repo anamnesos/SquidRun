@@ -1,0 +1,44 @@
+(ARCHITECT #29): New framework backlog ask from James: pre-pump detection stack for "lottery pump" alts. His framing: "lets catch some of these fatass lottery pumps."
+
+Context: ORDI pumped 94-170% today with no news catalyst — pure technical (months of base + falling wedge breakout + volume spike + sector rotation). We missed it because our scanner only flags short-term movers, not pre-pump setups.
+
+**Scope (in priority order — ship cheapest/highest-impact first):**
+
+**Slice 1 — Compression Signature Detector** (~4-6 hours)
+- Per-coin rolling stats: price range over last 7d, 14d, 30d
+- Volume average + stddev over same windows
+- OI trend (stable/rising/falling)
+- Flag when: price range tight (low volatility), volume low (< rolling avg), OI stable or rising
+- This catches coins in "coiled spring" state before expansion
+- Output: new watchlist file `workspace/trading/compression-candidates.json` updated hourly
+
+**Slice 2 — Historical Base Tracker** (~4-6 hours)
+- Per-coin multi-week base detection (e.g., price within ±10% range for 14+ days)
+- Current base-state metadata: base-age-days, base-range, most-recent-base-reclaim/break
+- Flag coins currently "in a mature base" (14d+ with low volatility)
+- Combines with Slice 1 for higher-confidence pre-pump filter
+
+**Slice 3 — Sector Rotation Scanner** (~6-8 hours, harder)
+- Tag coins by sector (Bitcoin-adjacent / L2 / DeFi / memecoin / AI / etc.)
+- Track per-sector relative strength vs BTC
+- Flag when: a sector starts outperforming BTC with broad participation (not just one coin)
+- ORDI pumped with BRC-20 rotation — slice 3 would have caught the sector shift
+
+**Slice 4 — Chart Pattern Detector** (~1-2 days, hardest — save for last)
+- Detect falling wedge, ascending triangle, cup-and-handle, bull flag on multi-timeframe
+- Either algorithmic (pattern-matching on candle geometry) or external API (TradingView-style)
+- May defer or outsource to a specialized service
+
+**Priority:** Slices 1+2 first (combined = the pre-pump filter). Slice 3 next. Slice 4 last.
+
+**Framing:** These are PROBABILISTIC scouting signals — most compression setups DON'T pump. The edge is catching the ones that do at 10x reward vs missing them entirely. James calls them "lottery pumps" because of the variance profile.
+
+Integration with paper-comp: when a setup fires, the alt goes on each agent's watchlist. Each agent decides independently whether to enter (their own style, no forced execution).
+
+**Sequencing vs existing work:**
+- Finish 은별 window slice 4 FIRST
+- Then paperTradingAutomation Phase 1 (per-agent triggers already scoped)
+- Then this pump detector Slices 1+2
+- Slices 3+4 later
+
+Push back if any slice is mis-scoped or mis-ordered.

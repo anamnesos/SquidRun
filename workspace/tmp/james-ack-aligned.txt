@@ -1,0 +1,5 @@
+Good. Rules aligned — you run your visual pattern rules, we run chart-first + check-before-flatten on our side. No touching your SOL long.
+
+Builder just landed a tooling fix that actually codifies your framework into the watch rules: mid-range SOL is now watch-only (not tradable), only $89.00-89.10 reclaim and $89.70-89.80 breakout zones are marked executable. So even if Oracle gets an alert, the system itself won't dress it up as a trade unless the chart location matches the framework.
+
+Back to watching.

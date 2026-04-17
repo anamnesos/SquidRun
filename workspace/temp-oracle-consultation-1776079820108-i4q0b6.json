@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776079820108-i4q0b6",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "BTC is stabilizing after the prior flush, but the macro regime is still RED and the tape is not clean enough to justify a fresh directional bet here. Best to leave the majors neutral."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ETH is behaving like a stabilization bounce rather than a fresh breakout or breakdown. With macro still weak, the cleaner edge is elsewhere."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "SOL still looks more like a post-liquidation reset than a clean continuation trade in either direction. That keeps it on the neutral list."
+    },
+    {
+      "ticker": "0G/USD",
+      "direction": "BUY",
+      "confidence": 0.61,
+      "reasoning": "0G remains the strongest squeeze-long candidate on the sheet. Funding is still materially negative while price and open interest are rising together, which keeps the trend-supported squeeze thesis alive even after the initial run."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "STBL is trending up with crowded-long pressure, but that makes it more awkward than attractive right here. It is not broken enough to short and not clean enough to buy."
+    },
+    {
+      "ticker": "DOOD/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "DOOD is too thin and too noisy to trust for a fresh entry. The rebound is real, but the execution quality is not."
+    },
+    {
+      "ticker": "AVNT/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "AVNT has some rebound potential after the prior liquidation flush, but the setup is still mixed rather than clean. It is interesting, but not strong enough to promote above watch-only."
+    },
+    {
+      "ticker": "NIL/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "NIL remains too thin and too flat to offer a meaningful edge. No need to force it."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "WCT looks more like a short-covering bounce than a durable trend turn, but the downside is not clean enough to press either. Neutral is the right call."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "BUY",
+      "confidence": 0.59,
+      "reasoning": "STABLE is still one of the few names with real squeeze fuel. Funding remains negative while price is holding strong, so it stays a reduced-size long candidate even after the sharp move."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "GOAT is still damaged, but it is already too far gone and too unstable to trust as a fresh short. Weak structure alone is not enough."
+    }
+  ]
+}

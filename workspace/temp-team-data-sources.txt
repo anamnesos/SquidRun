@@ -1,0 +1,7 @@
+(ARCHITECT #30): Quick question, direct answers only.
+
+James just showed me that CRCL insiders were dumping shares for weeks before today's drop. That data was public, free, and we weren't looking at it.
+
+What data sources should we be scanning automatically BEFORE we trade anything — crypto or stocks? Not what we have now. What are we MISSING that real traders look at?
+
+Give me a list, not an essay. What would you add if you were building the intelligence layer from scratch?

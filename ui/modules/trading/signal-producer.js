@@ -2,6 +2,7 @@
 
 const dataIngestion = require('./data-ingestion');
 const macroRiskGate = require('./macro-risk-gate');
+const rangeStructure = require('./range-structure');
 const watchlist = require('./watchlist');
 
 const AGENT_PROFILES = Object.freeze({
@@ -173,6 +174,104 @@ function groupNewsByTicker(newsItems = []) {
 	return grouped;
 }
 
+function groupDefiPositionsByTicker(defiStatus = {}) {
+	const grouped = new Map();
+	const positions = Array.isArray(defiStatus?.positions) ? defiStatus.positions : [];
+	for (const position of positions) {
+		const coin = String(position?.coin || '').trim().toUpperCase();
+		if (!coin) continue;
+		grouped.set(coin, position);
+		grouped.set(`${coin}/USD`, position);
+	}
+	return grouped;
+}
+
+function appendReasoning(baseReasoning, suffix) {
+	if (!suffix) return baseReasoning;
+	const normalized = String(baseReasoning || '').trim();
+	if (!normalized) return suffix;
+	return `${normalized} ${suffix}`;
+}
+
+function toIsoTimestamp(value, fallback = null) {
+	if (value == null || value === '') return fallback;
+	const date = value instanceof Date ? value : new Date(value);
+	if (Number.isNaN(date.getTime())) return fallback;
+	return date.toISOString();
+}
+
+function attachBarsSourceMeta(bars = [], meta = {}) {
+	const next = Array.isArray(bars) ? bars.slice() : [];
+	next.sourceMeta = {
+		source: String(meta.source || 'unknown'),
+		primarySource: meta.primarySource ? String(meta.primarySource) : null,
+		fallbackUsed: meta.fallbackUsed === true,
+		primaryBarCount: Number.isFinite(Number(meta.primaryBarCount)) ? Number(meta.primaryBarCount) : null,
+		barCount: next.length,
+		observedAt: toIsoTimestamp(meta.observedAt, null),
+		fetchedAt: toIsoTimestamp(meta.fetchedAt, new Date().toISOString()),
+		stale: meta.stale === true,
+		staleReason: meta.staleReason || null,
+	};
+	return next;
+}
+
+function applyBarsSourceContext(signal = {}, bars = []) {
+	const sourceMeta = Array.isArray(bars) ? bars.sourceMeta : null;
+	if (!sourceMeta) return signal;
+
+	let nextConfidence = toNumber(signal.confidence, 0);
+	const notes = [];
+
+	if (sourceMeta.fallbackUsed === true) {
+		nextConfidence = clamp(nextConfidence - 0.06, 0.4, 0.92);
+		notes.push(`Daily bars were backfilled from Yahoo because primary broker history was thin (${toNumber(sourceMeta.primaryBarCount, 0)} primary bars).`);
+	} else if (sourceMeta.stale === true) {
+		nextConfidence = clamp(nextConfidence - 0.03, 0.4, 0.92);
+		notes.push(`Primary daily bar history is degraded: ${String(sourceMeta.staleReason || 'unknown data quality issue').replace(/_/g, ' ')}.`);
+	}
+
+	if (notes.length === 0) return signal;
+	return {
+		...signal,
+		confidence: Number(nextConfidence.toFixed(2)),
+		reasoning: appendReasoning(signal.reasoning, notes.join(' ')),
+		dataFreshness: {
+			...(signal.dataFreshness || {}),
+			bars: sourceMeta,
+		},
+	};
+}
+
+function applyDefiPositionContext(signal = {}, ticker, positionLookup = new Map()) {
+	const matchedPosition = positionLookup.get(toTicker(ticker));
+	if (!matchedPosition) {
+		return signal;
+	}
+
+	const side = String(matchedPosition?.side || '').trim().toLowerCase();
+	const warningLevel = String(matchedPosition?.warningLevel || '').trim().toLowerCase();
+	const unrealizedPnl = toNumber(matchedPosition?.unrealizedPnl, 0);
+	const peakUnrealizedPnl = toNumber(matchedPosition?.peakUnrealizedPnl, 0);
+	const retainedPeakRatio = toNumber(matchedPosition?.retainedPeakRatio, 0);
+	const positionNote = `Live Hyperliquid ${side || 'open'} ${matchedPosition.coin} position is at $${unrealizedPnl.toFixed(2)} unrealized P&L versus $${peakUnrealizedPnl.toFixed(2)} peak (${(retainedPeakRatio * 100).toFixed(0)}% retained).`;
+
+	if ((warningLevel === 'warning' || warningLevel === 'urgent') && String(signal.direction || '').toUpperCase() === 'HOLD') {
+		const suggestedDirection = side === 'short' ? 'SELL' : (side === 'long' ? 'BUY' : signal.direction);
+		return {
+			...signal,
+			direction: suggestedDirection,
+			confidence: Number(Math.max(toNumber(signal.confidence, 0), warningLevel === 'urgent' ? 0.79 : 0.69).toFixed(2)),
+			reasoning: appendReasoning(signal.reasoning, `${positionNote} Profit giveback warning keeps the bias defensive.`),
+		};
+	}
+
+	return {
+		...signal,
+		reasoning: appendReasoning(signal.reasoning, positionNote),
+	};
+}
+
 async function getNormalizedNews(options = {}) {
 	const symbols = dataIngestion.normalizeSymbols(
 		Array.isArray(options.symbols) && options.symbols.length > 0
@@ -189,6 +288,7 @@ async function getNormalizedNews(options = {}) {
 
 async function getHistoricalBarsWithFallback(options = {}, symbols = []) {
 	const normalizedSymbols = symbols.map(toTicker).filter(Boolean);
+	const fetchedAt = toIsoTimestamp(options.now, new Date().toISOString());
 	const barsMap = await dataIngestion.getHistoricalBars({
 		...options,
 		symbols: normalizedSymbols,
@@ -199,7 +299,17 @@ async function getHistoricalBarsWithFallback(options = {}, symbols = []) {
 	const result = new Map();
 	for (const ticker of normalizedSymbols) {
 		const bars = barsMap instanceof Map ? (barsMap.get(ticker) || []) : (barsMap?.[ticker] || []);
-		result.set(ticker, Array.isArray(bars) ? bars : []);
+		const normalizedBars = Array.isArray(bars) ? bars : [];
+		result.set(ticker, attachBarsSourceMeta(normalizedBars, {
+			source: 'primary_broker',
+			primarySource: 'broker',
+			fallbackUsed: false,
+			primaryBarCount: normalizedBars.length,
+			observedAt: normalizedBars[normalizedBars.length - 1]?.timestamp || null,
+			fetchedAt,
+			stale: normalizedBars.length < 3,
+			staleReason: normalizedBars.length < 3 ? 'insufficient_primary_bars' : null,
+		}));
 	}
 
 	const missing = normalizedSymbols.filter((ticker) => {
@@ -225,11 +335,190 @@ async function getHistoricalBarsWithFallback(options = {}, symbols = []) {
 
 	for (const [ticker, bars] of fallbackBars) {
 		if (Array.isArray(bars) && bars.length > 0) {
-			result.set(ticker, bars);
+			const primaryBars = result.get(ticker) || [];
+			result.set(ticker, attachBarsSourceMeta(bars, {
+				source: 'yahoo_finance_fallback',
+				primarySource: 'broker',
+				fallbackUsed: true,
+				primaryBarCount: Array.isArray(primaryBars) ? primaryBars.length : 0,
+				observedAt: bars[bars.length - 1]?.timestamp || null,
+				fetchedAt,
+				stale: false,
+				staleReason: 'primary_bars_incomplete_used_yahoo_fallback',
+			}));
 		}
 	}
 
 	return result;
+}
+
+async function getBarsForTimeframe(options = {}, symbols = [], timeframe = '1Day', limit = 30) {
+	const normalizedSymbols = symbols.map(toTicker).filter(Boolean);
+	if (normalizedSymbols.length === 0) {
+		return new Map();
+	}
+	const barsMap = await dataIngestion.getHistoricalBars({
+		...options,
+		symbols: normalizedSymbols,
+		limit,
+		timeframe,
+	}).catch(() => new Map());
+	return dataIngestion.normalizeBarsMap(barsMap, normalizedSymbols);
+}
+
+function normalizeMultiTimeframeBars(rawBars = null, symbols = []) {
+	const normalizedSymbols = symbols.map(toTicker).filter(Boolean);
+	const result = new Map();
+	for (const ticker of normalizedSymbols) {
+		const entry = rawBars instanceof Map ? rawBars.get(ticker) : rawBars?.[ticker];
+		result.set(ticker, {
+			hourly: dataIngestion.normalizeBarsMap({ [ticker]: entry?.hourly || entry?.['1Hour'] || [] }, [ticker]).get(ticker) || [],
+			fourHour: dataIngestion.normalizeBarsMap({ [ticker]: entry?.fourHour || entry?.['4Hour'] || [] }, [ticker]).get(ticker) || [],
+			daily: dataIngestion.normalizeBarsMap({ [ticker]: entry?.daily || entry?.['1Day'] || [] }, [ticker]).get(ticker) || [],
+		});
+	}
+	return result;
+}
+
+async function getCryptoMultiTimeframeBars(options = {}, symbols = []) {
+	const normalizedSymbols = symbols.map(toTicker).filter(Boolean);
+	if (normalizedSymbols.length === 0) {
+		return new Map();
+	}
+	const [hourly, fourHour, daily] = await Promise.all([
+		getBarsForTimeframe(options, normalizedSymbols, '1Hour', 48),
+		getBarsForTimeframe(options, normalizedSymbols, '4Hour', 42),
+		getBarsForTimeframe(options, normalizedSymbols, '1Day', 30),
+	]);
+	const result = new Map();
+	for (const ticker of normalizedSymbols) {
+		result.set(ticker, {
+			hourly: hourly.get(ticker) || [],
+			fourHour: fourHour.get(ticker) || [],
+			daily: daily.get(ticker) || [],
+		});
+	}
+	return result;
+}
+
+async function getRangeConvictionStructures(options = {}, symbols = []) {
+	const normalizedSymbols = symbols.map(toTicker).filter(Boolean);
+	if (normalizedSymbols.length === 0) {
+		return new Map();
+	}
+	const [bars5m, bars15m, bars1h] = await Promise.all([
+		getBarsForTimeframe(options, normalizedSymbols, '5Min', 72),
+		getBarsForTimeframe(options, normalizedSymbols, '15Min', 48),
+		getBarsForTimeframe(options, normalizedSymbols, '1Hour', 24),
+	]);
+	const result = new Map();
+	for (const ticker of normalizedSymbols) {
+		result.set(ticker, rangeStructure.analyzeRangeStructure({
+			bars5m: bars5m.get(ticker) || [],
+			bars15m: bars15m.get(ticker) || [],
+			bars1h: bars1h.get(ticker) || [],
+		}));
+	}
+	return result;
+}
+
+function analyzeRangeConvictionTicker(ticker, snapshot, profile, structure, options = {}) {
+	const currentPrice = pickReferencePrice(snapshot) || toNumber(structure?.currentPrice, 0);
+	const profileFloor = profile === AGENT_PROFILES.builder
+		? 0.62
+		: profile === AGENT_PROFILES.oracle
+			? 0.68
+			: 0.7;
+	const biasBoost = profile === AGENT_PROFILES.builder ? 0.03 : 0;
+	const longSetup = structure?.setups?.long
+		? {
+			...structure.setups.long,
+			confidence: clamp(toNumber(structure.setups.long.confidence, 0) + biasBoost, 0, 1),
+		}
+		: null;
+	const shortSetup = structure?.setups?.short
+		? {
+			...structure.setups.short,
+			confidence: clamp(toNumber(structure.setups.short.confidence, 0) + biasBoost, 0, 1),
+		}
+		: null;
+	const regime = String(structure?.regime || 'unknown').trim().toLowerCase();
+	const mid = toNumber(structure?.mid, currentPrice);
+	const ceilingDistancePct = toNumber(structure?.distanceToCeilingPct, 1);
+	const floorDistancePct = toNumber(structure?.distanceToFloorPct, 1);
+	const edgeThresholdPct = Math.max(toNumber(structure?.tolerancePct, 0) * 1.6, 0.006);
+	const nearCeiling = ceilingDistancePct <= edgeThresholdPct;
+	const nearFloor = floorDistancePct <= edgeThresholdPct;
+	const longRegimeAllowed = !['breakout_down', 'trend_down'].includes(regime);
+	const shortRegimeAllowed = !['breakout_up', 'trend_up'].includes(regime);
+	const longContextAllowed = longRegimeAllowed && (
+		nearFloor
+		|| (!nearCeiling && currentPrice <= mid)
+	);
+	const shortContextAllowed = shortRegimeAllowed && (
+		nearCeiling
+		|| (!nearFloor && currentPrice >= mid)
+	);
+	const eligibleLongSetup = longContextAllowed ? longSetup : null;
+	const eligibleShortSetup = shortContextAllowed ? shortSetup : null;
+	let selectedSetup = null;
+	if (eligibleLongSetup && eligibleShortSetup) {
+		if (nearCeiling && !nearFloor) {
+			selectedSetup = eligibleShortSetup;
+		} else if (nearFloor && !nearCeiling) {
+			selectedSetup = eligibleLongSetup;
+		} else {
+			selectedSetup = currentPrice >= mid ? eligibleShortSetup : eligibleLongSetup;
+		}
+	} else {
+		selectedSetup = eligibleLongSetup || eligibleShortSetup || null;
+	}
+
+	let direction = 'HOLD';
+	let confidence = 0.52;
+	let reasoning = `Range conviction inactive: structure is ${structure?.regime || 'unknown'} around floor ${toNumber(structure?.floor, 0).toFixed(4)} and ceiling ${toNumber(structure?.ceiling, 0).toFixed(4)}.`;
+	let invalidationPrice = null;
+	let takeProfitPrice = null;
+	let leverage = null;
+
+	if (selectedSetup && toNumber(selectedSetup.confidence, 0) >= profileFloor) {
+		direction = selectedSetup.direction;
+		confidence = clamp(selectedSetup.confidence, 0.45, 0.93);
+		invalidationPrice = toNumber(selectedSetup.invalidationPrice, 0) || null;
+		takeProfitPrice = toNumber(selectedSetup.targetPrice, 0) || null;
+		const distancePct = currentPrice > 0 && invalidationPrice > 0
+			? Math.abs(currentPrice - invalidationPrice) / currentPrice
+			: 0;
+		leverage = clamp(
+			Math.floor(1 / Math.max(distancePct * 2.2, 0.08)),
+			2,
+			10
+		);
+		reasoning = `Range conviction ${direction}: price ${currentPrice.toFixed(4)} is inside ${toNumber(structure?.floor, 0).toFixed(4)}-${toNumber(structure?.ceiling, 0).toFixed(4)}, ${selectedSetup.rationale} Context ${nearCeiling ? 'at_ceiling' : nearFloor ? 'at_floor' : regime}. Invalidation ${toNumber(invalidationPrice, 0).toFixed(4)}, target ${toNumber(takeProfitPrice, 0).toFixed(4)}.`;
+	}
+
+	return {
+		ticker,
+		direction,
+		confidence: Number(confidence.toFixed(2)),
+		reasoning,
+		invalidationPrice,
+		takeProfitPrice,
+		leverage: leverage ? Math.floor(leverage) : null,
+		strategyMode: 'range_conviction',
+		rangeStructure: structure || null,
+		metrics: {
+			currentPrice: Number(currentPrice.toFixed(4)),
+			assetClass: 'crypto',
+			rangeFloor: Number(toNumber(structure?.floor, 0).toFixed(4)),
+			rangeCeiling: Number(toNumber(structure?.ceiling, 0).toFixed(4)),
+			rangeMid: Number(toNumber(structure?.mid, 0).toFixed(4)),
+			rangeWidthPct: Number(toNumber(structure?.widthPct, 0).toFixed(6)),
+			ceilingRejections: toNumber(structure?.ceilingRejections, 0),
+			floorRejections: toNumber(structure?.floorRejections, 0),
+			regime: structure?.regime || 'unknown',
+		},
+	};
 }
 
 function scoreNews(newsItems = []) {
@@ -278,35 +567,67 @@ function getDirectionalBias(value) {
 	return 0;
 }
 
-function getCryptoTrendDiagnostics(currentPrice, snapshot = {}, bars = [], assetConfig = ASSET_SIGNAL_CONFIG.crypto) {
-	const closes = bars.map((bar) => toNumber(bar?.close, 0)).filter((value) => value > 0);
-	const recentCloses = closes.slice(-3);
-	const shortAvgClose = mean(recentCloses);
-	const shortMomentumPct = shortAvgClose > 0 ? (currentPrice - shortAvgClose) / shortAvgClose : 0;
-	const recentTrendPct = recentCloses.length >= 2 && recentCloses[0] > 0
-		? (recentCloses[recentCloses.length - 1] - recentCloses[0]) / recentCloses[0]
+function computeWindowMomentumPct(bars = [], currentPrice = 0, lookback = 6) {
+	const closes = (Array.isArray(bars) ? bars : [])
+		.map((bar) => toNumber(bar?.close, 0))
+		.filter((value) => value > 0);
+	const window = closes.slice(-lookback);
+	const baseline = mean(window);
+	return baseline > 0 && currentPrice > 0 ? (currentPrice - baseline) / baseline : 0;
+}
+
+function computeSeriesTrendPct(bars = [], lookback = 6) {
+	const closes = (Array.isArray(bars) ? bars : [])
+		.map((bar) => toNumber(bar?.close, 0))
+		.filter((value) => value > 0)
+		.slice(-lookback);
+	return closes.length >= 2 && closes[0] > 0
+		? (closes[closes.length - 1] - closes[0]) / closes[0]
 		: 0;
+}
+
+function getCryptoTrendDiagnostics(
+	currentPrice,
+	snapshot = {},
+	bars = [],
+	assetConfig = ASSET_SIGNAL_CONFIG.crypto,
+	timeframeBars = null
+) {
+	const hourlyBars = Array.isArray(timeframeBars?.hourly) && timeframeBars.hourly.length > 0
+		? timeframeBars.hourly
+		: bars;
+	const fourHourBars = Array.isArray(timeframeBars?.fourHour) && timeframeBars.fourHour.length > 0
+		? timeframeBars.fourHour
+		: bars;
+	const dailyBars = Array.isArray(timeframeBars?.daily) && timeframeBars.daily.length > 0
+		? timeframeBars.daily
+		: bars;
+	const hourlyMomentumPct = computeWindowMomentumPct(hourlyBars, currentPrice, 6);
+	const fourHourTrendPct = computeSeriesTrendPct(fourHourBars, 6);
+	const dailyTrendPct = computeSeriesTrendPct(dailyBars, 5);
 	const intradayReference = toNumber(snapshot?.previousClose, 0) || toNumber(snapshot?.dailyClose, 0);
 	const intradayPct = intradayReference > 0 ? (currentPrice - intradayReference) / intradayReference : 0;
 	const directionalBiases = [
-		getDirectionalBias(shortMomentumPct),
-		getDirectionalBias(recentTrendPct),
+		getDirectionalBias(hourlyMomentumPct),
+		getDirectionalBias(fourHourTrendPct),
+		getDirectionalBias(dailyTrendPct),
 		getDirectionalBias(intradayPct),
 	].filter((value) => value !== 0);
 	const positiveVotes = directionalBiases.filter((value) => value > 0).length;
 	const negativeVotes = directionalBiases.filter((value) => value < 0).length;
 	let dominantBias = 0;
-	if (positiveVotes >= 2) dominantBias = 1;
-	if (negativeVotes >= 2) dominantBias = -1;
+	if (positiveVotes >= 3 || (positiveVotes >= 2 && positiveVotes > negativeVotes)) dominantBias = 1;
+	if (negativeVotes >= 3 || (negativeVotes >= 2 && negativeVotes > positiveVotes)) dominantBias = -1;
 
 	const alignmentStrength = dominantBias === 0
 		? 0
 		: clamp(
 			(
-				(Math.abs(shortMomentumPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
-				+ (Math.abs(recentTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				(Math.abs(hourlyMomentumPct) / Math.max(assetConfig.intradayMomentumDivisor, 0.0001))
+				+ (Math.abs(fourHourTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				+ (Math.abs(dailyTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
 				+ (Math.abs(intradayPct) / Math.max(assetConfig.intradayMomentumDivisor, 0.0001))
-			) / 3,
+			) / 4,
 			0,
 			1
 		);
@@ -314,21 +635,27 @@ function getCryptoTrendDiagnostics(currentPrice, snapshot = {}, bars = [], asset
 	const chopPenalty = mixedSignals
 		? clamp(
 			(
-				(Math.abs(shortMomentumPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
-				+ (Math.abs(recentTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				(Math.abs(hourlyMomentumPct) / Math.max(assetConfig.intradayMomentumDivisor, 0.0001))
+				+ (Math.abs(fourHourTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				+ (Math.abs(dailyTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
 				+ (Math.abs(intradayPct) / Math.max(assetConfig.intradayMomentumDivisor, 0.0001))
-			) / 4,
+			) / 5,
 			0,
 			1
 		)
 		: 0;
-	const exhaustionPenalty = dominantBias !== 0 && getDirectionalBias(intradayPct) !== dominantBias
-		? clamp(Math.abs(shortMomentumPct) / Math.max(assetConfig.momentumDivisor, 0.0001), 0, 1)
+	const exhaustionPenalty = dominantBias !== 0
+		&& getDirectionalBias(hourlyMomentumPct) !== dominantBias
+		&& getDirectionalBias(intradayPct) !== dominantBias
+		? clamp(Math.abs(hourlyMomentumPct) / Math.max(assetConfig.intradayMomentumDivisor, 0.0001), 0, 1)
 		: 0;
 
 	return {
-		shortMomentumPct,
-		recentTrendPct,
+		hourlyMomentumPct,
+		fourHourTrendPct,
+		dailyTrendPct,
+		shortMomentumPct: hourlyMomentumPct,
+		recentTrendPct: fourHourTrendPct,
 		intradayPct,
 		dominantBias,
 		alignmentStrength,
@@ -370,8 +697,11 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 	);
 	const newsScore = scoreNewsForAsset(newsItems, assetClass);
 	const cryptoTrend = assetClass === 'crypto'
-		? getCryptoTrendDiagnostics(currentPrice, snapshot, bars, assetConfig)
+		? getCryptoTrendDiagnostics(currentPrice, snapshot, bars, assetConfig, options.timeframeBars)
 		: {
+			hourlyMomentumPct: 0,
+			fourHourTrendPct: 0,
+			dailyTrendPct: 0,
 			shortMomentumPct: 0,
 			recentTrendPct: 0,
 			intradayPct: 0,
@@ -449,10 +779,10 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 	const cryptoTrendText = assetClass === 'crypto'
 		? (
 			cryptoTrend.dominantBias > 0
-				? `trend aligned higher across 3d/intraday (${(cryptoTrend.shortMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.intradayPct * 100).toFixed(1)}%)`
+				? `trend aligned higher across 1h/4h/daily (${(cryptoTrend.hourlyMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.fourHourTrendPct * 100).toFixed(1)}% / ${(cryptoTrend.dailyTrendPct * 100).toFixed(1)}%)`
 				: cryptoTrend.dominantBias < 0
-					? `trend aligned lower across 3d/intraday (${(cryptoTrend.shortMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.intradayPct * 100).toFixed(1)}%)`
-					: `mixed short-term crypto tape (${(cryptoTrend.shortMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.intradayPct * 100).toFixed(1)}%)`
+					? `trend aligned lower across 1h/4h/daily (${(cryptoTrend.hourlyMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.fourHourTrendPct * 100).toFixed(1)}% / ${(cryptoTrend.dailyTrendPct * 100).toFixed(1)}%)`
+					: `mixed 1h/4h/daily crypto tape (${(cryptoTrend.hourlyMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.fourHourTrendPct * 100).toFixed(1)}% / ${(cryptoTrend.dailyTrendPct * 100).toFixed(1)}%)`
 		)
 		: '';
 
@@ -484,6 +814,9 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 			riskPenalty: Number(riskPenalty.toFixed(2)),
 			newsScore: Number(newsScore.score.toFixed(2)),
 			assetClass,
+			hourlyMomentumPct: Number(cryptoTrend.hourlyMomentumPct.toFixed(4)),
+			fourHourTrendPct: Number(cryptoTrend.fourHourTrendPct.toFixed(4)),
+			dailyTrendPct: Number(cryptoTrend.dailyTrendPct.toFixed(4)),
 			shortMomentumPct: Number(cryptoTrend.shortMomentumPct.toFixed(4)),
 			recentTrendPct: Number(cryptoTrend.recentTrendPct.toFixed(4)),
 			intradayPct: Number(cryptoTrend.intradayPct.toFixed(4)),
@@ -500,9 +833,13 @@ async function produceSignals(agentId, alpacaClientOrOptions) {
 	const isOptions = alpacaClientOrOptions && typeof alpacaClientOrOptions === 'object' && !alpacaClientOrOptions.getAccount;
 	const clientOptions = isOptions ? alpacaClientOrOptions : (alpacaClientOrOptions ? { client: alpacaClientOrOptions } : {});
 	const macroRisk = clientOptions.macroRisk || null;
-	const providedSnapshots = clientOptions.snapshots || null;
-	const providedBars = clientOptions.bars || null;
-	const providedNews = clientOptions.news || null;
+	const providedSnapshots = clientOptions.snapshots || clientOptions.paperTradingContext?.snapshots || null;
+	const providedBars = clientOptions.bars || clientOptions.paperTradingContext?.bars || null;
+	const providedMultiTimeframeBars = clientOptions.multiTimeframeBars || clientOptions.paperTradingContext?.multiTimeframeBars || null;
+	const providedRangeStructures = clientOptions.rangeStructures || clientOptions.paperTradingContext?.rangeStructures || null;
+	const providedNews = clientOptions.news || clientOptions.paperTradingContext?.news || null;
+	const providedDefiStatus = clientOptions.defiStatus || clientOptions.liveTradingContext || null;
+	const strategyMode = String(clientOptions.strategyMode || '').trim().toLowerCase();
 	const symbols = dataIngestion.normalizeSymbols(
 		Array.isArray(clientOptions.symbols) && clientOptions.symbols.length > 0
 			? clientOptions.symbols
@@ -515,9 +852,16 @@ async function produceSignals(agentId, alpacaClientOrOptions) {
 	const hasProvidedBars = providedBars instanceof Map
 		? providedBars.size > 0
 		: Boolean(providedBars && typeof providedBars === 'object' && Object.keys(providedBars).length > 0);
+	const hasProvidedMultiTimeframeBars = providedMultiTimeframeBars instanceof Map
+		? providedMultiTimeframeBars.size > 0
+		: Boolean(providedMultiTimeframeBars && typeof providedMultiTimeframeBars === 'object' && Object.keys(providedMultiTimeframeBars).length > 0);
+	const hasProvidedRangeStructures = providedRangeStructures instanceof Map
+		? providedRangeStructures.size > 0
+		: Boolean(providedRangeStructures && typeof providedRangeStructures === 'object' && Object.keys(providedRangeStructures).length > 0);
 	const hasProvidedNews = Array.isArray(providedNews);
+	const cryptoSymbols = symbols.filter((ticker) => resolveAssetClass(ticker) === 'crypto');
 
-	const [snapshots, historicalBars, newsItems] = await Promise.all([
+	const [snapshots, historicalBars, newsItems, multiTimeframeBars, rangeStructures] = await Promise.all([
 		hasProvidedSnapshots
 			? Promise.resolve(dataIngestion.normalizeSnapshotCollection(providedSnapshots, symbols))
 			: dataIngestion.getWatchlistSnapshots({ ...clientOptions, symbols }),
@@ -527,23 +871,50 @@ async function produceSignals(agentId, alpacaClientOrOptions) {
 		hasProvidedNews
 			? Promise.resolve((providedNews || []).map((item) => dataIngestion.normalizeNewsItem(item)))
 			: getNormalizedNews({ ...clientOptions, symbols }),
+		cryptoSymbols.length === 0
+			? Promise.resolve(new Map())
+			: (hasProvidedMultiTimeframeBars
+				? Promise.resolve(normalizeMultiTimeframeBars(providedMultiTimeframeBars, cryptoSymbols))
+				: getCryptoMultiTimeframeBars(clientOptions, cryptoSymbols)),
+		(strategyMode !== 'range_conviction' || cryptoSymbols.length === 0)
+			? Promise.resolve(new Map())
+			: (hasProvidedRangeStructures
+				? Promise.resolve(providedRangeStructures)
+				: getRangeConvictionStructures(clientOptions, cryptoSymbols)),
 	]);
 
 	const newsByTicker = groupNewsByTicker(newsItems);
+	const defiPositionLookup = groupDefiPositionsByTicker(providedDefiStatus);
 
 	return symbols.map((ticker) => {
 		const snapshot = snapshots instanceof Map ? snapshots.get(ticker) : snapshots?.[ticker];
 		const bars = historicalBars instanceof Map ? (historicalBars.get(ticker) || []) : (historicalBars?.[ticker] || []);
+		const timeframeBars = multiTimeframeBars instanceof Map ? (multiTimeframeBars.get(ticker) || null) : null;
 		const relatedNews = newsByTicker.get(ticker) || [];
-		const signal = analyzeTicker(ticker, snapshot, bars, relatedNews, profile, {
-			assetClass: resolveAssetClass(ticker),
-			emptyPortfolio,
-		});
+		const assetClass = resolveAssetClass(ticker);
+		const convictionStructure = rangeStructures instanceof Map ? (rangeStructures.get(ticker) || null) : null;
+		const signal = strategyMode === 'range_conviction' && assetClass === 'crypto'
+			? analyzeRangeConvictionTicker(ticker, snapshot, profile, convictionStructure, {
+				emptyPortfolio,
+			})
+			: analyzeTicker(ticker, snapshot, bars, relatedNews, profile, {
+				assetClass,
+				emptyPortfolio,
+				timeframeBars,
+			});
+		const enrichedSignal = applyDefiPositionContext(signal, ticker, defiPositionLookup);
+		const dataAwareSignal = applyBarsSourceContext(enrichedSignal, bars);
 		return macroRiskGate.applyMacroRiskToSignal({
-			ticker: signal.ticker,
-			direction: signal.direction,
-			confidence: signal.confidence,
-			reasoning: signal.reasoning,
+			ticker: dataAwareSignal.ticker,
+			direction: dataAwareSignal.direction,
+			confidence: dataAwareSignal.confidence,
+			reasoning: dataAwareSignal.reasoning,
+			invalidationPrice: dataAwareSignal.invalidationPrice,
+			takeProfitPrice: dataAwareSignal.takeProfitPrice,
+			leverage: dataAwareSignal.leverage,
+			strategyMode: dataAwareSignal.strategyMode,
+			rangeStructure: dataAwareSignal.rangeStructure,
+			dataFreshness: dataAwareSignal.dataFreshness,
 		}, macroRisk);
 	});
 }
@@ -565,6 +936,9 @@ function registerAllSignals(orchestrator, agentId, signals = []) {
 
 module.exports = {
 	analyzeTicker,
+	analyzeRangeConvictionTicker,
+	applyBarsSourceContext,
+	getHistoricalBarsWithFallback,
 	scoreNewsForAsset,
 	produceSignals,
 	registerAllSignals,

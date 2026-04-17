@@ -1,0 +1,10 @@
+MON: -14.33 (approaching the -15 monitor alert line)
+BABY: -2.56
+Total: -16.89
+Account: 950.91
+
+Full giveback from peak +27 → -14 in ~25 min. That's a $41 swing on the bigger position.
+
+Still well above your hard close triggers (price <0.0375, PnL >-75, liq >4%). Liq still wide at 0.038569 (10%+ buffer).
+
+Heads up only — you're in the seat.

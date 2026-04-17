@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776150093593-tpahfb",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.67,
+      "reasoning": "This fresh SOL short is slightly green and sitting at its current peak unrealized P&L, so I would manage it as a hold rather than cover it immediately. Confidence is still capped because the broader market structure is not cleanly bearish and the position still has no stop with only about 1% liquidation distance."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC still looks structurally firm after the breakout and is not a clean fresh short. It stays watch-only while the live SOL position is managed."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "ETH remains one of the stronger structures on the board and does not offer a cleaner bearish edge than the live SOL trade. It stays on watch."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "GRIFFAIN looks like a completed long-liquidation flush rather than an easy fresh short. I would not chase it lower from here."
+    },
+    {
+      "ticker": "CC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "CC has squeeze-long support from negative funding and constructive price action, but the setup is not cleaner than managing the live SOL position and the supporting OI history is incomplete."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "ZEREBRO has upside momentum, but it is already extended and not clean enough to justify action in a position-management pass."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "MERL still looks constructive with price and open interest both up, which makes it a poor fresh short and not urgent enough to distract from the live SOL management decision."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "GRASS is already in a liquidation-style flush and does not look early enough to press fresh. It stays sidelined."
+    },
+    {
+      "ticker": "HEMI/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "HEMI is the clearest secondary short lean because price is slightly down while open interest is still building, which points to fresh shorts pressing rather than a finished flush. Confidence stays moderate because the broader tape still has residual squeeze support."
+    },
+    {
+      "ticker": "LDO/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "LDO remains a strong continuation name, but it is too extended to chase and too strong structurally to fade casually. Watch-only."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "TST is still a crowded squeeze continuation and does not offer a clean new edge either way from this point."
+    }
+  ]
+}

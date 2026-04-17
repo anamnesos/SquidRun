@@ -1,0 +1,14 @@
+ARCHITECT consultation ltkj0g — Macro RED + cash+wait per Oracle. All HOLD.
+
+{"requestId":"consultation-1775885421860-ltkj0g","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Trend supported but macro RED (F&G 15, oil $114) caps fresh long conviction. Watch flag, no entry."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Constructive but no-trade flag. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mixed read, no fresh edge."},
+{"ticker":"HEMI/USD","direction":"HOLD","confidence":0.40,"reasoning":"+15.89% extended, funding +0.18 bps, late to chase."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.45,"reasoning":"Short_covering_rally bearish bias, funding -0.16 bps. Real vol $12.6M but the setup is mid. Pass."},
+{"ticker":"BLAST/USD","direction":"HOLD","confidence":0.50,"reasoning":"Mechanical TRADE flag with bullish bias 0.75, funding -2.05 bps (strong squeeze fuel), crowding 75. The setup is real BUT vol only $313K and OI $1.18M = liquidity floor too low for James's $300+ margin sizing rule. Watch only — mechanical edge cannot be sized properly here."},
+{"ticker":"MET/USD","direction":"HOLD","confidence":0.40,"reasoning":"Neutral bias, vol $215K thin. Pass."},
+{"ticker":"AERO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Funding +0.71 bps elevated, crowding 75, neutral bias. Pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Extended pump, late chase territory. Pass."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding still +1.79 bps elevated, crowding 75. James just took STBL fade and closed near flat — personal cooldown re-engaged. No re-entry."}
+]}

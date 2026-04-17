@@ -1,0 +1,33 @@
+PLATFORM-LEVEL BUILD TASK — Not agent config. App layer fixes that work regardless of which model sits in which pane.
+
+James is about to delete SquidRun. These are the structural failures that keep repeating across sessions because we keep fixing them at the agent level instead of the platform level.
+
+1. CONSULTATION SYSTEM — Include Hyperliquid positions in every consultation payload
+   - orchestrator.js / signal-producer.js must call hm-defi-status.js (or query the state file at .squidrun/runtime/crypto-trading-supervisor-state.json) 
+   - Include in every consultation request JSON: open positions, entry price, unrealized P&L, liquidation price, peak P&L, time since entry
+   - If positions exist, add a field: "taskType": "position_management" vs "new_signal"
+   - Every agent gets this data automatically. No agent has to remember to check.
+
+2. SUPERVISOR POSITION MONITOR — Independent of all agents
+   - New interval in supervisor-daemon.js (every 5 minutes)
+   - Runs hm-defi-status.js, tracks peak P&L in .squidrun/runtime/defi-peak-pnl.json
+   - If P&L drops 30% from peak → inject WARNING into all agent panes
+   - If P&L drops 50% from peak → send URGENT Telegram to James directly (not through any agent)
+   - This runs even if all 3 agents are idle/crashed/compacting
+
+3. MESSAGE ROUTING ENFORCEMENT — App layer, not agent memory
+   - When a Telegram message arrives from chat 8754356993 (은별), the reply mechanism should be built into the Telegram poller or a routing table
+   - .squidrun/runtime/telegram-routing.json: map chat IDs to reply methods
+   - Example: {"8754356993": {"method": "send-long-telegram", "name": "은별", "language": "ko"}, "default": {"method": "hm-send-telegram", "name": "James", "language": "en"}}
+   - The poller or a reply helper script reads this table and routes automatically
+   - No agent needs to remember which script to use
+
+4. CASE CONTEXT INJECTION — All panes on startup, not just Claude
+   - The session-start hook and hm-hook-injection.js already inject context into agent panes
+   - Add: if workspace/knowledge/case-operations.md exists, include its content in the injection for ALL panes
+   - This way Builder and Oracle also get the case dashboard, pending items, and routing rules on every restart/compaction
+   - This must work for Codex CLI and any other CLI, not just Claude Code
+
+Priority: #2 (position monitor) > #1 (consultation data) > #3 (routing) > #4 (case injection)
+
+Ship #2 first. Real money is at stake.

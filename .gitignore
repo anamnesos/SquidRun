@@ -132,6 +132,12 @@ workspace/app-status.json
 # Runtime logs
 workspace/logs/
 
+# Sensitive operational data (public repo — keep private)
+workspace/knowledge/session-*-handoff.md
+workspace/knowledge/trading-operations.md
+workspace/knowledge/case-operations.md
+workspace/knowledge/architecture-decisions.md
+
 # Generic local caches
 .cache/
 .eslintcache

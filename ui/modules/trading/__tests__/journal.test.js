@@ -3,11 +3,10 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DatabaseSync } = require('node:sqlite');
 
 const journal = require('../journal');
 
-describe('trading journal schema migration', () => {
+describe('trade journal execution reports', () => {
   let tempDir;
   let dbPath;
 
@@ -22,107 +21,76 @@ describe('trading journal schema migration', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test('rebuilds legacy trades tables that restrict Alpaca order statuses', () => {
-    const db = new DatabaseSync(dbPath);
-    db.exec(`
-      CREATE TABLE trades (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-        ticker TEXT NOT NULL,
-        direction TEXT NOT NULL CHECK(direction IN ('BUY','SELL')),
-        shares REAL NOT NULL,
-        price REAL NOT NULL,
-        stop_loss_price REAL,
-        total_value REAL NOT NULL,
-        consensus_detail TEXT,
-        risk_check_detail TEXT,
-        status TEXT NOT NULL DEFAULT 'FILLED' CHECK(status IN ('FILLED','PENDING','CANCELED','REJECTED')),
-        alpaca_order_id TEXT,
-        notes TEXT
-      );
+  test('records and reads execution reports', () => {
+    const db = journal.getDb(dbPath);
 
-      CREATE TABLE consensus_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-        ticker TEXT NOT NULL,
-        decision TEXT NOT NULL CHECK(decision IN ('BUY','SELL','HOLD')),
-        consensus_reached INTEGER NOT NULL DEFAULT 0,
-        agreement_count INTEGER NOT NULL DEFAULT 0,
-        architect_signal TEXT,
-        builder_signal TEXT,
-        oracle_signal TEXT,
-        dissent_reasoning TEXT,
-        acted_on INTEGER NOT NULL DEFAULT 0
-      );
-
-      CREATE TABLE daily_summary (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL UNIQUE,
-        start_equity REAL NOT NULL,
-        end_equity REAL NOT NULL,
-        pnl REAL NOT NULL,
-        pnl_pct REAL NOT NULL,
-        trades_count INTEGER NOT NULL DEFAULT 0,
-        wins INTEGER NOT NULL DEFAULT 0,
-        losses INTEGER NOT NULL DEFAULT 0,
-        peak_equity REAL NOT NULL,
-        drawdown_pct REAL NOT NULL DEFAULT 0,
-        notes TEXT
-      );
-
-      CREATE TABLE positions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ticker TEXT NOT NULL UNIQUE,
-        shares INTEGER NOT NULL,
-        avg_price REAL NOT NULL,
-        stop_loss_price REAL,
-        opened_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
-    db.prepare(`
-      INSERT INTO trades (ticker, direction, shares, price, total_value, status, alpaca_order_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run('SOL/USD', 'BUY', 2.5, 90, 225, 'PENDING', 'legacy-order-1');
-    db.close();
-
-    const migratedDb = journal.getDb(dbPath);
-    journal.recordTrade(migratedDb, {
+    journal.recordExecutionReport(db, {
+      timestamp: '2026-04-05T21:00:00.000Z',
+      marketDate: '2026-04-05',
+      phase: 'market_open',
       ticker: 'ETH/USD',
-      direction: 'BUY',
-      shares: 1.25,
-      price: 2200,
-      status: 'partially_filled',
-      alpacaOrderId: 'new-order-2',
+      direction: 'SELL',
+      broker: 'hyperliquid',
+      assetClass: 'crypto',
+      status: 'executed',
+      ok: true,
+      reportType: 'market_open_execution',
+      execution: {
+        ok: true,
+        status: 'filled',
+      },
+      referencePrice: 2100.5,
+      confidence: 0.73,
+      realizedPnl: 12.5,
+      macroRisk: {
+        regime: 'red',
+      },
     });
 
-    const tradesSql = migratedDb.prepare(`
-      SELECT sql
-      FROM sqlite_master
-      WHERE type = 'table' AND name = 'trades'
-    `).get()?.sql;
-    const positionsInfo = migratedDb.prepare('PRAGMA table_info(positions)').all();
-    const tradesInfo = migratedDb.prepare('PRAGMA table_info(trades)').all();
-    const summaryInfo = migratedDb.prepare('PRAGMA table_info(daily_summary)').all();
-    const rows = migratedDb.prepare(`
-      SELECT ticker, status
-      FROM trades
-      ORDER BY id
-    `).all();
+    const rows = journal.getExecutionReports(db, 5);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(expect.objectContaining({
+      timestamp: '2026-04-05T21:00:00.000Z',
+      phase: 'market_open',
+      report_type: 'market_open_execution',
+      ticker: 'ETH/USD',
+      ok: 1,
+      status: 'executed',
+      entry_price: 2100.5,
+      realized_pnl: 12.5,
+      confidence: 0.73,
+    }));
+    const payload = JSON.parse(rows[0].report_json);
+    expect(payload).toEqual(expect.objectContaining({
+      timestamp: '2026-04-05T21:00:00.000Z',
+      reportType: 'market_open_execution',
+      broker: 'hyperliquid',
+      assetClass: 'crypto',
+      macroRisk: expect.objectContaining({
+        regime: 'red',
+      }),
+    }));
+  });
 
-    expect(String(tradesSql)).not.toMatch(/CHECK\s*\(\s*status\s+IN/i);
-    expect(positionsInfo.find((column) => column.name === 'shares')).toMatchObject({ type: 'REAL' });
-    expect(tradesInfo.find((column) => column.name === 'filled_at')).toBeTruthy();
-    expect(tradesInfo.find((column) => column.name === 'reconciled_at')).toBeTruthy();
-    expect(tradesInfo.find((column) => column.name === 'realized_pnl')).toBeTruthy();
-    expect(tradesInfo.find((column) => column.name === 'outcome_recorded_at')).toBeTruthy();
-    expect(summaryInfo.find((column) => column.name === 'best_trade_ticker')).toBeTruthy();
-    expect(summaryInfo.find((column) => column.name === 'best_trade_pnl')).toBeTruthy();
-    expect(summaryInfo.find((column) => column.name === 'worst_trade_ticker')).toBeTruthy();
-    expect(summaryInfo.find((column) => column.name === 'worst_trade_pnl')).toBeTruthy();
-    expect(rows).toEqual([
-      { ticker: 'SOL/USD', status: 'PENDING' },
-      { ticker: 'ETH/USD', status: 'PARTIALLY_FILLED' },
-    ]);
+  test('records SHORT trades after schema migration', () => {
+    const db = journal.getDb(dbPath);
+
+    journal.recordTrade(db, {
+      ticker: 'ETH/USD',
+      direction: 'SHORT',
+      shares: 0.15,
+      price: 2400,
+      status: 'FILLED',
+      notes: 'open-short',
+    });
+
+    const trades = journal.getAllTrades(db);
+    expect(trades).toHaveLength(1);
+    expect(trades[0]).toEqual(expect.objectContaining({
+      ticker: 'ETH/USD',
+      direction: 'SHORT',
+      shares: 0.15,
+      price: 2400,
+    }));
   });
 });

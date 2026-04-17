@@ -1,0 +1,11 @@
+You're in TAO short. Quick state in plain words:
+
+You're short 18 TAO at $258.16.
+TAO is now at $259.58 (went up a tiny bit after you entered).
+You're down -$25 right now because of that small bounce.
+
+You're nowhere near losing the trade — your "everything goes wrong" price is $281.48, which is 8.7% above current. You'd need TAO to jump 8.7% from here to get wiped out.
+
+The -$25 is just because TAO bounced a hair after you entered. It's normal. The trade isn't broken — it just needs to roll back down.
+
+Required alert per the monitor rule (-$15 line crossed). You're aware. Standing by.

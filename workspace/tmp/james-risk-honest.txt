@@ -1,0 +1,17 @@
+Yeah, by your own framework it's risky.
+
+The bias is right (SOL bullish day, 89-90 range, long-only) — that part's solid.
+
+What makes it risky:
+1. **Entry location is mid-range ($89.52).** Your framework says mid-range = watch only. Valid entries were $89.00-89.10 pullback reclaim or $89.70-89.80 breakout reclaim. $89.52 is between them. Same chart-location failure as Oracle's top entry, just at a different mid-point.
+2. **Full margin ($599/600 used).** If SOL flushes to $89 base and snaps back, you can't pyramid or re-enter lower. One shot, no bullets left.
+3. **Liq at $87.27** — if SOL loses the whole range ($89 base flush through), liq is 2.6% away. Tight on full margin.
+
+What's working FOR you:
+- Day bias is bullish, so probability favors SOL holding or reclaiming $90
+- You have a stop set (you said "with a stop loss set") — that's the hedge
+- SOL has been respecting 89-90 all day
+
+Poker translation: You raised preflop with a decent hand from a bad position, fully committed. If the flop comes clean (SOL reclaims 89.70+), you win the pot. If it comes rough (89.10 flush), you're stuck hoping your stop doesn't slip. You can't 3-bet or fold back into a better seat.
+
+Not wrong, but you're playing with less room than a framework-valid entry would give you.

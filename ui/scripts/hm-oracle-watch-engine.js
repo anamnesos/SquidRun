@@ -1,0 +1,885 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+const { resolveCoordPath } = require('../config');
+const hyperliquidClient = require('../modules/trading/hyperliquid-client');
+const { sendAgentAlert } = require('./hm-agent-alert');
+
+const DEFAULT_RULES_PATH = resolveCoordPath(path.join('runtime', 'oracle-watch-rules.json'), { forWrite: true });
+const DEFAULT_STATE_PATH = resolveCoordPath(path.join('runtime', 'oracle-watch-state.json'), { forWrite: true });
+const DEFAULT_TARGETS = ['oracle'];
+const DEFAULT_SYMBOLS = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
+const DEFAULT_POLL_INTERVAL_MS = 10_000;
+const DEFAULT_MACRO_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const MAX_HOT_SYMBOLS = 2;
+
+function toText(value, fallback = '') {
+  const normalized = String(value || '').trim();
+  return normalized || fallback;
+}
+
+function toNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function round(value, digits = 4) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Number(numeric.toFixed(digits));
+}
+
+function ensureDir(filePath) {
+  fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true });
+}
+
+function readJsonFile(filePath, fallback = null) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonFile(filePath, payload) {
+  ensureDir(filePath);
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeTicker(value) {
+  const raw = toText(value).toUpperCase().replace('-', '/');
+  if (!raw) return '';
+  return raw.endsWith('/USD') ? raw : `${raw}/USD`;
+}
+
+function normalizeTargets(value = DEFAULT_TARGETS) {
+  const raw = Array.isArray(value) ? value : String(value || '').split(',');
+  return Array.from(new Set(
+    raw
+      .map((entry) => toText(entry).toLowerCase())
+      .filter((entry) => ['architect', 'builder', 'oracle'].includes(entry))
+  ));
+}
+
+function normalizeMode(value, fallback = 'normal') {
+  const normalized = toText(value, fallback).toLowerCase();
+  return normalized === 'macro-release' || normalized === 'macro_release'
+    ? 'macro_release'
+    : 'normal';
+}
+
+function defaultRulesConfig() {
+  return {
+    version: 1,
+    mode: 'normal',
+    pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
+    macroPollIntervalMs: DEFAULT_MACRO_POLL_INTERVAL_MS,
+    targets: DEFAULT_TARGETS,
+    symbols: DEFAULT_SYMBOLS,
+    hotSymbols: [],
+    rules: [
+      {
+        id: 'btc-reclaim-74020',
+        name: 'BTC reclaim above 74020 and hold 2x 1m closes',
+        enabled: true,
+        ticker: 'BTC/USD',
+        trigger: 'reclaim_hold',
+        level: 74020,
+        confirmCloses: 2,
+        timeframe: '1m',
+        cooldownMs: DEFAULT_ALERT_COOLDOWN_MS,
+      },
+      {
+        id: 'btc-lose-73520-fail-retest',
+        name: 'BTC lose 73520 then fail retest into 73520-73560',
+        enabled: true,
+        ticker: 'BTC/USD',
+        trigger: 'lose_fail_retest',
+        loseLevel: 73520,
+        retestMin: 73520,
+        retestMax: 73560,
+        timeframe: '1m',
+        cooldownMs: DEFAULT_ALERT_COOLDOWN_MS,
+      },
+      {
+        id: 'eth-reclaim-2368-2370',
+        name: 'ETH reclaim 2368-2370',
+        enabled: true,
+        ticker: 'ETH/USD',
+        trigger: 'reclaim_hold',
+        zone: { min: 2368, max: 2370 },
+        confirmCloses: 2,
+        timeframe: '1m',
+        cooldownMs: DEFAULT_ALERT_COOLDOWN_MS,
+      },
+      {
+        id: 'sol-relative-strength-vs-btc',
+        name: 'SOL green while BTC red over same 5m window',
+        enabled: true,
+        ticker: 'SOL/USD',
+        trigger: 'relative_strength',
+        anchorTicker: 'BTC/USD',
+        timeframe: '5m',
+        altMinChangePct: 0.002,
+        anchorMaxChangePct: -0.001,
+        chartLocation: {
+          bias: 'long_only',
+          dayRange: { min: 89.0, max: 90.0 },
+          validLongZones: [
+            { label: 'support_reclaim', min: 89.0, max: 89.1 },
+            { label: 'breakout_reclaim', min: 89.7, max: 89.8 },
+          ],
+          invalidLabel: 'midrange_watch_only',
+          invalidNote: 'SOL relative strength is watch-only here. Valid long zones are 89.00-89.10 support reclaim or 89.70-89.80 breakout reclaim.',
+        },
+        cooldownMs: DEFAULT_ALERT_COOLDOWN_MS,
+      },
+    ],
+  };
+}
+
+function defaultState() {
+  return {
+    version: 2,
+    updatedAt: null,
+    mode: 'normal',
+    heartbeat: {
+      lastTickAt: null,
+      intervalMs: DEFAULT_POLL_INTERVAL_MS,
+      stale: false,
+      state: 'idle',
+    },
+    counters: {
+      triggersSeen: 0,
+      triggersArmed: 0,
+      triggersFired: 0,
+      triggersInvalidated: 0,
+      triggersActedOn: 0,
+      alertsSent: 0,
+      lastCycleSeen: 0,
+      lastCycleFired: 0,
+      lastCycleAlertCount: 0,
+    },
+    marketByTicker: {},
+    rules: {},
+  };
+}
+
+function getRuleThreshold(rule = {}) {
+  if (Number.isFinite(Number(rule.level))) {
+    return Number(rule.level);
+  }
+  if (rule.zone && Number.isFinite(Number(rule.zone.max))) {
+    return Number(rule.zone.max);
+  }
+  return NaN;
+}
+
+function getRuleFloor(rule = {}) {
+  if (rule.zone && Number.isFinite(Number(rule.zone.min))) {
+    return Number(rule.zone.min);
+  }
+  if (Number.isFinite(Number(rule.level))) {
+    return Number(rule.level);
+  }
+  return NaN;
+}
+
+function getLastCloses(bars = [], count = 3) {
+  return (Array.isArray(bars) ? bars : [])
+    .slice(-count)
+    .map((bar) => round(bar?.close, 6))
+    .filter((value) => Number.isFinite(value));
+}
+
+function getLatestBar(bars = []) {
+  return Array.isArray(bars) && bars.length > 0 ? bars[bars.length - 1] : null;
+}
+
+function getPreviousBar(bars = []) {
+  return Array.isArray(bars) && bars.length > 1 ? bars[bars.length - 2] : null;
+}
+
+function determineFundingDirection(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 'unknown';
+  if (numeric > 0) return 'positive';
+  if (numeric < 0) return 'negative';
+  return 'flat';
+}
+
+function evaluateChartLocation(rule = {}, payload = {}) {
+  const chartLocation = rule?.chartLocation || null;
+  const livePrice = Number(payload?.livePrice);
+  if (!chartLocation || !Number.isFinite(livePrice) || livePrice <= 0) {
+    return {
+      bias: toText(chartLocation?.bias, ''),
+      label: null,
+      executable: true,
+      note: null,
+    };
+  }
+
+  const zones = Array.isArray(chartLocation.validLongZones)
+    ? chartLocation.validLongZones.filter((zone) => Number.isFinite(Number(zone?.min)) && Number.isFinite(Number(zone?.max)))
+    : [];
+  const matchingZone = zones.find((zone) => livePrice >= Number(zone.min) && livePrice <= Number(zone.max)) || null;
+  if (matchingZone) {
+    return {
+      bias: toText(chartLocation.bias, ''),
+      label: toText(matchingZone.label, 'valid_zone'),
+      executable: true,
+      note: null,
+    };
+  }
+
+  const dayRangeMin = Number(chartLocation?.dayRange?.min);
+  const dayRangeMax = Number(chartLocation?.dayRange?.max);
+  const insideDayRange = Number.isFinite(dayRangeMin)
+    && Number.isFinite(dayRangeMax)
+    && livePrice >= dayRangeMin
+    && livePrice <= dayRangeMax;
+
+  return {
+    bias: toText(chartLocation.bias, ''),
+    label: insideDayRange
+      ? toText(chartLocation.invalidLabel, 'watch_only')
+      : 'out_of_framework',
+    executable: false,
+    note: insideDayRange
+      ? toText(chartLocation.invalidNote, null)
+      : 'Current price is outside the active chart-location framework for this trigger.',
+  };
+}
+
+function buildSuggestedCommand(rule = {}, payload = {}, eventType = 'fired') {
+  const chartLocation = evaluateChartLocation(rule, payload);
+  if (eventType !== 'fired' || chartLocation.executable !== true) {
+    return null;
+  }
+  const asset = toText(payload.ticker).split('/')[0];
+  if (!asset) return null;
+  const majors = new Set(['BTC', 'ETH']);
+  const leverage = majors.has(asset) ? 25 : asset === 'SOL' ? 20 : 10;
+  const margin = majors.has(asset) ? 12 : asset === 'SOL' ? 10 : 8;
+  let direction = 'LONG';
+  let stopLoss = null;
+  if (rule.trigger === 'lose_fail_retest') {
+    direction = 'SHORT';
+    stopLoss = Number.isFinite(Number(rule.retestMax)) ? Number(rule.retestMax) : null;
+  } else {
+    direction = 'LONG';
+    stopLoss = Number.isFinite(Number(rule.level))
+      ? Number(rule.level)
+      : (Number.isFinite(Number(rule?.zone?.min)) ? Number(rule.zone.min) : null);
+  }
+  const parts = [
+    'node',
+    'ui/scripts/hm-defi-execute.js',
+    'trade',
+    '--asset', asset,
+    '--direction', direction,
+    '--leverage', String(leverage),
+    '--margin', String(margin),
+  ];
+  if (stopLoss != null) {
+    parts.push('--stop-loss', String(stopLoss));
+  }
+  return parts.join(' ');
+}
+
+function buildAlertPayload(rule = {}, symbolContext = {}, previousMarket = {}) {
+  const fundingRate = symbolContext?.market?.fundingRate ?? symbolContext?.predictedFunding?.fundingRate ?? null;
+  const openInterest = toNumber(symbolContext?.market?.openInterest, NaN);
+  const previousOpenInterest = toNumber(previousMarket?.openInterest, NaN);
+  const openInterestChangePct = Number.isFinite(openInterest) && Number.isFinite(previousOpenInterest) && previousOpenInterest > 0
+    ? (openInterest - previousOpenInterest) / previousOpenInterest
+    : null;
+  return {
+    ticker: symbolContext.ticker,
+    trigger: rule.name || rule.id,
+    triggerId: rule.id,
+    livePrice: round(symbolContext?.market?.price ?? symbolContext?.snapshot?.tradePrice, 6),
+    last1mCloses: getLastCloses(symbolContext?.bars1m, 3),
+    candle5m: symbolContext?.bar5m
+      ? {
+        open: round(symbolContext.bar5m.open, 6),
+        high: round(symbolContext.bar5m.high, 6),
+        low: round(symbolContext.bar5m.low, 6),
+        close: round(symbolContext.bar5m.close, 6),
+      }
+      : null,
+    book: symbolContext?.l2Book
+      ? {
+        skew: symbolContext.l2Book.nearTouchSkew,
+        imbalanceTop5: symbolContext.l2Book.depthImbalanceTop5,
+        bestBid: round(symbolContext.l2Book.bestBid, 6),
+        bestAsk: round(symbolContext.l2Book.bestAsk, 6),
+      }
+      : null,
+    fundingDirection: determineFundingDirection(fundingRate),
+    fundingRateBps: Number.isFinite(Number(fundingRate)) ? round(Number(fundingRate) * 10_000, 4) : null,
+    openInterestChangePct: openInterestChangePct == null ? null : round(openInterestChangePct, 4),
+    hasLivePosition: Boolean(symbolContext?.hasLivePosition),
+  };
+}
+
+function formatOracleAlert(eventType, rule = {}, payload = {}, mode = 'normal') {
+  const chartLocation = evaluateChartLocation(rule, payload);
+  const compact = {
+    mode,
+    ticker: payload.ticker,
+    state: eventType,
+    trigger: payload.trigger,
+    livePrice: payload.livePrice,
+    last1mCloses: payload.last1mCloses,
+    candle5m: payload.candle5m,
+    book: payload.book,
+    fundingDirection: payload.fundingDirection,
+    fundingRateBps: payload.fundingRateBps,
+    openInterestChangePct: payload.openInterestChangePct,
+    hasLivePosition: payload.hasLivePosition,
+    chartLocation,
+    executionReady: eventType === 'fired' && chartLocation.executable === true,
+    command: buildSuggestedCommand(rule, payload, eventType),
+  };
+  return `(ORACLE WATCH): ${JSON.stringify(compact)}`;
+}
+
+function shouldAlert(lastAlertAt, cooldownMs, nowMs) {
+  if (!Number.isFinite(Number(lastAlertAt))) return true;
+  return (nowMs - Number(lastAlertAt)) >= Math.max(1, Number(cooldownMs) || DEFAULT_ALERT_COOLDOWN_MS);
+}
+
+function evaluateReclaimHold(rule = {}, symbolContext = {}, ruleState = {}, nowMs = Date.now()) {
+  const threshold = getRuleThreshold(rule);
+  const latestBar = getLatestBar(symbolContext?.bars1m);
+  const closes = getLastCloses(symbolContext?.bars1m, Math.max(2, Number(rule.confirmCloses) || 2));
+  const lookbackCloses = getLastCloses(symbolContext?.bars1m, 6);
+  if (!Number.isFinite(threshold) || !latestBar || closes.length === 0) {
+    return { state: ruleState, events: [] };
+  }
+  const confirmCloses = Math.max(1, Number(rule.confirmCloses) || 2);
+  const heldAbove = closes.length >= confirmCloses && closes.slice(-confirmCloses).every((close) => close > threshold);
+  const recentBelow = lookbackCloses.some((close) => close < threshold);
+  const latestClose = closes[closes.length - 1];
+  const nextState = { ...ruleState };
+  const events = [];
+
+  if (heldAbove && recentBelow) {
+    if (ruleState.status !== 'fired') {
+      nextState.status = 'fired';
+      nextState.armedAt = nextState.armedAt || nowMs;
+      nextState.firedAt = nowMs;
+      events.push('fired');
+    }
+    return { state: nextState, events };
+  }
+
+  if (latestClose > threshold && recentBelow) {
+    if (ruleState.status !== 'armed' && ruleState.status !== 'fired') {
+      nextState.status = 'armed';
+      nextState.armedAt = nowMs;
+      events.push('armed');
+    }
+    return { state: nextState, events };
+  }
+
+  if ((ruleState.status === 'armed' || ruleState.status === 'fired') && latestClose < getRuleFloor(rule)) {
+    nextState.status = 'idle';
+    nextState.invalidatedAt = nowMs;
+    nextState.armedAt = null;
+    events.push('invalidated');
+  }
+
+  return { state: nextState, events };
+}
+
+function evaluateLoseFailRetest(rule = {}, symbolContext = {}, ruleState = {}, nowMs = Date.now()) {
+  const loseLevel = Number(rule.loseLevel);
+  const retestMin = Number(rule.retestMin);
+  const retestMax = Number(rule.retestMax);
+  const bars = Array.isArray(symbolContext?.bars1m) ? symbolContext.bars1m : [];
+  const latestBar = getLatestBar(bars);
+  const previousBar = getPreviousBar(bars);
+  if (!latestBar || !Number.isFinite(loseLevel) || !Number.isFinite(retestMin) || !Number.isFinite(retestMax)) {
+    return { state: ruleState, events: [] };
+  }
+  const nextState = { ...ruleState };
+  const events = [];
+  const breakdownNow = previousBar && Number(previousBar.close) >= loseLevel && Number(latestBar.close) < loseLevel;
+  const retestTouched = bars.some((bar) => Number(bar.high) >= retestMin && Number(bar.low) <= retestMax);
+  const failedRetest = retestTouched && Number(latestBar.close) < retestMin;
+  const invalidated = Number(latestBar.close) > retestMax;
+
+  if (breakdownNow && ruleState.status !== 'armed' && ruleState.status !== 'fired') {
+    nextState.status = 'armed';
+    nextState.armedAt = nowMs;
+    events.push('armed');
+    return { state: nextState, events };
+  }
+
+  if ((ruleState.status === 'armed' || ruleState.status === 'fired') && failedRetest) {
+    if (ruleState.status !== 'fired') {
+      nextState.status = 'fired';
+      nextState.firedAt = nowMs;
+      nextState.retestTouched = true;
+      events.push('fired');
+    }
+    return { state: nextState, events };
+  }
+
+  if ((ruleState.status === 'armed' || ruleState.status === 'fired') && invalidated) {
+    nextState.status = 'idle';
+    nextState.invalidatedAt = nowMs;
+    nextState.armedAt = null;
+    events.push('invalidated');
+  }
+
+  return { state: nextState, events };
+}
+
+function evaluateRelativeStrength(rule = {}, symbolContext = {}, anchorContext = {}, ruleState = {}, nowMs = Date.now()) {
+  const altBar = symbolContext?.bar5m;
+  const anchorBar = anchorContext?.bar5m;
+  if (!altBar || !anchorBar) {
+    return { state: ruleState, events: [] };
+  }
+  const altChangePct = Number(altBar.open) > 0 ? (Number(altBar.close) - Number(altBar.open)) / Number(altBar.open) : null;
+  const anchorChangePct = Number(anchorBar.open) > 0 ? (Number(anchorBar.close) - Number(anchorBar.open)) / Number(anchorBar.open) : null;
+  if (!Number.isFinite(altChangePct) || !Number.isFinite(anchorChangePct)) {
+    return { state: ruleState, events: [] };
+  }
+
+  const altMinChangePct = Number.isFinite(Number(rule.altMinChangePct)) ? Number(rule.altMinChangePct) : 0.002;
+  const anchorMaxChangePct = Number.isFinite(Number(rule.anchorMaxChangePct)) ? Number(rule.anchorMaxChangePct) : -0.001;
+  const nextState = { ...ruleState };
+  const events = [];
+  const anchorRed = anchorChangePct <= anchorMaxChangePct;
+  const altPositive = altChangePct > 0;
+  const altStrong = altChangePct >= altMinChangePct;
+
+  if (anchorRed && altPositive && !altStrong && ruleState.status !== 'armed') {
+    nextState.status = 'armed';
+    nextState.armedAt = nowMs;
+    events.push('armed');
+    return { state: nextState, events };
+  }
+
+  if (anchorRed && altStrong) {
+    if (ruleState.status !== 'fired') {
+      nextState.status = 'fired';
+      nextState.firedAt = nowMs;
+      events.push('fired');
+    }
+    return { state: nextState, events };
+  }
+
+  if ((ruleState.status === 'armed' || ruleState.status === 'fired') && (!anchorRed || altChangePct <= 0)) {
+    nextState.status = 'idle';
+    nextState.invalidatedAt = nowMs;
+    nextState.armedAt = null;
+    events.push('invalidated');
+  }
+
+  return { state: nextState, events };
+}
+
+function evaluateRule(rule = {}, context = {}, ruleState = {}, nowMs = Date.now()) {
+  const symbolContext = context.byTicker?.[normalizeTicker(rule.ticker)] || null;
+  if (!rule.enabled || !symbolContext) {
+    return { state: ruleState, events: [] };
+  }
+  if (rule.trigger === 'reclaim_hold') {
+    return evaluateReclaimHold(rule, symbolContext, ruleState, nowMs);
+  }
+  if (rule.trigger === 'lose_fail_retest') {
+    return evaluateLoseFailRetest(rule, symbolContext, ruleState, nowMs);
+  }
+  if (rule.trigger === 'relative_strength') {
+    const anchorTicker = normalizeTicker(rule.anchorTicker || 'BTC/USD');
+    return evaluateRelativeStrength(
+      rule,
+      symbolContext,
+      context.byTicker?.[anchorTicker] || null,
+      ruleState,
+      nowMs
+    );
+  }
+  return { state: ruleState, events: [] };
+}
+
+function resolveWatchedTickers(config = {}) {
+  const primary = Array.isArray(config.symbols) ? config.symbols : DEFAULT_SYMBOLS;
+  const hot = Array.isArray(config.hotSymbols) ? config.hotSymbols.slice(0, MAX_HOT_SYMBOLS) : [];
+  return Array.from(new Set(
+    [...primary, ...hot]
+      .map((entry) => normalizeTicker(entry))
+      .filter(Boolean)
+  ));
+}
+
+async function fetchWatchContext(config = {}, previousState = {}, options = {}) {
+  const tickers = resolveWatchedTickers(config);
+  const mode = normalizeMode(options.mode || config.mode || previousState.mode || 'normal');
+  const requestOptions = {
+    ...(options.clientOptions || {}),
+    requestPoolTtlMs: Math.max(
+      0,
+      Number(
+        options.requestPoolTtlMs
+        || (mode === 'macro_release'
+          ? (config.macroPollIntervalMs || DEFAULT_MACRO_POLL_INTERVAL_MS)
+          : (config.pollIntervalMs || DEFAULT_POLL_INTERVAL_MS))
+      ) || DEFAULT_POLL_INTERVAL_MS
+    ),
+  };
+  const [marketData, bars1mMap, bars5mMap, predictedFundings, openPositions] = await Promise.all([
+    hyperliquidClient.getUniverseMarketData(requestOptions),
+    hyperliquidClient.getHistoricalBars({
+      ...requestOptions,
+      symbols: tickers,
+      timeframe: '1m',
+      limit: 12,
+    }),
+    hyperliquidClient.getHistoricalBars({
+      ...requestOptions,
+      symbols: tickers,
+      timeframe: '5m',
+      limit: 2,
+    }),
+    hyperliquidClient.getPredictedFundings(requestOptions).catch(() => ({ byCoin: {} })),
+    hyperliquidClient.getOpenPositions(requestOptions).catch(() => []),
+  ]);
+
+  const marketByTicker = Object.fromEntries(
+    (Array.isArray(marketData) ? marketData : []).map((entry) => [normalizeTicker(entry.ticker || `${entry.coin}/USD`), entry])
+  );
+  const positionsByTicker = new Set(
+    (Array.isArray(openPositions) ? openPositions : [])
+      .map((position) => normalizeTicker(position.ticker))
+      .filter(Boolean)
+  );
+  const l2Books = await Promise.all(tickers.map(async (ticker) => {
+    try {
+      const book = await hyperliquidClient.getL2Book({
+        ...requestOptions,
+        ticker,
+      });
+      return [ticker, book];
+    } catch {
+      return [ticker, null];
+    }
+  }));
+
+  const byTicker = {};
+  for (const ticker of tickers) {
+    const market = marketByTicker[ticker] || null;
+    const coin = toText(market?.coin, ticker.split('/')[0]);
+    const previousMarket = previousState?.marketByTicker?.[ticker] || null;
+    const bars1m = bars1mMap instanceof Map ? (bars1mMap.get(ticker) || []) : [];
+    const bars5m = bars5mMap instanceof Map ? (bars5mMap.get(ticker) || []) : [];
+    const l2Book = Object.fromEntries(l2Books)[ticker] || null;
+    byTicker[ticker] = {
+      ticker,
+      coin,
+      market,
+      previousMarket,
+      bars1m,
+      bars5m,
+      bar5m: getLatestBar(bars5m),
+      l2Book,
+      predictedFunding: predictedFundings?.byCoin?.[coin.toUpperCase()] || null,
+      hasLivePosition: positionsByTicker.has(ticker),
+    };
+  }
+  return {
+    tickers,
+    byTicker,
+    marketByTicker: Object.fromEntries(
+      Object.entries(byTicker).map(([ticker, entry]) => [ticker, {
+        price: entry?.market?.price ?? null,
+        openInterest: entry?.market?.openInterest ?? null,
+        fundingRate: entry?.market?.fundingRate ?? null,
+        checkedAt: new Date().toISOString(),
+      }])
+    ),
+  };
+}
+
+function loadRulesConfig(filePath = DEFAULT_RULES_PATH) {
+  const config = readJsonFile(filePath, null);
+  if (config) return config;
+  const defaults = defaultRulesConfig();
+  writeJsonFile(filePath, defaults);
+  return defaults;
+}
+
+function loadWatchState(filePath = DEFAULT_STATE_PATH) {
+  return {
+    ...defaultState(),
+    ...(readJsonFile(filePath, defaultState()) || {}),
+  };
+}
+
+async function runWatchCycle(options = {}) {
+  const rulesPath = path.resolve(toText(options.rulesPath, DEFAULT_RULES_PATH));
+  const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
+  const config = loadRulesConfig(rulesPath);
+  const state = loadWatchState(statePath);
+  const mode = normalizeMode(options.mode || config.mode || state.mode || 'normal');
+  const nowMs = Date.now();
+  let context = null;
+  try {
+    context = await fetchWatchContext(config, state, { ...options, mode });
+  } catch (error) {
+    const failedState = {
+      ...state,
+      updatedAt: new Date(nowMs).toISOString(),
+      mode,
+      heartbeat: {
+        lastTickAt: state?.heartbeat?.lastTickAt || null,
+        intervalMs: mode === 'macro_release'
+          ? Math.max(1000, Number(config.macroPollIntervalMs) || DEFAULT_MACRO_POLL_INTERVAL_MS)
+          : Math.max(1000, Number(config.pollIntervalMs) || DEFAULT_POLL_INTERVAL_MS),
+        stale: true,
+        state: 'red',
+        lastErrorAt: new Date(nowMs).toISOString(),
+      },
+      lastError: String(error?.stack || error?.message || error || 'unknown_watch_cycle_error'),
+      lastFailureAt: new Date(nowMs).toISOString(),
+    };
+    writeJsonFile(statePath, failedState);
+    return {
+      ok: false,
+      status: 'failed',
+      error: failedState.lastError,
+      rulesPath,
+      statePath,
+      mode,
+    };
+  }
+  const alerts = [];
+  const counters = {
+    ...(state.counters || {}),
+  };
+  const cycleCounters = {
+    triggersSeen: 0,
+    triggersArmed: 0,
+    triggersFired: 0,
+    triggersInvalidated: 0,
+  };
+  const nextRulesState = {
+    ...(state.rules || {}),
+  };
+
+  for (const rule of Array.isArray(config.rules) ? config.rules : []) {
+    const previousRuleState = nextRulesState[rule.id] || {};
+    const evaluation = evaluateRule(rule, context, previousRuleState, nowMs);
+    const nextRuleState = {
+      ...previousRuleState,
+      ...evaluation.state,
+      lastSeenAt: new Date(nowMs).toISOString(),
+    };
+    const symbolContext = context.byTicker?.[normalizeTicker(rule.ticker)] || null;
+    const payload = symbolContext
+      ? buildAlertPayload(rule, symbolContext, state.marketByTicker?.[normalizeTicker(rule.ticker)] || {})
+      : null;
+    const cooldownMs = Math.max(1000, Number(rule.cooldownMs) || DEFAULT_ALERT_COOLDOWN_MS);
+
+    for (const eventType of evaluation.events) {
+      cycleCounters.triggersSeen += 1;
+      if (eventType === 'armed') cycleCounters.triggersArmed += 1;
+      if (eventType === 'fired') cycleCounters.triggersFired += 1;
+      if (eventType === 'invalidated') cycleCounters.triggersInvalidated += 1;
+      nextRuleState.eventCounts = {
+        ...(nextRuleState.eventCounts || {}),
+        [eventType]: Number(nextRuleState?.eventCounts?.[eventType] || 0) + 1,
+      };
+      nextRuleState.lastEventType = eventType;
+      nextRuleState.lastEventAt = new Date(nowMs).toISOString();
+      const lastAlertAt = previousRuleState?.lastAlertAtByType?.[eventType];
+      if (!shouldAlert(lastAlertAt, cooldownMs, nowMs)) {
+        continue;
+      }
+      if (!payload) continue;
+      alerts.push({
+        eventType,
+        ruleId: rule.id,
+        ticker: payload.ticker,
+        message: formatOracleAlert(eventType, rule, payload, mode),
+        payload,
+      });
+      nextRuleState.lastAlertAtByType = {
+        ...(nextRuleState.lastAlertAtByType || {}),
+        [eventType]: nowMs,
+      };
+    }
+    nextRulesState[rule.id] = nextRuleState;
+  }
+
+  let alertResult = null;
+  if (alerts.length > 0 && options.sendAlerts !== false) {
+    alertResult = sendAgentAlert(
+      alerts.map((entry) => entry.message).join('\n'),
+      {
+        targets: normalizeTargets(options.targets || config.targets || DEFAULT_TARGETS),
+        env: process.env,
+        cwd: process.env.SQUIDRUN_PROJECT_ROOT || path.join(__dirname, '..', '..'),
+        hmSendScriptPath: options.hmSendScriptPath,
+        role: 'oracle-watch',
+      }
+    );
+  }
+
+  const nextState = {
+    version: 2,
+    updatedAt: new Date(nowMs).toISOString(),
+    mode,
+    heartbeat: {
+      lastTickAt: new Date(nowMs).toISOString(),
+      intervalMs: mode === 'macro_release'
+        ? Math.max(1000, Number(config.macroPollIntervalMs) || DEFAULT_MACRO_POLL_INTERVAL_MS)
+        : Math.max(1000, Number(config.pollIntervalMs) || DEFAULT_POLL_INTERVAL_MS),
+      stale: false,
+      state: 'green',
+    },
+    counters: {
+      triggersSeen: Number(counters.triggersSeen || 0) + cycleCounters.triggersSeen,
+      triggersArmed: Number(counters.triggersArmed || 0) + cycleCounters.triggersArmed,
+      triggersFired: Number(counters.triggersFired || 0) + cycleCounters.triggersFired,
+      triggersInvalidated: Number(counters.triggersInvalidated || 0) + cycleCounters.triggersInvalidated,
+      triggersActedOn: Number(counters.triggersActedOn || 0),
+      alertsSent: Number(counters.alertsSent || 0) + alerts.length,
+      lastCycleSeen: cycleCounters.triggersSeen,
+      lastCycleFired: cycleCounters.triggersFired,
+      lastCycleAlertCount: alerts.length,
+    },
+    marketByTicker: context.marketByTicker,
+    rules: nextRulesState,
+    lastError: null,
+    lastFailureAt: null,
+  };
+  writeJsonFile(statePath, nextState);
+
+  return {
+    ok: true,
+    mode,
+    rulesPath,
+    statePath,
+    alertCount: alerts.length,
+    alerts,
+    alertResult,
+    tickers: context.tickers,
+  };
+}
+
+function parseCliArgs(argv = process.argv.slice(2)) {
+  const positional = [];
+  const options = new Map();
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (!token.startsWith('--')) {
+      positional.push(token);
+      continue;
+    }
+    const key = token.slice(2).trim();
+    const next = argv[i + 1];
+    const value = (!next || next.startsWith('--')) ? true : next;
+    if (value !== true) i += 1;
+    options.set(key, value);
+  }
+  return { positional, options };
+}
+
+function getOption(options, key, fallback = null) {
+  if (!options || typeof options.has !== 'function' || !options.has(key)) return fallback;
+  return options.get(key);
+}
+
+async function runCli(argv = process.argv.slice(2)) {
+  const parsed = parseCliArgs(argv);
+  const command = parsed.positional[0] || 'run';
+  const rulesPath = toText(getOption(parsed.options, 'rules', DEFAULT_RULES_PATH), DEFAULT_RULES_PATH);
+  const statePath = toText(getOption(parsed.options, 'state', DEFAULT_STATE_PATH), DEFAULT_STATE_PATH);
+
+  if (command === 'init') {
+    const config = loadRulesConfig(rulesPath);
+    const state = loadWatchState(statePath);
+    writeJsonFile(rulesPath, config);
+    writeJsonFile(statePath, state);
+    const result = { ok: true, rulesPath: path.resolve(rulesPath), statePath: path.resolve(statePath) };
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  if (command === 'run') {
+    const once = getOption(parsed.options, 'once', false) === true;
+    const pollIntervalMs = Math.max(1000, Number(getOption(parsed.options, 'poll-ms', 0)) || 0);
+    let result = await runWatchCycle({
+      rulesPath,
+      statePath,
+      mode: getOption(parsed.options, 'mode', null),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    if (once) return result;
+
+    while (true) {
+      const config = loadRulesConfig(rulesPath);
+      const mode = normalizeMode(config.mode || 'normal');
+      const intervalMs = pollIntervalMs || (mode === 'macro_release'
+        ? Math.max(1000, Number(config.macroPollIntervalMs) || DEFAULT_MACRO_POLL_INTERVAL_MS)
+        : Math.max(1000, Number(config.pollIntervalMs) || DEFAULT_POLL_INTERVAL_MS));
+      await sleep(intervalMs);
+      result = await runWatchCycle({
+        rulesPath,
+        statePath,
+      });
+      console.log(JSON.stringify(result, null, 2));
+    }
+  }
+
+  throw new Error(`Unknown command: ${command}`);
+}
+
+if (require.main === module) {
+  runCli().catch((error) => {
+    console.error(error?.stack || error?.message || String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  DEFAULT_RULES_PATH,
+  DEFAULT_STATE_PATH,
+  DEFAULT_SYMBOLS,
+  defaultRulesConfig,
+  defaultState,
+  normalizeTicker,
+  normalizeTargets,
+  normalizeMode,
+  loadRulesConfig,
+  loadWatchState,
+  getRuleThreshold,
+  getRuleFloor,
+  getLastCloses,
+  buildAlertPayload,
+  formatOracleAlert,
+  evaluateReclaimHold,
+  evaluateLoseFailRetest,
+  evaluateRelativeStrength,
+  evaluateRule,
+  resolveWatchedTickers,
+  fetchWatchContext,
+  runWatchCycle,
+  runCli,
+};

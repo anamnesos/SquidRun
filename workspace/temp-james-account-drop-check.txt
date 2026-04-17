@@ -1,0 +1,9 @@
+⚠️ Account dropped $70 between checks with no position visible.
+
+$1,494.69 (last check) → $1,424.04 (now)
+Difference: -$70.64
+Open positions: NONE
+
+Did you open and close a quick trade just now? Or was that a withdrawal? Or something I missed?
+
+I want to confirm this isn't a system bug or unexpected debit before standing by. Let me know what happened and I'll log it correctly.

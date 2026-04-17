@@ -1,0 +1,25 @@
+BABY tranche 2 EXECUTED.
+
+Triggered by: failed pop rejection (price pushed to 0.01389 at 02:00, rejected, dropped through the range bottom to 0.01372). Oracle's trigger #1 from our plan.
+
+Fill: SHORT 13,716 BABY @ 0.013701 (clean near-bottom entry)
+
+Combined BABY position:
+- Size: 27,208 BABY
+- Blended entry: 0.013816
+- Current: 0.01372
+- Unrealized: +2.62
+- Stop (exchange-native): 0.014631 (5.9% above blended, inside Oracle's 0.01455-0.01470 spec)
+- TP: 0.011671 (~15% drop target, +$58 if hit)
+- Liq: 0.01579 (14.3% safe buffer)
+
+Full portfolio now:
+- BABY +2.62 (mine, doubled size, working)
+- LIT -2.96 (mine, grinding against but inside 4% of stop)
+- MON -6.62 (yours, chopping)
+
+Account: 970.29
+Total margin: 277.79
+Withdrawable: 692.50
+
+Unlock in 25 min. Still holding 50% of BABY budget in reserve (~$125) for potential tranche 3/4 on first post-unlock rejection.

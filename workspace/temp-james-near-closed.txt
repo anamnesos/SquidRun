@@ -1,0 +1,17 @@
+Yes — closed NEAR. Action first, here's the why.
+
+REALIZED: ~-$16.77 (account: $1,641.07 → $1,624.30)
+Closed at $1.34186 avg (entry $1.33947) — slippage on the IOC close
+
+WHY I FIRED:
+1. PnL accelerating against fast: -$1.37 → -$12.44 in 5 min
+2. 5 of last 6 5m candles GREEN — no follow-through down
+3. **LEVEL 2 NEWS VETO landed specifically on NEAR live position** — Iran/Hormuz "Best War Tactic Now a Liability" headline = risk-off event hitting active position
+4. Per Oracle's rule: "if no follow-through downward, scratch it"
+5. First close attempt got 429 rate limit, retried after 5s, second attempt filled clean
+
+The thesis didn't print + a level 2 news event hit the live position = scratch the trade fast before -$30 trigger fires harder. Took the -$17 instead of waiting to bag -$30+.
+
+Account: $1,624.30 (-$17 net from NEAR entry, ~-$25 net from session start at $1,649)
+
+Standing flat. Wheel still mine for the next move. Sleep, I'll keep watching.

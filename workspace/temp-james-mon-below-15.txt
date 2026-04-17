@@ -1,0 +1,11 @@
+MON crossed below -15: now -16.66
+BABY: +0.33
+
+Total: -16.34
+Account: 951.47
+
+Still well above your hard close triggers (-75 PnL, 0.0375 price, 4% liq).
+Liq distance still 9-10% wide.
+Trigger alert per monitor rule (-15 line crossed).
+
+You're in the seat. Not touching either position.

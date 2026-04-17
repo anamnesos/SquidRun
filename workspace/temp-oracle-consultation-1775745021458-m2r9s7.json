@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775745021458-m2r9s7",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.58,
+      "reasoning": "BTC is liquid and relatively stable, but the directional edge is still muted. Slightly negative funding offers some support, yet the board remains low-signal and macro is still RED, so there is not enough asymmetry to justify a fresh long or short."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "ETH is still one of the weaker majors with a negative 24h trend and a softer structure than BTC. This is not a high-conviction breakdown short, but it still leans better as a fade than as a dip-buy while macro risk stays elevated."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "SOL is weak but not decisively broken, and the board still marks it no-trade. Negative funding reduces short appeal, while the downside impulse is not strong enough to justify a clean bearish swing."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.64,
+      "reasoning": "TNSR still has one of the strongest squeeze-continuation profiles on the board: explosive 24h momentum, extremely negative funding, and a top-tier squeeze score. Confidence is capped only because the name is still wide and macro remains RED, so this is a reduced-size momentum buy rather than a relaxed swing."
+    },
+    {
+      "ticker": "KAITO/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "KAITO is deeply down on the day, but the short thesis weakened because funding flipped slightly negative instead of staying crowded-long positive. That removes some downside asymmetry, so I would avoid forcing a fresh trade here."
+    },
+    {
+      "ticker": "DYM/USD",
+      "direction": "BUY",
+      "confidence": 0.66,
+      "reasoning": "DYM is one of the better long candidates in this batch. It combines positive price expansion with strongly negative funding and elite squeeze/overcrowding scores, which is the classic continuation setup. The main risk is execution quality because it is still a small and wide market."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "ZEREBRO has positive 24h momentum, but the board is mixed and funding is mildly positive rather than supportive of a squeeze. It is moving, but not with a clean enough edge to outrank the stronger continuation names."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "CHILLGUY is up hard, but the spread is extremely poor and the setup is too unstable to trust as a clean continuation entry. Positive funding also means you are not being paid by a squeeze setup here."
+    },
+    {
+      "ticker": "APEX/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "APEX is one of the cleaner bearish names on this sheet: negative 24h trend, positive funding, and a mechanical bearish lean. It is not as liquid as the majors, but the setup is cleaner than trying to short the stronger squeeze names."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "BUY",
+      "confidence": 0.66,
+      "reasoning": "BLUR remains the best long on the board. It still has strong upside expansion, deeply negative funding, a high squeeze score, and materially better volume quality than most of the other small caps. Macro conditions still haircut confidence, but directionally this is the best continuation candidate here."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "GRIFFAIN has positive momentum and decent liquidity, but the signal is mixed because funding is still positive and the board does not give a strong directional bias. It is interesting, but not clean enough to rank ahead of BLUR, DYM, or TNSR."
+    }
+  ]
+}

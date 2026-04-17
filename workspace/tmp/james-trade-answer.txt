@@ -1,0 +1,17 @@
+Got the data. Your current SOL LONG (this is a new one, different from the earlier $89.52 entry):
+
+- **Entry: $89.0112** — that's actually in the framework-valid pullback zone ($89.00-89.10). Clean entry.
+- **Peak unrealized: +$9.34** (you were green for a stretch)
+- **Worst (right now): -$15.98** — gave back all $9.34 plus $16 more. 100% giveback from peak.
+- **Current SOL: $88.885** — just $0.13 below your entry
+- **Your stop: $81.481** (manual stop you set — 8.3% below entry = ~$953 max loss if hit)
+- **Liq: $86.79** — 2.4% below current. Liquidation will trigger before your manual stop if SOL dumps hard.
+
+**Would we have closed?**
+- Old panic-alert system: YES — the supervisor fired "urgent" giveback alert at 21:55:02 UTC. Under old discipline Oracle might have flattened on the 100% giveback signal.
+- New ride-to-stop framework: NO. Stop valid, thesis not chart-invalidated (SOL still holding above $88 base). We hold.
+
+**What this trade is testing:**
+You're down $16 after being up $9. Under new framework that's accepted variance — not a close signal. We hold to stop unless chart says thesis failed. Price at $88.88 with $89 base reclaim zone a hair above — if SOL can reclaim $89 with a green candle in the next few 5m, your position is validated. If SOL breaks $88 cleanly downside, thesis is wobbling and we'd watch for the chart-invalidation signal.
+
+One real note: your manual stop at $81.48 is below your liq at $86.79. The liq will fire first. Effective max loss = liquidation, not your stop. If you wanted $81.48 to matter you'd need to reduce size or deposit margin. Not telling you to, just math you should know.

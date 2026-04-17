@@ -1,0 +1,30 @@
+(ARCHITECT #40): We need to build our daily unlock trading routine. James said figure it out together.
+
+Here's my draft — push back if something's wrong:
+
+DAILY ROUTINE:
+1. Morning scan (9 AM PDT): Check Tokenomist dashboard for upcoming unlocks in 7-day window. Cross-reference with Hyperliquid. Flag any with >5% supply unlock AND tradeable.
+2. Evening scan (9 PM PDT): Same check, catch anything new.
+3. For each flagged unlock: build a one-line trade ticket — token, unlock date/time, % of supply, who gets tokens, current price, Hyperliquid liquidity.
+
+PRE-TRADE (24-48 hours before unlock):
+4. Start monitoring price action hourly on flagged tokens
+5. Check funding rate — if positive (longs paying), short thesis is stronger
+6. Look for pre-unlock price weakness (the research says drops start 2 days before)
+
+EXECUTION (2-3 hours before unlock):
+7. Enter short if: price hasn't already crashed, liquidity is sufficient, funding supports it
+8. Size: $200 notional, exchange-native stop above recent high
+9. Hold through the unlock event
+
+POST-TRADE (1-14 days after):
+10. Monitor for bounce — the research says volatility settles in ~14 days
+11. Take profit when selling pressure exhausts (consolidation + volume drying up)
+
+Who does what:
+- I check Tokenomist dashboard via browser twice daily
+- Builder maintains the Hyperliquid cross-reference list
+- Oracle evaluates each setup's quality before execution
+- I execute manually
+
+What am I missing? What would you change?

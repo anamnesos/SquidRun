@@ -1,0 +1,126 @@
+{
+  "requestId": "consultation-1775962818970-zcp8r4",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "TON/USD",
+      "direction": "BUY",
+      "confidence": 0.97,
+      "reasoning": "Cover the live TON short now. It has only retained 3% of peak P&L, warning level is urgent, and the short no longer has enough edge to justify defending it."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation flush, so I would not chase a fresh short after the first dump leg."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and no longer offers a clean fresh edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "SOL remains a reduced-size short lean because price is down while open interest is still rising, which suggests fresh shorts are still pressing."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is already deep into a flush and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "SPX/USD",
+      "direction": "SELL",
+      "confidence": 0.59,
+      "reasoning": "SPX still leans short because the dump is confirmed and the tape remains weak, but the edge is already late and reduced by the active veto."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "VVV has already broken lower on the day, so I would rather wait than force a fresh short here."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "FARTCOIN still looks shortable on a reduced-size basis because it is holding up too well after the broader dump and still reads as a short-covering rally."
+    },
+    {
+      "ticker": "PENGU/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "PENGU is weak but not showing enough structure or crowding to justify a fresh directional trade."
+    },
+    {
+      "ticker": "VIRTUAL/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "VIRTUAL has some squeeze fuel from negative funding, but after this dump I would rather wait for a cleaner reset before taking either side."
+    },
+    {
+      "ticker": "PUMP/USD",
+      "direction": "SELL",
+      "confidence": 0.56,
+      "reasoning": "PUMP remains a reduced-size short lean because it is down while funding is still positive, but the edge is only modest after the first flush."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "LIT leans short because price is slipping while open interest is still rising, which suggests fresh shorts are pressing into a weak tape."
+    },
+    {
+      "ticker": "AERO/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "AERO is also a modest short lean because price is down while open interest is still building, which is consistent with a bearish continuation setup."
+    },
+    {
+      "ticker": "BRETT/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "BRETT is too low-liquidity to trust for a serious fresh position."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "GOAT is too low-liquidity and too weakly signaled to justify a fresh trade."
+    },
+    {
+      "ticker": "NOT/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "NOT has squeeze fuel from negative funding, but the market regime and poor liquidity argue for patience instead of forcing a long."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "SELL",
+      "confidence": 0.63,
+      "reasoning": "STBL remains one of the cleaner fades because price is still green while funding is extremely positive, which leaves the long side crowded."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "GRIFFAIN is already in a flush state and too low-liquidity to trust for a fresh short chase."
+    },
+    {
+      "ticker": "WLD/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "WLD is still too resilient to call a clean short and not attractive enough to buy in this macro tape."
+    },
+    {
+      "ticker": "MANTA/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "MANTA is too low-liquidity and too mixed structurally to justify a fresh position."
+    }
+  ]
+}

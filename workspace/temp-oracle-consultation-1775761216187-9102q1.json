@@ -1,0 +1,126 @@
+{
+  "requestId": "consultation-1775761216187-9102q1",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BLUR/USD",
+      "direction": "HOLD",
+      "confidence": 0.72,
+      "reasoning": "This live long is still behaving acceptably. It is only newly opened, currently green, has not triggered any giveback warning, and the board remains bullish with negative funding and good volume. Manage it, but there is no reason to flatten it immediately."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "BUY",
+      "confidence": 0.84,
+      "reasoning": "This is the weak live position. The short is already losing money, predicted funding has flipped away from supporting the short, and the mechanical edge is only moderate rather than strong. In a position-management round, I would cover and stop carrying the weaker leg."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC has slight squeeze support from negative funding, but the board still says no-trade and the directional edge is limited. Not worth shifting capital here while managing live positions."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "ETH is still too neutral to matter: no-trade board, modest liquidity, and no strong directional asymmetry. Easy pass."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "SOL has become more balanced with predicted funding even turning slightly negative, but the board remains no-trade and the edge is not strong enough to act on now."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.63,
+      "reasoning": "TNSR remains one of the better continuation longs on the board with strong 24h expansion, negative funding, and a bullish trade flag. Macro still being RED keeps this at reduced-size conviction only."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "CHILLGUY has strong momentum, but the spread is poor and funding is positive, so it still looks more like a chase trap than a clean continuation trade."
+    },
+    {
+      "ticker": "ZEC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "ZEC has real liquidity and decent strength, but after the recent move it is more interesting than actionable. I would keep it on watch, not press it here."
+    },
+    {
+      "ticker": "DYM/USD",
+      "direction": "BUY",
+      "confidence": 0.65,
+      "reasoning": "DYM is one of the strongest fresh longs on the board: strong price expansion, negative funding, elite squeeze and crowding scores, and a bullish trade flag. The only reason confidence is capped is execution quality."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "VVV has good momentum and decent liquidity, but the board is still neutral and funding is positive. It is interesting, but not cleaner than DYM, TNSR, or BLUR."
+    },
+    {
+      "ticker": "KAITO/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "KAITO is oversold and funding is now negative, but the setup has become mixed rather than clearly bearish or bullish. Not clean enough to prioritize."
+    },
+    {
+      "ticker": "2Z/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "2Z has reversal ingredients with negative funding and heavy crowding, but the board is still mixed and liquidity is not great. Watchlist only."
+    },
+    {
+      "ticker": "MAV/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "MAV is too small and too mixed to matter here. Neutral board, mediocre liquidity, and no clear asymmetry."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "ZEREBRO has a decent squeeze profile with negative funding and a bullish lean, but liquidity is still too thin to outrank the better continuation names."
+    },
+    {
+      "ticker": "CFX/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "CFX has modest momentum, but the board remains neutral and execution quality is only average. Not a priority signal."
+    },
+    {
+      "ticker": "MORPHO/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "MORPHO is constructive and liquid enough, but funding is still positive and the board is neutral. It is tradable, not especially compelling."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "GRASS has positive momentum but still lacks a strong mechanical edge. Better to keep capital focused on the higher-quality longs."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "MON has become more neutral, with only a tiny positive 24h move and no strong board bias. It no longer stands out as a clean short."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "TON is low-energy and no-trade on the board. Not worth attention relative to the stronger setups."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "MERL is moving, but liquidity is thin and the spread is ugly. The board is not strong enough to compensate for that."
+    }
+  ]
+}

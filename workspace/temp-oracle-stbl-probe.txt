@@ -1,0 +1,26 @@
+Oracle — fresh setup candidate: STBL.
+
+Live HL data I just pulled:
+- Mark: 0.034344
+- Max leverage: 3x
+- Funding: 2.868 bps (that's the highest I've seen tonight, longs paying shorts ~0.86% per day from funding alone)
+- OI: 119M STBL (~$4.1M notional)
+- 24h vol: $709,800 (thin-ish but 4x BABY's vol)
+- 24h change: +6.93%
+
+Mechanical profile matches your "extreme funding + extended move + thin-ish book" fade pattern. Better liquidity than BABY, same shape as LIT was at entry but with 3.6x the funding edge.
+
+My question: does this pass your harvest-mode discipline bar? I'm tempted to probe $75 margin × 3x = $225 notional with tight stop ~4% above entry. That's about 8% of my withdrawable cash.
+
+Pros:
+- Funding edge is legitimately extreme (2.87 bps, LIT was 1.51 at entry)
+- Thin liquidity is similar shape to setups we've traded
+- Clean mechanical read — no narrative needed
+
+Cons:
+- We're in post-BABY harvest mode
+- LIT had same shape and only returned $0.83
+- VETO still active (thin name, unlikely to be scoped)
+- Macro RED
+
+Your call: probe or pass?

@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775944817766-4hofgl",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is firm but not giving a clean enough edge to override the active veto."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "ETH still looks constructive, but the move is already underway and not attractive enough for a fresh entry under veto."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "SOL remains mixed, with price stable but open interest softening, which keeps it in watch-only territory."
+    },
+    {
+      "ticker": "TAO/USD",
+      "direction": "SELL",
+      "confidence": 0.65,
+      "reasoning": "TAO is one of the clearest crowded-upside fades on the board, with price up 5.3%, funding near +2.98 bps, and open interest up 22.91%, but veto keeps conviction capped."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.66,
+      "reasoning": "FARTCOIN is up 10.08% with positive funding and rising open interest, so it still reads as one of the best crowded-upside fade candidates under this defensive regime."
+    },
+    {
+      "ticker": "WLD/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "WLD is strong but not crowded enough to justify a fade, and veto blocks chasing it on the long side."
+    },
+    {
+      "ticker": "ALT/USD",
+      "direction": "BUY",
+      "confidence": 0.6,
+      "reasoning": "ALT remains the best squeeze-long candidate because predicted funding is flipping negative while price is only modestly higher, but poor liquidity and veto keep this reduced-confidence only."
+    },
+    {
+      "ticker": "PENGU/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "PENGU has upside momentum but no clean squeeze edge or rejection signal, so I would keep it watch-only."
+    },
+    {
+      "ticker": "PUMP/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "PUMP is moving but not in a way that creates a clean, high-conviction continuation or fade entry under veto."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "VVV is still extended enough to stay on the fade side, but it has not yet printed the clear peak rejection that would justify a stronger short call."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "TON remains a strong future peak-rejection watch, but the chart has not actually cracked yet, so I would keep it at HOLD."
+    }
+  ]
+}

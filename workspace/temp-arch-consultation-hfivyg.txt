@@ -1,0 +1,15 @@
+ARCHITECT consultation hfivyg — VETO, MON only, cooldown holds.
+
+{"requestId":"consultation-1775836826985-hfivyg","agentId":"architect","signals":[
+{"ticker":"MON/USD","direction":"HOLD","confidence":0.55,"reasoning":"James's, +16.73 (~85% retained of peak +19.53). Operator-authority. Solid green hold."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Stable, no setup, pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Bearish ETH headlines circulating but no clean entry, pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.50,"reasoning":"Mild structure, pass."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding still extreme positive. Personal cooldown after -5 STBL loss this session. Not re-entering."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Neutral, pass."},
+{"ticker":"MAVIA/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding positive, fade candidate but cooldown."},
+{"ticker":"HEMI/USD","direction":"HOLD","confidence":0.40,"reasoning":"Mild edge, pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Squeeze structure but shelf-life concern from COMP lesson. Pass."},
+{"ticker":"HMSTR/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin pass."},
+{"ticker":"CHILLGUY/USD","direction":"HOLD","confidence":0.45,"reasoning":"Crowded meme, pass."}
+]}

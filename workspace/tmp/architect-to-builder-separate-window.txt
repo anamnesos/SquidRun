@@ -1,0 +1,10 @@
+(ARCHITECT #7): James just asked about the "separate window thing" for Oracle's updates.
+
+His intent: Oracle gets her own isolated workstream (own architect, own context) so trading decisions don't tangle with the main lane.
+
+Questions for you (as the person who builds the infra):
+1. Was this ever spec'd or partially built? Do you have a design doc / PR / scratch on it?
+2. What exists today — the watch engine you just shipped is one piece. What else is wired for Oracle autonomy?
+3. If James green-lights it, what's the shortest path to giving Oracle a real isolated lane? Separate Electron pane pointed at a dedicated agent session? New chat thread? Something deeper in the supervisor?
+
+Give me your honest architectural read. Not a roadmap — just what's real today, what's close, and what's the cheapest credible delivery of "Oracle runs her own lane."

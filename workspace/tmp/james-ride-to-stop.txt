@@ -1,0 +1,21 @@
+Locking this in — important distinction.
+
+**Stop-loss = exit. Peak-giveback percentage = noise.**
+
+What you're saying:
+- Once you're in a trade, you ride to the STOP. Not "I gave back the profit, close it."
+- Entry points are never perfect. Drawdown to the stop is expected variance, not a panic signal.
+- The -$125 last night was about NO STOP LOSS letting drawdown run unbounded — NOT about holding through retracement. With a stop in place, drawdown to the stop = accepted risk.
+- Giveback-from-peak notifications literally induce panic closes instead of data-driven ones.
+
+**Concrete actions from this:**
+
+1. **Our giveback-P&L alerts are the problem.** The supervisor fires "SOL LONG gave back 100% of peak PNL" — that's panic fuel, not a trade signal. Asking Builder to kill those or at minimum suppress them for trades with stops in place.
+
+2. **New rule for Oracle's ticket language.** Her trade calls should say "if the stop hits, thesis was wrong — we take the L and move on. In between, the position is live and we don't micro-manage." No more Oracle flatten-calls just because a position is drawing down toward its stop.
+
+3. **Panic test for the Architect (me).** When I see a position draw down, my default should be "is the stop still valid?" not "should we close early?" If stop still valid = hands off. That's the rule.
+
+The -$125 lesson is about UNBOUNDED risk (no stop), not about HOLDING variance. I was conflating them. Correcting now.
+
+Poker: you don't fold because the river came scary. You fold based on pot odds vs. hand strength. Peak-giveback alerts = scary river card. Stop = pot odds threshold.

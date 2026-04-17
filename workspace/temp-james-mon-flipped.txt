@@ -1,0 +1,11 @@
+I see you flipped — closed the short, opened LONG MON 67,908 @ 0.036919. Already +12 dollars.
+
+Recalibrating my monitor:
+- Position: LONG (not short)
+- Entry: 0.036919
+- Mark: 0.03713
+- Liq: 0.032828 (11.59% below — safe room)
+- Notional: ~2,521 (sized way down from prior ~7,500)
+- Withdrawable cash freed: 500
+
+Respect on the move. You covered the invalidated thesis, banked 500 as safety, sized down to a probe, and flipped WITH the trend you identified. That's exactly the right play after a losing short on a trending coin. I'll monitor from the long side now — I'll ping if MON drops under 0.0360 (your entry pain zone) or if the long PnL goes below -15.

@@ -1,0 +1,24 @@
+ARCHITECT consultation 2fel0w — TAO winning +$107, holding for the structural breakdown.
+
+{"requestId":"consultation-1775862011696-2fel0w","agentId":"architect","signals":[
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.75,"reasoning":"James's manual short, +107 unrealized (peak today). Mountain breakdown thesis firing. Hold for the multi-day move."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Stable, pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"No clean trigger."},
+{"ticker":"CHILLGUY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended +30%, mean reversion risk."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended pump, pass."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"TNSR/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Personal cooldown after loss."},
+{"ticker":"WLFI/USD","direction":"BUY","confidence":0.55,"reasoning":"Squeeze long candidate, funding -0.74 bps, $15.9M vol, real positioning. Backup if TAO breaks but full account already deployed."},
+{"ticker":"STBL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Personal cooldown."},
+{"ticker":"MERL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"MON/USD","direction":"HOLD","confidence":0.45,"reasoning":"Chop pattern, no edge."},
+{"ticker":"COMP/USD","direction":"HOLD","confidence":0.45,"reasoning":"Squeeze long shelf-life lesson, pass."},
+{"ticker":"DYM/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"GRIFFAIN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"TRB/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."},
+{"ticker":"FOGO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."},
+{"ticker":"MAVIA/USD","direction":"HOLD","confidence":0.40,"reasoning":"Pass."},
+{"ticker":"SKR/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin, pass."}
+]}

@@ -1,0 +1,8 @@
+Oracle — James is asking me a direct question: did YOU send the consultation responses that come through as JSON with "agentId": "oracle"?
+
+Example message:
+{"requestId":"consultation-1775979016039-3icvvp","agentId":"oracle","signals":[{"ticker":"BTC/USD","direction":"HOLD","confidence":0.81,...}]}
+
+Did you generate and send that? Or does it come from somewhere else?
+
+Simple yes or no with explanation. James needs to know.

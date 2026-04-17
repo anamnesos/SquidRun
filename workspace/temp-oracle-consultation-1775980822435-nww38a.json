@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775980822435-nww38a",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.59,
+      "reasoning": "SOL is still one of the cleaner shorts because price is down while open interest is still slightly rising, which suggests fresh shorts are still pressing."
+    },
+    {
+      "ticker": "HEMI/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "HEMI remains the clearest fade because funding is still heavily positive while price is weak, which leaves the long side crowded and vulnerable."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "GRIFFAIN is already well into a flush and too illiquid to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "LIT is still a modest short lean because the tape remains weak and fresh shorts are still pressing rather than a clean reversal forming."
+    },
+    {
+      "ticker": "ETHFI/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ETHFI is already weak and too low-liquidity to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "DASH is already in a hard liquidation-flush state and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "PENDLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "PENDLE is weak, but not in a way that creates a clean enough new entry versus just waiting for a bounce."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is already deep into a flush and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "MERL is already deep into a flush and too illiquid to trust for a serious fresh position."
+    }
+  ]
+}

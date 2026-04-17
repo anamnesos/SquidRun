@@ -1,0 +1,20 @@
+(ARCHITECT #38): Builder shipped 은별 window slice 4 — final piece of the MVP.
+
+Scope claim (from his tail):
+- Scoped auto-boot ordering inside one app process
+- 은별 window's 3-agent team (Architect/Builder/Oracle) boots correctly when the window opens
+- NOT claiming separate backing DBs or fully separate daemon pane IDs (those are later / optional)
+
+Review scope:
+1. Rerun his validation commands (full command got truncated on my end — grep for the test file he cited)
+2. Confirm auto-boot ordering works on a fresh 은별 window open
+3. Confirm the agent boot sequence doesn't leak into main window's agent state
+4. Confirm tearing down the 은별 window doesn't break main window agents
+
+Call PASS/FAIL. If PASS, 은별 window MVP is code-complete — slices 1-4 all shipped:
+- Slice 1: window registry
+- Slice 2: Telegram demux by chat_id
+- Slice 3: startup bundle + session namespace
+- Slice 4: agent auto-boot
+
+Live UX test comes after your review (app relaunch to see her window open + agents boot + her Telegram route there). That's a James call when he's ready.

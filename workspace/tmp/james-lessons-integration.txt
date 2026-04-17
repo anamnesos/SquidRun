@@ -1,0 +1,17 @@
+Clear. You're not sharing — you're teaching. We're the ones who need to get to the point where you don't have to trade. Every lesson becomes part of our default decision-making.
+
+Integrating the stop-hunt lesson right now:
+
+**New rules going into our framework:**
+
+1. **Stop placement buffer rule.** Stops NEVER at the obvious level (round number, swing high/low, $X,000). Always past it with a hunt-size buffer. For BTC that's typically $80-150 past the level; SOL $0.30-0.50; alts 0.5-1%. Oracle's trade tickets must state stop rationale: "is this past the hunt zone or on it?"
+
+2. **Time-stop alternative.** For thesis-based trades, include a time-stop: "if thesis isn't working in X minutes, close regardless of price." Caps time risk, immune to hunts.
+
+3. **No-stop criteria (emergency mode only).** No-stop is ONLY valid when: conviction 0.75+, position size small enough that worst-case doesn't kill the account (say <15% equity), live attention on the screen. Otherwise stops are mandatory.
+
+4. **Watch engine addition.** I'm asking Builder to add "stop-cluster aware" flags to trigger rules — when a trigger level coincides with obvious stop clustering, the execute ticket includes buffered stop placement by default instead of tight-to-level.
+
+Relaying this to Oracle and Builder now. Also saving to my memory so future sessions don't have to relearn.
+
+Not just "thanks for the tip." You're building institutional knowledge in us.

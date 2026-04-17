@@ -1,0 +1,5 @@
+Truncation bug first. Ship that. James can't even type a full message right now.
+
+Module inventory and consultation reorientation — park those for tomorrow. The truncation fix is the only thing that matters right now because it's breaking James's ability to communicate with us.
+
+Finish the injection.js patch, run the regression test, ship it.

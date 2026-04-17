@@ -33,6 +33,18 @@ function normalizeSource(value, fallback = 'manual') {
   return normalized || fallback;
 }
 
+function normalizeWatchlistSource(value, fallback = 'manual') {
+  const normalized = normalizeSource(value, fallback);
+  if (normalized === 'market_scanner') return 'market_scanner';
+  return normalized;
+}
+
+function normalizeCryptoTicker(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) return '';
+  return normalized.endsWith('/USD') ? normalized : `${normalized}/USD`;
+}
+
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
@@ -55,6 +67,7 @@ function defaultExchangeForAssetClass(assetClass = 'us_equity') {
 }
 
 function defaultBrokerForAssetClass(assetClass = 'us_equity') {
+  if (assetClass === 'crypto') return 'hyperliquid';
   if (assetClass === 'prediction_market') return 'polymarket';
   return 'alpaca';
 }
@@ -82,7 +95,7 @@ function normalizeWatchlistEntry(entryOrTicker, options = {}) {
     exchange: normalizeExchange(input.exchange, defaultExchangeForAssetClass(assetClass)),
     broker: normalizeBroker(input.broker, defaultBrokerForAssetClass(assetClass)),
     assetClass,
-    source: normalizeSource(input.source, fallbackSource),
+    source: normalizeWatchlistSource(input.source, fallbackSource),
     reason: toText(input.reason),
     addedAt: toIsoTimestamp(input.addedAt, null),
     expiry: toIsoTimestamp(input.expiry || input.expiresAt, null),
@@ -123,12 +136,9 @@ const DEFAULT_WATCHLIST = [
 });
 
 const DEFAULT_CRYPTO_WATCHLIST = [
-  { ticker: 'BTC/USD',  name: 'Bitcoin',   sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
-  { ticker: 'ETH/USD',  name: 'Ethereum',  sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
-  { ticker: 'SOL/USD',  name: 'Solana',    sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
-  { ticker: 'AVAX/USD', name: 'Avalanche', sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
-  { ticker: 'LINK/USD', name: 'Chainlink', sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
-  { ticker: 'DOGE/USD', name: 'Dogecoin',  sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
+  { ticker: 'BTC/USD',  name: 'Bitcoin',   sector: 'Crypto', exchange: 'CRYPTO', broker: 'hyperliquid', assetClass: 'crypto' },
+  { ticker: 'ETH/USD',  name: 'Ethereum',  sector: 'Crypto', exchange: 'CRYPTO', broker: 'hyperliquid', assetClass: 'crypto' },
+  { ticker: 'SOL/USD',  name: 'Solana',    sector: 'Crypto', exchange: 'CRYPTO', broker: 'hyperliquid', assetClass: 'crypto' },
 ].map((entry) => {
   const normalized = normalizeWatchlistEntry(entry, { source: 'static', assetClass: 'crypto' });
   normalized.addedAt = null;
@@ -144,6 +154,34 @@ function defaultDynamicState() {
     dynamicEntries: [],
     disabledTickers: [],
     updatedAt: null,
+  };
+}
+
+function resolveExpiryFromTtl(now = new Date(), ttlMs = 4 * 60 * 60 * 1000) {
+  const base = now instanceof Date ? now : new Date(now);
+  const normalizedTtlMs = Math.max(60 * 1000, Number(ttlMs) || 0);
+  if (Number.isNaN(base.getTime())) {
+    return toIsoTimestamp(Date.now() + normalizedTtlMs, null);
+  }
+  return new Date(base.getTime() + normalizedTtlMs).toISOString();
+}
+
+function normalizeMarketScannerMover(mover = {}) {
+  const ticker = normalizeCryptoTicker(mover.ticker || mover.symbol || mover.coin);
+  if (!ticker) {
+    throw new Error('ticker is required');
+  }
+  return {
+    ticker,
+    name: toText(mover.name, ticker),
+    sector: toText(mover.sector, 'Crypto'),
+    exchange: normalizeExchange(mover.exchange, defaultExchangeForAssetClass('crypto')),
+    broker: normalizeBroker(mover.broker, defaultBrokerForAssetClass('crypto')),
+    assetClass: normalizeAssetClass(mover.assetClass || mover.asset_class, 'crypto'),
+    source: 'market_scanner',
+    reason: toText(mover.reason, 'Market scanner mover'),
+    addedAt: toIsoTimestamp(mover.addedAt, null),
+    expiry: toIsoTimestamp(mover.expiry || mover.expiresAt, null),
   };
 }
 
@@ -299,6 +337,44 @@ function addTicker(ticker, details = {}) {
   return true;
 }
 
+function promoteMarketScannerMovers(movers = [], options = {}) {
+  const statePath = options.statePath || DEFAULT_DYNAMIC_WATCHLIST_STATE_PATH;
+  const now = options.now || new Date();
+  const ttlMs = options.ttlMs || options.expiryMs || (4 * 60 * 60 * 1000);
+  const { state } = resolveState({ ...options, statePath });
+  const entries = Array.isArray(movers) ? movers : [movers];
+  const promotedTickers = [];
+  const dynamicEntries = state.dynamicEntries.filter((entry) => {
+    const ticker = toTicker(entry?.ticker);
+    return !entries.some((mover) => toTicker(mover?.ticker || mover?.symbol || mover?.coin) === ticker);
+  });
+
+  for (const mover of entries) {
+    const normalizedMover = normalizeMarketScannerMover(mover);
+    const promotedEntry = normalizeWatchlistEntry({
+      ...normalizedMover,
+      addedAt: options.addedAt || now,
+      expiry: options.expiry || options.expiresAt || resolveExpiryFromTtl(now, ttlMs),
+    }, {
+      source: 'market_scanner',
+    });
+    dynamicEntries.push(promotedEntry);
+    promotedTickers.push(promotedEntry.ticker);
+  }
+
+  const nextState = {
+    ...state,
+    dynamicEntries,
+  };
+  persistStateIfNeeded(statePath, nextState, options.persist);
+
+  return {
+    ok: true,
+    promotedTickers,
+    state: nextState,
+  };
+}
+
 function removeTicker(ticker, options = {}) {
   const normalizedTicker = toTicker(ticker);
   if (!normalizedTicker) return false;
@@ -353,8 +429,12 @@ module.exports = {
   normalizeAssetClass,
   normalizeBroker,
   normalizeExchange,
+  normalizeMarketScannerMover,
   normalizeSource,
+  normalizeWatchlistSource,
   normalizeWatchlistEntry,
+  promoteMarketScannerMovers,
+  resolveExpiryFromTtl,
   pruneExpiredTickers,
   readDynamicState,
   removeTicker,

@@ -1,0 +1,5 @@
+MON gave back fast: +1.23 (was +10.61 peak 10 min ago). -9 swing.
+
+12% retention of peak. Still your manual rule — none of your triggers fired (price still well below 0.03780, liq still wide). Just keeping you informed.
+
+If you want me to harvest at +1 (basically breakeven save) before it goes red again, say the word. Otherwise holding.

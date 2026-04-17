@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776092536030-1iwd0m",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "BTC has rebounded sharply, but the live Hormuz blockade headlines still keep the board in a veto regime. Fresh entries are less attractive than simply respecting the event brake."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "ETH is participating in the rebound, but the live geopolitical shock still outweighs the local chart improvement. Best to stay neutral under veto."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "SOL has improved, but the move still reads more like a rebound in a headline-sensitive tape than a clean durable breakout. Neutral is the disciplined call."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "STABLE has a very strong raw squeeze profile, but that alone is not enough to justify a fresh long through a live blockade headline. Best raw long is not the same as best trade now."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "VVV is still mostly a short-covering rebound rather than a clean fresh long. With the veto active, that is not enough to justify a trade."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "CHILLGUY remains constructive, but it is extended enough that the fresh event risk matters more than the local momentum. Better to stand down."
+    },
+    {
+      "ticker": "BOME/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "BOME is too thin and too noisy to trust through a headline-driven regime. No reason to force it."
+    },
+    {
+      "ticker": "VIRTUAL/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "VIRTUAL is rebounding, but not with a strong enough edge to justify acting through a live geopolitical veto. Watch-only at best."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "WCT has squeeze characteristics and improving price action, but the execution quality is still messy and the event brake makes it too easy to get trapped. Keep it neutral."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "GOAT remains damaged, but the downside is already too mature and unstable to trust as a fresh short. Weak structure alone is not enough."
+    },
+    {
+      "ticker": "JTO/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "JTO still has a real squeeze setup on paper, but the blockade headline keeps this from being a clean actual long. Under veto, it belongs on the watchlist rather than in the buy column."
+    }
+  ]
+}

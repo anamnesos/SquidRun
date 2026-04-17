@@ -61,6 +61,17 @@ describe('Risk Engine', () => {
       expect(result.approved).toBe(true);
     });
 
+    test('allows Hyperliquid crypto SELL to open a fresh short', () => {
+      const result = checkTrade(
+        { ticker: 'ETH/USD', direction: 'SELL', price: 2000, assetClass: 'crypto', broker: 'hyperliquid' },
+        makeAccount(),
+      );
+      expect(result.approved).toBe(true);
+      expect(result.violations).toHaveLength(0);
+      expect(result.maxShares).toBeCloseTo(0.0075, 6);
+      expect(result.stopLossPrice).toBeCloseTo(2080);
+    });
+
     test('rejects when max trades per day reached', () => {
       const result = checkTrade(
         { ticker: 'AAPL', direction: 'BUY', price: 10 },

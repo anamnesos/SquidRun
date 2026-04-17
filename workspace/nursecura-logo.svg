@@ -1,0 +1,6 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='400' height='200' viewBox='0 0 400 200'>
+  <rect width='400' height='200' fill='#f0f7f4' rx='10'/>
+  <text x='200' y='80' text-anchor='middle' font-family='Arial, sans-serif' font-size='36' font-weight='bold' fill='#2d8659'>NurseCura</text>
+  <text x='200' y='115' text-anchor='middle' font-family='Arial, sans-serif' font-size='14' fill='#555'>간호사 경험 기반 산모·신생아 헬스케어 큐레이션</text>
+  <text x='200' y='155' text-anchor='middle' font-family='Arial, sans-serif' font-size='40'>🏥👶🍼</text>
+</svg>

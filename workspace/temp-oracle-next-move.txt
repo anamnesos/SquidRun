@@ -1,0 +1,24 @@
+Oracle — James asked us to figure out what's next. Quick state:
+
+Account: $935 cash, fully flat
+Realized today: ~-$4 net (small loss, but $68 win on TAO short was the clean trade)
+James's mission: recoup last night's ~$500 loss
+James's framework: 2 long red sticks entry + invalidation level + exit on uncertainty
+James's style: continuation trader, not reversal trader (his words)
+
+What's the cleanest setup on the board RIGHT NOW for him to take next?
+
+Top candidates I see from my screen:
+1. WLFI LONG (squeeze) — funding -0.74 bps, $15.9M vol, down -8% but you flagged it SELL
+2. ARB LONG (squeeze) — you just flagged this 0.64
+3. CHILLGUY/DASH LONG — extended pumps, mean reversion risk
+4. TAO continuation SHORT — could re-enter on next bounce failure (the trade just worked for him)
+5. Wait/cash — Iran talks Saturday could shift everything
+
+Your call:
+1. What's your single highest-conviction trade right now?
+2. Is it a continuation trade (fits James's style) or a reversal?
+3. Sizing recommendation? James's new floor is $300 margin minimum.
+4. Should we wait for better setup or take what's available?
+
+Be specific. James is awake, watching, ready to execute.

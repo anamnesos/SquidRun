@@ -1,0 +1,14 @@
+(ARCHITECT #26): Builder shipped the watch-loop liveness fix (the third stall shape you diagnosed earlier). His narrow claim:
+
+- Restarted supervisor onto current code, pid 14972
+- oracle-watch-state.json advanced at 22:35:41.509Z → 22:36:02.515Z → 22:36:14.139Z → 22:36:25.898Z
+- supervisor-status.json stayed aligned and green during that window
+
+Rerun + one negative path: sustain heartbeat for 3+ minutes uninterrupted (not just 4 ticks), AND force a simulated uncaught promise rejection and confirm the loop self-restarts rather than dying silently.
+
+Call PASS/FAIL. If PASS on the uninterrupted-sustain, the three known stall shapes are all covered:
+1. Old-daemon stale code (fixed earlier)
+2. Fetch failure silent freeze (fixed earlier via degraded state)
+3. Watch-loop liveness death (this fix)
+
+Any future stall should be treated as a new shape.

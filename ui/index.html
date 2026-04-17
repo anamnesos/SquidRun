@@ -20,7 +20,20 @@
     <div class="startup-loading-content">
       <img class="startup-loading-logo" src="assets/squidrun-logo.png" alt="SquidRun logo">
       <div class="startup-loading-spinner" aria-hidden="true"></div>
-      <span class="startup-loading-text" id="startupLoadingText">Starting SquidRun...</span>
+      <div class="startup-loading-copy">
+        <span class="startup-loading-text" id="startupLoadingText">Starting SquidRun...</span>
+        <span class="startup-loading-stage-text" id="startupLoadingStageText">Bootstrapping workspace…</span>
+      </div>
+    </div>
+    <div class="startup-loading-progress-shell" aria-hidden="true">
+      <div class="startup-loading-progress-track">
+        <div class="startup-loading-progress-fill" id="startupLoadingProgressFill"></div>
+      </div>
+      <div class="startup-loading-meta">
+        <span class="startup-loading-eta" id="startupLoadingEta">Estimating…</span>
+        <span class="startup-loading-percent" id="startupLoadingPercent">0%</span>
+      </div>
+      <div class="startup-loading-checks" id="startupLoadingChecks"></div>
     </div>
   </div>
 

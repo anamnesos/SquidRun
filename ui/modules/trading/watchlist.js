@@ -26,7 +26,15 @@ function getTickers(options = {}) {
 }
 
 function getBrokerForTicker(ticker, fallback = 'alpaca') {
-  return getEntry(ticker)?.broker || dynamicWatchlist.normalizeBroker(fallback);
+  const entry = getEntry(ticker);
+  if (entry?.broker) {
+    return entry.broker;
+  }
+  const normalizedTicker = String(ticker || '').trim().toUpperCase();
+  if (normalizedTicker.endsWith('/USD')) {
+    return 'hyperliquid';
+  }
+  return dynamicWatchlist.normalizeBroker(fallback);
 }
 
 function getExchangeForTicker(ticker, fallback = 'SMART') {
@@ -34,7 +42,7 @@ function getExchangeForTicker(ticker, fallback = 'SMART') {
 }
 
 function getAssetClassForTicker(ticker, fallback = 'us_equity') {
-  return getEntry(ticker)?.assetClass || dynamicWatchlist.normalizeAssetClass(fallback);
+  return getEntry(ticker)?.assetClass || (String(ticker || '').trim().toUpperCase().endsWith('/USD') ? 'crypto' : dynamicWatchlist.normalizeAssetClass(fallback));
 }
 
 function addToWatchlist(ticker, name, sector, exchange, broker, assetClass) {

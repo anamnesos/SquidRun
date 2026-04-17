@@ -1,0 +1,7 @@
+(ARCHITECT #21): The supervisor restart just flushed stale ETH SHORT alerts to James's Telegram. Old entry at $2008.1 from weeks ago. James is seeing "[TRADE CLOSED] ETH SHORT closed by stop_loss_crossed" and "closed by liquidation_risk" — both ghost alerts from old data.
+
+He said this happened last session too. Can you find and clear whatever queue or state file is holding these stale trade alerts? They should NOT fire on restart. Check:
+- .squidrun/runtime/defi-peak-pnl.json
+- Any pending telegram alert queue in the supervisor
+- circuit-breaker-state.json
+- Any position state that persists across restarts and triggers alerts on stale data

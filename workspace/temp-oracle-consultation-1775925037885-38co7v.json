@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775925037885-38co7v",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "BTC is stable with mild trend-supported mechanics, but the active veto blocks chasing a fresh long and there is no clean short edge either."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "ETH still looks structurally firm with positive price and open-interest support, but under veto it remains watch-only rather than a fresh long."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "SOL reads more like a short-covering bounce than a clean trend, which makes it unattractive in either direction under the event brake."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.64,
+      "reasoning": "This is one of the cleaner crowded-long fades on the board: price is up hard, open interest is expanding with the move, and funding is positive enough to make the upside look crowded."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "SELL",
+      "confidence": 0.67,
+      "reasoning": "STBL remains the clearest bearish fade because funding is still extremely positive, crowding is elevated, and the rally already looks expensive rather than fresh."
+    },
+    {
+      "ticker": "XPL/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "XPL is strong but not clean enough for a veto-breaking long, and there is not enough crowding to justify a fresh short either."
+    },
+    {
+      "ticker": "WLD/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "WLD has upside momentum, but the signal quality is only moderate and this is still a veto regime, so I would keep it watch-only."
+    },
+    {
+      "ticker": "NOT/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "Liquidity is too thin and spreads are too wide for a serious new position here, especially with the event brake active."
+    },
+    {
+      "ticker": "ENA/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "ENA is one of the few names showing an early rollover profile without already being fully broken, so it is a reasonable secondary short candidate if we need one."
+    },
+    {
+      "ticker": "FOGO/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "FOGO already looks like a flush rather than a fresh breakdown, so pressing the short here would be late."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.75,
+      "reasoning": "VVV is strong and extended, but veto keeps it in watch-only territory rather than a chase long."
+    }
+  ]
+}

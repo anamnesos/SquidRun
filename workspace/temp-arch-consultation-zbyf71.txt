@@ -1,0 +1,15 @@
+ARCHITECT consultation zbyf71 — News veto CLEARED but James in cool-off + rejected all candidates. All HOLD.
+
+{"requestId":"consultation-1775946617041-zbyf71","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Trend supported, news veto clear, but James cool-off. No fresh entry."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.55,"reasoning":"Was BUY 0.62 earlier per Oracle and my call, James reviewed and rejected. HOLD respecting his decision."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cool-off."},
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.45,"reasoning":"Funding climbing but tape bullish — fading is wrong side. Watch only."},
+{"ticker":"FARTCOIN/USD","direction":"HOLD","confidence":0.45,"reasoning":"Already round-tripped twice today."},
+{"ticker":"NOT/USD","direction":"HOLD","confidence":0.40,"reasoning":"Vol thin."},
+{"ticker":"WLD/USD","direction":"HOLD","confidence":0.45,"reasoning":"Strong but extended."},
+{"ticker":"FET/USD","direction":"HOLD","confidence":0.45,"reasoning":"$1M vol borderline, +4.5% 24h, no clear edge."},
+{"ticker":"PUMP/USD","direction":"HOLD","confidence":0.50,"reasoning":"Active buyback program (7.13% supply), structurally bullish but James rejected as unclean."},
+{"ticker":"VVV/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mid-range chop, no clear setup."},
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.40,"reasoning":"Extended pump."}
+]}

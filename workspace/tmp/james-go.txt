@@ -1,0 +1,11 @@
+Green-lit. Builder's on it now. Five pieces he'll ship in slices:
+
+1. Window registry (replace single main window with many)
+2. Second BrowserWindow with her own 3-agent team layout
+3. Telegram routing by chat_id (hers goes to hers, ours stays ours)
+4. Her own memory namespace (her conversation history, our conversation history, separate)
+5. 은별 startup bundle (case files + confirmed-facts auto-loaded + Korean case-focused CLAUDE.md)
+
+Oracle reviews each slice before we stack the next one. I'll report when slice 1 is live, not every little commit.
+
+No trading action from us meanwhile — flat $611.78.

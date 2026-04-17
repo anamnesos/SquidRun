@@ -1,0 +1,9 @@
+(ARCHITECT #25): While Builder implements the reset, help me evaluate the top setup for our first manual trade.
+
+Last few scans consistently show TURBO, TNSR, and BLUR as top longs. All have negative funding + squeeze characteristics.
+
+Quick questions — don't write an essay, just answer directly:
+1. Which ONE of these three would you pick right now if you had to?
+2. What price would you enter at?
+3. Where would you put the stop?
+4. What's the thesis in one sentence?

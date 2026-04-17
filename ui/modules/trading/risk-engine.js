@@ -47,6 +47,8 @@ const DEFAULT_CRYPTO_LIMITS = Object.freeze({
   minMarketCap: 0,
 });
 
+const DEFAULT_RANGE_CONVICTION_MAX_POSITION_PCT = 0.25;
+
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
@@ -81,6 +83,59 @@ function roundDownQuantity(value, decimals = 6) {
   return Math.floor(numeric * factor) / factor;
 }
 
+function clamp(value, min = 0, max = 1) {
+  return Math.min(max, Math.max(min, Number.isFinite(Number(value)) ? Number(value) : min));
+}
+
+function normalizeStrategyMode(value, fallback = 'momentum') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function resolveRangeConvictionLeverage(trade = {}, invalidationDistancePct = 0) {
+  const requested = Math.max(1, Math.floor(Number(trade?.leverage || 0) || 0));
+  const guardrailLeverage = invalidationDistancePct > 0
+    ? Math.max(1, Math.floor(1 / Math.max(invalidationDistancePct * 2.2, 0.08)))
+    : 3;
+  const fallback = requested > 0 ? requested : 4;
+  return Math.min(10, Math.max(2, Math.min(fallback, guardrailLeverage)));
+}
+
+function resolveCryptoPositionBudget(account = {}, trade = {}, limits = DEFAULT_CRYPTO_LIMITS) {
+  const equity = Number(account?.equity || 0) || 0;
+  if (!(equity > 0)) return 0;
+  const strategyMode = normalizeStrategyMode(trade?.strategyMode);
+  if (strategyMode === 'range_conviction') {
+    const entryPrice = Number(trade?.price || 0) || 0;
+    const invalidationPrice = Number(trade?.invalidationPrice || 0) || 0;
+    const invalidationDistancePct = entryPrice > 0 && invalidationPrice > 0
+      ? Math.abs(entryPrice - invalidationPrice) / entryPrice
+      : 0;
+    const confidence = clamp(trade?.confidence ?? trade?.signalConfidence ?? 0.72, 0.55, 0.98);
+    const riskFloorPct = 0.0125;
+    const riskCeilingPct = 0.05;
+    const confidenceWeight = clamp((confidence - 0.55) / 0.4, 0, 1);
+    const riskBudgetPct = riskFloorPct + ((riskCeilingPct - riskFloorPct) * confidenceWeight);
+    const effectiveDistancePct = clamp(invalidationDistancePct || Number(limits?.stopLossPct || 0.04) || 0.04, 0.003, 0.25);
+    const riskSizedNotional = (equity * riskBudgetPct) / effectiveDistancePct;
+    const hardCapPct = clamp(
+      Number(trade?.maxPositionPct ?? limits?.rangeConvictionMaxPositionPct ?? DEFAULT_RANGE_CONVICTION_MAX_POSITION_PCT),
+      DEFAULT_RANGE_CONVICTION_MAX_POSITION_PCT,
+      3
+    );
+    return Math.min(riskSizedNotional, equity * hardCapPct);
+  }
+  const stopLossPct = Number(limits?.stopLossPct || 0) || 0.04;
+  const confidence = clamp(trade?.confidence ?? trade?.signalConfidence ?? 0.65, 0.5, 0.95);
+  const riskFloorPct = 0.005;
+  const riskCeilingPct = 0.02;
+  const confidenceWeight = clamp((confidence - 0.5) / 0.4, 0, 1);
+  const riskBudgetPct = riskFloorPct + ((riskCeilingPct - riskFloorPct) * confidenceWeight);
+  const riskSizedNotional = stopLossPct > 0 ? (equity * riskBudgetPct) / stopLossPct : 0;
+  const hardCapPct = Math.max(Number(limits?.maxPositionPct || 0), 0.35);
+  return Math.min(riskSizedNotional, equity * hardCapPct);
+}
+
 function normalizeTradeDirection(direction, assetClass = 'us_equity') {
   const normalized = normalizeSignalDirection(direction, { fallback: '' });
   if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD' || normalized === 'SHORT' || normalized === 'COVER' || normalized === 'BUY_PUT') {
@@ -90,6 +145,17 @@ function normalizeTradeDirection(direction, assetClass = 'us_equity') {
     return normalized;
   }
   return normalized;
+}
+
+function isHyperliquidCryptoTrade(trade = {}) {
+  const assetClass = normalizeAssetClass(trade.assetClass || trade.asset_class);
+  if (assetClass !== 'crypto') return false;
+  const venue = String(trade.broker || trade.venue || trade.exchange || '').trim().toLowerCase();
+  if (venue === 'hyperliquid') {
+    return true;
+  }
+  const ticker = String(trade.ticker || trade.symbol || '').trim().toUpperCase();
+  return ticker.endsWith('/USD');
 }
 
 function normalizeOpenPosition(position = {}) {
@@ -162,17 +228,19 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   const normalizedAccount = normalizeAccountState(account);
   const direction = normalizeTradeDirection(trade.direction, assetClass);
   const effectiveLimits = resolveRiskLimits(limits, assetClass);
+  const strategyMode = normalizeStrategyMode(trade?.strategyMode);
   const violations = [];
   const isBuyExposure = direction === 'BUY' || direction === 'BUY_YES' || direction === 'BUY_NO';
+  const opensHyperliquidCryptoShort = isHyperliquidCryptoTrade(trade) && (direction === 'SELL' || direction === 'SHORT');
 
   // --- ABSOLUTE PROHIBITIONS ---
   const normTicker = (t) => String(t || '').replace(/[\/\-]/g, '').toUpperCase();
   const tradeTicker = normTicker(trade.ticker);
-  if (direction === 'SELL' && !normalizedAccount.openPositions?.some(p => normTicker(p.ticker) === tradeTicker)) {
+  if (direction === 'SELL' && !opensHyperliquidCryptoShort && !normalizedAccount.openPositions?.some(p => normTicker(p.ticker) === tradeTicker)) {
     // Shorting check — can only sell what we own
     violations.push('SHORT_PROHIBITED: Cannot sell a stock we do not own');
   }
-  if (direction === 'SHORT' && effectiveLimits.allowShorting !== true) {
+  if (direction === 'SHORT' && !opensHyperliquidCryptoShort && effectiveLimits.allowShorting !== true) {
     violations.push('SHORT_PROHIBITED: Crisis short execution is disabled until phase 2');
   }
   if (direction === 'COVER') {
@@ -212,7 +280,7 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   }
 
   // --- POSITION COUNT ---
-  if (isBuyExposure) {
+  if (isBuyExposure || opensHyperliquidCryptoShort) {
     const openCount = normalizedAccount.openPositions?.length || 0;
     if (openCount >= effectiveLimits.maxOpenPositions) {
       violations.push(`MAX_POSITIONS: ${openCount} open positions (limit: ${effectiveLimits.maxOpenPositions})`);
@@ -220,7 +288,9 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   }
 
   // --- POSITION SIZE ---
-  const maxDollars = normalizedAccount.equity * effectiveLimits.maxPositionPct;
+  const maxDollars = assetClass === 'crypto'
+    ? resolveCryptoPositionBudget(normalizedAccount, trade, effectiveLimits)
+    : (normalizedAccount.equity * effectiveLimits.maxPositionPct);
   const maxShares = trade.price > 0
     ? (assetClass === 'crypto'
       ? roundDownQuantity(maxDollars / trade.price, 6)
@@ -236,7 +306,7 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   }
 
   // --- MINIMUM NOTIONAL (Alpaca crypto requires >= $10 per order) ---
-  if (assetClass === 'crypto' && direction === 'SELL' && trade.price > 0) {
+  if (assetClass === 'crypto' && direction === 'SELL' && !opensHyperliquidCryptoShort && trade.price > 0) {
     const position = normalizedAccount.openPositions?.find(p => normTicker(p.ticker) === tradeTicker);
     const positionValue = (position?.shares || 0) * trade.price;
     if (positionValue > 0 && positionValue < 10) {
@@ -245,8 +315,19 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   }
 
   // --- STOP LOSS CALCULATION ---
-  const stopLossPrice = isBuyExposure
-    ? trade.price * (1 - effectiveLimits.stopLossPct)
+  const invalidationPrice = Number(trade?.invalidationPrice || 0) || null;
+  const convictionMode = strategyMode === 'range_conviction' && assetClass === 'crypto';
+  const stopLossPrice = convictionMode && invalidationPrice
+    ? invalidationPrice
+    : (isBuyExposure
+      ? trade.price * (1 - effectiveLimits.stopLossPct)
+      : (opensHyperliquidCryptoShort ? trade.price * (1 + effectiveLimits.stopLossPct) : null));
+  const leverage = convictionMode
+    ? resolveRangeConvictionLeverage(trade, trade.price > 0 && invalidationPrice > 0 ? Math.abs(trade.price - invalidationPrice) / trade.price : 0)
+    : null;
+  const positionNotional = violations.length === 0 ? Number(maxDollars.toFixed(2)) : null;
+  const margin = convictionMode && positionNotional && leverage
+    ? Number((positionNotional / leverage).toFixed(2))
     : null;
 
   return {
@@ -254,6 +335,13 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
     violations,
     maxShares: violations.length === 0 ? maxShares : null,
     stopLossPrice,
+    takeProfitPrice: convictionMode && Number.isFinite(Number(trade?.takeProfitPrice)) ? Number(trade.takeProfitPrice) : null,
+    positionNotional,
+    margin,
+    leverage,
+    invalidationPrice: convictionMode ? invalidationPrice : null,
+    strategyMode: convictionMode ? strategyMode : null,
+    signalConfidence: Number.isFinite(Number(trade?.confidence)) ? Number(trade.confidence) : null,
   };
 }
 

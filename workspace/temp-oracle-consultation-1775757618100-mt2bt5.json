@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775757618100-mt2bt5",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "BTC is liquid and stable, but the board still marks it no-trade and funding is positive. With macro still RED, there is not enough directional edge to justify fresh exposure."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "ETH remains soft and directionless, with positive funding and a no-trade board read. It is neither a strong long nor a strong short here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "SOL is mildly constructive on price, but funding is positive and the board still says no-trade. Better to leave it alone than force a mediocre setup."
+    },
+    {
+      "ticker": "TURBO/USD",
+      "direction": "BUY",
+      "confidence": 0.63,
+      "reasoning": "TURBO has one of the strongest squeeze profiles on the sheet: strong 24h momentum, deeply negative funding, and elite squeeze plus crowding scores. Confidence is capped by thin liquidity and macro still being RED, so this is only a reduced-size momentum buy."
+    },
+    {
+      "ticker": "ZEC/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "ZEC has decent liquidity and mild positive price action, but the directional edge is still weak and the board is no-trade. Not compelling enough to deploy capital."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "VVV has strong price momentum and acceptable liquidity, but the mechanical board is still neutral and funding is positive rather than supportive of a squeeze. Interesting, but not top-tier."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "MON is the cleaner bearish name on this board: slightly negative 24h performance, positive funding, real liquidity, and a bearish mechanical lean. It is not a huge edge, but it is the better short relative to the rest of the sheet."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "TON is orderly and liquid enough, but the setup is still neutral and funding remains positive. Watchlist only."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "GRIFFAIN has some upside follow-through, but the board is mixed and execution quality is only moderate. Not cleaner than the stronger squeeze candidates."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.64,
+      "reasoning": "TNSR remains one of the best continuation longs on the board with strong 24h expansion, negative funding, and elite squeeze characteristics. Macro still being RED keeps this as a reduced-size trade rather than a full-risk chase."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "BUY",
+      "confidence": 0.63,
+      "reasoning": "BLUR still has strong squeeze-continuation qualities with solid momentum, negative funding, and better liquidity than many other small caps. Confidence is capped by the wider spread and the still-risk-off macro backdrop."
+    }
+  ]
+}

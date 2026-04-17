@@ -1,0 +1,14 @@
+(ARCHITECT #21): Builder shipped the watch-lane 429/freeze hardening. Your narrow review.
+
+Narrow scope:
+- hm-oracle-watch-engine now reuses pooled market data across cycles (replaces 2s TTL that was likely getting 429'd by Hyperliquid)
+- Failed fetch cycles now write a "red/degraded" oracle-watch-state with lastError/lastFailureAt
+- Silent freezes on the last good tick are replaced with visible failure surfacing
+
+Regression: ui/__tests__/hm-oracle-watch-engine.test.js
+Validation: 6 tests passed
+Live proof: lane green and aligned at 21:32:48Z
+
+Rerun + one negative path: force a simulated fetch failure and confirm state becomes "degraded" with lastError populated (not frozen). Call PASS/FAIL.
+
+If PASS, the two stall causes (old-daemon + rate-limit-freeze) are both covered. Trigger lane should be reliable from here barring a new failure shape.

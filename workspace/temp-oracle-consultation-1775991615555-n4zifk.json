@@ -1,0 +1,126 @@
+{
+  "requestId": "consultation-1775991615555-n4zifk",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "SOL has already moved far enough into flush territory that I would rather wait for a bounce than force a new short here."
+    },
+    {
+      "ticker": "ZEN/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEN is already deep into a flush and too illiquid to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "MON remains a reduced-size short because it is still weak and funding is still positive, which keeps the downside pressure intact."
+    },
+    {
+      "ticker": "PURR/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "PURR is already down hard and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "RENDER/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "RENDER is already weak and does not offer a clean enough new entry versus just waiting for a bounce."
+    },
+    {
+      "ticker": "RESOLV/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "RESOLV has upside momentum, but liquidity is too poor to justify forcing a fresh long here."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "WCT is too low-liquidity and too unstable after the move to trust for a serious fresh trade."
+    },
+    {
+      "ticker": "AERO/USD",
+      "direction": "SELL",
+      "confidence": 0.64,
+      "reasoning": "AERO is one of the clearest shorts on the board because price is down hard while open interest is still rising, which suggests the selloff is not fully exhausted yet."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "VVV is already in a liquidation-flush state and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "TNSR has squeeze fuel from negative funding, but liquidity is too poor and the tape is still too fragile to force a long."
+    },
+    {
+      "ticker": "PENDLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "PENDLE is already weak and too low-liquidity to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ZEREBRO is too illiquid and too unstable to trust for a fresh directional trade."
+    },
+    {
+      "ticker": "DYM/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "DYM is already down hard and too illiquid to trust for a fresh short chase."
+    },
+    {
+      "ticker": "VINE/USD",
+      "direction": "SELL",
+      "confidence": 0.62,
+      "reasoning": "VINE remains a valid reduced-size short because price is weak and funding is still extremely positive, which leaves the long side crowded."
+    },
+    {
+      "ticker": "WLFI/USD",
+      "direction": "BUY",
+      "confidence": 0.59,
+      "reasoning": "WLFI is still the only real long candidate because funding is deeply negative while price and open interest are both rising together, but confidence stays moderate in this macro tape."
+    },
+    {
+      "ticker": "ORDI/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "ORDI is already weak and too low-liquidity to trust for a serious fresh short entry after the move."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "TON remains a modest catch-down short lean because it is still green relative to the broader tape and has not fully unwound yet."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "GRIFFAIN is already weak and too low-liquidity to trust for a serious fresh short entry after the move."
+    }
+  ]
+}

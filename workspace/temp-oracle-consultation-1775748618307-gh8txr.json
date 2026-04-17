@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775748618307-gh8txr",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC is liquid and steady, but the board still marks it no-trade and the edge is weak. With the event veto at CAUTION and macro still RED, there is no reason to force a fresh position here."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "ETH remains softer than BTC, with a negative 24h profile and positive funding. It is not a dramatic breakdown setup, but among the majors it still leans better as a fade than as a long."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "SOL is weak but not decisively broken. Positive funding hurts the long case, but the downside edge is still too modest to rank it ahead of cleaner shorts like FARTCOIN."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "TON has mild positive momentum, but funding is still positive and the mechanical board is only neutral. With CAUTION active, it stays in watch-only territory."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "CHILLGUY is up sharply, but the spread is extremely poor and funding is positive, so this is not a clean squeeze continuation. Too unstable to chase under a RED macro regime."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "GRASS is basically flat on the day with weak directional structure and poor spread quality. The board does not offer enough asymmetry for either side."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "VVV has decent momentum and real liquidity, but funding is still positive and the board does not provide a strong directional bias. Interesting, but not clean enough to outrank the top squeeze names."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.62,
+      "reasoning": "FARTCOIN remains one of the cleaner bearish setups: sharp negative 24h trend, positive funding, and strong volume. Among the short candidates, this is one of the more executable fades."
+    },
+    {
+      "ticker": "MAV/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "MAV has a mild bullish lean, but liquidity is thin and spread quality is poor. Under CAUTION conditions, that is not enough to justify a fresh long."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.61,
+      "reasoning": "TNSR still has a real squeeze-continuation profile with very strong 24h momentum and extremely negative funding. I am haircutting confidence because the event veto is CAUTION and the name is still wide, so this should be treated as half-size only."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "BUY",
+      "confidence": 0.62,
+      "reasoning": "BLUR remains one of the best longs on the board: strong upside expansion, negative funding, and better liquidity than most small-cap alternatives. CAUTION status and RED macro keep this as a reduced-size continuation buy, not a full-risk chase."
+    }
+  ]
+}

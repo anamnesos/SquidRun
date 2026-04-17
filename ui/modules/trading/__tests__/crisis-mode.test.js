@@ -64,6 +64,21 @@ describe('crisis-mode helpers', () => {
     })).toEqual(expect.objectContaining({ ok: false }));
   });
 
+  test('allows Hyperliquid crypto SELL signals during crisis mode', () => {
+    expect(validateCrisisSignalCapability({
+      ticker: 'ETH/USD',
+      direction: 'SELL',
+      assetClass: 'crypto',
+      broker: 'hyperliquid',
+    }, null, {
+      regime: 'stay_cash',
+      strategyMode: 'crisis',
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      reason: 'hyperliquid_crypto_short_allowed',
+    }));
+  });
+
   test('estimates current crisis book exposure from open positions', () => {
     const exposure = estimateCrisisBookExposure({
       openPositions: [

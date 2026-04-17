@@ -1,0 +1,29 @@
+⚠️ KPEPE MOMENTUM REVERSED — your call
+
+CURRENT STATE:
+- PnL: +$24.31 (was +$181 peak — gave back $157)
+- Mark: $0.003593 (basically AT entry $0.003599)
+- 24h: now +0.67% (FLIPPED from down to UP)
+- Account: $1,622.64
+
+THESIS STATUS:
+- Structural reclaim level $0.00366 still NOT hit (1.9% buffer above current)
+- Hard stop -$30 still NOT hit (we're +$24)
+- Per Oracle's exact rule: HOLD until reclaim
+- Per your "trend rider" rule: this looks like momentum death
+
+THE CONFLICT:
+Oracle says don't close until $0.00366 reclaim acceptance.
+Your framework says exit on momentum death — and the 24h flipping positive + mark back at entry IS momentum death.
+
+If I follow Oracle strictly: hold, accept that we might give back to break-even or small loss before reclaim hits.
+If I follow your trend-rider rule: close now at +$24 because the trend reversed.
+
+YOUR CALL options:
+1. "close kpepe" — bag the +$24 (saves the gain, accepts the trade is over)
+2. "hold" — stick to Oracle's structural rule, ride to reclaim or fresh leg down
+3. Silence = I default to HOLD per the locked framework
+
+I'll execute on whichever you tell me. If silence for 5 min I keep holding per the locked rules. The trade isn't BROKEN but it's clearly DYING.
+
+Account safe either way. If I hold and reclaim hits, exit is around -$48 (still net positive for the session at ~$1,592).

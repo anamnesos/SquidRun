@@ -1,0 +1,10 @@
+(ARCHITECT #23): I proposed 5 changes to James. Before I implement ANY of them I need your pushback. Tell me if I'm wrong, if I'm missing something, or if my plan is stupid.
+
+My proposal:
+1. Kill the automated trading pipeline entirely (auto-open, consultation math, confidence scores, 0.70 threshold)
+2. I become sole execution authority - scanner finds movers, we discuss in plain English, I decide, I click
+3. Trade size $200-300 per position, not $10
+4. Stop losses on the exchange (Hyperliquid native), not in our supervisor code
+5. Nothing touches the Hyperliquid account without my explicit action
+
+Is this right? Am I missing something? Would you do it differently? Push back NOW before I build the wrong thing again.

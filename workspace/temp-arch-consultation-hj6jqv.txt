@@ -1,0 +1,15 @@
+ARCHITECT consultation hj6jqv — position_management priority, macro RED(48), F&G 16, oil $114.
+
+{"requestId":"consultation-1775797228994-hj6jqv","agentId":"architect","signals":[
+{"ticker":"MON/USD","direction":"HOLD","confidence":0.55,"reasoning":"Live short -275 unrealized, entry 0.034981, mark 0.036268, liq 0.03819 (5.9% away). James is manually managing this position and has told the system not to touch it. Position management = respect the live operator. +22.68% 24h pump against us but funding still positive at 0.125bps (shorts getting paid tiny). Hold, do not flip, do not add."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.50,"reasoning":"Mark 72,098, +1.91% 24h. Macro RED with oil $114 supply shock is ironically supportive of hard assets, but F&G 16 extreme fear says don't chase. No edge either way. Preserve capital for BABY unlock short in ~5h."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Mark 2194.8, flat +0.83% 24h. Majors stable while alt universe euphoric (18-40% movers). No setup, no thesis, no position."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.50,"reasoning":"Mark 83.32, +1.85% 24h. Funding slightly negative (-0.1221 bps), indicating modest short crowding. Not worth taking sides in RED macro with no catalyst."},
+{"ticker":"CHILLGUY/USD","direction":"SELL","confidence":0.40,"reasoning":"Mark 0.012362, +39.6% 24h. Meme coin parabolic in extreme fear macro = classic retail trap. Funding still positive 0.125 bps means longs paying, shorts get paid to fade. Capped confidence because MON already consuming account and we shouldn't open new shorts until MON resolves. Paper signal, not a live-sized bet."},
+{"ticker":"GRASS/USD","direction":"SELL","confidence":0.35,"reasoning":"+20.69% 24h pump, funding 0.125 bps. Similar retail-chase setup. SELL signal for the board's record, but no capacity to act while MON is live."},
+{"ticker":"TNSR/USD","direction":"HOLD","confidence":0.45,"reasoning":"+31.41% 24h but funding is NEGATIVE -0.3998 bps — that means shorts are already crowded paying longs. Short-squeeze risk high. Skip; don't add to a crowded short."},
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.45,"reasoning":"Mark 264.14, -17.95% 24h — only real downmover in the list. Funding positive. Already crushed; chasing short here is buying the bottom of the dump. No thesis to long either in RED macro."},
+{"ticker":"ZEREBRO/USD","direction":"SELL","confidence":0.35,"reasoning":"+18.31% 24h meme pump, funding 0.125 bps. SELL for the record, but no capacity to size while MON is the live position."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.40,"reasoning":"+19.02% 24h in an older L1. Less clearly a meme trap, might be fundamental flow. No edge, no position."},
+{"ticker":"ZEC/USD","direction":"HOLD","confidence":0.40,"reasoning":"+17.45% 24h with NEGATIVE funding -0.4964 bps, mech board flag='trade'. Conflicted signal: pump + crowded short + flag to trade. In RED macro with F&G 16, not a high-conviction entry either direction. Skip."}
+]}

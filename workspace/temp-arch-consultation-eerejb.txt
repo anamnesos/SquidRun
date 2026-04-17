@@ -1,0 +1,15 @@
+ARCHITECT consultation eerejb — Flat. All HOLD.
+
+{"requestId":"consultation-1776000624397-eerejb","agentId":"architect","signals":[
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Post-cascade settling."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Settling."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Settling."},
+{"ticker":"CHILLGUY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"COMP/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"BABY/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"BIO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cooldown."},
+{"ticker":"ETHFI/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"GRIFFAIN/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."}
+]}

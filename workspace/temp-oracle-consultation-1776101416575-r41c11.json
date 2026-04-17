@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776101416575-r41c11",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BTC is still recovering well, but the edge here remains weaker than in the best alt setups and the macro backdrop is still only partially supportive."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH looks healthier, but the move still reads like broad market recovery rather than a uniquely actionable fresh signal."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "SOL has good rebound structure, but it is already well off the lows and no longer offers a cleaner entry than the strongest squeeze name."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "TST is far too extended now. The squeeze is real, but after a move of this size the trade quality is gone unless it resets first."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "STABLE has improved, but its current funding support is much weaker than before and the live structure is no longer clean enough to justify a fresh long."
+    },
+    {
+      "ticker": "BRETT/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "BRETT is constructive, but not in a way that gives a clearer edge than the rest of the board. It is interesting, not compelling."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "STBL has recovered strongly, but positive funding and the already-mature move make it a poor fresh entry from here."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "WCT still trends well, but it is already extended and the execution quality remains too messy to justify chasing."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "MERL looks more like a low-quality rebound than a clean breakout. There is not enough edge here to force a trade."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "VVV still reads more like recovery and short-covering than a true fresh trend continuation. It is not broken enough to short and not clean enough to buy."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "ZEREBRO remains a high-beta recovery name rather than a durable clean long. The structure is too noisy after the first rebound leg."
+    }
+  ]
+}

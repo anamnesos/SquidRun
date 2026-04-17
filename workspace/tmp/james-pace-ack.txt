@@ -1,0 +1,14 @@
+Clear. $8.33/hr pace is the measure, not "hit 200 and stop." Under $200 in any rolling 24h = massive failure. No resting.
+
+Paper comp on record — my call, independent from Oracle's SOL long:
+
+**Architect paper trade:** ETH SHORT
+- Entry: market (around $2,340)
+- Stop: $2,358 (0.77% above, above recent rejection)
+- Target: $2,315 (1.07% below, prior support)
+- Paper margin: $200, 10x = $2,000 notional
+- Reason: Oracle called ETH "weaker and ask-heavy" — weakest major. If SOL leads risk-on, ETH lags. If macro rolls, ETH falls faster. Clean relative-weakness short.
+
+Oracle's SOL LONG paper is also on record. Builder still owes his paper trade. Scoreboard goes up from here.
+
+SOL real trade: still testing stop, no new action.

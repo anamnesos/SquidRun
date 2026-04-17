@@ -1,0 +1,66 @@
+{
+  "requestId": "consultation-1776112225310-vj0q8z",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "BUY",
+      "confidence": 0.8,
+      "reasoning": "The live SOL short is still a deep loser after fully round-tripping peak PnL, retained none of its peak edge, still has no stop, and liquidation distance remains under 1%. This is a hard cleanup exit, not a manage-it hold."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.89,
+      "reasoning": "BTC remains too headline-driven under an active kinetic-conflict veto to justify a fresh call after the SOL short failure."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "ETH is participating in the same macro-sensitive rebound tape, so it is not a cleaner immediate decision than simply flattening the failed SOL risk."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "MERL is recovering constructively, but it does not clear the bar for a fresh idea on a live veto board right after an urgent position-management failure."
+    },
+    {
+      "ticker": "ORDI/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "ORDI has bounced, but execution quality and event sensitivity are too messy to justify rotating into it from a failed SOL short."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.87,
+      "reasoning": "FARTCOIN still has some fresh-shorts-pressing bias mechanically, but forcing a new bearish idea here is lower quality than simply standing down after the SOL failure."
+    },
+    {
+      "ticker": "CAKE/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "CAKE is strong on the bounce, but that makes it more of a stretched recovery name than a clean new trade under an active event veto."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.89,
+      "reasoning": "STABLE still has strong squeeze fuel, but the live conflict veto outweighs the raw setup and makes it a watch-only name here."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.9,
+      "reasoning": "TST is far too extended and too reactive to headlines to trust as a disciplined next step."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.89,
+      "reasoning": "WCT has rebound momentum, but the setup is still too far along and too event-sensitive to justify touching during a veto board."
+    }
+  ]
+}

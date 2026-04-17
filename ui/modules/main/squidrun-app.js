@@ -3,10 +3,11 @@
  * Main process application controller
  */
 
-const { app, BrowserWindow, dialog, ipcMain, session, powerMonitor, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session, powerMonitor, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { createHash } = require('crypto');
 const { spawn } = require('child_process');
 const log = require('../logger');
 const { getDaemonClient } = require('../../daemon-client');
@@ -29,7 +30,9 @@ const { createExternalNotifier } = require('../external-notifications');
 const { createKernelBridge } = require('./kernel-bridge');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
+const { resolveRuntimeInt } = require('../runtime-config');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
+const TEAM_MEMORY_BELIEF_SWEEP_ENABLED = process.env.SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP === '1';
 
 // Import sub-modules
 const triggers = require('../triggers');
@@ -42,7 +45,8 @@ const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
-const { sendTelegram, normalizeChatId } = require('../../scripts/hm-telegram');
+const { normalizeChatId } = require('../../scripts/hm-telegram');
+const { sendRoutedTelegramMessage } = require('../../scripts/hm-telegram-routing');
 const {
   shouldTriggerAutonomousSmoke,
   buildSmokeRunnerArgs,
@@ -104,12 +108,18 @@ const {
   generateSessionSummary,
 } = require('../../scripts/hm-session-summary');
 const {
+  generateStartupBriefing,
+} = require('../startup-ai-briefing');
+const {
   buildSystemCapabilitiesSnapshot,
   detectOllamaRuntime,
   resolveSleepExtractionCommandFromSnapshot,
   writeSystemCapabilitiesSnapshot,
 } = require('../local-model-capabilities');
 const { createProblemOrchestrator } = require('../problem-orchestrator');
+const {
+  recordRecallUsageFromMessage,
+} = require('../memory-recall');
 const {
   readPairedConfig,
   writePairedConfig,
@@ -120,9 +130,13 @@ const {
   buildInjectMessageIpcPackets,
   getUtf8ByteLength,
 } = require('../inject-message-ipc');
+const { createPtyOutputFilter } = require('./pty-output-filter');
 const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
+const PANE_HOST_BOOTSTRAP_LOADING_GRACE_MS = IS_DARWIN ? 20000 : 45000;
+const PANE_HOST_READY_GRACE_AFTER_LOAD_MS = IS_DARWIN ? 1500 : 4000;
 const APP_IDLE_THRESHOLD_MS = 30000;
+const DEFAULT_AGENT_RESPONSE_WATCHDOG_MS = 15 * 60 * 1000;
 const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
 const PTY_DATA_IPC_BATCH_INTERVAL_MS = Number.parseInt(
   process.env.SQUIDRUN_PTY_DATA_IPC_BATCH_INTERVAL_MS || '16',
@@ -196,6 +210,7 @@ const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
 const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
 const WINDOWS_APP_USER_MODEL_ID = 'com.squidrun.app';
 const AUTONOMOUS_SMOKE_RUNNER_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-smoke-runner.js');
+const HM_SEND_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-send.js');
 const AUTONOMOUS_SMOKE_TIMEOUT_MS = Math.max(
   15000,
   Number.parseInt(process.env.SQUIDRUN_AUTONOMOUS_SMOKE_TIMEOUT_MS || '120000', 10) || 120000
@@ -204,11 +219,48 @@ const AUTONOMOUS_SMOKE_COOLDOWN_MS = Math.max(
   0,
   Number.parseInt(process.env.SQUIDRUN_AUTONOMOUS_SMOKE_COOLDOWN_MS || '15000', 10) || 15000
 );
+const EUNBYEOL_CHAT_ID = '8754356993';
+const EUNBYEOL_CONFIRMED_FACT_PATHS = Object.freeze([
+  'D:\\projects\\Jeon Myeongsam Case\\reference\\confirmed-facts.md',
+  'D:\\projects\\Hillstate Case\\reference\\confirmed-facts.md',
+  'D:\\projects\\Korean Fraud\\reference\\confirmed-facts.md',
+]);
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
   return numeric;
+}
+
+function resolveSupervisorLaunchExecutable() {
+  const override = toNonEmptyString(process.env.SQUIDRUN_SUPERVISOR_NODE_PATH);
+  if (override) {
+    return {
+      executable: override,
+      env: { ...process.env },
+    };
+  }
+
+  const currentExecPath = String(process.execPath || '').trim();
+  const execBaseName = path.basename(currentExecPath).toLowerCase();
+  const runningInsideElectron = Boolean(process.versions?.electron);
+  const currentExecIsNode = execBaseName === 'node' || execBaseName === 'node.exe';
+
+  if (!runningInsideElectron || currentExecIsNode) {
+    return {
+      executable: currentExecPath,
+      env: { ...process.env },
+    };
+  }
+
+  const fallbackExecutable = process.platform === 'win32' ? 'node.exe' : 'node';
+  const fallbackEnv = { ...process.env };
+  delete fallbackEnv.ELECTRON_RUN_AS_NODE;
+
+  return {
+    executable: fallbackExecutable,
+    env: fallbackEnv,
+  };
 }
 
 function stripAnsiForStartupReady(value) {
@@ -340,6 +392,26 @@ const ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS = Object.freeze({
   [RUNTIME_LIFECYCLE_STATE.STOPPING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPED]),
 });
 
+function toNonEmptyString(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function formatLocalClockTime(value = Date.now()) {
+  const date = value instanceof Date ? value : new Date(value);
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function shouldWatchdogAgentTask(content) {
+  const text = toNonEmptyString(content);
+  if (!text) return false;
+  if (text.includes('\n')) return true;
+  return /\b(task|fix|proof|investigat|analy[sz]e|review|read|write|implement|urgent|priority|objective|scope|validation|acceptance|deadline|reply|now)\b/i.test(text);
+}
+
 class SquidRunApp {
   constructor(appContext, managers) {
     if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
@@ -355,6 +427,7 @@ class SquidRunApp {
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
     this.paneHostWindowManager = createPaneHostWindowManager({
       getCurrentSettings: () => this.ctx.currentSettings || {},
+      onLifecycleEvent: (event) => this.handlePaneHostLifecycleEvent(event),
     });
     this.backgroundAgentManager = createBackgroundAgentManager({
       getDaemonClient: () => this.ctx.daemonClient,
@@ -376,6 +449,7 @@ class SquidRunApp {
       },
     });
     this.problemOrchestrator = createProblemOrchestrator();
+    this.pendingAgentResponseWatchdogs = new Map();
     try {
       this.problemOrchestrator.ensureState();
     } catch (error) {
@@ -400,6 +474,8 @@ class SquidRunApp {
     this.startupReadyBuffers = new Map();
     this.pendingPtyDataByPane = new Map();
     this.ptyDataFlushTimer = null;
+    this.ptyVisibleReleaseTimer = null;
+    this.visiblePtyOutputFilter = createPtyOutputFilter();
     this.teamMemoryInitialized = false;
     this.teamMemoryInitPromise = null;
     this.teamMemoryInitFailed = false;
@@ -423,6 +499,8 @@ class SquidRunApp {
     };
     this.bridgeClient = null;
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
+    this.pendingPaneDeliveryQueuePath = path.join(WORKSPACE_PATH, '.squidrun', 'runtime', 'pending-pane-deliveries.json');
+    this.pendingPaneDeliveryReplayPromise = Promise.resolve();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
     this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
     this.bridgeRelayStatus = {
@@ -477,6 +555,7 @@ class SquidRunApp {
     this.paneHostLastErrorAt = null;
     this.paneHostBootstrapTimer = null;
     this.paneHostBootstrapVerifyTimer = null;
+    this.paneHostRecoveryTimer = null;
     this.paneHostReadyIpcRegistered = false;
     this.paneHostReadyListener = null;
     this.mainWindowSendRaw = null;
@@ -484,6 +563,7 @@ class SquidRunApp {
     this.websocketStartRetryTimer = null;
     this.websocketStartRetryAttempt = 0;
     this.supervisorBootstrapPromise = null;
+    this.startupBriefingPromise = null;
     this.lastSystemCapabilities = null;
     this.daemonConnectTimeoutTimer = null;
     this.daemonConnectedForStartup = false;
@@ -495,6 +575,10 @@ class SquidRunApp {
     this.sessionEndCapturePromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
+    this.launchWindowProfile = {
+      windowKey: 'main',
+      standaloneWindow: false,
+    };
   }
 
   isBundledRuntimePath(targetPath = '') {
@@ -1611,11 +1695,56 @@ class SquidRunApp {
     if (!this.isHiddenPaneHostModeEnabled()) return;
     const paneIds = this.getHiddenPaneHostPaneIds();
     if (!paneIds.length) return;
+    const diagnostics = this.paneHostWindowManager.getWindowDiagnostics?.() || null;
+    const now = Date.now();
+    const stillLoading = Boolean(diagnostics?.loading);
+    const loadingAgeMs = diagnostics?.lastLoadStartedAt
+      ? Math.max(0, now - diagnostics.lastLoadStartedAt)
+      : null;
+    const postLoadAgeMs = diagnostics?.lastDidFinishLoadAt
+      ? Math.max(0, now - diagnostics.lastDidFinishLoadAt)
+      : null;
+
+    if (stillLoading && (loadingAgeMs === null || loadingAgeMs < PANE_HOST_BOOTSTRAP_LOADING_GRACE_MS)) {
+      log.info(
+        'PaneHost',
+        `Hidden pane host still loading (${source}); deferring readiness check`
+        + ` for ${paneIds.join(', ')}${loadingAgeMs !== null ? ` after ${loadingAgeMs}ms` : ''}`
+      );
+      this.updatePaneHostStatus();
+      this.paneHostBootstrapVerifyTimer = setTimeout(() => {
+        this.paneHostBootstrapVerifyTimer = null;
+        this.verifyPaneHostWindowsAfterBootstrap('loading_wait');
+      }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      return;
+    }
 
     const missingWindows = paneIds.filter((paneId) => !this.paneHostWindowManager.getPaneWindow(paneId));
     const missingReady = paneIds.filter((paneId) => !this.paneHostReady.has(String(paneId)));
 
+    if (
+      missingWindows.length === 0
+      && missingReady.length > 0
+      && postLoadAgeMs !== null
+      && postLoadAgeMs < PANE_HOST_READY_GRACE_AFTER_LOAD_MS
+    ) {
+      log.info(
+        'PaneHost',
+        `Hidden pane host finished loading but is still awaiting ready signal`
+        + ` (${source}) for panes ${missingReady.join(', ')} after ${postLoadAgeMs}ms`
+      );
+      this.updatePaneHostStatus();
+      this.paneHostBootstrapVerifyTimer = setTimeout(() => {
+        this.paneHostBootstrapVerifyTimer = null;
+        this.verifyPaneHostWindowsAfterBootstrap('ready_wait');
+      }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      return;
+    }
+
     if (missingWindows.length === 0 && missingReady.length === 0) {
+      this.paneHostMissingPanes.clear();
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
       log.info('PaneHost', `Verified hidden pane host bootstrap (${source}): windows ready for panes ${paneIds.join(', ')}`);
       this.updatePaneHostStatus();
       return;
@@ -1637,6 +1766,77 @@ class SquidRunApp {
         message: `Hidden pane host did not report ready after bootstrap for pane ${paneId}.`,
         details: { source },
       });
+    }
+
+    if (missingWindows.length > 0 || missingReady.length > 0) {
+      this.schedulePaneHostRecovery('bootstrap_verify');
+    }
+  }
+
+  schedulePaneHostRecovery(reason = 'unknown', delayMs = 750) {
+    if (!this.isHiddenPaneHostModeEnabled() || this.shuttingDown) return;
+    if (this.paneHostRecoveryTimer) {
+      clearTimeout(this.paneHostRecoveryTimer);
+      this.paneHostRecoveryTimer = null;
+    }
+    const waitMs = Math.max(100, Number(delayMs) || 750);
+    this.paneHostRecoveryTimer = setTimeout(() => {
+      this.paneHostRecoveryTimer = null;
+      if (this.shuttingDown) return;
+      log.warn('PaneHost', `Scheduling hidden pane host recovery (${reason})`);
+      this.schedulePaneHostBootstrap();
+    }, waitMs);
+  }
+
+  handlePaneHostLifecycleEvent(payload = {}) {
+    const eventType = String(payload?.type || 'unknown').trim().toLowerCase();
+    const paneIds = Array.isArray(payload?.paneIds)
+      ? payload.paneIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+
+    if (eventType === 'console-message') {
+      const levelNames = ['verbose', 'info', 'warning', 'error'];
+      const levelName = levelNames[Number(payload?.level)] || 'info';
+      const message = String(payload?.message || '').trim();
+      if (!message) return;
+      const prefix = `PaneHost(${paneIds.join(',') || 'unknown'})`;
+      if (levelName === 'error') {
+        log.error('PaneHost', `${prefix}: ${message}`);
+      } else if (levelName === 'warning') {
+        log.warn('PaneHost', `${prefix}: ${message}`);
+      } else {
+        log.info('PaneHost', `${prefix}: ${message}`);
+      }
+      return;
+    }
+
+    if (eventType === 'did-finish-load' || eventType === 'window-created') {
+      log.info('PaneHost', `Hidden pane host ${eventType} for panes: ${paneIds.join(', ')}`);
+      return;
+    }
+
+    const detailParts = [];
+    if (payload?.errorDescription) detailParts.push(`description=${payload.errorDescription}`);
+    if (payload?.validatedURL) detailParts.push(`url=${payload.validatedURL}`);
+    if (payload?.preloadPath) detailParts.push(`preload=${payload.preloadPath}`);
+    if (payload?.error) detailParts.push(`error=${payload.error}`);
+    if (payload?.reason) detailParts.push(`reason=${payload.reason}`);
+    if (payload?.exitCode !== undefined && payload?.exitCode !== null) detailParts.push(`exitCode=${payload.exitCode}`);
+    const detailsText = detailParts.length > 0 ? ` (${detailParts.join(', ')})` : '';
+    const message = `Hidden pane host lifecycle event: ${eventType}${detailsText}`;
+
+    for (const paneId of (paneIds.length > 0 ? paneIds : this.getHiddenPaneHostPaneIds())) {
+      this.paneHostReady.delete(String(paneId));
+      this.reportPaneHostDegraded({
+        paneId,
+        reason: `lifecycle_${eventType}`,
+        message: `${message} for pane ${paneId}.`,
+        details: payload,
+      });
+    }
+
+    if (['closed', 'render-process-gone', 'did-fail-load', 'preload-error', 'unresponsive'].includes(eventType)) {
+      this.schedulePaneHostRecovery(`lifecycle_${eventType}`);
     }
   }
 
@@ -1664,6 +1864,14 @@ class SquidRunApp {
     if (this.paneHostBootstrapVerifyTimer) {
       clearTimeout(this.paneHostBootstrapVerifyTimer);
       this.paneHostBootstrapVerifyTimer = null;
+    }
+    if (this.paneHostRecoveryTimer) {
+      clearTimeout(this.paneHostRecoveryTimer);
+      this.paneHostRecoveryTimer = null;
+    }
+    if (this.paneHostRecoveryTimer) {
+      clearTimeout(this.paneHostRecoveryTimer);
+      this.paneHostRecoveryTimer = null;
     }
 
     this.paneHostBootstrapTimer = setTimeout(() => {
@@ -1715,6 +1923,9 @@ class SquidRunApp {
         scrollback: terminal.scrollback,
       });
     }
+    void this.flushPendingPaneDeliveries({ paneId, reason: 'pane_host_ready' }).catch((err) => {
+      log.warn('PendingPaneDelivery', `Replay on pane-host-ready failed for pane ${paneId}: ${err.message}`);
+    });
   }
 
   dispatchPaneHostEnter(paneId) {
@@ -1769,10 +1980,15 @@ class SquidRunApp {
     }
   }
 
-  sendToVisibleWindow(channel, payload) {
-    const window = this.ctx.mainWindow;
+  sendToVisibleWindow(channel, payload, options = {}) {
+    const requestedWindowKey = toNonEmptyString(options.windowKey)
+      || toNonEmptyString(payload?.windowKey)
+      || toNonEmptyString(payload?.meta?.windowKey)
+      || 'main';
+    const windowKey = String(requestedWindowKey).trim() || 'main';
+    const window = this.getAppWindow(windowKey);
     if (!this.canSendToWindow(window)) return false;
-    const sender = typeof this.mainWindowSendRaw === 'function'
+    const sender = (windowKey === 'main' && typeof this.mainWindowSendRaw === 'function')
       ? this.mainWindowSendRaw
       : window.webContents.send.bind(window.webContents);
     try {
@@ -1782,6 +1998,22 @@ class SquidRunApp {
       log.warn('RendererIPC', `Skipped send for ${channel}: ${err.message}`);
       return false;
     }
+  }
+
+  sendToAllWindows(channel, payload, options = {}) {
+    const excludedWindowKey = toNonEmptyString(options.excludeWindowKey);
+    let delivered = false;
+    const seen = new Set();
+    for (const [windowKey, windowRef] of this.getAppWindows()) {
+      const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+      if (excludedWindowKey && normalizedWindowKey === excludedWindowKey) {
+        continue;
+      }
+      if (seen.has(windowRef)) continue;
+      seen.add(windowRef);
+      delivered = this.sendToVisibleWindow(channel, payload, { windowKey: normalizedWindowKey }) || delivered;
+    }
+    return delivered;
   }
 
   canSendToWindow(windowRef) {
@@ -1806,7 +2038,7 @@ class SquidRunApp {
 
   notifyRendererDaemonTimeout(reason = 'daemon_connect_timeout') {
     if (this.daemonConnectedForStartup) return;
-    const delivered = this.sendToVisibleWindow('daemon-timeout', {
+    const delivered = this.sendToAllWindows('daemon-timeout', {
       timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
       reason,
       message: "SquidRun couldn't start the background daemon.",
@@ -1901,6 +2133,8 @@ class SquidRunApp {
         const delivered = this.sendToVisibleWindow('inject-message', {
           ...packet,
           startupInjection,
+        }, {
+          windowKey: packet?.windowKey || packet?.meta?.windowKey || 'main',
         });
         if (delivered) routed = true;
         continue;
@@ -1948,6 +2182,8 @@ class SquidRunApp {
         ...packet,
         panes: [paneId],
         meta: fallbackMeta,
+      }, {
+        windowKey: packet?.windowKey || fallbackMeta?.windowKey || 'main',
       });
 
       if (routedToVisible) {
@@ -2055,8 +2291,23 @@ class SquidRunApp {
       log.info('ProjectLifecycle', `Using packaged external workspace: ${packagedWorkspacePath}`);
     }
 
-    // 2. Create main window as early as possible so users see immediate startup feedback.
-    await this.createWindow();
+    this.kickoffStartupBriefingGeneration('app-init');
+
+    // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
+    await this.launchWindowsForProfile(this.launchWindowProfile);
+
+    if (process.platform === 'win32') {
+      try {
+        const shortcutResult = this.ensureEunbyeolDesktopShortcut();
+        if (shortcutResult?.ok) {
+          log.info('Shortcut', `Eunbyeol desktop shortcut ready at ${shortcutResult.shortcutPath}`);
+        } else if (shortcutResult?.skipped !== true) {
+          log.warn('Shortcut', `Failed ensuring Eunbyeol desktop shortcut: ${shortcutResult?.reason || 'unknown'}`);
+        }
+      } catch (err) {
+        log.warn('Shortcut', `Failed ensuring Eunbyeol desktop shortcut: ${err.message}`);
+      }
+    }
 
     // 3. Generate firmware files on startup when feature flag is enabled.
     if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
@@ -2502,6 +2753,7 @@ class SquidRunApp {
               timestamp_ms: sentAtMs,
               project: data.message?.metadata?.project || null,
             });
+            const senderRoleForJournal = String(canonicalEnvelope.sender?.role || data.role || 'unknown').trim().toLowerCase();
             const canonicalMetadata = buildCanonicalEnvelopeMetadata(canonicalEnvelope);
             const contentWithProjectContext = withProjectContext(canonicalEnvelope.content, canonicalMetadata);
             const bridgeStructured = bridgeTarget
@@ -2520,6 +2772,22 @@ class SquidRunApp {
                 projectMetadata: canonicalMetadata?.project || canonicalEnvelope.project || null,
                 deliveryResult,
               });
+            };
+            const maybeRecordRecallUsage = async (deliveryResult) => {
+              if (!deliveryResult) return;
+              const accepted = deliveryResult.accepted === true || deliveryResult.queued === true || deliveryResult.verified === true || deliveryResult.ok === true;
+              if (!accepted) return;
+              try {
+                await recordRecallUsageFromMessage(canonicalEnvelope.content, {
+                  paneId: asString(data.paneId || ROLE_ID_MAP?.[senderRoleForJournal] || '', '') || null,
+                  role: senderRoleForJournal,
+                  target: canonicalEnvelope.target?.raw || target || null,
+                  routeKind,
+                  nowMs,
+                });
+              } catch (err) {
+                log.warn('RecallFeedback', `Outbound recall usage tracking failed: ${err.message}`);
+              }
             };
 
             if (canonicalEnvelope.message_id) {
@@ -2656,6 +2924,7 @@ class SquidRunApp {
                 error: bridgeResult?.error || null,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
+              await maybeRecordRecallUsage(payload);
               maybeTriggerAutonomousSmoke(payload);
               return payload;
             }
@@ -2750,6 +3019,7 @@ class SquidRunApp {
                 guardActions: preflight.actions,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
+              await maybeRecordRecallUsage(payload);
               maybeTriggerAutonomousSmoke(payload);
               return payload;
             }
@@ -2818,23 +3088,50 @@ class SquidRunApp {
                   guardActions: preflight.actions,
                   traceId: traceContext?.traceId || traceContext?.correlationId || null,
                 };
+                await maybeRecordRecallUsage(payload);
                 maybeTriggerAutonomousSmoke(payload);
                 return payload;
               }
 
               log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
-              const result = await triggers.sendDirectMessage(
-                [String(paneId)],
-                withAgentPrefix(contentWithProjectContext),
-                data.role || 'unknown',
-                { traceContext, awaitDelivery: true }
-              );
+              const result = await this.deliverPaneMessageReliably({
+                paneId: String(paneId),
+                message: withAgentPrefix(contentWithProjectContext),
+                fromRole: data.role || 'unknown',
+                traceContext,
+                queueOnAcceptedUnverified: false,
+                queueOnHardFailure: true,
+                messageId: canonicalEnvelope.message_id || null,
+                channel: 'ws',
+                sender: senderRoleForJournal,
+                logLabel: 'WebSocket',
+              });
               await this.recordDeliveryOutcomePattern({
                 channel: 'send',
                 target: String(paneId),
                 fromRole: data.role || 'unknown',
                 result,
                 traceContext,
+              });
+              await this.finalizeLocalTriggerDeliveryJournal({
+                messageId: canonicalEnvelope.message_id,
+                result,
+                paneId: String(paneId),
+                target: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
+                senderRole: senderRoleForJournal,
+                traceContext,
+                routeKind: 'local',
+              });
+              this.scheduleAgentResponseWatchdog({
+                senderRole: senderRoleForJournal,
+                targetRole: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
+                content: canonicalEnvelope.content,
+                sentAtMs: canonicalEnvelope.timestamp_ms || nowMs,
+              });
+              this.maybeResolveAgentResponseWatchdog({
+                senderRole: senderRoleForJournal,
+                targetRole: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
+                deliveryAccepted: result?.accepted !== false || result?.verified === true,
               });
               const payload = {
                 ok: Boolean(result?.verified),
@@ -2850,6 +3147,7 @@ class SquidRunApp {
                 guardActions: preflight.actions,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
+              await maybeRecordRecallUsage(payload);
               maybeTriggerAutonomousSmoke(payload);
               return payload;
             } else {
@@ -2921,6 +3219,14 @@ class SquidRunApp {
               result,
               traceContext,
             });
+            await this.finalizeLocalTriggerDeliveryJournal({
+              messageId: data.message.messageId || null,
+              result,
+              target: 'all',
+              senderRole: data.role || 'unknown',
+              traceContext,
+              routeKind: 'local',
+            });
             return {
               ok: Boolean(result?.verified),
               accepted: Boolean(result?.accepted),
@@ -2952,6 +3258,27 @@ class SquidRunApp {
     this.startAutoHandoffMaterializer();
 
     log.info('App', 'Initialization complete');
+  }
+
+  kickoffStartupBriefingGeneration(reason = 'app-init') {
+    if (this.startupBriefingPromise) {
+      return this.startupBriefingPromise;
+    }
+
+    this.startupBriefingPromise = generateStartupBriefing({
+      projectRoot: getProjectRoot(),
+      source: reason,
+    }).then((result) => {
+      if (!result?.ok) {
+        log.warn('StartupBriefing', `Generation failed: ${result?.error || 'unknown'}`);
+      }
+      return result;
+    }).catch((err) => {
+      log.warn('StartupBriefing', `Generation crashed: ${err.message}`);
+      return { ok: false, error: err.message };
+    });
+
+    return this.startupBriefingPromise;
   }
 
   async runAutoHandoffMaterializer(reason = 'timer') {
@@ -3072,10 +3399,14 @@ class SquidRunApp {
       intervalMs: TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS,
       immediate: true,
     });
-    teamMemory.startBeliefSnapshotSweep({
-      intervalMs: TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS,
-      immediate: true,
-    });
+    if (TEAM_MEMORY_BELIEF_SWEEP_ENABLED) {
+      teamMemory.startBeliefSnapshotSweep({
+        intervalMs: TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS,
+        immediate: true,
+      });
+    } else {
+      log.info('TeamMemory', 'Belief snapshot sweep disabled by default; set SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP=1 to re-enable.');
+    }
     teamMemory.startPatternMiningSweep({
       intervalMs: TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS,
       immediate: true,
@@ -3121,7 +3452,25 @@ class SquidRunApp {
   }
 
   async createWindow() {
-    this.ctx.mainWindow = new BrowserWindow({
+    const rawOptions = arguments[0] && typeof arguments[0] === 'object' ? arguments[0] : {};
+    const windowKey = String(rawOptions.windowKey || 'main').trim() || 'main';
+    const lifecycleRoot = rawOptions.lifecycleRoot === true
+      || (windowKey === 'main' && !this.canSendToWindow(this.ctx.mainWindow));
+    const existingWindow = this.getAppWindow(windowKey);
+    if (this.canSendToWindow(existingWindow)) {
+      if (typeof existingWindow.show === 'function') existingWindow.show();
+      return;
+    }
+
+    const isPrimaryWindow = windowKey === 'main';
+    const windowTitle = rawOptions.title
+      || (isPrimaryWindow ? 'SquidRun' : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
+    const query = {
+      windowKey,
+      windowTeam: String(rawOptions.windowTeam || windowKey).trim() || windowKey,
+    };
+
+    const windowRef = new BrowserWindow({
       width: 1400,
       height: 800,
       icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
@@ -3133,19 +3482,24 @@ class SquidRunApp {
         sandbox: false,
         preload: path.join(__dirname, '..', '..', 'preload.js'),
       },
-      title: 'SquidRun',
+      title: windowTitle,
     });
-    this.enforceMenuSuppression(this.ctx.mainWindow);
+    this.registerAppWindow(windowKey, windowRef, { lifecycleRoot });
+    this.enforceMenuSuppression(windowRef);
 
-    this.installMainWindowSendInterceptor();
-    this.ensurePaneHostReadyForwarder();
-    this.setupPermissions();
+    if (lifecycleRoot) {
+      this.installMainWindowSendInterceptor();
+      this.ensurePaneHostReadyForwarder();
+      this.setupPermissions();
 
-    // Register IPC handlers and load listeners before renderer startup to avoid startup races.
-    this.initModules();
-    this.setupWindowListeners();
+      // Register IPC handlers and load listeners before renderer startup to avoid startup races.
+      this.initModules();
+      this.setupWindowListeners(windowRef, { windowKey, lifecycleRoot });
+    } else {
+      this.setupWindowListeners(windowRef, { windowKey, lifecycleRoot });
+    }
 
-    this.ctx.mainWindow.loadFile(RENDERER_ENTRY_HTML).catch((err) => {
+    windowRef.loadFile(RENDERER_ENTRY_HTML, { query }).catch((err) => {
       log.error('Window', `Failed to load renderer entry ${RENDERER_ENTRY_HTML}: ${err.message}`);
       this.activity.logActivity('error', 'system', 'Renderer failed to load', {
         reason: 'load_file_failed',
@@ -3154,13 +3508,487 @@ class SquidRunApp {
       });
     });
 
-    // Hidden pane host windows are non-critical; defer to a separate task so
-    // main-window listeners/post-load init always install first.
-    this.schedulePaneHostBootstrap();
+    if (lifecycleRoot) {
+      // Hidden pane host windows are non-critical; defer to a separate task so
+      // main-window listeners/post-load init always install first.
+      this.schedulePaneHostBootstrap();
 
-    const devToolsAllowedByEnv = process.env.SQUIDRUN_DEBUG === '1' || process.env.NODE_ENV === 'development';
-    if (this.ctx.currentSettings.devTools && devToolsAllowedByEnv) {
-      this.ctx.mainWindow.webContents.openDevTools();
+      const devToolsAllowedByEnv = process.env.SQUIDRUN_DEBUG === '1' || process.env.NODE_ENV === 'development';
+      if (this.ctx.currentSettings.devTools && devToolsAllowedByEnv) {
+        windowRef.webContents.openDevTools();
+      }
+    }
+
+  }
+
+  setLaunchWindowProfile(profile = {}) {
+    const windowKey = toNonEmptyString(profile.windowKey) || 'main';
+    const includeMainWindow = windowKey === 'main'
+      ? true
+      : profile.includeMainWindow !== false && profile.standaloneWindow !== true;
+    this.launchWindowProfile = {
+      windowKey,
+      includeMainWindow,
+      standaloneWindow: includeMainWindow !== true,
+      focusWindowKey: toNonEmptyString(profile.focusWindowKey) || windowKey,
+    };
+    return { ...this.launchWindowProfile };
+  }
+
+  getLaunchWindowProfile() {
+    return { ...(this.launchWindowProfile || { windowKey: 'main', includeMainWindow: true, standaloneWindow: false, focusWindowKey: 'main' }) };
+  }
+
+  async launchWindowsForProfile(profile = null) {
+    const nextProfile = profile && typeof profile === 'object'
+      ? this.setLaunchWindowProfile(profile)
+      : this.getLaunchWindowProfile();
+    const windowKey = toNonEmptyString(nextProfile.windowKey) || 'main';
+    const includeMainWindow = nextProfile.includeMainWindow === true || windowKey === 'main';
+
+    if (includeMainWindow) {
+      await this.openAppWindow('main', {
+        lifecycleRoot: this.getOpenAppWindowCount() === 0,
+      });
+    }
+    if (windowKey !== 'main') {
+      await this.openAppWindow(windowKey, {
+        lifecycleRoot: this.getOpenAppWindowCount() === 0,
+      });
+    }
+
+    this.focusAppWindow(nextProfile.focusWindowKey || windowKey);
+    return nextProfile;
+  }
+
+  focusAppWindow(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    const window = this.getAppWindow(windowKey);
+    if (!this.canSendToWindow(window)) return false;
+    if (typeof window.isMinimized === 'function' && window.isMinimized()) {
+      window.restore();
+    }
+    if (typeof window.isVisible === 'function' && !window.isVisible()) {
+      window.show();
+    } else if (typeof window.show === 'function') {
+      window.show();
+    }
+    if (typeof window.moveTop === 'function') {
+      window.moveTop();
+    }
+    if (typeof window.focus === 'function') {
+      window.focus();
+    }
+    return true;
+  }
+
+  async openAppWindow(rawWindowKey = 'main', options = {}) {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    const windowTitle = windowKey === 'main'
+      ? 'SquidRun'
+      : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
+    await this.createWindow({
+      windowKey,
+      windowTeam: windowKey,
+      title: windowTitle,
+      lifecycleRoot: options.lifecycleRoot === true,
+    });
+    this.focusAppWindow(windowKey);
+    return {
+      ok: true,
+      windowKey,
+      title: windowTitle,
+    };
+  }
+
+  async closeAppWindow(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    const window = this.getAppWindow(windowKey);
+    if (!window) {
+      return {
+        ok: false,
+        reason: 'window_not_found',
+        windowKey,
+      };
+    }
+    window.close();
+    return {
+      ok: true,
+      windowKey,
+    };
+  }
+
+  formatWindowKeyLabel(windowKey) {
+    const raw = String(windowKey || 'main').trim();
+    if (!raw) return 'Window';
+    return raw
+      .split(/[-_\s]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  getWindowSessionScopeId(windowKey = 'main') {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    const baseScopeId = toNonEmptyString(this.commsSessionScopeId) || `app-${process.pid}-${Date.now()}`;
+    return normalizedWindowKey === 'main'
+      ? baseScopeId
+      : `${baseScopeId}:${normalizedWindowKey}`;
+  }
+
+  getOpenAppWindowCount(excludedWindowKey = null) {
+    const excludedKey = toNonEmptyString(excludedWindowKey);
+    if (typeof this.ctx.getWindows === 'function') {
+      return Array.from(this.ctx.getWindows().entries())
+        .filter(([windowKey, windowRef]) => {
+          if (excludedKey && String(windowKey || '').trim() === excludedKey) return false;
+          return this.canSendToWindow(windowRef);
+        })
+        .length;
+    }
+    const fallbackWindow = excludedKey === 'main' ? null : this.ctx.mainWindow;
+    return this.canSendToWindow(fallbackWindow) ? 1 : 0;
+  }
+
+  getFallbackMainWindow(excludedWindow = null) {
+    const currentMainWindow = this.getAppWindow('main');
+    if (this.canSendToWindow(currentMainWindow) && currentMainWindow !== excludedWindow) {
+      return currentMainWindow;
+    }
+    if (typeof this.ctx.getWindows !== 'function') return null;
+    for (const [, windowRef] of this.ctx.getWindows().entries()) {
+      if (!this.canSendToWindow(windowRef)) continue;
+      if (windowRef === excludedWindow) continue;
+      return windowRef;
+    }
+    return null;
+  }
+
+  handleAppWindowClosed(windowKey, windowRef) {
+    this.unregisterAppWindow(windowKey);
+    if (this.ctx.mainWindow !== windowRef) return;
+    const replacementWindow = this.getFallbackMainWindow(windowRef);
+    if (typeof this.ctx.setMainWindow === 'function') {
+      this.ctx.setMainWindow(replacementWindow || null);
+      return;
+    }
+    this.ctx.mainWindow = replacementWindow || null;
+  }
+
+  seedRendererWindowState(window, options = {}) {
+    if (!this.canSendToWindow(window)) return;
+    const windowKey = String(options.windowKey || 'main').trim() || 'main';
+    try {
+      window.webContents.send('state-changed', watcher.readState());
+    } catch (err) {
+      log.warn('Window', `Failed to seed state for ${windowKey}: ${err.message}`);
+    }
+
+    if (this.ctx.daemonClient?.connected) {
+      try {
+        const terminals = this.ctx.daemonClient.getTerminals?.() || [];
+        window.webContents.send('daemon-connected', { terminals, windowKey });
+        return;
+      } catch (err) {
+        log.warn('Window', `Failed to seed daemon state for ${windowKey}: ${err.message}`);
+      }
+    }
+
+    if (this.daemonTimeoutTriggered && !this.daemonConnectedForStartup) {
+      try {
+        window.webContents.send('daemon-timeout', {
+          reason: 'daemon_connect_timeout_replay',
+          windowKey,
+        });
+      } catch (err) {
+        log.warn('Window', `Failed to replay daemon timeout for ${windowKey}: ${err.message}`);
+      }
+    }
+  }
+
+  getEunbyeolDesktopShortcutPath() {
+    if (process.platform !== 'win32' || typeof app?.getPath !== 'function') return null;
+    return path.join(app.getPath('desktop'), 'Eunbyeol.lnk');
+  }
+
+  buildEunbyeolDesktopShortcutOptions() {
+    if (process.platform !== 'win32') return null;
+    const uiRoot = path.resolve(path.join(__dirname, '..', '..'));
+    const isPackaged = app.isPackaged === true;
+    return {
+      target: process.execPath,
+      args: isPackaged
+        ? '--window=eunbyeol --standalone-window'
+        : `"${uiRoot}" --window=eunbyeol --standalone-window`,
+      cwd: isPackaged ? path.dirname(process.execPath) : uiRoot,
+      description: 'Open Eunbyeol as a standalone SquidRun window',
+      icon: path.join(uiRoot, 'assets', 'squidrun-favicon.ico'),
+      iconIndex: 0,
+      appUserModelId: WINDOWS_APP_USER_MODEL_ID,
+    };
+  }
+
+  ensureEunbyeolDesktopShortcut() {
+    if (process.platform !== 'win32') {
+      return { ok: false, skipped: true, reason: 'unsupported_platform' };
+    }
+    if (!shell || typeof shell.writeShortcutLink !== 'function') {
+      return { ok: false, skipped: true, reason: 'shortcut_api_unavailable' };
+    }
+    const shortcutPath = this.getEunbyeolDesktopShortcutPath();
+    const shortcutOptions = this.buildEunbyeolDesktopShortcutOptions();
+    if (!shortcutPath || !shortcutOptions?.target) {
+      return { ok: false, skipped: true, reason: 'shortcut_target_unavailable' };
+    }
+    const written = shell.writeShortcutLink(shortcutPath, 'create', shortcutOptions);
+    return {
+      ok: written === true,
+      shortcutPath,
+      shortcutOptions,
+      reason: written === true ? null : 'write_shortcut_failed',
+    };
+  }
+
+  getEunbyeolStartupBundlePath() {
+    return resolveCoordPath(path.join('runtime', 'window-teams', 'eunbyeol', 'startup-bundle.md'), { forWrite: true });
+  }
+
+  getEunbyeolStartupSourcePaths() {
+    return [
+      path.join(getProjectRoot() || process.cwd(), 'CLAUDE.md'),
+      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'case-operations.md'),
+      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'handoff-corrections.md'),
+      ...EUNBYEOL_CONFIRMED_FACT_PATHS,
+    ];
+  }
+
+  async readRecentEunbyeolTelegramHistory(limit = 8) {
+    const result = await executeEvidenceLedgerOperation(
+      'query-comms-journal',
+      {
+        channel: 'telegram',
+        order: 'desc',
+        limit: Math.max(limit * 4, 24),
+      },
+      {
+        source: {
+          via: 'eunbyeol-startup-bundle',
+          role: 'system',
+          paneId: 'system',
+        },
+      }
+    ).catch((err) => ({ ok: false, error: err.message, items: [] }));
+    const rows = Array.isArray(result)
+      ? result
+      : (Array.isArray(result?.items) ? result.items : []);
+    return rows
+      .filter((row) => {
+        const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        const metadataChatId = normalizeChatId(metadata.chatId || metadata.telegramChatId || null);
+        const windowKey = toNonEmptyString(metadata.windowKey) || null;
+        const sessionId = toNonEmptyString(row?.sessionId) || null;
+        return metadataChatId === EUNBYEOL_CHAT_ID
+          || windowKey === 'eunbyeol'
+          || sessionId === this.getWindowSessionScopeId('eunbyeol')
+          || sessionId?.endsWith(':eunbyeol') === true;
+      })
+      .slice(0, limit);
+  }
+
+  async readEunbyeolCognitiveMemoryEntries(limit = 6) {
+    const result = await executeCognitiveMemoryOperation(
+      'retrieve',
+      {
+        agentId: 'architect',
+        query: 'Eunbyeol Hillstate Jeon Qeline case operations handoff corrections',
+        limit,
+      },
+      {
+        source: {
+          via: 'eunbyeol-startup-bundle',
+          role: 'system',
+          paneId: 'system',
+        },
+      }
+    ).catch((err) => ({ ok: false, error: err.message, results: [] }));
+    return Array.isArray(result?.results) ? result.results.slice(0, limit) : [];
+  }
+
+  async buildEunbyeolStartupBundle() {
+    const sourcePaths = this.getEunbyeolStartupSourcePaths();
+    const claudePath = sourcePaths[0];
+    const caseOperationsPath = sourcePaths[1];
+    const handoffCorrectionsPath = sourcePaths[2];
+    const confirmedFactsPaths = sourcePaths.slice(3);
+    const [telegramHistory, cognitiveEntries] = await Promise.all([
+      this.readRecentEunbyeolTelegramHistory(8),
+      this.readEunbyeolCognitiveMemoryEntries(6),
+    ]);
+
+    const claudeLines = this.readTextFileSafe(claudePath)
+      .split(/\r?\n/)
+      .filter((line) => /은별|eunbyeol|rachelchoi|case-operations|confirmed-facts|hillstate|jeon|qeline|korean fraud/i.test(line))
+      .slice(0, 16);
+    const caseOperationsPreview = this.readTextFileSafe(caseOperationsPath)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(0, 20);
+    const handoffCorrectionsPreview = this.readTextFileSafe(handoffCorrectionsPath)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(0, 16);
+    const confirmedFactsPreviews = confirmedFactsPaths.map((filePath) => ({
+      filePath,
+      lines: this.readTextFileSafe(filePath)
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .slice(0, 12),
+    }));
+
+    const lines = [
+      '# Eunbyeol Startup Bundle',
+      '',
+      `Generated: ${new Date().toISOString()}`,
+      `Session Scope: ${this.getWindowSessionScopeId('eunbyeol')}`,
+      '',
+      'Window purpose:',
+      '- This window is for Eunbyeol-only case work.',
+      '- Keep focus on Hillstate, Jeon Myeongsam, Qeline/Korean Fraud, insurance, and competition docs.',
+      '- Do not mix trading chatter into this lane.',
+      '',
+      'Authoritative source files:',
+      ...sourcePaths.map((filePath) => `- ${filePath}`),
+      '',
+      'Scoped CLAUDE.md lines:',
+      ...(claudeLines.length > 0 ? claudeLines.map((line) => `> ${line}`) : ['> No Eunbyeol-specific CLAUDE.md lines found.']),
+      '',
+      `Case dashboard preview (${caseOperationsPath}):`,
+      ...(caseOperationsPreview.length > 0 ? caseOperationsPreview.map((line) => `- ${line}`) : ['- Missing or empty case-operations.md']),
+      '',
+      `Handoff corrections preview (${handoffCorrectionsPath}):`,
+      ...(handoffCorrectionsPreview.length > 0 ? handoffCorrectionsPreview.map((line) => `- ${line}`) : ['- Missing or empty handoff-corrections.md']),
+    ];
+
+    for (const preview of confirmedFactsPreviews) {
+      lines.push('');
+      lines.push(`Confirmed facts preview (${preview.filePath}):`);
+      if (preview.lines.length > 0) {
+        lines.push(...preview.lines.map((line) => `- ${line}`));
+      } else {
+        lines.push('- Missing or empty confirmed-facts.md');
+      }
+    }
+
+    lines.push('');
+    lines.push(`Recent Eunbyeol Telegram history (chat ${EUNBYEOL_CHAT_ID}):`);
+    if (telegramHistory.length > 0) {
+      for (const entry of telegramHistory) {
+        const metadata = entry?.metadata && typeof entry.metadata === 'object' ? entry.metadata : {};
+        const sender = toNonEmptyString(metadata.from) || toNonEmptyString(entry?.senderRole) || 'unknown';
+        const body = String(entry?.rawBody || '').replace(/\s+/g, ' ').trim();
+        if (!body) continue;
+        lines.push(`- ${sender}: ${body.slice(0, 280)}`);
+      }
+    } else {
+      lines.push('- No recent Telegram history found for Eunbyeol in the evidence ledger.');
+    }
+
+    lines.push('');
+    lines.push('Relevant cognitive memory entries:');
+    if (cognitiveEntries.length > 0) {
+      for (const entry of cognitiveEntries) {
+        const title = toNonEmptyString(entry?.title) || toNonEmptyString(entry?.heading) || 'Memory';
+        const sourcePath = toNonEmptyString(entry?.sourcePath) || 'cognitive-memory';
+        const content = String(entry?.content || '').replace(/\s+/g, ' ').trim();
+        lines.push(`- ${title} (${sourcePath}): ${content.slice(0, 260)}`);
+      }
+    } else {
+      lines.push('- No cognitive memory entries were retrieved for the Eunbyeol startup query.');
+    }
+
+    return {
+      ok: true,
+      sessionScopeId: this.getWindowSessionScopeId('eunbyeol'),
+      sourcePaths,
+      bundlePath: this.getEunbyeolStartupBundlePath(),
+      text: lines.join('\n'),
+    };
+  }
+
+  async writeEunbyeolStartupBundle(bundle = null) {
+    const nextBundle = bundle && typeof bundle === 'object' ? bundle : await this.buildEunbyeolStartupBundle();
+    if (!nextBundle?.bundlePath || !nextBundle?.text) return nextBundle;
+    fs.mkdirSync(path.dirname(nextBundle.bundlePath), { recursive: true });
+    fs.writeFileSync(nextBundle.bundlePath, `${nextBundle.text}\n`, 'utf8');
+    return nextBundle;
+  }
+
+  async injectEunbyeolStartupBundle() {
+    const bundle = await this.writeEunbyeolStartupBundle();
+    const sessionScopeId = bundle?.sessionScopeId || this.getWindowSessionScopeId('eunbyeol');
+    for (const paneId of ['1', '2', '3']) {
+      this.routeInjectMessage({
+        panes: [paneId],
+        message: `${bundle.text}\r`,
+        startupInjection: true,
+        meta: {
+          windowKey: 'eunbyeol',
+          session_id: sessionScopeId,
+          startupInjection: true,
+          contextBundle: 'eunbyeol',
+          authoritative: true,
+          sourceFiles: bundle?.sourcePaths || [],
+          bundlePath: bundle?.bundlePath || null,
+        },
+      });
+    }
+    return bundle;
+  }
+
+  getAppWindow(windowKey = 'main') {
+    if (typeof this.ctx.getWindow === 'function') {
+      return this.ctx.getWindow(windowKey);
+    }
+    return String(windowKey || 'main') === 'main' ? this.ctx.mainWindow : null;
+  }
+
+  getAppWindows() {
+    if (typeof this.ctx.getWindows === 'function') {
+      return Array.from(this.ctx.getWindows().entries());
+    }
+    if (this.canSendToWindow(this.ctx.mainWindow)) {
+      return [['main', this.ctx.mainWindow]];
+    }
+    return [];
+  }
+
+  registerAppWindow(windowKey, windowRef, options = {}) {
+    if (typeof this.ctx.setWindow === 'function') {
+      this.ctx.setWindow(windowKey, windowRef);
+    }
+    if (String(windowKey || 'main') === 'main') {
+      this.ctx.mainWindow = windowRef;
+      if (typeof this.ctx.setMainWindow === 'function') {
+        this.ctx.setMainWindow(windowRef);
+      }
+      return;
+    }
+    if (options.lifecycleRoot === true) {
+      if (typeof this.ctx.setMainWindow === 'function') {
+        this.ctx.setMainWindow(windowRef);
+      } else {
+        this.ctx.mainWindow = windowRef;
+      }
+    }
+  }
+
+  unregisterAppWindow(windowKey) {
+    if (typeof this.ctx.deleteWindow === 'function') {
+      this.ctx.deleteWindow(windowKey);
+      return;
+    }
+    if (String(windowKey || 'main') === 'main') {
+      this.ctx.mainWindow = null;
     }
   }
 
@@ -3322,6 +4150,7 @@ class SquidRunApp {
       loadSettings: () => this.settings.loadSettings(),
       saveSettings: (s) => this.settings.saveSettings(s),
       readAppStatus: () => this.settings.readAppStatus(),
+      getStartupServicesStatus: () => this.getStartupServicesStatus(),
       getSessionId: () => this.commsSessionScopeId,
       recordSessionStart: (id) => this.usage.recordSessionStart(id),
       recordSessionEnd: (id) => this.usage.recordSessionEnd(id),
@@ -3343,6 +4172,7 @@ class SquidRunApp {
       startRuntimeLifecycle: (reason) => this.startRuntimeServices(reason || 'ipc-start'),
       stopRuntimeLifecycle: (reason) => this.stopRuntimeServices(reason || 'ipc-stop'),
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
+      performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
     });
 
     ipcMain.removeHandler('get-onboarding-state');
@@ -3381,6 +4211,22 @@ class SquidRunApp {
           error: err.message,
         };
       }
+    });
+
+    ipcMain.removeHandler('open-app-window');
+    ipcMain.handle('open-app-window', async (_event, payload = {}) => {
+      const requestedWindowKey = typeof payload === 'string'
+        ? payload
+        : (payload?.windowKey || payload?.key || 'main');
+      return this.openAppWindow(requestedWindowKey);
+    });
+
+    ipcMain.removeHandler('close-app-window');
+    ipcMain.handle('close-app-window', async (_event, payload = {}) => {
+      const requestedWindowKey = typeof payload === 'string'
+        ? payload
+        : (payload?.windowKey || payload?.key || 'main');
+      return this.closeAppWindow(requestedWindowKey);
     });
 
     // Pipeline
@@ -3476,17 +4322,58 @@ class SquidRunApp {
       if (!buffered) continue;
       this.pendingPtyDataByPane.delete(paneId);
 
-      this.sendToVisibleWindow(`pty-data-${paneId}`, buffered);
       if (this.isHiddenPaneHostModeEnabled()) {
         this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-data-${paneId}`, buffered);
       }
+      this.visiblePtyOutputFilter.ingest(paneId, buffered);
+      this.flushVisibleFilteredPtyData(paneId);
     }
+
+    this.refreshPtyVisibleReleaseTimer();
+  }
+
+  flushVisibleFilteredPtyData(targetPaneId = null, options = {}) {
+    const releases = this.visiblePtyOutputFilter.releaseReady(targetPaneId, options);
+    for (const entry of releases) {
+      if (!entry || !entry.text) continue;
+      this.sendToVisibleWindow(`pty-data-${entry.paneId}`, entry.text);
+    }
+  }
+
+  refreshPtyVisibleReleaseTimer() {
+    this.clearPtyVisibleReleaseTimer();
+    const delay = this.visiblePtyOutputFilter.getNextReleaseDelayMs();
+    if (delay === null) return;
+
+    this.ptyVisibleReleaseTimer = setTimeout(() => {
+      this.ptyVisibleReleaseTimer = null;
+      this.flushVisibleFilteredPtyData();
+      this.refreshPtyVisibleReleaseTimer();
+    }, Math.max(0, delay));
+    if (typeof this.ptyVisibleReleaseTimer.unref === 'function') {
+      this.ptyVisibleReleaseTimer.unref();
+    }
+  }
+
+  handlePtyDataKernelEvent(eventData = {}) {
+    const result = this.visiblePtyOutputFilter.applyKernelEvent(eventData);
+    if (result?.paneId && result.changed) {
+      this.flushVisibleFilteredPtyData(result.paneId);
+    }
+    this.refreshPtyVisibleReleaseTimer();
+    return result;
   }
 
   clearPtyDataFlushTimer() {
     if (!this.ptyDataFlushTimer) return;
     clearTimeout(this.ptyDataFlushTimer);
     this.ptyDataFlushTimer = null;
+  }
+
+  clearPtyVisibleReleaseTimer() {
+    if (!this.ptyVisibleReleaseTimer) return;
+    clearTimeout(this.ptyVisibleReleaseTimer);
+    this.ptyVisibleReleaseTimer = null;
   }
 
   async requestDaemonTerminalSnapshot(timeoutMs = 2000) {
@@ -3587,9 +4474,7 @@ class SquidRunApp {
         daemonClient.resume(String(paneId));
       }
 
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-        this.ctx.mainWindow.webContents.send('daemon-connected', { terminals });
-      }
+      this.sendToAllWindows('daemon-connected', { terminals });
       this.primePaneHostFromTerminalSnapshot(terminals);
 
       this.emitCommsBridgeEvent('comms.transport.recovery.completed', {
@@ -3640,10 +4525,17 @@ class SquidRunApp {
     });
   }
 
-  setupWindowListeners() {
-    const window = this.ctx.mainWindow;
+  setupWindowListeners(window = this.ctx.mainWindow, options = {}) {
+    const windowKey = String(options.windowKey || 'main').trim() || 'main';
+    const isPrimaryWindow = windowKey === 'main';
+    const lifecycleRoot = options.lifecycleRoot === true;
+
+    if (!window) return;
 
     window.on('close', (event) => {
+      if (!isPrimaryWindow || this.getOpenAppWindowCount(windowKey) > 0) {
+        return;
+      }
       if (this.shuttingDown || this.fullShutdownPromise) return;
       event.preventDefault();
       void (async () => {
@@ -3657,6 +4549,10 @@ class SquidRunApp {
       })();
     });
 
+    window.on('closed', () => {
+      this.handleAppWindowClosed(windowKey, window);
+    });
+
     window.webContents.on('did-start-loading', () => {
       log.info('Window', 'did-start-loading');
     });
@@ -3666,8 +4562,38 @@ class SquidRunApp {
     });
 
     window.webContents.on('did-finish-load', async () => {
-      log.info('Window', 'did-finish-load');
-      await this.initPostLoad();
+      log.info('Window', `did-finish-load${isPrimaryWindow ? '' : ` (${windowKey})`}`);
+      if (lifecycleRoot) {
+        await this.initPostLoad();
+      }
+      if (!isPrimaryWindow) {
+        let eunbyeolBundle = null;
+        if (windowKey === 'eunbyeol') {
+          try {
+            eunbyeolBundle = await this.injectEunbyeolStartupBundle();
+          } catch (err) {
+            log.warn('Window', `Failed to build Eunbyeol startup bundle: ${err.message}`);
+          }
+        }
+        try {
+          window.webContents.send('window-context', {
+            windowKey,
+            windowTeam: windowKey,
+            roleLayout: 'standard',
+            sessionScopeId: this.getWindowSessionScopeId(windowKey),
+            startupBundlePath: eunbyeolBundle?.bundlePath || null,
+            startupSourceFiles: eunbyeolBundle?.sourcePaths || [],
+            autoBootAgents: windowKey === 'eunbyeol',
+          });
+        } catch (err) {
+          log.warn('Window', `Failed to seed secondary window context for ${windowKey}: ${err.message}`);
+        }
+        try {
+          this.seedRendererWindowState(window, { windowKey });
+        } catch (err) {
+          log.warn('Window', `Failed to seed secondary window runtime state for ${windowKey}: ${err.message}`);
+        }
+      }
     });
 
     window.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -3754,6 +4680,227 @@ class SquidRunApp {
     } catch {
       return fallback;
     }
+  }
+
+  getPendingPaneDeliveryQueuePath() {
+    return this.pendingPaneDeliveryQueuePath;
+  }
+
+  ensurePendingPaneDeliveryQueueDir() {
+    const queuePath = this.getPendingPaneDeliveryQueuePath();
+    fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+    return queuePath;
+  }
+
+  buildPendingPaneDeliveryKey(entry = {}) {
+    const explicit = toNonEmptyString(entry.messageId)
+      || toNonEmptyString(entry.queueKey);
+    if (explicit) return explicit;
+    const hash = createHash('sha1');
+    hash.update(JSON.stringify({
+      paneId: toNonEmptyString(entry.paneId) || '1',
+      message: toNonEmptyString(entry.message) || '',
+      fromRole: toNonEmptyString(entry.fromRole) || '',
+      channel: toNonEmptyString(entry.channel) || '',
+      sender: toNonEmptyString(entry.sender) || '',
+    }));
+    return `pending-pane-${hash.digest('hex').slice(0, 16)}`;
+  }
+
+  normalizePendingPaneDeliveryEntry(entry = {}) {
+    const message = toNonEmptyString(entry.message);
+    const paneId = toNonEmptyString(entry.paneId) || '1';
+    if (!message || !paneId) return null;
+    const attemptCount = Number.isFinite(Number(entry.attemptCount))
+      ? Math.max(0, Math.floor(Number(entry.attemptCount)))
+      : 0;
+    return {
+      queueKey: this.buildPendingPaneDeliveryKey(entry),
+      paneId,
+      message,
+      messageId: toNonEmptyString(entry.messageId) || null,
+      fromRole: toNonEmptyString(entry.fromRole) || null,
+      channel: toNonEmptyString(entry.channel) || null,
+      sender: toNonEmptyString(entry.sender) || null,
+      createdAt: toNonEmptyString(entry.createdAt) || new Date().toISOString(),
+      lastAttemptAt: toNonEmptyString(entry.lastAttemptAt) || null,
+      lastFailureReason: toNonEmptyString(entry.lastFailureReason) || null,
+      attemptCount,
+      traceContext: (entry.traceContext && typeof entry.traceContext === 'object')
+        ? { ...entry.traceContext }
+        : null,
+      meta: (entry.meta && typeof entry.meta === 'object')
+        ? { ...entry.meta }
+        : null,
+    };
+  }
+
+  readPendingPaneDeliveries() {
+    const payload = this.readJsonFileSafe(this.getPendingPaneDeliveryQueuePath(), null);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    return items
+      .map((item) => this.normalizePendingPaneDeliveryEntry(item))
+      .filter(Boolean);
+  }
+
+  writePendingPaneDeliveries(items = []) {
+    this.ensurePendingPaneDeliveryQueueDir();
+    const normalizedItems = Array.isArray(items)
+      ? items.map((item) => this.normalizePendingPaneDeliveryEntry(item)).filter(Boolean)
+      : [];
+    fs.writeFileSync(this.getPendingPaneDeliveryQueuePath(), JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      count: normalizedItems.length,
+      items: normalizedItems,
+    }, null, 2));
+    return normalizedItems;
+  }
+
+  queuePendingPaneDelivery(entry = {}) {
+    const normalized = this.normalizePendingPaneDeliveryEntry(entry);
+    if (!normalized) {
+      return { ok: false, reason: 'invalid_pending_delivery_entry' };
+    }
+    const items = this.readPendingPaneDeliveries();
+    const existingIndex = items.findIndex((item) => item.queueKey === normalized.queueKey);
+    if (existingIndex >= 0) {
+      items[existingIndex] = {
+        ...items[existingIndex],
+        ...normalized,
+        attemptCount: Math.max(items[existingIndex].attemptCount || 0, normalized.attemptCount || 0),
+      };
+    } else {
+      items.push(normalized);
+    }
+    this.writePendingPaneDeliveries(items);
+    return { ok: true, queued: true, entry: normalized, count: items.length };
+  }
+
+  async deliverPaneMessageReliably({
+    paneId = '1',
+    message = '',
+    fromRole = null,
+    traceContext = null,
+    meta = null,
+    queueOnAcceptedUnverified = false,
+    queueOnHardFailure = true,
+    messageId = null,
+    channel = null,
+    sender = null,
+    logLabel = 'PaneDelivery',
+  } = {}) {
+    const normalizedMessage = toNonEmptyString(message);
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    if (!normalizedMessage) {
+      return { accepted: false, queued: false, verified: false, status: 'invalid_message' };
+    }
+
+    const result = await triggers.sendDirectMessage(
+      [String(normalizedPaneId)],
+      normalizedMessage,
+      fromRole,
+      { traceContext, awaitDelivery: true, meta }
+    );
+
+    const accepted = result?.accepted === true || result?.queued === true || result?.ok === true;
+    const verified = result?.verified === true;
+    const shouldQueue = verified
+      ? false
+      : ((queueOnAcceptedUnverified && accepted) || (queueOnHardFailure && !accepted));
+
+    if (!shouldQueue) {
+      return result;
+    }
+
+    const failureReason = toNonEmptyString(result?.status)
+      || toNonEmptyString(result?.error)
+      || toNonEmptyString(result?.reason)
+      || toNonEmptyString(result?.details?.failureReason)
+      || 'delivery_unverified';
+
+    const queued = this.queuePendingPaneDelivery({
+      paneId: normalizedPaneId,
+      message: normalizedMessage,
+      messageId,
+      fromRole,
+      channel,
+      sender,
+      traceContext,
+      meta,
+      lastAttemptAt: new Date().toISOString(),
+      lastFailureReason: failureReason,
+      attemptCount: 1,
+    });
+
+    if (queued?.ok) {
+      log.warn(logLabel, `Queued pane ${normalizedPaneId} delivery for replay (${failureReason})`);
+    }
+
+    return {
+      ...result,
+      pendingQueued: queued?.ok === true,
+      pendingQueueKey: queued?.entry?.queueKey || null,
+      pendingFailureReason: failureReason,
+    };
+  }
+
+  async flushPendingPaneDeliveries({ paneId = null, reason = 'manual-replay' } = {}) {
+    const normalizedPaneId = paneId === null || paneId === undefined ? null : String(paneId).trim();
+    const run = async () => {
+      const items = this.readPendingPaneDeliveries();
+      if (!items.length) {
+        return { ok: true, deliveredCount: 0, remainingCount: 0, reason };
+      }
+
+      let deliveredCount = 0;
+      const remaining = [];
+      const MAX_PENDING_DELIVERY_RETRIES = 5;
+      for (const item of items) {
+        if (normalizedPaneId && item.paneId !== normalizedPaneId) {
+          remaining.push(item);
+          continue;
+        }
+        if ((item.attemptCount || 0) >= MAX_PENDING_DELIVERY_RETRIES) {
+          log.warn('PendingPaneDelivery', `Dropping message after ${MAX_PENDING_DELIVERY_RETRIES} retries (last: ${item.lastFailureReason || 'unknown'})`);
+          continue;
+        }
+        const result = await triggers.sendDirectMessage(
+          [String(item.paneId)],
+          item.message,
+          item.fromRole || null,
+          { traceContext: item.traceContext || null, awaitDelivery: true, meta: item.meta || null }
+        );
+        if (result?.verified === true) {
+          deliveredCount += 1;
+          continue;
+        }
+        remaining.push({
+          ...item,
+          attemptCount: (item.attemptCount || 0) + 1,
+          lastAttemptAt: new Date().toISOString(),
+          lastFailureReason: toNonEmptyString(result?.status)
+            || toNonEmptyString(result?.error)
+            || toNonEmptyString(result?.reason)
+            || toNonEmptyString(result?.details?.failureReason)
+            || 'delivery_unverified',
+        });
+      }
+
+      this.writePendingPaneDeliveries(remaining);
+      if (deliveredCount > 0) {
+        log.info('PendingPaneDelivery', `Replayed ${deliveredCount} queued delivery(s) (${reason})`);
+      }
+      return {
+        ok: true,
+        deliveredCount,
+        remainingCount: remaining.length,
+        reason,
+      };
+    };
+
+    const replayPromise = this.pendingPaneDeliveryReplayPromise.then(run, run);
+    this.pendingPaneDeliveryReplayPromise = replayPromise.then(() => undefined, () => undefined);
+    return replayPromise;
   }
 
   parseSupervisorPidPayload(rawValue = '') {
@@ -3850,6 +4997,93 @@ class SquidRunApp {
     };
   }
 
+  async getStartupServicesStatus() {
+    const appStatus = (typeof this.settings?.readAppStatus === 'function')
+      ? (this.settings.readAppStatus() || null)
+      : null;
+    const supervisor = this.readSupervisorRuntimeSnapshot();
+    const websocketClients = typeof websocketServer.getClients === 'function'
+      ? websocketServer.getClients()
+      : [];
+    let memory = {
+      ok: false,
+      state: 'unknown',
+      available: false,
+      status: null,
+      error: null,
+    };
+
+    try {
+      const ingestStatus = await teamMemory.executeTeamMemoryOperation('get-memory-ingest-status', {
+        nowMs: Date.now(),
+      }, {
+        source: 'startup-services-status',
+      });
+      const normalizedStatus = ingestStatus && typeof ingestStatus === 'object'
+        ? ingestStatus
+        : null;
+      memory = {
+        ok: Boolean(normalizedStatus && normalizedStatus.ok !== false),
+        state: String(
+          normalizedStatus?.state
+          || normalizedStatus?.status?.state
+          || normalizedStatus?.runtimeState
+          || 'ready'
+        ),
+        available: normalizedStatus?.status?.available !== false,
+        status: normalizedStatus?.status || null,
+        error: normalizedStatus?.error || null,
+      };
+    } catch (err) {
+      memory = {
+        ok: false,
+        state: 'error',
+        available: false,
+        status: null,
+        error: err.message,
+      };
+    }
+
+    return {
+      startedAt: appStatus?.started || null,
+      lastUpdated: appStatus?.lastUpdated || null,
+      daemon: {
+        connected: this.ctx?.daemonClient?.connected === true,
+        startupConnected: this.daemonConnectedForStartup === true,
+        timeoutTriggered: this.daemonTimeoutTriggered === true,
+      },
+      supervisor: {
+        healthy: supervisor.healthy === true,
+        pid: supervisor.pid || null,
+        pidAlive: supervisor.pidAlive === true,
+        staleReasons: supervisor.staleReasons || [],
+        heartbeatAtMs: supervisor.heartbeatAtMs || null,
+        heartbeatAgeMs: supervisor.heartbeatAgeMs || null,
+        state: supervisor.state || null,
+      },
+      websocket: {
+        running: typeof websocketServer.isRunning === 'function' ? websocketServer.isRunning() : false,
+        port: typeof websocketServer.getPort === 'function'
+          ? (websocketServer.getPort() || websocketServer.DEFAULT_PORT || null)
+          : (websocketServer.DEFAULT_PORT || null),
+        clientCount: Array.isArray(websocketClients) ? websocketClients.length : 0,
+      },
+      paneHost: appStatus?.paneHost || {
+        hiddenModeEnabled: this.isHiddenPaneHostModeEnabled(),
+        degraded: this.paneHostMissingPanes.size > 0,
+        missingPanes: Array.from(this.paneHostMissingPanes).sort(),
+        readyPanes: Array.from(this.paneHostReady).sort(),
+        lastErrorReason: this.paneHostLastErrorReason,
+        lastErrorAt: this.paneHostLastErrorAt,
+      },
+      memory,
+      capabilities: {
+        loaded: Boolean(this.lastSystemCapabilities),
+        selectedModel: this.lastSystemCapabilities?.selectedModel || null,
+      },
+    };
+  }
+
   removeFileIfPresent(filePath, context = 'runtime file') {
     if (!filePath || !fs.existsSync(filePath)) return false;
     try {
@@ -3896,8 +5130,9 @@ class SquidRunApp {
     }
 
     try {
+      const { executable, env } = resolveSupervisorLaunchExecutable();
       const child = spawn(
-        process.execPath,
+        executable,
         [
           runtimePaths.daemonScriptPath,
           '--pid-path',
@@ -3909,10 +5144,7 @@ class SquidRunApp {
         ],
         {
           cwd: getProjectRoot(),
-          env: {
-            ...process.env,
-            ELECTRON_RUN_AS_NODE: '1',
-          },
+          env,
           detached: true,
           windowsHide: true,
           stdio: 'ignore',
@@ -3923,7 +5155,7 @@ class SquidRunApp {
       }
       log.info(
         'Supervisor',
-        `Spawned detached supervisor daemon (pid=${child?.pid || 'unknown'}, reason=${reason})`
+        `Spawned detached supervisor daemon via ${executable} (pid=${child?.pid || 'unknown'}, reason=${reason})`
       );
       return {
         ok: true,
@@ -4043,6 +5275,52 @@ class SquidRunApp {
     return true;
   }
 
+  async stopSupervisorFromPidFile(options = {}) {
+    const waitMs = Math.max(250, Number(options.waitMs) || 4000);
+    const pollMs = Math.max(50, Number(options.pollMs) || 100);
+    const pidInfo = this.parseSupervisorPidPayload(this.readTextFileSafe(SUPERVISOR_PID_FILE, ''));
+    const pid = asPositiveInt(pidInfo.pid, null);
+    if (!pid) {
+      return { ok: true, skipped: true, reason: 'missing_supervisor_pid' };
+    }
+
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'signal_failed',
+        pid,
+        error: err.message,
+      };
+    }
+
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      const pidAlive = this.isProcessAlive(pid);
+      const pidFilePresent = fs.existsSync(SUPERVISOR_PID_FILE);
+      if (!pidAlive && !pidFilePresent) {
+        return {
+          ok: true,
+          pid,
+          signal: 'SIGTERM',
+          graceful: true,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+
+    const runtimeSnapshot = this.readSupervisorRuntimeSnapshot();
+    const cleaned = this.cleanupStaleSupervisorRuntime(runtimeSnapshot, 'full-shutdown');
+    return {
+      ok: true,
+      pid,
+      signal: 'SIGTERM',
+      graceful: false,
+      cleaned,
+    };
+  }
+
   async performFullShutdown(reason = 'user-request') {
     if (this.fullShutdownPromise) {
       return this.fullShutdownPromise;
@@ -4050,6 +5328,7 @@ class SquidRunApp {
 
     this.fullShutdownPromise = (async () => {
       log.info('Shutdown', `Initiating full shutdown (${reason})`);
+      this.clearAllAgentResponseWatchdogs();
 
       if (this.ctx.daemonClient) {
         try {
@@ -4068,8 +5347,17 @@ class SquidRunApp {
         log.warn('Shutdown', `App cleanup reported an error: ${err.message}`);
       }
 
+      const supervisorStopResult = await this.stopSupervisorFromPidFile();
+      if (supervisorStopResult?.ok === false && supervisorStopResult?.skipped !== true) {
+        log.warn(
+          'Shutdown',
+          `Supervisor stop reported ${supervisorStopResult.reason || 'unknown'}`
+          + `${supervisorStopResult.error ? `: ${supervisorStopResult.error}` : ''}`
+        );
+      }
+
       app.exit(0);
-      return { success: true };
+      return { success: true, supervisorStopResult };
     })();
 
     try {
@@ -4203,7 +5491,7 @@ class SquidRunApp {
             const terminals = this.ctx.daemonClient.getTerminals?.() || [];
             this.daemonConnectedForStartup = true;
             this.clearDaemonConnectTimeout();
-            this.sendToVisibleWindow('daemon-connected', {
+            this.sendToAllWindows('daemon-connected', {
               terminals
             });
             this.primePaneHostFromTerminalSnapshot(terminals);
@@ -4214,6 +5502,7 @@ class SquidRunApp {
             });
           }
         }
+        await this.flushPendingPaneDeliveries({ reason: 'renderer_post_load' });
       } catch (err) {
         log.error('App', 'Post-load init failed', err);
         this.activity.logActivity('error', null, 'Post-load init failed', {
@@ -4363,6 +5652,8 @@ class SquidRunApp {
         return;
       }
       this.flushBufferedPtyData(paneId);
+      this.flushVisibleFilteredPtyData(paneId, { force: true });
+      this.visiblePtyOutputFilter.clearPane(paneId);
       this.ctx.recoveryManager?.handleExit(paneId, code);
       this.usage.recordSessionEnd(paneId);
       this.recordSessionLifecyclePattern({
@@ -4513,7 +5804,7 @@ class SquidRunApp {
           handlePaneExit(paneId, -1);
         }
       }
-      this.sendToVisibleWindow('daemon-connected', { terminals });
+      this.sendToAllWindows('daemon-connected', { terminals });
       this.primePaneHostFromTerminalSnapshot(terminals);
 
       this.kernelBridge.emitBridgeEvent('bridge.connected', {
@@ -4525,18 +5816,14 @@ class SquidRunApp {
     this.attachDaemonClientListener('disconnected', () => {
       log.warn('Daemon', 'Disconnected');
       void this.backgroundAgentManager.killAll({ reason: 'daemon_disconnected' });
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-        this.ctx.mainWindow.webContents.send('daemon-disconnected');
-      }
+      this.sendToAllWindows('daemon-disconnected');
       this.kernelBridge.emitBridgeEvent('bridge.disconnected', {
         transport: 'daemon-client',
       });
     });
 
     this.attachDaemonClientListener('reconnected', () => {
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-        this.ctx.mainWindow.webContents.send('daemon-reconnected');
-      }
+      this.sendToAllWindows('daemon-reconnected');
       this.kernelBridge.emitBridgeEvent('bridge.connected', {
         transport: 'daemon-client',
         resumed: true,
@@ -4544,6 +5831,7 @@ class SquidRunApp {
     });
 
     this.attachDaemonClientListener('kernel-event', (eventData) => {
+      this.handlePtyDataKernelEvent(eventData);
       this.kernelBridge.forwardDaemonEvent(eventData);
     });
 
@@ -5028,6 +6316,179 @@ class SquidRunApp {
     );
   }
 
+  getCommsJournalFinalDeliveryState(result = {}) {
+    const accepted = result?.accepted === true || result?.verified === true;
+    const verified = result?.verified === true;
+    const ackStatus = toNonEmptyString(result?.status)
+      || (verified ? 'delivered.verified' : (accepted ? 'accepted.unverified' : 'delivery_failed'));
+    const errorCode = accepted
+      ? null
+      : (
+        toNonEmptyString(result?.error)
+        || toNonEmptyString(result?.reason)
+        || toNonEmptyString(result?.status)
+        || toNonEmptyString(result?.details?.error)
+        || toNonEmptyString(result?.details?.failureReason)
+        || 'delivery_failed'
+      );
+
+    return {
+      status: verified ? 'acked' : (accepted ? 'routed' : 'failed'),
+      ackStatus,
+      errorCode,
+      accepted,
+      verified,
+    };
+  }
+
+  async finalizeLocalTriggerDeliveryJournal({
+    messageId = null,
+    result = null,
+    paneId = null,
+    target = null,
+    senderRole = null,
+    traceContext = null,
+    routeKind = 'local',
+  } = {}) {
+    const normalizedMessageId = toNonEmptyString(messageId);
+    if (!normalizedMessageId || !result) return null;
+
+    const finalState = this.getCommsJournalFinalDeliveryState(result);
+    const journalResult = await executeEvidenceLedgerOperation(
+      'upsert-comms-journal',
+      {
+        messageId: normalizedMessageId,
+        senderRole: senderRole || null,
+        targetRole: target || null,
+        channel: 'ws',
+        direction: 'outbound',
+        status: finalState.status,
+        ackStatus: finalState.ackStatus,
+        errorCode: finalState.errorCode,
+        metadata: {
+          source: 'websocket-local-trigger-delivery',
+          routeKind,
+          paneId: paneId ? String(paneId) : null,
+          targetRaw: target || null,
+          traceId: traceContext?.traceId || traceContext?.correlationId || null,
+          deliveryId: result?.deliveryId || null,
+          deliveryMode: result?.mode || null,
+          deliveryAccepted: finalState.accepted,
+          deliveryVerified: finalState.verified,
+          finalOutcome: finalState.ackStatus,
+          failureReason: toNonEmptyString(result?.reason) || toNonEmptyString(result?.details?.failureReason),
+          notified: Array.isArray(result?.notified) ? result.notified : [],
+        },
+      },
+      {
+        source: {
+          via: 'websocket',
+          role: senderRole || 'system',
+          paneId: paneId ? String(paneId) : null,
+        },
+      }
+    );
+
+    if (journalResult?.ok === false) {
+      log.warn('EvidenceLedger', `Comms journal delivery finalization failed: ${journalResult.reason || 'unknown'}`);
+    }
+
+    return journalResult;
+  }
+
+  clearAgentResponseWatchdog(targetRole = null) {
+    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
+    if (!normalizedTargetRole) return false;
+    const entry = this.pendingAgentResponseWatchdogs.get(normalizedTargetRole);
+    if (!entry) return false;
+    clearTimeout(entry.timerId);
+    this.pendingAgentResponseWatchdogs.delete(normalizedTargetRole);
+    return true;
+  }
+
+  clearAllAgentResponseWatchdogs() {
+    for (const entry of this.pendingAgentResponseWatchdogs.values()) {
+      clearTimeout(entry?.timerId);
+    }
+    this.pendingAgentResponseWatchdogs.clear();
+  }
+
+  sendArchitectInternalHmMessage(message, options = {}) {
+    const text = toNonEmptyString(message);
+    if (!text) return false;
+    if (!fs.existsSync(HM_SEND_SCRIPT_PATH)) {
+      log.warn('ArchitectComms', `hm-send script unavailable for internal message: ${HM_SEND_SCRIPT_PATH}`);
+      return false;
+    }
+    const role = toNonEmptyString(options.role) || 'system';
+    const payload = text.startsWith(AGENT_MESSAGE_PREFIX)
+      ? text
+      : `${AGENT_MESSAGE_PREFIX}${text}`;
+    try {
+      const child = spawn('node', [HM_SEND_SCRIPT_PATH, 'architect', payload, '--role', role], {
+        cwd: getProjectRoot() || WORKSPACE_PATH || process.cwd(),
+        env: process.env,
+        windowsHide: true,
+      });
+      if (typeof child?.unref === 'function') {
+        child.unref();
+      }
+      return true;
+    } catch (error) {
+      log.warn('ArchitectComms', `Failed sending internal architect message via hm-send: ${error.message}`);
+      return false;
+    }
+  }
+
+  scheduleAgentResponseWatchdog({ senderRole = null, targetRole = null, content = '', sentAtMs = Date.now() } = {}) {
+    const normalizedSenderRole = toNonEmptyString(senderRole)?.toLowerCase();
+    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
+    if (normalizedSenderRole !== 'architect') return false;
+    if (!['builder', 'oracle'].includes(normalizedTargetRole || '')) return false;
+    if (!shouldWatchdogAgentTask(content)) return false;
+
+    const watchdogMs = resolveRuntimeInt(
+      'agentResponseWatchdogMs',
+      DEFAULT_AGENT_RESPONSE_WATCHDOG_MS
+    );
+    this.clearAgentResponseWatchdog(normalizedTargetRole);
+
+    const sentAtLabel = formatLocalClockTime(sentAtMs);
+    const timerId = setTimeout(() => {
+      this.pendingAgentResponseWatchdogs.delete(normalizedTargetRole);
+      const warning = `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`;
+      try {
+        this.sendArchitectInternalHmMessage(`(SYSTEM WATCHDOG): ${warning}`, {
+          role: 'system',
+        });
+      } catch (error) {
+        log.warn('Watchdog', `Failed routing response watchdog alert for ${normalizedTargetRole}: ${error.message}`);
+      }
+    }, watchdogMs);
+
+    if (typeof timerId?.unref === 'function') {
+      timerId.unref();
+    }
+
+    this.pendingAgentResponseWatchdogs.set(normalizedTargetRole, {
+      timerId,
+      watchdogMs,
+      sentAtMs,
+      senderRole: normalizedSenderRole,
+      targetRole: normalizedTargetRole,
+    });
+    return true;
+  }
+
+  maybeResolveAgentResponseWatchdog({ senderRole = null, targetRole = null, deliveryAccepted = false } = {}) {
+    const normalizedSenderRole = toNonEmptyString(senderRole)?.toLowerCase();
+    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
+    if (!deliveryAccepted) return false;
+    if (!['builder', 'oracle'].includes(normalizedSenderRole || '')) return false;
+    if (normalizedTargetRole !== 'architect') return false;
+    return this.clearAgentResponseWatchdog(normalizedSenderRole);
+  }
+
   async recordDeliveryFailurePattern(args = {}) {
     return this.recordDeliveryOutcomePattern(args);
   }
@@ -5177,13 +6638,20 @@ class SquidRunApp {
 
   markTelegramInboundContext(sender = 'unknown', metadata = {}) {
     const chatId = normalizeChatId(metadata?.chatId);
+    const windowKey = toNonEmptyString(metadata?.windowKey) || this.resolveTelegramInboundWindowKey(chatId);
     this.telegramInboundContext = {
       lastInboundAtMs: Date.now(),
       sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
       chatId,
+      windowKey,
     };
     this.persistTelegramReplyContext(this.telegramInboundContext);
     return this.telegramInboundContext;
+  }
+
+  resolveTelegramInboundWindowKey(chatId = null) {
+    const normalizedChatId = normalizeChatId(chatId);
+    return normalizedChatId === '8754356993' ? 'eunbyeol' : 'main';
   }
 
   hasRecentTelegramInbound(nowMs = Date.now()) {
@@ -5231,8 +6699,9 @@ class SquidRunApp {
     }
 
     try {
-      const replyChatId = normalizeChatId(chatId) || normalizeChatId(this.telegramInboundContext?.chatId);
-      const result = await sendTelegram(message, process.env, {
+      const replyChatId = normalizeChatId(chatId)
+        || (requiresRecentInbound ? normalizeChatId(this.telegramInboundContext?.chatId) : null);
+      const result = await sendRoutedTelegramMessage(message, process.env, {
         messageId,
         senderRole: fromRole,
         sessionId: this.commsSessionScopeId || null,
@@ -5263,6 +6732,7 @@ class SquidRunApp {
         status: 'telegram_delivered',
         messageId: result.messageId || null,
         chatId: result.chatId || null,
+        routeMethod: result.method || null,
       };
     } catch (err) {
       return {
@@ -5508,17 +6978,23 @@ class SquidRunApp {
       });
 
       const runnerResult = await this.runAutonomousSmokeSidecar(runnerArgs, { projectPath });
-      const parsedSummary = parseStructuredJsonOutput(runnerResult.stdout);
-      const summary = (parsedSummary && typeof parsedSummary === 'object' && !Array.isArray(parsedSummary))
-        ? { ...parsedSummary }
-        : {
-          ok: false,
-          runId: context.runId,
-          runDir: null,
-          url: null,
-          hardFailureCount: 1,
-          hardFailures: [{ code: 'invalid_summary', message: 'Smoke runner did not return JSON summary' }],
-        };
+      const structuredOutput = [
+        runnerResult.stdout,
+        runnerResult.stderr,
+        [runnerResult.stdout, runnerResult.stderr].filter(Boolean).join('\n'),
+      ]
+        .map((value) => parseStructuredJsonOutput(value))
+        .find((value) => value && typeof value === 'object' && !Array.isArray(value));
+
+      if (!structuredOutput) {
+        log.warn(
+          'AutonomousSmoke',
+          `Skipping summary injection because smoke runner returned no structured JSON (status=${runnerResult.status || 'unknown'}, code=${runnerResult.code ?? 'null'})`,
+        );
+        return;
+      }
+
+      const summary = { ...structuredOutput };
 
       if (summary.runId == null) summary.runId = context.runId;
       if (summary.projectPath == null) summary.projectPath = projectPath;
@@ -6337,6 +7813,33 @@ class SquidRunApp {
     };
   }
 
+  async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const meta = {
+      ...((recallContext.meta && typeof recallContext.meta === 'object') ? recallContext.meta : {}),
+      ...((recallContext.metadata && typeof recallContext.metadata === 'object') ? recallContext.metadata : {}),
+    };
+    if (toNonEmptyString(recallContext.windowKey) && !toNonEmptyString(meta.windowKey)) {
+      meta.windowKey = toNonEmptyString(recallContext.windowKey);
+    }
+    const result = await this.deliverPaneMessageReliably({
+      paneId: String(recallContext.paneId || '1'),
+      message,
+      fromRole: null,
+      traceContext: recallContext.traceContext || null,
+      meta: Object.keys(meta).length > 0 ? meta : null,
+      queueOnAcceptedUnverified: true,
+      queueOnHardFailure: true,
+      messageId: recallContext.messageId || null,
+      channel: recallContext.channel || 'user',
+      sender: recallContext.sender || 'user',
+      logLabel,
+    });
+    if (!(result?.accepted === true || result?.queued === true || result?.verified === true || result?.ok === true || result?.pendingQueued === true)) {
+      log.warn(logLabel, `Failed to inject inbound message into pane ${recallContext.paneId || '1'} (${result?.error || 'unknown'})`);
+    }
+    return result;
+  }
+
   startSmsPoller() {
     const started = smsPoller.start({
       onMessage: (text, from, metadata = {}) => {
@@ -6386,11 +7889,19 @@ class SquidRunApp {
           log.warn('EvidenceLedger', `SMS inbound journal upsert error: ${err.message}`);
         });
 
-        const formatted = `[SMS from ${sender}]: ${body}`;
-        const result = triggers.sendDirectMessage(['1'], formatted, null);
-        if (!result?.success) {
-          log.warn('SMS', `Failed to inject inbound SMS into pane 1 (${result?.error || 'unknown'})`);
-        }
+        void this.deliverHumanMessageWithRecall(
+          `[SMS from ${sender}]: ${body}`,
+          {
+            paneId: '1',
+            role: 'architect',
+            channel: 'sms',
+            sender,
+            messageId: inboundMessageId,
+            metadata,
+            header: 'MESSAGE RECALL',
+          },
+          'SMS'
+        );
       },
     });
 
@@ -6403,15 +7914,45 @@ class SquidRunApp {
     const started = telegramPoller.start({
       onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
-        const body = typeof text === 'string' ? text.trim() : '';
-        if (!body) return;
         const media = metadata?.media && typeof metadata.media === 'object' ? metadata.media : null;
+        const photo = metadata?.photo && typeof metadata.photo === 'object' ? metadata.photo : null;
+        const document = metadata?.document && typeof metadata.document === 'object' ? metadata.document : null;
+        let body = typeof text === 'string' ? text.trim() : '';
+        if (!body && media?.kind === 'photo') {
+          body = '[Photo received]';
+        } else if (!body && photo) {
+          body = '[Photo received]';
+        } else if (!body && media?.kind === 'document') {
+          const fileName = typeof media?.fileName === 'string' && media.fileName.trim()
+            ? media.fileName.trim()
+            : 'unknown';
+          body = `[File: ${fileName}]`;
+        } else if (!body && document) {
+          const fileName = typeof document?.file_name === 'string' && document.file_name.trim()
+            ? document.file_name.trim()
+            : 'unknown';
+          body = `[File: ${fileName}]`;
+        }
+        if (!body) {
+          log.warn(
+            'Telegram',
+            `Dropped inbound Telegram callback with empty body (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))})`
+          );
+          return;
+        }
         const archivePath = typeof media?.localPath === 'string' && media.localPath.trim()
           ? media.localPath.trim()
           : null;
+        const inboundWindowKey = this.resolveTelegramInboundWindowKey(metadata?.chatId);
+        const inboundSessionScopeId = this.getWindowSessionScopeId(inboundWindowKey);
 
+        log.info(
+          'Telegram',
+          `Handling inbound Telegram callback from ${sender} (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))})`
+        );
         this.markTelegramInboundContext(sender, {
           chatId: metadata?.chatId,
+          windowKey: inboundWindowKey,
         });
         const updateId = Number.isFinite(Number(metadata?.updateId))
           ? Math.floor(Number(metadata.updateId))
@@ -6431,7 +7972,7 @@ class SquidRunApp {
           'upsert-comms-journal',
           {
             messageId: inboundMessageId,
-            sessionId: this.commsSessionScopeId || null,
+            sessionId: inboundSessionScopeId || null,
             senderRole: 'user',
             targetRole: 'architect',
             channel: 'telegram',
@@ -6449,6 +7990,8 @@ class SquidRunApp {
               chatId: Number.isFinite(Number(metadata?.chatId))
                 ? Number(metadata.chatId)
                 : null,
+              windowKey: inboundWindowKey,
+              sessionScopeId: inboundSessionScopeId,
               mediaKind: typeof media?.kind === 'string' ? media.kind : null,
               telegramFileId: typeof media?.fileId === 'string' ? media.fileId : null,
               telegramFilePath: typeof media?.telegramFilePath === 'string' ? media.telegramFilePath : null,
@@ -6470,16 +8013,42 @@ class SquidRunApp {
         )).then((result) => {
           if (result?.ok === false) {
             log.warn('EvidenceLedger', `Telegram inbound journal upsert failed: ${result.reason || 'unknown'}`);
+          } else {
+            log.info('Telegram', `Telegram inbound journaled as ${inboundMessageId}`);
           }
         }).catch((err) => {
           log.warn('EvidenceLedger', `Telegram inbound journal upsert error: ${err.message}`);
         });
         const formattedBody = archivePath ? `${body} | saved: ${archivePath}` : body;
-        const formatted = `[Telegram from ${sender}]: ${formattedBody}`;
-        const result = triggers.sendDirectMessage(['1'], formatted, null);
-        if (!result?.success) {
-          log.warn('Telegram', `Failed to inject inbound Telegram into pane 1 (${result?.error || 'unknown'})`);
+        const fullTelegramMessage = `[Telegram from ${sender}]: ${formattedBody}`;
+        const telegramMsgBytes = Buffer.byteLength(fullTelegramMessage, 'utf8');
+        const TELEGRAM_MSG_SIZE_LIMIT = 256 * 1024; // 256 KB
+        if (telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT) {
+          log.warn('Telegram', `Oversized message from ${sender} (${telegramMsgBytes} bytes > ${TELEGRAM_MSG_SIZE_LIMIT}). Truncating.`);
         }
+        const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
+          ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
+          : fullTelegramMessage;
+        void this.deliverHumanMessageWithRecall(
+          safeMessage,
+          {
+            paneId: '1',
+            role: 'architect',
+            windowKey: inboundWindowKey,
+            channel: 'telegram',
+            sender,
+            messageId: inboundMessageId,
+            chatId: metadata?.chatId,
+            telegramChatId: metadata?.chatId,
+            metadata: {
+              ...(metadata && typeof metadata === 'object' ? metadata : {}),
+              windowKey: inboundWindowKey,
+              sessionScopeId: inboundSessionScopeId,
+            },
+            header: 'MESSAGE RECALL',
+          },
+          'Telegram'
+        );
       },
     });
 
@@ -6566,6 +8135,8 @@ class SquidRunApp {
     this.shuttingDown = true;
     this.clearPtyDataFlushTimer();
     this.flushBufferedPtyData();
+    this.clearPtyVisibleReleaseTimer();
+    this.flushVisibleFilteredPtyData(null, { force: true });
     this.clearDaemonConnectTimeout();
     this.clearWebSocketStartRetry();
     if (this.paneHostBootstrapTimer) {

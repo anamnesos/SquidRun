@@ -1,0 +1,10 @@
+AVAX SHORT ALERT — PnL: -$13.08
+
+Position: -890.19 AVAX @ $9.4394 entry
+Mark price: ~$9.454 (moved against us)
+Account: $823.66
+Liquidation: $9.885 (4.6% away)
+
+Was +$5.44 ten minutes ago. Price spiked up ~$0.02.
+
+Your call — hold or cut losses. Liq is still $0.43 away.

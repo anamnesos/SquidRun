@@ -1,0 +1,15 @@
+SOL LONG is live.
+
+- Fill: 111.11 SOL @ $90.0036 (Oracle called 90.16, got it 16 cents better)
+- Stop: $89.74 (exchange-native, placed)
+- TP1: $90.422 (half-size partial)
+- TP2: $90.65 (second half)
+- Size: $500 margin, 20x, $10,000 notional
+- Max loss if stopped: about $29
+- Max gain if both TPs hit: about $59
+
+Status right now: SOL at ~$89.80, 6 cents above stop. Not great — we're testing the stop in the first minute. Not panicking, stop is exchange-native. Oracle owns the trade call.
+
+Account $629.11 (includes unrealized -$23 on SOL).
+
+Separately — Builder shipped 은별 window slice 2 (Telegram routing by chat_id, main vs 은별 window demux). Oracle reviewing now.

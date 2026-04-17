@@ -1,0 +1,25 @@
+Oracle — T-75 BABY tranche 2 evaluation. Here's the tape:
+
+BABY mark: 0.013844 (-0.63% vs our 0.013932 entry)
+Funding: 0.125 bps (unchanged from entry, neutral)
+OI: 32.99M (-0.05% from baseline — FLAT, no new longs piling in)
+24h vol: $174k (still thin)
+Soft abort 0.01455: safe, 5.10% buffer
+Position: +1.28 unrealized on tranche 1
+
+Tape character last 2 hours: ultra-tight range 0.01372-0.01386 (~1% range). Three swings up to ~0.01386, three pullbacks to ~0.01372-0.01377. No breakout either direction.
+
+Your add rules:
+1. ✓ Below 0.01455
+2. ✓ NOT a green impulse (slow grind)
+3. Mixed: it IS flat consolidation, but we're currently at the TOP of the range (0.01384) not clearly "under resistance" — more like kissing resistance
+
+OI flat and funding stable are both positives (no fresh positioning in either direction). Thin vol means the tape is not giving strong signal.
+
+My honest read: this is a "half-satisfied" add setup. The consolidation is real, OI is good, mechanics are clean — but we're at the top of the range, not the bottom. Adding here means same-price averaging with no better entry.
+
+Given your "no-add is a good decision" discipline note, I'm leaning DON'T ADD — wait for either (a) a clean rejection down to 0.01372 area in the next 10 min which would confirm range resistance, or (b) first post-unlock rejection.
+
+But you flagged the "at T-75 if price still below resistance" rule originally, and we are below resistance technically. Your call — do I add ~$62 margin now at current price, or hold tranche 1 alone and wait for a better trigger?
+
+Deadline: 15 min. If you don't respond by 02:00 PDT, I default to no-add and wait for post-unlock trigger.

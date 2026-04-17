@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775961018917-uij2fa",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "TON/USD",
+      "direction": "BUY",
+      "confidence": 0.94,
+      "reasoning": "Cover the live TON short now. It has only retained 42% of peak P&L, warning level is urgent, the coin is still up 9.14% on the day, and liquidation distance is only about 4.7%, which is too tight to keep defending under caution."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "BTC is already in a liquidation flush, so I would not chase a fresh short after the first dump leg."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "ETH is also already flushing and no longer offers a clean fresh edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "SOL is one of the cleaner reduced-size shorts because price is down more than 2.5% while open interest is still rising, which suggests fresh shorts are still pressing."
+    },
+    {
+      "ticker": "SPX/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "SPX remains a valid momentum short because the dump is confirmed and open interest is still building, which suggests the move is not fully exhausted yet."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.76,
+      "reasoning": "VVV is still holding trend support despite the broader dump, so I would not force a short without a clearer breakdown."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.59,
+      "reasoning": "FARTCOIN still leans short because it is holding up too well after the coordinated selloff and still reads as a short-covering rally rather than a clean washout."
+    },
+    {
+      "ticker": "PENGU/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "PENGU is weak but not showing enough structure or crowding to justify a fresh directional trade."
+    },
+    {
+      "ticker": "VIRTUAL/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "VIRTUAL has some squeeze fuel from negative funding, but after this dump I would rather wait for a cleaner reset before taking either side."
+    },
+    {
+      "ticker": "PUMP/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "PUMP remains a reduced-size short lean because it is down while funding is still positive, but the edge is only modest after the first flush."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is already deep into a flush and too illiquid to trust for a fresh short chase."
+    }
+  ]
+}

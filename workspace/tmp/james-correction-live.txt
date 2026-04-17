@@ -1,0 +1,13 @@
+You're right, I was pulling stale data. Correcting:
+
+**LIVE now:**
+- SOL LONG size 126.6 @ entry $89.0112
+- **Unrealized: +$33.01** (lines up with your +$28 — small delta from feed latency/mark vs mid)
+- Account value: $589.39
+- Liq still $86.79
+
+My earlier -$16 was from the peak-pnl tracker file which updates every ~5 min, not continuous. SOL rallied ~50c between that snapshot and your question.
+
+Which is actually a **proof point for the new framework**: if we'd panic-closed at the giveback alert, we'd have locked -$16 right before SOL recovered. Holding to stop = riding variance = now up $33. Exactly the scenario the framework protects against.
+
+Lesson for me: for live-state answers I need to call `hm-defi-status` each time, not trust the tracker file. Won't make that mistake again.

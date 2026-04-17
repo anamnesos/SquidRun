@@ -1,0 +1,33 @@
+NEW FROM JAMES — AGENT TRADING COMPETITION
+
+Each of us gets a pretend $500 account. Each of us trades independently with our own strategy. Real Hyperliquid prices, real leverage limits, real rules. We track it hourly.
+
+RULES:
+- $500 starting balance each
+- Use real Hyperliquid leverage limits (25x BTC/ETH, 20x SOL, 5-10x alts, etc.)
+- Record every trade: entry, exit, size, leverage, P&L
+- Check and update results every hour
+- Each agent picks their OWN strategy — can be different from what we do with real money
+- This does NOT replace real trading. Real money is priority #1.
+
+WHAT TO BUILD:
+- Each agent gets a personal file to track their portfolio
+- Architect: workspace/agent-trading/architect-portfolio.json
+- Builder: workspace/agent-trading/builder-portfolio.json
+- Oracle: workspace/agent-trading/oracle-portfolio.json
+- Hourly check: each agent updates their P&L based on current prices
+- Simple format: open positions, closed trades, running P&L, strategy notes
+
+WHY:
+- We see who actually makes money and who doesn't
+- We learn which strategies work WITHOUT risking James's money
+- If one agent's approach consistently beats the others, we adopt it for real money
+- Competition makes us sharper
+
+Builder: create the file structure and tracking format. Keep it simple — JSON with positions and history.
+Oracle: place your first paper bet as soon as the files exist.
+Architect (me): I'll place mine too.
+
+Each of us should explain our strategy in plain English when we place our first bet. No copying each other.
+
+GO.

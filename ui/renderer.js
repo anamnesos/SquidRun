@@ -124,6 +124,7 @@ const { showStatusNotice } = rendererModules.notifications;
 const { debounceButton, applyShortcutTooltips } = rendererModules.utils;
 const { initCommandPalette } = rendererModules.commandPalette;
 const { initStatusStrip } = rendererModules.statusStrip;
+const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
 const bus = rendererModules.bus;
@@ -465,10 +466,20 @@ let initState = {
   terminalsReady: false,
   autoSpawnChecked: false
 };
+const initialWindowContext = readInitialWindowContextFromLocation(window?.location?.search || '');
+const windowTeamBootstrap = createWindowTeamBootstrap({
+  settings,
+  terminal,
+  log,
+  initialContext: initialWindowContext,
+});
 const STARTUP_OVERLAY_FADE_MS = 280;
 const DAEMON_TIMEOUT_FALLBACK_MESSAGE = "SquidRun couldn't start the background daemon. Make sure Node.js 18+ is installed and try restarting the app.";
 const STARTUP_LOADING_DEFAULT_MESSAGE = 'Starting SquidRun...';
 const STARTUP_OVERLAY_ERROR_DISMISS_MS = 12000;
+const STARTUP_OVERLAY_MIN_VISIBLE_MS = 1400;
+const STARTUP_OVERLAY_POLL_MS = 600;
+const STARTUP_OVERLAY_MAX_WAIT_MS = 12000;
 const HEADER_SESSION_BADGE_RETRY_MS = 700;
 const HEADER_SESSION_BADGE_MAX_RETRIES = 8;
 let autonomyOnboardingBusy = false;
@@ -480,6 +491,147 @@ const profileOnboardingState = {
 };
 let headerSessionBadgeRetryTimer = null;
 let headerSessionBadgeRetryAttempts = 0;
+
+function getCurrentWindowContext() {
+  return windowTeamBootstrap.getState();
+}
+
+function isSecondaryWindow(windowContext = getCurrentWindowContext()) {
+  return String(windowContext?.windowKey || 'main').trim() !== 'main';
+}
+
+function applyWindowChrome(windowContext = getCurrentWindowContext()) {
+  const normalized = windowContext && typeof windowContext === 'object'
+    ? windowContext
+    : getCurrentWindowContext();
+  const windowKey = String(normalized?.windowKey || 'main').trim() || 'main';
+  if (document.body) {
+    document.body.dataset.windowKey = windowKey;
+  }
+  document.title = windowKey === 'main'
+    ? 'SquidRun'
+    : `SquidRun - ${windowKey === 'eunbyeol' ? 'Eunbyeol Workspace' : windowKey}`;
+
+  const fullRestartBtn = document.getElementById('fullRestartBtn');
+  if (fullRestartBtn) {
+    if (!fullRestartBtn.dataset.defaultHtml) {
+      fullRestartBtn.dataset.defaultHtml = fullRestartBtn.innerHTML;
+    }
+    if (windowKey === 'main') {
+      fullRestartBtn.innerHTML = fullRestartBtn.dataset.defaultHtml;
+      fullRestartBtn.title = 'Shutdown cleanly (run \'npm start\' to restart)';
+      fullRestartBtn.dataset.windowAction = 'shutdown-app';
+    } else {
+      fullRestartBtn.innerHTML = 'Close Window';
+      fullRestartBtn.title = `Close the ${windowKey} window only`;
+      fullRestartBtn.dataset.windowAction = 'close-window';
+    }
+  }
+}
+
+function formatStartupElapsed(ms) {
+  const safeMs = Math.max(0, Number(ms) || 0);
+  const totalSeconds = Math.ceil(safeMs / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+function buildStartupChecklistHtml(items = []) {
+  return items.map((item) => {
+    const state = String(item?.state || 'pending');
+    const name = String(item?.name || 'Unknown');
+    const detail = String(item?.detail || '').trim();
+    return `
+      <div class="startup-loading-check ${state}">
+        <span class="startup-loading-check-dot" aria-hidden="true"></span>
+        <span class="startup-loading-check-label">
+          <span class="startup-loading-check-name">${name}</span>
+          <span class="startup-loading-check-detail">${detail || '&nbsp;'}</span>
+        </span>
+      </div>
+    `;
+  }).join('');
+}
+
+function computeStartupOverlayModel(status = {}, localState = {}) {
+  const paneHost = status?.paneHost || {};
+  const readyPanes = Array.isArray(paneHost.readyPanes) ? paneHost.readyPanes : [];
+  const missingPanes = Array.isArray(paneHost.missingPanes) ? paneHost.missingPanes : [];
+  const paneHostHealthy = paneHost.hiddenModeEnabled === false
+    || (readyPanes.length >= 3 && missingPanes.length === 0 && paneHost.degraded !== true);
+  const memoryState = status?.memory || {};
+  const supervisor = status?.supervisor || {};
+  const websocket = status?.websocket || {};
+  const daemonConnected = localState.daemonConnected === true || status?.daemon?.connected === true;
+  const capabilitiesLoaded = localState.capabilitiesLoaded === true || status?.capabilities?.loaded === true;
+  const items = [
+    {
+      id: 'ui',
+      name: 'UI shell',
+      state: 'ready',
+      weight: 12,
+      detail: 'Renderer mounted',
+    },
+    {
+      id: 'daemon',
+      name: 'Terminal daemon',
+      state: daemonConnected ? 'ready' : 'loading',
+      weight: 24,
+      detail: daemonConnected ? 'PTYs connected' : 'Connecting terminals…',
+    },
+    {
+      id: 'supervisor',
+      name: 'Supervisor',
+      state: supervisor.healthy ? 'ready' : (supervisor.pid ? 'loading' : 'pending'),
+      weight: 18,
+      detail: supervisor.healthy
+        ? `PID ${supervisor.pid || 'active'}`
+        : (supervisor.pid ? 'Waiting for heartbeat…' : 'Starting runtime loop…'),
+    },
+    {
+      id: 'websocket',
+      name: 'WS broker',
+      state: websocket.running ? 'ready' : 'loading',
+      weight: 14,
+      detail: websocket.running
+        ? `Port ${websocket.port || '9900'}`
+        : 'Binding local broker…',
+    },
+    {
+      id: 'memory',
+      name: 'Memory',
+      state: memoryState.ok || capabilitiesLoaded ? 'ready' : (memoryState.error ? 'degraded' : 'loading'),
+      weight: 14,
+      detail: memoryState.error
+        ? 'Recall degraded'
+        : (memoryState.ok || capabilitiesLoaded ? 'Recall online' : 'Warming memory services…'),
+    },
+    {
+      id: 'paneHost',
+      name: 'Pane hosting',
+      state: paneHostHealthy ? 'ready' : (paneHost.degraded ? 'degraded' : 'loading'),
+      weight: 18,
+      detail: paneHostHealthy
+        ? (paneHost.hiddenModeEnabled === false ? 'Visible mode' : `${readyPanes.length}/3 hidden panes ready`)
+        : (paneHost.degraded ? `Degraded: ${missingPanes.join(', ') || 'retrying'}` : 'Preparing hidden panes…'),
+    },
+  ];
+
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0) || 1;
+  const completedWeight = items.reduce((sum, item) => sum + (item.state === 'ready' ? item.weight : 0), 0);
+  const degraded = items.some((item) => item.state === 'degraded');
+  const nextItem = items.find((item) => item.state !== 'ready') || items[items.length - 1];
+  return {
+    items,
+    percent: Math.max(6, Math.min(100, Math.round((completedWeight / totalWeight) * 100))),
+    ready: items.every((item) => item.state === 'ready'),
+    degraded,
+    headline: nextItem?.state === 'ready' ? 'SquidRun ready' : `Loading ${nextItem?.name || 'services'}…`,
+    subhead: nextItem?.detail || 'Bootstrapping workspace…',
+  };
+}
 
 function isAutonomyConsentRequired() {
   if (typeof settings.requiresAutonomyConsent !== 'function') return false;
@@ -563,6 +715,11 @@ function setupAutonomyOnboardingHandlers() {
 
 function checkInitComplete() {
   if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
+    if (windowTeamBootstrap.shouldDeferAutoSpawn()) {
+      log.info('Init', 'Waiting for window context before auto-spawn');
+      return;
+    }
+
     if (!profileOnboardingState.checkComplete) {
       log.info('Init', 'Waiting for profile onboarding check before auto-spawn');
       return;
@@ -582,10 +739,19 @@ function checkInitComplete() {
 
     initState.autoSpawnChecked = true;
     log.info('Init', 'Both settings and terminals ready, checking auto-spawn...');
-    settings.checkAutoSpawn(
-      terminal.spawnAllAgents,
-      terminal.getReconnectedToExisting()
-    );
+    const windowContext = windowTeamBootstrap.getState();
+    const autoSpawnPromise = windowContext.windowKey !== 'main' && windowContext.autoBootAgents === true
+      ? windowTeamBootstrap.maybeRunSecondaryAutoBoot({
+          reconnectedToExisting: terminal.getReconnectedToExisting(),
+        })
+      : settings.checkAutoSpawn(
+          terminal.spawnAllAgents,
+          terminal.getReconnectedToExisting()
+        );
+    Promise.resolve(autoSpawnPromise).catch((err) => {
+      log.error('Init', 'Auto-spawn failed', err);
+      showStatusNotice('Auto-boot failed. Check the log and retry.', 'warning', 4000);
+    });
   }
 }
 
@@ -615,15 +781,43 @@ function dismissStartupLoadingOverlay() {
   }, STARTUP_OVERLAY_FADE_MS + 40);
 }
 
-function setStartupLoadingOverlayState({ message = null, error = false, hideSpinner = false } = {}) {
+function setStartupLoadingOverlayState({
+  message = null,
+  stage = null,
+  eta = null,
+  percent = null,
+  checks = null,
+  error = false,
+  hideSpinner = false,
+} = {}) {
   const overlay = document.getElementById('startupLoadingOverlay');
   if (!overlay || overlay.dataset.dismissed === 'true') return;
 
   const textElement = document.getElementById('startupLoadingText');
+  const stageElement = document.getElementById('startupLoadingStageText');
+  const etaElement = document.getElementById('startupLoadingEta');
+  const percentElement = document.getElementById('startupLoadingPercent');
+  const checksElement = document.getElementById('startupLoadingChecks');
+  const progressFill = document.getElementById('startupLoadingProgressFill');
   const spinner = overlay.querySelector('.startup-loading-spinner');
 
   if (textElement && typeof message === 'string' && message.trim()) {
     textElement.textContent = message.trim();
+  }
+  if (stageElement && typeof stage === 'string' && stage.trim()) {
+    stageElement.textContent = stage.trim();
+  }
+  if (etaElement && typeof eta === 'string' && eta.trim()) {
+    etaElement.textContent = eta.trim();
+  }
+  if (percentElement && Number.isFinite(Number(percent))) {
+    percentElement.textContent = `${Math.max(0, Math.min(100, Math.round(Number(percent))))}%`;
+  }
+  if (progressFill && Number.isFinite(Number(percent))) {
+    progressFill.style.width = `${Math.max(0, Math.min(100, Number(percent)))}%`;
+  }
+  if (checksElement && Array.isArray(checks)) {
+    checksElement.innerHTML = buildStartupChecklistHtml(checks);
   }
 
   overlay.classList.toggle('error', Boolean(error));
@@ -1950,6 +2144,20 @@ function setupEventListeners() {
   const fullRestartBtn = document.getElementById('fullRestartBtn');
   if (fullRestartBtn) {
     fullRestartBtn.addEventListener('click', async () => {
+      const windowContext = getCurrentWindowContext();
+      if (isSecondaryWindow(windowContext)) {
+        if (confirm(`Close the ${windowContext.windowKey} window?\n\nMain SquidRun and the shared daemon will keep running.\n\nContinue?`)) {
+          updateConnectionStatus('Closing window...');
+          try {
+            await ipcRenderer.invoke('close-app-window', { windowKey: windowContext.windowKey });
+          } catch (err) {
+            log.error('Window', 'Scoped close failed:', err);
+            updateConnectionStatus('Window close failed - try manually');
+          }
+        }
+        return;
+      }
+
       if (confirm('Shutdown SquidRun and stop the daemon?\n\nAll active agent sessions will be terminated.\n\nContinue?')) {
         updateConnectionStatus('Shutting down...');
         try {
@@ -2081,7 +2289,9 @@ function setupEventListeners() {
   });
 
   // Command palette (Ctrl+K)
-  initCommandPalette();
+  initCommandPalette({
+    openAppWindow: (windowKey) => ipcRenderer.invoke('open-app-window', { windowKey }),
+  });
 
   // Fix: Blur terminals when UI input/textarea gets focus (NOT xterm's internal textarea)
   // This prevents xterm from capturing keyboard input meant for form fields
@@ -2111,29 +2321,108 @@ document.addEventListener('DOMContentLoaded', async () => {
     daemonHandlers.teardownDaemonListeners();
   }
   let startupOverlayResolved = false;
+  const startupOverlayStartedAtMs = Date.now();
+  const startupOverlayState = {
+    daemonConnected: false,
+    capabilitiesLoaded: false,
+  };
+  let startupOverlayPollTimer = null;
+
   setStartupLoadingOverlayState({
     message: STARTUP_LOADING_DEFAULT_MESSAGE,
+    stage: 'Bootstrapping workspace…',
+    eta: 'Estimating…',
+    percent: 6,
+    checks: [
+      { name: 'UI shell', state: 'ready', detail: 'Renderer mounted' },
+      { name: 'Terminal daemon', state: 'loading', detail: 'Connecting terminals…' },
+      { name: 'Supervisor', state: 'pending', detail: 'Waiting for runtime…' },
+      { name: 'WS broker', state: 'pending', detail: 'Waiting for runtime…' },
+      { name: 'Memory', state: 'pending', detail: 'Preparing recall…' },
+      { name: 'Pane hosting', state: 'pending', detail: 'Preparing hidden panes…' },
+    ],
     error: false,
     hideSpinner: false,
   });
+
   const resolveStartupOverlay = (reason, payload = null) => {
     if (startupOverlayResolved) return;
     startupOverlayResolved = true;
+    if (startupOverlayPollTimer) {
+      clearInterval(startupOverlayPollTimer);
+      startupOverlayPollTimer = null;
+    }
     if (reason === 'daemon-timeout') {
       handleDaemonStartupTimeout(payload);
     } else {
-      dismissStartupLoadingOverlay();
+      const elapsedMs = Date.now() - startupOverlayStartedAtMs;
+      const remainingMs = Math.max(0, STARTUP_OVERLAY_MIN_VISIBLE_MS - elapsedMs);
+      setStartupLoadingOverlayState({
+        message: 'SquidRun ready',
+        stage: reason === 'degraded-startup'
+          ? 'Started with degraded services'
+          : 'All core services online',
+        eta: 'Ready',
+        percent: 100,
+        hideSpinner: true,
+      });
+      setTimeout(() => {
+        dismissStartupLoadingOverlay();
+      }, remainingMs);
     }
     void refreshHeaderSessionBadge();
   };
 
   ipcRenderer.once('daemon-connected', () => {
-    resolveStartupOverlay('daemon-connected');
+    startupOverlayState.daemonConnected = true;
   });
 
   ipcRenderer.once('daemon-timeout', (_event, payload) => {
     resolveStartupOverlay('daemon-timeout', payload);
   });
+
+  const refreshStartupOverlay = async () => {
+    if (startupOverlayResolved) return;
+    const elapsedMs = Date.now() - startupOverlayStartedAtMs;
+    let serviceStatus = null;
+    try {
+      serviceStatus = await ipcRenderer.invoke('get-startup-services-status');
+    } catch (err) {
+      log.warn('Init', `Failed reading startup services status: ${err?.message || err}`);
+    }
+
+    const model = computeStartupOverlayModel(serviceStatus || {}, startupOverlayState);
+    const rawEtaMs = model.percent > 0
+      ? Math.max(0, ((elapsedMs / model.percent) * (100 - model.percent)))
+      : STARTUP_OVERLAY_MAX_WAIT_MS;
+    const etaText = model.ready
+      ? 'Ready'
+      : `ETA ${formatStartupElapsed(Math.min(rawEtaMs, STARTUP_OVERLAY_MAX_WAIT_MS))}`;
+
+    setStartupLoadingOverlayState({
+      message: model.headline,
+      stage: model.subhead,
+      eta: etaText,
+      percent: model.percent,
+      checks: model.items,
+      error: false,
+      hideSpinner: model.ready,
+    });
+
+    if (model.ready && elapsedMs >= STARTUP_OVERLAY_MIN_VISIBLE_MS) {
+      resolveStartupOverlay('startup-complete');
+      return;
+    }
+
+    if (elapsedMs >= STARTUP_OVERLAY_MAX_WAIT_MS && startupOverlayState.daemonConnected) {
+      resolveStartupOverlay('degraded-startup');
+    }
+  };
+
+  startupOverlayPollTimer = setInterval(() => {
+    void refreshStartupOverlay();
+  }, STARTUP_OVERLAY_POLL_MS);
+  void refreshStartupOverlay();
 
   // Refresh session badge when main process writes the session number.
   ipcRenderer.on('session-updated', (_event, data) => {
@@ -2148,6 +2437,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   setupAutonomyOnboardingHandlers();
   initMainPaneState();
+  applyWindowChrome(initialWindowContext);
 
   // Enhance shortcut tooltips for controls with keyboard hints
   applyShortcutTooltips();
@@ -2158,6 +2448,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Status Strip - task counts at a glance
   initStatusStrip();
   await refreshHeaderSessionBadge();
+
+  try {
+    await ipcRenderer.invoke('get-feature-capabilities');
+    startupOverlayState.capabilitiesLoaded = true;
+    void refreshStartupOverlay();
+  } catch (err) {
+    log.warn('Init', `Feature capability fetch failed during startup overlay: ${err?.message || err}`);
+  }
 
   // Model Selector - per-pane model switching
   setupModelSelectorListeners();
@@ -2325,6 +2623,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  ipcRenderer.on('window-context', (_event, payload) => {
+    const windowContext = windowTeamBootstrap.handleWindowContext(payload || {});
+    applyWindowChrome(windowContext);
+    if (!initState.autoSpawnChecked) {
+      checkInitComplete();
+    }
+  });
+
   // Task list updates handled by status-strip.js (SSOT for task-list-updated IPC)
 
   // Single agent stuck detection - notify user (we can't auto-ESC via PTY)
@@ -2429,8 +2735,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   daemonHandlers.setupPaneProjectClicks();
   await daemonHandlers.loadPaneProjects();
 
-  // Run startup preflight checks and surface pass/fail to user.
-  await runStartupPreflightCheck();
+  // Secondary windows should not block their renderer boot on the main-window preflight modal.
+  if (!isSecondaryWindow()) {
+    await runStartupPreflightCheck();
+  }
 
   // Auto-spawn now handled by checkInitComplete() when both
   // settings are loaded AND terminals are ready (no more race condition)

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { buildStartupTranscriptContext } = require('../../ui/modules/startup-transcript-context');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const COORD_ROOT = path.join(PROJECT_ROOT, '.squidrun');
@@ -196,6 +197,18 @@ function formatLedgerContext(ctx) {
   return lines.join('\n');
 }
 
+function appendTranscriptStartupContext(baseContext) {
+  try {
+    const transcriptContext = buildStartupTranscriptContext({ projectRoot: PROJECT_ROOT });
+    const transcriptBlock = String(transcriptContext?.context || '').trim();
+    if (!transcriptBlock) return baseContext;
+    return `${baseContext}\n\n${transcriptBlock}`;
+  } catch (error) {
+    process.stderr.write(`[arch-hooks] transcript startup context failed: ${error.message}\n`);
+    return baseContext;
+  }
+}
+
 function parseList(value) {
   if (!value) return [];
   return String(value)
@@ -332,6 +345,8 @@ async function main() {
           'Evidence Ledger context unavailable; no snapshot context found.',
         ].join('\n');
       }
+
+      additionalContext = appendTranscriptStartupContext(additionalContext);
 
       const output = {
         hookSpecificOutput: {

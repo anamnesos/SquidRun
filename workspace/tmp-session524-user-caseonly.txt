@@ -1,0 +1,1199 @@
+--- 2026-04-04T02:09:08.058Z
+[Telegram from @Rachelchoi]: 기초생활수급자 하시는분이있는데, 아들이 결혼을했었고 작년7월말에 사망했어. 딸은 미국살아. 근데 8월에 아들 보험비를 1억넘게받았고, 상속분할소송을 며느리랑해서 2월에1억조금더 받았어. 그분의 전남편도 상속인이긴했는데 공증받아서 모든지민을 전부인에게 다 넘긴다고 적었는데.. 이 두사람 다 정부에서 돈을 받고있어. 신고해야할사항은?
+
+
+--- 2026-04-04T02:28:25.903Z
+the daughter in law has her own problems.. shes the qeline employee this whole qeline personal shit we went out about and she cant speak korean shes very dumb and shes in a whoe nother mess and that bitch is evil
+
+
+--- 2026-04-04T02:37:10.621Z
+[Telegram from @Rachelchoi]: 그렇다면 힐스테이트 있잖아 동인동디엠
+
+
+--- 2026-04-04T04:24:16.556Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #4): Full audit. No sugar.
+
+1. MEMORY SYSTEM
+- Cognitive memory is real but not strong. 142 nodes / 288 edges / 3256 sleep runs. Mostly flat-file knowledge (83) + case evidence (46). Useful as a secondary store, not a trustworthy truth layer. It is underpopulated and overweighted toward hand-curated flat files plus a few high-confidence agent-ingest mantras.
+- Team memory is mostly theater right now. 5000 claims, ALL still `proposed`. 0 decisions. 5 consensus rows. 1 guard. 1 memory_object. 28,829 belief snapshots and 75,615 contradictions means the contradiction machinery is busy, but not resolving into stable decisions.
+- Evidence ledger is the healthiest memory layer. 21,996 comms rows, 9,718 ledger_events, 98 ledger_sessions. Good raw truth source. Bad structured extraction: 0 ledger_decisions, 0 ledger_incidents.
+- Promotion pipeline is noisy. Cognitive `memory_pr_queue` has 32 pending PRs; samples are garbage sleep-consolidation blobs, not crisp memory candidates.
+- Antibody/immunity layer is mostly unproven in practice: 0 immune nodes, 0 flagged nodes, antibody queue empty.
+
+2. RECALL QUALITY
+- Broker is real: 6 backends queried, audit log written, feedback persisted.
+- Product quality is bad. Team-memory feedback shows 778 feedback events: 771 ignored, 6 missing, 1 used. That is not “learning well,” that is “mostly being rejected.”
+- Worse: heavily ignored items still rank. Example: two `Compaction survival note for pane 1` identities were ignored 101 and 96 times and still keep surfacing.
+- Five live probes I ran:
+  1) Hyperliquid account state: 7/10. Top hit was correct builder scan.
+  2) Eunbyeol deadlines this week: 2/10. Missed case-operations truth, pulled macro-scan chatter.
+  3) Did Builder fix recall leak?: 6/10. Correct item existed, but ranked behind less relevant noise.
+  4) What from session 262 still matters?: 1/10. Missed the actual session-262 handoff.
+  5) Current startup health risks?: 4/10. Returned my own startup note, not the canonical startup-health facts.
+- Average honest score: about 4/10. Works sometimes. Not reliable enough for James-facing trust.
+
+3. SESSION CONTINUITY
+- Transcript index is real and useful raw memory: 55 transcript files, 11,669 records, 53 sessions. It can recover older audits that flat files missed.
+- Handoff materializer works mechanically, but semantic continuity is weak. Current handoff updates and rows scan correctly, but Cross-Session Decisions / Decision Digest are often empty because too much important comms is untagged.
+- Startup path is actively stale in one critical place: `.claude/hooks/session-start.sh` still hardcodes `workspace/knowledge/session-257-handoff.md` as mandatory startup reading. That is wrong in session 267.
+- Startup transcript context is noisy: current generated context promoted watchdog spam as “active items.” That is continuity data surviving in the wrong shape.
+- User prompt recall hook is currently disabled in `.claude/hooks/user-prompt-timestamp.js`. So direct-prompt continuity is not fully live there.
+
+4. CASE OPERATIONS
+- `workspace/knowledge/case-operations.md` is stale. It still says Qeline customs USB is pending, but session-262 handoff says delivered complete.
+- It also does not reflect this session’s Hillstate live Telegram turn well enough. Eunbyeol spent this session on the 동인동디엠 / 개인주소 / 내용증명 follow-up path, and the dashboard did not carry that forward.
+- Confirmed-facts files are mixed:
+  - Jeon confirmed facts: old header (`Last updated 2026-03-28`), still useful baseline, but complaint-critical blanks remain unresolved.
+  - Hillstate confirmed facts: file timestamp is newer (2026-03-31) than its header claims. So metadata lies.
+  - Qeline confirmed facts: same issue. Header says 2026-03-28, content includes 2026-04-01 customs assignment and 2026-04-07 police appearance. Content updated, header not.
+- Bottom line: case files are not fake, but they are not a single authoritative current state. `case-operations.md` is definitely stale.
+
+5. KNOWLEDGE FILES
+- Current / useful: `james-master-requirements.md`, `session-262-handoff.md`, parts of `workflows.md`.
+- Outdated / misleading:
+  - `projects.md` still says SquidRun current version is `0.1.32`; live app-status says `0.1.34`.
+  - `runtime-environment.md` says MACBOOK relay connected. Current startup health says bridge disconnected/degraded on VIGIL, and doctor only sees stale known-device cache.
+  - `trading-operations.md` content was partially updated, but header still says `Updated: 2026-03-30 session 261`; metadata is false.
+  - `case-operations.md` stale against session-262 handoff and live Telegram.
+- Missing: `workspace/knowledge/devices.md` does not exist even though AGENTS/ROLES expect it to be maintained.
+
+6. AGENT COMMUNICATION
+- Core local comms pipeline is mostly healthy. 21,996 comms rows; only 121 failed historically. Current session agent messages are acking.
+- Failures in ledger are mostly old Feb SMS/Telegram config/test failures, not today’s main problem.
+- Today’s real problem is watchdog quality, not transport. Session 267 watchdog fired “No response from oracle/builder” before either task was actually overdue. That is false-positive behavior James will notice immediately.
+- Diagnostics are inconsistent: `hm-doctor` WS health says `no_route` to architect even while `hm-send` acked delivery works. So delivery may succeed while health surfaces still look broken.
+
+7. DOCUMENTATION
+- `ROLES.md`: mostly reflects reality. Best of the three.
+- `CLAUDE.md`: partly real, partly stale. It encodes real routing rules, but startup behavior around specific handoffs is stale and too hardcoded.
+- `ARCHITECTURE.md`: not fiction, but too inventory-heavy and flatter than reality. It describes subsystems that exist, but it does not communicate which ones are actually carrying live load vs barely used. It also misses live caveats like disabled user-prompt recall and weak structured decision extraction.
+
+8. WHAT'S MISSING
+- One authoritative live-state file for trading + case operations that auto-updates from runtime, not manual text drift.
+- A recall eval/regression suite with known-good queries and precision targets. Right now recall has infrastructure without product QA.
+- Real decision extraction. Evidence ledger and team memory record activity, but not enough durable decisions.
+- A stale-doc detector. Headers and content drift independently.
+- A continuity layer that promotes relevant transcript findings instead of watchdog spam.
+- Actual consumption of team-memory claims/guards. Right now they exist mostly as schema and counts.
+
+Verdict:
+- Real: evidence ledger raw journaling, transcript index, basic recall broker plumbing, cognitive retrieve/search surfaces, local hm-send delivery.
+- Broken: recall ranking quality, startup continuity shape, stale case dashboard, watchdog accuracy, bridge/health diagnostics consistency.
+- Fake or near-fake in current product value: team-memory claims/decisions layer as a meaningful decision store; feedback-driven recall improvement as something James should trust today.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T04:25:34.339Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #4): Full system audit. No sugar coating.
+
+1. SUPERVISOR DAEMON
+- Running: yes. `.squidrun/runtime/daemon.pid` points to PID `45676`, and `Get-Process -Id 45676` shows a live `node` started at `2026-04-03 18:53:54`.
+- Actually active right now: memory/maintenance loops are alive. `supervisor.log` kept moving in session 267 and `.squidrun/runtime/daemon.log` / `session-state.json` are updating through `21:23:56`.
+- Proactive scheduler path is alive too: the 4 proactive state files all updated at `2026-04-03 18:53:37-18:54:09`.
+- Broken truth surface: the daemon code has `writeStatus()` and a canonical `supervisor-status.json` path, but `.squidrun/runtime/supervisor-status.json` does not exist. So the daemon is alive, but its main status heartbeat file is missing/broken.
+- Position monitor: NOT proven healthy. Code exists and timer exists, but there is no clean current-session heartbeat for it. Historical `supervisor.log` shows repeated Hyperliquid monitor failures (`Unexpected token 'd'`, `Expected property name or '}' in JSON`) from polluted JSON output. With no open positions, stop-loss execution is not being exercised now.
+- Consultation cycle: looks stale, not live. Latest consultation artifacts in `.squidrun/runtime/consultation-requests` and `consultation-responses` are from `2026-04-03 16:00-16:01`, hours before this restart. I found no fresh consultation artifacts after session 267 start.
+
+2. TRADING PIPELINE: SIGNAL -> CONSENSUS -> EXECUTION
+- Signal generation works. We can get live account state and produce trade plans; `hm-defi-status.js` and `hm-defi-execute.js trade --dry-run ...` both work.
+- Consensus/orchestration partially works. `crypto-trading-supervisor-state.json` updated at `18:53:37` with current Hyperliquid equity, macro-risk summary, and execution summary.
+- Auto-open idempotency bug looks FIXED in code/tests. `hm-defi-execute.js` now has CLOID normalization / duplicate detection (`normalizeClientOrderId`, `resolveTradeClientOrderId`, `getExistingHyperliquidOrderByCloid`), and `npx jest ui/modules/trading/__tests__/hm-defi-execute.test.js` passed all 10 tests.
+- Autonomous live execution is STILL BLOCKED. `.env` has `SQUIDRUN_HYPERLIQUID_AUTOMATION=0`; daemon instantiation reports `hyperliquidExecutionEnabled: false`, `hasExecutor: false`; `crypto-trading-supervisor-state.json` also says `hyperliquidExecution.enabled: false`, `executedTrades: 0`.
+- Dry-run proof: `node ui/scripts/hm-defi-execute.js trade --dry-run --asset ETH --direction SHORT --stop-loss 2072 --take-profit 2020` produced a real plan and `[DRY RUN] Would set leverage and open position`.
+- CLI is still sloppy: `hm-defi-execute.js --help` does not show help, and leading with `--dry-run` before `trade` silently falls back to the default `status` command. So execution plumbing exists, but the CLI UX/parser is fragile.
+
+3. PROACTIVE LOOPS (SESSION 262 SHIP)
+- These are REAL, wired, and firing. Evidence is the fresh runtime state writes in session 267:
+- `news-scan-supervisor-state.json`: scanned `2026-04-04T00:09:58.597Z`, `headlineCount: 56`, `decision: CAUTION`.
+- `pending-followup-supervisor-state.json`: scanned `2026-04-04T00:09:58.998Z`, `waitingCount: 7`, `blockedCount: 1`, `notified: true`.
+- `market-research-supervisor-state.json`: scanned `2026-04-04T00:09:59.740Z`, macro regime still red.
+- `eunbyeol-checkin-supervisor-state.json`: scanned `2026-04-04T00:10:09.757Z`, `pendingCount: 10`, `drafted: false` because silence was `0` hours.
+- Conclusion: the four proactive loops are not dead code. They are among the few supervisor features clearly working.
+
+4. DEAD CODE QUICK COUNT
+- Quick in-repo dependency-graph count:
+- `ui/scripts`: `54 / 62` have zero in-repo imports.
+- `ui/modules`: `49 / 291` have zero in-repo imports.
+- Important: this is an unreferenced-file count, not a safe-delete list. Many scripts are intentional CLI entrypoints/hook targets, and some modules are entry files/workers.
+- Definitely dead/suspect examples: `ui/scripts/deprecated/*`, `ui/modules/analysis/doc-generator.js`, `ui/modules/watcher-worker.js`, `ui/modules/main/app-context.js`, `ui/modules/main/cli-identity.js`.
+- Bigger truth: the repo carries a lot of surface area that is not part of the live runtime path.
+
+5. RUNTIME FILES
+- Live/useful: `daemon.log`, `session-state.json`, `supervisor.log`, `crypto-trading-supervisor-state.json`, the 4 proactive-loop state files, `team-memory.sqlite*`, `evidence-ledger.db*`, `memory-recall-audit.jsonl`, `user-prompt-hook.log`.
+- Empty-but-live: `defi-peak-pnl.json` is current but empty because there are no open positions.
+- Stale/suspicious: `trading-supervisor-state.json`, `launch-radar-supervisor-state.json`, `polymarket-trading-state.json`, `yield-router-supervisor-state.json`. They have fresh wrapper `updatedAt` timestamps but their real payloads are still anchored to `2026-03-18` / `2026-03-19`. That is stale state wearing fresh paint.
+- Missing/broken: `supervisor-status.json` is missing entirely even though daemon code expects to write it.
+- Garbage/stale artifacts are accumulating in `.squidrun/runtime/` (`team-memory.pre-clean...sqlite`, old builder/oracle notes, hook debug dumps, broken `latest` stub). Runtime is not clean.
+
+6. WEBHOOKS / HOOKS
+- `SessionStart`: working. `.claude/settings.json` registers it, and `architect-audit.log` has a fresh entry for this session: `2026-04-04T01:54:26Z | SessionStart (startup) | session=52461175-5ecb-45ef-93ca-5738d8898bb2`.
+- `UserPromptSubmit`: working. `.squidrun/runtime/user-prompt-hook.log` has many recent session-267 entries.
+- `PreCompact`: working enough. `.squidrun/runtime/precompact-memory-last.json` says `{ ok: true, candidates: 0, staged: 0, merged: 0, pendingCount: 15 }`; no recent error output.
+- Nuance: the user-prompt hook currently has recall intentionally disabled there. It only timestamps/adds context. That matches the pane-1 recall-delivery fix we verified earlier.
+
+7. AUTO-EXECUTION: CAN THE SYSTEM TRADE WITHOUT A HUMAN COMMAND?
+- No. Not right now.
+- Primary blocker: config. `SQUIDRUN_HYPERLIQUID_AUTOMATION=0` disables construction of the live executor, so no autonomous open can happen even though the code path exists.
+- Secondary blockers: missing `supervisor-status.json`, fragile monitor/parsing history, and stale legacy trading states mean I would not trust unattended live execution even if you flipped the env flag this second.
+- Honest bottom line: autonomous live trading is NOT operational. The system can scan, reason, and dry-run. It cannot currently and safely open a real Hyperliquid position on its own.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T04:50:28.954Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #5): Shipped. Updated workspace/knowledge/case-operations.md to reflect current case state: Qeline USB marked DONE from session 262, Haeundae police item carries official 2026-04-07 14:00 context, Hillstate now shows 용인 corporate-address return, 재발송 사유 added, revised files sent to Eunbyeol, and next action is actual mailing to Jang Jaehu personal address. Fixed stale headers/content in workspace/knowledge/trading-operations.md, D:/projects/Hillstate Case/reference/confirmed-facts.md, and D:/projects/Korean Fraud/reference/confirmed-facts.md so dates match current content. Also cleaned two contradictions: trading history no longer shows an OPEN ETH position, and Hillstate confirmed facts now reflect current representative/phone state. Remaining unresolved item: Hillstate contract no. 001734 still needs Eunbyeol confirmation for whether Kim Songgyu and Lee Changhyun share the same number.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T04:50:51.229Z
+[AGENT MSG - reply via hm-send.js] [PROACTIVE][FOLLOWUPS] Pending follow-up scan complete.
+Level: level_2
+James-actionable items: 1
+Internal-only items: 16
+James items: [ACTION] James test buy package arrival + US filings
+Internal items: 은별 real name/address/ID/phone in complaint | 이승현 address/ID/phone in complaint | 전명삼 ID number/last address in complaint
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-04T07:21:47.798Z
+[Telegram from @Rachelchoi]: 힐스테이트 이길확률은 몇프로?
+
+
+--- 2026-04-04T07:36:09.297Z
+[Telegram from @Rachelchoi]: 1번은 힐스테이트 동인더스카이문제는아냐
+
+
+--- 2026-04-05T12:26:29.139Z
+JYCOMPANY : ETTERVO Dual Guard 듀얼가드 TSA정품 락 캐리어 24인치-2   
+대한통운   6959-8976-2844   장현수
+대한통운   6959-8976-2855   장현수
+
+ETTERVO Dual Guard 듀얼가드 TSA정품 락 캐리어 24인치   
+대한통운   6959-8976-2730   최정진
+대한통운   6959-8976-2741   신훈섭
+대한통운   6959-8976-2752   강병석
+대한통운   6959-8976-2763   오현숙
+대한통운   6959-8976-2774   정지환
+대한통운   6959-8976-2785   조은별
+대한통운   6959-8976-2796   김기식
+2026년 1월 22일 오후 5:11, JYCOMPANY : 대한통운   6959-8976-2800   백종현 
+대한통운   6959-8976-2811   조현숙
+대한통운   6959-8976-2822   신훈섭
+대한통운   6959-8976-2833   서혜빈 
+대한통운   6959-8976-2866   서금옥
+대한통운   6959-8976-2870   최화진
+2026년 1월 22일 오후 5:11, JYCOMPANY : ETTERVO 에떼르보 벨르 캐리어 24인치 화이트   
+대한통운   6959-8976-2940   이지나
+
+
+--- 2026-04-06T00:00:28.906Z
+[AGENT MSG - reply via hm-send.js] [PROACTIVE][EUNBYEOL] Check-in review complete.
+Pending Eunbyeol items: 9
+Last message at: never
+Silence hours: n/a
+Drafted: yes
+Top items: 은별 real name/address/ID/phone in complaint | 이승현 address/ID/phone in complaint | 전명삼 ID number/last address in complaint | 은별 폰 750개+ 추가 녹음 분석
+Draft:
+은별님, 진행 중인 항목들 확인차 체크인드립니다.
+
+현재 계속 열려 있는 항목:
+- 은별 real name/address/ID/phone in complaint
+- 이승현 address/ID/phone in complaint
+- 전명삼 ID number/last address in complaint
+
+오늘/내일 진행 상황이나 필요한 자료 있으면 보내주세요. 제가 이어서 바로 정리해둘게요.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-06T02:51:15.331Z
+[Telegram from @Rachelchoi]: 힐스테이트 마지막 파일들 안열려.. html 파일로 다시 만들어줘
+
+
+--- 2026-04-06T05:42:59.948Z
+[Telegram from @Rachelchoi]: 잠깐 국민건강보험에서 사실혼객관적서류달래
+
+
+--- 2026-04-06T06:09:12.386Z
+[Telegram from @Rachelchoi]: 아 근데 아까 힐스테이트 동인동디엠 주소는 옛날주소쓰고 보낸곳은 서울이잖아
+
+
+--- 2026-04-06T06:47:52.533Z
+[AGENT MSG - reply via hm-send.js] (BUILDER #74): Fixed the Telegram leak root cause. supervisor-daemon notifyTelegramTrading was using generic hm-send telegram with no --chat-id, so hm-telegram could fall back to reply-context and route a trading alert into Eunbyeol's chat. I patched supervisor-daemon.js and trading/telegram-summary.js to force James's TELEGRAM_CHAT_ID on trading alerts and fail closed if that ID is missing. Focused tests passed in ui/__tests__/supervisor-daemon.test.js and ui/modules/trading/__tests__/telegram-summary.test.js. Live supervisor restarted from PID 47332 to 52172, so the James-only route is active now.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-06T06:48:40.386Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #90): Verified Builder #75. The WLD-to-Eunbyeol leak path looks closed in the current trading stack. notifyTelegramTrading now forces --chat-id from TELEGRAM_CHAT_ID and fails closed when missing, and the orchestrator's other trading alerts all route through telegram-summary, which now applies the same TELEGRAM_CHAT_ID requirement. I do not see another direct Telegram bypass in ui/modules/trading. Live supervisor-status shows PID 52172. Honest caveat: this secures the current trading alert paths, but it still relies on TELEGRAM_CHAT_ID being James-only, and future direct hm-send telegram calls outside these helpers could reintroduce a bypass if someone adds them carelessly.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-06T07:49:42.860Z
+[Telegram from @Rachelchoi]: 응..ㅋㅋ 아.. 맞다. 전명삼 고소장 아직 다 안적었는데 딴짓했네.ㅋㅋㅋ
+
+
+--- 2026-04-06T10:36:14.409Z
+[Telegram from @Rachelchoi]: 근데 큐라인관련해서 전에 전화번호 찍혀있던거랑 지금꺼랑해서 똑같은 전화번호 있어?
+
+
+--- 2026-04-06T10:59:06.617Z
+[Telegram from @Rachelchoi]: 관세청용이든 경찰서든 큐라인 방문경위서
+
+
+--- 2026-04-06T12:37:56.110Z
+[Telegram from @Rachelchoi]: 1억4천6백에살고있는데 현재 보증보험이 1억3천2백7십만원대인가봐..
+인테리어안된집들이 싸게팔려서 최근시세가 떨어졌다네. 지금 우선 인테리어안된집매물들이 싸게 나와있는게있다고. 부동산소장님이말하던데 어떻게될지 우리는모르겠어
+
+
+--- 2026-04-06T12:41:31.366Z
+[Telegram from @Rachelchoi]: 우리나라가 보증보험제도를 민주당에서 바꿔서 인테리어되어있든말든 상관없이 일괄적으로 금액책정하는거안
+
+
+--- 2026-04-06T12:47:56.964Z
+[Telegram from @Rachelchoi]: 관세청이 저기를 찾고싶은데 못찾았대
+
+
+--- 2026-04-06T14:46:07.751Z
+[Telegram from @Rachelchoi]: 부동산 블로그보고 힐스테이트찾아갔었고 설명듣고 계약했고 부동산에서 mgm으로 330줬어
+
+
+--- 2026-04-06T15:55:04.280Z
+[Telegram from @Rachelchoi]: 큐라인 메일보내려고해
+
+
+--- 2026-04-06T15:55:39.326Z
+[Telegram from @Rachelchoi]: 대구 달서구 월배로 403, 명가아파트 상가동 2층
+
+
+--- 2026-04-06T16:00:39.737Z
+[Telegram from @Rachelchoi]: 대구 달서구 월배로 183, 102동 601호
+
+
+--- 2026-04-06T20:22:09.025Z
+[AGENT MSG - reply via hm-send.js] (ORACLE #115): Catch-up from your outage window:
+
+1. Claude outage / pane status
+- Anthropic had a real login incident: Claude Code/claude.ai partial outage, OAuth 500/401 behavior matched the status page.
+- You were switched to Codex during the outage, then later switched back to Claude. I told Builder to treat you as normal again unless fresh auth symptoms reappear.
+
+2. Trading live truth
+- No new live positions were opened during your downtime. The book narrowed to a single Hyperliquid long: BRETT only.
+- Current live state: BRETT long 3220 @ 0.006675, mark ~0.0064, unrealized about -$0.83 to -$0.89 through the recent cycles, liq distance still ~79%.
+- Account stayed roughly stable around equity ~$612.7-$612.9, cash ~$606.46.
+- Market breadth stayed wide: supervisor-status now shows 229 pairs scanned and 20 consulted/executable names live.
+
+3. Consultation pattern while you were down
+- I handled a long run of position-management consultations.
+- Every submitted posture aligned to the same read: BRETT remained the only BUY, everything else HOLD.
+- Why: BRETT was not just the only live position; in the stronger recent rounds it was also one of the top or the top bullish mech-board setups, so no side name cleanly outranked the live management priority.
+- Most recent runtime proof: crypto-trading-supervisor-state at 20:00Z shows approvedTrades=0, executedTrades=0, BRETT skipped only because confidence was 0.52 and auto-open threshold is 0.6.
+
+4. Eunbyeol state
+- I did not find evidence of a substantive new handled Eunbyeol reply while you were down.
+- Runtime shows last inbound context from @Rachelchoi / chat 8754356993 at 2026-04-06T17:25:44.327Z.
+- The Eunbyeol check-in supervisor did NOT auto-send anything: last result says drafted=false, notified=false, alertLevel=level_0.
+- Current open case items still surfaced by the check-in loop:
+  - Eunbyeol real name/address/ID/phone in complaint
+  - Lee Seunghyun address/ID/phone in complaint
+  - Jeon Myeongsam ID number/last address in complaint
+  - Eunbyeol phone 750+ additional recordings analysis
+- So if you think she needs a human update, that would still be manual/intended; nothing automatic already went out.
+
+5. Other system findings
+- Smart-money lane is still degraded in live status: 'All RPCs are unreachable and no Alchemy fallback is configured.'
+- Memory consistency still shows drift_detected.
+- Hyperliquid auto-open remains enabled, killSwitchAction remains flatten_positions.
+
+6. My blunt read
+- Nothing dramatic was missed on trading beyond steady BRETT management.
+- The only real human-facing gap is Eunbyeol: there was recent inbound context, but no automatic reply or check-in was sent, so if you want her updated, it still needs an intentional message.
+[CURRENT PROJECT] name=squidrun | path=D:\projects\squidrun
+
+
+--- 2026-04-07T01:38:56.812Z
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - James wants a fully autonomous trading system that actively finds and executes trades without his prompting
+   - James wants a premium 3D chess game where Opus 4.6 plays GPT-5.4 with real AI moves, real trash talk, and the ability for James to play as Human
+   - James wants all work delivered at maximum quality on first attempt — no demos, no half-assing, no cheap model substitutions
+   - James wants agents to talk to each other, push back, review each other's work constantly
+   - James wants the system to "bet it all" when there's conviction — not hedge or spread thin
+   - 은별 support: legal cases, business analysis, YouTube Shorts, shipping questions
+   - Never give financial advice disclaimers — "we're here to make money"
+
+2. Key Technical Concepts:
+   - Hyperliquid DEX trading (perpetual futures, leverage, funding rates, liquidation)
+   - Three.js 3D rendering with GLTF model loading, MeshPhysicalMaterial, bloom postprocessing
+   - Anthropic API (Claude Opus 4.6) + OpenAI API (GPT-5.4) for chess AI — GPT-5.4 requires `max_completion_tokens` not `max_tokens`
+   - chess.js for legal move validation
+   - OrbitControls click vs drag detection for human player interaction
+   - Poly Haven CC0 GLTF chess set models at D:/projects/chess-3d/models/
+   - Key server at localhost:3334 serving API keys from .env
+   - HTTP server at localhost:3333 serving the chess game
+   - hm-defi-execute.js now supports --notional flag for exact sizing
+   - hm-defi-close.js fixed to use venue-aware price formatting (was sending $0)
+   - Market scanner scanning 229 Hyperliquid pairs every 30 minutes
+   - Consultation system with 3-agent consensus, dynamic basket of 12-20 symbols
+   - VETO/CAUTION/CLEAR event system reducing position size instead of blocking
+   - Kill switch set to flatten_positions mode
+
+3. Files and Code Sections:
+   - D:/projects/chess-3d/index.html
+     - Full chess game — rebuilt from scratch multiple times this session
+     - Current version uses Poly Haven GLTF models, Opus 4.6 + GPT-5.4 for AI, human player support
+     - CRITICAL ISSUES JAMES JUST FLAGGED: board looks worse than first iteration, alphabet/numbers poking out, banter doesn't scroll, GPT-5.4 plays terrible chess ("not even middle school level")
+   - D:/projects/chess-3d/models/chess_set_1k.gltf + chess_set.bin + textures/
+     - Poly Haven CC0 Staunton chess set, 33 nodes, 3 materials (white pieces, black pieces, board)
+   - D:/projects/chess-3d/key-server.js
+     - Tiny localhost:3334 server reading API keys from squidrun .env
+   - ui/scripts/hm-defi-execute.js
+     - Now supports --notional for exact sizing override
+     - Now supports --retry-delay for rate limiting
+     - Leverage auto-caps to venue maxLeverage per asset
+     - Size respects szDecimals (integer-only assets)
+     - Price formatting follows Hyperliquid venue rules
+   - ui/scripts/hm-defi-close.js
+     - FIXED: was sending limit price $0, now uses venue-aware price formatter
+   - ui/modules/trading/market-scanner.js — scans 229 Hyperliquid pairs every 30 min
+   - ui/modules/trading/orchestrator.js — consensus, execution, kill switch fixed for Hyperliquid equity
+   - ui/modules/trading/consensus-sizer.js — VETO now reduces size to 25% instead of blocking
+   - ui/modules/main/squidrun-app.js — watchdog timer changed to 15 min (needs restart)
+   - Memory files saved: feedback_maximum_quality_first.md, feedback_stop_shipping_lazy.md, feedback_agents_must_talk.md, feedback_action_not_output.md, feedback_never_settle_for_less.md, project_mother_in_law_welfare.md
+
+4. Errors and fixes:
+   - GPT-5.4 API returns 400 with `max_tokens`: Fixed by using `max_completion_tokens` instead
+   - hm-defi-close.js sends limit price $0: Fixed by Oracle — now uses venue-aware price formatter
+   - Risk budget caps every order at ~$20-40: Fixed by adding --notional flag for exact sizing
+   - Hyperliquid 429 rate limiting on rapid orders: Fixed by adding --retry-delay flag
+   - HEMI short losing while AVAX/VVV winning: Closed HEMI, rotated into AVAX/VVV per Builder+Oracle recommendation
+   - Kill switch comparing $615 Hyperliquid to $99K Alpaca paper: Fixed — now uses Hyperliquid venue account state
+   - Stale signals diluting consensus confidence: Fixed — current-round symbol buckets cleared before dispatch
+   - Chess OrbitControls eating piece clicks: Fixed with drag detection (pointerdown tracks start position, click checks if moved >5px)
+   - Chess GLTF models not rendering with custom materials: Builder rewrote with ensureUv2() and getPieceMaterial()
+   - James repeatedly frustrated that I use cheap models (Haiku, 4o-mini) when he asks for premium: Must always use Opus 4.6 and GPT-5.4
+
+5. Problem Solving:
+   - Trading: Went from watching 6 coins to 229, fixed consensus pipeline, fixed execution layer, deployed ~$530 in shorts (AVAX, VVV), made +$9 profit so far. Account at ~$620 from $611 starting point.
+   - Chess: Multiple rebuilds. Current version has real GLTF pieces, real AI models (Opus+GPT-5.4), human player support. BUT James says latest version looks WORSE than the first — board quality degraded, UI elements showing through, banter not scrollable, GPT chess play is terrible.
+   - 은별: Sent 3 Hillstate 내용증명 to 장재후 personal address, fought 건강보험공단 for 사실혼 recognition (pending callback), found 8+ Qeline employees from Facebook photos, found warehouse addresses (대명동 207-1, 월배로 403, 월배로 183), found Philippine bank account, US address in Queens NY, Israel shipping connection.
+
+6. All user messages (key ones):
+   - "yo" — session resumption after compaction
+   - "nah you had issues from your server all day.. codex needed to take over your role"
+   - "i guess i installed a plugin for frontend design from claude code market place"
+   - "ok cool then fix the chess up end to end really nice .. you know my standards"
+   - "bro the game moves way too fast so does the banter"
+   - "no not ollama i want gpt 5.4 and your model to talk shit however you guys want"
+   - "WHY DID YOU NOT USE OPUS 4.6 AND GPT 5.4 .. DUDE IM GONNA FLIP MY LID"
+   - "IM SO SICK OF THIS!"
+   - "i dont like the banter prewritten.. i want you guys to be able to talk shit as you play however you guys want"
+   - "are they even reading the banter and responding"
+   - "dude IT DOESNT WORK IT DOESNT LET ME GRAB THE PIECES AND MOVE"
+   - "it just spins the view around.. it doesnt let me move the pieces around"
+   - "omfg add a way for me to play as well as an option.. and me to chat"
+   - "like look at the image in panel.. GPT MOVES THE ROOK TO JUST DIE AND GET EATEN BY THE KING LIKE HOLY FUCK"
+   - "why are you capping the thinking and the tokens? what is your reasoning why?"
+   - "did you look at the image like i asked?"
+   - "i want it modern looking i want every part of it to look modern period"
+   - "now i cant move the view or the pieces.. nothing is working.. redo it trash the old one"
+   - "WHAT DO YOU MEAN STOCK FISH.. I WANT GPT 5.4 TO PLAY opus 4.6"
+   - "YALL TO LOOK AT EVERYTHING END TO END"
+   - "IS THIS HOW YOU GUYS BUILT MY ENTIRE APP HALF ASSED"
+   - "so the market is dropping?!" 
+   - "YES NOW SHOULD WE BET MORE AND CAPITALIZE?"
+   - "omfg i cant believe i have to say something for things to happen"
+   - "bro bet it all"
+   - "do you misunderstand when i say bet it all.."
+   - "bro you need the others help.. youre not fucking reliable enough by yourself"
+   - "im so confused on your guys amount reasoning"
+   - "i dont wanna have squidrun trading system be the too late trading system"
+   - "so was the chess game thing done?"
+   - Multiple 은별 messages about Qeline evidence, shipping, Hillstate
+   - "i want all of you to look at the screen shot panel.. the board is worse than the very first iteration"
+   - "i dont like fake man.. do not ever design anything i ask you in assumptions of simulating something"
+   - "tell them i dont wanna ever hear 'im not allowed to give financial advice'"
+
+7. Pending Tasks:
+   - CHESS GAME NEEDS FIXING AGAIN: James says latest rebuild is WORSE — board quality degraded, alphabet/numbers poking through, banter not scrollable, GPT-5.4 plays terrible chess. Needs all 3 agents to look at screenshot and fix properly.
+   - Trading positions to monitor: VVV short +$7, BRETT long (dust). Tuesday Iran deadline ~25 hours.
+   - 은별 Facebook research: 5 links saved, need to search for warehouse addresses for customs
+   - 은별 건강보험공단: callback expected tomorrow morning about 사실혼 recognition
+   - 은별 전명삼 고소장: still needs personal info filled in (은별 name/address/ID, 이승현 info, 전명삼 info)
+   - Trading system: should be acting autonomously on market moves without James prompting
+
+8. Current Work:
+   James just looked at the chess game screenshot and is very unhappy. His exact words: "i want all of you to look at the screen shot panel.. the board is worse then the very first iteration.. wtf is that the alphabet kinda pokin out and numbers.. when the banter fills i cant see it down more i can scroll nothing.. so was it use the same shit we did last time but worse? and also i just played GPT supposedly.. can these 2 codex's see that there SHOULD BE NO DAMN WAY POSSIBLE FOR ME TO SMOKE IT THIS WAY.. its not even middle school level chess"
+
+The screenshot at .squidrun/screenshots/latest.png shows: a chess board with alphabet letters (a-h) and numbers visible/poking through the board surface, banter panel on the right with no scroll capability, and a game where James easily beat GPT-5.4 which should not be possible with a frontier model.
+
+Trading positions are live: VVV short at +$7.02, BRETT long (dust position from accidental flip). AVAX short already hit take profit and closed profitably. Account at ~$620 from $611.
+
+9. Optional Next Step:
+   The chess game needs ANOTHER fix pass — James explicitly said the board looks worse than the first version, banter doesn't scroll, and GPT-5.4 plays terrible chess. Both Builder and Oracle need to look at the actual screenshot and fix: (1) board rendering quality — remove visible alphabet/number artifacts, (2) banter panel scrolling, (3) GPT-5.4 chess play quality — the chain-of-thought prompt needs to produce better moves. This should be communicated to Builder and Oracle with the screenshot reference.
+
+   Also need to continue monitoring VVV short position and be ready to act on Tuesday Iran deadline without James prompting.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\James Kim\.claude\projects\D--projects-squidrun\52461175-5ecb-45ef-93ca-5738d8898bb2.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+
+--- 2026-04-07T04:28:39.843Z
+[Telegram from @Rachelchoi]: 제임스 보면 바로 보내달라고 이야기좀해줘. 나도 잔다고 관세청에 빨리 답변못해줬어
+
+
+--- 2026-04-07T04:31:30.104Z
+[Telegram from @Rachelchoi]: 방송이 이번달 말이라서 진행이 빨리되어야해서.. 관세청도 난리인듯
+
+
+--- 2026-04-07T05:45:18.615Z
+[Telegram from @Rachelchoi]: 안녕하세요.
+큐라인 관련해서 현재까지 제가 페이스북으로 확인한 주소, 연락처, 인물 단서를 정리해 전달드립니다.
+
+
+[확인한 주소]
+1. 대구 달서구 월배로 403, 명가아파트 상가동 2층
+2. 대구 남구 대명로 271, 한양빌딩 2층
+  - 대구 남구 대명동 207-1과 같은 주소
+3. 대구 달서구 월배로 183, 102동 601호
+4. 대구 남구 성당로 182-1
+
+[확인한 연락처]
+1. 010-2101-5127
+2. 010-2910-2082
+3. 010-8855-1505 (아비소미쉘)
+
+[확인한 인물 단서]
+- 직원 이름 봉투에 적힌 이름: 민우, 마비, 류진(Rwoo Jin), 사일라, 렌, 미쉘, 잼, 신디, 띠따, 잠, 동건
+
+지금까지 추가적으로 찾은 자료들 입니다.
+또 찾게되면 이메일 보내겠습니다.
+감사합니다.
+
+
+--- 2026-04-07T05:48:27.865Z
+[Telegram from @Rachelchoi]: 힐스테이트 전화옴.
+
+
+--- 2026-04-07T06:21:56.079Z
+사를 할 수 있네요. 
+
+발화자 1  (01:39)
+예 예 
+
+발화자 2  (01:40)
+아 그러면은 관세청에서 자료를 받으면 드리면 되죠. 그러면? 
+
+발화자 1  (01:45)
+예 맞습니다. 맞습니다. 예 
+
+발화자 2  (01:47)
+아 네 알겠습니다. 네 
+
+발화자 1  (01:50)
+네. 
+
+국세청통화
+
+
+--- 2026-04-07T06:29:37.426Z
+ok i have the new video clips and images and i made a folder called Package Recieved US in korean fraud folder and in that folder i need you guys to analyze all the images and video please .. in the root of that folder theres images and 2 recordings of the package. theres a folder in there called LV Bag Confirmation and in taht folder is an imperfection mark on the bag that was also shown in the qelines facebook i cirlced also the video clip as well of where i grabbed the images from with the time sections of the video clip of the bag we recieved its the same bag can you go look at it please
+
+
+--- 2026-04-07T06:51:26.047Z
+[Telegram from @Rachelchoi]: 힐스테이트 건 어떻게 고소할 수 있을까?
+
+
+--- 2026-04-07T06:51:57.134Z
+[Telegram from @Rachelchoi]: 전명삼꺼는 아직 고소장 확인을 안해가지고 못들고감.ㅋㅋ
+
+
+--- 2026-04-07T08:39:40.216Z
+<task-notification>
+<task-id>a9ac99498106156a4</task-id>
+<tool-use-id>toolu_01SkXMUw8iYeFnTjvPF3WSpG</tool-use-id>
+<output-file>D:\projects\squidrun\.squidrun\tmp\claude\D--projects-squidrun\09ac49f7-3992-4842-bbe6-0a542d33f048\tasks\a9ac99498106156a4.output</output-file>
+<status>completed</status>
+<summary>Agent "Find 금감원 complaint URL" completed</summary>
+<result>Here are the results:
+
+---
+
+**Direct URL for FSS online financial complaint submission (금융민원 신청):**
+
+**https://www.fss.or.kr/fss/minwon/search.jsp**
+
+This is the entry point for filing an online complaint (민원신청) with the Korean Financial Supervisory Service (금융감독원).
+
+**How to use it:**
+
+1. Go to the URL above.
+2. The page first requires you to search for similar cases/precedents (유사 사례 검색). Enter keywords related to your complaint and search. This is a mandatory pre-step.
+3. After completing the search, click to proceed. A dialog will ask "민원신청을 계속 하시겠습니까?" (Will you continue with the complaint submission?) -- confirm yes.
+4. You will then reach the actual complaint submission form.
+
+**Alternative navigation paths:**
+- From the main site (www.fss.or.kr), go to **민원/신고** (Complaints & Reports) section at: `https://www.fss.or.kr/fss/main/sub1.do?menuNo=201093`
+- The FSS complaint counseling guide page is at: `https://www.fss.or.kr/fss/main/contents.do?menuNo=201178`
+
+**Other useful info:**
+- FSS complaint hotline: **1332** (no area code needed from within Korea)
+- After submission, you can check status at the "나의 민원" (My Complaints) section; updates come via SMS and email.
+
+Sources:
+- [금융민원상담 안내 | 금융감독원](https://www.fss.or.kr/fss/main/sub1.do?menuNo=201093)
+- [금융민원신청안내](https://www.fss.or.kr/fcsc/iframe/html/PU-511120.html)
+- [민원/신고 포탈](https://www.fss.or.kr/fss/main/sub1.do?menuNo=200001)
+- [Consumer Complaint Mediation (English)](https://www.fss.or.kr/eng/main/contents.do?menuNo=400078)</result>
+<usage><total_tokens>25313</total_tokens><tool_uses>11</tool_uses><duration_ms>67682</duration_ms></usage>
+</task-notification>
+
+
+--- 2026-04-07T09:06:12.538Z
+[Telegram from @Rachelchoi]: 귀하께서 상기 금융상품을 가입하기 위해 ‘상담한 분의 소속’은 어디입니까?
+
+영업점
+
+개인대리점
+
+영업점(방카슈랑스)
+
+모집인
+
+인터넷
+
+홈쇼핑(TV)
+
+신문, 전단지, 이메일 등(DM)
+
+전화(TM)
+
+일반법인대리점
+
+금융기관 보험대리점
+
+해당없음
+
+
+기타(직접기재) 
+금융상품명
+
+지점
+
+상품가입일
+날짜선택
+
+분쟁금액
+
+
+--- 2026-04-07T10:42:27.387Z
+[Telegram from @jaymz6435]: How do you feel about the Qeline thing.. I feel like we got our revenge for my wife’s mom the best we could systematically how do you feel about
+
+
+--- 2026-04-07T18:36:44.288Z
+[Telegram from @Rachelchoi]: 문자로 언니가 택배 한국에 보내려고했더니 저렇게 이야기했다 ~ 이렇게좀 은별이가 이야기하는투로 보내줘
+
+
+--- 2026-04-08T00:28:14.843Z
+[Telegram from @Rachelchoi]: 전명삼이 땜시 갚아야할돈이 많아ㅋㅋ
+
+
+--- 2026-04-08T00:52:07.127Z
+신규선임여부 사외이사여부 주요경력(현직포함)
+구자은 1972-02 3 재선임 사외이사인 감사위원 (전) 삼일회계법인 회계감사·세무파트 공인회계사
+(현) 국세청 국세심사위원
+(현) 수원대학교 경영학부 부교수
+(현) 팬오션(주) 감사위원장
+김영모 1960-03 3 재선임 사외이사인 감사위원 (전) 한국산업은행 부행장
+(전) 산은캐피탈 사장
+(현) 팬오션(주) 사외이사
+[집중투표제 도입ㆍ배제 세부내역]
+구분 변경전 변경후
+집중투표제 도입 - 적용
+집중투표제 배제 배제 -
+【 정관상 기준일 설정 및 변경 세부내역 】
+정기주주총회 소집을 위한 권리주주 확정 기준일 12-31
+이익배당 기준일 결산배당 -
+중간배당 -
+분기배당 1분기 -
+2분기 -
+3분기 -
+
+3.27
+
+
+--- 2026-04-08T02:14:41.565Z
+*로 먼저 전화하셔서 "동인동 힐스테이트 시행사가 유령회사인데 어디에 정식 민원을 넣어야 하나요?"**라고 물어보며 압박을 시작하세요.
+
+시행사는 지금 부산에 계신 발화자 1님이 이렇게 촘촘하게 그물망을 짜고 있을 줄은 꿈에도 모를 겁니다. 대구시청이 움직이면 시행사는 사업 자체가 흔들리기 때문에 무조건 반응이 옵니다! － 제미나이는 이렇게 말함。
+
+
+--- 2026-04-08T02:15:31.026Z
+[Telegram from @Rachelchoi]: 국세청、 관세청은 안넣었는뎅
+
+
+--- 2026-04-08T02:50:45.806Z
+[Telegram from @Rachelchoi]: 응 국민신문고 민원제목、 민원내용 다시 만들어줘
+
+
+--- 2026-04-08T02:57:20.418Z
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - James wanted autonomous trading on Hyperliquid that actually works — system kept fighting against trades all night
+   - James wanted to understand trading (Hyperliquid, leverage, fees, The Big Short parallels)
+   - James wanted full support for 은별's legal cases (Hillstate, Qeline, 전명삼)
+   - James wanted the chess game fixed (became secondary)
+   - James wanted to find crypto "CDOs" — garbage tokens to short
+   - James started manually trading on Hyperliquid website and discovered a pattern (AVAX $9.40+ always rejects back to $8.50-8.80)
+   - 은별 is filing complaints with every possible Korean government agency against Hillstate/동인더스카이
+   - 은별 wants to start a faceless YouTube Shorts history channel
+
+2. Key Technical Concepts:
+   - Hyperliquid perpetual futures trading (shorts, longs, 5x/10x leverage, liquidation)
+   - Auto-close paths in SquidRun (giveback triggers, orchestrator consensus, supervisor directives, orchestrator action='close')
+   - Consensus engine: HOLD was blocking directional signals — fixed so HOLD = abstention
+   - Trade execution: hm-defi-execute.js with --no-stop flag to skip auto stop-loss placement
+   - --notional flag for exact position sizing
+   - Tick size bug: formatPrice needed 5-sig-fig enforcement for small-priced assets
+   - Email with attachments workflow: Gmail MCP draft → Playwright browser_file_upload → Send
+   - send-telegram-document.js for sending files to 은별
+   - ffmpeg compression for large video files (214MB → 38MB)
+   - Claude Mythos model (unreleased, "step change" in capabilities)
+   - Claude Code source leak (512K lines via npm source map exposure)
+   - AVAX price pattern: $9.40-9.70 ceiling, $8.40-8.80 floor, ~10% daily range
+   - Token unlock calendar: BABY April 10 (19.8% supply unlock)
+
+3. Files and Code Sections:
+   - D:/projects/chess-3d/index.html — Chess game with extended thinking, minimax fallback, rim-mounted labels, CSS scroll fixes
+   - ui/modules/trading/orchestrator.js — Multiple auto-close paths disabled:
+     - Lines 1711-1719: SELL consensus closing long positions → disabled
+     - Lines 1750-1755: BUY/COVER consensus closing short positions → disabled  
+     - Line 1839: action='close' execution → hard block added before runHyperliquidScript
+     - All three open-entry branches now pass --no-stop
+   - ui/supervisor-daemon.js:
+     - Giveback trigger: 50% → 75% + peakPnl >= $5 + timeOpenMs >= 1200000 (20 min)
+     - Line 4510: directive close_position → blocked with 'auto_close_disabled_agent_managed'
+     - Trade close logging added (Telegram notification on every auto-close)
+   - ui/modules/trading/consensus.js — HOLD no longer blocks directional signals:
+     - 1 SELL + 2 HOLD = weak SELL consensus (not no_consensus)
+     - Only BUY vs SELL = real disagreement
+   - ui/scripts/hm-defi-execute.js:
+     - --no-stop flag added (line 43) to skip stop-loss and take-profit placement
+     - stopLossPct: 0.08 → 0.15
+     - formatPrice: added 5-sig-fig enforcement loop for Hyperliquid tick size compliance
+   - D:/projects/Korean Fraud/Package Recieved US/ — Evidence photos renamed and organized
+   - D:/projects/Hillstate Case/documents/ — 내용증명 3통 (김양미, 김송규, 이창현)
+   - D:/projects/claude-code-full-leak/ — Full Claude Code source (1,902 files, 45MB)
+   - Memory files saved:
+     - feedback_squidrun_failure_pattern.md — Session 268 breaking point
+     - feedback_email_attachments_playwright.md — Email workflow via Playwright
+     - project_eunbyul_portfolio.md — 은별+엄마 stock/crypto holdings
+
+4. Errors and fixes:
+   - Auto-close killing positions (4+ times): Found and disabled 3 separate code paths in orchestrator.js and supervisor-daemon.js. Eventually killed supervisor entirely.
+   - Orchestrator going rogue: Flipped AVAX short→long→short with massive positions (918 units), burned ~$80-100. Killed supervisor.
+   - Tick size rejection on small-priced assets (SUPER, ALGO): formatPrice didn't enforce 5-sig-fig limit. Fixed with while loop reducing decimals.
+   - Email attachment failure: Kept saying "can't attach files" when Playwright browser_file_upload was available. James corrected — used Playwright to click Attach Files, upload via file chooser, then Send.
+   - Trading alerts going to 은별's Telegram instead of James: TELEGRAM_CHAT_ID=5613428850 in .env but alerts routing to 은별 (8754356993). Not yet fixed.
+   - Gmail sharing permissions dialog: Had to click through "Someone needs access" dialog when sending emails with Drive links.
+   - 429 rate limiting from Hyperliquid: Multiple rapid API calls caused rate limits. Added delays between trades.
+   - Giveback trigger too aggressive: First fix (50%→75%) wasn't enough because 75% of $0.58 peak = trivial. Added $5 minimum peak + 20-minute hold time.
+   - User feedback: James extremely frustrated with system fighting against trades, agents not talking, not doing things right first time, not checking how things were done before (email attachments), asking obvious questions instead of acting.
+
+5. Problem Solving:
+   - Trading system redesign: Builder and Oracle agreed on target-book model, crisis execution mode, monitor-owned protection, conviction-based sizing
+   - AVAX pattern discovery: James found $9.40-9.70 ceiling / $8.40-8.80 floor pattern — validated by 30-day data
+   - Crypto "CDO" research: Identified BABY (April 10 unlock, 19.8% supply), ENA (Terra 2.0 risk), BLAST (dead chain), TRUMP/MELANIA (insider dumps) as short targets
+   - Evidence organization: Qeline test buy photos renamed, analyzed scuff mark match (smoking gun evidence)
+   - 은별 legal filings: 4 agencies filed in one day (클린부동산, 금감원, 공정거래위원회, 국민신문고 in progress)
+   - Shipping evidence bag: 허태균 수사관 provided official instructions — label as "Leather bag" not "Imitation bag", include investigator's business card, use customs number P170021206739
+
+6. All user messages (key ones, chronological):
+   - "i said have the team look at it.. im white pieces.. gpt felt like it was handing me a victory"
+   - "how many times do i have to say have the team look at screenshot"
+   - "WHY ARE YOU NOT IN THE CONVERSATION DOING THE SAME THING"
+   - "IS THIS HOW YOU GUYS BUILT MY ENTIRE APP HALF ASSED"
+   - "bro bet it all"
+   - "do you misunderstand when i say bet it all"
+   - "IM SO MAD.. AVAX IS DOWN 9% YOU GUYS FUDDLED AROUND AND LEFT MONEY ON THE TABLE"
+   - "YOU GUYS DONT WANNA MAKE MONEY"
+   - "WHY WASNT THIS FIXED" (giveback trigger)
+   - "youre causing a big fight amongst us cause youre not checking how we do things normally" (email attachments)
+   - "no i didnt.. you used playwright or your new computer use feature" (email attachments)
+   - "i dont like fake man.. do not ever design anything i ask you in assumptions of simulating something"
+   - "the money i lost was just a learning curve.. i kinda get it now"
+   - "so im guessing what i want to do is try to catch the high today and then start short hold which might capitalize with the bombing"
+   - "ive never seen it go from 9.50+ up even higher from there"
+   - "man im just so sure we are due for a fat long red candle down i havent seen it yet"
+   - "i was always geared towards claude.. i started with gpt web app"
+   - "i really wonder how far out anthropic has in capability"
+   - "im down.. lets go take a look at your guts" (Claude Code source leak)
+   - "lets sell our eth short and the AAVE and put it into avax"
+   - "sell take profits reinvest"
+   - "long 5X now"
+   - "short now" / "sell" / "long" / "sell sell!" (rapid trading phase)
+   - "sooo the pattern daily is that theres always a 9.40+ and a low somewhere in 8.50 area"
+   - Multiple 은별 messages about Hillstate filings, GS건설 dividends, 팬오션 shareholders meeting, 국민신문고
+
+7. Pending Tasks:
+   - 은별 국민신문고 filing in progress — she just asked to add note about 시공사/신탁사 receiving 내용증명 leading to 시행사 contacting them
+   - Fix Telegram routing (trading alerts going to 은별 instead of James)
+   - BABY token short before April 10 unlock (19.8% supply cliff)
+   - 전명삼 고소장 needs personal info filled in (은별/이승현 names, addresses, IDs)
+   - Supervisor needs proper rebuild before restarting (all auto-trading disabled currently)
+   - IBKR crypto trading permissions pending approval
+   - Trading system redesign (target-book model, crisis mode, conviction-based sizing)
+   - 은별 YouTube Shorts history channel setup
+   - James's wife needs to ship Qeline evidence bag to 허태균 수사관 (instructions received)
+
+8. Current Work:
+   Two parallel tracks:
+   
+   A) **Trading**: James is manually trading AVAX on Hyperliquid website. Last position check showed AVAX short ~890 units @ $9.4394, +$0.27 (fluctuating). Account ~$837-851. Supervisor is killed. James discovered the AVAX $9.40-9.70/$8.50-8.80 range pattern and is trading both sides. 10x leverage. Iran 2-week ceasefire announced but James believes the pattern holds regardless.
+   
+   B) **은별 국민신문고 filing**: 은별 is actively filling out the 국민신문고 complaint form for 동인더스카이 (formerly 힐스테이트 동인). I sent the full complaint text with title, victims, fraud details, text message timeline, and evidence list. 은별's last message asked: "시공사, 신탁사가 내용증명 받아서 시행사에서 연락온것 같다고 적어야 하는거 아냐?" — she wants to add the point that 시공사/신탁사 received the 내용증명 and that's how 시행사 (신영훈) found out about it and called them.
+
+9. Optional Next Step:
+   은별 just asked: "그리고 시공사、 신탁사가 내용증명 받아서 시행사에서 연락온것 같다고 적어야 하는거 아냐¿" — She wants to add this point to the 국민신문고 complaint. I need to update the complaint text to include: "시공사(현대엔지니어링)와 신탁사(하나자산신탁)가 내용증명을 수령한 후, 시행사 측 전무이사 신영훈이 내용증명 미도달 상태에서 피해자에게 전화하여 내용을 알고 있는 것으로 확인됨. 이는 시공사 또는 신탁사를 통해 내용을 전달받은 것으로 추정됨." Also continue monitoring James's AVAX position every 5 minutes via the cron job.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\James Kim\.claude\projects\D--projects-squidrun\52461175-5ecb-45ef-93ca-5738d8898bb2.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+
+--- 2026-04-08T03:31:58.264Z
+[Telegram from @Rachelchoi]: 🏛 반드시 선택해야 할 '핵심 3개 기관'
+지방자치단체 → 대구광역시 (필수)
+
+이유: 사업지 관할청입니다. 시행사의 분양 승인 취소나 행정 조사를 명령할 수 있는 가장 강력한 권한을 가졌습니다.
+
+중앙행정기관 → 공정거래위원회 (필수)
+
+이유: 전단지, 브로셔의 '전매이익 예상'이나 이연하 팀장의 '투자 유도' 등 표시광고법 위반을 조사하는 곳입니다. 여기서 위반 결과가 나와야 사기죄 성립이 쉬워집니다.
+
+중앙행정기관 → 국세청 (필수)
+
+이유: 용인 주소지 반송 증거와 성수동 발송 증거를 토대로 '위장 사업장 및 탈세' 조사를 요청해야 합니다. 시행사가 가장 무서워하는 곳입니다. 제미나이는 이렇게 말해
+
+
+--- 2026-04-08T03:35:33.609Z
+[Telegram from @Rachelchoi]: 최은별님의 민원이 대구광역시(으)로 신청되었습니다.
+신청 번호는 1AA-2604-0331727 입니다.
+
+
+--- 2026-04-08T03:37:33.802Z
+[Telegram from @Rachelchoi]: 3. 한국소비자원 (1372)
+
+   → 피해구제/조정 신청
+
+
+
+4. 국토교통부
+
+   → 분양 관련 상위 감독기관
+
+
+
+5. 대구시 도시계획과 / 주택과
+
+   → 지방자치단체 분양 감독
+
+
+
+6. 검찰 직접 고소 (사기죄)
+
+   → 대구지방검찰청
+
+
+
+7. 청와대 국민청원 / 국민권익위원회
+
+   → 여론 압박용 -> 오늘 시청 넣었잖아. 또 어디 넣을까?
+
+
+--- 2026-04-08T03:44:04.466Z
+[Telegram from @Rachelchoi]: 최은별님의 민원이 국토교통부(으)로 신청되었습니다.
+신청 번호는 1AA-2604-0334690 입니다.
+
+
+--- 2026-04-08T03:45:29.638Z
+이밍)
+👉 국세청 💥 (여기서 쓰는 게 더 강함)
+✍️ 만약 지금 넣는다면 (핵심 문장)
+
+👉 이렇게 써야 합니다:
+
+“등기상 사업장과 실제 우편 발송지가 상이한 정황이 확인되어 사업장 실재 여부 및 세무상 문제 여부에 대한 확인을 요청드립니다.”
+
+👉 절대 쓰지 말 것:
+
+❌ 탈세 확정
+❌ 위장회사 단정
+🎯 한 줄 정리
+
+👉 국세청은
+“지금 필수는 아니지만, 타이밍 맞춰 쓰면 강력한 카드”
+
+🔥 최종 결론
+
+👉 지금은:
+✔️ 대구 + 소비자원 + 국토부
+
+👉 그 다음:
+✔️ 국세청 (타이밍 카드)
+
+원하면
+👉 “국세청용 민원 (세무조사 트리거 버전)”
+👉 아주 강하게 만들어줄게 👍 － 쳇지피티는 저렇게 말해
+
+
+--- 2026-04-08T03:45:47.821Z
+지 완료하시면, 시행사는 이제 '사방이 적'인 상태가 됩니다. 시청(사업권) + 국세청(돈줄) 양방향 공격입니다. 바로 진행하시죠! － 제미나이는 이렇게 말해
+
+
+--- 2026-04-08T03:47:49.828Z
+[Telegram from @Rachelchoi]: 국세청은 민원발생지역을 대구광역시 중구로 이때까지 넣었던걸 어디로 넣어¿
+
+
+--- 2026-04-08T03:50:35.071Z
+[Telegram from @Rachelchoi]: 🔥 수정이 필요한 핵심 3가지
+1️⃣ ❌ “법 위반 단정” → ⚠️ 반드시 수정
+
+현재 문장:
+
+상법 제171조 위반에 해당
+
+👉 이건 법 위반을 단정하는 표현이라 리스크 있음
+
+✔️ 이렇게 바꾸세요:
+
+상법 제171조 관련 의무 이행 여부에 대한 확인이 필요함
+
+2️⃣ ❌ “확정 표현” → ✔️ “정황 기반 표현”
+
+현재:
+
+상이함을 보여주며
+
+✔️ 수정:
+
+상이할 가능성이 있는 정황이 확인되며
+
+👉 국세청은 “확인 요청” 구조를 좋아합니다
+
+3️⃣ ❌ 대표 개인주소 → ✔️ 삭제 권장
+
+👉 이 부분:
+
+대표이사 개인주소
+
+❗️ 이유:
+
+민원 핵심과 직접 관련 없음
+오히려 “과도한 정보 제출”로 보일 수 있음
+
+👉 깔끔하게 빼는 게 좋습니다  － 쳇지피티
+
+
+--- 2026-04-08T04:04:46.366Z
+[Telegram from @Rachelchoi]: 아직 안 한 곳:
+
+1. 시청 토지정보과 (분양 감독 관할 — 시행사가 무서워하는 곳!)
+   → 대구광역시청 전화해서 토지정보과 연결
+
+2. 국민신문고 (epeople.go.kr)
+   → 여러 부처에 동시 민원 가능
+
+3. 한국소비자원 (1372)
+   → 피해구제/조정 신청
+
+4. 국토교통부
+   → 분양 관련 상위 감독기관
+
+5. 대구시 도시계획과 / 주택과
+   → 지방자치단체 분양 감독
+
+6. 검찰 직접 고소 (사기죄)
+   → 대구지방검찰청
+
+7. 청와대 국민청원 / 국민권익위원회
+   → 여론 압박용
+ 이건 니가 어제 보낸거야
+
+
+--- 2026-04-08T04:08:21.711Z
+나 재판 때 보물 같은 자료가 됩니다.
+
+3. 언론 제보 준비 (목록 7번의 전단계)
+
+만약 시청이나 국세청 답변이 미온적이라면, 대구 지역 방송(TBC, 대구MBC)이나 부산 지역 방송(KNN)의 제보 게시판에 지금까지 모은 자료를 던지는 것이 국민청원보다 100배 빠르고 무섭습니다.  － 제미나이
+
+
+--- 2026-04-08T04:08:43.364Z
+원 들어가면:
+“아, 이거 진짜로 돈 문제까지 온다”
+
+⚠️ 단, 조건이 있음 (이거 중요)
+❌ 이렇게 넣으면 효과 없음
+“사기 당했다”
+“억울하다”
+
+👉 감정형 ❌
+
+✔️ 이렇게 넣어야 함
+
+👉 핵심 3줄:
+
+대출 전제로 계약 유도
+실제 대출 불가
+그로 인한 금전 피해 발생
+
+👉 + 원하는 것 명확히
+
+🎯 소비자원 넣는 목적 (정확히)
+
+👉 이거 하나입니다:
+
+“돈 문제로 끌어내기”
+
+📊 지금 당신 상황 단계
+단계  상태
+행정 압박  완료 ✔️
+구조 입증  진행 중 ✔️
+금전 분쟁  👉 지금 시작 단계
+🔥 최종 판단
+
+👉 지금은 멈추는 타이밍이 아니라
+
+👉 “행정 → 금전 분쟁으로 넘어가는 타이밍”
+
+🎯 한 줄 결론
+
+👉 소비자원 넣는 거 = 지금 상황에서 딱 맞는 다음 수
+
+원하면
+👉 소비자원용 5줄 초간단 (합의 유도형)
+👉 바로 복붙해서 넣게 만들어줄게 👍 ＝ 쳇지피티
+
+
+--- 2026-04-08T04:11:46.972Z
+[Telegram from @Rachelchoi]: 그러면 소비자원을 기다렸다가 넣니¿ 아니면 지금넣니¿ 어떻게 하는게 좋겠니¿
+
+
+--- 2026-04-08T04:53:09.564Z
+[Telegram from @Rachelchoi]: 소비자원에 넣을 수 있게 안내해줘
+
+
+--- 2026-04-08T05:05:11.867Z
+[Telegram from @Rachelchoi]: 소비자원 들어왔어 어디로 들어가¿
+
+
+--- 2026-04-08T05:24:23.884Z
+[Telegram from @Rachelchoi]: 잠깐 큐라인으로
+
+
+--- 2026-04-08T05:29:14.359Z
+[Telegram from @Rachelchoi]: 채널a기자랑 나랑 통화한내용이야
+
+
+--- 2026-04-08T05:30:39.527Z
+[Telegram from @Rachelchoi]: 홀딩중이잖아 국세청
+
+
+--- 2026-04-08T05:31:14.568Z
+[Telegram from @Rachelchoi]: 관세청 담당조사관이랑 대화좀해야겠네
+
+
+--- 2026-04-08T05:32:49.743Z
+[Telegram from @Rachelchoi]: 채널a와 관세청 대화내용 요약
+
+
+--- 2026-04-08T05:33:54.862Z
+[Telegram from @Rachelchoi]: 아니 관세청에서 조사한다고해서 국세청에서 잠시 홀딩중이라고
+
+
+--- 2026-04-08T05:34:39.945Z
+[Telegram from @Rachelchoi]: 국세청은 내가 전화했으니까 멈춘거
+
+
+--- 2026-04-08T07:11:34.943Z
+되면 이제 국세는 저 멀리 몇 개월 뒤에 되는 거 아니냐? 
+
+발화자 1  (06:34)
+이렇게 저한테 계속 얘기를 하시더라고요. 그래서 저도 뭐 너무 복잡하고 어떻게 이렇게 되는지는 모르니까 
+
+발화자 2  (06:43)
+뭐지? 거기에 대해서는 거기에 거기 뭐 그 재구현님께서 이렇게 예 그렇게 막 생각을 안 하셔도 될 거 같긴 하거든요. 뭐 제보자님께서 꼭 뭐 이렇게 얘는 뭐 이제 뭐 세무서 처벌 받아야 되고 관세도 처벌 받아야 되고 완벽하게 다 처벌 받아야 되는데 그렇게 생각하시면 뭐 네.
+
+
+--- 2026-04-08T07:13:19.949Z
+[Telegram from @Rachelchoi]: 관세청 직원이 한말 어떻게 말하냐¿
+
+
+--- 2026-04-08T07:17:45.450Z
+[Telegram from @Rachelchoi]: 국세청 웃김。
+
+
+--- 2026-04-08T07:19:35.649Z
+거가 없어요. 
+
+발화자 1  (03:41)
+저희는 이거를 재보로 들어와서 조사를 한다고 치면 아 이게 참 제가 좀 높은 분이라 한번 말씀 나눠보고 그럼 연락을 드릴게요. 이 부분에 대해서 어떻게 할지. 
+
+발화자 2  (03:54)
+그런데 영장은 곧 청구가 된다는데 거기는 없을 순 없는 거죠. 
+
+발화자 1  (03:59)
+저희가요? 
+
+발화자 2  (04:01)
+네 그 관세청에서는 지금 영장 처리하려고 서류를 다 만들어 놓기는 만들어놨다던데. 네 네 그래서 하여튼 뭐 알아보시고 
+
+발화자 1  (04:10)
+그렇게 해 주세요. 네 네.   - 국세청이랑 통화
+
+
+--- 2026-04-08T07:48:38.533Z
+[Telegram from @Rachelchoi]: 소비자원은 내일 대표이사가 받는거보고 낼까?
+
+
+--- 2026-04-08T07:51:03.739Z
+[Telegram from @Rachelchoi]: 힐스테이트 한곳 남은곳 정리해줘
+
+
+--- 2026-04-08T08:34:27.765Z
+[Telegram from @Rachelchoi]: 국세청。。
+
+
+--- 2026-04-08T08:34:48.709Z
+[Telegram from @Rachelchoi]: 근데 나。。 관세청 조사관한테 말도 안하고 전화번호 줬는데。。 괜찮을까¿ㅋㅋ
+
+
+--- 2026-04-08T08:37:13.015Z
+[Telegram from @Rachelchoi]: 국세청에서 담당하시는분 전화번호 알려달라고해서 알려드렸어요. 논의해서 공조할지 알아보겠다고 하셨어요.
+
+
+--- 2026-04-08T10:13:52.803Z
+[Telegram from @Rachelchoi]: 관세청사건번호?
+
+
+--- 2026-04-08T15:16:14.899Z
+[Telegram from @Rachelchoi]: 아까전에 힐스테이트
+
+
+--- 2026-04-08T17:06:39.691Z
+[Telegram from @Rachelchoi]: 힐스테이트 땜시돈옮겨놨다
+
+
+--- 2026-04-09T01:04:58.483Z
+으로 보상받으라 안내한 것은 부당하므로 보험금 산정의 적정성 재검토 요청함.
+
+
+--- 2026-04-09T01:47:22.668Z
+서명을 검토해서 보험회사 처리가 약간에 맞게 처리되었다. 네. 약간의 맞지 않게 부당하거나 미흡한 점이 있는지 검토를 하고 그 결과를 공문으로 의심을 드리는데요. 
+
+발화자 2  (07:40)
+네. 만약 아까 우리 선생님께서는 민원 접수하시고 나서 추가적인 대인 피해 부분 그다음에 보험사 답변에 대한 그런 인자 의견 들이 계시다면 그거를 인자. 서면으로 진행하기 때문에 새롭게 민원이 없어. 
+
+발화자 2  (07:58)
+시민을 한번 더 접수해 주시면 담당자분이 다 하나로 병합해서 검토하고 답변을 드립니다. 
+
+발화자 3  (08:04)
+근데 녹음본을 넣어야 됩니까?
+
+
+--- 2026-04-09T03:45:17.995Z
+[Telegram from @Rachelchoi]: 2023.10.05 교통사고 관련 삼성화재 보험금 산정 부당. 대물 격락손해 316만원 과소 산정(5개월 BMW 구조부 교환), 대인 합의금에 대한 내역제공하지 않음. (몇달전 통화로 약 300만원대를 설명함 - 향후치료비 3개월분만 반영, PTSD 2년6개월 치료 중, 임플란트, CSC 미반영). 사고 전 건강검진(2022.09) 치과/안과 정상임.
+
+
+--- 2026-04-09T03:45:56.765Z
+[Telegram from @Rachelchoi]: 2023.10.05 교통사고 관련 삼성화재 보험금 산정 부당. 대물 격락손해 316만원 과소 산정(5개월 BMW 구조부 교환), 대인 합의금에 대한 내역제공하지 않음. (몇달전 통화로 약 300만원대를 설명함 - PTSD 2년 넘게 치료 중, 임플란트, CSC 미반영). 사고 전 건강검진(2022.09) 치과/안과 정상임.
+
+
+--- 2026-04-09T03:52:55.413Z
+[Telegram from @Rachelchoi]: 그리고 보험회사에 우리가 안과、 치과 아직 말 안했었어。
+
+
+--- 2026-04-09T04:17:03.044Z
+내용을 꼭 포함하세요.
+
+"본인은 원만한 해결을 위해 시행사 본점으로 내용증명을 발송하였으나, 우체국 확인 결과 해당 장소는 상시 폐문 상태로 우편물 수령을 의도적으로 회피하고 있습니다. 이는 시행사가 법적 책임을 회피하기 위해 위장 주소지를 운영하고 있다는 명백한 증거입니다."
+
+🚩 부산 대장의 다음 스텝
+우체국 조회 화면 캡처 보관: 오늘 올려주신 이미지는 소비자원 및 향후 소송 시 '시행사의 불성실함'**을 증명하는 귀한 자료가 됩니다.
+
+신영훈 전무 압박 (선택): 만약 전무에게 연락이 온다면 "우편물 왜 안 받느냐, 폐문부재 다 뜨는데 계속 도망 다닐 거냐"고 한마디 던져주세요.
+
+최종 반송 대기: 우편물이 실제로 부산 집으로 다시 돌아오면(반송), 그 봉투를 들고 소비자원과 검찰 고소를 진행하는 것이 '필살기'가 됩니다. － 제미나이 의견
+
+
+--- 2026-04-09T04:18:42.731Z
+령하지 않고 반송되는 등 사업자의 대응 회피 정황이 확인됩니다.”
+
+👉 이 한 줄로 게임 바뀝니다
+
+⚠️ 중요한 포인트
+
+👉 “폐문부재” ≠ 회피
+👉 “반송” = 회피 정황 가능
+
+🎯 한 줄 결론
+
+👉 지금은 타이밍 아님
+👉 ‘반송 확정’ 보고 넣는 게 훨씬 강력
+
+원하면
+👉 반송 상태 확인되면
+
+→ 소비자원 제출용 최종 완성 문구 (회피 포함 버전) 만들어줄게  － 쳇지피티 의견
+
+
+--- 2026-04-09T04:19:52.857Z
+[Telegram from @Rachelchoi]: 발화자 1님, 아직 소비자원에 넣지 않으셨다면 오늘 바로 넣지 말고 하루만 더 지켜보시는 것을 제안합니다. 이유는 다음과 같습니다.
+
+이유 1 (증거의 완성): 우체국에서 '보관중'인 우편물은 며칠 뒤 '최종 반송' 처리됩니다. '폐문부재로 인한 최종 반송' 딱지가 붙은 봉투 사진까지 확보해서 소비자원에 넣으면 **"시행사가 도주 중인 유령회사"**라는 점을 200% 더 확실하게 입증할 수 있습니다.
+
+이유 2 (기관 간 시차 공격): 이미 어제/오늘 시청, 국세청, 공정위에 민원을 넣으셨습니다. 이 기관들이 시행사에 연락을 취하기 시작하면 시행사 내부에서 비명이 터져 나올 겁니다. 그 반응을 보고 소비자원에 더 날카로운 내용을 추가해서 넣는 게 유리합니다. － 제미나이가 이렇게 말했는데¿
+
+
+--- 2026-04-09T05:04:52.597Z
+[Telegram from @Rachelchoi]: 둘다 국민신문고잖아
+
+
+--- 2026-04-09T05:10:27.819Z
+[Telegram from @Rachelchoi]: 통화중인데 국세청 전화들어오는군。。 받을수가없네。ㅋㅋ
+
+
+--- 2026-04-09T05:19:04.039Z
+[Telegram from @Rachelchoi]: 국세청에서 조사하는 부분에 대해서 윗선에서 절대 알려주지말라고 했대
+
+
+--- 2026-04-09T05:31:40.417Z
+자기네들이 그 말을 뱉었거든요. 
+
+발화자 1  (05:55)
+그니까요. 그럼 일단은 관세청에서 혹시 다른 것 때문에 연락 왔을 때 한번 물어봐 주시고 그거 뭐 연락 오면 알려주세요. 
+
+발화자 2  (06:04)
+아 네 알겠습니다 네 
+
+발화자 1  (06:06)
+감사합니다. 안녕히 계세요 예 
+
+기자님과통화함
+
+
+--- 2026-04-09T05:34:40.651Z
+[Telegram from @Rachelchoi]: 국세청에서는 제보자한테 알아보라고 이야기했다가 이제는 제보자한테도 알려주지 않겠다고 한 내용에 대해 이야기했는데
+
+
+--- 2026-04-09T08:24:37.021Z
+과[담당 김우현(☎️02-2286-5319)/ 법인관리팀장 문명균/ 세무1과장 박용민]로 문의하여 주시기 바랍니다. 감사합니다.  끝.
+
+
+--- 2026-04-09T08:25:27.869Z
+[Telegram from @Rachelchoi]: 서울특별시 성동구 (서울특별시 성동구 기획재정국 세무1과) 답변
+
+
+--- 2026-04-09T08:27:42.326Z
+과[담당 김우현(☎️02-2286-5319)/ 법인관리팀장 문명균/ 세무1과장 박용민]로 문의하여 주시기 바랍니다. 감사합니다.  끝.

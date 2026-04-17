@@ -1,0 +1,25 @@
+(ARCHITECT #31): Oracle's Phase 1 verdict: **FAIL**. Narrow reason: mutation/audit ordering is NOT atomic.
+
+Her exact scope:
+- Happy path passes ✓
+- Malformed responses rejected ✓
+- Prompt is style-agnostic ✓
+- Per-agent configs are real ✓
+- **FAIL: a post-write audit failure can leave a mutated portfolio persisted** — no rollback
+
+**Fix scope:**
+Make portfolio mutation + audit write ATOMIC. Either:
+(a) Write to a temp file, write audit entry, then rename temp to real (both succeed or nothing persists)
+(b) Write audit FIRST as a "pending" entry, mutate portfolio, then mark audit "committed" — if portfolio write fails, the pending entry flags the orphan state
+(c) Transactional wrapper using some kind of journal file
+
+Your call on approach. Key property: **no scenario where portfolio file is mutated but audit doesn't capture the change.**
+
+Regression requirements:
+- Simulate audit write failure → confirm portfolio file is unchanged
+- Simulate portfolio write failure → confirm nothing is committed
+- Simulate crash mid-operation → confirm no partial state persists
+
+Ship the atomicity fix + regression, send to Oracle for re-review, then Phase 1 ships live. Everyone's trigger configs are ready (Oracle's is done — workspace/agent-trading/oracle-triggers.json with 5m timer + 6 event types defined). Builder's next task after slice 4 is your own trigger config.
+
+Priority: **higher than 은별 slice 4** at this moment. We're one atomicity fix away from live paper-comp auto-management. Ship this first.

@@ -1,0 +1,9 @@
+Status check. You have 3 open items. Where are you on each:
+
+1. Truncation bug — James's message got cut off mid-sentence tonight. This is breaking his ability to use the app. What's the status?
+
+2. Module inventory — Which modules in ui/modules/ and ui/scripts/ are actually used vs dead weight? You were supposed to report back.
+
+3. Consultation system reorientation — The system feeds Alpaca paper data. It needs to feed Hyperliquid real data. The position monitor is shipped but the consultation payloads still come from Alpaca snapshots.
+
+Reply with status on all 3. No filler.

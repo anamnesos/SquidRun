@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776146423762-6cunm7",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.58,
+      "reasoning": "BTC still has a broadly constructive structure, but veto is active and the move is already well off the early trigger point. That keeps it in watch-only mode rather than a fresh long."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.61,
+      "reasoning": "ETH is the strongest structure on the board, with trend-supported price and open-interest expansion plus still-negative funding, but the active veto headline is enough to keep even the best setup from becoming an actionable long."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "SOL still looks more like a short-covering rally than a clean bearish continuation, but the board is vetoed and there is no fresh edge to force here either. Watch only."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.57,
+      "reasoning": "GRIFFAIN reads like a completed long-liquidation flush, not a fresh short with easy follow-through. Under veto that means pass rather than chase."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "TST remains in an active squeeze with very large price and open-interest expansion, but it is already too crowded and too extended to chase cleanly while the event brake is active."
+    },
+    {
+      "ticker": "CC/USD",
+      "direction": "HOLD",
+      "confidence": 0.58,
+      "reasoning": "CC has real squeeze-long characteristics from negative funding and continued upside, but the move is already underway and open-interest history is too incomplete to trust it as a fresh entry under veto."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "MERL still looks constructive with price and open interest both up, but it is not a special enough setup to override the active event brake."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "FARTCOIN is another active continuation name, but the move is already crowded and extended. Under veto this is watch-only, not a fresh long."
+    },
+    {
+      "ticker": "RESOLV/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "RESOLV has a mixed setup: mild trend support, but also exchange-notice overhang from the Binance monitoring-tag story. That is not clean enough to justify action during veto."
+    },
+    {
+      "ticker": "LDO/USD",
+      "direction": "HOLD",
+      "confidence": 0.57,
+      "reasoning": "LDO is one of the cleaner continuation longs on raw structure, but it is already stretched after the rebound and still does not clear the veto bar for a fresh trade."
+    },
+    {
+      "ticker": "KNEIRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "KNEIRO has upside momentum, but the chart is extended and the supporting open-interest history is incomplete. It stays on the sidelines."
+    }
+  ]
+}

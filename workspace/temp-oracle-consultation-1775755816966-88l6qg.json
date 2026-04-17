@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775755816966-88l6qg",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.57,
+      "reasoning": "BTC is liquid and stable, but the board remains no-trade, funding is positive, and the active geopolitical veto argues against new exposure. Best kept neutral."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "SELL",
+      "confidence": 0.57,
+      "reasoning": "ETH is slightly weaker than BTC, still lacks squeeze support, and remains vulnerable to a macro-led fade. This is only a modest bearish lean, not a high-conviction short."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "SOL has mild positive momentum, but funding is positive and the board is still no-trade. Under VETO conditions there is no need to press it."
+    },
+    {
+      "ticker": "GRIFFAIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "GRIFFAIN has some momentum, but the signal is mixed and spread remains wide. Not strong enough to trade through a live geopolitical veto."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "MON has one of the more reasonable bearish profiles in the sheet because it still carries positive funding and no meaningful upside edge. The signal is moderate, but short is better than long here."
+    },
+    {
+      "ticker": "MORPHO/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "MORPHO has good price strength and usable liquidity, but the board is still neutral and funding remains positive. It is a watchlist name, not a VETO-period entry."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "GRASS is modestly constructive on price, but the edge is still too weak and too wide to justify a fresh trade. Better to stand down while veto is active."
+    },
+    {
+      "ticker": "ZEC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "ZEC is one of the few names with negative funding support and decent liquidity, but the active veto keeps me from endorsing a new long. Directionally interesting, operationally still a pass."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "MERL is low-energy and low-liquidity with no strong directional asymmetry. Easy hold/no-trade."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "HOLD",
+      "confidence": 0.58,
+      "reasoning": "TNSR still has a valid squeeze-continuation structure, but veto conditions are exactly when high-beta continuation trades tend to fail. I would not open it here."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "HOLD",
+      "confidence": 0.57,
+      "reasoning": "BLUR still looks bullish mechanically, but the combination of geopolitical veto, RED macro, and wide spread makes fresh long exposure unattractive. It stays on watch, not in risk."
+    }
+  ]
+}

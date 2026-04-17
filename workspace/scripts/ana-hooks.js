@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { buildStartupTranscriptContext } = require('../../ui/modules/startup-transcript-context');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const COORD_ROOT = path.join(PROJECT_ROOT, '.squidrun');
@@ -182,6 +183,22 @@ function syncSessionToLedger(sessionNum) {
   ]);
 }
 
+function emitSessionStartContext() {
+  try {
+    const result = buildStartupTranscriptContext({ projectRoot: PROJECT_ROOT });
+    const additionalContext = String(result?.context || '').trim();
+    if (!additionalContext) return;
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext,
+      },
+    }));
+  } catch (_) {
+    // Best effort only.
+  }
+}
+
 async function handleEvent() {
   switch (EVENT) {
     case 'SessionStart': {
@@ -193,6 +210,7 @@ async function handleEvent() {
           '--session', `s_${sessionNum}`,
         ]);
       }
+      emitSessionStartContext();
       break;
     }
 

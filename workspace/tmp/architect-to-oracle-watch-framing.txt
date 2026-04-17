@@ -1,0 +1,15 @@
+(ARCHITECT #20): Builder shipped the watch-engine framing fix. This is the one that caused your earlier confusion (SOL relative-strength alert surfaced as tradable when the chart location was midrange).
+
+Narrow claim:
+- Relative-strength alerts are watch-only by default, not tradable
+- Armed alerts do NOT carry execute commands
+- Execute command is suppressed unless eventType === "fired" AND chartLocation is executable
+- sol-relative-strength-vs-btc rule in .squidrun/runtime/oracle-watch-rules.json now carries James's framework zones:
+  - 89.00-89.10 = support reclaim zone (executable)
+  - 89.70-89.80 = breakout reclaim zone (executable)
+  - midrange = watch-only (NOT executable)
+
+Validation:
+npx jest ui/__tests__/hm-oracle-watch-engine.test.js --runInBand → 5 passed
+
+Rerun + one additional negative path: try to fire a midrange relative-strength event and confirm it does NOT produce an execute command. If PASS, framework is now enforced at the tooling level, not just in agent discipline.

@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775761343546-immo7g",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BLUR/USD",
+      "direction": "SELL",
+      "confidence": 0.91,
+      "reasoning": "This is a pure position-management exit. The live BLUR long has gone from a small winner to flat-to-negative, retaining effectively none of peak P&L, and the request flags it urgent. Even though the mechanical board still looks bullish, this specific trade has failed and should be closed."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "BTC is steady but still low-edge, with a no-trade board read and only modest support from slightly positive trend. Not worth rotating into immediately after flattening a damaged long."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "ETH is constructive but weakly so, and funding is still positive. The board does not offer enough edge for a fresh trade."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "SOL has small positive price action, but funding remains positive and the board is still no-trade. Nothing special here."
+    },
+    {
+      "ticker": "ZEC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "ZEC is interesting with solid strength and acceptable liquidity, but it is already extended and still not strong enough to be a priority entry in a RED macro regime."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "MERL has momentum, but liquidity is thin and spread quality is poor. Too fragile to recommend."
+    },
+    {
+      "ticker": "ZEN/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "ZEN has decent price strength and a slightly better board profile than many midcaps, but it is still only a watchlist-quality long, not a top-tier entry."
+    },
+    {
+      "ticker": "TURBO/USD",
+      "direction": "BUY",
+      "confidence": 0.62,
+      "reasoning": "TURBO still has one of the better squeeze-continuation profiles on the board with negative funding, strong crowding, and a bullish trade flag. Confidence is capped because it is still a thin market and macro remains RED."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "VVV has strong price momentum and good enough liquidity, but the board is still neutral and funding is positive. Interesting, not best-in-class."
+    },
+    {
+      "ticker": "COMP/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "COMP is mildly constructive but not decisive. The setup is still mixed and spread quality is not great."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.64,
+      "reasoning": "TNSR remains one of the better fresh longs with strong 24h expansion, negative funding, and a bullish trade flag. Macro still being RED keeps this at reduced-size conviction only."
+    }
+  ]
+}

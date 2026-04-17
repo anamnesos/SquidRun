@@ -1,0 +1,23 @@
+Stop hunts are real. You're describing a textbook pattern:
+
+1. Price builds up near an obvious level (a round number, a swing high, where a lot of stops cluster)
+2. Fast spike past it in seconds — takes out stops, triggers liquidations
+3. Parks briefly at the extreme to deny re-entries
+4. Reverses violently in the original direction
+5. Continues the original trend
+
+This happens because market makers and whales can SEE where stops are clustered (concentration of orders at $75,220 or $90.00 etc). Running price through those zones is profitable liquidity farming — they're not hunting you personally, they're hunting the cluster.
+
+Your no-stop short surviving it proved the thesis. If you'd had a "normal" stop right above the obvious resistance, you'd have eaten -$60 and missed the reversal.
+
+But no-stop = no fold button. Works when you're right. Catastrophic when you're wrong (if that pump had kept going another 5%, account's gone). So it's a high-conviction, eyes-on-screen mode, not a default.
+
+**Stop-placement adjustment for future trades:**
+- Don't place stops at THE level. Place them past the level, with buffer equal to the typical hunt spike (often 0.3-0.5% on crypto majors, wider on alts).
+- Example: if resistance is $75,220 and you short, don't stop at $75,260. Stop at $75,380-75,400 (gives hunts room to complete and fail).
+- OR use a time stop: "if my thesis isn't working within X minutes, I close regardless of price."
+- OR use no-stop ONLY when you're watching live AND the thesis is 0.75+ conviction AND position size is small enough that a disaster doesn't kill the account.
+
+Poker version: you went all-in without a fold button. Hand held. But that's not a strategy, it's a specific decision for a specific spot. Variance caught up with a good read.
+
+Lesson you learned is correct and worth keeping — just systematize it.

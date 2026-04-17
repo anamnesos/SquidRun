@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776078149862-3ydm8c",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "BTC remains trapped in a weak macro tape, but the live veto makes fresh directional exposure unattractive. No edge here is clean enough to force."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "ETH is stabilizing rather than offering a fresh clean short, and the active event brake keeps reduced-confidence longs off the table. Neutral is the disciplined call."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "SOL is still weak on the higher-level tape, but this is already post-flush rather than a clean new breakdown. Under veto, watch it instead of chasing it."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "TST bounced hard, but it is already extended and still too noisy to buy through a live event veto. Best to leave it alone."
+    },
+    {
+      "ticker": "AAVE/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "AAVE has constructive recovery behavior, but the setup is not strong enough to justify overriding the event brake. This is a watch-only rebound, not a fresh long."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "STBL is trending up with crowded-long pressure, but not in a way that gives a clean fresh short right here. Under veto, trend-supported squeezable names stay neutral."
+    },
+    {
+      "ticker": "0G/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "0G still has the strongest raw squeeze metrics on the board, but it is too extended and too headline-sensitive to chase under veto. Keep it watch-only."
+    },
+    {
+      "ticker": "GOAT/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "GOAT is still damaged, but it is already too far along and too unstable to trust as a fresh short. Weak does not automatically mean actionable."
+    },
+    {
+      "ticker": "MEW/USD",
+      "direction": "HOLD",
+      "confidence": 0.87,
+      "reasoning": "MEW is too thin and too noisy to trust under active event risk. This is exactly the kind of name we should avoid forcing."
+    },
+    {
+      "ticker": "JTO/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "JTO is the cleanest squeeze long on paper, but the move is already extended and the live veto still matters more than the raw funding signal. Best name on paper is not the same as best trade now."
+    },
+    {
+      "ticker": "STABLE/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "STABLE still has strong squeeze fuel and real volume, but it already ran hard and remains event-sensitive. That keeps it on the watchlist instead of in the buy column."
+    }
+  ]
+}

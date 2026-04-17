@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776135754644-1hf0ie",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "BUY",
+      "confidence": 0.84,
+      "reasoning": "Cover the live SOL short immediately. It is still a live loser after previously being up, retained none of peak P&L, is flagged urgent, has no stop, and liquidation distance is only about 0.96%. That is failed-position cleanup."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.77,
+      "reasoning": "BTC is still holding the broader squeeze recovery and is not confirming the SOL short thesis. The clean move is still to remove the weak open risk first."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "ETH remains structurally stable and does not add a cleaner action than simply covering SOL."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "TST remains a volatile squeeze name with unstable execution quality. Watch-only."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "CHILLGUY is fading modestly from its rebound but still does not offer a clean fresh short or long."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.78,
+      "reasoning": "FARTCOIN still looks trend-supported, but the move is mature enough that chasing it is low quality and fading it is early. No action."
+    },
+    {
+      "ticker": "XPL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "XPL remains extended after the rebound and is not yet giving a decisive reversal signal. Stay out."
+    },
+    {
+      "ticker": "ALGO/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ALGO is still constructive underneath, but it is not cleaner than just covering the failed SOL short."
+    },
+    {
+      "ticker": "LDO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "LDO has stabilized and no longer offers a clear directional edge from here. No action."
+    },
+    {
+      "ticker": "KNEIRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "KNEIRO remains too thin and underdefined in the current feed to justify a confident call."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "MERL is still holding its rebound structure, but the move is already developed and not cleaner than flattening SOL."
+    }
+  ]
+}

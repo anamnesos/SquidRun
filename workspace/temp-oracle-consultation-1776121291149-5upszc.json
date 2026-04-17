@@ -1,0 +1,66 @@
+{
+  "requestId": "consultation-1776121291149-5upszc",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "BTC remains trend-supported and near fresh highs, but the live Fed-shock veto blocks chasing a new breakout entry."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "ETH has strong recovery structure, but the event brake outweighs upgrading it at these levels."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.85,
+      "reasoning": "SOL is back in strong rebound mode, but it is already extended and should stay watch-only under the live veto."
+    },
+    {
+      "ticker": "BOME/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "BOME is too stretched and too headline-sensitive to justify a fresh signal here."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.87,
+      "reasoning": "MERL is strong and trend-supported, but the rebound is already too advanced to chase through a veto board."
+    },
+    {
+      "ticker": "PNUT/USD",
+      "direction": "HOLD",
+      "confidence": 0.88,
+      "reasoning": "PNUT is constructive, but it is still just a rebound continuation candidate and not clean enough to override the event brake."
+    },
+    {
+      "ticker": "ORDI/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "ORDI has some squeeze support and solid price action, but the live veto is enough to keep it watch-only instead of actionable."
+    },
+    {
+      "ticker": "WIF/USD",
+      "direction": "HOLD",
+      "confidence": 0.87,
+      "reasoning": "WIF is recovering but not with enough differentiation to justify forcing a new signal through a veto."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.9,
+      "reasoning": "TST is still too extended and too crowded to trust as a disciplined entry."
+    },
+    {
+      "ticker": "KNEIRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.91,
+      "reasoning": "KNEIRO has incomplete market data in the request snapshot, so it should remain off-limits even though the raw squeeze setup looks interesting."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+REVIEW. 은별 says "내용이 다 깨져서 없던데" — the file content was garbled/broken when she opened it.
+
+The .docx file might have encoding issues or she might not have a program that opens .docx properly on her phone.
+
+Draft reply:
+---
+앗 깨졌어? 혹시 폰으로 열었어? docx 파일은 폰에서 깨질 수 있어.
+
+PC에서 열어보거나, 아니면 내가 PDF로 변환해서 다시 보낼게. 어떻게 할까?
+---
+
+Check for errors.

@@ -33,6 +33,8 @@ Use WebSocket via `hm-send`:
 hm-send <target> "(YOUR-ROLE #N): Your message"
 ```
 
+For PowerShell, prefer `--stdin` or `--file` whenever the message contains `$`, backticks, quotes, or long text. Double-quoted PowerShell commands can mangle money figures like `$178`.
+
 | To reach... | Target |
 |-------------|--------|
 | Architect | `architect` |
@@ -47,6 +49,13 @@ Backward-compatible aliases are normalized automatically by the runtime.
 If you are **Builder** and need to message Architect:
 ```bash
 hm-send architect "(BUILDER #1): Task complete. Ready for review."
+```
+
+PowerShell-safe form:
+```powershell
+@'
+(BUILDER #1): Task complete. Ready for review.
+'@ | node ui/scripts/hm-send.js architect --stdin
 ```
 
 If you are **Oracle** and received a roll call:

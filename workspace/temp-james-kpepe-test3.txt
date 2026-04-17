@@ -1,0 +1,32 @@
+Round 3. KPEPE SHORT detected. Wheel on.
+
+POSITION:
+- 2,805,915 kPEPE @ $0.003599
+- Margin $1,006 (✓ new $1k rule), 10x leverage
+- Liq $0.003769 (4.74% buffer — TIGHT like NEAR)
+- PnL: +$1.86 right now (entry slippage in your favor)
+
+HONEST READ on entry:
+- 24h +3.42% (UP day, fighting your short)
+- Funding +0.13 bps (FLAT — not crowded either way, slightly better than SOL where funding was -0.20)
+- Vol $16.27M, OI $26.66M (real liquidity)
+
+5m chart shows a CLEAR upside breakout with escalating volume:
+01:05 vol 9.7M (green)
+01:10 vol 23.1M (green, biggest volume in 90 min, hit $0.003604 high)
+01:15 small red profit-take
+01:20-01:25 trying to continue up
+
+You're shorting INTO an active breakout. Volume confirms long not short.
+
+MY MANAGEMENT TRIGGERS (locked):
+- 2 green candles close above $0.003610 with rising volume → CLOSE (the reclaim/acceptance)
+- PnL hits -$30 → CLOSE
+- Liq buffer <2% (~$0.003693) → CLOSE
+- +$30 PnL → PARTIAL 50%
+- +$60 PnL → PARTIAL 50% of remainder
+- Time-stop 2:05 AM PDT if chops without follow-through down → SCRATCH
+
+This setup looks rougher than SOL — SOL was sideways chop, this is an active breakout. If kPEPE prints one more big green volume candle above $0.003610 that's the trigger. I'll fire fast and tell you why.
+
+Standing by. Wheel mine.

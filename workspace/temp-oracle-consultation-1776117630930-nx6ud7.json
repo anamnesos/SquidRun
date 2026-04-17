@@ -1,0 +1,66 @@
+{
+  "requestId": "consultation-1776117630930-nx6ud7",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "BUY",
+      "confidence": 0.76,
+      "reasoning": "The live SOL short is back to worsening as a real loser after fully round-tripping from peak profit, retains none of peak PnL, still has no stop, and liquidation distance remains under 1%. This is a failed short that should be cleaned up, not defended."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "BTC remains firm on the day, which directly works against defending the SOL short, but this is still a position-management cycle so the right move is flattening bad risk rather than forcing a new BTC decision."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "ETH is participating in the same constructive tape, so it does not offer a cleaner immediate action than closing the failed SOL short."
+    },
+    {
+      "ticker": "ORDI/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ORDI is already well into rebound territory and does not justify attention over simply getting flat."
+    },
+    {
+      "ticker": "MERL/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "MERL has strong recovery structure, but that makes it more of a chase risk than a disciplined next action in position management."
+    },
+    {
+      "ticker": "BOME/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "BOME is just another noisy rebound name and not a better immediate decision than closing the failed SOL short."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "FARTCOIN has shifted from earlier bearish pressure into a more constructive rebound, which weakens the case for fresh downside thinking."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "VVV is strong but already extended enough that it belongs on a watchlist rather than as a fresh rotation while an urgent bad short is still open."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.86,
+      "reasoning": "TST remains too extended and crowded to justify touching here."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.84,
+      "reasoning": "ZEREBRO still looks more like noisy short-covering than a clean fresh opportunity, so it is not where disciplined attention should go."
+    }
+  ]
+}

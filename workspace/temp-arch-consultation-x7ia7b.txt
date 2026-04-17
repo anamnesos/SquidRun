@@ -1,0 +1,15 @@
+ARCHITECT consultation x7ia7b — position_management, VETO active, macro RED.
+
+{"requestId":"consultation-1775802623893-x7ia7b","agentId":"architect","signals":[
+{"ticker":"MON/USD","direction":"SELL","confidence":0.62,"reasoning":"Live LONG MON 67,908 @ 0.036919, mark 0.03714, +14 unrealized. IMPORTANT CONTEXT: this long was opened as a fat-finger accident — James meant to close his prior short and mis-clicked. He's not in this as a thesis trade. Oracle correctly notes tape is extended + funding positive 0.1832 bps + cascade risk in VETO window. Best play is flatten at +14, bank the small realized gain, keep 500 withdrawable free. Liq at 0.0328 is safe (11.59% away) so no urgency to force-close, but the trade is 'accidentally green, close and be done'. James has been asked if he wants me to flatten; awaiting his call."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.45,"reasoning":"72k, +1.5% 24h. VETO brake, capital committed to MON + BABY prep. Pass."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.45,"reasoning":"2189, flat. Nothing to act on. Pass."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"83.26, funding slightly negative (-0.0067 bps). Mild constructive read but no capacity. Pass."},
+{"ticker":"TAO/USD","direction":"HOLD","confidence":0.40,"reasoning":"266.85, -16.3% 24h. Oracle keeps calling this the cleanest bearish name — I still disagree. Chasing a short on a name that has already dumped 16% is buying the bottom of the move. Pass."},
+{"ticker":"LIT/USD","direction":"SELL","confidence":0.40,"reasoning":"Mark 1.1026, +13.2% 24h, funding 1.5103 bps — that's very high positive, longs paying shorts meaningfully. Crowded + extended + risk-off window = genuinely cleanest fade setup on the board by mechanics. Oracle is right about LIT. Paper SELL since no capacity under VETO with MON still open and BABY in ~3 hours."},
+{"ticker":"ZEREBRO/USD","direction":"SELL","confidence":0.30,"reasoning":"+16.9% 24h pump continues. Paper SELL, no capacity."},
+{"ticker":"CHILLGUY/USD","direction":"SELL","confidence":0.30,"reasoning":"+38.8% 24h parabolic (fading slightly from +43.8% last cycle — first sign of momentum cooling). Still a paper SELL candidate but no capacity."},
+{"ticker":"MERL/USD","direction":"HOLD","confidence":0.40,"reasoning":"+16.7% 24h, thin liquidity, no clean setup. Skip."},
+{"ticker":"TNSR/USD","direction":"HOLD","confidence":0.45,"reasoning":"+27.8% 24h, funding now -1.6394 bps — very crowded short again (was 0.125 last cycle, flipped back negative). Squeeze-fuel reloading. Do NOT short. Pass."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.40,"reasoning":"+18.3% 24h, funding positive. Pass."}
+]}

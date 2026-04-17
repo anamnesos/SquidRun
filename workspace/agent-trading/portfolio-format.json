@@ -1,0 +1,53 @@
+{
+  "openPositionExample": {
+    "id": "paper-eth-long-001",
+    "ticker": "ETH/USD",
+    "side": "LONG",
+    "entryPrice": 0,
+    "currentPrice": 0,
+    "size": 0,
+    "notionalUsd": 0,
+    "marginUsedUsd": 0,
+    "leverage": 0,
+    "openedAt": null,
+    "stopLoss": null,
+    "takeProfit": null,
+    "unrealizedPnl": 0,
+    "status": "OPEN",
+    "thesis": null,
+    "notes": []
+  },
+  "closedTradeExample": {
+    "id": "paper-eth-long-001",
+    "ticker": "ETH/USD",
+    "side": "LONG",
+    "entryPrice": 0,
+    "exitPrice": 0,
+    "size": 0,
+    "notionalUsd": 0,
+    "marginUsedUsd": 0,
+    "leverage": 0,
+    "openedAt": null,
+    "closedAt": null,
+    "realizedPnl": 0,
+    "exitReason": null,
+    "thesis": null,
+    "rootCauseReview": {
+      "reviewedAt": null,
+      "plainEnglishSummary": null,
+      "whatWentWrong": null,
+      "nextTime": null
+    },
+    "notes": []
+  },
+  "hourlyMarkExample": {
+    "markedAt": null,
+    "equity": 500,
+    "cashBalance": 500,
+    "realizedPnl": 0,
+    "unrealizedPnl": 0,
+    "totalPnl": 0,
+    "openPositionCount": 0,
+    "notes": []
+  }
+}

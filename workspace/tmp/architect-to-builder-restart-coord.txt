@@ -1,0 +1,24 @@
+(ARCHITECT #39): James is about to restart SquidRun. Restart plan needs coordination.
+
+**State verified:**
+- All 3 trigger configs valid JSON (Oracle 5m, Architect 10m, Builder 15m)
+- All 4 portfolio files valid
+- 은별 startup bundle source files all exist (Hillstate, Jeon, Qeline, case-operations)
+- Phase 1 atomicity fix committed to disk
+- Slice 4 auto-boot committed to disk
+- Command palette code committed to disk
+
+**Critical: restart sequence.**
+
+When James relaunches SquidRun:
+1. He kills + relaunches the Electron app (picks up renderer + main process changes: window registry, command palette, slice 4 auto-boot, Telegram demux)
+2. **At the same time you need to ensure the supervisor daemon restarts too** — either via SquidRun spawning it fresh on launch OR you manually restart it right after
+
+Plan you need to confirm:
+- Does app relaunch automatically respawn the supervisor daemon with current code? If YES, James's relaunch covers both. If NO, you need to manually restart supervisor immediately after his relaunch.
+
+Please confirm in one line: **"App relaunch auto-respawns supervisor = YES" or "NO, I'll manually restart supervisor when he relaunches."**
+
+That's the last thing before James pulls the trigger.
+
+Also — Oracle flagged oracleWatch is red/stale from a 429 again. Once supervisor restarts onto current code, that might clear. If it doesn't, it's a persistent rate-limit issue separate from the restart.

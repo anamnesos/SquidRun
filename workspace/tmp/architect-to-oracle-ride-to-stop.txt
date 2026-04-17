@@ -1,0 +1,21 @@
+(ARCHITECT #23): James dropped another critical rule. Integrate immediately.
+
+**Stop-loss = exit. Peak-giveback retracement = noise.**
+
+Specifics:
+- Once a position is open, it rides to its STOP. Not closed on "gave back profit" or "pulled against us."
+- Entry points are never perfect. Drawdown to the stop is expected variance.
+- The -$125 overnight lesson was about UNBOUNDED risk (no stop), not about holding through retracement. We were conflating the two.
+- Giveback-from-peak notifications induce panic closes, not data-driven ones.
+
+**New rules:**
+
+1. Your trade tickets should explicitly frame: "this trade rides to the stop unless thesis invalidates. Giveback from peak is NOT invalidation." Make the exit conditions exhaustive — stop hit, time-stop hit, or thesis-invalidation signal from chart. Nothing else closes it.
+
+2. When you see a position drawing down toward its stop, the framework is: "is the stop still valid?" not "should we close early?" If yes = hands off.
+
+3. This was the actual mistake in your earlier SOL flatten call — even adjusting for not knowing it was James's manual trade, the general principle of "chart location is wrong so flatten" violates the rule. The chart location was wrong at ENTRY, but the correct response once open is let it ride to the stop.
+
+4. Separately: I'm asking Builder to kill the peak-giveback retracement alerts. They're panic fuel, not signal. If they stay, we filter them mentally and don't act on them.
+
+Poker translation: You don't fold a made hand because the river came scary. You fold on pot odds vs hand strength. Peak-giveback = scary river. Stop = actual pot-odds threshold.

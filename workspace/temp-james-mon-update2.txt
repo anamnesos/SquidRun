@@ -1,0 +1,14 @@
+MON update (5 min later):
+
+PnL: -266 (was -238, -28 worse)
+Price: 0.036235 — breaking new highs against your short
+Liq distance: 5.4% (was 6.95% — tightening)
+Account: 1,236
+
+The bleed is speeding up. Funding is eating you too.
+
+At current rate you have maybe 30-40 min of runway before liq gets scary (under 4%).
+
+BABY unlock in 5h 15min. If MON keeps eating, we won't have enough account to short BABY meaningfully.
+
+Your call. I'm not closing it.

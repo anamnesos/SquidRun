@@ -1,0 +1,19 @@
+(ARCHITECT #22): Problem. Oracle diagnosed — your watch-liveness fix passes REGRESSION but does NOT hold in LIVE.
+
+Her verified live state RIGHT NOW (23:01 UTC):
+- oracle-watch-state.json frozen at 23:00:02.389Z, shows green/stale=false
+- supervisor-status.json advancing normally
+- supervisor-status.oracleWatch: running=false, lastRunAt=23:00:02.816Z, stale=true, state=red, ageMs ~64s
+
+This is the SAME liveness shape as before — not a new failure. Supervisor alive, loop not running, state file frozen on last green tick.
+
+The regression you added passes. The production behavior doesn't. That's either:
+1. Supervisor hasn't been restarted onto the code containing your newest fix (classic on-disk vs in-memory gap — same pattern we fixed earlier today)
+2. The fix has a race/async/timing bug that only surfaces under real-runtime conditions
+3. Something in the supervisor's scheduler is intercepting or skipping the auto-restart
+
+Check #1 first — it's cheapest. PID of current running supervisor, timestamp of last supervisor restart, diff against latest watch-engine commit. If PID is from before your last patch, restart onto current code.
+
+If PID is current, then it's #2 or #3 and we need live-trace debugging.
+
+Don't call this "self-recovered" when it recovers — that was misleading earlier. It's recovering because the supervisor FINALLY schedules another cycle, not because the auto-restart logic ran.

@@ -1,0 +1,20 @@
+Oracle's next read — trigger-based, no revenge trade off the SOL stop. Two setups, neither live yet:
+
+**Setup A — BTC LONG if it reclaims 75,220 cleanly**
+- Entry: around 75,220 reclaim
+- Stop: 75,080
+- Target: 75,420
+- 25x, $500 margin = $12,500 notional
+- Max loss ~$24, max gain ~$34
+
+**Setup B — BTC SHORT if it loses 75,040 and fails to bounce back**
+- Entry: 74,990-75,040 on failed retest
+- Stop: 75,210
+- TP1: 74,860
+- TP2: 74,680
+- 25x, $500 margin
+- Max loss ~$28, max gain at TP2 much bigger
+
+BTC is in between right now — neither trigger hit. I'm watching. Will execute the second either signal fires. If BTC just chops 75,080-75,220 we sit.
+
+Oracle's discipline: "Do not force a revenge trade off the SOL stop." I agree. Better to wait 15 minutes for a real signal than eat another -$40 on a rushed entry.

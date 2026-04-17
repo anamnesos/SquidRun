@@ -45,10 +45,12 @@ const throttlingPanes = new Set(); // panes currently being processed
 const MESSAGE_DELAY = 100; // ms between messages per pane (reduced from 150ms — 3 panes = less contention)
 const DEFAULT_THROTTLE_QUEUE_MAX_ITEMS = 200;
 const DEFAULT_THROTTLE_QUEUE_MAX_BYTES = 512 * 1024;
+const DAEMON_RUNTIME_CONFIG_REFRESH_TTL_MS = 2000;
 let throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
 let throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
 let daemonRuntimeConfigPromise = null;
 let daemonRuntimeConfigLoaded = false;
+let daemonRuntimeConfigLoadedAtMs = 0;
 const ipcChunkAssemblies = new Map();
 
 function toNonEmptyString(value) {
@@ -114,28 +116,36 @@ function applyDaemonRuntimeConfig(config = {}) {
   );
 }
 
-function ensureDaemonRuntimeConfigLoaded() {
-  if (daemonRuntimeConfigLoaded) return daemonRuntimeConfigPromise || Promise.resolve();
-  if (!daemonRuntimeConfigPromise) {
+function ensureDaemonRuntimeConfigLoaded(options = {}) {
+  const force = options.force === true;
+  const stale = !daemonRuntimeConfigLoadedAtMs || ((Date.now() - daemonRuntimeConfigLoadedAtMs) >= DAEMON_RUNTIME_CONFIG_REFRESH_TTL_MS);
+  if (daemonRuntimeConfigLoaded && !force && !stale) {
+    return daemonRuntimeConfigPromise || Promise.resolve();
+  }
+  if (!daemonRuntimeConfigPromise || force || stale) {
     daemonRuntimeConfigPromise = invokeBridge('get-daemon-runtime-config')
       .then((config) => {
         applyDaemonRuntimeConfig(config);
+        daemonRuntimeConfigLoadedAtMs = Date.now();
       })
       .catch((err) => {
         log.warn('Daemon', `Failed to load runtime config, using defaults: ${err.message}`);
       })
       .finally(() => {
         daemonRuntimeConfigLoaded = true;
+        daemonRuntimeConfigPromise = null;
       });
   }
   return daemonRuntimeConfigPromise;
 }
 
 function getThrottleQueueMaxItems() {
+  void ensureDaemonRuntimeConfigLoaded();
   return toPositiveInt(throttleQueueMaxItems, DEFAULT_THROTTLE_QUEUE_MAX_ITEMS);
 }
 
 function getThrottleQueueMaxBytes() {
+  void ensureDaemonRuntimeConfigLoaded();
   return toPositiveInt(throttleQueueMaxBytes, DEFAULT_THROTTLE_QUEUE_MAX_BYTES);
 }
 
@@ -621,7 +631,8 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
         prepared.payload.message,
         deliveryId,
         normalizedTraceContext,
-        isStartupInjection
+        isStartupInjection,
+        prepared.payload.meta
       );
     }
   });
@@ -841,7 +852,8 @@ function enqueueForThrottle(
   message,
   deliveryId,
   traceContext = null,
-  startupInjection = false
+  startupInjection = false,
+  meta = null
 ) {
   if (!throttleQueues.has(paneId)) {
     throttleQueues.set(paneId, []);
@@ -852,6 +864,7 @@ function enqueueForThrottle(
     deliveryId: deliveryId || null,
     traceContext: traceContext || null,
     startupInjection: startupInjection === true,
+    meta: (meta && typeof meta === 'object') ? { ...meta } : null,
   };
   const maxItems = getThrottleQueueMaxItems();
   const maxBytes = getThrottleQueueMaxBytes();
@@ -921,6 +934,9 @@ function processThrottleQueue(paneId) {
   const routedMessage = stripInternalRoutingWrappers(message);
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
   const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
+  const injectMeta = item && typeof item === 'object' && item.meta && typeof item.meta === 'object'
+    ? { ...item.meta }
+    : null;
   const hmSendFastEnter = isHmSendTraceContext(traceContext);
   const isStartupInjection = item && typeof item === 'object' && item.startupInjection === true;
   const corrId = traceContext?.traceId || traceContext?.correlationId || undefined;
@@ -977,6 +993,7 @@ function processThrottleQueue(paneId) {
   let sendScheduled = false;
   try {
     terminal.sendToPane(paneId, routedMessage, {
+      meta: injectMeta || undefined,
       traceContext: traceContext || undefined,
       hmSendFastEnter,
       startupInjection: isStartupInjection,
@@ -1162,6 +1179,7 @@ module.exports = {
     throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
     throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
     daemonRuntimeConfigLoaded = false;
+    daemonRuntimeConfigLoadedAtMs = 0;
     daemonRuntimeConfigPromise = null;
   },
 };

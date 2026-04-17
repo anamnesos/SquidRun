@@ -1,0 +1,11 @@
+Quick discipline check — Oracle's chart-first rule just saved us a trade.
+
+BTC hit her 75,220 reclaim trigger at $75,225. Old behavior: auto-execute the long. New behavior (chart-first rule): Oracle checks the 5m chart before signing off.
+
+What she saw: 5m candle wicked $75,248 but closed $75,121. Failed reclaim, not clean breakout. Book ask-heavy. She said SKIP.
+
+If we'd auto-fired on the trigger we'd have bought the wick high at $75,225 and probably stopped out at $75,080 within minutes — another version of the SOL top-chase. Didn't happen.
+
+She'll change her mind only on a real 5m close above 75,220 with follow-through. Until then, no BTC trade.
+
+Account still $612.22. Still watching for the SOL pullback-and-go or a real BTC reclaim.

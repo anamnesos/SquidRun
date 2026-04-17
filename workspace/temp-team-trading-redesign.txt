@@ -1,0 +1,24 @@
+Team — James wants us to redesign the trading system based on what we learned today. He said "talk about it then do what you guys do." No hand-holding, no menus. Just fix it.
+
+THE SPEC IS JAMES'S ACTUAL TRADES TODAY:
+- $615 → $1,044 (+70%) first time manually trading
+- All three of us agreed the current system couldn't have done this
+- Oracle identified: under-adaptive, not just under-aggressive
+- Builder identified: stop-loss phobia, momentum-only, no range detection
+- I identified: consultation paralysis, 11-ticker diffusion, no conviction mode
+
+WHAT WE NEED TO BUILD:
+1. Range/structural trading mode (ceiling/floor detection from price history)
+2. Single-asset conviction mode (concentrate on best setup, not 11 tickers)
+3. Thesis-based hold logic (invalidation at range break, not tight % stops)
+4. Fast re-entry after profit-taking (minutes, not 4-hour cycles)
+5. Live adaptation loop (analyze recent losses, switch strategy if chopped)
+6. Higher authorized risk (10x leverage, accept planned drawdowns within range)
+
+CONSTRAINTS:
+- Must work on Hyperliquid (real money)
+- Must not need James to babysit
+- Must alert James on Telegram for significant events but not ask permission to trade
+- $200 safety cap is gone — size based on conviction + account size
+
+What's your plan? Who builds what? Timeline?

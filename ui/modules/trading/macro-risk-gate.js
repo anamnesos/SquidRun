@@ -4,7 +4,8 @@
  *
  * Sources:
  * - Alternative.me Fear & Greed
- * - FRED VIX + WTI oil
+ * - FRED VIX + fallback WTI oil
+ * - Yahoo Finance live WTI futures
  * - GDELT DOC API 2.0 for conflict / tone
  * - Static 2026 FOMC decision calendar
  *
@@ -28,7 +29,14 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const GDELT_API_URL = 'https://api.gdeltproject.org/api/v2/doc/doc';
 const GDELT_TIMESPAN = '48h';
 const GDELT_MAX_RECORDS = 25;
+const LIVE_OIL_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart/CL=F?interval=1m&range=1d';
 const FED_TIME_ZONE = 'America/New_York';
+const INDICATOR_STALE_AFTER_MS = Object.freeze({
+  fredDaily: 3 * 24 * 60 * 60 * 1000,
+  vixFred: 48 * 60 * 60 * 1000,
+  fearGreed: 36 * 60 * 60 * 1000,
+  liveOil: 2 * 60 * 60 * 1000,
+});
 const FOMC_DECISION_DATES_2026 = Object.freeze([
   '2026-01-28',
   '2026-03-18',
@@ -217,6 +225,99 @@ function normalizeConfidence(value) {
   return clamp(toNumber(value, 0), 0, 1);
 }
 
+function toIsoTimestamp(value, fallback = null) {
+  if (value == null || value === '') return fallback;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const normalized = value > 10_000_000_000 ? value : value * 1000;
+    return new Date(normalized).toISOString();
+  }
+  const numericString = String(value).trim();
+  if (/^\d{10,13}$/.test(numericString)) {
+    const numericValue = Number.parseInt(numericString, 10);
+    if (Number.isFinite(numericValue)) {
+      const normalized = numericString.length >= 13 ? numericValue : numericValue * 1000;
+      return new Date(normalized).toISOString();
+    }
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toISOString();
+}
+
+function dateStringToIsoStart(dateString, fallback = null) {
+  const normalized = String(dateString || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return fallback;
+  return new Date(`${normalized}T00:00:00.000Z`).toISOString();
+}
+
+function firstFiniteValue(candidates = [], fallback = null) {
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
+}
+
+function computeDeltaPct(currentValue, previousValue) {
+  const current = Number(currentValue);
+  const previous = Number(previousValue);
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous <= 0) return 0;
+  return (current - previous) / previous;
+}
+
+function buildIndicatorPayload({
+  value,
+  source,
+  observedAt = null,
+  fetchedAt = null,
+  previousValue = null,
+  deltaPct = 0,
+  stale = false,
+  staleReason = null,
+  staleAfterMs = 0,
+  staleReasonIfTooOld = 'observed_at_too_old',
+  requireObservedAt = true,
+} = {}) {
+  const normalizedValue = Number(value);
+  const normalizedFetchedAt = toIsoTimestamp(fetchedAt, new Date().toISOString());
+  const normalizedObservedAt = toIsoTimestamp(observedAt, null);
+  const normalizedPreviousValue = Number(previousValue);
+  const normalizedDeltaPct = Number(deltaPct);
+  const observationAgeMs = normalizedObservedAt
+    ? Math.max(0, Date.parse(normalizedFetchedAt) - Date.parse(normalizedObservedAt))
+    : null;
+
+  let nextStale = stale === true;
+  let nextStaleReason = staleReason || null;
+
+  if (!normalizedObservedAt && requireObservedAt) {
+    nextStale = true;
+    nextStaleReason = nextStaleReason || 'missing_observed_at';
+  } else if (!nextStale && normalizedObservedAt && staleAfterMs > 0 && observationAgeMs > staleAfterMs) {
+    nextStale = true;
+    nextStaleReason = nextStaleReason || staleReasonIfTooOld;
+  }
+
+  return {
+    value: Number.isFinite(normalizedValue) ? normalizedValue : 0,
+    source: String(source || 'unknown'),
+    observedAt: normalizedObservedAt,
+    fetchedAt: normalizedFetchedAt,
+    stale: nextStale,
+    staleReason: nextStaleReason,
+    previousValue: Number.isFinite(normalizedPreviousValue) ? normalizedPreviousValue : null,
+    deltaPct: Number.isFinite(normalizedDeltaPct) ? normalizedDeltaPct : 0,
+    observationAgeMs,
+  };
+}
+
+function buildIndicatorStaleReason(label, indicator = {}) {
+  if (!indicator || indicator.stale !== true) return null;
+  const reason = String(indicator.staleReason || 'unknown_staleness').replace(/_/g, ' ');
+  const observedAt = indicator.observedAt ? ` (observed ${indicator.observedAt})` : '';
+  return `${label} data stale: ${reason}${observedAt}`;
+}
+
 async function fetchJson(url, timeoutMs = DEFAULT_TIMEOUT_MS) {
   let timer = null;
   try {
@@ -246,35 +347,147 @@ async function fetchJson(url, timeoutMs = DEFAULT_TIMEOUT_MS) {
   }
 }
 
-async function fetchFearGreed() {
+async function fetchFearGreed(options = {}) {
+  const fetchedAt = toIsoTimestamp(options.now, new Date().toISOString());
   const data = await fetchJson('https://api.alternative.me/fng/?limit=1');
   if (data?.data?.[0]?.value != null) {
-    return { value: Number(data.data[0].value), source: 'api' };
+    const latest = data.data[0];
+    return buildIndicatorPayload({
+      value: Number(latest.value),
+      source: 'alternative_me',
+      observedAt: latest.timestamp,
+      fetchedAt,
+      staleAfterMs: INDICATOR_STALE_AFTER_MS.fearGreed,
+      staleReasonIfTooOld: 'fear_greed_observation_stale',
+    });
   }
   console.warn('[macro-risk-gate] Fear & Greed API failed, using fallback');
-  return { value: FALLBACK_VALUES.fearGreed, source: 'fallback' };
+  return buildIndicatorPayload({
+    value: FALLBACK_VALUES.fearGreed,
+    source: 'fallback',
+    fetchedAt,
+    stale: true,
+    staleReason: 'fear_greed_api_failed',
+    requireObservedAt: false,
+  });
 }
 
-async function fetchFredSeries(seriesId, label, fallback) {
+async function fetchFredSeries(seriesId, label, fallback, options = {}) {
+  const fetchedAt = toIsoTimestamp(options.now, new Date().toISOString());
   const apiKey = process.env.FRED_API_KEY;
   if (!apiKey) {
     console.warn(`[macro-risk-gate] FRED_API_KEY missing, using fallback for ${label}`);
-    return { value: fallback, previousValue: fallback, deltaPct: 0, source: 'fallback' };
+    return buildIndicatorPayload({
+      value: fallback,
+      previousValue: fallback,
+      deltaPct: 0,
+      source: 'fallback',
+      fetchedAt,
+      stale: true,
+      staleReason: 'fred_api_key_missing',
+      requireObservedAt: false,
+    });
   }
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&sort_order=desc&limit=5&file_type=json&api_key=${apiKey}`;
   const data = await fetchJson(url);
   const observations = Array.isArray(data?.observations) ? data.observations : [];
   const usable = observations
-    .map((obs) => Number(obs?.value))
-    .filter((value) => Number.isFinite(value));
+    .map((obs) => ({
+      value: Number(obs?.value),
+      observedAt: dateStringToIsoStart(obs?.date, null),
+    }))
+    .filter((obs) => Number.isFinite(obs.value));
   if (usable.length > 0) {
-    const value = usable[0];
-    const previousValue = usable[1] ?? value;
-    const deltaPct = previousValue > 0 ? ((value - previousValue) / previousValue) : 0;
-    return { value, previousValue, deltaPct, source: 'api' };
+    const latest = usable[0];
+    const previous = usable[1] || latest;
+    return buildIndicatorPayload({
+      value: latest.value,
+      previousValue: previous.value,
+      deltaPct: computeDeltaPct(latest.value, previous.value),
+      source: `fred:${seriesId}`,
+      observedAt: latest.observedAt,
+      fetchedAt,
+      staleAfterMs: Number.isFinite(Number(options.staleAfterMs))
+        ? Number(options.staleAfterMs)
+        : INDICATOR_STALE_AFTER_MS.fredDaily,
+      staleReasonIfTooOld: options.staleReasonIfTooOld || `${seriesId.toLowerCase()}_observation_stale`,
+    });
   }
   console.warn(`[macro-risk-gate] FRED ${seriesId} returned no data, using fallback for ${label}`);
-  return { value: fallback, previousValue: fallback, deltaPct: 0, source: 'fallback' };
+  return buildIndicatorPayload({
+    value: fallback,
+    previousValue: fallback,
+    deltaPct: 0,
+    source: 'fallback',
+    fetchedAt,
+    stale: true,
+    staleReason: `${seriesId.toLowerCase()}_no_data`,
+    requireObservedAt: false,
+  });
+}
+
+async function fetchLiveOilPrice(options = {}) {
+  const fetchedAt = toIsoTimestamp(options.now, new Date().toISOString());
+  const data = await fetchJson(LIVE_OIL_CHART_URL);
+  const result = data?.chart?.result?.[0];
+  const meta = result?.meta || {};
+  const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const quote = result?.indicators?.quote?.[0] || {};
+  const closes = Array.isArray(quote?.close) ? quote.close : [];
+  const finiteCloses = closes.map((value, index) => ({
+    value: Number(value),
+    timestamp: timestamps[index],
+  })).filter((entry) => Number.isFinite(entry.value));
+  const latestClose = finiteCloses[finiteCloses.length - 1] || null;
+  const previousCloseEntry = finiteCloses.length >= 2 ? finiteCloses[finiteCloses.length - 2] : latestClose;
+  const liveValue = firstFiniteValue([
+    meta.regularMarketPrice,
+    latestClose?.value,
+  ], null);
+
+  if (!Number.isFinite(liveValue)) {
+    return null;
+  }
+
+  const previousValue = firstFiniteValue([
+    meta.chartPreviousClose,
+    meta.previousClose,
+    previousCloseEntry?.value,
+    liveValue,
+  ], liveValue);
+  const observedAt = toIsoTimestamp(
+    firstFiniteValue([meta.regularMarketTime, latestClose?.timestamp], null),
+    null
+  );
+
+  return buildIndicatorPayload({
+    value: liveValue,
+    previousValue,
+    deltaPct: computeDeltaPct(liveValue, previousValue),
+    source: 'yahoo_finance:CL=F',
+    observedAt,
+    fetchedAt,
+    staleAfterMs: INDICATOR_STALE_AFTER_MS.liveOil,
+    staleReasonIfTooOld: 'live_oil_quote_stale',
+  });
+}
+
+async function fetchOilPrice(options = {}) {
+  const liveResult = await fetchLiveOilPrice(options).catch(() => null);
+  if (liveResult) {
+    return liveResult;
+  }
+  const fredFallback = await fetchFredSeries('DCOILWTICO', 'Oil (WTI)', FALLBACK_VALUES.oilPrice, {
+    ...options,
+    staleAfterMs: INDICATOR_STALE_AFTER_MS.fredDaily,
+    staleReasonIfTooOld: 'fred_oil_observation_stale',
+  });
+  return {
+    ...fredFallback,
+    source: fredFallback.source === 'fallback' ? 'fallback' : 'fred:DCOILWTICO:fallback',
+    stale: true,
+    staleReason: fredFallback.staleReason || 'live_oil_unavailable_using_fred_fallback',
+  };
 }
 
 function buildGdeltQuery(queryTerms = CONFLICT_QUERY_TERMS) {
@@ -614,11 +827,11 @@ function regimeConstraints(regime, options = {}) {
       return {
         strategyMode,
         crisisType,
-        allowLongs: false,
-        blockNewPositions: true,
+        allowLongs: true,
+        blockNewPositions: false,
         allowCrisisTrades: true,
-        positionSizeMultiplier: 0.0,
-        buyConfidenceMultiplier: 0.0,
+        positionSizeMultiplier: 0.25,
+        buyConfidenceMultiplier: 0.85,
         sellConfidenceMultiplier: 1.15,
         crisisUniverse,
         crisisTradeDirections: ['BUY', 'SHORT', 'COVER', 'BUY_PUT', 'HOLD'],
@@ -631,11 +844,11 @@ function regimeConstraints(regime, options = {}) {
       return {
         strategyMode,
         crisisType,
-        allowLongs: false,
-        blockNewPositions: true,
-        positionSizeMultiplier: 0.35,
-        buyConfidenceMultiplier: 0.6,
-        sellConfidenceMultiplier: 1.1,
+        allowLongs: true,
+        blockNewPositions: false,
+        positionSizeMultiplier: 0.25,
+        buyConfidenceMultiplier: 0.9,
+        sellConfidenceMultiplier: 1.05,
         crisisUniverse,
       };
     case 'yellow':
@@ -645,7 +858,7 @@ function regimeConstraints(regime, options = {}) {
         allowLongs: true,
         blockNewPositions: false,
         positionSizeMultiplier: 0.5,
-        buyConfidenceMultiplier: 0.8,
+        buyConfidenceMultiplier: 0.95,
         sellConfidenceMultiplier: 1.0,
         crisisUniverse,
       };
@@ -681,34 +894,40 @@ function applyMacroRiskToSignal(signal = {}, macroRisk = null) {
   const constraints = macroRisk.constraints || {};
   const crisisUniverse = getCrisisUniverse(macroRisk);
   let { direction, confidence, reasoning } = normalized;
+  const sizeMultiplier = clamp(toNumber(constraints.positionSizeMultiplier, 1), 0, 1);
+  const reducedSizeNote = sizeMultiplier < 1
+    ? `Macro ${String(macroRisk.regime || regime).toUpperCase()} keeps ${direction || 'this setup'} live but trims size to ${(sizeMultiplier * 100).toFixed(0)}% of normal.`
+    : '';
 
   if (direction === 'BUY') {
     const crisisEligibleBuy = strategyMode === 'crisis' && isCrisisTicker(normalized.ticker, crisisUniverse);
     confidence = normalizeConfidence(confidence * toNumber(constraints.buyConfidenceMultiplier, 1));
-    if (!crisisEligibleBuy && (constraints.allowLongs === false || constraints.blockNewPositions === true)) {
-      direction = 'HOLD';
-      const macroReason = regime === 'stay_cash'
-        ? 'Macro STAY_CASH blocks all new positions during active chokepoint conflict.'
-        : `Macro ${String(macroRisk.regime || '').toUpperCase()} blocks new longs; stay defensive.`;
-      reasoning = reasoning ? `${reasoning} ${macroReason}` : macroReason;
-      confidence = clamp(Math.max(confidence, regime === 'stay_cash' ? 0.9 : 0.72), 0, 1);
-    } else if (crisisEligibleBuy) {
+    if (crisisEligibleBuy) {
       reasoning = reasoning
-        ? `${reasoning} Macro CRISIS mode allows crisis-universe hedge buys.`
-        : 'Macro CRISIS mode allows crisis-universe hedge buys.';
+        ? `${reasoning} Macro CRISIS mode allows crisis-universe hedge buys. ${reducedSizeNote}`.trim()
+        : `Macro CRISIS mode allows crisis-universe hedge buys. ${reducedSizeNote}`.trim();
+    } else if (reducedSizeNote) {
+      reasoning = reasoning
+        ? `${reasoning} ${reducedSizeNote}`
+        : reducedSizeNote;
     }
   } else if (direction === 'SELL') {
     confidence = normalizeConfidence(confidence * toNumber(constraints.sellConfidenceMultiplier, 1));
     if (regime === 'red' || regime === 'stay_cash') {
       reasoning = reasoning
-        ? `${reasoning} Macro regime favors defensive de-risking.`
-        : 'Macro regime favors defensive de-risking.';
+        ? `${reasoning} Macro regime favors defensive de-risking.${reducedSizeNote ? ` ${reducedSizeNote}` : ''}`
+        : `Macro regime favors defensive de-risking.${reducedSizeNote ? ` ${reducedSizeNote}` : ''}`;
+    } else if (reducedSizeNote) {
+      reasoning = reasoning
+        ? `${reasoning} ${reducedSizeNote}`
+        : reducedSizeNote;
     }
   } else if (direction === 'SHORT' || direction === 'COVER' || direction === 'BUY_PUT') {
-    if (strategyMode === 'crisis') {
+    const redShortAllowed = regime === 'red' && (direction === 'SHORT' || direction === 'COVER');
+    if (strategyMode === 'crisis' || redShortAllowed) {
       reasoning = reasoning
-        ? `${reasoning} Macro CRISIS mode permits bearish hedge analysis.`
-        : 'Macro CRISIS mode permits bearish hedge analysis.';
+        ? `${reasoning} ${redShortAllowed ? 'Macro RED regime permits defensive short exposure at reduced size.' : 'Macro CRISIS mode permits bearish hedge analysis.'}`
+        : (redShortAllowed ? 'Macro RED regime permits defensive short exposure at reduced size.' : 'Macro CRISIS mode permits bearish hedge analysis.');
     } else {
       direction = 'HOLD';
       reasoning = reasoning
@@ -728,6 +947,7 @@ function applyMacroRiskToSignal(signal = {}, macroRisk = null) {
 
 async function assessMacroRisk(options = {}) {
   const { skipCache = false } = options;
+  const now = options.now || new Date();
 
   if (!skipCache && _cache && (Date.now() - _cache.timestamp) < CACHE_TTL_MS) {
     return _cache.result;
@@ -738,28 +958,44 @@ async function assessMacroRisk(options = {}) {
 
   _inflight = (async () => {
     const [fearGreedResult, vixResult, oilResult, geopolitics] = await Promise.all([
-      fetchFearGreed(),
-      fetchFredSeries('VIXCLS', 'VIX', FALLBACK_VALUES.vix),
-      fetchFredSeries('DCOILWTICO', 'Oil (WTI)', FALLBACK_VALUES.oilPrice),
+      fetchFearGreed({ now }),
+      fetchFredSeries('VIXCLS', 'VIX', FALLBACK_VALUES.vix, {
+        now,
+        staleAfterMs: INDICATOR_STALE_AFTER_MS.vixFred,
+        staleReasonIfTooOld: 'fred_vix_observation_stale',
+      }),
+      fetchOilPrice({ now }),
       fetchGeopoliticalIntelligence(options),
     ]);
 
     const intelligence = {
       geopolitics,
-      fed: getFedEventState(options.now || new Date()),
+      fed: getFedEventState(now),
       market: {
         vixDeltaPct: toNumber(vixResult.deltaPct, 0),
         oilDeltaPct: toNumber(oilResult.deltaPct, 0),
+        vixObservedAt: vixResult.observedAt,
+        oilObservedAt: oilResult.observedAt,
+        fearGreedObservedAt: fearGreedResult.observedAt,
+        vixStale: vixResult.stale === true,
+        oilStale: oilResult.stale === true,
+        fearGreedStale: fearGreedResult.stale === true,
       },
     };
     const vix = vixResult.value;
     const fearGreed = fearGreedResult.value;
     const oilPrice = oilResult.value;
-    const { regime, reason, crisisType } = classifyRegime(vix, fearGreed, oilPrice, intelligence, options.now || new Date());
+    const { regime, reason, crisisType } = classifyRegime(vix, fearGreed, oilPrice, intelligence, now);
     const score = computeRiskScore(vix, fearGreed, oilPrice, intelligence);
     const constraints = regimeConstraints(regime, { crisisType });
     const strategyMode = strategyModeForRegime(regime);
     const fetchedAt = new Date().toISOString();
+    const reasons = [
+      buildIndicatorStaleReason('VIX', vixResult),
+      buildIndicatorStaleReason('Fear & Greed', fearGreedResult),
+      buildIndicatorStaleReason('Oil', oilResult),
+      ...reason,
+    ].filter(Boolean);
 
     const result = {
       regime,
@@ -767,14 +1003,14 @@ async function assessMacroRisk(options = {}) {
       crisisType,
       score,
       indicators: {
-        vix: { value: vix, source: vixResult.source },
-        fearGreed: { value: fearGreed, source: fearGreedResult.source },
-        oilPrice: { value: oilPrice, source: oilResult.source },
+        vix: { ...vixResult, value: vix },
+        fearGreed: { ...fearGreedResult, value: fearGreed },
+        oilPrice: { ...oilResult, value: oilPrice },
       },
       intelligence,
       constraints,
       crisisUniverse: getCrisisUniverse({ crisisType, constraints }),
-      reason: reason.join('; '),
+      reason: reasons.join('; '),
       fetchedAt,
     };
 
@@ -805,6 +1041,8 @@ module.exports = {
     strategyModeForRegime,
     fetchFearGreed,
     fetchFredSeries,
+    fetchLiveOilPrice,
+    fetchOilPrice,
     fetchGeopoliticalIntelligence,
     classifyCrisisType,
     getFedEventState,
@@ -812,6 +1050,7 @@ module.exports = {
     buildToneRiskScore,
     buildGdeltQuery,
     FALLBACK_VALUES,
+    INDICATOR_STALE_AFTER_MS,
     CACHE_TTL_MS,
     FOMC_DECISION_DATES_2026,
   },

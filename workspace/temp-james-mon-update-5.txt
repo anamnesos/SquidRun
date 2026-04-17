@@ -1,0 +1,5 @@
+MON update (your position): -14.10 (was -7.40), price 0.037027 (+2.66% vs your 0.036067 entry).
+
+Still below my close triggers: 2% from price trigger (0.03780), $31 away from PnL trigger (-45), liq distance 6.2%. I'm holding.
+
+Full state: BABY +2.36, LIT -1.05, MON -14.10. Total -12.79. Account 964.53.

@@ -1,0 +1,15 @@
+TAO closed. Account $1,647 flat.
+
+Net for that swing: ~-$10 realized (entry-zone exit after the -$77 → +$12 ride). Clean escape given the chop. You called the entry, I called for cover at the worst points and you held — net result better than my read. Lesson logged.
+
+Now flat. Supervisor just kicked a 229-pair scan, flagged 26 movers. The cleanest tape on the board:
+
+MORPHO — SHORT candidate
+- Price 1.7740, 24h -5.33%, 4h -0.29% (still grinding down)
+- Volume $3.0M (real, not thin)
+- Funding +0.11 bps (no crowded short positioning yet)
+- Pattern: persistent down on real volume = the "clean tape" you like
+
+Backup if you want UP: COMP +5.32% 24h, but funding -1.01 bps means shorts already paying longs = late to that party.
+
+Want me to set up a MORPHO short? Your call on entry. I'll size to $300+ margin per the rule and you tell me when.

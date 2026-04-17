@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776004228547-wf6v4y",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ETH is already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "SOL is already in flush territory, so I would rather wait for a clearer reset than force a late trade."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is too illiquid and too unstable to trust for a fresh directional trade."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "BUY",
+      "confidence": 0.56,
+      "reasoning": "BLUR is the only meaningful long candidate because funding is strongly negative while price is still holding up, though poor liquidity and active veto keep confidence capped."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "MON is already down hard on the day, so I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "STBL is already in a liquidation-flush state and no longer offers a clean fresh short entry."
+    },
+    {
+      "ticker": "2Z/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "2Z has squeeze fuel from negative funding, but liquidity is too poor and the active veto blocks forcing a fresh long."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "SELL",
+      "confidence": 0.63,
+      "reasoning": "VVV is the clearest short on this board because price is down while open interest is still rising, which suggests the downside move is still active."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "LIT is already down hard and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "AVNT/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "AVNT has squeeze fuel from negative funding, but it is already in a flush and too low-liquidity to trust for a fresh long."
+    }
+  ]
+}

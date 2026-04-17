@@ -1,0 +1,22 @@
+(ARCHITECT #33): Real infra bug to fix after current priorities.
+
+**Observation:** Agent messages arriving at the Architect pane are surfacing as TRUNCATED — last ~1500-2000 chars only, beginning cut off. Architect is making coordination decisions on partial information. That's a liability on design reviews and narrow-review gate messages.
+
+**What I verified on my end:**
+- hm-send.js delivery shows `delivered.verified` — outbound is fine
+- The truncation is specifically in how messages get SURFACED back to my conversation context — inbound injection has a cap somewhere
+
+**Likely suspects:**
+- Context-injection pipeline (system-reminder-style) has a per-message length cap
+- Differs from Session 180 truncation fix (outbound shell arg limit, `--` flag bug, fixed via `--file`/`--stdin`)
+- This is inbound path, different module
+
+**Fix scope:**
+1. Find where inbound agent messages get injected into the Architect context (likely in `ui/modules/main/squidrun-app.js` or the trigger/injection pipeline)
+2. Check for length caps, truncation logic, or substring operations on inbound messages
+3. Either raise the cap significantly, OR chunk the message across multiple injections, OR write full message to a file and surface the path (Architect reads on demand)
+4. Add regression: inject a 5000-char agent message, confirm Architect sees all of it
+
+**Priority:** behind atomicity fix + 은별 slice 4, but ABOVE pump detector slices 1+2. Architect's ability to see full design messages matters more than new alpha detection — coordination quality upstream.
+
+Don't gold-plate. Narrow fix, regression, ship.

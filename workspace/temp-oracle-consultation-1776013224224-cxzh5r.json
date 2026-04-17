@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776013224224-cxzh5r",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "BTC is already in a liquidation-flush state, so I would not chase a fresh short after the initial dump."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ETH is also already flushing and does not offer a clean new edge in either direction right here."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "SOL is already in flush territory, so I would rather wait for a clearer reset than force a late trade."
+    },
+    {
+      "ticker": "0G/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "0G has extreme squeeze fuel from deeply negative funding, but the move is already too extended and the active veto blocks forcing a fresh long."
+    },
+    {
+      "ticker": "ZEREBRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.82,
+      "reasoning": "ZEREBRO is already in a flush state and too illiquid to trust for a serious fresh short chase."
+    },
+    {
+      "ticker": "RESOLV/USD",
+      "direction": "HOLD",
+      "confidence": 0.79,
+      "reasoning": "RESOLV has upside momentum, but liquidity is too poor and the active veto blocks forcing a fresh long."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "DASH is already down hard and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.81,
+      "reasoning": "CHILLGUY is too mixed and too low-liquidity to justify a serious fresh directional trade."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "HOLD",
+      "confidence": 0.8,
+      "reasoning": "BLUR has some squeeze fuel but the signal is not strong enough and liquidity is still too poor to force a long here."
+    },
+    {
+      "ticker": "STBL/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "STBL is already deeply flushed and I would rather wait than chase a fresh short here."
+    },
+    {
+      "ticker": "LIT/USD",
+      "direction": "HOLD",
+      "confidence": 0.83,
+      "reasoning": "LIT is already down hard and I would rather wait than chase a fresh short here."
+    }
+  ]
+}

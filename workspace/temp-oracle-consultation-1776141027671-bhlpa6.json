@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1776141027671-bhlpa6",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.71,
+      "reasoning": "The live SOL short is back in profit and still retaining about 87% of current peak unrealized P&L, so this is a management hold rather than another emergency cover. The 24h move still looks more like a short-covering rally than a clean new upside trend, but confidence is capped because the board is only CAUTION and the position still has no stop."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC remains structurally strong after the squeeze and still shows trend-supported price plus open interest expansion. That makes it a poor fresh short, but after the big rebound and under a CAUTION event brake I would not force a new long either."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.57,
+      "reasoning": "ETH still has one of the cleaner bullish structures on the board, with price and open interest both higher on the 24h lookback. Even so, the move is already well underway and position management should stay focused on the live SOL short instead of rotating into a fresh ETH trade here."
+    },
+    {
+      "ticker": "TST/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "TST is up sharply with extremely large open interest expansion, which says the move is active but already crowded. That is exactly the kind of name that can whipsaw both ways after the first squeeze leg, so it stays watch-only."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "FARTCOIN is still trending higher with positive funding and rising open interest, but it is already extended and crowded after the squeeze. It is not cleaner than simply managing the SOL position already on the book."
+    },
+    {
+      "ticker": "RESOLV/USD",
+      "direction": "SELL",
+      "confidence": 0.58,
+      "reasoning": "RESOLV is the clearest secondary bearish name because price is slightly down while open interest is still building, which points to fresh shorts pressing rather than a finished flush. Confidence stays moderate because the board is only CAUTION and the symbol is much less important than the live SOL management decision."
+    },
+    {
+      "ticker": "SUPER/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "SUPER has real squeeze fuel from deeply negative funding, but the move is already underway and open-interest history here is too incomplete to trust for a fresh chase. It stays on the watchlist rather than graduating to an active long in a position-management pass."
+    },
+    {
+      "ticker": "JTO/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "JTO still looks constructive, but positive funding and rising open interest make it more continuation-by-observation than a clean asymmetry. It does not clear the bar to outrank the live SOL short."
+    },
+    {
+      "ticker": "WCT/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "WCT has momentum, but the setup quality is weak because open-interest history is incomplete and the move is already extended on the day. Under CAUTION that stays a pass."
+    },
+    {
+      "ticker": "KNEIRO/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "KNEIRO has strong squeeze-style characteristics with negative funding, but the chart is already very stretched and the supporting open-interest history is too thin to trust. That makes it a watch-only long candidate, not a fresh action item."
+    },
+    {
+      "ticker": "LDO/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "LDO is another name with real upside momentum, but it is already extended and lacks enough extra structure to justify acting during a position-management round. Holding attention on the existing SOL short is still the cleaner call."
+    }
+  ]
+}

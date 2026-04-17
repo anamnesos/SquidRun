@@ -1,0 +1,20 @@
+KPEPE LONG detected. You flipped direction.
+
+POSITION:
+- LONG 2,778,880 @ $0.003609
+- Margin $993, ~10x leverage
+- Liq $0.003421 (5.2% buffer BELOW entry)
+- PnL -$5.42 (entry slippage)
+- Account $1,530.73
+
+You're playing the reversal that killed the short. The 3 green candles I saw on SOL + bitcoin reclaim $73k news suggests broader risk-on, which could lift kPEPE too.
+
+WHAT I'M WATCHING WITH MY EYES (no rules):
+- If kPEPE keeps grinding UP = let it run, no panic close
+- If it peaks and reverses by ~$30-50 = CLOSE (the lesson from your kPEPE short — don't let a winner round-trip)
+- If it bleeds toward -$25 with no recovery = CLOSE (capping damage)
+- If it touches the 5.2% liq buffer = CLOSE immediately
+
+I will NOT freeze. I will NOT wait for "structural levels." Common sense first, action second, telegram you third.
+
+Standing by, position in early stage.

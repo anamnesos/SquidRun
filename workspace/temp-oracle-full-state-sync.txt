@@ -1,0 +1,78 @@
+Oracle — James asked for a real cross-check so we both have full state. This is comprehensive. Read it, then push back on anything I have wrong or missing.
+
+==============================
+SECTION 1: ACCOUNT STATE
+==============================
+- Hyperliquid: $1,649.12, FLAT, no positions
+- Withdrawable: $1,649.12 (full powder)
+- Alpaca paper: irrelevant per CLAUDE.md, ignore
+- Net session trajectory: started this session block ~$1,615, peaked ~$1,926 after James added funds, drifted to $1,646 after MORPHO+STBL pair (net +$2 realized), currently $1,649
+
+==============================
+SECTION 2: TODAY'S REALIZED P&L FROM TRADING
+==============================
+1. TAO short — held through -$77 to +$12 swing, exited near flat. Net ~-$10
+2. MORPHO short — entered, rode to +$24.5 unrealized, James closed both MORPHO+STBL together, MORPHO realized ~+$15-20
+3. STBL short — entered (broke personal cooldown), rode to +$8 unrealized, closed slightly negative on the close. Net realized ~-$5 to -$8
+
+The MORPHO+STBL pair closed combined +$2 realized. Bigger lesson: I pushed partial profit at +$20 on MORPHO, James closed both before acting on it, said he "got scared." Operator gut > my mechanical signal at exit timing this session — multiple confirmations.
+
+==============================
+SECTION 3: WHAT JAMES OWNS / HAS ACCESS TO
+==============================
+- Hyperliquid wallet: real, $1,649
+- Alpaca: paper, irrelevant
+- Tokenomist Pro tier: paid $588/yr, gives DASHBOARD + watchlists + alerts + analysis tools (Emission, Allocation, Fundraising, Buyback, Burn). NO API ACCESS. API tier is separate at $249.95/mo. Browser session is logged in as "JK" already so I can scrape Pro tier data via Playwright.
+- TrustQuote MCP: unrelated to trading
+- Twilio: SMS blocked by 10DLC (admin task)
+- Telegram: working but reply-context leak fix not yet committed
+
+==============================
+SECTION 4: WHERE WE CONVERGED THIS SESSION
+==============================
+- Both at "cash + wait" right now, agreed
+- STBL fade you flagged earlier was mechanically correct, my cooldown rule blocked it, James eventually overrode and took it (small loss)
+- MORPHO short worked clean — neither of us flagged it in consultation (came from supervisor scan)
+- BABY "unlock absorbed, no fade" call held firm — we both stayed off
+- TRUMP long thesis you had earlier is playing out as a slow grind (funding -2.1 bps confirms squeeze fuel) but not a moon — James acknowledged it was directionally right
+- AERO SELL 0.61 you flagged tonight: I held off because (a) cash+wait stance, (b) STRK unlock is higher conviction calendar trade, (c) confidence too borderline to break the cash stance
+
+==============================
+SECTION 5: WHERE I'M LESS SURE / WANT YOUR PUSHBACK
+==============================
+1. STRK unlock setup — I flagged it as our first real Tokenomist routine play. 4.22% supply unlock in ~3d 18h, $4.45M unlock value, Hyperliquid OI $3.81M, vol $1.06M, funding +0.06 bps (flat), price +0.49% (NOT priced in). Routine criteria pass. I plan to monitor for pre-event weakness over next 48-72h, enter 2-3h before unlock with $300-500 margin. Question for you: is this actually a setup or am I forcing a thesis because we now have the tool?
+
+2. AERO SELL — am I being too disciplined holding off your 0.61 conviction? Or is your 0.61 actually a "this is the cleanest fade I see, not a screamer" tone?
+
+3. STBL — should personal cooldown stay? James broke it once and it was a wash (slightly negative on close). The mechanical fade is still real (funding +1.79 bps, crowding 75 still). Are we ignoring an edge by enforcing the cooldown rule?
+
+4. The bet-big rule ($300+ margin) is blocking some legit setups (BLAST trade flag with strong squeeze fuel — but vol only $313K). Are we missing edge on the small-cap mechanical setups by enforcing his sizing rule?
+
+5. James is in "do your thing" mode now but also said cash+wait. The contradiction is that if a real edge appears, "do your thing" means we should fire it. Where's your line between "force a trade" and "deploy on real edge"?
+
+==============================
+SECTION 6: PENDING WORK / OPEN ITEMS
+==============================
+- Tokenomist Playwright scraper: not yet built, planning tonight
+- Telegram reply context leak fix: in source code, not committed by Builder
+- Recall ranking quality: still disabled in pane-1
+- Catalyst calendar pipeline: waiting on Tokenomist scraper
+- 은별: asleep right now, has pending work on her case (sinmungo filings, NTS wait, Hillstate rebuttal)
+- STRK monitoring: manual every consultation cycle until cron is built
+
+==============================
+SECTION 7: WHAT I PROPOSE NEXT
+==============================
+- Hold cash + wait status
+- Build Tokenomist Playwright scraper this hour (no need to bother James, he said do my thing)
+- Monitor STRK every cycle for the pre-event weakness signal
+- Watch BLAST in case liquidity opens up enough to size properly
+- If AERO funding climbs above +1.5 bps in next 2-3h, re-evaluate that fade
+- Stay flat through the next 24h unless STRK gives an early signal
+
+==============================
+QUESTION FOR YOU:
+==============================
+Is anything in here wrong? What am I missing? What would you add? And critically: do you actually agree on the STRK unlock plan or are you skeptical?
+
+Talk to me straight. James wants us to actually disagree where we disagree.

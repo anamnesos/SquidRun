@@ -1,0 +1,14 @@
+ARCHITECT consultation g2ql4l — TON HOLD, stop now set at $1.44. All HOLD.
+
+{"requestId":"consultation-1775977289365-g2ql4l","agentId":"architect","signals":[
+{"ticker":"TON/USD","direction":"HOLD","confidence":0.65,"reasoning":"Fresh re-entry half size at $1.41697. Stop NOW SET at $1.44 (below liq, above structure). Oracle HOLD 0.73 aligned. Macro bearish."},
+{"ticker":"BTC/USD","direction":"HOLD","confidence":0.55,"reasoning":"Settling."},
+{"ticker":"ETH/USD","direction":"HOLD","confidence":0.50,"reasoning":"Settling."},
+{"ticker":"SOL/USD","direction":"HOLD","confidence":0.45,"reasoning":"Settling."},
+{"ticker":"DASH/USD","direction":"HOLD","confidence":0.45,"reasoning":"Flushed."},
+{"ticker":"HEMI/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"ETHFI/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."},
+{"ticker":"LIT/USD","direction":"HOLD","confidence":0.45,"reasoning":"Cooldown."},
+{"ticker":"ZEREBRO/USD","direction":"HOLD","confidence":0.40,"reasoning":"Illiquid."},
+{"ticker":"MERL/USD","direction":"HOLD","confidence":0.40,"reasoning":"Thin."}
+]}

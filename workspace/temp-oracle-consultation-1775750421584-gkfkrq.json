@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775750421584-gkfkrq",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "BTC has recovered intraday, but the board still marks it no-trade and funding is now positive instead of washed out. In a RED macro regime, this is stable but not high-edge."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "ETH is only slightly constructive on price and still lacks a strong directional edge. Positive funding and a no-trade board read keep it below the threshold for a fresh long."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "SOL has modest positive price action, but funding is positive and the board remains no-trade. There is not enough asymmetry here to justify new exposure."
+    },
+    {
+      "ticker": "TON/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "TON has decent momentum and acceptable liquidity, but the mechanical board is still only neutral and funding is positive. It is a watchlist name, not a priority signal."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "HOLD",
+      "confidence": 0.52,
+      "reasoning": "GRASS is too mixed: small positive day, poor spread quality, and almost no mechanical edge. Capital is better reserved for cleaner setups."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "SELL",
+      "confidence": 0.66,
+      "reasoning": "MON is the cleanest short on this board. It combines real liquidity and open interest with a bearish mechanical profile, very crowded long positioning, and unusually high positive funding. That is the best fade setup in this batch."
+    },
+    {
+      "ticker": "VVV/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "VVV has solid price momentum and decent liquidity, but funding is still positive and the board does not provide a decisive directional edge. Interesting, but not cleaner than the top continuation longs."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.61,
+      "reasoning": "FARTCOIN remains a viable short candidate with negative 24h trend, positive funding, and strong volume. It is still a meme market, so conviction stays moderate, but the directional case remains bearish."
+    },
+    {
+      "ticker": "CHILLGUY/USD",
+      "direction": "HOLD",
+      "confidence": 0.51,
+      "reasoning": "CHILLGUY is up sharply, but the spread is terrible and funding is positive, so this is not a clean squeeze continuation. The move is too unstable to chase."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "BUY",
+      "confidence": 0.63,
+      "reasoning": "TNSR still has one of the best long profiles on the sheet: powerful 24h momentum, extremely negative funding, and elite squeeze scores. Macro still being RED keeps this at reduced-size conviction rather than full-risk."
+    },
+    {
+      "ticker": "BLUR/USD",
+      "direction": "BUY",
+      "confidence": 0.64,
+      "reasoning": "BLUR remains the best all-around long here. It has strong upside expansion, deeply negative funding, elite squeeze characteristics, and better liquidity quality than most of the other speculative names. Macro risk keeps the score capped, but it is still the strongest continuation candidate."
+    }
+  ]
+}

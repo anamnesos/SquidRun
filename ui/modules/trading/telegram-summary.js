@@ -11,8 +11,16 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { getProjectRoot } = require('../../config');
 
-const HM_SEND = path.join(__dirname, '..', '..', 'scripts', 'hm-send.js');
+function resolveHmSendPath() {
+  return path.join(getProjectRoot(), 'ui', 'scripts', 'hm-send.js');
+}
+
+function resolveTradingTelegramChatId(env = process.env) {
+  const chatId = typeof env?.TELEGRAM_CHAT_ID === 'string' ? env.TELEGRAM_CHAT_ID.trim() : '';
+  return chatId || null;
+}
 
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -25,21 +33,28 @@ function toNumber(value, fallback = 0) {
  * @param {string} message
  */
 function sendTelegram(message) {
+  const hmSendPath = resolveHmSendPath();
+  const cwd = getProjectRoot();
+  const chatId = resolveTradingTelegramChatId(process.env);
+  if (!chatId) {
+    console.warn('Trading Telegram notify suppressed: TELEGRAM_CHAT_ID is not configured.');
+    return;
+  }
   if (message.length > 400) {
     const tmpFile = path.join(os.tmpdir(), `trading-summary-${Date.now()}.txt`);
     fs.writeFileSync(tmpFile, message, 'utf8');
     try {
-      execFileSync('node', [HM_SEND, 'telegram', '--file', tmpFile], {
+      execFileSync('node', [hmSendPath, 'telegram', '--file', tmpFile, '--chat-id', chatId], {
         timeout: 15_000,
-        cwd: path.join(__dirname, '..', '..', '..'),
+        cwd,
       });
     } finally {
       try { fs.unlinkSync(tmpFile); } catch (_) { /* ignore */ }
     }
   } else {
-    execFileSync('node', [HM_SEND, 'telegram', message], {
+    execFileSync('node', [hmSendPath, 'telegram', message, '--chat-id', chatId], {
       timeout: 15_000,
-      cwd: path.join(__dirname, '..', '..', '..'),
+      cwd,
     });
   }
 }

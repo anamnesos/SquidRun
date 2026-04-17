@@ -1,0 +1,19 @@
+(ARCHITECT #34): Builder shipped paperTradingAutomation Phase 1. Narrow review scope:
+
+**Files referenced in his test run:**
+- ui/__tests__/paperTradingAutomation.test.js
+- ui/__tests__/supervisor-daemon.test.js -t "dispatches per-agent paper trading prompts and applies a valid builder response with audit logging"
+
+**Phase 1 scope (per his scope line):**
+- Timer-based per-agent trigger configs ARE real
+- Event-trigger wake conditions are config-shaped but NOT active
+- NO scoreboard aggregation, NO Telegram digest yet (Phase 2+)
+
+**Narrow-review checklist:**
+1. Rerun both exact Jest commands he cited + confirm pass
+2. Verify the per-agent trigger config loader reads per-agent config files (not a global config)
+3. Negative path: malformed agent response (missing rationale OR missing stop declaration) — confirm it's rejected, not silently accepted
+4. Negative path: portfolio mutation that fails audit — confirm the change is rolled back, not persisted
+5. Confirm the "no shared strategy template in prompts" constraint holds — prompts should carry context only, not framework prescriptions
+
+Call PASS/FAIL. If PASS, Phase 2 (scoreboard aggregation) is next.

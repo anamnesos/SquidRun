@@ -271,6 +271,25 @@ function selectInboundMedia(message) {
   return null;
 }
 
+function buildInboundDisplayText(message, selectedMedia = null) {
+  const text = normalizeBody(message?.text);
+  if (text) return text;
+
+  const caption = normalizeBody(message?.caption);
+  const media = selectedMedia || selectInboundMedia(message);
+  if (media?.kind === 'photo') {
+    return caption ? `[Photo] ${caption}` : '[Photo received]';
+  }
+
+  const document = message?.document && typeof message.document === 'object' ? message.document : null;
+  if (document || media?.kind === 'document') {
+    const fileName = document?.file_name || media?.fileName || 'unknown';
+    return caption ? `[File: ${fileName}] ${caption}` : `[File: ${fileName}]`;
+  }
+
+  return '';
+}
+
 async function requestTelegramJson(method, requestPath) {
   const response = await requestTelegram(method, requestPath);
   let payload = null;
@@ -431,13 +450,18 @@ async function pollNow() {
         continue;
       }
 
-      const text = normalizeBody(message.text);
-      const caption = normalizeBody(message.caption);
       const photoArray = Array.isArray(message.photo) ? message.photo : null;
       const document = message.document && typeof message.document === 'object' ? message.document : null;
       const messageId = Number.isFinite(Number(message?.message_id))
         ? Number(message.message_id)
         : null;
+      const selectedMedia = selectInboundMedia(message);
+      if (selectedMedia) {
+        log.info(
+          'Telegram',
+          `Inbound Telegram ${selectedMedia.kind} detected (update=${updateId} message=${messageId ?? 'unknown'} chat=${message?.chat?.id ?? 'unknown'} downloadMedia=${mediaDownloadEnabled ? 'enabled' : 'disabled'})`
+        );
+      }
 
       let downloadedMedia = null;
       try {
@@ -445,23 +469,34 @@ async function pollNow() {
           updateId,
           messageId,
         });
+        if (downloadedMedia) {
+          log.info(
+            'Telegram',
+            `Inbound Telegram ${downloadedMedia.kind} saved to ${downloadedMedia.localPath} (update=${updateId} message=${messageId ?? 'unknown'})`
+          );
+        }
       } catch (err) {
-        log.warn('Telegram', `Telegram media download failed: ${err.message}`);
+        log.warn(
+          'Telegram',
+          `Telegram media download failed for update=${updateId} message=${messageId ?? 'unknown'} fileId=${selectedMedia?.fileId || 'unknown'}: ${err.message}`
+        );
       }
 
-      // Build display text: prefer text, fall back to caption, then describe media
-      let displayText = text;
-      if (!displayText && photoArray) {
-        displayText = caption ? `[Photo] ${caption}` : '[Photo received]';
+      const displayText = buildInboundDisplayText(message, selectedMedia);
+      if (!displayText) {
+        log.warn(
+          'Telegram',
+          `Skipping inbound Telegram update ${updateId} because no display text could be derived (hasPhoto=${photoArray ? 'yes' : 'no'} hasDocument=${document ? 'yes' : 'no'})`
+        );
+        continue;
       }
-      if (!displayText && document) {
-        const fileName = document.file_name || 'unknown';
-        displayText = caption ? `[File: ${fileName}] ${caption}` : `[File: ${fileName}]`;
-      }
-      if (!displayText) continue;
 
       if (typeof onMessage === 'function') {
         try {
+          log.info(
+            'Telegram',
+            `Dispatching inbound Telegram update ${updateId} to callback (message=${messageId ?? 'unknown'} body=${JSON.stringify(displayText)})`
+          );
           await Promise.resolve(onMessage(displayText, normalizeFrom(message.from), {
             updateId,
             updateKind: inbound.kind,
@@ -510,6 +545,10 @@ function start(options = {}) {
   pollInFlight = false;
   running = true;
 
+  log.info(
+    'Telegram',
+    `Telegram inbound media downloads ${mediaDownloadEnabled ? 'enabled' : 'disabled'} (root=${mediaDownloadRoot || 'n/a'})`
+  );
   pollTimer = setInterval(() => {
     pollNow().catch((err) => {
       log.warn('Telegram', `Telegram polling tick failed: ${err.message}`);
@@ -550,6 +589,7 @@ const _internals = {
   requestTelegramJson,
   maybeDownloadInboundMedia,
   selectInboundMedia,
+  buildInboundDisplayText,
   extractInboundMessage,
   pollNow,
   parseUpdateId,

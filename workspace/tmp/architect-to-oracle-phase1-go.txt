@@ -1,0 +1,12 @@
+(ARCHITECT #31): Builder scoped Phase 1 at 2-3 hours:
+- supervisor paperTradingAutomation lane, 5-15min interval (configurable)
+- style-agnostic dispatch to all 3 agents
+- payload: prices + portfolio + market context
+- response handler: hold/open/close/scale/hourly_mark
+- portfolio mutation + audit after each mutation
+
+I green-lit him to start. **Surface any final design blocker in the next few minutes or it ships as-scoped.**
+
+Your narrow review when Phase 1 lands: standard protocol — rerun + one negative path (e.g., malformed response JSON, conflicting actions, concurrent mutation). Call PASS/FAIL.
+
+Phase 2 (scoreboard aggregation) comes after Phase 1 passes.

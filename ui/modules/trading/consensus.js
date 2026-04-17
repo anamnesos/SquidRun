@@ -28,19 +28,32 @@ const path = require('path');
  * @property {'BUY'|'SELL'|'HOLD'} decision
  * @property {boolean} consensus - true if 2-of-3 agreed
  * @property {number} agreementCount - 2 or 3
+ * @property {number} confidence - average confidence of agreeing signals when consensus exists, else 0
+ * @property {number} averageAgreeConfidence - same as confidence, retained for downstream sizing/execution
+ * @property {number} averageSignalConfidence - average confidence across all submitted signals
  * @property {Signal[]} agreeing
  * @property {Signal[]} dissenting
  * @property {string} summary
  */
 
+function averageConfidence(signals = []) {
+  const values = Array.isArray(signals)
+    ? signals
+      .map((signal) => Number(signal?.confidence))
+      .filter((value) => Number.isFinite(value))
+    : [];
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
 /**
  * Evaluate consensus from 3 agent signals for a single ticker.
- * @param {Signal[]} signals - Exactly 3 signals, one per agent
+ * @param {Signal[]} signals - 2 or 3 signals, one per agent
  * @returns {ConsensusResult}
  */
 function evaluateConsensus(signals) {
-  if (!Array.isArray(signals) || signals.length !== 3) {
-    throw new Error(`Consensus requires exactly 3 signals, got ${signals?.length}`);
+  if (!Array.isArray(signals) || signals.length < 2 || signals.length > 3) {
+    throw new Error(`Consensus requires 2 or 3 signals, got ${signals?.length}`);
   }
 
   const ticker = signals[0].ticker;
@@ -74,12 +87,34 @@ function evaluateConsensus(signals) {
     }
   }
 
-  // No 2-of-3 agreement → default HOLD
+  // No 2-of-3 majority — but HOLD is not a vote AGAINST a direction.
+  // HOLD means "no opinion." Only BUY vs SELL is real disagreement.
   if (!consensus) {
-    decision = 'HOLD';
-    agreeing = [];
-    dissenting = signals;
+    const buyVotes = votes.BUY || [];
+    const sellVotes = votes.SELL || [];
+
+    if (sellVotes.length >= 1 && buyVotes.length === 0) {
+      // 1+ SELL, 0 BUY, rest HOLD → weak SELL consensus (no opposing view)
+      decision = 'SELL';
+      agreeing = sellVotes;
+      dissenting = signals.filter(s => s.direction?.toUpperCase() !== 'SELL');
+      consensus = true;
+    } else if (buyVotes.length >= 1 && sellVotes.length === 0) {
+      // 1+ BUY, 0 SELL, rest HOLD → weak BUY consensus (no opposing view)
+      decision = 'BUY';
+      agreeing = buyVotes;
+      dissenting = signals.filter(s => s.direction?.toUpperCase() !== 'BUY');
+      consensus = true;
+    } else {
+      // Genuine BUY vs SELL disagreement → real no_consensus
+      decision = 'HOLD';
+      agreeing = [];
+      dissenting = signals;
+    }
   }
+
+  const averageAgreeConfidence = consensus ? averageConfidence(agreeing) : 0;
+  const averageSignalConfidence = averageConfidence(signals);
 
   // Build summary
   const agreeNames = agreeing.map(s => s.agent).join(' + ');
@@ -87,6 +122,8 @@ function evaluateConsensus(signals) {
   let summary;
   if (consensus && agreeing.length === 3) {
     summary = `${ticker}: UNANIMOUS ${decision} — all 3 models agree`;
+  } else if (consensus && signals.length === 2 && agreeing.length === 2) {
+    summary = `${ticker}: ${decision} — 2-signal real-agent quorum agrees`;
   } else if (consensus) {
     const dissentReason = dissenting[0]?.reasoning || 'no reason given';
     summary = `${ticker}: ${decision} — ${agreeNames} agree, ${dissentNames} dissents (${dissentReason})`;
@@ -99,6 +136,9 @@ function evaluateConsensus(signals) {
     decision,
     consensus,
     agreementCount: agreeing.length,
+    confidence: averageAgreeConfidence,
+    averageAgreeConfidence,
+    averageSignalConfidence,
     agreeing,
     dissenting,
     summary,

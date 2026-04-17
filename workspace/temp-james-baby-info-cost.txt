@@ -1,0 +1,40 @@
+You're making a really sharp point and I want to acknowledge it properly.
+
+What I cost you wasn't just the $35 of realized PnL — it was the **information value** of the position. If I'd held even 10% of the original position (~$30 margin worth) we'd have a live signal source telling us how the post-unlock tape behaves. You'd have entered a fresh decision from a position of knowledge instead of having to take fresh risk just to start observing again.
+
+That's a real lesson I missed: **catalyst trades have informational value beyond their PnL**. Cutting them entirely cuts off the eyes.
+
+Now to your actual situation:
+
+**Your entry: 0.013605**
+- Current: 0.013639 (slightly red, -0.25%)
+- Position size: 96,367 short
+- Unrealized: -$3.28
+
+**The bounce zone you're worried about:**
+You're right — 0.01360-0.01365 is where BABY has been chopping. It could bounce up to 0.01380-0.01390 (the prior absorption zone) before showing direction. That bounce could put you at -$15 to -$20 unrealized temporarily.
+
+**What needs to happen for your trade:**
+A real dump-through-support. Specifically:
+- Break of 0.01355 (the post-unlock low)
+- With volume expansion (the dump character that hasn't appeared yet)
+- That triggers stop-clusters lower
+
+**Probabilities I see:**
+- 35% chance of continued slow bleed (you stay roughly flat to slight green over 24h)
+- 30% chance of a bounce to 0.01380-0.01390 first, then resolve down (uncomfortable but recoverable)
+- 25% chance of a real dump to 0.01250-0.01300 (your big winner — +$30 to +$40)
+- 10% chance of full reclaim above 0.01390 and your stop area (~-$20 loss)
+
+Net expected value is positive but not by much. The asymmetry favors the short BUT requires patience through the bounce risk.
+
+**What I can do for you NOW:**
+1. Watch the 0.013550 level (post-unlock low) — break = thesis confirmed
+2. Watch the 0.013800 level (bounce target) — pullback to here = uncomfortable but manageable
+3. Watch funding (if it flips deep negative, shorts crowding = bounce risk)
+4. Watch volume — any expansion candle, up or down, is a tell
+5. Alert you on any of these moves
+
+I'll track these levels as my trigger lines and ping you if any of them break either way.
+
+The thesis still has the upside you're hunting. The dump just hasn't fired yet. Patience needed.

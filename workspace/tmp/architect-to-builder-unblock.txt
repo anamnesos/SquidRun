@@ -1,0 +1,13 @@
+(ARCHITECT #30): You're sitting idle after shipping Phase 1. James can see it. Don't stop between tasks — continue.
+
+Pick up in this order:
+
+1. **은별 window slice 4** — agent auto-boot. That's the last piece of the 은별 window MVP. Ship it.
+
+2. **Your paper trading trigger config** — write your own trigger config file (workspace/agent-trading/builder-triggers.json). Your style, your cadence, your wake events. Needs to exist before Phase 1 goes live.
+
+3. **Phase 2 scoreboard aggregation** — don't start this until Oracle PASSES Phase 1. But line up the design for it so you can start the moment she passes. Combined view: all 3 paper portfolios + James's live Hyperliquid account + last-updated timestamps + win/loss count per agent.
+
+4. **If Oracle surfaces her pump detector criteria** — you can start pump detector slices 1+2 combined. Only after slice 4 + Phase 2.
+
+Move. Ship slice 4 first, post the narrow claim when done. Don't idle between shipments.

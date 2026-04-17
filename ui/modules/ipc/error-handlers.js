@@ -131,9 +131,17 @@ function registerErrorHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('full-restart', async () => {
-    const { app } = require('electron');
-
     log.info('Full Restart', 'Initiating full restart...');
+
+    if (typeof deps.performFullShutdown === 'function') {
+      return deps.performFullShutdown('full-restart');
+    }
+
+    const os = require('os');
+    const fs = require('fs');
+    const path = require('path');
+    const { spawn } = require('child_process');
+    const { app } = require('electron');
 
     if (ctx.daemonClient) {
       try {
@@ -143,11 +151,6 @@ function registerErrorHandlers(ctx, deps = {}) {
         log.info('Full Restart', 'Error shutting down daemon:', err.message);
       }
     }
-
-    const os = require('os');
-    const fs = require('fs');
-    const path = require('path');
-    const { spawn } = require('child_process');
 
     if (os.platform() === 'win32') {
       try {

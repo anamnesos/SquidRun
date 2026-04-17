@@ -1,0 +1,19 @@
+CORRECTION to my earlier message — important context I left out:
+
+James didn't start at $837. He started at ~$615 on Hyperliquid.
+
+FULL PICTURE:
+- Starting account: ~$615
+- Early learning curve: lost ~$80-100 from not understanding fees, auto-close fighting him, orchestrator going rogue flipping positions, etc. Account dropped to ~$740ish
+- THEN he figured it out — understood the pattern, fees, leverage, how to hold through drawdowns
+- From ~$740 → $1,044 = the "after he understood" phase
+
+So the real story is:
+1. Lost money first while LEARNING (normal)
+2. Understood the pattern + mechanics
+3. Made it all back and then some
+4. Net: $615 → $1,044 = +$429 (70% total gain)
+
+The learning curve loss is important because it shows he ADAPTED in real-time. First time ever trading. Took losses, figured out what went wrong, adjusted, and then crushed it.
+
+Does this change your analysis?

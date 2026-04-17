@@ -192,12 +192,19 @@ function buildBrokerCapabilityPayload({ account = null, assets = new Map(), phas
 function validateCrisisSignalCapability(signal = {}, brokerCapabilities = null, macroRisk = null) {
   const direction = normalizeSignalDirection(signal.direction);
   const ticker = toTicker(signal.ticker);
+  const assetClass = toText(signal.assetClass || signal.asset_class).toLowerCase();
+  const broker = toText(signal.broker || signal.venue || signal.exchange).toLowerCase();
   const strategyMode = toText(macroRisk?.strategyMode || strategyModeForRegime(macroRisk?.regime), STRATEGY_MODES.NORMAL).toLowerCase();
   if (strategyMode !== STRATEGY_MODES.CRISIS) {
     return { ok: true, reason: 'strategy_not_crisis' };
   }
   if (direction === 'HOLD') {
     return { ok: true, reason: 'hold_allowed' };
+  }
+  const isHyperliquidCrypto = (assetClass === 'crypto' || ticker.endsWith('/USD'))
+    && (broker === '' || broker === 'hyperliquid');
+  if (isHyperliquidCrypto && (direction === 'SELL' || direction === 'SHORT')) {
+    return { ok: true, reason: 'hyperliquid_crypto_short_allowed' };
   }
 
   const crisisUniverse = getCrisisUniverse(macroRisk);

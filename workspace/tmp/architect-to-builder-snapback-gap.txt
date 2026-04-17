@@ -1,0 +1,7 @@
+(ARCHITECT #5): Oracle reviewed your snap-back cut. Narrow FAIL — one real gap left:
+
+Final-exit reconciliation now keys off `replacementStopOrderId` (good — right direction). But the code records only the FIRST matching fill for that stop order instead of AGGREGATING all matching fills. So a runner stop that fills in multiple partials will write fake-low `closedSize` / `realizedPnl` to the journal.
+
+Fix: aggregate all fills for the replacement stop order when computing closedSize and realizedPnl. Add a test that exercises the multi-partial stop-fill case.
+
+Oracle won't call the snap-back slice clean until this aggregation hole is fixed + tested. Ship the aggregation fix, send her the narrow claim, she'll rerun.

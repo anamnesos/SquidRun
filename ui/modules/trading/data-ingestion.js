@@ -401,7 +401,7 @@ async function getWatchlistSnapshots(options = {}) {
   return mergeSnapshotMaps(snapshots, entries.map((entry) => entry.ticker));
 }
 
-async function getLatestBars(options = {}) {
+async function getAlpacaLatestBars(options = {}) {
   const client = createAlpacaClient(options);
   const normalized = new Map();
   const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
@@ -430,7 +430,7 @@ async function getLatestBars(options = {}) {
   return normalized;
 }
 
-async function getHistoricalBars(options = {}) {
+async function getAlpacaHistoricalBars(options = {}) {
   const client = createAlpacaClient(options);
   const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
     ? options.watchlistEntries
@@ -468,6 +468,68 @@ async function getHistoricalBars(options = {}) {
     if (!merged.has(symbol)) merged.set(symbol, []);
   }
 
+  return merged;
+}
+
+async function getLatestBars(options = {}) {
+  const { createBroker } = require('./broker-adapter');
+  const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
+    ? options.watchlistEntries
+    : resolveWatchlistEntries(options.symbols, options);
+  const grouped = groupEntriesByBroker(entries);
+  const barCollections = await Promise.all(Array.from(grouped.entries()).map(async ([brokerType, brokerEntries]) => {
+    const broker = createBroker(brokerType);
+    if (typeof broker.getLatestBars === 'function') {
+      return broker.getLatestBars({
+        ...options,
+        broker: brokerType,
+        symbols: brokerEntries.map((entry) => entry.ticker),
+        watchlistEntries: brokerEntries,
+      });
+    }
+    return new Map(normalizeSymbols(brokerEntries.map((entry) => entry.ticker)).map((symbol) => [symbol, null]));
+  }));
+
+  const merged = new Map();
+  for (const collection of barCollections) {
+    for (const [symbol, bar] of collection.entries()) {
+      merged.set(symbol, bar);
+    }
+  }
+  for (const symbol of normalizeSymbols(entries.map((entry) => entry.ticker))) {
+    if (!merged.has(symbol)) merged.set(symbol, null);
+  }
+  return merged;
+}
+
+async function getHistoricalBars(options = {}) {
+  const { createBroker } = require('./broker-adapter');
+  const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
+    ? options.watchlistEntries
+    : resolveWatchlistEntries(options.symbols, options);
+  const grouped = groupEntriesByBroker(entries);
+  const barCollections = await Promise.all(Array.from(grouped.entries()).map(async ([brokerType, brokerEntries]) => {
+    const broker = createBroker(brokerType);
+    if (typeof broker.getHistoricalBars === 'function') {
+      return broker.getHistoricalBars({
+        ...options,
+        broker: brokerType,
+        symbols: brokerEntries.map((entry) => entry.ticker),
+        watchlistEntries: brokerEntries,
+      });
+    }
+    return new Map(normalizeSymbols(brokerEntries.map((entry) => entry.ticker)).map((symbol) => [symbol, []]));
+  }));
+
+  const merged = new Map();
+  for (const collection of barCollections) {
+    for (const [symbol, bars] of collection.entries()) {
+      merged.set(symbol, bars);
+    }
+  }
+  for (const symbol of normalizeSymbols(entries.map((entry) => entry.ticker))) {
+    if (!merged.has(symbol)) merged.set(symbol, []);
+  }
   return merged;
 }
 
@@ -681,6 +743,8 @@ module.exports = {
   resolveAlpacaCredentials,
   createAlpacaClient,
   getAlpacaWatchlistSnapshots,
+  getAlpacaLatestBars,
+  getAlpacaHistoricalBars,
   getAlpacaNews,
   normalizeSymbols,
   normalizeSnapshot,

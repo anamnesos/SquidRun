@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775777416879-loktu6",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BLUR/USD",
+      "direction": "SELL",
+      "confidence": 0.98,
+      "reasoning": "This live trade is broken again. BLUR has gone from a peak gain of about $1.21 to a current loss near $-1.18, retaining none of peak P&L, and the request flags it urgent. There is no management case for staying in it."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC is liquid and stable, but the board remains no-trade and the active veto argues against opening fresh exposure. Neutral is still the right stance."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "ETH is slightly constructive but still low-edge, with positive funding and a no-trade board. Not enough to matter under a veto regime."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "SOL is modestly constructive, but positive funding and a no-trade board keep it below action threshold."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "MON has become momentum-positive and no longer offers a clean bearish asymmetry. It does not stand out enough on either side."
+    },
+    {
+      "ticker": "DYM/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "DYM is one of the better secondary longs with mildly supportive negative funding, but the market is still thin and the active veto keeps it in watch-only status."
+    },
+    {
+      "ticker": "ARB/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "ARB has okay liquidity and a mild bullish lean, but positive funding and a mixed board keep it below trade threshold."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "DASH has strong momentum and decent volume, but the board remains neutral and funding is positive. Watchlist only."
+    },
+    {
+      "ticker": "GRASS/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "GRASS has strength, but the board is still neutral and spread quality is not great. It is not a high-conviction setup."
+    },
+    {
+      "ticker": "FARTCOIN/USD",
+      "direction": "SELL",
+      "confidence": 0.60,
+      "reasoning": "FARTCOIN is the cleaner bearish lean on the board with a sharp negative 24h move and a bearish mechanical profile. It is volatile, so conviction stays moderate, but short is still better than long here."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "HOLD",
+      "confidence": 0.61,
+      "reasoning": "TNSR still screens as a strong squeeze-continuation long mechanically, but the live geopolitical veto is a direct reason not to open fresh high-beta exposure. Strong watchlist long, not an active trade."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+BABY unlock T+5 min report:
+
+WHAT HAPPENED:
+• Unlock printed at 03:00 PDT (10:00 UTC) as scheduled
+• BABY drifting lower but NO dramatic dump — price went from 0.01371 (pre-unlock) to 0.013687 (now). Slow bleed, not a capitulation.
+• Funding flipped slightly negative: +0.125 → -0.106 bps. Small crowding signal (new shorts joining) but not extreme.
+• OI up 0.35% — tiny pile-in, nothing alarming
+• Volume still thin ($175k/24h) — the unlocked tokens may not have hit exchanges yet, or they're being dripped out via OTC
+
+OUR POSITIONS:
+• BABY +3.65 ✓ (27,208 short, blended 0.013816, best of day)
+• LIT -2.37 (small drift, unchanged concern)
+• MON +1.36 ✓ (your position flipped green again)
+• Total unrealized: +2.64
+• Account: 979.92
+
+DECISION: NO tranche 3 add. This matches Oracle's "skip if BABY just dribbles lower in thin book" scenario exactly — no range expansion, no sell impulse. Reserve ($125 margin) stays on the bench. Flipping to harvest mode on existing position.
+
+WATCHING NEXT: If BABY breaks down with volume expansion in the next 15-25 min, I may still add late. If it reclaims back toward 0.01382+, I start taking profit on a portion.
+
+Account trajectory: Started session ~1500, current 980. Tonight's damage was the MON short eating -500. BABY is clawing some back.

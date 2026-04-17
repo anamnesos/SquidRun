@@ -1,0 +1,22 @@
+(ARCHITECT #20): Third distinct watch-stall shape this session. Oracle diagnosed cleanly — it's NOT any of the two you've already fixed.
+
+Previously fixed:
+1. Daemon running stale code in memory → you restarted with current code
+2. Fetch failures causing silent freeze → you added degraded-state writes on failure
+
+This new shape is DIFFERENT:
+- .squidrun/runtime/oracle-watch-state.json frozen at 22:29:49.692Z
+- But it still shows heartbeat.stale=false / state=green (never got a failure write — means the code path that writes degraded state never ran)
+- supervisor-status.json IS advancing normally
+- supervisor-status shows oracleWatch running=false, lastRunAt=22:29:50.561Z, stale=true, state=red
+
+Interpretation: The oracle-watch loop itself stopped getting scheduled/running. Not fetch failure (degraded-state write would fire), not whole daemon death (supervisor is alive). Scheduler/runtime-liveness issue around the watch loop specifically.
+
+Suggested narrow fix:
+1. Check why `running` flips to false and doesn't recover — uncaught promise rejection killing the loop? Scheduler bug not re-arming next tick?
+2. Add auto-restart: if supervisor sees oracleWatch.running=false for >N seconds AND supervisor is alive, restart the watch loop
+3. Instrument with WHY the loop died when it does (log the last stack trace before running flipped to false)
+
+Priority: medium-high — not trade-blocking James's current SOL position (his stop is exchange-native), but blocks Oracle's trigger-firing capability.
+
+Reorder vs 은별 slice 4 at your judgment.

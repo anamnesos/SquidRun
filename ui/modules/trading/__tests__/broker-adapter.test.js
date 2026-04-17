@@ -12,6 +12,8 @@ jest.mock('../ibkr-client', () => ({
 
 jest.mock('../data-ingestion', () => ({
   getAlpacaWatchlistSnapshots: jest.fn().mockResolvedValue(new Map([['AAPL', { symbol: 'AAPL' }]])),
+  getAlpacaLatestBars: jest.fn().mockResolvedValue(new Map([['AAPL', { symbol: 'AAPL' }]])),
+  getAlpacaHistoricalBars: jest.fn().mockResolvedValue(new Map([['AAPL', [{ symbol: 'AAPL' }]]])),
   getAlpacaNews: jest.fn().mockResolvedValue([{ id: 'alpaca-news' }]),
 }));
 
@@ -19,10 +21,20 @@ jest.mock('../executor', () => ({
   getAlpacaAccountSnapshot: jest.fn().mockResolvedValue({ id: 'alpaca-account' }),
   getAlpacaOpenPositions: jest.fn().mockResolvedValue([{ ticker: 'AAPL', broker: 'alpaca' }]),
   submitAlpacaOrder: jest.fn().mockResolvedValue({ ok: true, order: { id: 'alpaca-1' } }),
+  submitHyperliquidOrder: jest.fn().mockResolvedValue({ ok: true, status: 'accepted', order: { id: 'hl-1' } }),
+}));
+
+jest.mock('../hyperliquid-client', () => ({
+  getAccountSnapshot: jest.fn().mockResolvedValue({ id: 'hyperliquid-account' }),
+  getOpenPositions: jest.fn().mockResolvedValue([{ ticker: 'BTC/USD', broker: 'hyperliquid' }]),
+  getSnapshots: jest.fn().mockResolvedValue(new Map([['BTC/USD', { symbol: 'BTC/USD' }]])),
+  getLatestBars: jest.fn().mockResolvedValue(new Map([['BTC/USD', { symbol: 'BTC/USD' }]])),
+  getHistoricalBars: jest.fn().mockResolvedValue(new Map([['BTC/USD', [{ symbol: 'BTC/USD' }]]])),
 }));
 
 const dataIngestion = require('../data-ingestion');
 const executor = require('../executor');
+const hyperliquidClient = require('../hyperliquid-client');
 const ibkrClient = require('../ibkr-client');
 const { createBroker } = require('../broker-adapter');
 
@@ -67,6 +79,28 @@ describe('broker-adapter', () => {
     expect(ibkrClient.submitOrder).toHaveBeenCalled();
     expect(ibkrClient.getSnapshots).toHaveBeenCalled();
     expect(ibkrClient.getNews).toHaveBeenCalled();
+  });
+
+  test('routes crypto market data and account reads to Hyperliquid', async () => {
+    const broker = createBroker('hyperliquid');
+
+    expect(broker.type).toBe('hyperliquid');
+    await broker.getAccount();
+    await broker.getPositions();
+    await broker.getSnapshots({ symbols: ['BTC/USD'] });
+    await broker.getLatestBars({ symbols: ['BTC/USD'] });
+    await broker.getHistoricalBars({ symbols: ['BTC/USD'] });
+    await broker.submitOrder({ ticker: 'BTC/USD', direction: 'BUY', shares: 0.01 }, { hyperliquidScalpModeArmed: true });
+
+    expect(hyperliquidClient.getAccountSnapshot).toHaveBeenCalled();
+    expect(hyperliquidClient.getOpenPositions).toHaveBeenCalled();
+    expect(hyperliquidClient.getSnapshots).toHaveBeenCalled();
+    expect(hyperliquidClient.getLatestBars).toHaveBeenCalled();
+    expect(hyperliquidClient.getHistoricalBars).toHaveBeenCalled();
+    expect(executor.submitHyperliquidOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ ticker: 'BTC/USD', direction: 'BUY', shares: 0.01 }),
+      expect.objectContaining({ hyperliquidScalpModeArmed: true })
+    );
   });
 
   test('throws on unsupported broker types', () => {

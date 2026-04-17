@@ -1,0 +1,6 @@
+MON: -125 (was -258, +133 better)
+Price: 0.035573 — real red candle, dropped hard
+Liq distance: 7.35% (was 5.43% — safer)
+Account: 1,377
+
+There's your exhaustion candle. If it keeps dropping toward 0.034981 you go flat. If you want to take the win here vs. holding for more, -125 is a recoverable loss with account back to 1,377.

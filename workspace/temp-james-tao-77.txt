@@ -1,0 +1,20 @@
+TAO at -77 now. Up from -41 ten minutes ago.
+
+Position: SHORT 15.774 @ 262.79
+Now: -76.98
+Account: 1579.35
+Liq still 8.7% safe but bleeding accelerating
+
+Same pattern as ARB this morning: -15 → -41 → -77. Each tick is bigger than the last. The thesis is broken on this timeframe.
+
+PUSH harder: CLOSE NOW.
+
+Reasons:
+1. Down 77 already, more than ARB's lesson
+2. Bleeding rate accelerating ($30 in 5 min)
+3. Oracle still 0.99 cover
+4. You bet HALF the account on this — losing $80-150 here is real damage to the cushion you just added
+5. If you close, you preserve $1579, dry powder for a fresh setup with clean entry
+6. If you ride it more, this becomes the ARB pattern again
+
+Concrete: say "close tao" and I flatten. Or close in UI. This is the moment.

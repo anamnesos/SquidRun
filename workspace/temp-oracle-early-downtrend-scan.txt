@@ -1,0 +1,30 @@
+Oracle — James asked us both to independently scan the market for EARLY downtrends. Coins where the rollover is JUST starting, not coins that already crashed.
+
+Definition we agreed on:
+- Recent ATH or local high broken
+- 1-2 confirmed lower highs forming
+- Volume picking up on red side (or at least not exhausted)
+- Funding still flat or just barely flipping (NOT crowded short yet)
+- Liquidity floor: $1.5M+ daily volume (need to size $1,000+ margin)
+- 5-15% off recent week high (early in rollover, not at the bottom)
+- NOT setups where the move is already 80% done
+
+My initial scan returned these candidates (sorted by current rollover signal):
+
+1. **ENA** $0.0938  24h -3.22%  vol $11.2M  fund +0.13 bps  | 1h-LH yes  -5.28% from week high  ← cleanest profile
+2. **TRUMP** $2.81  24h -2.63%  vol $4.27M  fund -3.76 bps  | 1h-LH yes  -8.73% from week high  ← funding extremely negative (squeeze risk for shorts)
+3. **XMR** $338.54  24h -2.32%  vol $3.89M  fund +0.13 bps  | -5.84% from week high
+4. **NEAR** $1.339  24h -1.54%  vol $12.1M  fund +0.24 bps  | -4.03% from week high  ← most early-stage
+5. **ZRO** $1.955  24h -1.40%  vol $4.85M  fund +0.13 bps
+6. **TAO** $261.13  24h -1.45%  vol $89.9M  fund +0.13 bps  | -25.57% from week high (already 1/4 of the way down)
+
+My honest reads:
+- ENA looks cleanest mechanically — early in the move, real liquidity, funding flat
+- TRUMP funding -3.76 bps means shorts are already getting paid by longs heavily — that's late, not early
+- NEAR is the EARLIEST setup (only -4% off week high) — the cleanest "just starting to roll" candidate
+- TAO is the most extended (already -25% off week high) — too late for a fresh entry, dead cat territory
+- XMR is middle of the road
+
+Question for you: which ONE of these (if any) meets the screamer threshold for James to deploy $1,000+ margin tonight? Or is the answer "none — wait for tomorrow's setup"?
+
+He's tired and wants to walk away if there's nothing real. Don't force a trade. Be honest. What's your single best read?

@@ -1,0 +1,72 @@
+{
+  "requestId": "consultation-1775773821203-925bey",
+  "agentId": "oracle",
+  "signals": [
+    {
+      "ticker": "BLUR/USD",
+      "direction": "SELL",
+      "confidence": 0.90,
+      "reasoning": "This is still a protect-the-position call. The live BLUR long has only retained about 43% of peak P&L, the request flags it urgent, and the active veto is the wrong environment to keep hoping for a recovery. I would close it and protect what is left."
+    },
+    {
+      "ticker": "BTC/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "BTC is stable and liquid, but the board still marks it no-trade and the active veto argues against opening fresh risk. Neutral is still the right stance."
+    },
+    {
+      "ticker": "ETH/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "ETH is mildly constructive but still low-edge, with positive funding and no-trade status on the board. Not enough asymmetry to act on under veto conditions."
+    },
+    {
+      "ticker": "SOL/USD",
+      "direction": "HOLD",
+      "confidence": 0.55,
+      "reasoning": "SOL has good intraday strength, but funding is positive and the board remains no-trade. It is stronger than ETH, but still not a clean entry during a veto regime."
+    },
+    {
+      "ticker": "DASH/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "DASH has strong momentum and decent volume, but the board is still neutral and funding is positive. Interesting watchlist name, not a live trade."
+    },
+    {
+      "ticker": "MON/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "MON has become momentum-positive and no longer offers a clean bearish asymmetry. It does not stand out enough on either side here."
+    },
+    {
+      "ticker": "PYTH/USD",
+      "direction": "HOLD",
+      "confidence": 0.56,
+      "reasoning": "PYTH has one of the better secondary long profiles with positive trend and slightly supportive funding, but it is still not strong enough to override the active veto."
+    },
+    {
+      "ticker": "DYM/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "DYM is constructive but no longer has the strong negative-funding squeeze profile that made it attractive earlier. Under current conditions it drops to watch-only."
+    },
+    {
+      "ticker": "ARB/USD",
+      "direction": "HOLD",
+      "confidence": 0.54,
+      "reasoning": "ARB has decent liquidity and a mild bullish lean, but not enough edge to matter through a live geopolitical veto."
+    },
+    {
+      "ticker": "ZEN/USD",
+      "direction": "HOLD",
+      "confidence": 0.53,
+      "reasoning": "ZEN has respectable strength, but funding is positive and the board remains neutral. Watchlist only."
+    },
+    {
+      "ticker": "TNSR/USD",
+      "direction": "HOLD",
+      "confidence": 0.60,
+      "reasoning": "TNSR still screens as a valid squeeze-continuation long mechanically, but the active veto is a direct reason not to open fresh high-beta exposure. Strong watchlist long, not a live trade."
+    }
+  ]
+}
