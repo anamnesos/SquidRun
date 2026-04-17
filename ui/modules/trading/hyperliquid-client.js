@@ -2,7 +2,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { HttpTransport, InfoClient } = require('@nktkas/hyperliquid');
 const { resolveCoordPath } = require('../../config');
 
 const DEFAULT_REQUEST_POOL_TTL_MS = Math.max(
@@ -25,6 +24,7 @@ const REQUEST_POOL_STATE = {
   memory: new Map(),
   inflight: new Map(),
 };
+let HYPERLIQUID_SDK_PROMISE = null;
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -74,8 +74,16 @@ function normalizeCoinSymbol(ticker) {
   return normalizeCoinKey(ticker);
 }
 
-function createInfoClient(options = {}) {
+async function loadHyperliquidSdk() {
+  if (!HYPERLIQUID_SDK_PROMISE) {
+    HYPERLIQUID_SDK_PROMISE = import('@nktkas/hyperliquid');
+  }
+  return HYPERLIQUID_SDK_PROMISE;
+}
+
+async function createInfoClient(options = {}) {
   if (options.infoClient) return options.infoClient;
+  const { HttpTransport, InfoClient } = await loadHyperliquidSdk();
   const transport = options.transport || new HttpTransport();
   return new InfoClient({ transport });
 }
@@ -285,7 +293,7 @@ async function postInfoRequest(payload = {}, options = {}) {
 }
 
 async function getAllMids(options = {}) {
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.allMids === 'function') {
     return getPooledRequest('info:allMids', async () => {
       const payload = await client.allMids();
@@ -305,7 +313,7 @@ async function getAllMids(options = {}) {
 }
 
 async function getMetaAndAssetCtxs(options = {}) {
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.metaAndAssetCtxs === 'function') {
     return getPooledRequest('info:metaAndAssetCtxs', async () => {
       const payload = await client.metaAndAssetCtxs();
@@ -336,7 +344,7 @@ async function getUserFees(options = {}) {
   if (!user) {
     throw new Error('Hyperliquid user address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
   }
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.userFees === 'function') {
     return client.userFees({ user });
   }
@@ -352,7 +360,7 @@ async function getPerpDexs(options = {}) {
   if (options.perpDexs) {
     return Array.isArray(options.perpDexs) ? options.perpDexs : [];
   }
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.perpDexs === 'function') {
     return getPooledRequest('info:perpDexs', () => client.perpDexs(), options);
   }
@@ -584,7 +592,7 @@ function normalizeUserVaultEquitiesPayload(user, payload = [], asOf = new Date()
 
 async function getSnapshots(options = {}) {
   const entries = resolveWatchlistEntries(options);
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const mids = await getAllMids(options);
   const metaAndAssetCtxs = await getMetaAndAssetCtxs(options).catch(() => null);
   const checkedAt = new Date().toISOString();
@@ -606,7 +614,7 @@ async function getSnapshots(options = {}) {
 }
 
 async function getHistoricalBars(options = {}) {
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const entries = resolveWatchlistEntries(options);
   const metaAndAssetCtxs = await getMetaAndAssetCtxs(options).catch(() => null);
   const interval = resolveCandleInterval(options.timeframe || '1Day');
@@ -697,7 +705,7 @@ async function getUniverseMarketData(options = {}) {
 
 async function getPredictedFundings(options = {}) {
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const payload = options.predictedFundings
     || (client && typeof client.predictedFundings === 'function'
       ? await getPooledRequest('info:predictedFundings', () => client.predictedFundings(), options).catch(() => null)
@@ -717,7 +725,7 @@ async function getL2Book(options = {}) {
     throw new Error('Hyperliquid l2Book request requires coin or ticker.');
   }
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const params = {
     coin,
     ...(options.nSigFigs != null ? { nSigFigs: Number(options.nSigFigs) } : {}),
@@ -737,7 +745,7 @@ async function getVaultDetails(options = {}) {
     throw new Error('Hyperliquid vaultDetails request requires vaultAddress.');
   }
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const params = {
     vaultAddress,
     ...(toText(options.user) ? { user: toText(options.user) } : {}),
@@ -756,7 +764,7 @@ async function getUserVaultEquities(options = {}) {
     throw new Error('Hyperliquid userVaultEquities request requires user or walletAddress.');
   }
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const params = { user };
   const payload = options.userVaultEquities
     || (client && typeof client.userVaultEquities === 'function'
@@ -782,7 +790,7 @@ async function getClearinghouseState(options = {}) {
   if (!walletAddress) {
     throw new Error('Hyperliquid wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
   }
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const dex = normalizeDexName(options.dex, '');
   return getPooledRequest(
     `info:clearinghouseState:${walletAddress.toLowerCase()}:${dex || 'main'}`,
@@ -893,6 +901,7 @@ async function getOpenPositions(options = {}) {
 function resetRequestPoolState() {
   REQUEST_POOL_STATE.memory.clear();
   REQUEST_POOL_STATE.inflight.clear();
+  HYPERLIQUID_SDK_PROMISE = null;
 }
 
 module.exports = {

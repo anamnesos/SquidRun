@@ -138,7 +138,7 @@ function normalizeBar(ticker, candle = {}) {
 async function fetchHourlyBarsForTicker(ticker, startTime, endTime, options = {}) {
   const coin = hyperliquidClient.normalizeCoinSymbol(ticker);
   if (!coin) return [];
-  const client = hyperliquidClient.createInfoClient(options);
+  const client = await hyperliquidClient.createInfoClient(options);
   const candles = await withRateLimitRetry(() => client.candleSnapshot({
     coin,
     interval: '1h',
