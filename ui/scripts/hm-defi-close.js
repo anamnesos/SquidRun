@@ -269,7 +269,7 @@ async function main(argv = parseCliArgs()) {
       console.log(formatHelpText());
       return { ok: true, help: true };
     }
-    const result = await module.exports.closeHyperliquidPositions(options);
+    const result = await closeHyperliquidPositions(options);
     return result;
   } catch (e) {
     console.error('Fatal:', e.message);
