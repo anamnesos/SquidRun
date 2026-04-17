@@ -740,7 +740,7 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push(`- Feature Enabled: ${localModels.enabled === true ? 'yes' : 'no'}`);
   lines.push(`- Ollama: ${ollama.running === true ? 'running' : 'unavailable'}${ollama.error ? ` (${ollama.error})` : ''}`);
   lines.push(`- Selected Model: ${ollama.selectedModel || 'none'}`);
-  lines.push(`- Sleep Extraction: path=${sleepExtraction.path || 'fallback'}, enabled=${sleepExtraction.enabled === true ? 'yes' : 'no'}, available=${sleepExtraction.available === true ? 'yes' : 'no'}`);
+  lines.push(`- Sleep Extraction: path=${sleepExtraction.path || 'fallback'}, enabled=${sleepExtraction.enabled === true ? 'yes' : 'no'}, available=${sleepExtraction.available === true ? 'yes' : 'no'}${sleepExtraction.model ? `, model=${sleepExtraction.model}` : ''}`);
 
   return `${lines.join('\n')}\n`;
 }

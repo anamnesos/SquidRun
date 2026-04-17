@@ -676,6 +676,34 @@ describe('daemon-handlers.js module', () => {
         );
       });
 
+      test('forwards inject metadata to terminal.sendToPane options', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'internal msg',
+          meta: {
+            visibility: 'internal',
+            source: 'pane-output-filter',
+          },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'internal msg',
+          expect.objectContaining({
+            meta: expect.objectContaining({
+              visibility: 'internal',
+              source: 'pane-output-filter',
+            }),
+          })
+        );
+      });
+
       test('defers startupInjection delivery until startup readiness gate clears', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {
@@ -922,6 +950,38 @@ describe('daemon-handlers.js module', () => {
         }
 
         expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBeLessThanOrEqual(200);
+      });
+
+      test('refreshes daemon runtime config during a running session after the TTL expires', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        invokeBridge
+          .mockResolvedValueOnce({
+            throttleQueueMaxItems: 200,
+            throttleQueueMaxBytes: 512 * 1024,
+          })
+          .mockResolvedValueOnce({
+            throttleQueueMaxItems: 321,
+            throttleQueueMaxBytes: 654321,
+          });
+        terminal.sendToPane.mockImplementation(() => {
+          // keep pane throttled so queued depth is inspectable
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        const getRuntimeConfigCalls = () => invokeBridge.mock.calls
+          .filter(([channel]) => channel === 'get-daemon-runtime-config');
+
+        const initialCallCount = getRuntimeConfigCalls().length;
+        expect(initialCallCount).toBeGreaterThanOrEqual(1);
+
+        jest.advanceTimersByTime(2500);
+        injectHandler({}, { panes: ['1'], message: 'refresh-check' });
+
+        expect(getRuntimeConfigCalls().length).toBeGreaterThan(initialCallCount);
+        expect(getRuntimeConfigCalls().at(-1)).toEqual(['get-daemon-runtime-config']);
       });
     });
   });

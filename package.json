@@ -1,0 +1,29 @@
+{
+  "dependencies": {
+    "@nktkas/[private-live-ops]": "^0.32.1",
+    "viem": "^2.47.5"
+  },
+  "name": "squidrun",
+  "version": "1.0.0",
+  "description": "> **Alpha Warning:** This is an early technical preview built for developers and tinkerers. It requires comfort with terminal environments, reading logs, and configuring `.env` variables. Expect sharp edges, network topology quirks, and minor setup friction.",
+  "main": "telegram-poller.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anamnesos/SquidRun.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/anamnesos/SquidRun/issues"
+  },
+  "homepage": "https://github.com/anamnesos/SquidRun#readme"
+}

@@ -11,6 +11,7 @@ function createRendererModules() {
     utils: require('../utils'),
     commandPalette: require('../command-palette'),
     statusStrip: require('../status-strip'),
+    windowTeamBootstrap: require('../window-team-bootstrap'),
     modelSelector: require('../model-selector'),
     config: require('../../config'),
     bus: require('../event-bus'),

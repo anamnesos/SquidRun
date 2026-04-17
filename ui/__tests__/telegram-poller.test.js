@@ -15,6 +15,7 @@ jest.mock('../modules/logger', () => ({
 }));
 
 const https = require('https');
+const log = require('../modules/logger');
 const telegramPoller = require('../modules/telegram-poller');
 
 function mockTelegramUpdates(updates, statusCode = 200) {
@@ -238,6 +239,14 @@ describe('telegram-poller', () => {
       expect(fs.readFileSync(metadata.media.localPath)).toEqual(photoBytes);
       expect(fs.existsSync(latestPath)).toBe(true);
       expect(fs.readFileSync(latestPath)).toEqual(photoBytes);
+      expect(log.info).toHaveBeenCalledWith(
+        'Telegram',
+        expect.stringContaining('Inbound Telegram photo detected')
+      );
+      expect(log.info).toHaveBeenCalledWith(
+        'Telegram',
+        expect.stringContaining('Dispatching inbound Telegram update 21 to callback')
+      );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -281,5 +290,11 @@ describe('telegram-poller', () => {
         messageId: 77,
       })
     );
+  });
+
+  test('buildInboundDisplayText falls back to photo text for captionless media', () => {
+    expect(telegramPoller._internals.buildInboundDisplayText({
+      photo: [{ file_id: 'photo-1' }],
+    })).toBe('[Photo received]');
   });
 });

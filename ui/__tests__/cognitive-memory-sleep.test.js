@@ -3,9 +3,19 @@ const os = require('os');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
+const { CognitiveMemoryApi } = require('../modules/cognitive-memory-api');
 const { CognitiveMemoryStore } = require('../modules/cognitive-memory-store');
 const { MemorySearchIndex } = require('../modules/memory-search');
-const { SleepConsolidator, runDbscan } = require('../modules/cognitive-memory-sleep');
+const { TeamMemoryStore } = require('../modules/team-memory/store');
+const { TeamMemoryClaims } = require('../modules/team-memory/claims');
+const {
+  SleepConsolidator,
+  applyTeamMemoryAntibodyOutcomes,
+  isSubstantiveTeamMemoryClaim,
+  looksLikeOperationalNoiseStatement,
+  runDbscan,
+  syncTeamMemoryContradictionsToAntibody,
+} = require('../modules/cognitive-memory-sleep');
 
 function makeVectorForText(text) {
   const vector = new Array(384).fill(0);
@@ -46,8 +56,12 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
   let coordDir;
   let evidenceDbPath;
   let sessionStatePath;
+  let teamMemoryDbPath;
   let memorySearchIndex;
   let cognitiveStore;
+  let teamMemoryStore;
+  let teamMemoryClaims;
+  let api;
   let consolidator;
 
   beforeEach(async () => {
@@ -56,6 +70,7 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
     coordDir = path.join(tempDir, '.squidrun', 'runtime');
     evidenceDbPath = path.join(coordDir, 'evidence-ledger.db');
     sessionStatePath = path.join(coordDir, 'session-state.json');
+    teamMemoryDbPath = path.join(coordDir, 'team-memory.sqlite');
     fs.mkdirSync(path.join(workspaceDir, 'knowledge'), { recursive: true });
     fs.mkdirSync(path.join(workspaceDir, 'handoffs'), { recursive: true });
     fs.mkdirSync(coordDir, { recursive: true });
@@ -117,11 +132,25 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
       dbPath: path.join(workspaceDir, 'memory', 'cognitive-memory.db'),
       pendingPrPath: path.join(tempDir, '.squidrun', 'memory', 'pending-pr.json'),
     });
+    teamMemoryStore = new TeamMemoryStore({ dbPath: teamMemoryDbPath });
+    const teamInit = teamMemoryStore.init();
+    expect(teamInit.ok).toBe(true);
+    teamMemoryClaims = new TeamMemoryClaims(teamMemoryStore.db);
+    api = new CognitiveMemoryApi({
+      cognitiveStore,
+      memorySearchIndex,
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+      },
+    });
 
     consolidator = new SleepConsolidator({
       cognitiveStore,
       memorySearchIndex,
       evidenceDbPath,
+      teamMemoryDbPath,
       sessionStatePath,
       extractor: async () => ([
         {
@@ -148,7 +177,9 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
   });
 
   afterEach(() => {
+    try { api?.close(); } catch {}
     try { consolidator?.close(); } catch {}
+    try { teamMemoryStore?.close(); } catch {}
     try { cognitiveStore?.close(); } catch {}
     try { memorySearchIndex?.close(); } catch {}
     if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
@@ -199,5 +230,164 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
     expect(snapshot.lastActivityMs).toBe(nowMs - 3600000);
     expect(snapshot.idleMs).toBe(3600000);
     expect(snapshot.isIdle).toBe(true);
+  });
+
+  test('filters operational contradiction noise down to substantive user or agent claims', () => {
+    expect(looksLikeOperationalNoiseStatement('delivered.verified')).toBe(true);
+    expect(looksLikeOperationalNoiseStatement('Session started for pane 3')).toBe(true);
+    expect(looksLikeOperationalNoiseStatement('The seller sent the package to Example Buyer as the user\'s test-buy alias.')).toBe(false);
+
+    expect(isSubstantiveTeamMemoryClaim({
+      owner: 'builder',
+      claimType: 'fact',
+      status: 'confirmed',
+      statement: 'The seller sent the package to Example Buyer as the user\'s test-buy alias.',
+    })).toBe(true);
+    expect(isSubstantiveTeamMemoryClaim({
+      owner: 'system',
+      claimType: 'fact',
+      status: 'confirmed',
+      statement: 'delivered.verified',
+    })).toBe(false);
+  });
+
+  test('queues only substantive team-memory contradictions into the antibody pipeline', async () => {
+    teamMemoryClaims.createClaim({
+      statement: 'delivered.verified',
+      owner: 'builder',
+      claimType: 'fact',
+      session: 'tm-noise',
+      scopes: ['delivery-status'],
+    });
+    teamMemoryClaims.createClaim({
+      statement: 'routed_unverified_timeout',
+      owner: 'builder',
+      claimType: 'negative',
+      session: 'tm-noise',
+      scopes: ['delivery-status'],
+    });
+    const noisySnapshot = teamMemoryClaims.createBeliefSnapshot({
+      agent: 'builder',
+      session: 'tm-noise',
+    });
+    expect(noisySnapshot.ok).toBe(true);
+
+    teamMemoryClaims.createClaim({
+      statement: 'the user said the shipping label, invoice, and Messenger thread are all the same Example Buyer test-buy trail.',
+      owner: 'builder',
+      claimType: 'fact',
+      session: 'tm-real',
+      scopes: ['korean-fraud.purchase-trail'],
+    });
+    teamMemoryClaims.createClaim({
+      statement: 'The shipping label belongs to a different buyer and not to the Example Buyer test buy.',
+      owner: 'builder',
+      claimType: 'negative',
+      session: 'tm-real',
+      scopes: ['korean-fraud.purchase-trail'],
+    });
+    const realSnapshot = teamMemoryClaims.createBeliefSnapshot({
+      agent: 'builder',
+      session: 'tm-real',
+    });
+    expect(realSnapshot.ok).toBe(true);
+
+    const summary = await syncTeamMemoryContradictionsToAntibody({
+      api,
+      teamMemoryStore,
+      teamMemoryClaims,
+      limit: 20,
+    });
+
+    expect(summary).toEqual(expect.objectContaining({
+      ok: true,
+      scanned: expect.any(Number),
+      filteredNoise: expect.any(Number),
+      queued: expect.any(Number),
+    }));
+    expect(summary.filteredNoise).toBeGreaterThanOrEqual(1);
+    expect(summary.queueIds).toHaveLength(1);
+
+    const queueItem = cognitiveStore.getAntibodyQueueItem(summary.queueIds[0]);
+    const payload = JSON.parse(queueItem.payload_json || '{}');
+    expect(queueItem.request_type).toBe('team_memory_contradiction');
+    expect(payload).toEqual(expect.objectContaining({
+      source: 'team-memory-contradiction',
+      contradictionId: expect.any(String),
+    }));
+  });
+
+  test('applies completed antibody coexistence outcomes back into team memory contradictions', async () => {
+    const baseline = teamMemoryClaims.createClaim({
+      statement: 'The LINK short thesis is still active and should remain open.',
+      owner: 'builder',
+      claimType: 'fact',
+      session: 'tm-resolution',
+      scopes: ['trading.position-link'],
+    }).claim;
+    const correction = teamMemoryClaims.createClaim({
+      statement: 'The LINK short thesis is no longer active and should be closed.',
+      owner: 'builder',
+      claimType: 'negative',
+      session: 'tm-resolution',
+      scopes: ['trading.position-link'],
+    }).claim;
+    const snapshot = teamMemoryClaims.createBeliefSnapshot({
+      agent: 'builder',
+      session: 'tm-resolution',
+    });
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.contradictions.inserted).toBeGreaterThanOrEqual(1);
+
+    const queued = await syncTeamMemoryContradictionsToAntibody({
+      api,
+      teamMemoryStore,
+      teamMemoryClaims,
+      limit: 20,
+    });
+    expect(queued.queueIds).toHaveLength(1);
+
+    const queueId = queued.queueIds[0];
+    const queueItem = cognitiveStore.getAntibodyQueueItem(queueId);
+    const payload = JSON.parse(queueItem.payload_json || '{}');
+    expect(payload.autoDecision).toBe(null);
+
+    const updated = cognitiveStore.updateAntibodyJob(queueId, {
+      status: 'completed',
+      result: {
+        consensus: {
+          status: 'coexistence',
+        },
+      },
+    });
+    expect(updated.ok).toBe(true);
+
+    const resolution = applyTeamMemoryAntibodyOutcomes({
+      api,
+      cognitiveStore,
+      teamMemoryStore,
+      teamMemoryClaims,
+      queueIds: [queueId],
+    });
+    expect(resolution).toEqual(expect.objectContaining({
+      ok: true,
+      resolved: 1,
+    }));
+
+    const baselineAfter = teamMemoryClaims.getClaim(baseline.id);
+    expect(baselineAfter.status).toBe('proposed');
+
+    const activeAfter = teamMemoryClaims.getContradictions({
+      session: 'tm-resolution',
+      activeOnly: true,
+    });
+    expect(activeAfter.total).toBe(0);
+
+    const completed = cognitiveStore.getAntibodyQueueItem(queueId);
+    const completedResult = JSON.parse(completed.result_json || '{}');
+    expect(completedResult.teamMemoryResolution).toEqual(expect.objectContaining({
+      action: 'coexistence',
+    }));
+    expect(correction).toBeDefined();
   });
 });

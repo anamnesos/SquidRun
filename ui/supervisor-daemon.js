@@ -7,7 +7,7 @@ const { execFileSync } = require('child_process');
 const { getDatabaseSync } = require('./modules/sqlite-compat');
 const DatabaseSync = getDatabaseSync();
 
-const { resolveCoordPath, getProjectRoot } = require('./config');
+const { resolveCoordPath, getProjectRoot, ROLE_ID_MAP } = require('./config');
 const { SupervisorStore } = require('./modules/supervisor');
 const { CognitiveMemoryStore } = require('./modules/cognitive-memory-store');
 const { MemorySearchIndex, resolveWorkspacePaths } = require('./modules/memory-search');
@@ -26,7 +26,13 @@ const {
 const tradingOrchestrator = require('./modules/trading/orchestrator');
 const tradingScheduler = require('./modules/trading/scheduler');
 const tradingWatchlist = require('./modules/trading/watchlist');
+const dynamicWatchlist = require('./modules/trading/dynamic-watchlist');
 const tradingRiskEngine = require('./modules/trading/risk-engine');
+const consensusSizer = require('./modules/trading/consensus-sizer');
+const convictionEngine = require('./modules/trading/conviction-engine');
+const rangeStructure = require('./modules/trading/range-structure');
+const [private-live-ops]Client = require('./modules/trading/[private-live-ops]-client');
+const [private-live-ops]NativeLayer = require('./modules/trading/[private-live-ops]-native-layer');
 const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
 const macroRiskGate = require('./modules/trading/macro-risk-gate');
 const { CircuitBreaker } = require('./modules/trading/circuit-breaker');
@@ -36,6 +42,80 @@ const polymarketSignals = require('./modules/trading/polymarket-signals');
 const polymarketSizer = require('./modules/trading/polymarket-sizer');
 const launchRadar = require('./modules/trading/launch-radar');
 const yieldRouterModule = require('./modules/trading/yield-router');
+const marketScannerModule = require('./modules/trading/market-scanner');
+const paperTradingAutomation = require('./modules/trading/paper-trading-automation');
+const predictionTrackerModule = require('./modules/trading/prediction-tracker');
+const eventVeto = require('./modules/trading/event-veto');
+const tradeJournal = require('./modules/trading/journal');
+const { queryCommsJournalEntries } = require('./modules/main/comms-journal');
+const { buildAudit: buildPaperCompetitionAudit } = require('./scripts/hm-paper-competition-audit');
+const RUNNING_SUPERVISOR_MAIN = require.main === module;
+
+const CONSULTATION_FUNDING_DIVERGENCE_STRONG_BPS = 50;
+const CONSULTATION_FUNDING_DIVERGENCE_MILD_BPS = 25;
+const CONSULTATION_FUNDING_DIVERGENCE_STRONG_BOOST = 1.0;
+const CONSULTATION_FUNDING_DIVERGENCE_MILD_BOOST = 0.35;
+const CONSULTATION_NATIVE_FUNDING_MAX_AGE_MS = 15 * 60 * 1000;
+
+try {
+  require('dotenv').config({ path: path.join(getProjectRoot(), '.env'), quiet: true, override: true });
+} catch {}
+
+function hardenStandardStream(stream, { silence = false } = {}) {
+  if (!stream || typeof stream.write !== 'function') {
+    return;
+  }
+  let disabled = false;
+  const markBroken = () => {
+    disabled = true;
+  };
+  try {
+    stream.on('error', markBroken);
+  } catch {
+    disabled = true;
+  }
+  const originalWrite = stream.write.bind(stream);
+  stream.write = (chunk, encoding, callback) => {
+    const resolvedEncoding = typeof encoding === 'function' ? undefined : encoding;
+    const resolvedCallback = typeof encoding === 'function'
+      ? encoding
+      : (typeof callback === 'function' ? callback : null);
+    if (silence || disabled || stream.destroyed || stream.writable === false) {
+      if (resolvedCallback) resolvedCallback();
+      return true;
+    }
+    try {
+      return originalWrite(chunk, resolvedEncoding, (error) => {
+        if (error) markBroken();
+        if (resolvedCallback) resolvedCallback(error);
+      });
+    } catch (error) {
+      markBroken();
+      if (resolvedCallback) resolvedCallback(error);
+      return false;
+    }
+  };
+}
+
+hardenStandardStream(process.stdout, { silence: RUNNING_SUPERVISOR_MAIN });
+hardenStandardStream(process.stderr, { silence: RUNNING_SUPERVISOR_MAIN });
+
+if (RUNNING_SUPERVISOR_MAIN) {
+  process.on('uncaughtException', (error) => {
+    if (error?.code === 'EOF' && error?.syscall === 'write') {
+      try {
+        const fallbackLogPath = path.join(getProjectRoot(), '.squidrun', 'runtime', 'supervisor.log');
+        ensureDir(fallbackLogPath);
+        fs.appendFileSync(
+          fallbackLogPath,
+          `[${new Date().toISOString()}] [WARN] Suppressed detached stdio EOF (${error.message})\n`
+        );
+      } catch {}
+      return;
+    }
+    throw error;
+  });
+}
 
 const DEFAULT_POLL_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000);
 const DEFAULT_HEARTBEAT_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_HEARTBEAT_MS || '15000', 10) || 15000);
@@ -60,19 +140,81 @@ function resolveRuntimePath(relPath) {
   return resolveCoordPath(path.join('runtime', relPath), { forWrite: true });
 }
 
+function resolveProjectUiScriptPath(scriptName, projectRoot = getProjectRoot()) {
+  const root = path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
+  return path.join(root, 'ui', 'scripts', scriptName);
+}
+
+function resolveProjectUiSettingsPath(projectRoot = getProjectRoot()) {
+  const root = path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
+  return path.join(root, 'ui', 'settings.json');
+}
+
 const DEFAULT_PID_PATH = resolveRuntimePath('supervisor.pid');
 const DEFAULT_STATUS_PATH = resolveRuntimePath('supervisor-status.json');
 const DEFAULT_LOG_PATH = resolveRuntimePath('supervisor.log');
 const DEFAULT_TASK_LOG_DIR = resolveRuntimePath(path.join('supervisor-tasks'));
 const DEFAULT_WAKE_SIGNAL_PATH = resolveRuntimePath('supervisor-wake.signal');
+const DEFAULT_AGENT_TASK_QUEUE_PATH = resolveRuntimePath('agent-task-queue.json');
 const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
+const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
 const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-trading-state.json');
 const DEFAULT_LAUNCH_RADAR_STATE_PATH = resolveRuntimePath('launch-radar-supervisor-state.json');
+const DEFAULT_NEWS_SCAN_STATE_PATH = resolveRuntimePath('news-scan-supervisor-state.json');
+const DEFAULT_PENDING_FOLLOWUP_STATE_PATH = resolveRuntimePath('pending-followup-supervisor-state.json');
+const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
+const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
+const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-state.json');
+const DEFAULT_ORACLE_WATCH_RULES_PATH = resolveRuntimePath('oracle-watch-rules.json');
+const DEFAULT_ORACLE_WATCH_STATE_PATH = resolveRuntimePath('oracle-watch-state.json');
+const DEFAULT_EUNBYEOL_CHECKIN_STATE_PATH = resolveRuntimePath('private-profile-checkin-supervisor-state.json');
+const DEFAULT_PAPER_TRADING_AUTOMATION_STATE_PATH = resolveRuntimePath('paper-trading-automation-state.json');
 const DEFAULT_YIELD_ROUTER_STATE_PATH = resolveRuntimePath('yield-router-supervisor-state.json');
-const HM_SEND_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-send.js');
-const HM_DEFI_EXECUTE_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-defi-execute.js');
-const HM_DEFI_CLOSE_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-defi-close.js');
+const DEFAULT_TELEGRAM_CHAT_ID = '5613428850';
+const DEFAULT_SAYLOR_WATCHER_INTERVAL_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.SQUIDRUN_SAYLOR_WATCHER_INTERVAL_MS || '300000', 10) || 300_000
+);
+const DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS || '60000', 10) || 60_000
+);
+const DEFAULT_ORACLE_WATCH_INTERVAL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_INTERVAL_MS || '10000', 10) || 10_000
+);
+const DEFAULT_ORACLE_WATCH_MACRO_INTERVAL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_MACRO_INTERVAL_MS || '5000', 10) || 5_000
+);
+const ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS = 60_000;
+const DEFAULT_LIVE_OPS_MONITOR_POLL_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.SQUIDRUN_LIVE_OPS_MONITOR_POLL_MS || '300000', 10) || 300_000
+);
+const DEFAULT_RANGE_CONVICTION_INTERVAL_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.SQUIDRUN_RANGE_CONVICTION_INTERVAL_MS || '180000', 10) || 180_000
+);
+const DEFAULT_CRYPTO_TRADING_STRATEGY_MODE = 'momentum';
+const DEFAULT_AGENT_TASK_IDLE_COMPLETION_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.SQUIDRUN_AGENT_TASK_IDLE_COMPLETION_MS || '30000', 10) || 30_000
+);
+const DEFAULT_AGENT_TASK_READY_GRACE_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.SQUIDRUN_AGENT_TASK_READY_GRACE_MS || '60000', 10) || 60_000
+);
+const DEFAULT_AGENT_TASK_HISTORY_LIMIT = Math.max(
+  10,
+  Number.parseInt(process.env.SQUIDRUN_AGENT_TASK_HISTORY_LIMIT || '50', 10) || 50
+);
+const DEFAULT_AGENT_TASK_REENGAGE_IDLE_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.SQUIDRUN_AGENT_TASK_REENGAGE_IDLE_MS || '300000', 10) || 300_000
+);
+const AGENT_TASK_QUEUE_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const TRADING_AGENT_TARGETS = Object.freeze(['architect', 'builder', 'oracle']);
 const TRADING_PHASES = Object.freeze([
   { key: 'premarket_wake', label: 'Pre-market wake', offsetMinutes: -60 },
@@ -95,6 +237,41 @@ const LAUNCH_RADAR_PHASES = Object.freeze([
   { key: 'launch_radar_scan', label: 'Launch radar scan' },
 ]);
 const DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES = 15;
+const NEWS_SCAN_PHASES = Object.freeze([
+  { key: 'news_scan', label: 'News and market scan' },
+]);
+const DEFAULT_NEWS_SCAN_INTERVAL_MINUTES = 2 * 60;
+const PENDING_FOLLOWUP_PHASES = Object.freeze([
+  { key: 'pending_followups', label: 'Pending follow-up scan' },
+]);
+const MARKET_RESEARCH_PHASES = Object.freeze([
+  { key: 'market_research', label: 'Market research scan' },
+]);
+const MARKET_SCANNER_PHASES = Object.freeze([
+  { key: 'market_scanner', label: '[private-live-ops] market scanner' },
+]);
+const EUNBYEOL_CHECKIN_PHASES = Object.freeze([
+  { key: 'private-profile_checkin', label: '[private-profile] check-in review' },
+]);
+const DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES = 4 * 60;
+const DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES = 4 * 60;
+const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
+const DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES = 30;
+const DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES = 4 * 60;
+const DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS = Math.max(
+  15_000,
+  Number.parseInt(process.env.SQUIDRUN_PAPER_TRADING_RESPONSE_TIMEOUT_MS || '90000', 10) || 90_000
+);
+const DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT = Math.max(
+  1,
+  Number.parseInt(process.env.SQUIDRUN_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT || '2', 10) || 2
+);
+const DEFAULT_CRYPTO_CONSULTATION_SYMBOL_MAX = Math.max(
+  5,
+  Number.parseInt(process.env.SQUIDRUN_CRYPTO_CONSULTATION_SYMBOL_MAX || '5', 10) || 5
+);
+const CORE_CRYPTO_CONSULTATION_SYMBOLS = Object.freeze(['BTC/USD', 'ETH/USD', 'SOL/USD']);
 const YIELD_ROUTER_PHASES = Object.freeze([
   { key: 'yield_rebalance', label: 'Yield router rebalance' },
 ]);
@@ -103,6 +280,8 @@ const DEFAULT_TRADE_RECONCILIATION_POLL_MS = Math.max(
   60_000,
   Number.parseInt(process.env.SQUIDRUN_TRADE_RECONCILIATION_POLL_MS || '300000', 10) || 300_000
 );
+const DEFAULT_LIVE_MIN_AGREE_CONFIDENCE = 0.6;
+const DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE = 0.6;
 
 function ensureDir(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -125,6 +304,161 @@ function writeJsonFile(filePath, payload) {
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
 }
 
+function readProjectWatcherEnabled(projectRoot = getProjectRoot(), fallback = true) {
+  const settingsPath = resolveProjectUiSettingsPath(projectRoot);
+  const settings = readJsonFile(settingsPath, null);
+  if (settings && Object.prototype.hasOwnProperty.call(settings, 'watcherEnabled')) {
+    return settings.watcherEnabled !== false;
+  }
+  return fallback;
+}
+
+function resolveOracleWatchIntervalMs(rulesPath, fallback = DEFAULT_ORACLE_WATCH_INTERVAL_MS) {
+  const config = readJsonFile(rulesPath, null);
+  const mode = String(config?.mode || 'normal').trim().toLowerCase();
+  const isMacroMode = mode === 'macro_release' || mode === 'macro-release';
+  const raw = isMacroMode ? config?.macroPollIntervalMs : config?.pollIntervalMs;
+  const defaultMs = isMacroMode ? DEFAULT_ORACLE_WATCH_MACRO_INTERVAL_MS : fallback;
+  return Math.max(5_000, Number.parseInt(raw, 10) || defaultMs);
+}
+
+function toLocalDateKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildOracleWatchHeartbeat(summary = {}, state = {}) {
+  const heartbeat = state?.heartbeat || {};
+  const lastTickAt = String(
+    heartbeat.lastTickAt
+    || summary?.lastRunAt
+    || state?.updatedAt
+    || ''
+  ).trim() || null;
+  const intervalMs = Math.max(
+    5_000,
+    Number(heartbeat.intervalMs || summary?.intervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS) || DEFAULT_ORACLE_WATCH_INTERVAL_MS
+  );
+  const ageMs = lastTickAt ? Math.max(0, Date.now() - new Date(lastTickAt).getTime()) : null;
+  const stale = !lastTickAt || !Number.isFinite(ageMs) || ageMs > Math.max(intervalMs * 2, 15_000);
+  return {
+    lastTickAt,
+    intervalMs,
+    ageMs: Number.isFinite(ageMs) ? ageMs : null,
+    stale,
+    state: stale ? 'red' : 'green',
+  };
+}
+
+function getTodayRealizedTargetProgress(journalPath, now = new Date()) {
+  const targetUsd = 200;
+  const perHourTargetUsd = targetUsd / 24;
+  const localDate = toLocalDateKey(now);
+  try {
+    const db = tradeJournal.getDb(journalPath);
+    const dailySummary = db.prepare(`
+      SELECT *
+      FROM daily_summary
+      WHERE date = ?
+      LIMIT 1
+    `).get(localDate) || null;
+    const fallback = db.prepare(`
+      SELECT
+        COALESCE(SUM(realized_pnl), 0) AS realized_pnl,
+        COUNT(*) AS closed_trades
+      FROM trades
+      WHERE realized_pnl IS NOT NULL
+        AND COALESCE(
+          substr(outcome_recorded_at, 1, 10),
+          substr(reconciled_at, 1, 10),
+          substr(filled_at, 1, 10),
+          substr(timestamp, 1, 10)
+        ) = ?
+    `).get(localDate) || {};
+    const realizedPnl = Number(
+      dailySummary?.pnl
+      ?? fallback?.realized_pnl
+      ?? 0
+    ) || 0;
+    return {
+      date: localDate,
+      realizedPnl,
+      targetUsd,
+      vsTargetUsd: Number((realizedPnl - targetUsd).toFixed(2)),
+      cushionHoursBanked: Number((realizedPnl / perHourTargetUsd).toFixed(2)),
+      targetHit: realizedPnl >= targetUsd,
+      closedTrades: Number(dailySummary?.trades_count ?? fallback?.closed_trades ?? 0) || 0,
+      source: dailySummary ? 'daily_summary' : 'trade_rollup',
+      error: null,
+    };
+  } catch (error) {
+    return {
+      date: localDate,
+      realizedPnl: 0,
+      targetUsd,
+      vsTargetUsd: Number((0 - targetUsd).toFixed(2)),
+      cushionHoursBanked: 0,
+      targetHit: false,
+      closedTrades: 0,
+      source: 'unavailable',
+      error: error?.message || String(error),
+    };
+  }
+}
+
+function buildPaperCompetitionStatus(projectRoot = getProjectRoot(), now = new Date()) {
+  const tradingDir = path.join(projectRoot, 'workspace', 'agent-trading');
+  const closedDateKey = toLocalDateKey(now);
+  const summary = {
+    path: tradingDir,
+    filesChecked: 0,
+    missingSameDayRootCauseReviews: 0,
+    agents: [],
+    compliant: true,
+  };
+  try {
+    if (!fs.existsSync(tradingDir)) {
+      return { ...summary, compliant: false, error: 'missing_agent_trading_dir' };
+    }
+    const files = fs.readdirSync(tradingDir)
+      .filter((name) => name.endsWith('-portfolio.json'));
+    summary.filesChecked = files.length;
+    summary.agents = files.map((fileName) => {
+      const filePath = path.join(tradingDir, fileName);
+      const data = readJsonFile(filePath, {}) || {};
+      const closedTrades = Array.isArray(data.closedTrades) ? data.closedTrades : [];
+      const missing = closedTrades.filter((trade) => {
+        const closedAt = String(trade?.closedAt || '').trim();
+        if (!closedAt || !closedAt.startsWith(closedDateKey)) return false;
+        const review = trade?.rootCauseReview || null;
+        const reviewedAt = String(review?.reviewedAt || '').trim();
+        const summaryText = String(review?.plainEnglishSummary || review?.whatWentWrong || '').trim();
+        return !review || !reviewedAt.startsWith(closedDateKey) || !summaryText;
+      });
+      summary.missingSameDayRootCauseReviews += missing.length;
+      return {
+        agentId: String(data.agentId || data.agent || path.basename(fileName, '.json')).trim(),
+        filePath,
+        totalPnl: Number(data.totalPnl ?? ((Number(data.equity || data.currentEquity || 0) || 0) - (Number(data.startingBalance || 0) || 0))) || 0,
+        openPositionCount: Array.isArray(data.openPositions) ? data.openPositions.length : 0,
+        closedTradeCount: closedTrades.length,
+        missingSameDayRootCauseReviews: missing.length,
+      };
+    });
+    summary.compliant = summary.missingSameDayRootCauseReviews === 0;
+    return summary;
+  } catch (error) {
+    return {
+      ...summary,
+      compliant: false,
+      error: error?.message || String(error),
+    };
+  }
+}
+
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -138,16 +472,203 @@ function trimTail(value, maxBytes = DEFAULT_STDIO_TAIL_BYTES) {
   return buffer.slice(buffer.length - maxBytes).toString('utf8');
 }
 
+function toPositiveMs(value, fallback = 0) {
+  const numeric = Number.parseInt(value, 10);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return fallback;
+  }
+  return numeric;
+}
+
+function trimOptionalText(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function tailText(value, maxChars = 4000) {
+  const text = typeof value === 'string' ? value : String(value || '');
+  if (!text) return '';
+  return text.length <= maxChars ? text : text.slice(-maxChars);
+}
+
+function hasReadyPrompt(scrollback = '') {
+  const tail = tailText(scrollback, 4000);
+  if (!tail) return false;
+  return [
+    /type your message or @path\/to\/file/i,
+    /\?\s+for shortcuts/i,
+    /press up to edit queued messages/i,
+    /\bready \(/i,
+    /\n>\s*$/m,
+  ].some((pattern) => pattern.test(tail));
+}
+
+function createAgentTaskId(role = 'agent') {
+  const suffix = Math.random().toString(36).slice(2, 10);
+  return `${String(role || 'agent')}-${Date.now()}-${suffix}`;
+}
+
+function createEmptyAgentQueueBucket() {
+  return {
+    pending: [],
+    active: null,
+    history: [],
+  };
+}
+
+function normalizeAgentQueueTask(task, role, nowMs = Date.now()) {
+  if (!task || typeof task !== 'object') return null;
+  const message = trimOptionalText(task.message);
+  if (!message) return null;
+  return {
+    taskId: trimOptionalText(task.taskId) || trimOptionalText(task.id) || createAgentTaskId(role),
+    title: trimOptionalText(task.title),
+    role,
+    message,
+    source: trimOptionalText(task.source),
+    priority: trimOptionalText(task.priority) || 'normal',
+    metadata: task.metadata && typeof task.metadata === 'object' ? { ...task.metadata } : {},
+    completionSentinel: trimOptionalText(task.completionSentinel),
+    idleCompletionMs: toPositiveMs(task.idleCompletionMs, 0),
+    responseTimeoutMs: toPositiveMs(task.responseTimeoutMs, 0),
+    enqueuedAtMs: toNumber(task.enqueuedAtMs || task.createdAtMs, nowMs),
+    dispatchCount: Math.max(0, Number.parseInt(task.dispatchCount || '0', 10) || 0),
+    lastDispatchAtMs: toPositiveMs(task.lastDispatchAtMs, 0),
+    firstActivityAtMs: toPositiveMs(task.firstActivityAtMs, 0),
+    lastObservedActivityAtMs: toPositiveMs(task.lastObservedActivityAtMs, 0),
+    completedAtMs: toPositiveMs(task.completedAtMs, 0),
+    status: trimOptionalText(task.status) || 'pending',
+    completionReason: trimOptionalText(task.completionReason),
+    lastResult: task.lastResult && typeof task.lastResult === 'object' ? { ...task.lastResult } : null,
+    lastError: trimOptionalText(task.lastError),
+  };
+}
+
+function normalizeAgentQueueBucket(entry, role, nowMs = Date.now(), historyLimit = DEFAULT_AGENT_TASK_HISTORY_LIMIT) {
+  const bucket = Array.isArray(entry)
+    ? { pending: entry, active: null, history: [] }
+    : (entry && typeof entry === 'object' ? entry : {});
+  const pending = Array.isArray(bucket.pending)
+    ? bucket.pending
+        .map((task) => normalizeAgentQueueTask(task, role, nowMs))
+        .filter(Boolean)
+    : [];
+  const active = normalizeAgentQueueTask(bucket.active, role, nowMs);
+  const history = Array.isArray(bucket.history)
+    ? bucket.history
+        .map((task) => normalizeAgentQueueTask(task, role, nowMs))
+        .filter(Boolean)
+        .slice(-historyLimit)
+    : [];
+  return { pending, active, history };
+}
+
+function normalizeAgentTaskQueueState(raw, options = {}) {
+  const nowMs = toNumber(options.nowMs, Date.now());
+  const historyLimit = Math.max(1, Number.parseInt(options.historyLimit || DEFAULT_AGENT_TASK_HISTORY_LIMIT, 10) || DEFAULT_AGENT_TASK_HISTORY_LIMIT);
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const agentsSource = source.agents && typeof source.agents === 'object' ? source.agents : source;
+  const agents = {};
+  for (const role of AGENT_TASK_QUEUE_ROLES) {
+    agents[role] = normalizeAgentQueueBucket(agentsSource[role], role, nowMs, historyLimit);
+  }
+  return {
+    version: 1,
+    updatedAt: trimOptionalText(source.updatedAt),
+    agents,
+  };
+}
+
+function summarizeAgentTaskQueueState(state) {
+  const summary = {
+    pending: {},
+    active: {},
+    history: {},
+    totalPending: 0,
+    totalActive: 0,
+  };
+  const agents = state?.agents && typeof state.agents === 'object' ? state.agents : {};
+  for (const role of AGENT_TASK_QUEUE_ROLES) {
+    const bucket = agents[role] || createEmptyAgentQueueBucket();
+    const pendingCount = Array.isArray(bucket.pending) ? bucket.pending.length : 0;
+    summary.pending[role] = pendingCount;
+    summary.active[role] = bucket.active ? {
+      taskId: bucket.active.taskId,
+      title: bucket.active.title || null,
+      lastDispatchAtMs: bucket.active.lastDispatchAtMs || 0,
+      firstActivityAtMs: bucket.active.firstActivityAtMs || 0,
+      completionSentinel: bucket.active.completionSentinel || null,
+    } : null;
+    summary.history[role] = Array.isArray(bucket.history) ? bucket.history.length : 0;
+    summary.totalPending += pendingCount;
+    if (bucket.active) summary.totalActive += 1;
+  }
+  return summary;
+}
+
 function appendFileSafe(filePath, chunk) {
   try {
     fs.appendFileSync(filePath, chunk);
   } catch {}
 }
 
+function resolve[private-live-ops]WalletAddress(env = process.env) {
+  return String(
+    env?.LIVE_OPS_WALLET_ADDRESS
+    || env?.LIVE_OPS_ADDRESS
+    || env?.POLYMARKET_FUNDER_ADDRESS
+    || ''
+  ).trim();
+}
+
+function normalize[private-live-ops]KillSwitchAction(value, fallback = 'block_new_entries') {
+  const normalized = String(value || fallback).trim().toLowerCase();
+  return normalized === 'flatten_positions' ? 'flatten_positions' : 'block_new_entries';
+}
+
+function applyMacroRiskSizeCapToApprovedTrades(approvedTrades = [], macroRisk = null) {
+  const macroMultiplier = Number(macroRisk?.constraints?.positionSizeMultiplier);
+  if (!Number.isFinite(macroMultiplier) || !(macroMultiplier > 0) || macroMultiplier >= 1) {
+    return approvedTrades;
+  }
+  for (const trade of Array.isArray(approvedTrades) ? approvedTrades : []) {
+    const assetClass = String(trade?.assetClass || 'crypto').trim().toLowerCase() || 'crypto';
+    const currentMultiplier = consensusSizer.resolveAppliedSizeMultiplier(
+      trade?.sizeGuide?.bucket || 'normal',
+      assetClass,
+      trade?.sizeGuide?.sizeMultiplier ?? null
+    );
+    if (!Number.isFinite(currentMultiplier) || currentMultiplier <= 0) {
+      continue;
+    }
+    const effectiveMultiplier = Math.min(currentMultiplier, macroMultiplier);
+    const ratio = effectiveMultiplier / currentMultiplier;
+    trade.sizeGuide = {
+      ...(trade.sizeGuide || {}),
+      macroSizeMultiplier: macroMultiplier,
+      effectiveSizeMultiplier: effectiveMultiplier,
+    };
+    if (!(ratio < 0.999999)) {
+      continue;
+    }
+    if (Number.isFinite(Number(trade?.riskCheck?.maxShares))) {
+      trade.riskCheck.maxShares = Math.floor(Number(trade.riskCheck.maxShares) * ratio * 1e6) / 1e6;
+    }
+    if (Number.isFinite(Number(trade?.riskCheck?.positionNotional))) {
+      trade.riskCheck.positionNotional = Number((Number(trade.riskCheck.positionNotional) * ratio).toFixed(2));
+    }
+    if (Number.isFinite(Number(trade?.riskCheck?.margin))) {
+      trade.riskCheck.margin = Number((Number(trade.riskCheck.margin) * ratio).toFixed(2));
+    }
+  }
+  return approvedTrades;
+}
+
 function has[private-live-ops]Credentials(env = process.env) {
   return Boolean(
     String(env?.POLYMARKET_PRIVATE_KEY || '').trim()
-    && String(env?.POLYMARKET_FUNDER_ADDRESS || '').trim()
+    && resolve[private-live-ops]WalletAddress(env)
   );
 }
 
@@ -155,12 +676,25 @@ function normalize[private-live-ops]Position(position = {}) {
   const size = toNumber(position?.szi ?? position?.size, 0);
   return {
     coin: String(position?.coin || position?.asset || '').trim().toUpperCase(),
+    dex: String(position?.dex || '').trim() || null,
     size,
     side: size < 0 ? 'short' : (size > 0 ? 'long' : 'flat'),
     entryPx: toNumber(position?.entryPx, 0),
     unrealizedPnl: toNumber(position?.unrealizedPnl, 0),
     liquidationPx: toNumber(position?.liquidationPx, 0),
   };
+}
+
+function format[private-live-ops]RetainedRatio(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 'n/a';
+  return `${(numeric * 100).toFixed(0)}%`;
+}
+
+function build[private-live-ops]PaneAlert(position = {}, level = 'warning') {
+  const label = String(level || 'warning').trim().toUpperCase();
+  const side = String(position?.side || '').trim().toUpperCase() || 'POSITION';
+  return `[${label}] [private-live-ops] ${position.coin} ${side} unrealized P&L is now $${toNumber(position?.unrealizedPnl, 0).toFixed(2)} vs peak $${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} (${format[private-live-ops]RetainedRatio(position?.retainedPeakRatio)} retained). Review the live position now.`;
 }
 
 async function executeNodeScript(scriptPath, args = [], options = {}) {
@@ -234,57 +768,111 @@ function create[private-live-ops]Executor(options = {}) {
   const env = options.env || process.env;
   const cwd = options.cwd || getProjectRoot();
   const dryRun = options.dryRun === true;
+  const defiExecuteScriptPath = options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', cwd);
+  const defiCloseScriptPath = options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', cwd);
+
+  function normalizeAsset(asset = 'ETH') {
+    return String(asset || 'ETH').trim().toUpperCase();
+  }
 
   return {
     async getAccountState() {
-      const { HttpTransport, InfoClient } = await import('@nktkas/[private-live-ops]');
-      const transport = new HttpTransport();
-      const info = new InfoClient({ transport });
-      const state = await info.clearinghouseState({ user: env.POLYMARKET_FUNDER_ADDRESS });
-      const positions = Array.isArray(state?.assetPositions)
-        ? state.assetPositions
-          .map((entry) => normalize[private-live-ops]Position(entry?.position || {}))
-          .filter((position) => position.coin && position.side !== 'flat')
-        : [];
+      const walletAddress = resolve[private-live-ops]WalletAddress(env);
+      if (!walletAddress) {
+        throw new Error('[private-live-ops] wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or LIVE_OPS_WALLET_ADDRESS.');
+      }
+      const [account, positions] = await Promise.all([
+        [private-live-ops]Client.getAccountSnapshot({ walletAddress }),
+        [private-live-ops]Client.getOpenPositions({ walletAddress }),
+      ]);
       return {
-        accountValue: toNumber(state?.marginSummary?.accountValue, 0),
-        withdrawable: toNumber(state?.withdrawable, 0),
-        positions,
+        accountValue: toNumber(account?.equity, 0),
+        withdrawable: toNumber(account?.cash, 0),
+        positions: (Array.isArray(positions) ? positions : [])
+          .map((position) => normalize[private-live-ops]Position({
+            ...(position?.raw || {}),
+            dex: position?.dex || null,
+          }))
+          .filter((position) => position.coin && position.side !== 'flat'),
       };
     },
 
-    async openEthShort() {
-      return executeNodeScript(HM_DEFI_EXECUTE_SCRIPT_PATH, dryRun ? ['--dry-run', 'trade'] : ['trade'], {
+    async openPosition({ asset = 'ETH', direction = 'SHORT', stopLossPrice = null } = {}) {
+      const args = dryRun
+        ? ['--dry-run', 'trade', '--asset', normalizeAsset(asset), '--direction', String(direction || 'SHORT').trim().toUpperCase()]
+        : ['trade', '--asset', normalizeAsset(asset), '--direction', String(direction || 'SHORT').trim().toUpperCase()];
+      if (Number.isFinite(Number(stopLossPrice)) && Number(stopLossPrice) > 0) {
+        args.push('--stop-loss', String(Number(stopLossPrice)));
+      }
+      return executeNodeScript(defiExecuteScriptPath, args, {
         cwd,
         env,
       });
     },
 
-    async closeEthPosition() {
-      return executeNodeScript(HM_DEFI_CLOSE_SCRIPT_PATH, dryRun ? ['--dry-run'] : [], {
+    async closePosition({ asset = 'ETH' } = {}) {
+      const args = dryRun
+        ? ['--dry-run', '--asset', normalizeAsset(asset)]
+        : ['--asset', normalizeAsset(asset)];
+      return executeNodeScript(defiCloseScriptPath, args, {
         cwd,
         env,
       });
+    },
+
+    async openEthShort(options = {}) {
+      return this.openPosition({ asset: 'ETH', direction: 'SHORT', ...options });
+    },
+
+    async closeEthPosition(options = {}) {
+      return this.closePosition({ asset: 'ETH', ...options });
     },
   };
 }
 
 function createLogger(logPath) {
   ensureDir(logPath);
+  const createMirrorWriter = (stream) => {
+    if (!stream || typeof stream.write !== 'function') {
+      return () => {};
+    }
+    let disabled = false;
+    const markBroken = () => {
+      disabled = true;
+      try { stream.removeListener('error', markBroken); } catch {}
+    };
+    try {
+      stream.on('error', markBroken);
+    } catch {
+      disabled = true;
+    }
+    return (line) => {
+      if (disabled || !line || stream.destroyed || stream.writable === false) return;
+      try {
+        stream.write(line, (error) => {
+          if (error) markBroken();
+        });
+      } catch {
+        markBroken();
+      }
+    };
+  };
+  const writeStdout = createMirrorWriter(process.stdout);
+  const writeStderr = createMirrorWriter(process.stderr);
   return {
     info(message) {
       const line = `[${new Date().toISOString()}] [INFO] ${message}\n`;
-      process.stdout.write(line);
+      writeStdout(line);
       appendFileSafe(logPath, line);
     },
     warn(message) {
       const line = `[${new Date().toISOString()}] [WARN] ${message}\n`;
-      process.stderr.write(line);
+      writeStderr(line);
       appendFileSafe(logPath, line);
     },
     error(message) {
       const line = `[${new Date().toISOString()}] [ERROR] ${message}\n`;
-      process.stderr.write(line);
+      writeStderr(line);
       appendFileSafe(logPath, line);
     },
   };
@@ -309,6 +897,49 @@ function parseOptionalDurationMs(value, fallback) {
   return Math.max(1000, numeric);
 }
 
+function normalizeNewsTicker(value = '') {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return '';
+  return raw.includes('/') ? raw : `${raw}/USD`;
+}
+
+function buildNewsFingerprint(payload = {}) {
+  const headlines = Array.isArray(payload.headlines) ? payload.headlines : [];
+  const reason = String(payload.reason || '').trim();
+  return JSON.stringify({
+    level: String(payload.level || '').trim(),
+    reason,
+    headlines: headlines.slice(0, 5).map((headline) => String(headline || '').trim().toLowerCase()),
+  });
+}
+
+function tokenizeCaseKeywords(text = '') {
+  return Array.from(new Set(
+    String(text || '')
+      .split(/[(),/|·:\-\u2014]+/)
+      .map((entry) => String(entry || '').trim())
+      .filter((entry) => entry.length >= 2)
+  ));
+}
+
+function extractActiveCaseSignals(markdown = '') {
+  const source = String(markdown || '');
+  if (!source.trim()) return [];
+  const headings = Array.from(source.matchAll(/^###\s+Case\s+\d+:\s+(.+)$/gm)).map((match) => String(match[1] || '').trim());
+  const signals = headings.map((heading) => {
+    const label = heading.replace(/\s+[-—].*$/, '').trim();
+    return {
+      label,
+      keywords: Array.from(new Set([
+        ...tokenizeCaseKeywords(label),
+        '은별',
+        '[private-profile]',
+      ])),
+    };
+  }).filter((entry) => entry.keywords.length > 0);
+  return signals;
+}
+
 function defaultTradingState() {
   return {
     marketDate: null,
@@ -324,6 +955,7 @@ function defaultCryptoTradingState() {
     lastProcessedAt: null,
     lastResult: null,
     nextEvent: null,
+    activeConvictionThesis: null,
     updatedAt: null,
   };
 }
@@ -363,12 +995,95 @@ function defaultYieldRouterState() {
   };
 }
 
+function defaultNewsScanState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    lastScan: null,
+    lastAlertFingerprint: null,
+    updatedAt: null,
+  };
+}
+
+function defaultPendingFollowupState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    lastScan: null,
+    lastAlertFingerprint: null,
+    updatedAt: null,
+  };
+}
+
+function defaultMarketResearchState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    lastScan: null,
+    lastAlertFingerprint: null,
+    updatedAt: null,
+  };
+}
+
+function default[private-live-ops]State() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    lastScan: null,
+    updatedAt: null,
+  };
+}
+
+function defaultMarketScannerState() {
+  return marketScannerModule.defaultMarketScannerState();
+}
+
+function default[private-profile]CheckInState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    lastDraft: null,
+    lastDraftFingerprint: null,
+    updatedAt: null,
+  };
+}
+
 function defaultTradeReconciliationState() {
   return {
     lastProcessedAt: null,
     lastPendingCount: 0,
     lastResult: null,
     lastError: null,
+  };
+}
+
+function defaultPaperTradingAutomationState() {
+  return {
+    updatedAt: null,
+    lastProcessedAt: null,
+    lastSummary: null,
+    agents: Object.fromEntries(
+      paperTradingAutomation.AGENT_IDS.map((agentId) => [agentId, {
+        agentId,
+        lastDispatchAt: null,
+        lastDispatchAtMs: 0,
+        nextTimerWakeAt: null,
+        nextTimerWakeAtMs: 0,
+        pendingRequestId: null,
+        pendingRequestCreatedAt: null,
+        pendingRequestCreatedAtMs: 0,
+        lastResponseAt: null,
+        lastResponseAtMs: 0,
+        lastWakeReason: null,
+        lastActionType: null,
+        lastError: null,
+      }])
+    ),
   };
 }
 
@@ -429,6 +1144,231 @@ function getNextLaunchRadarEvent(referenceDate = new Date(), options = {}) {
     }
   }
   return null;
+}
+
+function buildNewsScanDailySchedule(referenceDate = new Date(), options = {}) {
+  const intervalMinutes = Math.max(1, Math.floor(Number(options.intervalMinutes) || DEFAULT_NEWS_SCAN_INTERVAL_MINUTES));
+  const start = startOfUtcDay(referenceDate);
+  const marketDate = start.toISOString().slice(0, 10);
+  const schedule = [];
+
+  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += intervalMinutes) {
+    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
+    for (const phase of NEWS_SCAN_PHASES) {
+      schedule.push({
+        key: phase.key,
+        label: phase.label,
+        marketDate,
+        scheduledAt: scheduledAt.toISOString(),
+        scheduledTimeLocal: scheduledAt.toISOString(),
+        displayTimeZone: 'UTC',
+        windowKey: scheduledAt.toISOString(),
+      });
+    }
+  }
+
+  return {
+    marketDate,
+    intervalMinutes,
+    displayTimeZone: 'UTC',
+    schedule,
+  };
+}
+
+function getNextNewsScanEvent(referenceDate = new Date(), options = {}) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
+    const day = buildNewsScanDailySchedule(candidateDate, options);
+    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
+    if (nextEvent) {
+      return {
+        ...nextEvent,
+        day,
+      };
+    }
+  }
+  return null;
+}
+
+function build[private-live-ops]DailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, [{ key: '[private-live-ops]_scan', label: 'Token unlock scan' }], options.intervalMinutes || DEFAULT_LIVE_OPS_INTERVAL_MINUTES);
+}
+
+function getNext[private-live-ops]Event(referenceDate = new Date(), options = {}) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
+    const day = build[private-live-ops]DailySchedule(candidateDate, options);
+    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
+    if (nextEvent) {
+      return {
+        ...nextEvent,
+        day,
+      };
+    }
+  }
+  return null;
+}
+
+function buildUtcIntervalSchedule(referenceDate = new Date(), phases = [], intervalMinutes = 60) {
+  const safeIntervalMinutes = Math.max(1, Math.floor(Number(intervalMinutes) || 60));
+  const start = startOfUtcDay(referenceDate);
+  const marketDate = start.toISOString().slice(0, 10);
+  const schedule = [];
+
+  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += safeIntervalMinutes) {
+    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
+    for (const phase of phases) {
+      schedule.push({
+        key: phase.key,
+        label: phase.label,
+        marketDate,
+        scheduledAt: scheduledAt.toISOString(),
+        scheduledTimeLocal: scheduledAt.toISOString(),
+        displayTimeZone: 'UTC',
+        windowKey: scheduledAt.toISOString(),
+      });
+    }
+  }
+
+  return {
+    marketDate,
+    intervalMinutes: safeIntervalMinutes,
+    displayTimeZone: 'UTC',
+    schedule,
+  };
+}
+
+function getNextUtcIntervalEvent(referenceDate = new Date(), phases = [], intervalMinutes = 60) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
+    const day = buildUtcIntervalSchedule(candidateDate, phases, intervalMinutes);
+    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
+    if (nextEvent) {
+      return {
+        ...nextEvent,
+        day,
+      };
+    }
+  }
+  return null;
+}
+
+function parseCaseOperationsDashboard(markdown = '') {
+  const lines = String(markdown || '').split(/\r?\n/);
+  const pendingItems = [];
+  let currentCaseLabel = null;
+  let currentSection = null;
+  let scheduleDate = null;
+  const scheduleItems = [];
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!line) continue;
+    const caseMatch = line.match(/^###\s+Case\s+\d+:\s+(.+)$/i);
+    if (caseMatch) {
+      currentCaseLabel = String(caseMatch[1] || '').trim();
+      currentSection = 'case';
+      continue;
+    }
+    const scheduleMatch = line.match(/^##\s+은별\s+내일\s+일정\s+\((\d{4}-\d{2}-\d{2})\)/);
+    if (scheduleMatch) {
+      scheduleDate = scheduleMatch[1];
+      currentSection = 'schedule';
+      continue;
+    }
+    if (/^##\s+/.test(line)) {
+      currentSection = null;
+      continue;
+    }
+    if (currentSection === 'schedule' && /^\d+\.\s+/.test(line)) {
+      scheduleItems.push(line.replace(/^\d+\.\s+/, '').trim());
+      continue;
+    }
+    if (!line.startsWith('|') || /^\|\s*-+/.test(line) || /^\|\s*#\s*\|/.test(line)) {
+      continue;
+    }
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length < 4 || !/^\d+$/.test(cells[0])) continue;
+    pendingItems.push({
+      id: cells[0],
+      item: cells[1],
+      blockedOn: cells[2],
+      status: cells[3],
+      caseLabel: currentCaseLabel,
+    });
+  }
+
+  return {
+    pendingItems,
+    scheduleDate,
+    scheduleItems,
+  };
+}
+
+function getLatest[private-profile]MessageTimestamp(rows = []) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const metadata = row && typeof row.metadata === 'object' ? row.metadata : {};
+    const rawBody = String(row?.rawBody || row?.body || '');
+    const sender = String(metadata.from || row?.sender || '');
+    const chatId = String(metadata.chatId || metadata.telegramChatId || row?.chatId || '');
+    if (
+      chatId === '8754356993'
+      || /은별|private-profile/i.test(sender)
+      || /은별|private-profile|8754356993/i.test(rawBody)
+    ) {
+      return Number(row?.sentAtMs || row?.brokeredAtMs || row?.createdAtMs || 0) || 0;
+    }
+  }
+  return 0;
+}
+
+function is[private-profile]OwnedPendingItem(item = {}) {
+  const blockedOn = String(item?.blockedOn || '');
+  const label = `${item?.item || ''} ${item?.caseLabel || ''} ${item?.status || ''}`;
+  return /은별 input|은별 action|은별|private-profile/i.test(blockedOn)
+    || /은별|private-profile/i.test(label);
+}
+
+function isthe userOwnedPendingItem(item = {}) {
+  const blockedOn = String(item?.blockedOn || '');
+  const label = `${item?.item || ''} ${item?.caseLabel || ''} ${item?.status || ''}`;
+  return /james\b|james action|builder|architect|oracle/i.test(blockedOn)
+    || /\bthe user\b|미국 filings|US filings|test buy/i.test(label);
+}
+
+function buildPendingFollowupDailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, PENDING_FOLLOWUP_PHASES, options.intervalMinutes || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES);
+}
+
+function getNextPendingFollowupEvent(referenceDate = new Date(), options = {}) {
+  return getNextUtcIntervalEvent(referenceDate, PENDING_FOLLOWUP_PHASES, options.intervalMinutes || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES);
+}
+
+function buildMarketResearchDailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, MARKET_RESEARCH_PHASES, options.intervalMinutes || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES);
+}
+
+function getNextMarketResearchEvent(referenceDate = new Date(), options = {}) {
+  return getNextUtcIntervalEvent(referenceDate, MARKET_RESEARCH_PHASES, options.intervalMinutes || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES);
+}
+
+function buildMarketScannerDailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, MARKET_SCANNER_PHASES, options.intervalMinutes || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES);
+}
+
+function getNextMarketScannerEvent(referenceDate = new Date(), options = {}) {
+  return getNextUtcIntervalEvent(referenceDate, MARKET_SCANNER_PHASES, options.intervalMinutes || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES);
+}
+
+function build[private-profile]CheckInDailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, EUNBYEOL_CHECKIN_PHASES, options.intervalMinutes || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES);
+}
+
+function getNext[private-profile]CheckInEvent(referenceDate = new Date(), options = {}) {
+  return getNextUtcIntervalEvent(referenceDate, EUNBYEOL_CHECKIN_PHASES, options.intervalMinutes || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES);
 }
 
 function buildYieldRouterDailySchedule(referenceDate = new Date(), options = {}) {
@@ -573,6 +1513,14 @@ class MemoryLeaseJanitor {
 class SupervisorDaemon {
   constructor(options = {}) {
     this.projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+    this.hmSendScriptPath = path.resolve(String(options.hmSendScriptPath || resolveProjectUiScriptPath('hm-send.js', this.projectRoot)));
+    this.hmDefiStatusScriptPath = path.resolve(String(options.defiStatusScriptPath || resolveProjectUiScriptPath('hm-defi-status.js', this.projectRoot)));
+    this.hmDefiExecuteScriptPath = path.resolve(String(options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', this.projectRoot)));
+    this.hmDefiCloseScriptPath = path.resolve(String(options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', this.projectRoot)));
+    this.hmSaylorWatcherScriptPath = path.resolve(String(options.saylorWatcherScriptPath || resolveProjectUiScriptPath('hm-x-watchlist.js', this.projectRoot)));
+    this.hm[private-live-ops]SqueezeDetectorScriptPath = path.resolve(String(options.[private-live-ops]SqueezeDetectorScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-squeeze-detector.js', this.projectRoot)));
+    this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolveProjectUiScriptPath('hm-oracle-watch-engine.js', this.projectRoot)));
+    this.hm[private-live-ops]UnlocksScriptPath = path.resolve(String(options.[private-live-ops]UnlocksScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-unlocks.js', this.projectRoot)));
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
     this.pollMs = Math.max(1000, Number.parseInt(options.pollMs || DEFAULT_POLL_MS, 10) || DEFAULT_POLL_MS);
     this.heartbeatMs = Math.max(1000, Number.parseInt(options.heartbeatMs || DEFAULT_HEARTBEAT_MS, 10) || DEFAULT_HEARTBEAT_MS);
@@ -583,6 +1531,51 @@ class SupervisorDaemon {
     this.statusPath = options.statusPath || DEFAULT_STATUS_PATH;
     this.logPath = options.logPath || DEFAULT_LOG_PATH;
     this.taskLogDir = options.taskLogDir || DEFAULT_TASK_LOG_DIR;
+    this.dynamicWatchlistStatePath = options.dynamicWatchlistStatePath || resolveRuntimePath('dynamic-watchlist-state.json');
+    this.agentTaskQueueEnabled = options.agentTaskQueueEnabled !== false;
+    this.agentTaskQueuePath = options.agentTaskQueuePath || DEFAULT_AGENT_TASK_QUEUE_PATH;
+    this.agentTaskIdleCompletionMs = Math.max(
+      10_000,
+      Number.parseInt(options.agentTaskIdleCompletionMs || DEFAULT_AGENT_TASK_IDLE_COMPLETION_MS, 10)
+      || DEFAULT_AGENT_TASK_IDLE_COMPLETION_MS
+    );
+    this.agentTaskReadyGraceMs = Math.max(
+      this.agentTaskIdleCompletionMs,
+      Number.parseInt(options.agentTaskReadyGraceMs || DEFAULT_AGENT_TASK_READY_GRACE_MS, 10)
+      || DEFAULT_AGENT_TASK_READY_GRACE_MS
+    );
+    this.agentTaskHistoryLimit = Math.max(
+      10,
+      Number.parseInt(options.agentTaskHistoryLimit || DEFAULT_AGENT_TASK_HISTORY_LIMIT, 10)
+      || DEFAULT_AGENT_TASK_HISTORY_LIMIT
+    );
+    this.agentTaskReengageIdleMs = Math.max(
+      60_000,
+      Number.parseInt(options.agentTaskReengageIdleMs || DEFAULT_AGENT_TASK_REENGAGE_IDLE_MS, 10)
+      || DEFAULT_AGENT_TASK_REENGAGE_IDLE_MS
+    );
+    this.lastAgentTaskQueueSummary = this.agentTaskQueueEnabled
+      ? {
+        enabled: true,
+        path: this.agentTaskQueuePath,
+        dispatched: 0,
+        completed: 0,
+        pending: {
+          architect: 0,
+          builder: 0,
+          oracle: 0,
+        },
+        active: {
+          architect: null,
+          builder: null,
+          oracle: null,
+        },
+      }
+      : {
+        enabled: false,
+        path: this.agentTaskQueuePath,
+        status: 'disabled',
+      };
     this.workerLeaseOwnerPrefix = String(options.workerLeaseOwnerPrefix || 'supervisor');
     this.logger = options.logger || createLogger(this.logPath);
     this.activeWorkers = new Map();
@@ -642,8 +1635,15 @@ class SupervisorDaemon {
     this.sleepCyclePromise = null;
     this.lastSleepCycleSummary = null;
     this.wakeSignalPath = options.wakeSignalPath || DEFAULT_WAKE_SIGNAL_PATH;
-    this.tradingEnabled = options.tradingEnabled !== false
-      && process.env.SQUIDRUN_TRADING_AUTOMATION !== '0';
+    this.manualTradingOnly = true;
+    this.[private-live-ops]ScalpModeArmed = options.[private-live-ops]ScalpModeArmed === true
+      || this.runtimeEnv.SQUIDRUN_LIVE_OPS_SCALP_MODE === '1';
+    const stockTradingAutomationRequested = options.tradingEnabled === true
+      || this.runtimeEnv.SQUIDRUN_ENABLE_STOCK_TRADING_AUTOMATION === '1';
+    this.tradingEnabled = Boolean(
+      stockTradingAutomationRequested
+      && this.runtimeEnv.SQUIDRUN_TRADING_AUTOMATION !== '0'
+    );
     this.tradingStatePath = options.tradingStatePath || DEFAULT_TRADING_STATE_PATH;
     this.tradingState = {
       ...defaultTradingState(),
@@ -661,6 +1661,7 @@ class SupervisorDaemon {
       : {
         enabled: false,
         status: 'disabled',
+        reason: stockTradingAutomationRequested ? 'manual_opt_out' : 'manual_opt_in_required',
         marketDate: null,
         sleeping: true,
         nextEvent: null,
@@ -688,14 +1689,132 @@ class SupervisorDaemon {
       lastResult: null,
       lastError: null,
     };
+    this.saylorWatcherEnabled = options.saylorWatcherEnabled !== false
+      && this.runtimeEnv.SQUIDRUN_SAYLOR_WATCHER !== '0';
+    this.saylorWatcherIntervalMs = Math.max(
+      60_000,
+      Number.parseInt(options.saylorWatcherIntervalMs || DEFAULT_SAYLOR_WATCHER_INTERVAL_MS, 10)
+      || DEFAULT_SAYLOR_WATCHER_INTERVAL_MS
+    );
+    this.lastSaylorWatcherRunAtMs = 0;
+    this.saylorWatcherPromise = null;
+    this.lastSaylorWatcherSummary = this.saylorWatcherEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMs: this.saylorWatcherIntervalMs,
+        lastRunAt: null,
+        lastSummary: null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMs: this.saylorWatcherIntervalMs,
+        lastRunAt: null,
+        lastSummary: null,
+      };
+    this.[private-live-ops]SqueezeDetectorEnabled = options.[private-live-ops]SqueezeDetectorEnabled !== false
+      && this.runtimeEnv.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR !== '0';
+    this.[private-live-ops]SqueezeDetectorIntervalMs = Math.max(
+      30_000,
+      Number.parseInt(
+        options.[private-live-ops]SqueezeDetectorIntervalMs || DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS,
+        10
+      ) || DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS
+    );
+    this.last[private-live-ops]SqueezeDetectorRunAtMs = 0;
+    this.[private-live-ops]SqueezeDetectorPromise = null;
+    this.last[private-live-ops]SqueezeDetectorSummary = this.[private-live-ops]SqueezeDetectorEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        lastRunAt: null,
+        lastSummary: null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        lastRunAt: null,
+        lastSummary: null,
+      };
+    this.oracleWatchRulesPath = path.resolve(String(options.oracleWatchRulesPath || DEFAULT_ORACLE_WATCH_RULES_PATH));
+    this.oracleWatchStatePath = path.resolve(String(options.oracleWatchStatePath || DEFAULT_ORACLE_WATCH_STATE_PATH));
+    this.oracleWatchEnabled = options.oracleWatchEnabled !== false
+      && readProjectWatcherEnabled(this.projectRoot, true)
+      && this.runtimeEnv.SQUIDRUN_ORACLE_WATCH !== '0';
+    this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath);
+    this.lastOracleWatchRunAtMs = 0;
+    this.oracleWatchPromise = null;
+    this.oracleWatchStaleAlertActive = false;
+    this.lastOracleWatchSummary = this.oracleWatchEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMs: this.oracleWatchIntervalMs,
+        rulesPath: this.oracleWatchRulesPath,
+        statePath: this.oracleWatchStatePath,
+        lastRunAt: null,
+        lastSummary: null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMs: this.oracleWatchIntervalMs,
+        rulesPath: this.oracleWatchRulesPath,
+        statePath: this.oracleWatchStatePath,
+        lastRunAt: null,
+        lastSummary: null,
+      };
+    this.paperTradingAutomationEnabled = options.paperTradingAutomationEnabled !== false
+      && this.runtimeEnv.SQUIDRUN_PAPER_TRADING_AUTOMATION !== '0';
+    this.paperTradingAutomationStatePath = options.paperTradingAutomationStatePath || DEFAULT_PAPER_TRADING_AUTOMATION_STATE_PATH;
+    this.paperTradingResponseTimeoutMs = Math.max(
+      15_000,
+      Number.parseInt(
+        options.paperTradingResponseTimeoutMs || this.runtimeEnv.SQUIDRUN_PAPER_TRADING_RESPONSE_TIMEOUT_MS || DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS,
+        10
+      ) || DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS
+    );
+    this.paperTradingAutomationState = {
+      ...defaultPaperTradingAutomationState(),
+      ...(readJsonFile(this.paperTradingAutomationStatePath, defaultPaperTradingAutomationState()) || {}),
+    };
+    this.paperTradingAutomationPromise = null;
+    this.lastPaperTradingAutomationSummary = this.paperTradingAutomationEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        statePath: this.paperTradingAutomationStatePath,
+        lastProcessedAt: this.paperTradingAutomationState.lastProcessedAt || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        statePath: this.paperTradingAutomationStatePath,
+        lastProcessedAt: null,
+      };
     this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
       && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
-    this.cryptoMonitorOnly = options.cryptoMonitorOnly !== false;
+    this.cryptoMonitorOnly = options.cryptoMonitorOnly === true
+      || this.runtimeEnv.SQUIDRUN_CRYPTO_MONITOR_ONLY === '1';
     this.cryptoTradingStatePath = options.cryptoTradingStatePath || DEFAULT_CRYPTO_TRADING_STATE_PATH;
     this.cryptoTradingState = {
       ...defaultCryptoTradingState(),
       ...(readJsonFile(this.cryptoTradingStatePath, defaultCryptoTradingState()) || {}),
     };
+    this.cryptoTradingStrategyMode = String(
+      options.cryptoTradingStrategyMode
+      || this.runtimeEnv.SQUIDRUN_CRYPTO_TRADING_STRATEGY_MODE
+      || DEFAULT_CRYPTO_TRADING_STRATEGY_MODE
+    ).trim().toLowerCase() || DEFAULT_CRYPTO_TRADING_STRATEGY_MODE;
+    this.rangeConvictionIntervalMs = Math.max(
+      60_000,
+      Number.parseInt(options.rangeConvictionIntervalMs || DEFAULT_RANGE_CONVICTION_INTERVAL_MS, 10) || DEFAULT_RANGE_CONVICTION_INTERVAL_MS
+    );
+    this.lastRangeConvictionRunAt = 0;
+    this.lastRangeConvictionSelection = null;
     this.cryptoTradingPhasePromise = null;
     this.lastCryptoTradingSummary = this.cryptoTradingEnabled
       ? {
@@ -713,47 +1832,102 @@ class SupervisorDaemon {
     this.cryptoTradingOrchestrator = this.cryptoTradingEnabled
       ? (options.cryptoTradingOrchestrator || tradingOrchestrator.createOrchestrator({
         journalPath: resolveRuntimePath('trade-journal.db'),
+        strategyMode: this.cryptoTradingStrategyMode,
       }))
       : null;
     const [private-live-ops]Configured = Boolean(options.[private-live-ops]Executor) || has[private-live-ops]Credentials(this.runtimeEnv);
+    this.[private-live-ops]MonitorPollMs = Math.max(
+      60_000,
+      Number.parseInt(options.[private-live-ops]MonitorPollMs || DEFAULT_LIVE_OPS_MONITOR_POLL_MS, 10) || DEFAULT_LIVE_OPS_MONITOR_POLL_MS
+    );
+    this.[private-live-ops]MonitorEnabled = options.[private-live-ops]MonitorEnabled !== false && [private-live-ops]Configured;
+    this.[private-live-ops]MonitorTimer = null;
+    this.[private-live-ops]MonitorPromise = null;
+    this.defiPeakPnlPath = options.defiPeakPnlPath || DEFAULT_DEFI_PEAK_PNL_PATH;
+    this.[private-live-ops]MonitorOrchestrator = this.[private-live-ops]MonitorEnabled
+      ? (options.[private-live-ops]MonitorOrchestrator || tradingOrchestrator.createOrchestrator({
+        defiMonitorAutoStart: false,
+        defiPeakPnlPath: this.defiPeakPnlPath,
+        defiStatusScriptPath: this.hmDefiStatusScriptPath,
+      }))
+      : null;
+    this.last[private-live-ops]MonitorSummary = this.[private-live-ops]MonitorEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        pollMs: this.[private-live-ops]MonitorPollMs,
+        checkedAt: null,
+        warnings: [],
+        telegramAlerts: [],
+      }
+      : {
+        enabled: false,
+        status: [private-live-ops]Configured ? 'manual_opt_out' : 'credentials_unavailable',
+        pollMs: this.[private-live-ops]MonitorPollMs,
+        checkedAt: null,
+        warnings: [],
+        telegramAlerts: [],
+      };
     const [private-live-ops]AutomationRequested = options.[private-live-ops]ExecutionEnabled !== false
       && this.runtimeEnv.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0';
     this.[private-live-ops]ExecutionEnabled = Boolean(this.cryptoTradingEnabled && [private-live-ops]AutomationRequested && [private-live-ops]Configured);
     this.[private-live-ops]ExecutionDryRun = options.[private-live-ops]ExecutionDryRun === true
       || this.runtimeEnv.SQUIDRUN_LIVE_OPS_DRY_RUN === '1';
+    this.[private-live-ops]ExecutionLeverage = Math.max(
+      1,
+      Number.parseInt(
+        options.[private-live-ops]ExecutionLeverage
+        || this.runtimeEnv.SQUIDRUN_LIVE_OPS_DEFAULT_LEVERAGE
+        || (this.[private-live-ops]ScalpModeArmed ? '20' : '5'),
+        10
+      ) || (this.[private-live-ops]ScalpModeArmed ? 20 : 5)
+    );
+    this.[private-live-ops]KillSwitchAction = normalize[private-live-ops]KillSwitchAction(
+      options.[private-live-ops]KillSwitchAction || this.runtimeEnv.SQUIDRUN_LIVE_OPS_KILL_SWITCH_ACTION,
+      'block_new_entries'
+    );
     this.[private-live-ops]Executor = this.[private-live-ops]ExecutionEnabled
       ? (options.[private-live-ops]Executor || create[private-live-ops]Executor({
         env: this.runtimeEnv,
         cwd: this.projectRoot,
         dryRun: this.[private-live-ops]ExecutionDryRun,
+        defiExecuteScriptPath: this.hmDefiExecuteScriptPath,
+        defiCloseScriptPath: this.hmDefiCloseScriptPath,
       }))
       : null;
-    this.last[private-live-ops]ExecutionSummary = this.[private-live-ops]ExecutionEnabled
+    this.last[private-live-ops]ExecutionSummary = (this.manualTradingOnly && !this.[private-live-ops]ScalpModeArmed)
       ? {
-        enabled: true,
-        status: 'idle',
+        enabled: false,
+        status: 'manual_only',
         dryRun: this.[private-live-ops]ExecutionDryRun,
+        reason: 'manual_only_reset',
         accountValue: null,
         position: null,
         action: null,
-        reason: null,
         executedAt: null,
       }
-      : {
-        enabled: false,
-        status: 'disabled',
-        dryRun: this.[private-live-ops]ExecutionDryRun,
-        reason: [private-live-ops]Configured ? 'manual_opt_out' : 'credentials_unavailable',
-        accountValue: null,
-        position: null,
-        action: null,
-        executedAt: null,
-      };
-    if (!this.tradingOrchestrator && this.cryptoTradingOrchestrator) {
-      this.lastTradeReconciliationSummary.enabled = true;
-      this.lastTradeReconciliationSummary.status = 'idle';
-    }
-
+      : this.[private-live-ops]ExecutionEnabled
+        ? {
+          enabled: true,
+          status: 'idle',
+          armed: this.[private-live-ops]ScalpModeArmed,
+          dryRun: this.[private-live-ops]ExecutionDryRun,
+          accountValue: null,
+          position: null,
+          action: null,
+          reason: null,
+          executedAt: null,
+        }
+        : {
+          enabled: false,
+          status: 'disabled',
+          dryRun: this.[private-live-ops]ExecutionDryRun,
+          reason: [private-live-ops]Configured ? 'manual_opt_out' : 'credentials_unavailable',
+          accountValue: null,
+          position: null,
+          action: null,
+          executedAt: null,
+        };
     // Smart money scanner — watches for whale convergence and triggers immediate consensus rounds
     this.smartMoneyScanner = this.cryptoTradingEnabled && options.smartMoneyScanner !== null
       ? (options.smartMoneyScanner || new SmartMoneyScanner({
@@ -807,7 +1981,10 @@ class SupervisorDaemon {
     // Circuit breaker — continuous position monitor with stop-loss execution
     const executor = require('./modules/trading/executor');
     const dataIngestion = require('./modules/trading/data-ingestion');
-    this.circuitBreaker = (this.tradingEnabled || this.cryptoTradingEnabled) && options.circuitBreaker !== null
+    // Circuit breaker DISABLED — was monitoring stale PaperBroker paper positions and spamming
+    // the user's Telegram with ghost ETH SHORT alerts for 3+ days. [private-live-ops] has its own
+    // position monitor. — Session 268
+    this.circuitBreaker = false && this.tradingEnabled && options.circuitBreaker !== null
       ? (options.circuitBreaker || new CircuitBreaker({
         pollMs: 30_000,
         hardStopPct: 0.04,   // 4% loss from entry
@@ -925,6 +2102,206 @@ class SupervisorDaemon {
         launchRadar: this.launchRadar,
       }))
       : null;
+    this.newsScanEnabled = options.newsScanEnabled !== false
+      && process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION !== '0';
+    this.newsScanIntervalMinutes = Math.max(
+      15,
+      Math.floor(Number(options.newsScanIntervalMinutes) || DEFAULT_NEWS_SCAN_INTERVAL_MINUTES)
+    );
+    this.caseOperationsPath = options.caseOperationsPath || path.join(this.projectRoot, 'workspace', 'knowledge', 'case-operations.md');
+    this.newsScanStatePath = options.newsScanStatePath || DEFAULT_NEWS_SCAN_STATE_PATH;
+    this.newsScanState = {
+      ...defaultNewsScanState(),
+      ...(readJsonFile(this.newsScanStatePath, defaultNewsScanState()) || {}),
+    };
+    this.newsScanPhasePromise = null;
+    this.lastNewsScanSummary = this.newsScanEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.newsScanIntervalMinutes,
+        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
+        nextEvent: this.newsScanState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.newsScanIntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.newsVetoModule = options.newsVetoModule || eventVeto;
+    this.newsScanOpenPositionProvider = options.newsScanOpenPositionProvider || (async () => {
+      const state = await this.[private-live-ops]Executor?.getAccountState?.().catch(() => null);
+      return Array.isArray(state?.positions) ? state.positions : [];
+    });
+    this.pendingFollowupEnabled = options.pendingFollowupEnabled !== false
+      && process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION !== '0';
+    this.pendingFollowupIntervalMinutes = Math.max(
+      30,
+      Math.floor(Number(options.pendingFollowupIntervalMinutes) || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES)
+    );
+    this.pendingFollowupStatePath = options.pendingFollowupStatePath || DEFAULT_PENDING_FOLLOWUP_STATE_PATH;
+    this.pendingFollowupState = {
+      ...defaultPendingFollowupState(),
+      ...(readJsonFile(this.pendingFollowupStatePath, defaultPendingFollowupState()) || {}),
+    };
+    this.pendingFollowupPhasePromise = null;
+    this.lastPendingFollowupSummary = this.pendingFollowupEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.pendingFollowupIntervalMinutes,
+        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
+        nextEvent: this.pendingFollowupState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.pendingFollowupIntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.marketResearchEnabled = options.marketResearchEnabled !== false
+      && process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION !== '0';
+    this.marketResearchIntervalMinutes = Math.max(
+      30,
+      Math.floor(Number(options.marketResearchIntervalMinutes) || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES)
+    );
+    this.marketResearchStatePath = options.marketResearchStatePath || DEFAULT_MARKET_RESEARCH_STATE_PATH;
+    this.marketResearchState = {
+      ...defaultMarketResearchState(),
+      ...(readJsonFile(this.marketResearchStatePath, defaultMarketResearchState()) || {}),
+    };
+    this.marketResearchPhasePromise = null;
+    this.lastMarketResearchSummary = this.marketResearchEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.marketResearchIntervalMinutes,
+        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
+        nextEvent: this.marketResearchState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.marketResearchIntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.[private-live-ops]Enabled = options.[private-live-ops]Enabled === true
+      || (
+        options.[private-live-ops]Enabled !== false
+        && RUNNING_SUPERVISOR_MAIN
+        && process.env.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0'
+      );
+    this.[private-live-ops]IntervalMinutes = Math.max(
+      60,
+      Math.floor(Number(options.[private-live-ops]IntervalMinutes) || DEFAULT_LIVE_OPS_INTERVAL_MINUTES)
+    );
+    this.[private-live-ops]StatePath = options.[private-live-ops]StatePath || DEFAULT_LIVE_OPS_STATE_PATH;
+    this.[private-live-ops]State = {
+      ...default[private-live-ops]State(),
+      ...(readJsonFile(this.[private-live-ops]StatePath, default[private-live-ops]State()) || {}),
+    };
+    this.[private-live-ops]PhasePromise = null;
+    this.last[private-live-ops]Summary = this.[private-live-ops]Enabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
+        nextEvent: this.[private-live-ops]State.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.marketScannerEnabled = options.marketScannerEnabled !== false
+      && process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION !== '0';
+    this.marketScannerIntervalMinutes = Math.max(
+      30,
+      Math.floor(Number(options.marketScannerIntervalMinutes) || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES)
+    );
+    this.marketScannerConsultationSymbolLimit = Math.max(
+      1,
+      Math.floor(Number(options.marketScannerConsultationSymbolLimit) || DEFAULT_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT)
+    );
+    this.cryptoConsultationSymbolMax = Math.max(
+      this.marketScannerConsultationSymbolLimit,
+      Math.floor(Number(options.cryptoConsultationSymbolMax) || DEFAULT_CRYPTO_CONSULTATION_SYMBOL_MAX)
+    );
+    this.marketScannerStatePath = options.marketScannerStatePath || DEFAULT_MARKET_SCANNER_STATE_PATH;
+    this.marketScannerState = marketScannerModule.normalizeMarketScannerState({
+      ...defaultMarketScannerState(),
+      ...(readJsonFile(this.marketScannerStatePath, defaultMarketScannerState()) || {}),
+    });
+    this.marketScanner = options.marketScanner || marketScannerModule;
+    this.marketScannerPhasePromise = null;
+    this.marketScannerLastTrigger = null;
+    this.lastMarketScannerSummary = this.marketScannerEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.lastCryptoCoverage = {
+      basketBuiltAt: null,
+      openPositionSymbols: [],
+      coreSymbols: [],
+      moverSymbols: [],
+      promotedSymbols: [],
+      symbolsConsulted: [],
+      symbolsExecutable: [],
+    };
+    this.private-profileCheckInEnabled = options.private-profileCheckInEnabled !== false
+      && process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION !== '0';
+    this.private-profileCheckInIntervalMinutes = Math.max(
+      30,
+      Math.floor(Number(options.private-profileCheckInIntervalMinutes) || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES)
+    );
+    this.private-profileCheckInSilenceMs = Math.max(
+      60_000,
+      Number.parseInt(options.private-profileCheckInSilenceMs || `${DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS}`, 10) || DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS
+    );
+    this.private-profileCheckInStatePath = options.private-profileCheckInStatePath || DEFAULT_EUNBYEOL_CHECKIN_STATE_PATH;
+    this.private-profileCheckInState = {
+      ...default[private-profile]CheckInState(),
+      ...(readJsonFile(this.private-profileCheckInStatePath, default[private-profile]CheckInState()) || {}),
+    };
+    this.private-profileCheckInPhasePromise = null;
+    this.last[private-profile]CheckInSummary = this.private-profileCheckInEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.private-profileCheckInIntervalMinutes,
+        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
+        nextEvent: this.private-profileCheckInState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.private-profileCheckInIntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.proactiveCommsProvider = options.proactiveCommsProvider || (() => queryCommsJournalEntries({
+      order: 'desc',
+      limit: 200,
+    }));
+    this.marketResearchOpenPositionProvider = options.marketResearchOpenPositionProvider || this.newsScanOpenPositionProvider;
     const yieldRouterAutomationRequested = options.yieldRouterEnabled === true
       || process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION === '1';
     this.yieldRouterEnabled = Boolean(yieldRouterAutomationRequested);
@@ -1014,7 +2391,7 @@ class SupervisorDaemon {
     if (command !== this.lastSleepExtractionCommand) {
       this.lastSleepExtractionCommand = command;
       const mode = command
-        ? `local (${snapshot?.localModels?.sleepExtraction?.model || 'unknown-model'})`
+        ? `${snapshot?.localModels?.sleepExtraction?.path || 'external'} (${snapshot?.localModels?.sleepExtraction?.model || 'unknown-model'})`
         : 'fallback';
       this.logger.info(`Sleep extraction path configured: ${mode}`);
     }
@@ -1034,6 +2411,9 @@ class SupervisorDaemon {
     const initResult = this.store.init();
     if (!initResult.ok) {
       return initResult;
+    }
+    if (this.agentTaskQueueEnabled) {
+      this.saveAgentTaskQueueState(this.loadAgentTaskQueueState(Date.now()));
     }
     this.refreshSleepExtractionCommand();
     if (this.sleepConsolidator && typeof this.sleepConsolidator.init === 'function') {
@@ -1071,6 +2451,7 @@ class SupervisorDaemon {
       this.circuitBreaker.start();
       this.logger.info('Circuit breaker started (30s poll, 4% hard stop, 3% trailing stop, 5% flash crash)');
     }
+    this.start[private-live-ops]PositionMonitor();
     this.requestTick('startup');
     this.statusTimer = setInterval(() => {
       this.writeStatus();
@@ -1101,6 +2482,7 @@ class SupervisorDaemon {
       this.circuitBreaker.stop();
       this.logger.info('Circuit breaker stopped');
     }
+    await this.stop[private-live-ops]PositionMonitor();
     if (this.launchRadar && typeof this.launchRadar.stop === 'function') {
       this.launchRadar.stop();
       this.logger.info('Launch radar stopped');
@@ -1130,9 +2512,277 @@ class SupervisorDaemon {
     } catch {}
   }
 
+  loadAgentTaskQueueState(nowMs = Date.now()) {
+    const fallback = normalizeAgentTaskQueueState(null, {
+      nowMs,
+      historyLimit: this.agentTaskHistoryLimit,
+    });
+    if (!this.agentTaskQueueEnabled) {
+      return fallback;
+    }
+    return normalizeAgentTaskQueueState(readJsonFile(this.agentTaskQueuePath, fallback), {
+      nowMs,
+      historyLimit: this.agentTaskHistoryLimit,
+    });
+  }
+
+  saveAgentTaskQueueState(state) {
+    if (!this.agentTaskQueueEnabled) return;
+    const normalized = normalizeAgentTaskQueueState(state, {
+      nowMs: Date.now(),
+      historyLimit: this.agentTaskHistoryLimit,
+    });
+    normalized.updatedAt = new Date().toISOString();
+    writeJsonFile(this.agentTaskQueuePath, normalized);
+  }
+
+  readAgentSessionState() {
+    const snapshot = readJsonFile(this.sessionStatePath, {});
+    return snapshot && typeof snapshot === 'object' ? snapshot : {};
+  }
+
+  getAgentTerminalSnapshot(role, sessionState = null) {
+    const paneId = ROLE_ID_MAP[String(role || '').trim().toLowerCase()] || null;
+    if (!paneId) return null;
+    const state = sessionState && typeof sessionState === 'object' ? sessionState : this.readAgentSessionState();
+    const terminals = Array.isArray(state.terminals) ? state.terminals : [];
+    const terminal = terminals.find((entry) => String(entry?.paneId || '') === String(paneId));
+    return terminal && typeof terminal === 'object' ? terminal : null;
+  }
+
+  completeAgentTask(bucket, task, completionReason, terminal, nowMs) {
+    if (!bucket || !task) return null;
+    const completedTask = {
+      ...task,
+      status: completionReason === 'timeout' ? 'timeout' : 'completed',
+      completionReason,
+      completedAtMs: nowMs,
+      lastObservedActivityAtMs: toPositiveMs(terminal?.lastActivity, task.lastObservedActivityAtMs || 0),
+      lastResult: {
+        reason: completionReason,
+        paneId: terminal?.paneId || null,
+        lastActivity: toPositiveMs(terminal?.lastActivity, 0),
+      },
+    };
+    bucket.active = null;
+    bucket.history.push(completedTask);
+    if (bucket.history.length > this.agentTaskHistoryLimit) {
+      bucket.history = bucket.history.slice(-this.agentTaskHistoryLimit);
+    }
+    return completedTask;
+  }
+
+  evaluateActiveAgentTask(task, terminal, nowMs, pendingCount = 0) {
+    if (!task) {
+      return { changed: false, completed: false, task: null };
+    }
+
+    const nextTask = { ...task };
+    const lastDispatchAtMs = toPositiveMs(nextTask.lastDispatchAtMs, 0);
+    const terminalLastActivity = toPositiveMs(terminal?.lastActivity, 0);
+    const hasPostDispatchActivity = terminalLastActivity > lastDispatchAtMs;
+    let changed = false;
+
+    if (hasPostDispatchActivity) {
+      if (!nextTask.firstActivityAtMs || terminalLastActivity < nextTask.firstActivityAtMs) {
+        nextTask.firstActivityAtMs = terminalLastActivity;
+        changed = true;
+      }
+      if (terminalLastActivity !== toPositiveMs(nextTask.lastObservedActivityAtMs, 0)) {
+        nextTask.lastObservedActivityAtMs = terminalLastActivity;
+        changed = true;
+      }
+      if (nextTask.status !== 'running') {
+        nextTask.status = 'running';
+        changed = true;
+      }
+    }
+
+    const completionSentinel = nextTask.completionSentinel || null;
+    if (completionSentinel && String(terminal?.scrollback || '').includes(completionSentinel)) {
+      return {
+        changed: true,
+        completed: true,
+        completionReason: 'sentinel',
+        task: nextTask,
+      };
+    }
+
+    const responseTimeoutMs = toPositiveMs(nextTask.responseTimeoutMs, 0);
+    if (!nextTask.firstActivityAtMs && responseTimeoutMs > 0 && lastDispatchAtMs > 0 && (nowMs - lastDispatchAtMs) >= responseTimeoutMs) {
+      return {
+        changed: true,
+        completed: true,
+        completionReason: 'timeout',
+        task: nextTask,
+      };
+    }
+
+    const reengageReferenceMs = Math.max(
+      toPositiveMs(nextTask.lastObservedActivityAtMs, 0),
+      toPositiveMs(nextTask.firstActivityAtMs, 0),
+      lastDispatchAtMs
+    );
+    if (pendingCount > 0 && reengageReferenceMs > 0 && (nowMs - reengageReferenceMs) >= this.agentTaskReengageIdleMs) {
+      return {
+        changed: true,
+        completed: true,
+        completionReason: 'reengage_next_task',
+        task: nextTask,
+      };
+    }
+
+    if (nextTask.firstActivityAtMs > 0 && terminalLastActivity > 0) {
+      const idleCompletionMs = toPositiveMs(nextTask.idleCompletionMs, this.agentTaskIdleCompletionMs) || this.agentTaskIdleCompletionMs;
+      const idleMs = Math.max(0, nowMs - terminalLastActivity);
+      const ready = hasReadyPrompt(terminal?.scrollback || '');
+      if ((idleMs >= idleCompletionMs && ready) || idleMs >= Math.max(this.agentTaskReadyGraceMs, idleCompletionMs * 2)) {
+        return {
+          changed: true,
+          completed: true,
+          completionReason: ready ? 'idle_ready' : 'idle_timeout',
+          task: nextTask,
+        };
+      }
+    }
+
+    return {
+      changed,
+      completed: false,
+      task: nextTask,
+    };
+  }
+
+  async dispatchAgentQueuedTask(role, task) {
+    const target = String(role || '').trim().toLowerCase();
+    if (!target || !ROLE_ID_MAP[target]) {
+      return { ok: false, reason: 'invalid_role' };
+    }
+    const message = trimOptionalText(task?.message);
+    if (!message) {
+      return { ok: false, reason: 'invalid_message' };
+    }
+    ensureDirectory(this.taskLogDir);
+    const messagePath = path.join(this.taskLogDir, `hm-msg-${target}-${task.taskId || createAgentTaskId(target)}.txt`);
+    fs.writeFileSync(messagePath, `${message}\n`, 'utf8');
+    return executeNodeScript(this.hmSendScriptPath, [target, '--file', messagePath], {
+      cwd: this.projectRoot,
+      timeoutMs: 20_000,
+      env: this.runtimeEnv,
+    });
+  }
+
+  async maybeRunAgentTaskQueue(nowMs = Date.now()) {
+    if (!this.agentTaskQueueEnabled) {
+      const disabled = {
+        enabled: false,
+        path: this.agentTaskQueuePath,
+        status: 'disabled',
+      };
+      this.lastAgentTaskQueueSummary = disabled;
+      return disabled;
+    }
+
+    const state = this.loadAgentTaskQueueState(nowMs);
+    const sessionState = this.readAgentSessionState();
+    let changed = false;
+    const summary = {
+      enabled: true,
+      path: this.agentTaskQueuePath,
+      status: 'idle',
+      dispatched: 0,
+      completed: 0,
+      reengaged: 0,
+      pending: {},
+      active: {},
+      blocked: [],
+      notes: [],
+    };
+
+    for (const role of AGENT_TASK_QUEUE_ROLES) {
+      const bucket = state.agents[role] || createEmptyAgentQueueBucket();
+      const terminal = this.getAgentTerminalSnapshot(role, sessionState);
+
+      if (bucket.active) {
+        const evaluation = this.evaluateActiveAgentTask(bucket.active, terminal, nowMs, bucket.pending.length);
+        if (evaluation.changed) {
+          changed = true;
+        }
+        if (evaluation.completed) {
+          this.completeAgentTask(bucket, evaluation.task, evaluation.completionReason, terminal, nowMs);
+          summary.completed += 1;
+          if (evaluation.completionReason === 'reengage_next_task') {
+            summary.reengaged += 1;
+          }
+        } else if (evaluation.task) {
+          bucket.active = evaluation.task;
+        }
+      }
+
+      if (!bucket.active && bucket.pending.length > 0) {
+        if (!terminal?.alive) {
+          summary.blocked.push(role);
+        } else {
+          const nextTask = bucket.pending.shift();
+          const dispatchResult = await this.dispatchAgentQueuedTask(role, nextTask);
+          if (dispatchResult?.ok) {
+            bucket.active = {
+              ...nextTask,
+              status: 'dispatched',
+              dispatchCount: Math.max(0, Number(nextTask.dispatchCount || 0)) + 1,
+              lastDispatchAtMs: nowMs,
+              lastError: null,
+              lastResult: {
+                exitCode: dispatchResult.exitCode,
+                status: dispatchResult.status || 'accepted',
+              },
+            };
+            changed = true;
+            summary.dispatched += 1;
+          } else {
+            bucket.pending.unshift({
+              ...nextTask,
+              lastError: dispatchResult?.error || dispatchResult?.reason || 'dispatch_failed',
+            });
+            summary.notes.push(`${role}:dispatch_failed`);
+          }
+        }
+      }
+
+      summary.pending[role] = bucket.pending.length;
+      summary.active[role] = bucket.active
+        ? {
+          taskId: bucket.active.taskId,
+          title: bucket.active.title || null,
+          status: bucket.active.status || 'active',
+          lastDispatchAtMs: bucket.active.lastDispatchAtMs || 0,
+          firstActivityAtMs: bucket.active.firstActivityAtMs || 0,
+        }
+        : null;
+      state.agents[role] = bucket;
+    }
+
+    if (summary.dispatched > 0 || summary.completed > 0) {
+      summary.status = 'active';
+    } else if (summary.blocked.length > 0) {
+      summary.status = 'blocked';
+    }
+
+    if (changed) {
+      this.saveAgentTaskQueueState(state);
+    }
+
+    this.lastAgentTaskQueueSummary = {
+      ...summary,
+      queue: summarizeAgentTaskQueueState(state),
+    };
+    return this.lastAgentTaskQueueSummary;
+  }
+
   async tick() {
     if (this.stopping) return;
     const nowMs = Date.now();
+    const agentTaskQueue = await this.maybeRunAgentTaskQueue(nowMs);
     const queueHousekeeping = this.runQueueHousekeeping(nowMs, 'tick');
     const leaseHousekeeping = this.runMemoryLeaseHousekeeping(nowMs, 'tick');
     const memoryConsistency = this.maybeRunMemoryConsistencyAudit(nowMs, 'tick');
@@ -1159,6 +2809,16 @@ class SupervisorDaemon {
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
     const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
     const launchRadarResult = await this.maybeRunLaunchRadarAutomation(nowMs);
+    const newsScanResult = await this.maybeRunNewsScanAutomation(nowMs);
+    const pendingFollowupResult = await this.maybeRunPendingFollowupAutomation(nowMs);
+    const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
+    const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
+    const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
+    const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
+    const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
+    const paperTradingAutomationResult = await this.maybeRunPaperTradingAutomation(nowMs);
+    const [private-live-ops]SqueezeDetectorResult = await this.maybeRun[private-live-ops]SqueezeDetector(nowMs);
+    const private-profileCheckInResult = await this.maybeRun[private-profile]CheckInAutomation(nowMs);
     const yieldRouterResult = await this.maybeRunYieldRouterAutomation(nowMs);
     const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
@@ -1166,6 +2826,7 @@ class SupervisorDaemon {
       ok: true,
       claimedCount,
       activeWorkerCount: this.activeWorkers.size,
+      agentTaskQueue,
       queueHousekeeping,
       leaseHousekeeping,
       memoryConsistency,
@@ -1174,6 +2835,16 @@ class SupervisorDaemon {
       cryptoTradingResult,
       polymarketTradingResult,
       launchRadarResult,
+      newsScanResult,
+      pendingFollowupResult,
+      marketResearchResult,
+      [private-live-ops]Result,
+      marketScannerResult,
+      saylorWatcherResult,
+      oracleWatchResult,
+      paperTradingAutomationResult,
+      [private-live-ops]SqueezeDetectorResult,
+      private-profileCheckInResult,
       yieldRouterResult,
       sleepResult,
     };
@@ -1220,6 +2891,8 @@ class SupervisorDaemon {
   computeNextTickDelay(summary = null) {
     const claimedCount = Number(summary?.claimedCount || 0);
     const activeWorkerCount = Number(summary?.activeWorkerCount || 0);
+    const agentQueueDispatched = Number(summary?.agentTaskQueue?.dispatched || 0);
+    const agentQueueCompleted = Number(summary?.agentTaskQueue?.completed || 0);
     const queueRequeued = Number(summary?.queueHousekeeping?.requeueResult?.requeued || 0);
     const pendingPruned = Number(summary?.queueHousekeeping?.pruneResult?.pruned || 0);
     const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
@@ -1227,9 +2900,19 @@ class SupervisorDaemon {
     const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
     const polymarketTradingRan = summary?.polymarketTradingResult && summary.polymarketTradingResult.skipped !== true;
+    const newsScanRan = summary?.newsScanResult && summary.newsScanResult.skipped !== true;
+    const pendingFollowupRan = summary?.pendingFollowupResult && summary.pendingFollowupResult.skipped !== true;
+    const marketResearchRan = summary?.marketResearchResult && summary.marketResearchResult.skipped !== true;
+    const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
+    const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
+    const paperTradingAutomationRan = summary?.paperTradingAutomationResult && summary.paperTradingAutomationResult.skipped !== true;
+    const [private-live-ops]SqueezeDetectorRan = summary?.[private-live-ops]SqueezeDetectorResult && summary.[private-live-ops]SqueezeDetectorResult.skipped !== true;
+    const private-profileCheckInRan = summary?.private-profileCheckInResult && summary.private-profileCheckInResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
     const memoryChecked = summary?.memoryConsistency && summary.memoryConsistency.skipped !== true;
     const performedWork = claimedCount > 0
+      || agentQueueDispatched > 0
+      || agentQueueCompleted > 0
       || queueRequeued > 0
       || pendingPruned > 0
       || leasePruned > 0
@@ -1237,6 +2920,14 @@ class SupervisorDaemon {
       || tradeReconciliationRan
       || cryptoTradingRan
       || polymarketTradingRan
+      || newsScanRan
+      || pendingFollowupRan
+      || marketResearchRan
+      || saylorWatcherRan
+      || oracleWatchRan
+      || paperTradingAutomationRan
+      || [private-live-ops]SqueezeDetectorRan
+      || private-profileCheckInRan
       || sleepRan
       || memoryChecked;
 
@@ -1249,7 +2940,36 @@ class SupervisorDaemon {
       this.maxIdleBackoffMs,
       Math.max(this.pollMs, this.currentBackoffMs * 2)
     );
-    return this.currentBackoffMs;
+
+    let nextDelayMs = this.currentBackoffMs;
+    if (this.oracleWatchEnabled) {
+      const oracleWatchState = readJsonFile(this.oracleWatchStatePath, {}) || {};
+      const heartbeat = buildOracleWatchHeartbeat(this.lastOracleWatchSummary, oracleWatchState);
+      if (!this.oracleWatchPromise && heartbeat?.stale === true) {
+        this.currentBackoffMs = this.pollMs;
+        return this.pollMs;
+      }
+      if (!this.oracleWatchPromise) {
+        const nextOracleWatchDueMs = Math.max(
+          0,
+          (Number(this.lastOracleWatchRunAtMs || 0) + Number(this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS))
+          - Date.now()
+        );
+        nextDelayMs = Math.min(nextDelayMs, nextOracleWatchDueMs);
+      }
+    }
+
+    if (this.paperTradingAutomationEnabled && !this.paperTradingAutomationPromise) {
+      const nextWakeAtMs = paperTradingAutomation.AGENT_IDS
+        .map((agentId) => Number(this.paperTradingAutomationState?.agents?.[agentId]?.nextTimerWakeAtMs || 0) || 0)
+        .filter((value) => value > 0)
+        .map((value) => Math.max(0, value - Date.now()));
+      if (nextWakeAtMs.length > 0) {
+        nextDelayMs = Math.min(nextDelayMs, ...nextWakeAtMs);
+      }
+    }
+
+    return nextDelayMs;
   }
 
   async runScheduledTick(reason = 'scheduled') {
@@ -1363,8 +3083,1848 @@ class SupervisorDaemon {
     writeJsonFile(this.yieldRouterStatePath, this.yieldRouterState);
   }
 
+  persistNewsScanState() {
+    this.newsScanState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.newsScanStatePath, this.newsScanState);
+  }
+
+  persistPendingFollowupState() {
+    this.pendingFollowupState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.pendingFollowupStatePath, this.pendingFollowupState);
+  }
+
+  persistMarketResearchState() {
+    this.marketResearchState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.marketResearchStatePath, this.marketResearchState);
+  }
+
+  persist[private-live-ops]State() {
+    this.[private-live-ops]State.updatedAt = new Date().toISOString();
+    writeJsonFile(this.[private-live-ops]StatePath, this.[private-live-ops]State);
+  }
+
+  persistMarketScannerState() {
+    this.marketScannerState = marketScannerModule.normalizeMarketScannerState({
+      ...this.marketScannerState,
+      updatedAt: new Date().toISOString(),
+    });
+    writeJsonFile(this.marketScannerStatePath, this.marketScannerState);
+  }
+
+  persist[private-profile]CheckInState() {
+    this.private-profileCheckInState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.private-profileCheckInStatePath, this.private-profileCheckInState);
+  }
+
+  persistPaperTradingAutomationState() {
+    this.paperTradingAutomationState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.paperTradingAutomationStatePath, this.paperTradingAutomationState);
+  }
+
+  readCaseOperationsDashboard() {
+    try {
+      const markdown = fs.existsSync(this.caseOperationsPath)
+        ? fs.readFileSync(this.caseOperationsPath, 'utf8')
+        : '';
+      return parseCaseOperationsDashboard(markdown);
+    } catch {
+      return {
+        pendingItems: [],
+        scheduleDate: null,
+        scheduleItems: [],
+      };
+    }
+  }
+
+  readActiveCaseSignals() {
+    try {
+      const markdown = fs.existsSync(this.caseOperationsPath)
+        ? fs.readFileSync(this.caseOperationsPath, 'utf8')
+        : '';
+      return extractActiveCaseSignals(markdown);
+    } catch {
+      return [];
+    }
+  }
+
+  buildPendingFollowupTelegramAlert(summary = {}) {
+    return [
+      '[PROACTIVE] Pending follow-up scan found items needing your action.',
+      `the user-actionable items: ${Number(summary.jamesActionCount || 0)}`,
+      summary.jamesTopItems?.length ? `Your items: ${summary.jamesTopItems.join(' | ')}` : null,
+    ].filter(Boolean).join('\n');
+  }
+
+  buildPendingFollowupArchitectAlert(summary = {}) {
+    return [
+      '[PROACTIVE][FOLLOWUPS] Pending follow-up scan complete.',
+      `Level: ${summary.alertLevel || 'level_0'}`,
+      `the user-actionable items: ${Number(summary.jamesActionCount || 0)}`,
+      `Internal-only items: ${Number(summary.internalOnlyCount || 0)}`,
+      summary.jamesTopItems?.length ? `the user items: ${summary.jamesTopItems.join(' | ')}` : null,
+      summary.private-profileTopItems?.length ? `Internal items: ${summary.private-profileTopItems.join(' | ')}` : null,
+    ].filter(Boolean).join('\n');
+  }
+
+  build[private-profile]CheckInDraft(summary = {}) {
+    const topItems = Array.isArray(summary.topItems) ? summary.topItems.slice(0, 3) : [];
+    const bullets = topItems.map((item) => `- ${item}`).join('\n');
+    return [
+      '은별님, 진행 중인 항목들 확인차 체크인드립니다.',
+      '',
+      topItems.length > 0 ? '현재 계속 열려 있는 항목:' : null,
+      topItems.length > 0 ? bullets : null,
+      '',
+      '오늘/내일 진행 상황이나 필요한 자료 있으면 보내주세요. 제가 이어서 바로 정리해둘게요.',
+    ].filter((line) => line !== null).join('\n');
+  }
+
+  buildNewsScanTelegramAlert(summary = {}) {
+    const findings = Array.isArray(summary.findings) ? summary.findings : [];
+    const top = findings[0] || {};
+    const headline = String(top.headline || top.summary || summary.reason || 'significant news detected').trim();
+    const subjects = Array.isArray(summary.livePositionSymbols) && summary.livePositionSymbols.length > 0
+      ? `live positions ${summary.livePositionSymbols.join(', ')}`
+      : (summary.caseMatches?.map((entry) => entry.label).join(', ') || 'active cases');
+    return [
+      '[PROACTIVE] News scan found a significant headline.',
+      `Level: ${summary.alertLevel || 'level_0'}`,
+      `Scope: ${subjects}`,
+      `Reason: ${summary.reason || 'headline matched active scope'}`,
+      `Headline: ${headline}`,
+    ].join('\n');
+  }
+
+  buildNewsScanArchitectAlert(summary = {}) {
+    const findings = Array.isArray(summary.findings) ? summary.findings : [];
+    const top = findings[0] || {};
+    const headline = String(top.headline || top.summary || summary.reason || 'no significant headline').trim();
+    const scope = Array.isArray(summary.livePositionSymbols) && summary.livePositionSymbols.length > 0
+      ? `live positions ${summary.livePositionSymbols.join(', ')}`
+      : (Array.isArray(summary.scanSymbols) ? summary.scanSymbols.join(', ') : 'watchlist');
+    return [
+      '[PROACTIVE][NEWS] News scan complete.',
+      `Level: ${summary.alertLevel || 'level_0'}`,
+      `Decision: ${summary.decision || 'DEGRADED'} (${summary.sourceTier || 'none'})`,
+      `Scope: ${scope}`,
+      `Reason: ${summary.reason || 'stored_for_review'}`,
+      `Headline: ${headline}`,
+    ].join('\n');
+  }
+
+  buildMarketResearchArchitectAlert(summary = {}) {
+    const findings = Array.isArray(summary.findings) ? summary.findings : [];
+    const top = findings[0] || {};
+    const headline = String(top.headline || top.summary || 'none').trim();
+    return [
+      '[PROACTIVE][RESEARCH] Market research scan complete.',
+      `Level: ${summary.alertLevel || 'level_0'}`,
+      `Macro: ${summary.macroRisk?.regime || 'unknown'} (${summary.macroRisk?.score ?? 'n/a'})`,
+      `Event decision: ${summary.eventDecision || 'DEGRADED'} (${summary.sourceTier || 'none'})`,
+      `Headline count: ${Number(summary.headlineCount || 0)}`,
+      headline ? `Top headline: ${headline}` : null,
+    ].filter(Boolean).join('\n');
+  }
+
+  buildMarketScannerArchitectAlert(summary = {}) {
+    const movers = Array.isArray(summary.alerts) && summary.alerts.length > 0
+      ? summary.alerts
+      : (Array.isArray(summary.flaggedMovers) ? summary.flaggedMovers.slice(0, 5) : []);
+    const lines = movers.slice(0, 5).map((mover) => {
+      const price = Number.isFinite(Number(mover?.price)) ? Number(mover.price).toFixed(4) : 'n/a';
+      const change4h = Number.isFinite(Number(mover?.change4hPct))
+        ? `${(Number(mover.change4hPct) * 100).toFixed(2)}%`
+        : 'n/a';
+      const change24h = Number.isFinite(Number(mover?.change24hPct))
+        ? `${(Number(mover.change24hPct) * 100).toFixed(2)}%`
+        : 'n/a';
+      const volume = Number.isFinite(Number(mover?.volumeUsd24h))
+        ? `$${Math.round(Number(mover.volumeUsd24h)).toLocaleString('en-US')}`
+        : 'n/a';
+      const fundingBps = Number.isFinite(Number(mover?.fundingRate))
+        ? `${(Number(mover.fundingRate) * 10_000).toFixed(3)} bps`
+        : 'n/a';
+      return `${mover?.coin || mover?.ticker}: ${mover?.direction || 'FLAT'} @ ${price} | 4h ${change4h} | 24h ${change24h} | vol ${volume} | funding ${fundingBps}`;
+    });
+    return [
+      '[PROACTIVE][MARKET] [private-live-ops] full-universe scan found movers.',
+      `Tracked pairs: ${Number(summary.assetCount || 0)}`,
+      `Flagged movers: ${Number(summary.flaggedCount || 0)}`,
+      ...lines,
+    ].filter(Boolean).join('\n');
+  }
+
+  logTradingEventHeader(phaseKey = 'unknown') {
+    try {
+      const header = predictionTrackerModule.eventHeader();
+      if (header) {
+        this.logger.info(`[EVENT WATCH][${phaseKey}]\n${header}`);
+      }
+    } catch (error) {
+      this.logger.warn(`Event watch header failed (${phaseKey}): ${error?.message || String(error)}`);
+    }
+  }
+
+  runOilMonitorCheck(phaseKey = 'unknown', oilIndicator = null) {
+    const indicator = oilIndicator && typeof oilIndicator === 'object'
+      ? oilIndicator
+      : { value: oilIndicator };
+    const numericOilPrice = Number(indicator?.value);
+    if (!Number.isFinite(numericOilPrice) || numericOilPrice <= 0) {
+      return null;
+    }
+    try {
+      const oilStatus = predictionTrackerModule.checkOilPrice(numericOilPrice, {
+        source: indicator?.source || null,
+        observedAt: indicator?.observedAt || null,
+        fetchedAt: indicator?.fetchedAt || null,
+        stale: indicator?.stale === true,
+        staleReason: indicator?.staleReason || null,
+      });
+      const delta = Number(oilStatus?.delta || 0);
+      this.logger.info(
+        `[OIL MONITOR][${phaseKey}] WTI $${numericOilPrice.toFixed(2)} (${delta >= 0 ? '+' : ''}${delta.toFixed(2)} vs last check, source=${String(indicator?.source || 'unknown')}${indicator?.stale === true ? ', stale=true' : ''})`
+      );
+      if (oilStatus?.suppressed) {
+        this.logger.warn(
+          `[OIL MONITOR][${phaseKey}] Alert suppressed (${oilStatus.suppressReason || 'unknown'}) for WTI $${numericOilPrice.toFixed(2)}.`
+        );
+      } else if (oilStatus?.alert) {
+        const message = `[PROACTIVE][MACRO] Oil moved ${delta >= 0 ? '+' : ''}$${delta.toFixed(2)} to $${numericOilPrice.toFixed(2)} since the last supervisor cycle.`;
+        this.logger.warn(message);
+        this.notifyArchitectInternal(message, 'oil_monitor');
+      }
+      return oilStatus;
+    } catch (error) {
+      this.logger.warn(`Oil monitor failed (${phaseKey}): ${error?.message || String(error)}`);
+      return null;
+    }
+  }
+
+  parseWatcherScriptSummary(result = {}, label = 'watcher') {
+    const stdout = String(result?.stdout || '').trim();
+    if (!result?.ok) {
+      return {
+        ok: false,
+        status: 'failed',
+        error: result?.error || result?.stderr || `script_failed:${label}`,
+        exitCode: result?.exitCode ?? null,
+      };
+    }
+    if (!stdout) {
+      return {
+        ok: false,
+        status: 'failed',
+        error: `empty_stdout:${label}`,
+        exitCode: result?.exitCode ?? null,
+      };
+    }
+    try {
+      return JSON.parse(stdout);
+    } catch (error) {
+      return {
+        ok: false,
+        status: 'failed',
+        error: `invalid_json:${label}:${error?.message || String(error)}`,
+        stdout,
+        exitCode: result?.exitCode ?? null,
+      };
+    }
+  }
+
+  async buildPaperTradingLiveContext(portfolios = []) {
+    const trackedTickers = new Set(paperTradingAutomation.CORE_TICKERS);
+    for (const portfolio of Array.isArray(portfolios) ? portfolios : []) {
+      for (const position of Array.isArray(portfolio?.openPositions) ? portfolio.openPositions : []) {
+        const ticker = String(position?.ticker || '').trim().toUpperCase();
+        if (ticker) trackedTickers.add(ticker);
+      }
+    }
+    const symbols = Array.from(trackedTickers);
+    const [marketData, bars5mMap] = await Promise.all([
+      [private-live-ops]Client.getUniverseMarketData({ requestPoolTtlMs: 10_000 }),
+      [private-live-ops]Client.getHistoricalBars({
+        symbols,
+        timeframe: '5m',
+        limit: 3,
+        requestPoolTtlMs: 10_000,
+      }).catch(() => new Map()),
+    ]);
+    const marketByTicker = new Map(
+      (Array.isArray(marketData) ? marketData : [])
+        .map((entry) => [String(entry?.ticker || '').trim().toUpperCase(), entry])
+        .filter(([ticker]) => ticker)
+    );
+    const livePrices = symbols.map((ticker) => {
+      const market = marketByTicker.get(ticker) || {};
+      return {
+        ticker,
+        price: Number(market?.price || 0) || 0,
+        change24hPct: Number(market?.change24hPct || 0) || 0,
+        openInterest: Number(market?.openInterest || 0) || 0,
+        fundingRate: Number(market?.fundingRate || 0) || 0,
+      };
+    });
+    const structureSummary = paperTradingAutomation.CORE_TICKERS.map((ticker) => {
+      const market = marketByTicker.get(ticker) || {};
+      const bars5m = bars5mMap instanceof Map ? (bars5mMap.get(ticker) || []) : [];
+      return paperTradingAutomation.summarizeStructure({
+        ticker,
+        price: market?.price || 0,
+        bars5m,
+      });
+    });
+    const livePriceMap = Object.fromEntries(
+      livePrices
+        .filter((entry) => Number.isFinite(Number(entry?.price)) && Number(entry.price) > 0)
+        .map((entry) => [entry.ticker, Number(entry.price)])
+    );
+    return {
+      symbols,
+      livePrices,
+      livePriceMap,
+      structureSummary,
+    };
+  }
+
+  collectPaperTradingAgentResponse(agentId, requestId, sinceMs) {
+    const entries = queryCommsJournalEntries({
+      channel: 'ws',
+      direction: 'outbound',
+      senderRole: agentId,
+      targetRole: 'builder',
+      sinceMs,
+      order: 'desc',
+      limit: 100,
+    });
+    for (const entry of entries) {
+      const rawBody = entry?.rawBody || entry?.body || '';
+      const parsed = paperTradingAutomation.parsePaperTradingResponseBody(rawBody);
+      if (!parsed) continue;
+      if (parsed.requestId !== requestId) continue;
+      if (parsed.agentId !== agentId) continue;
+      return {
+        entry,
+        parsed,
+      };
+    }
+    return null;
+  }
+
+  async sendPaperTradingAgentMessage(agentId, message, requestId = null) {
+    return this.dispatchAgentQueuedTask(agentId, {
+      taskId: requestId ? `paper-${requestId}` : `paper-${agentId}-${Date.now()}`,
+      message,
+    });
+  }
+
+  async runPaperTradingAutomationPhase(nowMs = Date.now()) {
+    const nowIso = new Date(nowMs).toISOString();
+    const previousState = this.paperTradingAutomationState || defaultPaperTradingAutomationState();
+    const nextState = {
+      ...defaultPaperTradingAutomationState(),
+      ...previousState,
+      agents: {
+        ...defaultPaperTradingAutomationState().agents,
+        ...(previousState.agents || {}),
+      },
+    };
+    const portfoliosByAgent = Object.fromEntries(
+      paperTradingAutomation.AGENT_IDS.map((agentId) => {
+        const portfolioResult = paperTradingAutomation.readPortfolio(this.projectRoot, agentId);
+        return [agentId, portfolioResult];
+      })
+    );
+    const normalizedPortfolios = paperTradingAutomation.AGENT_IDS.map((agentId) => portfoliosByAgent[agentId].normalized);
+    const liveContext = await this.buildPaperTradingLiveContext(normalizedPortfolios);
+    const summary = {
+      enabled: true,
+      status: 'ok',
+      processedAt: nowIso,
+      dispatched: 0,
+      responded: 0,
+      rejected: 0,
+      timedOut: 0,
+      agents: {},
+    };
+
+    for (const agentId of paperTradingAutomation.AGENT_IDS) {
+      const agentState = {
+        ...defaultPaperTradingAutomationState().agents[agentId],
+        ...(nextState.agents?.[agentId] || {}),
+      };
+      if (agentState.pendingRequestId) {
+        const response = this.collectPaperTradingAgentResponse(
+          agentId,
+          agentState.pendingRequestId,
+          Number(agentState.pendingRequestCreatedAtMs || 0) || 0
+        );
+        if (response?.parsed) {
+          const validation = paperTradingAutomation.validatePaperTradingResponse(response.parsed);
+          if (!validation.ok) {
+            const errorMessage = paperTradingAutomation.buildAgentErrorMessage(
+              { requestId: agentState.pendingRequestId },
+              validation.error
+            );
+            await this.sendPaperTradingAgentMessage(agentId, errorMessage, agentState.pendingRequestId);
+            paperTradingAutomation.writeResponse(this.projectRoot, {
+              requestId: agentState.pendingRequestId,
+              agentId,
+              ok: false,
+              error: validation.error,
+              receivedAt: nowIso,
+            });
+            paperTradingAutomation.appendJsonLine(
+              paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
+              {
+                kind: 'paper_trading_response_rejected',
+                requestId: agentState.pendingRequestId,
+                agentId,
+                receivedAt: nowIso,
+                error: validation.error,
+                raw: response.parsed.raw || null,
+              }
+            );
+            nextState.agents[agentId] = {
+              ...agentState,
+              pendingRequestId: null,
+              pendingRequestCreatedAt: null,
+              pendingRequestCreatedAtMs: 0,
+              lastResponseAt: nowIso,
+              lastResponseAtMs: nowMs,
+              lastError: validation.error,
+            };
+            summary.rejected += 1;
+          } else {
+            const previousRaw = portfoliosByAgent[agentId].raw;
+            const applied = paperTradingAutomation.applyPaperTradingResponse({
+              agentId,
+              portfolio: portfoliosByAgent[agentId].normalized,
+              response: response.parsed,
+              livePriceMap: liveContext.livePriceMap,
+              now: nowIso,
+              wakeReason: agentState.lastWakeReason || 'timer_cycle',
+            });
+            const nextRaw = paperTradingAutomation.serializePortfolio(applied.portfolio, previousRaw);
+            const auditPortfolios = paperTradingAutomation.AGENT_IDS.map((trackedAgentId) => (
+              trackedAgentId === agentId
+                ? nextRaw
+                : portfoliosByAgent[trackedAgentId].raw
+            ));
+            const auditResult = buildPaperCompetitionAudit(this.projectRoot, new Date(nowMs), auditPortfolios);
+            const commitResult = paperTradingAutomation.commitPortfolioMutation(
+              this.projectRoot,
+              {
+                agentId,
+                portfolio: applied.portfolio,
+                previousRaw,
+                now: nowIso,
+                pendingAudit: {
+                  requestId: agentState.pendingRequestId,
+                  agentId,
+                  wakeReason: agentState.lastWakeReason || 'timer_cycle',
+                  action: response.parsed.action,
+                  rationale: response.parsed.rationale,
+                  stopDeclaration: response.parsed.stopDeclaration || null,
+                  noStopDeclaration: response.parsed.noStopDeclaration || null,
+                  timeStop: response.parsed.timeStop || null,
+                  mutation: applied.mutation,
+                },
+                committedAudit: {
+                  kind: 'paper_trading_response_applied',
+                  requestId: agentState.pendingRequestId,
+                  agentId,
+                  receivedAt: nowIso,
+                  wakeReason: agentState.lastWakeReason || 'timer_cycle',
+                  action: response.parsed.action,
+                  rationale: response.parsed.rationale,
+                  stopDeclaration: response.parsed.stopDeclaration || null,
+                  noStopDeclaration: response.parsed.noStopDeclaration || null,
+                  timeStop: response.parsed.timeStop || null,
+                  mutation: applied.mutation,
+                  audit: auditResult,
+                },
+                abortAudit: {
+                  requestId: agentState.pendingRequestId,
+                  agentId,
+                },
+              }
+            );
+            portfoliosByAgent[agentId] = {
+              ...portfoliosByAgent[agentId],
+              raw: nextRaw,
+              normalized: applied.portfolio,
+            };
+            try {
+              paperTradingAutomation.writeResponse(this.projectRoot, {
+                requestId: agentState.pendingRequestId,
+                agentId,
+                ok: true,
+                receivedAt: nowIso,
+                action: response.parsed.action,
+                rationale: response.parsed.rationale,
+                mutation: applied.mutation,
+                audit: auditResult,
+                transactionId: commitResult.transactionId,
+                committedAuditOk: commitResult.committedAuditOk,
+              });
+            } catch (responseWriteError) {
+              summary.status = 'degraded';
+              summary.agents[agentId] = {
+                ...(summary.agents[agentId] || {}),
+                responseWriteError: responseWriteError?.message || String(responseWriteError),
+              };
+            }
+            if (!commitResult.committedAuditOk) {
+              summary.status = 'degraded';
+              summary.agents[agentId] = {
+                ...(summary.agents[agentId] || {}),
+                auditWarning: commitResult.committedAuditError?.message || 'pending_audit_only',
+              };
+            }
+            nextState.agents[agentId] = {
+              ...agentState,
+              pendingRequestId: null,
+              pendingRequestCreatedAt: null,
+              pendingRequestCreatedAtMs: 0,
+              lastResponseAt: nowIso,
+              lastResponseAtMs: nowMs,
+              lastActionType: response.parsed.action?.type || null,
+              lastError: null,
+            };
+            summary.responded += 1;
+          }
+        } else if (
+          Number(agentState.pendingRequestCreatedAtMs || 0) > 0
+          && (nowMs - Number(agentState.pendingRequestCreatedAtMs)) >= this.paperTradingResponseTimeoutMs
+        ) {
+          nextState.agents[agentId] = {
+            ...agentState,
+            pendingRequestId: null,
+            pendingRequestCreatedAt: null,
+            pendingRequestCreatedAtMs: 0,
+            lastError: 'response_timeout',
+          };
+          paperTradingAutomation.appendJsonLine(
+            paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
+            {
+              kind: 'paper_trading_response_timeout',
+              requestId: agentState.pendingRequestId,
+              agentId,
+              timedOutAt: nowIso,
+            }
+          );
+          summary.timedOut += 1;
+        } else {
+          nextState.agents[agentId] = agentState;
+        }
+      } else {
+        nextState.agents[agentId] = agentState;
+      }
+    }
+
+    const refreshedPortfolios = paperTradingAutomation.AGENT_IDS.map((agentId) => portfoliosByAgent[agentId].normalized);
+    const competitionSnapshot = paperTradingAutomation.buildPaperCompetitionSnapshot(refreshedPortfolios);
+    for (const agentId of paperTradingAutomation.AGENT_IDS) {
+      const agentState = {
+        ...defaultPaperTradingAutomationState().agents[agentId],
+        ...(nextState.agents?.[agentId] || {}),
+      };
+      const triggerConfig = paperTradingAutomation.loadTriggerConfig(this.projectRoot, agentId, { writeDefaults: true }).normalized;
+      const wake = paperTradingAutomation.evaluateWakeCondition(triggerConfig, agentState, nowMs);
+      if (agentState.pendingRequestId || !wake.shouldWake) {
+        nextState.agents[agentId] = {
+          ...agentState,
+          nextTimerWakeAtMs: wake.nextTimerWakeAtMs || agentState.nextTimerWakeAtMs || 0,
+          nextTimerWakeAt: wake.nextTimerWakeAtMs ? new Date(wake.nextTimerWakeAtMs).toISOString() : (agentState.nextTimerWakeAt || null),
+        };
+        summary.agents[agentId] = {
+          wakeReason: wake.wakeReason,
+          dispatched: false,
+          pendingRequestId: agentState.pendingRequestId || null,
+        };
+        continue;
+      }
+      const request = paperTradingAutomation.buildRequestPayload(agentId, {
+        requestId: `paper-cycle-${Date.now()}-${agentId}`,
+        portfolio: portfoliosByAgent[agentId].normalized,
+        livePrices: liveContext.livePrices.filter((entry) => paperTradingAutomation.CORE_TICKERS.includes(entry.ticker)),
+        structureSummary: liveContext.structureSummary,
+        competitionSnapshot,
+        wakeReason: wake.wakeReason,
+        createdAt: nowIso,
+        deadline: new Date(nowMs + this.paperTradingResponseTimeoutMs).toISOString(),
+      });
+      const requestPath = paperTradingAutomation.writeRequest(this.projectRoot, request);
+      const prompt = paperTradingAutomation.buildPaperTradingPrompt(request, requestPath);
+      const dispatchResult = await this.sendPaperTradingAgentMessage(agentId, prompt, request.requestId);
+      if (dispatchResult?.ok) {
+        const nextWakeAtMs = paperTradingAutomation.computeNextTimerWakeMs(nowMs, triggerConfig.timer.intervalMinutes);
+        nextState.agents[agentId] = {
+          ...agentState,
+          lastDispatchAt: nowIso,
+          lastDispatchAtMs: nowMs,
+          nextTimerWakeAt: new Date(nextWakeAtMs).toISOString(),
+          nextTimerWakeAtMs: nextWakeAtMs,
+          pendingRequestId: request.requestId,
+          pendingRequestCreatedAt: nowIso,
+          pendingRequestCreatedAtMs: nowMs,
+          lastWakeReason: wake.wakeReason,
+          lastError: null,
+        };
+        paperTradingAutomation.appendJsonLine(
+          paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
+          {
+            kind: 'paper_trading_request_dispatched',
+            requestId: request.requestId,
+            agentId,
+            dispatchedAt: nowIso,
+            wakeReason: wake.wakeReason,
+            triggerConfig,
+          }
+        );
+        summary.dispatched += 1;
+        summary.agents[agentId] = {
+          wakeReason: wake.wakeReason,
+          dispatched: true,
+          requestId: request.requestId,
+        };
+      } else {
+        nextState.agents[agentId] = {
+          ...agentState,
+          lastError: dispatchResult?.error || dispatchResult?.stderr || 'dispatch_failed',
+        };
+        summary.status = 'degraded';
+        summary.agents[agentId] = {
+          wakeReason: wake.wakeReason,
+          dispatched: false,
+          error: nextState.agents[agentId].lastError,
+        };
+      }
+    }
+
+    nextState.lastProcessedAt = nowIso;
+    nextState.lastSummary = summary;
+    this.paperTradingAutomationState = nextState;
+    this.persistPaperTradingAutomationState();
+    this.lastPaperTradingAutomationSummary = {
+      enabled: true,
+      status: summary.status,
+      statePath: this.paperTradingAutomationStatePath,
+      lastProcessedAt: nowIso,
+      lastSummary: summary,
+    };
+    return summary;
+  }
+
+  async maybeRunPaperTradingAutomation(nowMs = Date.now()) {
+    if (!this.paperTradingAutomationEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'paper_trading_automation_disabled' };
+    }
+    if (this.paperTradingAutomationPromise) {
+      return this.paperTradingAutomationPromise;
+    }
+    const currentState = this.paperTradingAutomationState || defaultPaperTradingAutomationState();
+    const agentStates = currentState.agents || {};
+    const hasPendingRequest = paperTradingAutomation.AGENT_IDS.some(
+      (agentId) => Boolean(agentStates?.[agentId]?.pendingRequestId)
+    );
+    const hasDueTimer = paperTradingAutomation.AGENT_IDS.some((agentId) => {
+      const triggerConfig = paperTradingAutomation.loadTriggerConfig(this.projectRoot, agentId, { writeDefaults: true }).normalized;
+      const wake = paperTradingAutomation.evaluateWakeCondition(triggerConfig, agentStates?.[agentId] || { agentId }, nowMs);
+      return wake.shouldWake === true;
+    });
+    if (!hasPendingRequest && !hasDueTimer) {
+      return { ok: false, skipped: true, reason: 'paper_trading_automation_idle' };
+    }
+    this.paperTradingAutomationPromise = Promise.resolve(this.runPaperTradingAutomationPhase(nowMs))
+      .catch((error) => {
+        const summary = {
+          enabled: true,
+          status: 'failed',
+          error: error?.message || String(error),
+          lastProcessedAt: new Date().toISOString(),
+        };
+        this.lastPaperTradingAutomationSummary = summary;
+        this.logger.warn(`Paper trading automation failed: ${summary.error}`);
+        return { ok: false, error: summary.error };
+      })
+      .finally(() => {
+        this.paperTradingAutomationPromise = null;
+      });
+    return this.paperTradingAutomationPromise;
+  }
+
+  async maybeRunSaylorWatcher(nowMs = Date.now()) {
+    if (!this.saylorWatcherEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'x_watchlist_disabled' };
+    }
+    if (this.saylorWatcherPromise) {
+      return this.saylorWatcherPromise;
+    }
+    if ((nowMs - this.lastSaylorWatcherRunAtMs) < this.saylorWatcherIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'x_watchlist_cooldown',
+        nextEligibleAtMs: this.lastSaylorWatcherRunAtMs + this.saylorWatcherIntervalMs,
+      };
+    }
+
+    this.saylorWatcherPromise = executeNodeScript(
+      this.hmSaylorWatcherScriptPath,
+      ['--json'],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 45_000,
+      }
+    ).then((result) => {
+      const summary = this.parseWatcherScriptSummary(result, 'saylor_watcher');
+      this.lastSaylorWatcherRunAtMs = Date.now();
+      this.lastSaylorWatcherSummary = {
+        enabled: true,
+        status: summary?.ok ? (summary?.alerted ? 'alert_sent' : 'ok') : 'failed',
+        intervalMs: this.saylorWatcherIntervalMs,
+        lastRunAt: new Date(this.lastSaylorWatcherRunAtMs).toISOString(),
+        lastSummary: summary,
+      };
+      if (summary?.ok !== true) {
+        this.logger.warn(`X watchlist failed: ${summary?.error || 'unknown'}`);
+      } else if (Number(summary?.alertCount || 0) > 0) {
+        this.logger.warn(`X watchlist detected ${summary.alertCount} new item(s).`);
+      }
+      return summary;
+    }).finally(() => {
+      this.saylorWatcherPromise = null;
+    });
+
+    return this.saylorWatcherPromise;
+  }
+
+  async maybeRun[private-live-ops]SqueezeDetector(nowMs = Date.now()) {
+    if (!this.[private-live-ops]SqueezeDetectorEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: '[private-live-ops]_squeeze_detector_disabled' };
+    }
+    if (this.[private-live-ops]SqueezeDetectorPromise) {
+      return this.[private-live-ops]SqueezeDetectorPromise;
+    }
+    if ((nowMs - this.last[private-live-ops]SqueezeDetectorRunAtMs) < this.[private-live-ops]SqueezeDetectorIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: '[private-live-ops]_squeeze_detector_cooldown',
+        nextEligibleAtMs: this.last[private-live-ops]SqueezeDetectorRunAtMs + this.[private-live-ops]SqueezeDetectorIntervalMs,
+      };
+    }
+
+    this.[private-live-ops]SqueezeDetectorPromise = executeNodeScript(
+      this.hm[private-live-ops]SqueezeDetectorScriptPath,
+      ['--json'],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 30_000,
+      }
+    ).then((result) => {
+      const summary = this.parseWatcherScriptSummary(result, '[private-live-ops]_squeeze_detector');
+      this.last[private-live-ops]SqueezeDetectorRunAtMs = Date.now();
+      this.last[private-live-ops]SqueezeDetectorSummary = {
+        enabled: true,
+        status: summary?.ok ? (summary?.alerted ? 'alert_sent' : 'ok') : 'failed',
+        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        lastRunAt: new Date(this.last[private-live-ops]SqueezeDetectorRunAtMs).toISOString(),
+        lastSummary: summary,
+      };
+      if (summary?.ok !== true) {
+        this.logger.warn(`[private-live-ops] squeeze detector failed: ${summary?.error || 'unknown'}`);
+      } else if (Number(summary?.detectionCount || 0) > 0) {
+        this.logger.warn(`[private-live-ops] squeeze detector flagged ${summary.detectionCount} setup(s).`);
+      }
+      return summary;
+    }).finally(() => {
+      this.[private-live-ops]SqueezeDetectorPromise = null;
+    });
+
+    return this.[private-live-ops]SqueezeDetectorPromise;
+  }
+
+  async maybeRunOracleWatchEngine(nowMs = Date.now()) {
+    if (!this.oracleWatchEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'oracle_watch_disabled' };
+    }
+    if (this.oracleWatchPromise) {
+      return this.oracleWatchPromise;
+    }
+    this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath, this.oracleWatchIntervalMs);
+    const oracleWatchState = readJsonFile(this.oracleWatchStatePath, {}) || {};
+    const heartbeat = buildOracleWatchHeartbeat(this.lastOracleWatchSummary, oracleWatchState);
+    const forceRelaunch = Boolean(
+      heartbeat?.stale === true
+      && Number.isFinite(Number(heartbeat?.ageMs))
+      && Number(heartbeat.ageMs) >= this.oracleWatchIntervalMs
+    );
+    if (!forceRelaunch && (nowMs - this.lastOracleWatchRunAtMs) < this.oracleWatchIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'oracle_watch_cooldown',
+        nextEligibleAtMs: this.lastOracleWatchRunAtMs + this.oracleWatchIntervalMs,
+      };
+    }
+    if (forceRelaunch) {
+      this.logger.warn(
+        `[ORACLE WATCH][INPROC_RELAUNCH] Oracle watch heartbeat is stale with no running lane; forcing relaunch ` +
+        `(lastTickAt=${heartbeat?.lastTickAt || 'unknown'}, ageMs=${Number(heartbeat?.ageMs || 0) || 0}).`
+      );
+    }
+
+    this.oracleWatchPromise = executeNodeScript(
+      this.hmOracleWatchEngineScriptPath,
+      ['run', '--once', '--rules', this.oracleWatchRulesPath, '--state', this.oracleWatchStatePath],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: Math.max(this.oracleWatchIntervalMs, 30_000),
+      }
+    ).then((result) => {
+      const summary = this.parseWatcherScriptSummary(result, 'oracle_watch');
+      this.lastOracleWatchRunAtMs = Date.now();
+      this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath, this.oracleWatchIntervalMs);
+      this.lastOracleWatchSummary = {
+        enabled: true,
+        status: summary?.ok ? (summary?.alertCount > 0 ? 'alert_sent' : 'ok') : 'failed',
+        intervalMs: this.oracleWatchIntervalMs,
+        rulesPath: this.oracleWatchRulesPath,
+        statePath: this.oracleWatchStatePath,
+        lastRunAt: new Date(this.lastOracleWatchRunAtMs).toISOString(),
+        lastSummary: summary,
+      };
+      if (summary?.ok !== true) {
+        this.logger.warn(`Oracle watch engine failed: ${summary?.error || 'unknown'}`);
+      } else if (Number(summary?.alertCount || 0) > 0) {
+        this.logger.warn(`Oracle watch engine sent ${summary.alertCount} alert(s).`);
+      }
+      return summary;
+    }).finally(() => {
+      this.oracleWatchPromise = null;
+    });
+
+    return this.oracleWatchPromise;
+  }
+
+  buildPredictionPriceMap(entries = []) {
+    const prices = {};
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const ticker = String(entry?.ticker || '').trim().toUpperCase();
+      const coin = String(entry?.coin || (ticker.endsWith('/USD') ? ticker.slice(0, -4) : ticker)).trim().toUpperCase();
+      const price = Number(entry?.price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      if (coin) prices[coin] = price;
+      if (ticker) prices[ticker] = price;
+    }
+    return prices;
+  }
+
+  normalizePredictionDirection(decision = '') {
+    const normalized = String(decision || '').trim().toUpperCase();
+    if (['BUY', 'LONG', 'COVER'].includes(normalized)) return 'LONG';
+    if (['SELL', 'SHORT'].includes(normalized)) return 'SHORT';
+    return 'HOLD';
+  }
+
+  buildPredictionReasoning(result = {}) {
+    const explicit = String(result?.reasoning || '').trim();
+    if (explicit) return explicit;
+    const agreeingReasoning = (Array.isArray(result?.agreeing) ? result.agreeing : [])
+      .map((signal) => String(signal?.reasoning || '').trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    if (agreeingReasoning.length > 0) {
+      return agreeingReasoning.join(' | ');
+    }
+    return `Consensus ${String(result?.decision || 'HOLD').toUpperCase()} on ${String(result?.ticker || '').trim() || 'unknown ticker'}`;
+  }
+
+  logConsensusPredictions(consensusPhase = {}) {
+    const results = Array.isArray(consensusPhase?.results) ? consensusPhase.results : [];
+    if (results.length === 0) return 0;
+    const prices = this.buildPredictionPriceMap(this.marketScannerState?.assets);
+    for (const trade of Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades : []) {
+      const ticker = String(trade?.ticker || '').trim().toUpperCase();
+      const coin = ticker.endsWith('/USD') ? ticker.slice(0, -4) : ticker;
+      const price = Number(trade?.referencePrice);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      if (coin) prices[coin] = price;
+      if (ticker) prices[ticker] = price;
+    }
+    for (const trade of Array.isArray(consensusPhase?.rejectedTrades) ? consensusPhase.rejectedTrades : []) {
+      const ticker = String(trade?.ticker || '').trim().toUpperCase();
+      const coin = ticker.endsWith('/USD') ? ticker.slice(0, -4) : ticker;
+      const price = Number(trade?.referencePrice);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      if (coin) prices[coin] = price;
+      if (ticker) prices[ticker] = price;
+    }
+
+    let logged = 0;
+    for (const result of results) {
+      const ticker = String(result?.ticker || '').trim().toUpperCase();
+      if (!ticker) continue;
+      const coin = ticker.endsWith('/USD') ? ticker.slice(0, -4) : ticker;
+      const entryPrice = Number(prices[coin] ?? prices[ticker]);
+      if (!Number.isFinite(entryPrice) || entryPrice <= 0) continue;
+      predictionTrackerModule.logPrediction({
+        coin,
+        direction: this.normalizePredictionDirection(result?.decision),
+        entryPrice,
+        confidence: toNumber(result?.averageAgreeConfidence ?? result?.confidence, 0),
+        reasoning: this.buildPredictionReasoning(result),
+        source: 'supervisor',
+        setupType: String(consensusPhase?.strategyMode || 'consensus').trim() || 'consensus',
+        macroState: String(consensusPhase?.macroRisk?.regime || 'unknown').trim() || 'unknown',
+      });
+      logged += 1;
+    }
+    return logged;
+  }
+
+  sanitizeMarketScannerMovers(entries = []) {
+    const canonicalMovers = marketScannerModule.buildMoverMap([
+      ...(Array.isArray(this.marketScannerState?.flaggedMovers) ? this.marketScannerState.flaggedMovers : []),
+      ...(Array.isArray(this.marketScannerState?.topMovers) ? this.marketScannerState.topMovers : []),
+      ...(Array.isArray(this.marketScannerState?.assets) ? this.marketScannerState.assets : []),
+    ]);
+    const sanitized = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const normalized = marketScannerModule.normalizeMover(entry);
+      if (!normalized.coin) continue;
+      sanitized.push(canonicalMovers.get(normalized.coin) || normalized);
+    }
+    return sanitized;
+  }
+
+  async filterExecutableMarketScannerMovers(entries = []) {
+    const candidates = this.sanitizeMarketScannerMovers(entries);
+    if (candidates.length === 0) return [];
+    const supported = [];
+    for (const mover of candidates) {
+      const ticker = String(mover?.ticker || '').trim().toUpperCase();
+      if (!ticker) continue;
+      try {
+        const barsBySymbol = await [private-live-ops]Client.getHistoricalBars({
+          symbols: [ticker],
+          timeframe: '1Hour',
+          limit: 2,
+          end: new Date().toISOString(),
+        });
+        const bars = barsBySymbol instanceof Map ? barsBySymbol.get(ticker) : barsBySymbol?.[ticker];
+        if (Array.isArray(bars) && bars.length > 0) {
+          supported.push(mover);
+        } else {
+          this.logger.warn(`Skipping market-scanner mover without executable historical support: ${ticker}`);
+        }
+      } catch (error) {
+        this.logger.warn(`Skipping market-scanner mover ${ticker}: ${error?.message || String(error)}`);
+      }
+    }
+    return supported;
+  }
+
+  promoteMarketScannerMovers(movers = [], now = new Date()) {
+    return dynamicWatchlist.promoteMarketScannerMovers(movers, {
+      statePath: this.dynamicWatchlistStatePath,
+      now,
+      ttlHours: 4,
+    });
+  }
+
+  build[private-profile]CheckInArchitectAlert(summary = {}) {
+    return [
+      '[PROACTIVE][EUNBYEOL] Check-in review complete.',
+      `Pending [private-profile] items: ${Number(summary.pendingCount || 0)}`,
+      `Last message at: ${summary.lastMessageAt || 'never'}`,
+      `Silence hours: ${summary.silenceHours ?? 'n/a'}`,
+      `Drafted: ${summary.drafted ? 'yes' : 'no'}`,
+      summary.topItems?.length ? `Top items: ${summary.topItems.join(' | ')}` : null,
+      summary.draft ? `Draft:\n${summary.draft}` : null,
+    ].filter(Boolean).join('\n');
+  }
+
+  async runNewsScanPhase(event) {
+    const scannedAt = new Date().toISOString();
+    const watchlistSymbols = await this.getCryptoSymbols();
+    const openPositions = await Promise.resolve(this.newsScanOpenPositionProvider()).catch(() => []);
+    const livePositionSymbols = Array.from(new Set(
+      (Array.isArray(openPositions) ? openPositions : [])
+        .map((position) => normalizeNewsTicker(position?.coin || position?.asset || position?.ticker || ''))
+        .filter(Boolean)
+    ));
+    const scanSymbols = Array.from(new Set([...livePositionSymbols, ...watchlistSymbols]));
+    const caseSignals = this.readActiveCaseSignals();
+    const newsItems = await this.newsVetoModule.fetchTier1News({
+      symbols: scanSymbols,
+      timeoutMs: 8_000,
+      limit: 25,
+    }).catch(() => []);
+    const veto = await this.newsVetoModule.buildEventVeto({
+      symbols: scanSymbols,
+      now: scannedAt,
+      newsItems,
+    }).catch(() => ({
+      decision: 'DEGRADED',
+      matchedEvents: [],
+      eventSummary: 'news_scan_failed',
+      sourceTier: 'none',
+    }));
+
+    const lowerCaseSignals = caseSignals.map((entry) => ({
+      label: entry.label,
+      keywords: entry.keywords.map((keyword) => String(keyword || '').toLowerCase()),
+    }));
+    const caseMatches = (Array.isArray(newsItems) ? newsItems : []).flatMap((item) => {
+      const haystack = `${item?.headline || ''} ${item?.summary || ''}`.toLowerCase();
+      return lowerCaseSignals
+        .filter((signal) => signal.keywords.some((keyword) => keyword && haystack.includes(keyword)))
+        .map((signal) => ({
+          label: signal.label,
+          headline: String(item?.headline || '').trim(),
+          source: String(item?.source || '').trim(),
+          url: String(item?.url || '').trim(),
+        }));
+    });
+
+    let alertLevel = 'level_0';
+    let reason = 'stored_for_review';
+    if (livePositionSymbols.length > 0 && ['CAUTION', 'VETO'].includes(String(veto?.decision || '').toUpperCase())) {
+      alertLevel = 'level_2';
+      reason = 'live_position_event_risk';
+    } else if (caseMatches.length > 0) {
+      alertLevel = 'level_2';
+      reason = 'active_case_headline_match';
+    }
+
+    const findings = Array.isArray(veto?.matchedEvents) && veto.matchedEvents.length > 0
+      ? veto.matchedEvents
+      : (Array.isArray(newsItems) ? newsItems.slice(0, 5) : []);
+    const alertFingerprint = buildNewsFingerprint({
+      level: alertLevel,
+      reason,
+      headlines: findings.map((item) => item?.headline || item?.summary || ''),
+    });
+    const shouldNotifyArchitect = Boolean(alertFingerprint)
+      && alertFingerprint !== this.newsScanState.lastAlertFingerprint;
+    const summary = {
+      ok: true,
+      key: event?.key || 'news_scan',
+      scannedAt,
+      scanSymbols,
+      livePositionSymbols,
+      watchlistSize: watchlistSymbols.length,
+      headlineCount: Array.isArray(newsItems) ? newsItems.length : 0,
+      decision: veto?.decision || 'DEGRADED',
+      sourceTier: veto?.sourceTier || 'none',
+      alertLevel,
+      reason,
+      caseMatches: caseMatches.slice(0, 5),
+      findings: findings.slice(0, 5),
+      notified: shouldNotifyArchitect,
+    };
+
+    if (shouldNotifyArchitect) {
+      this.notifyArchitectInternal(this.buildNewsScanArchitectAlert(summary), 'news_scan');
+      this.newsScanState.lastAlertFingerprint = alertFingerprint;
+    }
+    return summary;
+  }
+
+  async maybeRunNewsScanAutomation(nowMs = Date.now()) {
+    if (!this.newsScanEnabled || this.stopping || !this.newsVetoModule) {
+      return { ok: false, skipped: true, reason: 'news_scan_disabled' };
+    }
+    if (this.newsScanPhasePromise) {
+      return this.newsScanPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNextNewsScanEvent(now, {
+      intervalMinutes: this.newsScanIntervalMinutes,
+    });
+    const newsScanDay = buildNewsScanDailySchedule(now, {
+      intervalMinutes: this.newsScanIntervalMinutes,
+    });
+    const lastProcessedAtMs = this.newsScanState.lastProcessedAt
+      ? new Date(this.newsScanState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = newsScanDay.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.newsScanState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistNewsScanState();
+
+    if (dueEvents.length === 0) {
+      this.lastNewsScanSummary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.newsScanIntervalMinutes,
+        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
+        nextEvent: this.newsScanState.nextEvent,
+      };
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'no_due_news_scan',
+        nextEvent: this.newsScanState.nextEvent,
+      };
+    }
+
+    this.newsScanPhasePromise = (async () => {
+      const executed = [];
+      for (const event of dueEvents) {
+        const phaseResult = await this.runNewsScanPhase(event);
+        executed.push(phaseResult);
+        this.newsScanState.lastProcessedAt = event.scheduledAt;
+        this.newsScanState.lastResult = phaseResult;
+        this.newsScanState.lastScan = phaseResult;
+        this.persistNewsScanState();
+      }
+
+      const upcomingEvent = getNextNewsScanEvent(new Date(), {
+        intervalMinutes: this.newsScanIntervalMinutes,
+      });
+      this.newsScanState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistNewsScanState();
+      this.lastNewsScanSummary = {
+        enabled: true,
+        status: executed.some((entry) => entry.notified) ? 'alert_sent' : 'scan_complete',
+        intervalMinutes: this.newsScanIntervalMinutes,
+        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
+        nextEvent: this.newsScanState.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return {
+        ok: true,
+        skipped: false,
+        executed,
+        nextEvent: this.newsScanState.nextEvent,
+      };
+    })().finally(() => {
+      this.newsScanPhasePromise = null;
+    });
+
+    return this.newsScanPhasePromise;
+  }
+
+  async runPendingFollowupPhase(event) {
+    const scannedAt = new Date().toISOString();
+    const dashboard = this.readCaseOperationsDashboard();
+    const pendingItems = Array.isArray(dashboard.pendingItems) ? dashboard.pendingItems : [];
+    const waitingItems = pendingItems.filter((item) => /waiting|대기|⚠️/i.test(String(item.status || '')));
+    const blockedItems = pendingItems.filter((item) => /blocked|⛔/i.test(String(item.status || '')));
+    const laterItems = pendingItems.filter((item) => /later|다음|내일|예정|📝|⏳/i.test(String(item.status || '')));
+    const private-profileOwnedItems = pendingItems.filter((item) => is[private-profile]OwnedPendingItem(item));
+    const jamesOwnedItems = pendingItems.filter((item) => isthe userOwnedPendingItem(item));
+    const internalOnlyItems = pendingItems.filter((item) => !isthe userOwnedPendingItem(item));
+    const jamesActionableItems = Array.from(new Set([
+      ...jamesOwnedItems,
+      ...blockedItems.filter((item) => isthe userOwnedPendingItem(item)),
+      ...waitingItems.filter((item) => isthe userOwnedPendingItem(item)),
+    ]));
+    const overdue[private-profile]Schedule = Boolean(dashboard.scheduleDate && (dashboard.scheduleItems || []).length > 0);
+    const topItems = [
+      ...waitingItems.slice(0, 2).map((item) => `[WAITING] ${item.item}`),
+      ...blockedItems.slice(0, 2).map((item) => `[BLOCKED] ${item.item}`),
+      ...(overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).slice(0, 2).map((item) => `[EUNBYEOL] ${item}`) : []),
+    ].slice(0, 4);
+    const jamesTopItems = jamesActionableItems
+      .slice(0, 4)
+      .map((item) => `[ACTION] ${item.item}`);
+    const private-profileTopItems = [
+      ...private-profileOwnedItems.slice(0, 3).map((item) => item.item),
+      ...(overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).slice(0, 2) : []),
+    ].slice(0, 4);
+    const alertLevel = jamesActionableItems.length > 0 ? 'level_2' : 'level_0';
+    const fingerprint = JSON.stringify({
+      alertLevel,
+      jamesTopItems,
+      private-profileTopItems,
+    });
+    const shouldNotifyArchitect = fingerprint !== this.pendingFollowupState.lastAlertFingerprint;
+    const summary = {
+      ok: true,
+      key: event?.key || 'pending_followups',
+      scannedAt,
+      waitingCount: waitingItems.length,
+      blockedCount: blockedItems.length,
+      laterCount: laterItems.length,
+      overdueSchedule: false,
+      overdue[private-profile]Schedule,
+      scheduleDate: dashboard.scheduleDate || null,
+      topItems,
+      jamesActionCount: jamesActionableItems.length,
+      jamesTopItems,
+      private-profileActionCount: private-profileOwnedItems.length + (overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).length : 0),
+      private-profileTopItems,
+      internalOnlyCount: internalOnlyItems.length + (overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).length : 0),
+      alertLevel,
+      notified: shouldNotifyArchitect,
+    };
+
+    if (shouldNotifyArchitect) {
+      this.notifyArchitectInternal(this.buildPendingFollowupArchitectAlert(summary), 'pending_followups');
+      this.pendingFollowupState.lastAlertFingerprint = fingerprint;
+    }
+    return summary;
+  }
+
+  async maybeRunPendingFollowupAutomation(nowMs = Date.now()) {
+    if (!this.pendingFollowupEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'pending_followup_disabled' };
+    }
+    if (this.pendingFollowupPhasePromise) {
+      return this.pendingFollowupPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNextPendingFollowupEvent(now, {
+      intervalMinutes: this.pendingFollowupIntervalMinutes,
+    });
+    const day = buildPendingFollowupDailySchedule(now, {
+      intervalMinutes: this.pendingFollowupIntervalMinutes,
+    });
+    const lastProcessedAtMs = this.pendingFollowupState.lastProcessedAt
+      ? new Date(this.pendingFollowupState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = day.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.pendingFollowupState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistPendingFollowupState();
+
+    if (dueEvents.length === 0) {
+      this.lastPendingFollowupSummary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.pendingFollowupIntervalMinutes,
+        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
+        nextEvent: this.pendingFollowupState.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_due_pending_followup', nextEvent: this.pendingFollowupState.nextEvent };
+    }
+
+    this.pendingFollowupPhasePromise = (async () => {
+      const executed = [];
+      for (const dueEvent of dueEvents) {
+        const phaseResult = await this.runPendingFollowupPhase(dueEvent);
+        executed.push(phaseResult);
+        this.pendingFollowupState.lastProcessedAt = dueEvent.scheduledAt;
+        this.pendingFollowupState.lastResult = phaseResult;
+        this.pendingFollowupState.lastScan = phaseResult;
+        this.persistPendingFollowupState();
+      }
+
+      const upcomingEvent = getNextPendingFollowupEvent(new Date(), {
+        intervalMinutes: this.pendingFollowupIntervalMinutes,
+      });
+      this.pendingFollowupState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistPendingFollowupState();
+      this.lastPendingFollowupSummary = {
+        enabled: true,
+        status: executed.some((entry) => entry.notified) ? 'alert_sent' : 'scan_complete',
+        intervalMinutes: this.pendingFollowupIntervalMinutes,
+        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
+        nextEvent: this.pendingFollowupState.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return { ok: true, skipped: false, executed, nextEvent: this.pendingFollowupState.nextEvent };
+    })().finally(() => {
+      this.pendingFollowupPhasePromise = null;
+    });
+
+    return this.pendingFollowupPhasePromise;
+  }
+
+  async runMarketResearchPhase(event) {
+    const scannedAt = new Date().toISOString();
+    const watchlistSymbols = await this.getCryptoSymbols();
+    const openPositions = await Promise.resolve(this.marketResearchOpenPositionProvider()).catch(() => []);
+    const livePositionSymbols = Array.from(new Set(
+      (Array.isArray(openPositions) ? openPositions : [])
+        .map((position) => normalizeNewsTicker(position?.coin || position?.asset || position?.ticker || ''))
+        .filter(Boolean)
+    ));
+    const scanSymbols = Array.from(new Set([...livePositionSymbols, ...watchlistSymbols]));
+    const [macroRisk, newsItems, veto] = await Promise.all([
+      macroRiskGate.assessMacroRisk().catch(() => null),
+      this.newsVetoModule.fetchTier1News({
+        symbols: scanSymbols,
+        timeoutMs: 8_000,
+        limit: 12,
+      }).catch(() => []),
+      this.newsVetoModule.buildEventVeto({
+        symbols: scanSymbols,
+        now: scannedAt,
+      }).catch(() => ({
+        decision: 'DEGRADED',
+        matchedEvents: [],
+        sourceTier: 'none',
+      })),
+    ]);
+    const summary = {
+      ok: true,
+      key: event?.key || 'market_research',
+      scannedAt,
+      scanSymbols,
+      livePositionSymbols,
+      macroRisk: macroRisk ? {
+        regime: macroRisk.regime,
+        score: macroRisk.score,
+        reason: macroRisk.reason,
+      } : null,
+      eventDecision: veto?.decision || 'DEGRADED',
+      sourceTier: veto?.sourceTier || 'none',
+      headlineCount: Array.isArray(newsItems) ? newsItems.length : 0,
+      findings: Array.isArray(veto?.matchedEvents) && veto.matchedEvents.length > 0
+        ? veto.matchedEvents.slice(0, 5)
+        : (Array.isArray(newsItems) ? newsItems.slice(0, 5) : []),
+      alertLevel: 'level_0',
+      notified: false,
+    };
+    const fingerprint = buildNewsFingerprint({
+      level: summary.alertLevel,
+      reason: `${summary.macroRisk?.regime || 'unknown'}:${summary.eventDecision || 'DEGRADED'}`,
+      headlines: summary.findings.map((item) => item?.headline || item?.summary || ''),
+    });
+    const shouldNotifyArchitect = Boolean(fingerprint)
+      && fingerprint !== this.marketResearchState.lastAlertFingerprint;
+    if (shouldNotifyArchitect) {
+      this.notifyArchitectInternal(this.buildMarketResearchArchitectAlert(summary), 'market_research');
+      this.marketResearchState.lastAlertFingerprint = fingerprint;
+      summary.notified = true;
+    }
+    return summary;
+  }
+
+  async maybeRunMarketResearchAutomation(nowMs = Date.now()) {
+    if (!this.marketResearchEnabled || this.stopping || !this.newsVetoModule) {
+      return { ok: false, skipped: true, reason: 'market_research_disabled' };
+    }
+    if (this.marketResearchPhasePromise) {
+      return this.marketResearchPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNextMarketResearchEvent(now, {
+      intervalMinutes: this.marketResearchIntervalMinutes,
+    });
+    const day = buildMarketResearchDailySchedule(now, {
+      intervalMinutes: this.marketResearchIntervalMinutes,
+    });
+    const lastProcessedAtMs = this.marketResearchState.lastProcessedAt
+      ? new Date(this.marketResearchState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = day.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.marketResearchState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistMarketResearchState();
+
+    if (dueEvents.length === 0) {
+      this.lastMarketResearchSummary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.marketResearchIntervalMinutes,
+        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
+        nextEvent: this.marketResearchState.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_due_market_research', nextEvent: this.marketResearchState.nextEvent };
+    }
+
+    this.marketResearchPhasePromise = (async () => {
+      const executed = [];
+      for (const dueEvent of dueEvents) {
+        const phaseResult = await this.runMarketResearchPhase(dueEvent);
+        executed.push(phaseResult);
+        this.marketResearchState.lastProcessedAt = dueEvent.scheduledAt;
+        this.marketResearchState.lastResult = phaseResult;
+        this.marketResearchState.lastScan = phaseResult;
+        this.persistMarketResearchState();
+      }
+
+      const upcomingEvent = getNextMarketResearchEvent(new Date(), {
+        intervalMinutes: this.marketResearchIntervalMinutes,
+      });
+      this.marketResearchState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistMarketResearchState();
+      this.lastMarketResearchSummary = {
+        enabled: true,
+        status: 'scan_complete',
+        intervalMinutes: this.marketResearchIntervalMinutes,
+        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
+        nextEvent: this.marketResearchState.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return { ok: true, skipped: false, executed, nextEvent: this.marketResearchState.nextEvent };
+    })().finally(() => {
+      this.marketResearchPhasePromise = null;
+    });
+
+    return this.marketResearchPhasePromise;
+  }
+
+  async run[private-live-ops]Phase(event) {
+    const executedAt = new Date().toISOString();
+    const result = await executeNodeScript(this.hm[private-live-ops]UnlocksScriptPath, ['--json', '--hours', '48'], {
+      cwd: this.projectRoot,
+      timeoutMs: 30_000,
+      env: this.runtimeEnv,
+    });
+    if (!result?.ok) {
+      return {
+        ok: false,
+        key: event?.key || '[private-live-ops]_scan',
+        executedAt,
+        error: result?.error || result?.stderr || '[private-live-ops]_scan_failed',
+        stdout: result?.stdout || '',
+        stderr: result?.stderr || '',
+      };
+    }
+    let payload = null;
+    try {
+      payload = JSON.parse(String(result.stdout || '{}'));
+    } catch (error) {
+      return {
+        ok: false,
+        key: event?.key || '[private-live-ops]_scan',
+        executedAt,
+        error: `[private-live-ops]_json_parse_failed:${error.message}`,
+        stdout: result.stdout || '',
+      };
+    }
+    return {
+      ok: true,
+      key: event?.key || '[private-live-ops]_scan',
+      executedAt,
+      unlockCount: Number(payload?.unlockCount || 0),
+      unlocks: Array.isArray(payload?.unlocks) ? payload.unlocks.slice(0, 10) : [],
+      sourcePath: payload?.sourcePath || null,
+      maxHours: payload?.maxHours || 48,
+    };
+  }
+
+  async maybeRun[private-live-ops]Automation(nowMs = Date.now()) {
+    if (!this.[private-live-ops]Enabled || this.stopping) {
+      return { ok: false, skipped: true, reason: '[private-live-ops]_disabled' };
+    }
+    if (this.[private-live-ops]PhasePromise) {
+      return this.[private-live-ops]PhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNext[private-live-ops]Event(now, {
+      intervalMinutes: this.[private-live-ops]IntervalMinutes,
+    });
+    const day = build[private-live-ops]DailySchedule(now, {
+      intervalMinutes: this.[private-live-ops]IntervalMinutes,
+    });
+    const lastProcessedAtMs = this.[private-live-ops]State.lastProcessedAt
+      ? new Date(this.[private-live-ops]State.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = day.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.[private-live-ops]State.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persist[private-live-ops]State();
+
+    if (dueEvents.length === 0) {
+      this.last[private-live-ops]Summary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
+        nextEvent: this.[private-live-ops]State.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_due_[private-live-ops]_phase', nextEvent: this.[private-live-ops]State.nextEvent };
+    }
+
+    this.[private-live-ops]PhasePromise = (async () => {
+      const executed = [];
+      for (const dueEvent of dueEvents) {
+        const phaseResult = await this.run[private-live-ops]Phase(dueEvent);
+        executed.push(phaseResult);
+        this.[private-live-ops]State.lastProcessedAt = dueEvent.scheduledAt;
+        this.[private-live-ops]State.lastResult = phaseResult;
+        this.[private-live-ops]State.lastScan = phaseResult;
+        this.persist[private-live-ops]State();
+      }
+
+      const upcomingEvent = getNext[private-live-ops]Event(new Date(), {
+        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+      });
+      this.[private-live-ops]State.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persist[private-live-ops]State();
+      this.last[private-live-ops]Summary = {
+        enabled: true,
+        status: executed.every((entry) => entry.ok) ? 'scan_complete' : 'scan_failed',
+        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
+        nextEvent: this.[private-live-ops]State.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return { ok: executed.every((entry) => entry.ok), skipped: false, executed, nextEvent: this.[private-live-ops]State.nextEvent };
+    })().finally(() => {
+      this.[private-live-ops]PhasePromise = null;
+    });
+
+    return this.[private-live-ops]PhasePromise;
+  }
+
+  async runMarketScannerPhase(event) {
+    const phaseKey = event?.key || 'market_scanner';
+    this.logTradingEventHeader(phaseKey);
+    try {
+      const macroRisk = await macroRiskGate.assessMacroRisk();
+      this.runOilMonitorCheck(phaseKey, macroRisk?.indicators?.oilPrice);
+    } catch (error) {
+      this.logger.warn(`Market scanner macro prelude failed: ${error?.message || String(error)}`);
+    }
+    const phaseResult = await this.marketScanner.runMarketScan({
+      statePath: this.marketScannerStatePath,
+      now: Date.now(),
+      fetch: this.fetch || global.fetch,
+    });
+    if (phaseResult?.ok === false) {
+      return {
+        ok: false,
+        degraded: phaseResult?.degraded === true,
+        key: phaseKey,
+        scannedAt: phaseResult?.scannedAt || new Date().toISOString(),
+        assetCount: Number(phaseResult?.assetCount || this.marketScannerState?.assetCount || 0),
+        flaggedCount: Array.isArray(phaseResult?.flaggedMovers) ? phaseResult.flaggedMovers.length : 0,
+        flaggedMovers: Array.isArray(phaseResult?.flaggedMovers) ? phaseResult.flaggedMovers.slice(0, 10) : [],
+        topMovers: Array.isArray(phaseResult?.topMovers) ? phaseResult.topMovers.slice(0, 10) : [],
+        alerts: [],
+        notified: false,
+        error: phaseResult?.reason || 'market_scan_failed',
+        validation: phaseResult?.validation || null,
+      };
+    }
+    this.marketScannerState = marketScannerModule.normalizeMarketScannerState(phaseResult.state);
+    const canonicalFlaggedMovers = Array.isArray(this.marketScannerState.flaggedMovers)
+      ? this.marketScannerState.flaggedMovers.slice(0, 10)
+      : [];
+    const canonicalTopMovers = Array.isArray(this.marketScannerState.topMovers)
+      ? this.marketScannerState.topMovers.slice(0, 10)
+      : [];
+    const canonicalAlerts = this.sanitizeMarketScannerMovers(
+      Array.isArray(phaseResult.alerts) ? phaseResult.alerts : canonicalFlaggedMovers
+    ).slice(0, 10);
+    const summary = {
+      ok: true,
+      key: phaseKey,
+      scannedAt: phaseResult.scannedAt,
+      assetCount: Number(this.marketScannerState.assetCount || phaseResult.assetCount || 0),
+      flaggedCount: Array.isArray(this.marketScannerState.flaggedMovers) ? this.marketScannerState.flaggedMovers.length : 0,
+      flaggedMovers: canonicalFlaggedMovers,
+      topMovers: canonicalTopMovers,
+      alerts: canonicalAlerts,
+      notified: false,
+    };
+    try {
+      summary.predictionsScored = predictionTrackerModule.scorePredictions(
+        this.buildPredictionPriceMap(this.marketScannerState.assets)
+      );
+      if (summary.predictionsScored > 0) {
+        this.logger.info(`[PREDICTION TRACKER] Scored ${summary.predictionsScored} matured prediction checks during ${phaseKey}.`);
+      }
+    } catch (error) {
+      this.logger.warn(`Prediction scoring failed during ${phaseKey}: ${error?.message || String(error)}`);
+      summary.predictionsScored = 0;
+    }
+    const promotionResult = this.promoteMarketScannerMovers(summary.topMovers, phaseResult.scannedAt);
+    summary.promotedSymbols = Array.isArray(promotionResult?.promotedTickers) ? promotionResult.promotedTickers : [];
+    summary.refreshedSymbols = Array.isArray(promotionResult?.refreshedTickers) ? promotionResult.refreshedTickers : [];
+    if (summary.alerts.length > 0) {
+      this.notifyArchitectInternal(this.buildMarketScannerArchitectAlert(summary), 'market_scanner');
+      summary.notified = true;
+    }
+    const urgentSourceMovers = this.getUrgentMarketScannerMovers(
+      Array.isArray(this.marketScannerState.flaggedMovers) && this.marketScannerState.flaggedMovers.length > 0
+        ? this.marketScannerState.flaggedMovers
+        : summary.flaggedMovers
+    ).slice(0, 6);
+    const urgentMovers = (await this.filterExecutableMarketScannerMovers(urgentSourceMovers)).slice(0, 6);
+    summary.urgentMovers = urgentMovers;
+    if (urgentMovers.length > 0) {
+      const urgentPromotionResult = this.promoteMarketScannerMovers(urgentMovers, phaseResult.scannedAt);
+      summary.urgentPromotedSymbols = Array.isArray(urgentPromotionResult?.promotedTickers)
+        ? urgentPromotionResult.promotedTickers
+        : [];
+      const triggerDecision = this.shouldTriggerImmediateMarketScannerConsultation(urgentMovers, phaseResult.scannedAt);
+      summary.immediateConsultationEligibility = triggerDecision.reason;
+      if (triggerDecision.shouldTrigger) {
+        const nowIso = new Date().toISOString();
+        const urgentSymbols = urgentMovers.map((entry) => entry.ticker).filter(Boolean);
+        this.marketScannerLastTrigger = {
+          at: nowIso,
+          trigger: 'market_scanner',
+          symbols: urgentSymbols,
+          fingerprint: triggerDecision.fingerprint,
+        };
+        summary.immediateConsultation = await this.triggerImmediateCryptoConsensus({
+          key: 'market_scanner_trigger',
+          label: `Market scanner movers: ${urgentMovers.map((entry) => entry.coin).join(', ')}`,
+          marketDate: nowIso.slice(0, 10),
+          scheduledAt: nowIso,
+          symbols: urgentSymbols,
+          symbolLimit: this.cryptoConsultationSymbolMax,
+          trigger: 'market_scanner',
+        }, {
+          trigger: 'market_scanner',
+        });
+      } else {
+        summary.immediateConsultation = {
+          ok: false,
+          skipped: true,
+          reason: triggerDecision.reason,
+        };
+      }
+    }
+    return summary;
+  }
+
+  async maybeRunMarketScannerAutomation(nowMs = Date.now()) {
+    if (!this.marketScannerEnabled || this.stopping || !this.marketScanner || typeof this.marketScanner.runMarketScan !== 'function') {
+      return { ok: false, skipped: true, reason: 'market_scanner_disabled' };
+    }
+    if (this.marketScannerPhasePromise) {
+      this.lastMarketScannerSummary = {
+        enabled: true,
+        status: 'running',
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent || null,
+      };
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'market_scanner_running',
+        nextEvent: this.marketScannerState.nextEvent || null,
+      };
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNextMarketScannerEvent(now, {
+      intervalMinutes: this.marketScannerIntervalMinutes,
+    });
+    const day = buildMarketScannerDailySchedule(now, {
+      intervalMinutes: this.marketScannerIntervalMinutes,
+    });
+    const lastProcessedAtMs = this.marketScannerState.lastProcessedAt
+      ? new Date(this.marketScannerState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = day.schedule.filter((entry) => {
+      const scheduledAtMs = new Date(entry.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+    const latestDueEvent = dueEvents.length > 0 ? dueEvents[dueEvents.length - 1] : null;
+
+    this.marketScannerState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistMarketScannerState();
+
+    if (!latestDueEvent) {
+      this.lastMarketScannerSummary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_due_market_scan', nextEvent: this.marketScannerState.nextEvent };
+    }
+
+    this.lastMarketScannerSummary = {
+      enabled: true,
+      status: 'running',
+      intervalMinutes: this.marketScannerIntervalMinutes,
+      lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+      nextEvent: this.marketScannerState.nextEvent,
+    };
+
+    this.marketScannerPhasePromise = (async () => {
+      const phaseResult = await this.runMarketScannerPhase(latestDueEvent);
+      this.marketScannerState.lastProcessedAt = latestDueEvent.scheduledAt;
+      this.marketScannerState.lastResult = phaseResult;
+      this.marketScannerState.lastScan = phaseResult;
+      this.persistMarketScannerState();
+
+      const upcomingEvent = getNextMarketScannerEvent(new Date(), {
+        intervalMinutes: this.marketScannerIntervalMinutes,
+      });
+      this.marketScannerState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistMarketScannerState();
+      this.lastMarketScannerSummary = {
+        enabled: true,
+        status: phaseResult.degraded ? 'scan_degraded' : (phaseResult.notified ? 'alert_sent' : 'scan_complete'),
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent,
+        lastResult: phaseResult,
+      };
+
+      return { ok: true, skipped: false, executed: [phaseResult], nextEvent: this.marketScannerState.nextEvent };
+    })().catch((err) => {
+      this.lastMarketScannerSummary = {
+        enabled: true,
+        status: 'failed',
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent || null,
+        lastError: err.message,
+      };
+      this.logger.warn(`Market scanner automation phase failed: ${err.message}`);
+      return {
+        ok: false,
+        skipped: false,
+        error: err.message,
+        nextEvent: this.marketScannerState.nextEvent || null,
+      };
+    }).finally(() => {
+      this.marketScannerPhasePromise = null;
+    });
+
+    return {
+      ok: true,
+      skipped: false,
+      started: true,
+      reason: 'market_scanner_started',
+      nextEvent: this.marketScannerState.nextEvent,
+    };
+  }
+
+  async run[private-profile]CheckInPhase(event) {
+    const scannedAt = new Date().toISOString();
+    const dashboard = this.readCaseOperationsDashboard();
+    const pendingItems = Array.isArray(dashboard.pendingItems) ? dashboard.pendingItems : [];
+    const private-profileItems = pendingItems.filter((item) => /은별 input|은별 action|은별/i.test(String(item.blockedOn || '')));
+    const commsRows = await Promise.resolve(this.proactiveCommsProvider()).catch(() => []);
+    const lastMessageAtMs = getLatest[private-profile]MessageTimestamp(commsRows);
+    const silenceMs = lastMessageAtMs > 0 ? Math.max(0, Date.parse(scannedAt) - lastMessageAtMs) : Number.POSITIVE_INFINITY;
+    const shouldDraft = private-profileItems.length > 0 && silenceMs >= this.private-profileCheckInSilenceMs;
+    const topItems = private-profileItems.slice(0, 4).map((item) => item.item);
+    const draft = shouldDraft
+      ? this.build[private-profile]CheckInDraft({ topItems })
+      : null;
+    const fingerprint = draft ? JSON.stringify({ topItems, lastMessageAtMs }) : null;
+    const summary = {
+      ok: true,
+      key: event?.key || 'private-profile_checkin',
+      scannedAt,
+      pendingCount: private-profileItems.length,
+      lastMessageAt: lastMessageAtMs > 0 ? new Date(lastMessageAtMs).toISOString() : null,
+      silenceHours: Number.isFinite(silenceMs) ? Number((silenceMs / (60 * 60 * 1000)).toFixed(2)) : null,
+      drafted: Boolean(draft),
+      topItems,
+      draft,
+      alertLevel: 'level_0',
+      notified: false,
+    };
+    if (fingerprint) {
+      this.private-profileCheckInState.lastDraftFingerprint = fingerprint;
+      this.private-profileCheckInState.lastDraft = {
+        createdAt: scannedAt,
+        message: draft,
+        topItems,
+      };
+      this.notifyArchitectInternal(this.build[private-profile]CheckInArchitectAlert(summary), 'private-profile_checkin');
+      summary.notified = true;
+    }
+    return summary;
+  }
+
+  async maybeRun[private-profile]CheckInAutomation(nowMs = Date.now()) {
+    if (!this.private-profileCheckInEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'private-profile_checkin_disabled' };
+    }
+    if (this.private-profileCheckInPhasePromise) {
+      return this.private-profileCheckInPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNext[private-profile]CheckInEvent(now, {
+      intervalMinutes: this.private-profileCheckInIntervalMinutes,
+    });
+    const day = build[private-profile]CheckInDailySchedule(now, {
+      intervalMinutes: this.private-profileCheckInIntervalMinutes,
+    });
+    const lastProcessedAtMs = this.private-profileCheckInState.lastProcessedAt
+      ? new Date(this.private-profileCheckInState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = day.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.private-profileCheckInState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persist[private-profile]CheckInState();
+
+    if (dueEvents.length === 0) {
+      this.last[private-profile]CheckInSummary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.private-profileCheckInIntervalMinutes,
+        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
+        nextEvent: this.private-profileCheckInState.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_due_private-profile_checkin', nextEvent: this.private-profileCheckInState.nextEvent };
+    }
+
+    this.private-profileCheckInPhasePromise = (async () => {
+      const executed = [];
+      for (const dueEvent of dueEvents) {
+        const phaseResult = await this.run[private-profile]CheckInPhase(dueEvent);
+        executed.push(phaseResult);
+        this.private-profileCheckInState.lastProcessedAt = dueEvent.scheduledAt;
+        this.private-profileCheckInState.lastResult = phaseResult;
+        this.persist[private-profile]CheckInState();
+      }
+
+      const upcomingEvent = getNext[private-profile]CheckInEvent(new Date(), {
+        intervalMinutes: this.private-profileCheckInIntervalMinutes,
+      });
+      this.private-profileCheckInState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persist[private-profile]CheckInState();
+      this.last[private-profile]CheckInSummary = {
+        enabled: true,
+        status: executed.some((entry) => entry.drafted) ? 'draft_ready' : 'scan_complete',
+        intervalMinutes: this.private-profileCheckInIntervalMinutes,
+        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
+        nextEvent: this.private-profileCheckInState.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return { ok: true, skipped: false, executed, nextEvent: this.private-profileCheckInState.nextEvent };
+    })().finally(() => {
+      this.private-profileCheckInPhasePromise = null;
+    });
+
+    return this.private-profileCheckInPhasePromise;
+  }
+
   getTradeReconciliationOrchestrator() {
-    return this.tradingOrchestrator || this.cryptoTradingOrchestrator || null;
+    return this.tradingOrchestrator || null;
   }
 
   hasActiveTradingPhase() {
@@ -1672,8 +5232,9 @@ class SupervisorDaemon {
       const message = messages[target];
       if (!message) continue;
       try {
-        execFileSync(process.execPath, [HM_SEND_SCRIPT_PATH, target, message], {
+        execFileSync(process.execPath, [this.hmSendScriptPath, target, message], {
           cwd: this.projectRoot,
+          env: this.runtimeEnv,
           timeout: 15000,
           stdio: 'ignore',
         });
@@ -1683,15 +5244,273 @@ class SupervisorDaemon {
     }
   }
 
-  notifyTelegramTrading(message) {
+  notifyAllTradingAgents(message, reason = 'monitor') {
+    const text = String(message || '').trim();
+    if (!text) return;
+    for (const target of TRADING_AGENT_TARGETS) {
+      try {
+        execFileSync(process.execPath, [this.hmSendScriptPath, target, text], {
+          cwd: this.projectRoot,
+          env: this.runtimeEnv,
+          timeout: 15000,
+          stdio: 'ignore',
+        });
+      } catch (err) {
+        this.logger.warn(`Trading notify failed for ${target} during ${reason}: ${err.message}`);
+      }
+    }
+  }
+
+  notifyArchitectInternal(message, reason = 'proactive') {
+    const text = String(message || '').trim();
+    if (!text) return;
     try {
-      execFileSync(process.execPath, [HM_SEND_SCRIPT_PATH, 'telegram', message], {
+      execFileSync(process.execPath, [this.hmSendScriptPath, 'architect', text], {
         cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeout: 15000,
+        stdio: 'ignore',
+      });
+    } catch (err) {
+      this.logger.warn(`Architect internal notify failed during ${reason}: ${err.message}`);
+    }
+  }
+
+  notifyOracleWatchLane(message, reason = 'oracle_watch') {
+    const text = String(message || '').trim();
+    if (!text) return;
+    for (const target of ['architect', 'oracle']) {
+      try {
+        execFileSync(process.execPath, [this.hmSendScriptPath, target, text], {
+          cwd: this.projectRoot,
+          env: this.runtimeEnv,
+          timeout: 15000,
+          stdio: 'ignore',
+        });
+      } catch (err) {
+        this.logger.warn(`Oracle watch notify failed for ${target} during ${reason}: ${err.message}`);
+      }
+    }
+  }
+
+  maybeAlertOracleWatchHeartbeat(heartbeat = null) {
+    const ageMs = Number(heartbeat?.ageMs);
+    const intervalMs = Math.max(
+      5_000,
+      Number(heartbeat?.intervalMs || this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS) || DEFAULT_ORACLE_WATCH_INTERVAL_MS
+    );
+    const isStale = Boolean(
+      this.oracleWatchEnabled
+      && heartbeat?.stale === true
+      && Number.isFinite(ageMs)
+      && ageMs >= ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS
+    );
+
+    if (isStale && !this.oracleWatchStaleAlertActive) {
+      const seconds = Math.round(ageMs / 1000);
+      const lastTickAt = String(heartbeat?.lastTickAt || 'unknown');
+      this.notifyOracleWatchLane(
+        `(SUPERVISOR): Oracle watch heartbeat stale for ${seconds}s. lastTickAt=${lastTickAt}. Expected roughly every ${Math.round(intervalMs / 1000)}s. Oracle trigger lane is blind until this recovers.`,
+        'stale'
+      );
+      this.oracleWatchStaleAlertActive = true;
+      return;
+    }
+
+    if (!isStale && this.oracleWatchStaleAlertActive) {
+      const lastTickAt = String(heartbeat?.lastTickAt || new Date().toISOString());
+      this.notifyOracleWatchLane(
+        `(SUPERVISOR): Oracle watch heartbeat recovered. lastTickAt=${lastTickAt}. Oracle trigger lane is live again.`,
+        'recovered'
+      );
+      this.oracleWatchStaleAlertActive = false;
+    }
+  }
+
+  notifyTelegramTrading(message) {
+    // Suppress old trading alerts while manual trading mode is active
+    // TODO: Re-enable when conviction engine is live-ready
+    if (process.env.SQUIDRUN_SUPPRESS_TRADING_ALERTS === '1') {
+      this.logger.info(`Trading alert suppressed (manual mode): ${message.slice(0, 80)}...`);
+      return;
+    }
+    const chatId = String(this.runtimeEnv?.TELEGRAM_CHAT_ID || '').trim();
+    if (!chatId) {
+      this.logger.warn('Trading Telegram notify suppressed: TELEGRAM_CHAT_ID is not configured.');
+      return;
+    }
+    try {
+      execFileSync(process.execPath, [this.hmSendScriptPath, 'telegram', message, '--chat-id', chatId], {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
         timeout: 15000,
         stdio: 'ignore',
       });
     } catch (err) {
       this.logger.warn(`Trading Telegram notify failed: ${err.message}`);
+    }
+  }
+
+  async run[private-live-ops]PositionMonitorCycle(trigger = 'manual') {
+    if (!this.[private-live-ops]MonitorEnabled || !this.[private-live-ops]MonitorOrchestrator) {
+      return {
+        enabled: false,
+        status: 'disabled',
+        trigger,
+        checkedAt: null,
+        warnings: [],
+        telegramAlerts: [],
+      };
+    }
+
+    const result = await this.[private-live-ops]MonitorOrchestrator.runDefiMonitorCycle({
+      trigger,
+      sendTelegram: false,
+    });
+    const riskExit = trigger === 'startup'
+      ? { attempted: false, reason: 'startup_grace', executions: [] }
+      : await this.maybeExecute[private-live-ops]RiskExit(result, {
+        trigger,
+        checkedAt: result?.checkedAt || new Date().toISOString(),
+      });
+    this.last[private-live-ops]MonitorSummary = {
+      enabled: true,
+      status: result?.ok === false ? 'error' : 'ok',
+      trigger,
+      pollMs: this.[private-live-ops]MonitorPollMs,
+      checkedAt: result?.checkedAt || null,
+      warnings: Array.isArray(result?.warnings) ? result.warnings : [],
+      telegramAlerts: Array.isArray(result?.telegramAlerts) ? result.telegramAlerts : [],
+      positions: Array.isArray(result?.positions) ? result.positions : [],
+      peakStatePath: result?.peakStatePath || this.defiPeakPnlPath,
+      riskExit,
+      error: result?.error || null,
+    };
+
+    if (result?.ok === false && result?.error) {
+      this.logger.warn(`[private-live-ops] monitor failed (${trigger}): ${result.error}`);
+    }
+    if (this.cryptoTradingStrategyMode === 'range_conviction') {
+      await this.maybeRunRangeConvictionCycle({
+        trigger: `monitor_${trigger}`,
+      }).catch(() => null);
+    }
+
+    this.writeStatus();
+    return result;
+  }
+
+  async sync[private-live-ops]PeakStateFromAccountState(accountState = {}, options = {}) {
+    if (!this.[private-live-ops]MonitorOrchestrator || typeof this.[private-live-ops]MonitorOrchestrator.syncDefiPeakStateFromStatus !== 'function') {
+      return null;
+    }
+    try {
+      return await this.[private-live-ops]MonitorOrchestrator.syncDefiPeakStateFromStatus({
+        ok: true,
+        checkedAt: options.checkedAt || new Date().toISOString(),
+        accountValue: toNumber(accountState?.accountValue, 0),
+        positions: Array.isArray(accountState?.positions) ? accountState.positions : [],
+      }, {
+        trigger: options.trigger || 'execution_snapshot',
+        sendTelegram: options.sendTelegram === true,
+      });
+    } catch (error) {
+      this.logger.warn(`[private-live-ops] peak-state sync failed (${options.trigger || 'execution_snapshot'}): ${error?.message || String(error)}`);
+      return null;
+    }
+  }
+
+  async maybeExecute[private-live-ops]RiskExit(monitorResult = {}, options = {}) {
+    const positions = Array.isArray(monitorResult?.positions) ? monitorResult.positions : [];
+    const executions = [];
+
+    for (const position of positions) {
+      const drawdown = Number(position?.drawdownFromPeakPct || 0);
+      const previousAlertThreshold = Number(position?.previousGivebackAlertThreshold || 0);
+      if (drawdown >= 0.3 && previousAlertThreshold < 0.3) {
+        this.notifyTelegramTrading(this.build[private-live-ops]GivebackAlert(position));
+      }
+
+      const reasons = [];
+      if (this.shouldTrigger[private-live-ops]Stop(position)) {
+        reasons.push('stop_loss_crossed');
+      }
+      const peakPnl = toNumber(position?.peakUnrealizedPnl, 0);
+      const timeOpenMs = toNumber(position?.timeOpenMs, 0);
+      // giveback_75 DISABLED — killed the user's profitable BLUR trade on a normal pullback. Session 268.
+      // if (drawdown >= 0.75 && peakPnl >= 5 && timeOpenMs >= 1200000) {
+      //   reasons.push('giveback_75');
+      // }
+      const warningLevel = String(position?.warningLevel || '').trim().toLowerCase();
+      if (warningLevel === 'critical') {
+        reasons.push('liquidation_risk');
+      }
+      if (reasons.length === 0) {
+        continue;
+      }
+
+      const summary = {
+        asset: position.coin,
+        ok: true,
+        reasons,
+        position: this.summarize[private-live-ops]Position(position),
+        execution: null,
+      };
+      executions.push(summary);
+      this.logger.warn(`[TradeLog] [private-live-ops] risk exit requires manual action for ${position.coin} ${position.side} | reasons: ${reasons.join('+')} | pnl: $${toNumber(position?.unrealizedPnl, 0).toFixed(2)} | entry: ${position.entryPx} | mark: ${position.markPrice}`);
+      this.notifyTelegramTrading(this.build[private-live-ops]ManualActionAlert(position, reasons));
+    }
+
+    if (!executions.length) {
+      return { attempted: false, reason: 'no_risk_exit_signal', executions: [] };
+    }
+
+    return {
+      attempted: false,
+      ok: true,
+      reason: 'manual_only_alerted',
+      executions,
+    };
+  }
+
+  start[private-live-ops]PositionMonitor() {
+    if (!this.[private-live-ops]MonitorEnabled || this.[private-live-ops]MonitorTimer) {
+      return;
+    }
+    this.[private-live-ops]MonitorPromise = this.run[private-live-ops]PositionMonitorCycle('startup')
+      .catch((error) => {
+        this.logger.warn(`[private-live-ops] startup monitor failed: ${error.message}`);
+        return { ok: false, error: error.message };
+      })
+      .finally(() => {
+        this.[private-live-ops]MonitorPromise = null;
+      });
+    this.[private-live-ops]MonitorTimer = setInterval(() => {
+      if (this.[private-live-ops]MonitorPromise) {
+        return;
+      }
+      this.[private-live-ops]MonitorPromise = this.run[private-live-ops]PositionMonitorCycle('interval')
+        .catch((error) => {
+          this.logger.warn(`[private-live-ops] interval monitor failed: ${error.message}`);
+          return { ok: false, error: error.message };
+        })
+        .finally(() => {
+          this.[private-live-ops]MonitorPromise = null;
+        });
+    }, this.[private-live-ops]MonitorPollMs);
+    if (typeof this.[private-live-ops]MonitorTimer.unref === 'function') {
+      this.[private-live-ops]MonitorTimer.unref();
+    }
+  }
+
+  async stop[private-live-ops]PositionMonitor() {
+    if (this.[private-live-ops]MonitorTimer) {
+      clearInterval(this.[private-live-ops]MonitorTimer);
+      this.[private-live-ops]MonitorTimer = null;
+    }
+    if (this.[private-live-ops]MonitorPromise) {
+      await Promise.resolve(this.[private-live-ops]MonitorPromise).catch(() => {});
+      this.[private-live-ops]MonitorPromise = null;
     }
   }
 
@@ -1722,8 +5541,272 @@ class SupervisorDaemon {
     return null;
   }
 
-  getCryptoSymbols() {
-    return tradingWatchlist.getTickers({ assetClass: 'crypto' });
+  async getCurrent[private-live-ops]PositionSymbols() {
+    const sources = [];
+    const liveAccountState = await Promise.resolve(
+      this.[private-live-ops]Executor?.getAccountState?.()
+    ).catch(() => null);
+    if (Array.isArray(liveAccountState?.positions) && liveAccountState.positions.length > 0) {
+      sources.push(...liveAccountState.positions);
+    } else {
+      const fallbackPositions = await [private-live-ops]Client.getOpenPositions({
+        env: this.runtimeEnv,
+      }).catch(() => []);
+      if (Array.isArray(fallbackPositions) && fallbackPositions.length > 0) {
+        sources.push(...fallbackPositions);
+      }
+    }
+    return Array.from(new Set(
+      sources
+        .map((position) => normalizeNewsTicker(position?.ticker || position?.coin || ''))
+        .filter((ticker) => /\/USD$/i.test(ticker))
+    ));
+  }
+
+  async getCryptoSymbolCandidates(options = {}) {
+    const openPositionSymbols = await this.getCurrent[private-live-ops]PositionSymbols();
+    const prioritySymbols = (Array.isArray(options.prioritySymbols) ? options.prioritySymbols : [])
+      .map((ticker) => String(ticker || '').trim().toUpperCase())
+      .filter((ticker) => /\/USD$/i.test(ticker));
+    const rankedMovers = await this.rankConsultationMovers(
+      (Array.isArray(this.marketScannerState?.topMovers) ? this.marketScannerState.topMovers : [])
+        .filter((entry) => entry?.flagged === true)
+    );
+    const baseSymbols = Array.from(new Set([
+      ...openPositionSymbols,
+      ...CORE_CRYPTO_CONSULTATION_SYMBOLS,
+      ...prioritySymbols,
+    ]));
+    const requestedLimit = Math.max(
+      baseSymbols.length,
+      Math.floor(Number(options.limit) || this.cryptoConsultationSymbolMax)
+    );
+    const baseSymbolSet = new Set(baseSymbols);
+    const moverSymbols = rankedMovers
+      .map((entry) => String(entry?.ticker || '').trim().toUpperCase())
+      .filter((ticker) => /\/USD$/i.test(ticker) && !baseSymbolSet.has(ticker))
+      .slice(0, Math.min(this.marketScannerConsultationSymbolLimit, Math.max(0, requestedLimit - baseSymbols.length)));
+    const promotedSymbols = dynamicWatchlist.getActiveEntries({
+      statePath: this.dynamicWatchlistStatePath,
+      assetClass: 'crypto',
+      source: 'market_scanner',
+    })
+      .map((entry) => String(entry?.ticker || '').trim().toUpperCase())
+      .filter((ticker) => /\/USD$/i.test(ticker) && !baseSymbolSet.has(ticker) && !moverSymbols.includes(ticker))
+      .slice(0, Math.max(0, requestedLimit - baseSymbols.length - moverSymbols.length));
+    const orderedSymbols = [...baseSymbols, ...moverSymbols, ...promotedSymbols];
+    const symbolsExecutable = orderedSymbols.filter((ticker) => this.is[private-live-ops]ConsensusTicker(ticker));
+    this.lastCryptoCoverage = {
+      basketBuiltAt: new Date().toISOString(),
+      openPositionSymbols,
+      coreSymbols: [...CORE_CRYPTO_CONSULTATION_SYMBOLS],
+      prioritySymbols,
+      moverSymbols,
+      rankedMovers: rankedMovers.slice(0, this.marketScannerConsultationSymbolLimit).map((entry) => ({
+        ticker: entry?.ticker || null,
+        score: entry?.score ?? null,
+        consultationRankScore: entry?.consultationRankScore ?? null,
+        consultationBoost: entry?.consultationBoost ?? 0,
+        fundingBoostEligible: entry?.fundingBoostEligible === true,
+        fundingDivergenceBps: entry?.fundingDivergenceBps ?? null,
+        fundingBoostTier: entry?.fundingBoostTier || 'none',
+      })),
+      promotedSymbols,
+      symbolsConsulted: orderedSymbols,
+      symbolsExecutable,
+    };
+    return orderedSymbols;
+  }
+
+  async buildRangeConvictionSelection(symbols = [], options = {}) {
+    const candidates = (Array.isArray(symbols) ? symbols : [])
+      .map((ticker) => String(ticker || '').trim().toUpperCase())
+      .filter((ticker) => /\/USD$/i.test(ticker));
+    if (candidates.length === 0) {
+      return {
+        selectedTicker: null,
+        rangeStructures: new Map(),
+        ranked: [],
+      };
+    }
+
+    const [bars5m, bars15m, bars1h, accountState] = await Promise.all([
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: candidates,
+        timeframe: '5Min',
+        limit: 72,
+      }).catch(() => new Map()),
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: candidates,
+        timeframe: '15Min',
+        limit: 48,
+      }).catch(() => new Map()),
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: candidates,
+        timeframe: '1Hour',
+        limit: 24,
+      }).catch(() => new Map()),
+      this.[private-live-ops]Executor?.getAccountState?.().catch(() => null),
+    ]);
+
+    const positionsByCoin = new Map(
+      (Array.isArray(accountState?.positions) ? accountState.positions : [])
+        .filter((position) => position?.coin)
+        .map((position) => [String(position.coin || '').trim().toUpperCase(), position])
+    );
+    const rankedMovers = Array.isArray(this.lastCryptoCoverage?.rankedMovers) ? this.lastCryptoCoverage.rankedMovers : [];
+    const moverByTicker = new Map(
+      rankedMovers
+        .map((entry) => [String(entry?.ticker || '').trim().toUpperCase(), entry])
+        .filter(([ticker]) => ticker)
+    );
+    const rangeStructures = new Map();
+    const evaluationRows = [];
+
+    for (const ticker of candidates) {
+      const structure = rangeStructure.analyzeRangeStructure({
+        bars5m: bars5m instanceof Map ? (bars5m.get(ticker) || []) : [],
+        bars15m: bars15m instanceof Map ? (bars15m.get(ticker) || []) : [],
+        bars1h: bars1h instanceof Map ? (bars1h.get(ticker) || []) : [],
+      });
+      rangeStructures.set(ticker, structure);
+      const position = positionsByCoin.get(String(ticker).replace('/USD', '')) || null;
+      evaluationRows.push({
+        ticker,
+        structure,
+        change4hPct: moverByTicker.get(ticker)?.change4hPct ?? null,
+        hasOpenPosition: Boolean(position),
+        openPosition: position,
+      });
+    }
+
+    const selection = convictionEngine.chooseDominantSetup(evaluationRows);
+    const activeRow = evaluationRows.find((entry) => entry?.hasOpenPosition && entry?.ticker === selection.selectedTicker)
+      || evaluationRows.find((entry) => entry?.hasOpenPosition)
+      || null;
+    const positionAction = convictionEngine.resolvePositionAction(
+      selection,
+      activeRow?.openPosition || null,
+      {
+        ticker: activeRow?.ticker || selection.selectedTicker || null,
+        structure: activeRow?.structure
+          || (selection.selectedTicker ? rangeStructures.get(selection.selectedTicker) : null)
+          || selection?.dominant?.structure
+          || null,
+      }
+    );
+    const selectedTicker = activeRow?.ticker || selection.selectedTicker || null;
+    this.lastRangeConvictionSelection = {
+      selectedTicker,
+      selectedDirection: activeRow?.openPosition
+        ? (String(activeRow.openPosition.side || '').trim().toLowerCase() === 'short' ? 'SELL' : 'BUY')
+        : selection.selectedDirection,
+      confidence: selection.confidence,
+      action: positionAction?.action || null,
+      rationale: positionAction?.rationale || null,
+      invalidationPrice: Number(positionAction?.invalidationPrice || 0) || null,
+      targetPrice: Number(positionAction?.targetPrice || 0) || null,
+      activePosition: activeRow ? this.summarize[private-live-ops]Position(activeRow.openPosition) : null,
+      ranked: (selection.ranked || []).slice(0, 5).map((entry) => ({
+        ticker: entry.ticker,
+        direction: entry.setup?.direction || null,
+        score: entry.score,
+        confidence: entry.setup?.confidence ?? null,
+      })),
+      computedAt: new Date().toISOString(),
+    };
+
+    return {
+      ...selection,
+      selectedTicker,
+      rangeStructures,
+      activePosition: activeRow?.openPosition || null,
+      positionAction,
+    };
+  }
+
+  async getCryptoSymbols(options = {}) {
+    const prioritySymbols = (Array.isArray(options.prioritySymbols) ? options.prioritySymbols : [])
+      .map((ticker) => String(ticker || '').trim().toUpperCase())
+      .filter((ticker) => /\/USD$/i.test(ticker));
+    if (options.forceSelection === true && prioritySymbols.length > 0) {
+      return prioritySymbols.slice(0, 1);
+    }
+
+    const candidates = await this.getCryptoSymbolCandidates(options);
+    if (this.cryptoTradingStrategyMode !== 'range_conviction') {
+      return candidates;
+    }
+
+    const selection = await this.buildRangeConvictionSelection(candidates, options);
+    if (selection.selectedTicker) {
+      this.lastCryptoCoverage = {
+        ...(this.lastCryptoCoverage || {}),
+        strategyMode: 'range_conviction',
+        convictionSelection: this.lastRangeConvictionSelection,
+      };
+      return [selection.selectedTicker];
+    }
+
+    return candidates.slice(0, 1);
+  }
+
+  async rankConsultationMovers(entries = []) {
+    const normalized = (Array.isArray(entries) ? entries : [])
+      .map((entry) => marketScannerModule.normalizeMover(entry))
+      .filter((entry) => entry?.flagged === true && /\/USD$/i.test(String(entry?.ticker || '').trim()));
+    if (normalized.length === 0) return [];
+
+    let nativeBundle = null;
+    try {
+      nativeBundle = await [private-live-ops]NativeLayer.buildNativeFeatureBundle({
+        symbols: normalized.map((entry) => entry.ticker),
+      });
+    } catch (error) {
+      this.logger?.warn?.(`[market-scanner-rank] native funding boost unavailable: ${error?.message || String(error)}`);
+    }
+
+    const nativeAsOfMs = Date.parse(nativeBundle?.asOf || '');
+    const nowMs = Date.now();
+    const nativeFundingFresh = Number.isFinite(nativeAsOfMs)
+      && Math.max(0, nowMs - nativeAsOfMs) <= CONSULTATION_NATIVE_FUNDING_MAX_AGE_MS;
+    const nativeFundingDegraded = Array.isArray(nativeBundle?.degradedSources)
+      && nativeBundle.degradedSources.some((source) => String(source || '').startsWith('predictedFundings:'));
+    const allowFundingBoost = nativeFundingFresh && !nativeFundingDegraded;
+
+    return normalized
+      .map((entry, index) => {
+        const nativeEntry = nativeBundle?.symbols?.[entry.ticker] || null;
+        const fundingDivergenceBps = Number(
+          nativeEntry?.crossVenueFunding?.strongestVsHl?.absoluteSpreadBps
+          ?? nativeEntry?.crossVenueFunding?.basisSpreadBps
+        );
+        let consultationBoost = 0;
+        let fundingBoostTier = 'none';
+        if (allowFundingBoost && Number.isFinite(fundingDivergenceBps) && fundingDivergenceBps >= CONSULTATION_FUNDING_DIVERGENCE_STRONG_BPS) {
+          consultationBoost = CONSULTATION_FUNDING_DIVERGENCE_STRONG_BOOST;
+          fundingBoostTier = 'strong';
+        } else if (allowFundingBoost && Number.isFinite(fundingDivergenceBps) && fundingDivergenceBps >= CONSULTATION_FUNDING_DIVERGENCE_MILD_BPS) {
+          consultationBoost = CONSULTATION_FUNDING_DIVERGENCE_MILD_BOOST;
+          fundingBoostTier = 'mild';
+        }
+        return {
+          ...entry,
+          consultationOriginalIndex: index,
+          fundingBoostEligible: allowFundingBoost,
+          fundingDivergenceBps: Number.isFinite(fundingDivergenceBps) ? Number(fundingDivergenceBps.toFixed(4)) : null,
+          fundingBoostTier,
+          consultationBoost,
+          consultationRankScore: Number((Number(entry?.score || 0) + consultationBoost).toFixed(4)),
+        };
+      })
+      .sort((left, right) => {
+        const rankDelta = Number(right?.consultationRankScore || 0) - Number(left?.consultationRankScore || 0);
+        if (Math.abs(rankDelta) > 0.0000001) return rankDelta;
+        const magnitudeDelta = Math.abs(Number(right?.change4hPct || 0)) - Math.abs(Number(left?.change4hPct || 0));
+        if (Math.abs(magnitudeDelta) > 0.0000001) return magnitudeDelta;
+        return Number(left?.consultationOriginalIndex || 0) - Number(right?.consultationOriginalIndex || 0);
+      });
   }
 
   extractConsensusResultForTicker(consensusPhase, ticker) {
@@ -1742,6 +5825,273 @@ class SupervisorDaemon {
       unrealizedPnl: position.unrealizedPnl,
       liquidationPx: position.liquidationPx,
     };
+  }
+
+  is[private-live-ops]ConsensusTicker(ticker) {
+    return /\/USD$/i.test(String(ticker || '').trim());
+  }
+
+  getUrgentMarketScannerMovers(entries = []) {
+    return (Array.isArray(entries) ? entries : [])
+      .filter((entry) => {
+        const change4hPct = Number(entry?.change4hPct);
+        return entry?.flagged === true
+          && Number.isFinite(change4hPct)
+          && Math.abs(change4hPct) >= 0.015;
+      })
+      .slice()
+      .sort((left, right) => Math.abs(Number(right?.change4hPct || 0)) - Math.abs(Number(left?.change4hPct || 0)));
+  }
+
+  buildMarketScannerTriggerFingerprint(entries = []) {
+    return (Array.isArray(entries) ? entries : [])
+      .map((entry) => String(entry?.ticker || '').trim().toUpperCase())
+      .filter(Boolean)
+      .sort()
+      .join('|');
+  }
+
+  shouldTriggerImmediateMarketScannerConsultation(entries = [], scannedAt = null) {
+    const fingerprint = this.buildMarketScannerTriggerFingerprint(entries);
+    if (!fingerprint) {
+      return {
+        shouldTrigger: false,
+        reason: 'no_urgent_market_scanner_movers',
+        fingerprint: null,
+      };
+    }
+    if (this.marketScannerLastTrigger?.fingerprint !== fingerprint) {
+      return {
+        shouldTrigger: true,
+        reason: 'urgent_set_changed',
+        fingerprint,
+      };
+    }
+    const lastTriggeredAtMs = Date.parse(this.marketScannerLastTrigger?.at || '');
+    const scannedAtMs = Date.parse(scannedAt || '');
+    if (!Number.isFinite(lastTriggeredAtMs) || !Number.isFinite(scannedAtMs) || scannedAtMs > lastTriggeredAtMs) {
+      return {
+        shouldTrigger: false,
+        reason: 'urgent_set_already_triggered',
+        fingerprint,
+      };
+    }
+    return {
+      shouldTrigger: false,
+      reason: 'urgent_set_duplicate_scan',
+      fingerprint,
+    };
+  }
+
+  async triggerImmediateCryptoConsensus(event, summary = {}) {
+    if (!this.cryptoTradingOrchestrator) {
+      return { ok: false, skipped: true, reason: 'crypto_trading_unavailable' };
+    }
+    if (this.cryptoTradingPhasePromise) {
+      return { ok: false, skipped: true, reason: 'crypto_phase_busy' };
+    }
+
+    const trigger = String(summary.trigger || event?.key || 'manual').trim() || 'manual';
+    const startedAt = new Date().toISOString();
+    this.cryptoTradingPhasePromise = this.runCryptoConsensusPhase(event)
+      .then((result) => {
+        this.cryptoTradingState.lastProcessedAt = event?.scheduledAt || startedAt;
+        this.cryptoTradingState.lastResult = result;
+        this.persistCryptoTradingState();
+        this.cryptoTradingState.nextEvent = this.cryptoTradingState.nextEvent || null;
+        this.lastCryptoTradingSummary = {
+          enabled: true,
+          status: result?.ok ? 'completed' : 'failed',
+          trigger,
+          startedAt,
+          lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+          ...result,
+        };
+        this.writeStatus();
+        return result;
+      })
+      .catch((err) => {
+        this.logger.error(`Immediate crypto consensus (${trigger}) failed: ${err.message}`);
+        return { ok: false, error: err.message, trigger };
+      })
+      .finally(() => {
+        this.cryptoTradingPhasePromise = null;
+      });
+    return this.cryptoTradingPhasePromise;
+  }
+
+  syncRangeConvictionState(selection = null) {
+    const thesis = selection
+      ? {
+        ticker: selection?.selectedTicker || null,
+        action: selection?.positionAction?.action || null,
+        rationale: selection?.positionAction?.rationale || null,
+        confidence: Number(selection?.confidence || 0) || null,
+        invalidationPrice: Number(selection?.positionAction?.invalidationPrice || 0) || null,
+        targetPrice: Number(selection?.positionAction?.targetPrice || 0) || null,
+        activePosition: selection?.activePosition ? this.summarize[private-live-ops]Position(selection.activePosition) : null,
+        updatedAt: new Date().toISOString(),
+      }
+      : null;
+    this.cryptoTradingState.activeConvictionThesis = thesis;
+    this.persistCryptoTradingState();
+    return thesis;
+  }
+
+  async executeRangeConvictionManagement(selection = {}, options = {}) {
+    const positionAction = selection?.positionAction || null;
+    const activePosition = selection?.activePosition || null;
+    const action = String(positionAction?.action || '').trim().toLowerCase();
+    if (!['abort_thesis', 'take_profit'].includes(action) || !activePosition) {
+      return { ok: false, skipped: true, reason: 'range_conviction_no_management_action' };
+    }
+    const asset = String(activePosition.coin || selection?.selectedTicker || '').replace('/USD', '').trim().toUpperCase();
+    if (!asset) {
+      return { ok: false, skipped: true, reason: 'range_conviction_missing_asset' };
+    }
+    this.logger.warn(`[TradeLog] Range conviction ${action} flagged manual exit for ${asset} ${activePosition.side} | pnl: $${toNumber(activePosition?.unrealizedPnl, 0).toFixed(2)} | entry: ${activePosition.entryPx}`);
+    this.notifyTelegramTrading(`[ACTION REQUIRED] Range conviction wants to ${action.replace('_', ' ')} ${asset} ${String(activePosition.side || '').toUpperCase()}. ${positionAction?.rationale || 'Thesis exit fired.'} PnL: $${toNumber(activePosition?.unrealizedPnl, 0).toFixed(2)}. Entry: $${activePosition.entryPx}. Manual-only reset is active, so the supervisor did not close it.`);
+    return {
+      attempted: false,
+      ok: true,
+      skipped: true,
+      reason: 'manual_only_reset',
+      action,
+      rationale: positionAction?.rationale || null,
+      asset,
+      ticker: selection?.selectedTicker || `${asset}/USD`,
+      position: this.summarize[private-live-ops]Position(activePosition),
+      execution: null,
+    };
+  }
+
+  async maybeRunRangeConvictionCycle(options = {}) {
+    if (!this.cryptoTradingEnabled || this.stopping || !this.cryptoTradingOrchestrator) {
+      return { ok: false, skipped: true, reason: 'crypto_trading_disabled' };
+    }
+    if (this.cryptoTradingStrategyMode !== 'range_conviction') {
+      return { ok: false, skipped: true, reason: 'strategy_mode_not_range_conviction' };
+    }
+    if (this.cryptoTradingPhasePromise) {
+      return { ok: false, skipped: true, reason: 'crypto_phase_busy' };
+    }
+
+    const nowMs = Date.now();
+    if (options.force !== true && (nowMs - this.lastRangeConvictionRunAt) < this.rangeConvictionIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'range_conviction_interval_guard',
+      };
+    }
+
+    const candidates = await this.getCryptoSymbolCandidates({
+      prioritySymbols: Array.isArray(options.prioritySymbols) ? options.prioritySymbols : [],
+      limit: Math.max(CORE_CRYPTO_CONSULTATION_SYMBOLS.length, this.cryptoConsultationSymbolMax),
+    });
+    const selection = await this.buildRangeConvictionSelection(candidates, options);
+    this.syncRangeConvictionState(selection);
+    const positionAction = selection?.positionAction || null;
+    if (selection?.activePosition) {
+      this.lastRangeConvictionRunAt = nowMs;
+      if (['abort_thesis', 'take_profit'].includes(String(positionAction?.action || '').trim().toLowerCase())) {
+        const managed = await this.executeRangeConvictionManagement(selection, {
+          trigger: String(options.trigger || 'range_conviction').trim() || 'range_conviction',
+          checkedAt: new Date().toISOString(),
+        });
+        if (managed?.ok && options.reentryAfterManagement !== false) {
+          const reentry = await this.maybeRunRangeConvictionCycle({
+            ...options,
+            trigger: `post_${positionAction.action}`,
+            force: true,
+            reentryAfterManagement: false,
+          }).catch(() => null);
+          return {
+            ...managed,
+            reentry,
+          };
+        }
+        return managed;
+      }
+      return {
+        ok: true,
+        skipped: true,
+        reason: positionAction?.action || 'range_conviction_position_managed',
+        selection: this.lastRangeConvictionSelection,
+      };
+    }
+    if (!selection.selectedTicker) {
+      this.lastRangeConvictionRunAt = nowMs;
+      return { ok: false, skipped: true, reason: 'no_range_conviction_setup' };
+    }
+
+    this.lastRangeConvictionRunAt = nowMs;
+    const nowIso = new Date().toISOString();
+    return this.triggerImmediateCryptoConsensus({
+      key: 'range_conviction',
+      label: `Range conviction: ${selection.selectedTicker}`,
+      marketDate: nowIso.slice(0, 10),
+      scheduledAt: nowIso,
+      symbols: [selection.selectedTicker],
+      symbolLimit: 1,
+      strategyMode: 'range_conviction',
+      forceSelection: true,
+      trigger: String(options.trigger || 'range_conviction').trim() || 'range_conviction',
+      rangeStructures: selection.rangeStructures,
+      convictionSelection: this.lastRangeConvictionSelection,
+    }, {
+      trigger: options.trigger || 'range_conviction',
+    });
+  }
+
+  build[private-live-ops]AutoExecutionSummary(autoExecution = {}, scheduledAt = null) {
+    const executions = Array.isArray(autoExecution?.executions) ? autoExecution.executions : [];
+    const firstAction = executions[0]?.action || null;
+    return {
+      enabled: Boolean(autoExecution?.enabled),
+      status: executions.length === 0
+        ? 'idle'
+        : (executions.every((entry) => entry.ok !== false) ? 'completed' : 'failed'),
+      dryRun: this.[private-live-ops]ExecutionDryRun,
+      action: firstAction,
+      reason: executions.length === 0
+        ? 'no_consensus_execution'
+        : executions.filter((entry) => entry.ok === false).map((entry) => entry.error || entry.stderr || 'execution_failed').filter(Boolean).join(' | ') || 'executed',
+      executedAt: scheduledAt || new Date().toISOString(),
+      executions,
+    };
+  }
+
+  build[private-live-ops]GivebackAlert(position) {
+    const drawdownPct = Number(position?.drawdownFromPeakPct || 0);
+    const stopLossText = Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
+      ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
+      : '';
+    return `[TRADING] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} has given back ${(drawdownPct * 100).toFixed(0)}% of peak PnL. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} peak=$${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText}`;
+  }
+
+  build[private-live-ops]ManualActionAlert(position = {}, reasons = []) {
+    const reasonText = Array.isArray(reasons) && reasons.length > 0 ? reasons.join('+') : 'risk_exit_signal';
+    const stopLossText = Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
+      ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
+      : '';
+    return `[ACTION REQUIRED] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} hit ${reasonText}. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} entry=$${toNumber(position?.entryPx, 0).toFixed(4)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText} Manual-only reset is active, so the supervisor did not close it.`;
+  }
+
+  shouldTrigger[private-live-ops]Stop(position = {}) {
+    const stopLossPrice = Number(position?.stopLossPrice);
+    const markPrice = Number(position?.markPrice);
+    const side = String(position?.side || '').trim().toLowerCase();
+    if (!Number.isFinite(stopLossPrice) || stopLossPrice <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
+      return false;
+    }
+    if (side === 'short') {
+      return markPrice >= stopLossPrice;
+    }
+    if (side === 'long') {
+      return markPrice <= stopLossPrice;
+    }
+    return false;
   }
 
   resolve[private-live-ops]EthDirective(consensusPhase, approvedTrades = []) {
@@ -1797,6 +6147,45 @@ class SupervisorDaemon {
 
   async run[private-live-ops]ExecutionPhase({ scheduledAt, marketDate, consensusPhase, approvedTrades = [] } = {}) {
     const phase = '[private-live-ops]_execution';
+    if (this.manualTradingOnly && !this.[private-live-ops]ScalpModeArmed) {
+      const accountState = typeof this.[private-live-ops]Executor?.getAccountState === 'function'
+        ? await Promise.resolve(this.[private-live-ops]Executor.getAccountState()).catch(() => null)
+        : null;
+      const ethPosition = Array.isArray(accountState?.positions)
+        ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
+        : null;
+      await this.sync[private-live-ops]PeakStateFromAccountState(accountState || {}, {
+        trigger: '[private-live-ops]_execution_none',
+        checkedAt: scheduledAt || new Date().toISOString(),
+        sendTelegram: false,
+      });
+      const result = {
+        ok: true,
+        skipped: true,
+        phase,
+        scheduledAt,
+        marketDate,
+        action: 'none',
+        reason: 'manual_only_reset',
+        signal: null,
+        approvedTrade: null,
+        accountValue: toNumber(accountState?.accountValue, 0),
+        position: this.summarize[private-live-ops]Position(ethPosition),
+        execution: null,
+      };
+      this.last[private-live-ops]ExecutionSummary = {
+        enabled: false,
+        status: 'manual_only',
+        dryRun: this.[private-live-ops]ExecutionDryRun,
+        accountValue: result.accountValue,
+        position: result.position,
+        action: result.action,
+        reason: result.reason,
+        executedAt: scheduledAt || new Date().toISOString(),
+        signal: result.signal,
+      };
+      return result;
+    }
     if (!this.[private-live-ops]ExecutionEnabled || !this.[private-live-ops]Executor) {
       return {
         ok: false,
@@ -1807,8 +6196,8 @@ class SupervisorDaemon {
     }
 
     const directive = this.resolve[private-live-ops]EthDirective(consensusPhase, approvedTrades);
-    const accountState = await this.[private-live-ops]Executor.getAccountState();
-    const ethPosition = Array.isArray(accountState?.positions)
+    let accountState = await this.[private-live-ops]Executor.getAccountState();
+    let ethPosition = Array.isArray(accountState?.positions)
       ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
       : null;
     const positionSummary = this.summarize[private-live-ops]Position(ethPosition);
@@ -1859,11 +6248,21 @@ class SupervisorDaemon {
           reason: execution?.ok !== false ? directive.reason : (execution?.error || execution?.stderr || 'open_short_failed'),
           execution,
         };
+        if (execution?.ok !== false) {
+          accountState = await this.[private-live-ops]Executor.getAccountState();
+          ethPosition = Array.isArray(accountState?.positions)
+            ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
+            : null;
+          result.accountValue = toNumber(accountState?.accountValue, 0);
+          result.position = this.summarize[private-live-ops]Position(ethPosition);
+        }
       }
     } else if (directive.action === 'close_position') {
-      if (!ethPosition) {
-        result.reason = 'no_eth_position_to_close';
-      } else {
+      // AUTO-CLOSE DISABLED: agents manage exits manually
+      this.logger.info('[[private-live-ops]Execution] close_position directive BLOCKED — agents manage exits manually');
+      result.reason = 'auto_close_disabled_agent_managed';
+      result.skipped = true;
+      if (false) { // dead code — original close logic disabled
         const execution = await this.[private-live-ops]Executor.closeEthPosition({
           scheduledAt,
           marketDate,
@@ -1877,8 +6276,22 @@ class SupervisorDaemon {
           reason: execution?.ok !== false ? directive.reason : (execution?.error || execution?.stderr || 'close_position_failed'),
           execution,
         };
+        if (execution?.ok !== false) {
+          accountState = await this.[private-live-ops]Executor.getAccountState();
+          ethPosition = Array.isArray(accountState?.positions)
+            ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
+            : null;
+          result.accountValue = toNumber(accountState?.accountValue, 0);
+          result.position = this.summarize[private-live-ops]Position(ethPosition);
+        }
       }
     }
+
+    await this.sync[private-live-ops]PeakStateFromAccountState(accountState, {
+      trigger: `[private-live-ops]_execution_${result.action || 'none'}`,
+      checkedAt: scheduledAt || new Date().toISOString(),
+      sendTelegram: false,
+    });
 
     this.last[private-live-ops]ExecutionSummary = {
       enabled: true,
@@ -2318,10 +6731,16 @@ class SupervisorDaemon {
   async runCryptoConsensusPhase(event) {
     const phaseKey = String(event?.key || '').trim();
     const scheduledAt = String(event?.scheduledAt || '').trim();
-    const cryptoSymbols = this.getCryptoSymbols();
+    const strategyMode = String(event?.strategyMode || this.cryptoTradingStrategyMode || 'momentum').trim().toLowerCase() || 'momentum';
     if (!phaseKey || !scheduledAt || !this.cryptoTradingOrchestrator) {
       return { ok: false, phase: phaseKey || 'unknown', error: 'crypto_phase_unavailable' };
     }
+    this.logTradingEventHeader(phaseKey);
+    const cryptoSymbols = await this.getCryptoSymbols({
+      prioritySymbols: Array.isArray(event?.symbols) ? event.symbols : [],
+      limit: event?.symbolLimit,
+      forceSelection: event?.forceSelection === true,
+    });
     if (cryptoSymbols.length === 0) {
       return { ok: false, skipped: true, reason: 'no_crypto_symbols', phase: phaseKey };
     }
@@ -2334,8 +6753,20 @@ class SupervisorDaemon {
         this.logger.info(`Macro risk: ${macroRisk.regime.toUpperCase()} (score: ${macroRisk.score}) — ${macroRisk.reason}`);
       } catch (macroErr) {
         this.logger.warn(`Macro risk gate failed: ${macroErr.message} — proceeding with defaults`);
-        macroRisk = { regime: 'yellow', score: 50, constraints: { allowLongs: true, positionSizeMultiplier: 0.6, buyConfidenceMultiplier: 0.8, sellConfidenceMultiplier: 1.0 }, reason: 'macro gate error fallback' };
+        macroRisk = {
+          regime: 'red',
+          score: 100,
+          constraints: {
+            allowLongs: false,
+            blockNewPositions: true,
+            positionSizeMultiplier: 0.25,
+            buyConfidenceMultiplier: 0.75,
+            sellConfidenceMultiplier: 1.0,
+          },
+          reason: 'macro gate error defensive fallback',
+        };
       }
+      this.runOilMonitorCheck(phaseKey, macroRisk?.indicators?.oilPrice);
 
       for (const ticker of cryptoSymbols) {
         this.cryptoTradingOrchestrator.clearSignals(ticker);
@@ -2352,65 +6783,111 @@ class SupervisorDaemon {
         date: scheduledAt,
         symbols: cryptoSymbols,
         assetClass: 'crypto',
+        strategyMode,
+        rangeStructures: event?.rangeStructures || null,
+        convictionSelection: event?.convictionSelection || this.lastRangeConvictionSelection || null,
         limits: tradingRiskEngine.DEFAULT_CRYPTO_LIMITS,
         whaleTransfers: whaleTransfers.length > 0 ? whaleTransfers : undefined,
         macroRisk,
+        autoExecuteLiveConsensus: false,
+        [private-live-ops]ExecutionDryRun: this.[private-live-ops]ExecutionDryRun,
+        [private-live-ops]ExecutionEnv: this.runtimeEnv,
+        [private-live-ops]ExecuteScriptPath: this.hmDefiExecuteScriptPath,
+        [private-live-ops]CloseScriptPath: this.hmDefiCloseScriptPath,
+        [private-live-ops]ExecutionLeverage: this.[private-live-ops]ExecutionLeverage,
       });
 
-      // Apply macro risk gate to approved trades
       let approved = Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades : [];
-      if (macroRisk?.constraints?.allowLongs === false || macroRisk.regime === 'red' || macroRisk.regime === 'stay_cash') {
-        const blocked = approved.filter((t) => t.consensus?.decision === 'BUY');
-        if (blocked.length > 0) {
-          this.logger.info(`Macro ${String(macroRisk.regime || '').toUpperCase()} regime: blocking ${blocked.length} BUY trades (${blocked.map(t => t.ticker).join(', ')})`);
-        }
-        approved = approved.filter((t) => t.consensus?.decision !== 'BUY');
-      }
+      // Macro risk should cap size, not double-compress an already vetoed/MTF-scaled trade.
+      approved = applyMacroRiskSizeCapToApprovedTrades(approved, macroRisk);
 
-      // Apply position size multiplier from macro gate
-      if (macroRisk.constraints?.positionSizeMultiplier < 1) {
-        for (const trade of approved) {
-          if (trade.riskCheck?.maxShares) {
-            trade.riskCheck.maxShares = Math.floor(trade.riskCheck.maxShares * macroRisk.constraints.positionSizeMultiplier * 1e6) / 1e6;
-          }
-        }
-      }
-
-      const actionableCount = approved.length;
-      const approvedFor[private-live-ops] = approved.slice();
+      const [private-live-ops]ScalpExecutionEnabled = this.[private-live-ops]ExecutionEnabled
+        && this.[private-live-ops]ScalpModeArmed
+        && !this.cryptoMonitorOnly;
 
       if (this.cryptoMonitorOnly) {
-        if (actionableCount > 0) {
-          this.logger.info(`Crypto automation is monitor-only: skipping execution for ${actionableCount} approved trade(s)`);
+        if (approved.length > 0) {
+          this.logger.info(`Crypto automation is monitor-only: skipping execution for ${approved.length} approved trade(s)`);
         }
         approved = [];
+      } else if (this.manualTradingOnly && ![private-live-ops]ScalpExecutionEnabled && approved.length > 0) {
+        this.logger.info(`Crypto automation is manual-only: supervisor will not execute ${approved.length} approved trade(s)`);
       }
+      consensusPhase.approvedTrades = approved;
+      try {
+        const predictionsLogged = this.logConsensusPredictions(consensusPhase);
+        this.logger.info(`[PREDICTION TRACKER] Logged ${predictionsLogged} consultation predictions for ${phaseKey}.`);
+      } catch (error) {
+        this.logger.warn(`Prediction logging failed during ${phaseKey}: ${error?.message || String(error)}`);
+      }
+      const actionableCount = approved.length;
+      const approvedForMarketOpen = (this.manualTradingOnly && ![private-live-ops]ScalpExecutionEnabled)
+        ? []
+        : approved;
 
-      // Execute approved trades immediately — crypto markets are always open
+      const [private-live-ops]Execution = typeof this.cryptoTradingOrchestrator.maybeAutoExecuteLiveConsensus === 'function'
+        ? await this.cryptoTradingOrchestrator.maybeAutoExecuteLiveConsensus(
+          [private-live-ops]ScalpExecutionEnabled ? [] : consensusPhase?.results,
+          [private-live-ops]ScalpExecutionEnabled ? [] : approved,
+          consensusPhase?.defiStatus || {},
+          {
+            autoExecuteLiveConsensus: this.[private-live-ops]ExecutionEnabled && !this.cryptoMonitorOnly && (!this.manualTradingOnly || this.[private-live-ops]ScalpModeArmed),
+            [private-live-ops]ExecutionDryRun: this.[private-live-ops]ExecutionDryRun,
+            [private-live-ops]ExecutionEnv: this.runtimeEnv,
+            [private-live-ops]ExecuteScriptPath: this.hmDefiExecuteScriptPath,
+            [private-live-ops]CloseScriptPath: this.hmDefiCloseScriptPath,
+            [private-live-ops]ExecutionLeverage: this.[private-live-ops]ExecutionLeverage,
+            [private-live-ops]ScalpModeArmed: this.[private-live-ops]ScalpModeArmed,
+            [private-live-ops]KillSwitchAction: this.[private-live-ops]KillSwitchAction,
+            killSwitchTriggered: consensusPhase?.killSwitch?.triggered === true,
+            defiPeakPnlPath: this.defiPeakPnlPath,
+          }
+        )
+        : {
+          enabled: false,
+          attempted: 0,
+          succeeded: 0,
+          executions: [],
+          skipped: [],
+        };
+
+      // Execute non-[private-live-ops] approved trades immediately after [private-live-ops] sizing/execution is settled.
       let executionResult = null;
-      if (approved.length > 0) {
-        this.logger.info(`Crypto consensus approved ${approved.length} trades — executing immediately`);
+      if (approvedForMarketOpen.length > 0) {
+        this.logger.info(`Crypto consensus approved ${approvedForMarketOpen.length} executable trades — executing immediately`);
         executionResult = await this.cryptoTradingOrchestrator.runMarketOpen({
           date: scheduledAt,
           assetClass: 'crypto',
           consensusPhase,
-          approvedTrades: approved,
+          approvedTrades: approvedForMarketOpen,
+          allow[private-live-ops]LiveExecution: [private-live-ops]ScalpExecutionEnabled,
+          [private-live-ops]ScalpModeArmed: this.[private-live-ops]ScalpModeArmed,
+          [private-live-ops]ExecutionDryRun: this.[private-live-ops]ExecutionDryRun,
+          [private-live-ops]ExecutionEnv: this.runtimeEnv,
+          [private-live-ops]ExecuteScriptPath: this.hmDefiExecuteScriptPath,
+          [private-live-ops]CloseScriptPath: this.hmDefiCloseScriptPath,
+          [private-live-ops]ExecutionLeverage: this.[private-live-ops]ExecutionLeverage,
         });
         const execCount = Array.isArray(executionResult?.executions) ? executionResult.executions.length : 0;
         const fills = (executionResult?.executions || []).filter((e) => e.execution?.ok);
         this.logger.info(`Crypto execution: ${fills.length}/${execCount} orders filled`);
       }
 
-      const [private-live-ops]Execution = await this.run[private-live-ops]ExecutionPhase({
-        scheduledAt,
-        marketDate: event.marketDate || '',
-        consensusPhase,
-        approvedTrades: approvedFor[private-live-ops],
-      });
-      if (![private-live-ops]Execution.skipped) {
+      if ([private-live-ops]Execution?.attempted > 0 && typeof this.[private-live-ops]Executor?.getAccountState === 'function') {
+        const accountState = await Promise.resolve(this.[private-live-ops]Executor.getAccountState()).catch(() => null);
+        if (accountState) {
+          await this.sync[private-live-ops]PeakStateFromAccountState(accountState, {
+            trigger: 'consensus_auto_execution',
+            checkedAt: scheduledAt,
+            sendTelegram: false,
+          });
+        }
+        this.last[private-live-ops]ExecutionSummary = this.build[private-live-ops]AutoExecutionSummary([private-live-ops]Execution, scheduledAt);
         this.logger.info(
-          `[private-live-ops] execution ${[private-live-ops]Execution.ok ? 'completed' : 'failed'}: ${[private-live-ops]Execution.action} (${[private-live-ops]Execution.reason})`
+          `[private-live-ops] auto-execution ${[private-live-ops]Execution.succeeded}/${[private-live-ops]Execution.attempted} completed`
         );
+      } else {
+        this.last[private-live-ops]ExecutionSummary = this.build[private-live-ops]AutoExecutionSummary([private-live-ops]Execution, scheduledAt);
       }
 
       return {
@@ -2423,14 +6900,20 @@ class SupervisorDaemon {
         execution: executionResult,
         [private-live-ops]Execution,
         summary: {
+          strategyMode,
           symbols: cryptoSymbols.length,
+          symbolsConsulted: this.lastCryptoCoverage.symbolsConsulted,
+          symbolsExecutable: this.lastCryptoCoverage.symbolsExecutable,
+          convictionSelection: event?.convictionSelection || this.lastRangeConvictionSelection || null,
+          trigger: String(event?.trigger || phaseKey || 'scheduled'),
           approvedTrades: actionableCount,
           rejectedTrades: Array.isArray(consensusPhase?.rejectedTrades) ? consensusPhase.rejectedTrades.length : 0,
           incompleteSignals: Array.isArray(consensusPhase?.incompleteSignals) ? consensusPhase.incompleteSignals.length : 0,
           executedTrades: executionResult ? (executionResult.executions || []).filter((e) => e.execution?.ok).length : 0,
-          [private-live-ops]Action: [private-live-ops]Execution?.action || 'none',
-          [private-live-ops]Executed: Boolean([private-live-ops]Execution && ![private-live-ops]Execution.skipped),
+          [private-live-ops]Action: [private-live-ops]Execution?.executions?.[0]?.action || 'none',
+          [private-live-ops]Executed: Number([private-live-ops]Execution?.succeeded || 0) > 0,
           monitorOnly: this.cryptoMonitorOnly,
+          manualOnly: this.manualTradingOnly,
         },
       };
     } catch (err) {
@@ -2536,6 +7019,17 @@ class SupervisorDaemon {
   }
 
   async maybeRunTradingAutomation(nowMs = Date.now()) {
+    if (this.manualTradingOnly) {
+      this.lastTradingSummary = {
+        enabled: false,
+        status: 'manual_only',
+        reason: 'manual_only_reset',
+        marketDate: null,
+        sleeping: true,
+        nextEvent: null,
+      };
+      return { ok: false, skipped: true, reason: 'manual_only_reset' };
+    }
     if (!this.tradingEnabled || this.stopping || !this.tradingOrchestrator) {
       return { ok: false, skipped: true, reason: 'trading_disabled' };
     }
@@ -2639,11 +7133,29 @@ class SupervisorDaemon {
     if (!this.cryptoTradingEnabled || this.stopping || !this.cryptoTradingOrchestrator) {
       return { ok: false, skipped: true, reason: 'crypto_trading_disabled' };
     }
+    if (this.cryptoTradingStrategyMode === 'range_conviction') {
+      return this.maybeRunRangeConvictionCycle({
+        trigger: 'range_conviction_loop',
+      });
+    }
     if (this.cryptoTradingPhasePromise) {
-      return this.cryptoTradingPhasePromise;
+      this.lastCryptoTradingSummary = {
+        enabled: true,
+        status: 'running',
+        symbolsConsulted: this.lastCryptoCoverage.symbolsConsulted,
+        symbolsExecutable: this.lastCryptoCoverage.symbolsExecutable,
+        lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+        nextEvent: this.cryptoTradingState.nextEvent || null,
+      };
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'crypto_phase_running',
+        nextEvent: this.cryptoTradingState.nextEvent || null,
+      };
     }
 
-    const cryptoSymbols = this.getCryptoSymbols();
+    const cryptoSymbols = await this.getCryptoSymbols();
     const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
     const nextEvent = await tradingScheduler.getNextCryptoWakeEvent(now, {
       projectRoot: this.projectRoot,
@@ -2659,6 +7171,8 @@ class SupervisorDaemon {
         enabled: true,
         status: 'idle',
         reason: 'no_crypto_symbols',
+        symbolsConsulted: this.lastCryptoCoverage.symbolsConsulted,
+        symbolsExecutable: this.lastCryptoCoverage.symbolsExecutable,
         lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
         nextEvent: this.cryptoTradingState.nextEvent,
       };
@@ -2683,6 +7197,8 @@ class SupervisorDaemon {
       this.lastCryptoTradingSummary = {
         enabled: true,
         status: 'scheduled',
+        symbolsConsulted: this.lastCryptoCoverage.symbolsConsulted,
+        symbolsExecutable: this.lastCryptoCoverage.symbolsExecutable,
         lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
         nextEvent: this.cryptoTradingState.nextEvent,
       };
@@ -2693,6 +7209,15 @@ class SupervisorDaemon {
         nextEvent: this.cryptoTradingState.nextEvent,
       };
     }
+
+    this.lastCryptoTradingSummary = {
+      enabled: true,
+      status: 'running',
+      symbolsConsulted: this.lastCryptoCoverage.symbolsConsulted,
+      symbolsExecutable: this.lastCryptoCoverage.symbolsExecutable,
+      lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+      nextEvent: this.cryptoTradingState.nextEvent,
+    };
 
     this.cryptoTradingPhasePromise = (async () => {
       const executed = [];
@@ -2713,6 +7238,8 @@ class SupervisorDaemon {
       this.lastCryptoTradingSummary = {
         enabled: true,
         status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
+        symbolsConsulted: this.lastCryptoCoverage.symbolsConsulted,
+        symbolsExecutable: this.lastCryptoCoverage.symbolsExecutable,
         lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
         nextEvent: this.cryptoTradingState.nextEvent,
         lastResult: executed[executed.length - 1] || null,
@@ -2724,11 +7251,34 @@ class SupervisorDaemon {
         executed,
         nextEvent: this.cryptoTradingState.nextEvent,
       };
-    })().finally(() => {
+    })().catch((err) => {
+      this.lastCryptoTradingSummary = {
+        enabled: true,
+        status: 'phase_failed',
+        symbolsConsulted: this.lastCryptoCoverage.symbolsConsulted,
+        symbolsExecutable: this.lastCryptoCoverage.symbolsExecutable,
+        lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+        nextEvent: this.cryptoTradingState.nextEvent || null,
+        error: err.message,
+      };
+      this.logger.warn(`Crypto trading automation phase failed: ${err.message}`);
+      return {
+        ok: false,
+        skipped: false,
+        error: err.message,
+        nextEvent: this.cryptoTradingState.nextEvent || null,
+      };
+    }).finally(() => {
       this.cryptoTradingPhasePromise = null;
     });
 
-    return this.cryptoTradingPhasePromise;
+    return {
+      ok: true,
+      skipped: false,
+      started: true,
+      reason: 'crypto_phase_started',
+      nextEvent: this.cryptoTradingState.nextEvent,
+    };
   }
 
   async maybeRunLiveOpsTradingAutomation(nowMs = Date.now()) {
@@ -3261,6 +7811,13 @@ class SupervisorDaemon {
     if (fs.existsSync(path.dirname(paths.handoffPath))) {
       targets.push(paths.handoffPath);
     }
+    if (Array.isArray(paths.caseEvidenceDirs)) {
+      for (const evidenceDir of paths.caseEvidenceDirs) {
+        if (fs.existsSync(evidenceDir)) {
+          targets.push(path.join(evidenceDir, '**', '*'));
+        }
+      }
+    }
 
     return Array.from(new Set(targets));
   }
@@ -3522,6 +8079,62 @@ class SupervisorDaemon {
 
   writeStatus(extra = {}) {
     const counts = this.store.isAvailable() ? this.store.getTaskCounts() : null;
+    const oracleWatchState = readJsonFile(this.oracleWatchStatePath, {}) || {};
+    const oracleWatchHeartbeat = buildOracleWatchHeartbeat(this.lastOracleWatchSummary, oracleWatchState);
+    this.maybeAlertOracleWatchHeartbeat(oracleWatchHeartbeat);
+    const dailyTargetProgress = getTodayRealizedTargetProgress(resolveRuntimePath('trade-journal.db'));
+    const paperCompetition = buildPaperCompetitionStatus(this.projectRoot);
+    const pairsScanned = Number(
+      this.marketScannerState?.assetCount
+      || this.lastMarketScannerSummary?.lastResult?.assetCount
+      || 0
+    );
+    const symbolsConsulted = Array.isArray(this.lastCryptoCoverage?.symbolsConsulted)
+      ? this.lastCryptoCoverage.symbolsConsulted
+      : [];
+    const symbolsExecutable = Array.isArray(this.lastCryptoCoverage?.symbolsExecutable)
+      ? this.lastCryptoCoverage.symbolsExecutable
+      : [];
+    const macroRiskPolicy = {
+      green: macroRiskGate._internals?.regimeConstraints?.('green') || null,
+      yellow: macroRiskGate._internals?.regimeConstraints?.('yellow') || null,
+      red: macroRiskGate._internals?.regimeConstraints?.('red') || null,
+      stay_cash: macroRiskGate._internals?.regimeConstraints?.('stay_cash') || null,
+    };
+    const cryptoHardCapFloorPct = 0.35;
+    const configuredCryptoMaxPositionPct = Number(
+      this.cryptoTradingOrchestrator?.options?.limits?.maxPositionPct
+      ?? tradingRiskEngine.DEFAULT_CRYPTO_LIMITS.maxPositionPct
+    );
+    const configuredCryptoStopLossPct = Number(
+      this.cryptoTradingOrchestrator?.options?.limits?.stopLossPct
+      ?? tradingRiskEngine.DEFAULT_CRYPTO_LIMITS.stopLossPct
+    );
+    const cryptoConsultationPolicy = {
+      coreSymbols: [...CORE_CRYPTO_CONSULTATION_SYMBOLS],
+      consultationSymbolMax: this.cryptoConsultationSymbolMax,
+      marketScannerSymbolLimit: this.marketScannerConsultationSymbolLimit,
+      minAgreeConfidence: Number(
+        this.cryptoTradingOrchestrator?.options?.minAgreeConfidence
+        ?? this.cryptoTradingOrchestrator?.options?.minConfidence
+        ?? DEFAULT_LIVE_MIN_AGREE_CONFIDENCE
+      ),
+        autoExecuteMinConfidence: Number(
+          this.cryptoTradingOrchestrator?.options?.autoExecuteMinConfidence
+          ?? DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE
+        ),
+      };
+    const cryptoRiskPolicy = {
+      configuredMaxPositionPct: configuredCryptoMaxPositionPct,
+      hardCapFloorPct: cryptoHardCapFloorPct,
+      effectiveHardCapPct: Math.max(
+        Number.isFinite(configuredCryptoMaxPositionPct) ? configuredCryptoMaxPositionPct : 0,
+        cryptoHardCapFloorPct
+      ),
+      configuredStopLossPct: configuredCryptoStopLossPct,
+      confidenceRiskFloorPct: 0.005,
+      confidenceRiskCeilingPct: 0.02,
+    };
     const payload = {
       pid: process.pid,
       startedAtMs: this.startedAtMs,
@@ -3541,6 +8154,23 @@ class SupervisorDaemon {
       })),
       counts,
       dbPath: this.store.dbPath,
+      pairsScanned,
+      symbolsConsulted,
+      symbolsExecutable,
+      macroRiskPolicy,
+      cryptoConsultationPolicy,
+      cryptoRiskPolicy,
+      dailyTargetProgress,
+      paperCompetition,
+      agentTaskQueue: {
+        enabled: this.agentTaskQueueEnabled,
+        path: this.agentTaskQueuePath,
+        idleCompletionMs: this.agentTaskIdleCompletionMs,
+        readyGraceMs: this.agentTaskReadyGraceMs,
+        historyLimit: this.agentTaskHistoryLimit,
+        reengageIdleMs: this.agentTaskReengageIdleMs,
+        lastSummary: this.lastAgentTaskQueueSummary || null,
+      },
       sleepCycle: {
         enabled: this.sleepEnabled,
         idleThresholdMs: this.sleepIdleMs,
@@ -3578,6 +8208,7 @@ class SupervisorDaemon {
       },
       tradingAutomation: {
         enabled: this.tradingEnabled,
+        manualOnly: this.manualTradingOnly,
         running: Boolean(this.tradingPhasePromise),
         statePath: this.tradingStatePath,
         marketDate: this.tradingState.marketDate || null,
@@ -3597,20 +8228,37 @@ class SupervisorDaemon {
         enabled: this.cryptoTradingEnabled,
         running: Boolean(this.cryptoTradingPhasePromise),
         statePath: this.cryptoTradingStatePath,
+        symbolsConsulted,
+        symbolsExecutable,
         lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
         nextEvent: this.cryptoTradingState.nextEvent || null,
         lastSummary: this.lastCryptoTradingSummary || null,
       },
       [private-live-ops]Execution: {
-        enabled: this.[private-live-ops]ExecutionEnabled,
+        enabled: this.[private-live-ops]ExecutionEnabled && (!this.manualTradingOnly || this.[private-live-ops]ScalpModeArmed),
+        manualOnly: this.manualTradingOnly,
+        scalpModeArmed: this.[private-live-ops]ScalpModeArmed,
         dryRun: this.[private-live-ops]ExecutionDryRun,
+        autoOpenEnabled: this.[private-live-ops]ScalpModeArmed || String(this.runtimeEnv.SQUIDRUN_ALLOW_LIVE_OPS_AUTO_OPEN || '').trim() === '1',
+        killSwitchAction: this.[private-live-ops]KillSwitchAction,
+        symbolsExecutable,
         lastSummary: this.last[private-live-ops]ExecutionSummary || null,
+      },
+      [private-live-ops]PositionMonitor: {
+        enabled: this.[private-live-ops]MonitorEnabled,
+        running: Boolean(this.[private-live-ops]MonitorTimer || this.[private-live-ops]MonitorPromise),
+        pollMs: this.[private-live-ops]MonitorPollMs,
+        peakStatePath: this.defiPeakPnlPath,
+        lastSummary: this.last[private-live-ops]MonitorSummary || null,
       },
       smartMoneyScanner: {
         enabled: Boolean(this.smartMoneyScanner),
+        status: this.smartMoneyScanner?.state?.health || (this.smartMoneyScanner ? 'idle' : 'disabled'),
         running: Boolean(this.smartMoneyScanner?.running),
         pollMs: this.smartMoneyScanner?.pollMs || null,
         lastTrigger: this.smartMoneyScannerLastTrigger || null,
+        lastError: this.smartMoneyScanner?.state?.lastError || null,
+        lastResult: this.smartMoneyScanner?.state?.lastResult || null,
         state: this.smartMoneyScanner ? {
           recentTransfers: this.smartMoneyScanner.state?.recentTransfers?.length || 0,
           convergenceSignals: this.smartMoneyScanner.state?.convergenceSignals?.length || 0,
@@ -3618,6 +8266,7 @@ class SupervisorDaemon {
       },
       circuitBreaker: {
         enabled: Boolean(this.circuitBreaker),
+        manualOnly: true,
         running: Boolean(this.circuitBreaker?.running),
         pollMs: this.circuitBreaker?.pollMs || null,
         passCount: this.circuitBreaker?.passCount || 0,
@@ -3640,6 +8289,100 @@ class SupervisorDaemon {
         lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
         nextEvent: this.launchRadarState.nextEvent || null,
         lastSummary: this.lastLaunchRadarSummary || null,
+      },
+      newsScanAutomation: {
+        enabled: this.newsScanEnabled,
+        running: Boolean(this.newsScanPhasePromise),
+        intervalMinutes: this.newsScanIntervalMinutes,
+        statePath: this.newsScanStatePath,
+        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
+        nextEvent: this.newsScanState.nextEvent || null,
+        lastSummary: this.lastNewsScanSummary || null,
+      },
+      pendingFollowupAutomation: {
+        enabled: this.pendingFollowupEnabled,
+        running: Boolean(this.pendingFollowupPhasePromise),
+        intervalMinutes: this.pendingFollowupIntervalMinutes,
+        statePath: this.pendingFollowupStatePath,
+        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
+        nextEvent: this.pendingFollowupState.nextEvent || null,
+        lastSummary: this.lastPendingFollowupSummary || null,
+      },
+      marketResearchAutomation: {
+        enabled: this.marketResearchEnabled,
+        running: Boolean(this.marketResearchPhasePromise),
+        intervalMinutes: this.marketResearchIntervalMinutes,
+        statePath: this.marketResearchStatePath,
+        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
+        nextEvent: this.marketResearchState.nextEvent || null,
+        lastSummary: this.lastMarketResearchSummary || null,
+      },
+      [private-live-ops]Automation: {
+        enabled: this.[private-live-ops]Enabled,
+        running: Boolean(this.[private-live-ops]PhasePromise),
+        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+        statePath: this.[private-live-ops]StatePath,
+        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
+        nextEvent: this.[private-live-ops]State.nextEvent || null,
+        lastSummary: this.last[private-live-ops]Summary || null,
+      },
+      marketScannerAutomation: {
+        enabled: this.marketScannerEnabled,
+        running: Boolean(this.marketScannerPhasePromise),
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        consultationSymbolLimit: this.marketScannerConsultationSymbolLimit,
+        pairsScanned,
+        statePath: this.marketScannerStatePath,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent || null,
+        lastSummary: this.lastMarketScannerSummary || null,
+      },
+      saylorWatcher: {
+        enabled: this.saylorWatcherEnabled,
+        running: Boolean(this.saylorWatcherPromise),
+        intervalMs: this.saylorWatcherIntervalMs,
+        scriptPath: this.hmSaylorWatcherScriptPath,
+        lastRunAt: this.lastSaylorWatcherSummary?.lastRunAt || null,
+        lastSummary: this.lastSaylorWatcherSummary || null,
+      },
+      oracleWatch: {
+        enabled: this.oracleWatchEnabled,
+        running: Boolean(this.oracleWatchPromise),
+        intervalMs: this.oracleWatchIntervalMs,
+        scriptPath: this.hmOracleWatchEngineScriptPath,
+        rulesPath: this.oracleWatchRulesPath,
+        statePath: this.oracleWatchStatePath,
+        heartbeat: oracleWatchHeartbeat,
+        counters: oracleWatchState?.counters || null,
+        lastRunAt: this.lastOracleWatchSummary?.lastRunAt || null,
+        lastSummary: this.lastOracleWatchSummary || null,
+      },
+      paperTradingAutomation: {
+        enabled: this.paperTradingAutomationEnabled,
+        running: Boolean(this.paperTradingAutomationPromise),
+        statePath: this.paperTradingAutomationStatePath,
+        responseTimeoutMs: this.paperTradingResponseTimeoutMs,
+        lastProcessedAt: this.paperTradingAutomationState?.lastProcessedAt || null,
+        agents: this.paperTradingAutomationState?.agents || null,
+        lastSummary: this.lastPaperTradingAutomationSummary || null,
+      },
+      [private-live-ops]SqueezeDetector: {
+        enabled: this.[private-live-ops]SqueezeDetectorEnabled,
+        running: Boolean(this.[private-live-ops]SqueezeDetectorPromise),
+        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        scriptPath: this.hm[private-live-ops]SqueezeDetectorScriptPath,
+        lastRunAt: this.last[private-live-ops]SqueezeDetectorSummary?.lastRunAt || null,
+        lastSummary: this.last[private-live-ops]SqueezeDetectorSummary || null,
+      },
+      private-profileCheckInAutomation: {
+        enabled: this.private-profileCheckInEnabled,
+        running: Boolean(this.private-profileCheckInPhasePromise),
+        intervalMinutes: this.private-profileCheckInIntervalMinutes,
+        silenceMs: this.private-profileCheckInSilenceMs,
+        statePath: this.private-profileCheckInStatePath,
+        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
+        nextEvent: this.private-profileCheckInState.nextEvent || null,
+        lastSummary: this.last[private-profile]CheckInSummary || null,
       },
       yieldRouterAutomation: {
         enabled: this.yieldRouterEnabled,

@@ -446,7 +446,7 @@ describe('Injection Events', () => {
       const applied = mockBus.emit.mock.calls.find(c => c[0] === 'inject.applied');
       expect(applied).toBeDefined();
       expect(applied[1].payload.method).toBe('claude-pty');
-      expect(applied[1].payload.textLen).toBe(11);
+      expect(applied[1].payload.textLen).toBe('[00:00 local] claude test'.length);
       expect(applied[1].source).toBe('injection.js');
     });
 

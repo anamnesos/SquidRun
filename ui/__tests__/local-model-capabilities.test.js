@@ -1,4 +1,5 @@
 const {
+  buildAnthropicExtractionCommand,
   buildOllamaExtractionCommand,
   buildSystemCapabilitiesSnapshot,
   detectOllamaRuntime,
@@ -7,6 +8,16 @@ const {
 } = require('../modules/local-model-capabilities');
 
 describe('local-model-capabilities', () => {
+  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  afterEach(() => {
+    if (originalAnthropicKey == null) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    }
+  });
+
   test('picks the highest-priority pulled model', () => {
     const model = pickPreferredModel(
       [
@@ -56,7 +67,8 @@ describe('local-model-capabilities', () => {
     expect(result.error).toContain('ECONNREFUSED');
   });
 
-  test('builds a local extraction command when feature is enabled and model is available', () => {
+  test('builds a Claude extraction command when Anthropic is configured', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake-key-do-not-use';
     const snapshot = buildSystemCapabilitiesSnapshot({
       projectRoot: 'D:\\projects\\squidrun',
       settings: { localModelEnabled: true },
@@ -74,8 +86,13 @@ describe('local-model-capabilities', () => {
 
     expect(snapshot.localModels.enabled).toBe(true);
     expect(snapshot.localModels.sleepExtraction.enabled).toBe(true);
-    expect(snapshot.localModels.sleepExtraction.command).toContain('ollama-extract.js');
+    expect(snapshot.localModels.sleepExtraction.path).toBe('anthropic-api');
+    expect(snapshot.localModels.sleepExtraction.command).toContain('claude-extract.js');
     expect(resolveSleepExtractionCommandFromSnapshot(snapshot)).toContain('--model');
+    expect(buildAnthropicExtractionCommand({
+      projectRoot: 'D:\\projects\\squidrun',
+      model: 'claude-opus-4-6',
+    })).toContain('claude-extract.js');
     expect(buildOllamaExtractionCommand({
       projectRoot: 'D:\\projects\\squidrun',
       model: 'llama3:8b',

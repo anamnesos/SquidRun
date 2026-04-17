@@ -1,6 +1,7 @@
 jest.mock('../scripts/hm-telegram', () => ({
   sendTelegramPhoto: jest.fn(async () => ({ ok: true })),
-}));
+})); 
+const fs = require('fs');
 const path = require('path');
 
 jest.mock('../scripts/hm-visual-utils', () => ({
@@ -225,5 +226,82 @@ describe('hm-smoke-runner option parsing', () => {
     expect(targets).toHaveLength(2);
     expect(targets[0].url).toBe('http://127.0.0.1:3000/dashboard');
     expect(targets[1].url).toBe('http://127.0.0.1:3000/settings');
+  });
+
+  test('runSmoke returns a structured noop summary when no target is available', async () => {
+    const runDir = path.join(
+      'D:\\projects\\squidrun\\.squidrun\\screenshots\\smoke-runs',
+      'smoke-run-id'
+    );
+    fs.mkdirSync(runDir, { recursive: true });
+
+    const result = await smokeRunner.runSmoke({
+      projectPath: 'D:\\projects\\squidrun',
+      runtimeRoot: 'D:\\projects\\squidrun\\.squidrun',
+      route: '/dashboard',
+      requireSelectors: [],
+      requireTexts: [],
+      timeoutMs: 1000,
+      readyTimeoutMs: 1000,
+      pollMs: 10,
+      selectorTimeoutMs: 250,
+      linkTimeoutMs: 250,
+      settleMs: 0,
+      waitUntil: 'domcontentloaded',
+      viewport: { width: 800, height: 600 },
+      fullPage: false,
+      headed: false,
+      runId: 'smoke-run-id',
+      label: 'smoke',
+      artifactRoot: '',
+      maxCandidates: 1,
+      maxLinks: 1,
+      maxBrokenLinks: 0,
+      axeMaxViolations: 0,
+      minBodyTextChars: 0,
+      maxDiffPixels: -1,
+      diffThreshold: 0.1,
+      baselineKey: '',
+      enableVisualDiff: false,
+      updateBaselineOnPass: false,
+      updateBaselineAlways: false,
+      generateSpec: false,
+      specDir: '',
+      specOut: '',
+      specName: '',
+      perfEnabled: false,
+      collectWebVitals: false,
+      collectLighthouse: false,
+      perfRoutes: [],
+      lighthouseMinScore: -1,
+      lighthouseTimeoutMs: 45000,
+      gateProfile: 'per-cycle',
+      forceFirefoxGate: false,
+      enableBrowserMatrix: true,
+      runFirefoxGate: false,
+      collectA11y: true,
+      validateLinks: true,
+      includeExternalLinks: false,
+      contentCaseSensitive: false,
+      telegramRequested: false,
+      telegramCaptionRaw: '',
+      senderRole: 'builder',
+      triggerReason: 'workflow_signal',
+      triggerMessage: '',
+      sessionId: 'session-1',
+      explicitUrl: '',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'noop',
+      testable: false,
+      summaryType: 'hm-smoke-runner-summary',
+      noopReason: expect.any(String),
+    }));
+    expect(result.hardFailureCount).toBe(0);
+    expect(result.hardFailures).toEqual([]);
+    expect(result.browserMatrix.primary.status).toBe('noop');
+    expect(result.browserMatrix.primary.reasons).toContain('no_testable_target');
   });
 });

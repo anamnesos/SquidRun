@@ -7,7 +7,6 @@ const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
 const log = require('./logger');
 const bus = require('./event-bus');
 const settings = require('./settings');
@@ -19,6 +18,7 @@ const { invokeBridge } = require('./renderer-bridge');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
 const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
+const { readStartupBriefing } = require('./startup-ai-briefing');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
@@ -38,14 +38,6 @@ const {
   GEMINI_ENTER_DELAY_MS,
   SUBMIT_ACCEPT_MAX_ATTEMPTS,
 } = require('./constants');
-
-const STARTUP_MEMORY_TIMEOUT_MS = 5000;
-const STARTUP_MEMORY_LIMIT = 4;
-const STARTUP_MEMORY_QUERIES = Object.freeze({
-  architect: 'current session priorities recent decisions user preferences active investigations blockers release validation',
-  builder: 'current session priorities recent decisions user preferences active investigations implementation blockers ci release supervisor runtime',
-  oracle: 'current session priorities recent decisions user preferences active investigations documentation benchmarks ci risks',
-});
 
 // CLI identity tracking (dynamic)
 // Updated by renderer's pane-cli-identity handler (calls register/unregister)
@@ -975,25 +967,6 @@ async function sendStartupIdentityViaInjection(paneId, identityMsg) {
   });
 }
 
-function normalizeStartupMemoryText(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function getStartupMemoryQuery(paneId) {
-  const role = String(PANE_ROLES[String(paneId)] || '').trim().toLowerCase();
-  return STARTUP_MEMORY_QUERIES[role] || STARTUP_MEMORY_QUERIES.builder;
-}
-
-function formatStartupMemoryEntry(entry = {}) {
-  const sourceType = normalizeStartupMemoryText(entry.sourceType || 'memory');
-  const label = normalizeStartupMemoryText(entry.heading || entry.title || entry.sourcePath || sourceType);
-  const excerptSource = entry.excerpt || entry.content || '';
-  const excerpt = normalizeStartupMemoryText(excerptSource);
-  if (!excerpt) return null;
-  const clipped = excerpt.length > 180 ? `${excerpt.slice(0, 177).trimEnd()}...` : excerpt;
-  return `- [${sourceType}] ${label}: ${clipped}`;
-}
-
 function shouldLoadWebLinksAddon(container) {
   if (!container || typeof container.getClientRects !== 'function') return false;
   return container.getClientRects().length > 0;
@@ -1066,50 +1039,13 @@ function fetchStartupHealthSummary() {
   }
 }
 
-async function fetchStartupMemorySummary(paneId) {
-  const scriptPath = path.join(WORKSPACE_PATH, 'ui', 'scripts', 'hm-memory-api.js');
-  if (typeof fs.existsSync !== 'function' || !fs.existsSync(scriptPath)) return '';
-
-  const role = String(PANE_ROLES[String(paneId)] || `pane-${paneId}`).trim().toLowerCase();
-  const query = getStartupMemoryQuery(paneId);
-
-  return new Promise((resolve) => {
-    execFile(
-      'node',
-      [scriptPath, 'retrieve', query, '--agent', role, '--limit', String(STARTUP_MEMORY_LIMIT)],
-      {
-        cwd: WORKSPACE_PATH,
-        windowsHide: true,
-        timeout: STARTUP_MEMORY_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      },
-      (err, stdout, stderr) => {
-        if (err) {
-          log.warn('spawnAgent', `Startup memory retrieval failed for pane ${paneId}: ${stderr || err.message}`);
-          resolve('');
-          return;
-        }
-
-        try {
-          const parsed = JSON.parse(String(stdout || '{}'));
-          const lines = Array.isArray(parsed.results)
-            ? parsed.results
-                .map((entry) => formatStartupMemoryEntry(entry))
-                .filter(Boolean)
-                .slice(0, STARTUP_MEMORY_LIMIT)
-            : [];
-          if (lines.length === 0) {
-            resolve('');
-            return;
-          }
-          resolve(['', 'STARTUP MEMORY (cognitive):', ...lines].join('\n'));
-        } catch (parseErr) {
-          log.warn('spawnAgent', `Startup memory parse failed for pane ${paneId}: ${parseErr.message}`);
-          resolve('');
-        }
-      }
-    );
-  });
+function fetchStartupAiBriefing() {
+  try {
+    return readStartupBriefing();
+  } catch (err) {
+    log.warn('spawnAgent', `Startup AI briefing read failed: ${err.message}`);
+    return '';
+  }
 }
 
 async function buildStartupIdentityMessage(paneId) {
@@ -1117,11 +1053,11 @@ async function buildStartupIdentityMessage(paneId) {
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const header = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
-  const [memorySummary, healthSummary] = await Promise.all([
-    fetchStartupMemorySummary(paneId),
+  const [briefingSummary, healthSummary] = await Promise.all([
+    Promise.resolve(fetchStartupAiBriefing()),
     Promise.resolve(fetchStartupHealthSummary()),
   ]);
-  return [header, memorySummary, healthSummary].filter(Boolean).join('\n');
+  return [header, briefingSummary, healthSummary].filter(Boolean).join('\n');
 }
 
 async function runStartupIdentityAttempt(paneId, state, reason) {
@@ -2251,10 +2187,7 @@ function broadcast(message, options = {}) {
     }
   }
 
-  // Send directly to Architect (pane 1), no broadcast prefix needed
-  // priority: true ensures user message jumps to front of queue
-  // immediate: true bypasses idle threshold checks (user wants to send NOW)
-  sendToPane('1', message, { priority: true, immediate: true, ...options });
+  sendToPane('1', messageText || String(message ?? ''), { priority: true, immediate: true, ...options });
   updateConnectionStatus('Message sent to Architect');
 }
 
@@ -2737,7 +2670,7 @@ module.exports = {
     initPromotionEngine,
     buildStartupIdentityMessage,
     fetchStartupHealthSummary,
-    fetchStartupMemorySummary,
+    fetchStartupAiBriefing,
   },
 };
 

@@ -305,6 +305,23 @@ describe('triggers.js module', () => {
       }));
     });
 
+    test('sendDirectMessage forwards inject metadata to the IPC payload', () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      triggers.sendDirectMessage(['2'], 'Internal note', 'architect', {
+        meta: { visibility: 'internal', source: 'pane-output-filter' },
+      });
+
+      jest.runAllTimers();
+      expect(global.window.webContents.send).toHaveBeenCalledWith('inject-message', expect.objectContaining({
+        panes: ['2'],
+        meta: expect.objectContaining({
+          visibility: 'internal',
+          source: 'pane-output-filter',
+        }),
+      }));
+    });
+
     test('sendDirectMessage returns queued false when main window is unavailable', () => {
       triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
       global.window.isDestroyed.mockReturnValue(true);

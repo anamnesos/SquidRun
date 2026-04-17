@@ -316,10 +316,14 @@ describe('full-restart handler', () => {
   });
 
   test('shuts down daemon client if available', async () => {
+    const performFullShutdown = jest.fn(async () => ({ success: true }));
+    registerErrorHandlers(ctx, { performFullShutdown });
+
     await harness.invoke('full-restart');
 
-    expect(ctx.daemonClient.shutdown).toHaveBeenCalled();
-    expect(mockApp.exit).toHaveBeenCalledWith(0);
+    expect(performFullShutdown).toHaveBeenCalledWith('full-restart');
+    expect(ctx.daemonClient.shutdown).not.toHaveBeenCalled();
+    expect(mockApp.exit).not.toHaveBeenCalled();
   });
 
   test('handles daemon shutdown error gracefully', async () => {
@@ -386,6 +390,15 @@ describe('full-restart handler', () => {
 
     expect(mockSpawn).not.toHaveBeenCalled();
     expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+  });
+
+  test('falls back to legacy full-restart behavior when performFullShutdown is unavailable', async () => {
+    mockFs.existsSync.mockReturnValue(false);
+
+    const result = await harness.invoke('full-restart');
+
+    expect(result.success).toBe(true);
+    expect(mockApp.exit).toHaveBeenCalledWith(0);
   });
 });
 

@@ -2,8 +2,6 @@ const BUILDER_ROLE_PATTERN = /^builder(?:-bg-[a-z0-9-]+)?$/i;
 const SMOKE_TAG_PATTERN = /\[SMOKE\]/i;
 const VISUAL_TAG_PATTERN = /\[VISUAL\]/i;
 const READY_FOR_REVIEW_PATTERN = /\bready\s+for\s+review\b/i;
-const COMPLETED_PATTERN = /\bcompleted?\b/i;
-const DONE_PATTERN = /\bdone\b/i;
 
 function normalizeText(value) {
   if (typeof value !== 'string') return '';
@@ -40,14 +38,6 @@ function shouldTriggerAutonomousSmoke({ senderRole, messageContent } = {}) {
 
   if (READY_FOR_REVIEW_PATTERN.test(message)) {
     return { trigger: true, reason: 'builder_ready_for_review' };
-  }
-
-  if (COMPLETED_PATTERN.test(message)) {
-    return { trigger: true, reason: 'builder_completed' };
-  }
-
-  if (DONE_PATTERN.test(message)) {
-    return { trigger: true, reason: 'builder_done' };
   }
 
   return { trigger: false, reason: null };

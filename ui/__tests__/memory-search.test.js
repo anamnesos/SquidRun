@@ -5,6 +5,7 @@ const path = require('path');
 const {
   parseMarkdownTable,
   buildSessionHandoffSources,
+  buildEvidenceSources,
   chunkText,
   createExcerpt,
   MemorySearchIndex,
@@ -47,12 +48,15 @@ const maybeDescribe = (() => {
 maybeDescribe('memory-search', () => {
   let tempDir;
   let workspaceDir;
+  let caseEvidenceDir;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-memory-search-'));
     workspaceDir = path.join(tempDir, 'workspace');
+    caseEvidenceDir = path.join(tempDir, 'cases', 'Korean Fraud', 'evidence');
     fs.mkdirSync(path.join(workspaceDir, 'knowledge'), { recursive: true });
     fs.mkdirSync(path.join(tempDir, '.squidrun', 'handoffs'), { recursive: true });
+    fs.mkdirSync(caseEvidenceDir, { recursive: true });
 
     fs.writeFileSync(path.join(workspaceDir, 'knowledge', 'user-context.md'), [
       '# User Context',
@@ -81,6 +85,12 @@ maybeDescribe('memory-search', () => {
       '| 2026-02-21T22:32:39.337Z | app-session-159 | TASK | hm-123 | trace-123 | cli | builder | Landing page polish and brand integration |',
       '',
     ].join('\n'));
+
+    fs.writeFileSync(path.join(caseEvidenceDir, 'statement.txt'), [
+      '[private-profile] shared the customs packet and shipping label timeline.',
+      'The investigator needs the payment trail tied to the alias account.',
+    ].join('\n'));
+    fs.writeFileSync(path.join(caseEvidenceDir, 'shipping-label.png'), 'fake-binary');
   });
 
   afterEach(() => {
@@ -117,10 +127,33 @@ maybeDescribe('memory-search', () => {
     ]));
   });
 
+  test('builds case evidence sources for text files and binary metadata', () => {
+    const sources = buildEvidenceSources({
+      projectRoot: tempDir,
+      workspaceDir,
+      caseEvidenceDirs: [caseEvidenceDir],
+    }, {
+      maxChars: 2200,
+      overlapChars: 250,
+    });
+
+    expect(sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'case_evidence',
+        sourcePath: 'cases/Korean Fraud/evidence/statement.txt',
+      }),
+      expect.objectContaining({
+        sourceType: 'case_evidence_asset',
+        sourcePath: 'cases/Korean Fraud/evidence/shipping-label.png',
+      }),
+    ]));
+  });
+
   test('indexes workspace sources and returns hybrid search results', async () => {
     const index = new MemorySearchIndex({
       projectRoot: tempDir,
       workspaceDir,
+      caseEvidenceDirs: [caseEvidenceDir],
       embedder: mockEmbedder,
     });
 
@@ -142,6 +175,22 @@ maybeDescribe('memory-search', () => {
       expect(decisionSearch.results[0]).toEqual(expect.objectContaining({
         sourceType: 'decision_digest',
       }));
+
+      const evidenceSearch = await index.search('customs packet alias account', { limit: 3 });
+      expect(evidenceSearch.results).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: 'case_evidence',
+          sourcePath: 'cases/Korean Fraud/evidence/statement.txt',
+        }),
+      ]));
+
+      const assetSearch = await index.search('shipping-label png', { limit: 3 });
+      expect(assetSearch.results).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: 'case_evidence_asset',
+          sourcePath: 'cases/Korean Fraud/evidence/shipping-label.png',
+        }),
+      ]));
     } finally {
       index.close();
     }

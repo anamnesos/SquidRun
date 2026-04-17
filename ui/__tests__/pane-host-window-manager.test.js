@@ -1,16 +1,36 @@
+let mockLatestWindow = null;
+
 jest.mock('electron', () => ({
-  BrowserWindow: jest.fn().mockImplementation(() => ({
-    loadFile: jest.fn().mockResolvedValue(),
-    on: jest.fn(),
-    close: jest.fn(),
-    isDestroyed: jest.fn(() => false),
-    webContents: {
-      send: jest.fn(),
-      isLoadingMainFrame: jest.fn(() => false),
-      once: jest.fn(),
-      openDevTools: jest.fn(),
-    },
-  })),
+  BrowserWindow: jest.fn().mockImplementation(() => {
+    const windowEvents = new Map();
+    const webContentsEvents = new Map();
+    mockLatestWindow = {
+      loadFile: jest.fn().mockResolvedValue(),
+      close: jest.fn(),
+      isDestroyed: jest.fn(() => false),
+      on: jest.fn((event, handler) => {
+        windowEvents.set(event, handler);
+      }),
+      emitWindowEvent: (event, ...args) => {
+        const handler = windowEvents.get(event);
+        if (typeof handler === 'function') handler(...args);
+      },
+      webContents: {
+        send: jest.fn(),
+        isLoadingMainFrame: jest.fn(() => false),
+        once: jest.fn(),
+        openDevTools: jest.fn(),
+        on: jest.fn((event, handler) => {
+          webContentsEvents.set(event, handler);
+        }),
+        emitWebContentsEvent: (event, ...args) => {
+          const handler = webContentsEvents.get(event);
+          if (typeof handler === 'function') handler(...args);
+        },
+      },
+    };
+    return mockLatestWindow;
+  }),
 }));
 
 describe('pane-host-window-manager query defaults', () => {
@@ -35,7 +55,7 @@ describe('pane-host-window-manager query defaults', () => {
 
     expect(query).toEqual(expect.objectContaining({
       paneId: '1',
-      chunkThresholdBytes: '4096',
+      chunkThresholdBytes: '1024',
       hmSendChunkThresholdBytes: expectedThreshold,
     }));
   });
@@ -65,5 +85,52 @@ describe('pane-host-window-manager multiplexing', () => {
     expect(BrowserWindow).toHaveBeenCalledTimes(1);
     expect(manager.getPaneWindow('1')).toBe(manager.getPaneWindow('2'));
     expect(manager.getPaneWindow('2')).toBe(manager.getPaneWindow('3'));
+  });
+
+  test('emits lifecycle events for hidden pane host failures', async () => {
+    const { createPaneHostWindowManager } = require('../modules/main/pane-host-window-manager');
+    const onLifecycleEvent = jest.fn();
+    const manager = createPaneHostWindowManager({ onLifecycleEvent });
+
+    await manager.ensurePaneWindows(['1', '2', '3']);
+    mockLatestWindow.webContents.emitWebContentsEvent('did-fail-load', {}, -6, 'ERR_FILE_NOT_FOUND', 'file:///pane-host.html', true);
+    mockLatestWindow.emitWindowEvent('closed');
+
+    expect(onLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'window-created',
+      paneIds: ['1', '2', '3'],
+    }));
+    expect(onLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'did-fail-load',
+      paneIds: ['1', '2', '3'],
+      errorCode: -6,
+      errorDescription: 'ERR_FILE_NOT_FOUND',
+    }));
+    expect(onLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'closed',
+      paneIds: ['1', '2', '3'],
+    }));
+  });
+
+  test('tracks load diagnostics for slow hidden pane hosts', async () => {
+    const { createPaneHostWindowManager } = require('../modules/main/pane-host-window-manager');
+    const manager = createPaneHostWindowManager();
+
+    await manager.ensurePaneWindows(['1', '2', '3']);
+    let diagnostics = manager.getWindowDiagnostics();
+    expect(diagnostics).toEqual(expect.objectContaining({
+      paneIds: ['1', '2', '3'],
+      loading: true,
+      hasWindow: true,
+    }));
+
+    mockLatestWindow.webContents.emitWebContentsEvent('did-finish-load');
+    diagnostics = manager.getWindowDiagnostics();
+    expect(diagnostics).toEqual(expect.objectContaining({
+      paneIds: ['1', '2', '3'],
+      loading: false,
+      hasWindow: true,
+    }));
+    expect(diagnostics.lastDidFinishLoadAt).toEqual(expect.any(Number));
   });
 });

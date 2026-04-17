@@ -94,6 +94,33 @@ describe('Settings Handlers', () => {
     });
   });
 
+  describe('get-startup-services-status', () => {
+    test('returns startup services status from injected dependency when available', async () => {
+      deps.getStartupServicesStatus = jest.fn().mockResolvedValue({
+        daemon: { connected: true },
+        websocket: { running: true, port: 9900 },
+      });
+      registerSettingsHandlers(ctx, deps);
+
+      const result = await harness.invoke('get-startup-services-status');
+
+      expect(deps.getStartupServicesStatus).toHaveBeenCalled();
+      expect(result).toEqual({
+        daemon: { connected: true },
+        websocket: { running: true, port: 9900 },
+      });
+    });
+
+    test('returns null when startup services reader is unavailable', async () => {
+      deps.getStartupServicesStatus = undefined;
+      registerSettingsHandlers(ctx, deps);
+
+      const result = await harness.invoke('get-startup-services-status');
+
+      expect(result).toBeNull();
+    });
+  });
+
   describe('set-setting', () => {
     test('updates setting and saves', async () => {
       deps.loadSettings.mockReturnValue({ notifications: false });
@@ -543,6 +570,7 @@ describe('Settings Handlers', () => {
       registerSettingsHandlers.unregister({ ipcMain: harness.ipcMain });
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-settings');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-app-status');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-startup-services-status');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('set-setting');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-all-settings');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-api-keys');
