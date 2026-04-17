@@ -145,6 +145,74 @@ function resolvePostEnterDeliveryResult({ outputObserved = false, enterSucceeded
   };
 }
 
+function buildPtyWriteDispatchPlan({
+  text = '',
+  payloadBytes = null,
+  hmSendTrace = false,
+  ipcReassembled = false,
+  hasChunkedWriter = false,
+  chunkThresholdBytes = 1024,
+  chunkSizeBytes = 4096,
+  hmSendChunkThresholdBytes = 256,
+  hmSendChunkYieldEveryChunks = 1,
+} = {}) {
+  const normalizedText = typeof text === 'string' ? text : String(text || '');
+  const normalizedPayloadBytes = Number.isFinite(payloadBytes)
+    ? payloadBytes
+    : getUtf8ByteLength(normalizedText);
+  const normalizedChunkThresholdBytes = Number.isFinite(chunkThresholdBytes) && chunkThresholdBytes > 0
+    ? chunkThresholdBytes
+    : 1024;
+  const normalizedChunkSizeBytes = Number.isFinite(chunkSizeBytes) && chunkSizeBytes > 0
+    ? chunkSizeBytes
+    : 4096;
+  const normalizedHmSendChunkThresholdBytes = Number.isFinite(hmSendChunkThresholdBytes) && hmSendChunkThresholdBytes > 0
+    ? hmSendChunkThresholdBytes
+    : 256;
+  const normalizedHmSendChunkYieldEveryChunks = Number.isFinite(hmSendChunkYieldEveryChunks)
+    && hmSendChunkYieldEveryChunks > 0
+    ? hmSendChunkYieldEveryChunks
+    : 1;
+
+  const forceChunkedWrite = Boolean(hmSendTrace || ipcReassembled);
+  const forceChunkForHmSend = Boolean(hmSendTrace && normalizedPayloadBytes >= normalizedHmSendChunkThresholdBytes);
+  const shouldChunkWrite = Boolean(
+    hasChunkedWriter
+    && (
+      forceChunkedWrite
+      || normalizedPayloadBytes >= normalizedChunkThresholdBytes
+      || forceChunkForHmSend
+    )
+  );
+
+  if (!shouldChunkWrite) {
+    return {
+      method: 'direct',
+      forceChunkedWrite,
+      forceChunkForHmSend,
+      writeText: normalizedText,
+      payloadBytes: normalizedPayloadBytes,
+      chunkOptions: null,
+    };
+  }
+
+  const chunkOptions = {
+    chunkSize: normalizedChunkSizeBytes,
+  };
+  if (forceChunkedWrite || forceChunkForHmSend) {
+    chunkOptions.yieldEveryChunks = normalizedHmSendChunkYieldEveryChunks;
+  }
+
+  return {
+    method: 'chunked',
+    forceChunkedWrite,
+    forceChunkForHmSend,
+    writeText: normalizedText,
+    payloadBytes: normalizedPayloadBytes,
+    chunkOptions,
+  };
+}
+
 function createPaneRuntime(paneId, terminal, fitAddon) {
   return {
     paneId,
@@ -164,6 +232,7 @@ function createPaneRuntime(paneId, terminal, fitAddon) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     _internals: {
+      buildPtyWriteDispatchPlan,
       formatHmSendForPrompt,
       getPromptKindFromLine,
       resolvePostEnterDeliveryResult,
@@ -475,21 +544,26 @@ if (typeof window !== 'undefined') {
       const hmSendChunkThreshold = Number.isFinite(HM_SEND_CHUNK_THRESHOLD_BYTES) && HM_SEND_CHUNK_THRESHOLD_BYTES > 0
         ? HM_SEND_CHUNK_THRESHOLD_BYTES
         : DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES;
-      const forceChunkForHmSend = hmSendTrace && payloadBytes >= hmSendChunkThreshold;
-      const shouldChunkWrite = Boolean(api.pty.writeChunked)
-        && (payloadBytes >= chunkThreshold || forceChunkForHmSend);
-      if (shouldChunkWrite) {
-        const chunkOptions = { chunkSize };
-        if (forceChunkForHmSend) {
-          chunkOptions.yieldEveryChunks = Math.max(
-            1,
-            Number.isFinite(HM_SEND_CHUNK_YIELD_EVERY_CHUNKS)
-              ? HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
-              : DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
-          );
-        }
+      const chunkYieldEveryChunks = Math.max(
+        1,
+        Number.isFinite(HM_SEND_CHUNK_YIELD_EVERY_CHUNKS)
+          ? HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
+          : DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
+      );
+      const writePlan = buildPtyWriteDispatchPlan({
+        text,
+        payloadBytes,
+        hmSendTrace,
+        ipcReassembled: payload?.meta?.ipcReassembled === true,
+        hasChunkedWriter: Boolean(api.pty.writeChunked),
+        chunkThresholdBytes: chunkThreshold,
+        chunkSizeBytes: chunkSize,
+        hmSendChunkThresholdBytes: hmSendChunkThreshold,
+        hmSendChunkYieldEveryChunks: chunkYieldEveryChunks,
+      });
+      if (writePlan.method === 'chunked') {
         const chunkedResult = await withTimeout(
-          api.pty.writeChunked(runtime.paneId, text, chunkOptions, traceContext || null),
+          api.pty.writeChunked(runtime.paneId, writePlan.writeText, writePlan.chunkOptions, traceContext || null),
           WRITE_TIMEOUT_MS,
           'pane-host writeChunked'
         );
@@ -498,7 +572,7 @@ if (typeof window !== 'undefined') {
         }
       } else {
         await withTimeout(
-          api.pty.write(runtime.paneId, text, traceContext || null),
+          api.pty.write(runtime.paneId, writePlan.writeText, traceContext || null),
           WRITE_TIMEOUT_MS,
           'pane-host write'
         );
