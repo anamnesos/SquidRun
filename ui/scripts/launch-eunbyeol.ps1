@@ -18,7 +18,7 @@ $workingDirectory = $uiRoot
 foreach ($candidate in $packagedCandidates) {
     if (Test-Path $candidate) {
         $launchFilePath = $candidate
-        $launchArgs = @('--window=eunbyeol', '--solo-window')
+        $launchArgs = @('--profile=eunbyeol')
         $workingDirectory = Split-Path -Parent $candidate
         break
     }
@@ -27,7 +27,7 @@ foreach ($candidate in $packagedCandidates) {
 if (-not $launchFilePath) {
     $npmCommand = Get-Command npm.cmd -ErrorAction Stop
     $launchFilePath = $npmCommand.Source
-    $launchArgs = @('start', '--', '--window=eunbyeol', '--solo-window')
+    $launchArgs = @('start', '--', '--profile=eunbyeol')
 }
 
 $process = Start-Process -FilePath $launchFilePath `
