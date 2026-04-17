@@ -3271,15 +3271,16 @@ class SquidRunApp {
       if (!this.isHiddenPaneHostModeEnabled()) {
         return { success: false, reason: 'hidden_hosts_disabled' };
       }
-      const sent = this.sendPaneHostBridgeEvent(id, 'inject-message', {
+      const routed = this.routeInjectMessage({
+        panes: [id],
         message: payload?.message || '',
         deliveryId: payload?.deliveryId || null,
         traceContext: payload?.traceContext || null,
         meta: payload?.meta || null,
       });
-      return sent
-        ? { success: true, paneId: id, mode: 'pane-host' }
-        : { success: false, reason: 'pane_host_unavailable', paneId: id };
+      return routed
+        ? { success: true, paneId: id, mode: 'routed-inject' }
+        : { success: false, reason: 'inject_route_unavailable', paneId: id };
     });
 
     // Direct Enter dispatch for hidden pane hosts — bypasses pty-write IPC handler

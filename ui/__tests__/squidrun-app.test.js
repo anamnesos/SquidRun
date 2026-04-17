@@ -469,6 +469,94 @@ describe('SquidRunApp', () => {
         totalBytes: Buffer.byteLength(message, 'utf8'),
       }));
     });
+
+    it('routes pane-host inject IPC through the shared inject router and chunks long payloads', async () => {
+      const { ipcMain } = require('electron');
+      const watcher = require('../modules/watcher');
+      const ipcHandlers = require('../modules/ipc-handlers');
+      const pipeline = require('../modules/pipeline');
+      const sharedState = require('../modules/shared-state');
+      const contextCompressor = require('../modules/context-compressor');
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      watcher.init = jest.fn();
+      ipcHandlers.init = jest.fn();
+      jest.spyOn(pipeline, 'init').mockImplementation(() => {});
+      jest.spyOn(sharedState, 'init').mockImplementation(() => {});
+      jest.spyOn(contextCompressor, 'init').mockImplementation(() => {});
+      mockAppContext.setRecoveryManager = jest.fn((manager) => {
+        mockAppContext.recoveryManager = manager;
+      });
+      mockAppContext.setPluginManager = jest.fn((manager) => {
+        mockAppContext.pluginManager = manager;
+      });
+      mockAppContext.setBackupManager = jest.fn((manager) => {
+        mockAppContext.backupManager = manager;
+      });
+      mockAppContext.mainWindow = {
+        webContents: {
+          send: jest.fn(),
+          on: jest.fn(),
+          openDevTools: jest.fn(),
+        },
+      };
+      jest.spyOn(app, 'initRecoveryManager').mockReturnValue({});
+      jest.spyOn(app, 'initPluginManager').mockReturnValue({ loadAll: jest.fn() });
+      jest.spyOn(app, 'initBackupManager').mockReturnValue({});
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+      const message = 'pane-host-route-🙂-'.repeat(700);
+      const traceContext = { traceId: 'hm-pane-host-1' };
+      const meta = { source: 'test' };
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+
+      app.initModules();
+
+      const paneHostInjectHandler = ipcMain.handle.mock.calls
+        .find(([channel]) => channel === 'pane-host-inject')?.[1];
+
+      expect(typeof paneHostInjectHandler).toBe('function');
+
+      const result = await paneHostInjectHandler({}, '1', {
+        message,
+        deliveryId: 'delivery-pane-host-1',
+        traceContext,
+        meta,
+      });
+
+      expect(result).toEqual({
+        success: true,
+        paneId: '1',
+        mode: 'routed-inject',
+      });
+
+      const hostPayloads = sendPaneHostBridgeEvent.mock.calls
+        .filter(([paneId, type]) => paneId === '1' && type === 'inject-message')
+        .map(([, , payload]) => payload);
+
+      expect(hostPayloads.length).toBeGreaterThan(1);
+      const reconstructed = hostPayloads
+        .slice()
+        .sort((left, right) => left.ipcChunk.index - right.ipcChunk.index)
+        .map((payload) => payload.message)
+        .join('');
+      expect(reconstructed).toBe(message);
+      expect(hostPayloads[0]).toEqual(expect.objectContaining({
+        deliveryId: 'delivery-pane-host-1',
+        traceContext,
+        meta: expect.objectContaining({
+          source: 'test',
+          ipcChunked: true,
+          ipcOriginalBytes: Buffer.byteLength(message, 'utf8'),
+        }),
+      }));
+    });
   });
 
   describe('createWindow startup ordering', () => {
