@@ -8,6 +8,7 @@ describe('pane-host-renderer internals', () => {
         payloadBytes: Buffer.byteLength('small hm-send payload', 'utf8'),
         hmSendTrace: true,
         hasChunkedWriter: true,
+        homeResetBeforeWrite: true,
         chunkThresholdBytes: 1024,
         chunkSizeBytes: 4096,
         hmSendChunkThresholdBytes: 256,
@@ -16,6 +17,7 @@ describe('pane-host-renderer internals', () => {
     ).toEqual(expect.objectContaining({
       method: 'chunked',
       forceChunkedWrite: true,
+      writeText: '\x1b[Hsmall hm-send payload',
       chunkOptions: expect.objectContaining({
         chunkSize: 4096,
         yieldEveryChunks: 1,
@@ -31,6 +33,7 @@ describe('pane-host-renderer internals', () => {
         hmSendTrace: false,
         ipcReassembled: true,
         hasChunkedWriter: true,
+        homeResetBeforeWrite: true,
         chunkThresholdBytes: 1024,
         chunkSizeBytes: 4096,
         hmSendChunkThresholdBytes: 256,
@@ -39,6 +42,7 @@ describe('pane-host-renderer internals', () => {
     ).toEqual(expect.objectContaining({
       method: 'chunked',
       forceChunkedWrite: true,
+      writeText: '\x1b[Hreassembled hidden host payload',
       chunkOptions: expect.objectContaining({
         chunkSize: 4096,
         yieldEveryChunks: 1,

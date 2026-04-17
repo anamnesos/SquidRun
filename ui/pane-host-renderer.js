@@ -151,6 +151,7 @@ function buildPtyWriteDispatchPlan({
   hmSendTrace = false,
   ipcReassembled = false,
   hasChunkedWriter = false,
+  homeResetBeforeWrite = false,
   chunkThresholdBytes = 1024,
   chunkSizeBytes = 4096,
   hmSendChunkThresholdBytes = 256,
@@ -196,6 +197,9 @@ function buildPtyWriteDispatchPlan({
     };
   }
 
+  const writeText = homeResetBeforeWrite
+    ? '\x1b[H' + normalizedText
+    : normalizedText;
   const chunkOptions = {
     chunkSize: normalizedChunkSizeBytes,
   };
@@ -207,7 +211,7 @@ function buildPtyWriteDispatchPlan({
     method: 'chunked',
     forceChunkedWrite,
     forceChunkForHmSend,
-    writeText: normalizedText,
+    writeText,
     payloadBytes: normalizedPayloadBytes,
     chunkOptions,
   };
@@ -533,8 +537,22 @@ if (typeof window !== 'undefined') {
       1,
       Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
     );
+    const deferMaxWaitMs = isLongPayload
+      ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
+      : SUBMIT_DEFER_MAX_WAIT_MS;
 
     try {
+      // Match the visible renderer path: wait for active pane output to settle
+      // before the PTY write so the front of the injected message is not
+      // interleaved with streaming CLI output.
+      const preWriteDeferResult = await deferSubmitWhilePaneActive(runtime, deferMaxWaitMs);
+      if (preWriteDeferResult.forcedExpire) {
+        console.warn(
+          `[PaneHost] Pre-write defer window expired for pane ${runtime.paneId} after ${preWriteDeferResult.waitedMs}ms; `
+          + 'writing while output is still active'
+        );
+      }
+
       const chunkThreshold = Number.isFinite(CHUNK_THRESHOLD_BYTES) && CHUNK_THRESHOLD_BYTES > 0
         ? CHUNK_THRESHOLD_BYTES
         : DEFAULT_CHUNK_THRESHOLD_BYTES;
@@ -556,6 +574,7 @@ if (typeof window !== 'undefined') {
         hmSendTrace,
         ipcReassembled: payload?.meta?.ipcReassembled === true,
         hasChunkedWriter: Boolean(api.pty.writeChunked),
+        homeResetBeforeWrite: hmSendTrace || payload?.meta?.ipcReassembled === true,
         chunkThresholdBytes: chunkThreshold,
         chunkSizeBytes: chunkSize,
         hmSendChunkThresholdBytes: hmSendChunkThreshold,
@@ -587,17 +606,6 @@ if (typeof window !== 'undefined') {
         : 0;
       const minDelay = baseMinDelay + hmSendExtraDelayMs;
       await sleep(minDelay);
-
-      const deferMaxWaitMs = isLongPayload
-        ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
-        : SUBMIT_DEFER_MAX_WAIT_MS;
-      const deferResult = await deferSubmitWhilePaneActive(runtime, deferMaxWaitMs);
-      if (deferResult.forcedExpire) {
-        console.warn(
-          `[PaneHost] Submit defer window expired for pane ${runtime.paneId} after ${deferResult.waitedMs}ms; `
-          + 'sending Enter while output is still active'
-        );
-      }
 
       const outputBaseline = runtime.ptyOutputTick;
       const enterResult = await withTimeout(
