@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const { resolveCoordPath } = require('../config');
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
@@ -15,6 +16,8 @@ const DEFAULT_SYMBOLS = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 const DEFAULT_MACRO_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_ALERT_TIMEOUT_MS = 15_000;
+const DEFAULT_TELEGRAM_ALERT_TICKERS = ['SUI/USD', 'ZEC/USD'];
 const MAX_HOT_SYMBOLS = 2;
 
 function toText(value, fallback = '') {
@@ -67,6 +70,15 @@ function normalizeTargets(value = DEFAULT_TARGETS) {
     raw
       .map((entry) => toText(entry).toLowerCase())
       .filter((entry) => ['architect', 'builder', 'oracle'].includes(entry))
+  ));
+}
+
+function normalizeAlertTickers(value = DEFAULT_TELEGRAM_ALERT_TICKERS) {
+  const raw = Array.isArray(value) ? value : String(value || '').split(',');
+  return Array.from(new Set(
+    raw
+      .map((entry) => normalizeTicker(entry))
+      .filter(Boolean)
   ));
 }
 
@@ -353,6 +365,107 @@ function formatOracleAlert(eventType, rule = {}, payload = {}, mode = 'normal') 
     command: buildSuggestedCommand(rule, payload, eventType),
   };
   return `(ORACLE WATCH): ${JSON.stringify(compact)}`;
+}
+
+function resolveTradeDirection(rule = {}) {
+  return rule.trigger === 'lose_fail_retest' ? 'SHORT' : 'LONG';
+}
+
+function formatPrice(value, digits = 4) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 'n/a';
+  return numeric.toFixed(digits);
+}
+
+function shouldSendTelegramTradeAlert(alert = {}, options = {}) {
+  const eligibleTickers = normalizeAlertTickers(options.telegramTradeAlertTickers || DEFAULT_TELEGRAM_ALERT_TICKERS);
+  if (!eligibleTickers.includes(normalizeTicker(alert?.payload?.ticker || alert?.ticker))) {
+    return false;
+  }
+  return alert.eventType === 'fired' || alert.eventType === 'invalidated';
+}
+
+function formatTelegramTradeAlert(alert = {}) {
+  const ticker = normalizeTicker(alert?.payload?.ticker || alert?.ticker);
+  const baseAsset = ticker.split('/')[0] || 'UNKNOWN';
+  const direction = resolveTradeDirection(alert?.rule || {});
+  const livePrice = formatPrice(alert?.payload?.livePrice, 5);
+
+  if (alert.eventType === 'fired') {
+    return `TRADE ALERT: ${baseAsset} ${direction} entry confirmed @ ${livePrice}. Trigger live now.`;
+  }
+
+  if (alert.eventType === 'invalidated') {
+    if (alert?.payload?.hasLivePosition) {
+      return `TRADE ALERT: ${baseAsset} ${direction} invalidated / hard-stop touch @ ${livePrice}. Exit now.`;
+    }
+    return `TRADE ALERT: ${baseAsset} ${direction} invalidated @ ${livePrice}. Stand down.`;
+  }
+
+  return '';
+}
+
+function sendTelegramTradeAlerts(alerts = [], options = {}) {
+  const eligibleAlerts = (Array.isArray(alerts) ? alerts : [])
+    .filter((alert) => shouldSendTelegramTradeAlert(alert, options))
+    .map((alert) => ({
+      ...alert,
+      telegramMessage: formatTelegramTradeAlert(alert),
+    }))
+    .filter((alert) => toText(alert.telegramMessage));
+
+  if (eligibleAlerts.length === 0) {
+    return {
+      ok: true,
+      sent: 0,
+      results: [],
+    };
+  }
+
+  const hmSendScriptPath = path.resolve(
+    toText(options.hmSendScriptPath, path.join(__dirname, 'hm-send.js'))
+  );
+  const cwd = path.resolve(
+    toText(options.cwd, process.env.SQUIDRUN_PROJECT_ROOT || path.join(__dirname, '..', '..'))
+  );
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || DEFAULT_ALERT_TIMEOUT_MS);
+  const role = toText(options.role, 'oracle-watch');
+  const results = [];
+
+  for (const alert of eligibleAlerts) {
+    const args = [hmSendScriptPath, 'telegram', alert.telegramMessage];
+    if (role) {
+      args.push('--role', role);
+    }
+    try {
+      const stdout = execFileSync(process.execPath, args, {
+        cwd,
+        env: options.env || process.env,
+        timeout: timeoutMs,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      results.push({
+        ticker: alert.ticker,
+        eventType: alert.eventType,
+        ok: true,
+        stdout: toText(stdout, null),
+      });
+    } catch (error) {
+      results.push({
+        ticker: alert.ticker,
+        eventType: alert.eventType,
+        ok: false,
+        error: toText(error?.stderr, '') || toText(error?.message, 'hm_send_telegram_failed'),
+      });
+    }
+  }
+
+  return {
+    ok: results.every((entry) => entry.ok === true),
+    sent: results.length,
+    results,
+  };
 }
 
 function shouldAlert(lastAlertAt, cooldownMs, nowMs) {
@@ -716,6 +829,7 @@ async function runWatchCycle(options = {}) {
         eventType,
         ruleId: rule.id,
         ticker: payload.ticker,
+        rule,
         message: formatOracleAlert(eventType, rule, payload, mode),
         payload,
       });
@@ -728,6 +842,7 @@ async function runWatchCycle(options = {}) {
   }
 
   let alertResult = null;
+  let telegramAlertResult = null;
   if (alerts.length > 0 && options.sendAlerts !== false) {
     alertResult = sendAgentAlert(
       alerts.map((entry) => entry.message).join('\n'),
@@ -739,6 +854,13 @@ async function runWatchCycle(options = {}) {
         role: 'oracle-watch',
       }
     );
+    telegramAlertResult = sendTelegramTradeAlerts(alerts, {
+      telegramTradeAlertTickers: options.telegramTradeAlertTickers || config.telegramTradeAlertTickers,
+      env: process.env,
+      cwd: process.env.SQUIDRUN_PROJECT_ROOT || path.join(__dirname, '..', '..'),
+      hmSendScriptPath: options.hmSendScriptPath,
+      role: 'oracle-watch',
+    });
   }
 
   const nextState = {
@@ -779,6 +901,7 @@ async function runWatchCycle(options = {}) {
     alertCount: alerts.length,
     alerts,
     alertResult,
+    telegramAlertResult,
     tickers: context.tickers,
   };
 }
@@ -874,11 +997,14 @@ module.exports = {
   getLastCloses,
   buildAlertPayload,
   formatOracleAlert,
+  formatTelegramTradeAlert,
   evaluateReclaimHold,
   evaluateLoseFailRetest,
   evaluateRelativeStrength,
   evaluateRule,
   resolveWatchedTickers,
+  shouldSendTelegramTradeAlert,
+  sendTelegramTradeAlerts,
   fetchWatchContext,
   runWatchCycle,
   runCli,

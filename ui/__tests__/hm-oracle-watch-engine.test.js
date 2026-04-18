@@ -2,6 +2,10 @@ jest.mock('../scripts/hm-agent-alert', () => ({
   sendAgentAlert: jest.fn(() => ({ ok: true, targets: ['oracle'], results: [{ target: 'oracle', ok: true }] })),
 }));
 
+jest.mock('child_process', () => ({
+  execFileSync: jest.fn(() => 'Delivered to telegram: ok (ack: telegram_delivered, attempt 1)'),
+}));
+
 jest.mock('../modules/trading/hyperliquid-client', () => ({
   getUniverseMarketData: jest.fn(),
   getHistoricalBars: jest.fn(),
@@ -13,6 +17,7 @@ jest.mock('../modules/trading/hyperliquid-client', () => ({
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const { sendAgentAlert } = require('../scripts/hm-agent-alert');
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
@@ -22,6 +27,7 @@ const {
   resolveWatchedTickers,
   runWatchCycle,
   formatOracleAlert,
+  formatTelegramTradeAlert,
 } = require('../scripts/hm-oracle-watch-engine');
 const { main: watchRulesCli } = require('../scripts/hm-oracle-watch-rules');
 
@@ -218,6 +224,7 @@ describe('hm-oracle-watch-engine', () => {
       expect.stringContaining('hm-defi-execute.js trade --asset BTC --direction LONG'),
       expect.any(Object)
     );
+    expect(execFileSync).not.toHaveBeenCalled();
 
     await watchRulesCli(['mark-acted', 'btc-reclaim-74020', '--state', statePath, '--note', 'Oracle called it']);
     const actedState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
@@ -280,5 +287,126 @@ describe('hm-oracle-watch-engine', () => {
     }));
     expect(persistedState.lastError).toContain('429');
     expect(sendAgentAlert).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  test('runWatchCycle mirrors SUI fired trade alerts to Telegram with a one-line entry summary', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-watch-engine-sui-fire-'));
+    const rulesPath = path.join(tempDir, 'oracle-watch-rules.json');
+    const statePath = path.join(tempDir, 'oracle-watch-state.json');
+
+    fs.writeFileSync(rulesPath, JSON.stringify({
+      version: 1,
+      mode: 'normal',
+      targets: ['oracle'],
+      symbols: ['SUI/USD'],
+      hotSymbols: [],
+      rules: [
+        {
+          id: 'sui-short-lose-9633-fail-retest',
+          name: 'SUI short — lose 0.9633 then fail retest',
+          enabled: true,
+          ticker: 'SUI/USD',
+          trigger: 'lose_fail_retest',
+          loseLevel: 0.9633,
+          retestMin: 0.9633,
+          retestMax: 0.9650,
+          cooldownMs: 600000,
+        },
+      ],
+    }, null, 2));
+
+    fs.writeFileSync(statePath, JSON.stringify({
+      version: 2,
+      updatedAt: null,
+      mode: 'normal',
+      heartbeat: {
+        lastTickAt: null,
+        intervalMs: 10000,
+        stale: false,
+        state: 'idle',
+      },
+      counters: {},
+      marketByTicker: {},
+      rules: {
+        'sui-short-lose-9633-fail-retest': {
+          status: 'armed',
+          armedAt: Date.now() - 30_000,
+        },
+      },
+    }, null, 2));
+
+    hyperliquidClient.getUniverseMarketData.mockResolvedValue([
+      {
+        coin: 'SUI',
+        ticker: 'SUI/USD',
+        price: 0.9628,
+        fundingRate: -0.0000098,
+        openInterest: 18844100.8,
+      },
+    ]);
+    hyperliquidClient.getHistoricalBars
+      .mockResolvedValueOnce(new Map([
+        ['SUI/USD', [
+          { open: 0.9642, high: 0.9649, low: 0.9629, close: 0.9631 },
+          { open: 0.9631, high: 0.9647, low: 0.9627, close: 0.9628 },
+        ]],
+      ]))
+      .mockResolvedValueOnce(new Map([
+        ['SUI/USD', [
+          { open: 0.9644, high: 0.9649, low: 0.9627, close: 0.9628 },
+        ]],
+      ]));
+    hyperliquidClient.getPredictedFundings.mockResolvedValue({ byCoin: { SUI: { fundingRate: -0.0000098 } } });
+    hyperliquidClient.getOpenPositions.mockResolvedValue([]);
+    hyperliquidClient.getL2Book.mockResolvedValue({
+      nearTouchSkew: 'ask_heavy',
+      depthImbalanceTop5: -0.18,
+      bestBid: 0.9627,
+      bestAsk: 0.9628,
+    });
+
+    const result = await runWatchCycle({
+      rulesPath,
+      statePath,
+    });
+
+    expect(result.alertCount).toBe(1);
+    expect(execFileSync).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining([
+        expect.stringContaining('hm-send.js'),
+        'telegram',
+        expect.stringContaining('TRADE ALERT: SUI SHORT entry confirmed'),
+        '--role',
+        'oracle-watch',
+      ]),
+      expect.objectContaining({
+        cwd: expect.any(String),
+        encoding: 'utf8',
+      })
+    );
+    expect(result.telegramAlertResult).toEqual(expect.objectContaining({
+      ok: true,
+      sent: 1,
+    }));
+  });
+
+  test('telegram invalidation alerts escalate to exit-now wording when the live position is on', async () => {
+    const message = formatTelegramTradeAlert({
+      eventType: 'invalidated',
+      ticker: 'SUI/USD',
+      rule: {
+        trigger: 'lose_fail_retest',
+      },
+      payload: {
+        ticker: 'SUI/USD',
+        livePrice: 0.9692,
+        hasLivePosition: true,
+      },
+    });
+
+    expect(message).toContain('TRADE ALERT: SUI SHORT invalidated / hard-stop touch');
+    expect(message).toContain('Exit now.');
   });
 });
