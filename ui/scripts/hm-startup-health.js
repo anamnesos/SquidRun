@@ -184,7 +184,61 @@ function run({ autoFix = true } = {}) {
     }
   }
 
+  const handoffPath = path.join(projectRoot, '.squidrun', 'handoffs', 'session.md');
+  if (fs.existsSync(handoffPath)) {
+    const ageMs = Date.now() - fs.statSync(handoffPath).mtimeMs;
+    if (ageMs > 60 * 60 * 1000) {
+      report.warnings.push({ kind: 'stale_handoff', path: '.squidrun/handoffs/session.md', ageMinutes: Math.round(ageMs / 60000), note: 'handoff is older than 1h — fresh agent context may be misleading' });
+    }
+  }
+
+  const cruft = scanCruft();
+  if (cruft.totalBytes > 1024 * 1024) {
+    if (autoFix && cruft.deletable.length > 0) {
+      let bytesFreed = 0;
+      for (const p of cruft.deletable) {
+        try { bytesFreed += fs.statSync(p).size; fs.unlinkSync(p); } catch {}
+      }
+      report.fixes.push({ kind: 'cruft', deleted: cruft.deletable.length, bytesFreed });
+    } else {
+      report.warnings.push({ kind: 'cruft', files: cruft.deletable.length, totalBytes: cruft.totalBytes });
+    }
+  }
+
   return report;
+}
+
+function scanCruft() {
+  const candidates = [];
+  const runtimeDir = path.join(projectRoot, '.squidrun', 'runtime');
+  const workspaceDir = path.join(projectRoot, 'workspace');
+  if (fs.existsSync(runtimeDir)) {
+    for (const entry of fs.readdirSync(runtimeDir)) {
+      if (/^_tmp\d*-supervisor/.test(entry) || entry === '_arch_comms.json' || entry === '_stash_diff.patch') {
+        candidates.push(path.join(runtimeDir, entry));
+      }
+    }
+  }
+  if (fs.existsSync(workspaceDir)) {
+    for (const entry of fs.readdirSync(workspaceDir)) {
+      if (/^tmp-session(?:e3|\d+)-/.test(entry)) {
+        candidates.push(path.join(workspaceDir, entry));
+      }
+    }
+  }
+  let totalBytes = 0;
+  const deletable = [];
+  for (const p of candidates) {
+    try {
+      const stat = fs.statSync(p);
+      const ageDays = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24);
+      if (ageDays > 1) {
+        totalBytes += stat.size;
+        deletable.push(p);
+      }
+    } catch {}
+  }
+  return { totalBytes, deletable };
 }
 
 if (require.main === module) {
