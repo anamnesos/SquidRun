@@ -19,6 +19,13 @@ if [ "$SOURCE" != "compact" ] && command -v node >/dev/null 2>&1; then
     >> "$AUDIT_DIR/memory-pr-approval.log" 2>> "$AUDIT_DIR/memory-pr-approval-errors.log" || true
 fi
 
+STARTUP_HEALTH=""
+if [ "$SOURCE" != "compact" ] && command -v node >/dev/null 2>&1; then
+  STARTUP_HEALTH=$(
+    node "$PROJECT_DIR/ui/scripts/hm-startup-health.js" 2>> "$AUDIT_DIR/startup-health-errors.log"
+  )
+fi
+
 AGENCY_LAYER=""
 AI_BRIEFING=""
 if command -v node >/dev/null 2>&1; then
@@ -73,7 +80,7 @@ if [ "$SOURCE" = "compact" ] || [ "$SOURCE" = "resume" ]; then
   PREFIX="Session resumed/compacted."
 fi
 
-COMBINED_CONTEXT="$PREFIX\n\nMANDATORY READS BEFORE DOING ANYTHING:\n1. $LATEST_HANDOFF_PATH - Latest session handoff with open items, live positions, and James's feedback\n2. workspace/knowledge/trading-operations.md - Hyperliquid=REAL money, Alpaca=FAKE. Check positions FIRST.\n3. workspace/knowledge/case-operations.md - 은별 pending items and routing rules.\n\nROUTING: 은별=send-long-telegram.js 8754356993. James=hm-send.js telegram (ENGLISH ONLY). Use Builder/Oracle not subagents.\n\nTRADING: Alpaca is paper. Hyperliquid is real. Run hm-defi-status.js every cycle. Don't wait for prompts.\n\n$AI_BRIEFING\n\n$AGENCY_LAYER"
+COMBINED_CONTEXT="$PREFIX\n\nSYSTEM HEALTH (auto-fixed where safe):\n$STARTUP_HEALTH\n\nMANDATORY READS BEFORE DOING ANYTHING:\n1. $LATEST_HANDOFF_PATH - Latest session handoff with open items, live positions, and James's feedback\n2. workspace/knowledge/trading-operations.md - Hyperliquid=REAL money, Alpaca=FAKE. Check positions FIRST.\n3. workspace/knowledge/case-operations.md - 은별 pending items and routing rules.\n\nROUTING: 은별=send-long-telegram.js 8754356993. James=hm-send.js telegram (ENGLISH ONLY). Use Builder/Oracle not subagents.\n\nTRADING: Alpaca is paper. Hyperliquid is real. Run hm-defi-status.js every cycle. Don't wait for prompts.\n\n$AI_BRIEFING\n\n$AGENCY_LAYER"
 JSON_SAFE_CONTEXT=$(echo -n "$COMBINED_CONTEXT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.stringify(d)))" 2>/dev/null || echo '"context unavailable"')
 
 echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":'"$JSON_SAFE_CONTEXT"'}}'
