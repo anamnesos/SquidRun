@@ -301,7 +301,20 @@ function resolveWatchlistEntries(symbols, options = {}) {
     })
   );
   return normalizedSymbols.map((ticker) => {
-    return watchlist.getEntry(ticker) || watchlist.normalizeWatchlistEntry({ ticker });
+    const existingEntry = watchlist.getEntry(ticker);
+    if (existingEntry) {
+      return existingEntry;
+    }
+    const inferredAssetClass = watchlist.getAssetClassForTicker(
+      ticker,
+      options.assetClass || options.asset_class || undefined
+    );
+    return watchlist.normalizeWatchlistEntry({
+      ticker,
+      assetClass: inferredAssetClass,
+      broker: watchlist.getBrokerForTicker(ticker),
+      exchange: watchlist.getExchangeForTicker(ticker),
+    });
   });
 }
 
