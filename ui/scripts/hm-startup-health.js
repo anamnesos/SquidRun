@@ -4,13 +4,33 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync, spawn } = require('child_process');
+const {
+  loadRulesConfig,
+  loadWatchState,
+  collectStaleRules,
+} = require('./hm-oracle-watch-engine');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 const envPath = path.join(projectRoot, '.env');
 const settingsPath = path.join(projectRoot, 'ui', 'settings.json');
+const runtimeDir = path.join(projectRoot, '.squidrun', 'runtime');
 const supervisorStatusPath = path.join(projectRoot, '.squidrun', 'runtime', 'supervisor-status.json');
 const supervisorPidPath = path.join(projectRoot, '.squidrun', 'runtime', 'supervisor.pid');
 const supervisorScriptPath = path.join(projectRoot, 'ui', 'supervisor-daemon.js');
+const oracleWatchRulesPath = path.join(runtimeDir, 'oracle-watch-rules.json');
+const oracleWatchStatePath = path.join(runtimeDir, 'oracle-watch-state.json');
+const oracleWatchProposalPath = path.join(runtimeDir, 'oracle-watch-stale-proposals.json');
+const marketScannerStatePath = path.join(runtimeDir, 'market-scanner-state.json');
+const cryptoTradingSupervisorStatePath = path.join(runtimeDir, 'crypto-trading-supervisor-state.json');
+const paperTradingAutomationStatePath = path.join(runtimeDir, 'paper-trading-automation-state.json');
+const tokenomistSupervisorStatePath = path.join(runtimeDir, 'tokenomist-supervisor-state.json');
+const tokenomistSourcePath = path.join(projectRoot, 'tokenomist-current.yml');
+const handoffPath = path.join(projectRoot, '.squidrun', 'handoffs', 'session.md');
+
+const WATCH_RULE_STALE_DISTANCE_PCT = 0.02;
+const TOKENOMIST_SCAN_STALE_MS = 12 * 60 * 60 * 1000;
+const TOKENOMIST_SOURCE_STALE_MS = 24 * 60 * 60 * 1000;
+const SUPERVISOR_HEARTBEAT_STALE_MS = 60 * 1000;
 
 const REQUIRED_LANES = [
   'SQUIDRUN_ORACLE_WATCH',
@@ -47,6 +67,50 @@ function flipEnvVar(key, newValue) {
 function readSettings() {
   if (!fs.existsSync(settingsPath)) return null;
   try { return JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { return null; }
+}
+
+function readJsonFile(filePath, fallback = null) {
+  if (!fs.existsSync(filePath)) return fallback;
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return fallback; }
+}
+
+function ensureDir(filePath) {
+  fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true });
+}
+
+function writeJsonFile(filePath, payload) {
+  ensureDir(filePath);
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+}
+
+function toTimestampMs(value) {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function inspectLaneFreshness({ key, filePath, enabled, staleAfterMs, extractTimestamp }) {
+  if (enabled === false) {
+    return null;
+  }
+  if (!fs.existsSync(filePath)) {
+    return { key, stale: true, reason: 'missing_state_file', filePath };
+  }
+  const payload = readJsonFile(filePath, {});
+  const observedAtMs = Number(extractTimestamp(payload) || 0);
+  if (!Number.isFinite(observedAtMs) || observedAtMs <= 0) {
+    return { key, stale: true, reason: 'missing_timestamp', filePath };
+  }
+  const ageMs = Date.now() - observedAtMs;
+  return {
+    key,
+    stale: ageMs > staleAfterMs,
+    observedAt: new Date(observedAtMs).toISOString(),
+    ageMinutes: Math.round(ageMs / 60000),
+    staleAfterMinutes: Math.round(staleAfterMs / 60000),
+    filePath,
+  };
 }
 
 function flipSetting(key, value) {
@@ -182,14 +246,130 @@ function run({ autoFix = true } = {}) {
     if (lanesOff.length > 0) {
       report.warnings.push({ kind: 'lanes_still_disabled_in_status', lanes: lanesOff, note: 'may need supervisor restart to pick up env/settings' });
     }
+
+    const heartbeatAtMs = Number(status.heartbeatAtMs || 0);
+    const heartbeatAgeMs = Number.isFinite(heartbeatAtMs) ? (Date.now() - heartbeatAtMs) : Infinity;
+    if (!Number.isFinite(heartbeatAtMs) || heartbeatAgeMs > Math.max(SUPERVISOR_HEARTBEAT_STALE_MS, Number(status.heartbeatMs || 15000) * 2)) {
+      report.blockers.push({
+        kind: 'supervisor_heartbeat_stale',
+        heartbeatAt: heartbeatAtMs ? new Date(heartbeatAtMs).toISOString() : null,
+        ageMinutes: Number.isFinite(heartbeatAgeMs) ? Math.round(heartbeatAgeMs / 60000) : null,
+      });
+    }
+
+    const laneChecks = [
+      inspectLaneFreshness({
+        key: 'oracle_watch',
+        filePath: oracleWatchStatePath,
+        enabled: status.oracleWatch?.enabled !== false,
+        staleAfterMs: Math.max(2 * 60 * 1000, Number(status.oracleWatch?.heartbeat?.intervalMs || 30000) * 3),
+        extractTimestamp: (payload) => toTimestampMs(payload?.heartbeat?.lastTickAt || payload?.updatedAt),
+      }),
+      inspectLaneFreshness({
+        key: 'market_scanner',
+        filePath: marketScannerStatePath,
+        enabled: status.marketScannerAutomation?.enabled !== false,
+        staleAfterMs: 45 * 60 * 1000,
+        extractTimestamp: (payload) => toTimestampMs(payload?.lastScanAt || payload?.updatedAt || payload?.lastProcessedAt),
+      }),
+      inspectLaneFreshness({
+        key: 'crypto_trading_supervisor',
+        filePath: cryptoTradingSupervisorStatePath,
+        enabled: status.cryptoTradingAutomation?.enabled !== false,
+        staleAfterMs: 45 * 60 * 1000,
+        extractTimestamp: (payload) => toTimestampMs(payload?.lastProcessedAt || payload?.updatedAt),
+      }),
+      inspectLaneFreshness({
+        key: 'paper_trading_automation',
+        filePath: paperTradingAutomationStatePath,
+        enabled: status.paperTradingAutomation?.enabled !== false,
+        staleAfterMs: 60 * 60 * 1000,
+        extractTimestamp: (payload) => toTimestampMs(payload?.lastProcessedAt || payload?.updatedAt),
+      }),
+      inspectLaneFreshness({
+        key: 'tokenomist_supervisor',
+        filePath: tokenomistSupervisorStatePath,
+        enabled: true,
+        staleAfterMs: TOKENOMIST_SCAN_STALE_MS,
+        extractTimestamp: (payload) => toTimestampMs(payload?.lastResult?.executedAt || payload?.updatedAt),
+      }),
+    ].filter(Boolean);
+
+    for (const lane of laneChecks) {
+      if (lane.stale) {
+        report.warnings.push({
+          kind: 'stale_lane',
+          lane: lane.key,
+          observedAt: lane.observedAt || null,
+          ageMinutes: lane.ageMinutes || null,
+          staleAfterMinutes: lane.staleAfterMinutes || null,
+          reason: lane.reason || 'lane_not_recent',
+          filePath: lane.filePath,
+        });
+      }
+    }
   }
 
-  const handoffPath = path.join(projectRoot, '.squidrun', 'handoffs', 'session.md');
   if (fs.existsSync(handoffPath)) {
     const ageMs = Date.now() - fs.statSync(handoffPath).mtimeMs;
     if (ageMs > 60 * 60 * 1000) {
       report.warnings.push({ kind: 'stale_handoff', path: '.squidrun/handoffs/session.md', ageMinutes: Math.round(ageMs / 60000), note: 'handoff is older than 1h — fresh agent context may be misleading' });
     }
+  }
+
+  const watchConfig = loadRulesConfig(oracleWatchRulesPath);
+  const watchState = loadWatchState(oracleWatchStatePath);
+  const staleWatchRules = collectStaleRules(watchConfig, watchState, {
+    distancePct: WATCH_RULE_STALE_DISTANCE_PCT,
+    persistAfterMs: 0,
+    nowMs: Date.now(),
+  });
+  if (staleWatchRules.length > 0) {
+    if (autoFix) {
+      writeJsonFile(oracleWatchProposalPath, {
+        generatedAt: new Date().toISOString(),
+        distancePct: WATCH_RULE_STALE_DISTANCE_PCT,
+        count: staleWatchRules.length,
+        staleRules: staleWatchRules,
+      });
+      report.fixes.push({
+        kind: 'oracle_watch_stale_rules',
+        action: 'wrote_refresh_proposals',
+        path: oracleWatchProposalPath,
+        count: staleWatchRules.length,
+      });
+    }
+    report.warnings.push({
+      kind: 'oracle_watch_stale_rules',
+      count: staleWatchRules.length,
+      thresholdPct: WATCH_RULE_STALE_DISTANCE_PCT,
+      tickers: Array.from(new Set(staleWatchRules.map((entry) => entry.ticker))),
+      proposalPath: autoFix ? oracleWatchProposalPath : null,
+    });
+  }
+
+  if (fs.existsSync(tokenomistSourcePath)) {
+    const tokenomistSourceAgeMs = Date.now() - fs.statSync(tokenomistSourcePath).mtimeMs;
+    if (tokenomistSourceAgeMs > TOKENOMIST_SOURCE_STALE_MS) {
+      report.warnings.push({
+        kind: 'stale_tokenomist_source',
+        path: tokenomistSourcePath,
+        ageHours: Math.round(tokenomistSourceAgeMs / (60 * 60 * 1000)),
+      });
+    }
+  } else {
+    report.blockers.push({ kind: 'missing_tokenomist_source', path: tokenomistSourcePath });
+  }
+
+  const tokenomistState = readJsonFile(tokenomistSupervisorStatePath, {});
+  const tokenomistScanAtMs = toTimestampMs(tokenomistState?.lastResult?.executedAt || tokenomistState?.updatedAt);
+  if (!tokenomistScanAtMs || (Date.now() - tokenomistScanAtMs) > TOKENOMIST_SCAN_STALE_MS) {
+    report.warnings.push({
+      kind: 'stale_tokenomist_scan',
+      path: tokenomistSupervisorStatePath,
+      scannedAt: tokenomistScanAtMs ? new Date(tokenomistScanAtMs).toISOString() : null,
+      ageHours: tokenomistScanAtMs ? Math.round((Date.now() - tokenomistScanAtMs) / (60 * 60 * 1000)) : null,
+    });
   }
 
   const cruft = scanCruft();

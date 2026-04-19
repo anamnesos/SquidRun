@@ -9,10 +9,11 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: t
 const { resolveCoordPath } = require('../config');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const { sendAgentAlert } = require('./hm-agent-alert');
+const { buildOracleWakeMessage } = require('./hm-oracle-wake-context');
 
 const DEFAULT_STATE_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-state.json'), { forWrite: true });
 const DEFAULT_INTERVAL_MS = 60 * 1000;
-const DEFAULT_ARCHITECT_SILENCE_MS = 2 * 60 * 1000;
+const DEFAULT_ARCHITECT_SILENCE_MS = 8 * 60 * 1000;
 const DEFAULT_ORACLE_SILENCE_MS = 10 * 60 * 1000;
 
 function toText(value, fallback = '') {
@@ -142,13 +143,15 @@ function shouldRepoke(lastPokeAt, nowMs, thresholdMs) {
   return (nowMs - lastPokeMs) >= thresholdMs;
 }
 
-function runHeartbeatCycle(options = {}) {
+async function runHeartbeatCycle(options = {}) {
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
   const intervalMs = Math.max(30_000, toNumber(options.intervalMs, DEFAULT_INTERVAL_MS));
   const architectSilenceMs = Math.max(30_000, toNumber(options.architectSilenceMs, DEFAULT_ARCHITECT_SILENCE_MS));
   const oracleSilenceMs = Math.max(60_000, toNumber(options.oracleSilenceMs, DEFAULT_ORACLE_SILENCE_MS));
+  const architectSilenceMinutes = Math.round(architectSilenceMs / 60_000);
+  const oracleSilenceMinutes = Math.round(oracleSilenceMs / 60_000);
   const state = loadState(statePath);
 
   const architectLastSeenAt = latestSeenAt('architect', nowMs);
@@ -161,7 +164,7 @@ function runHeartbeatCycle(options = {}) {
     && Number.isFinite(architectLastSeenMs)
     && (nowMs - architectLastSeenMs) >= architectSilenceMs
     && shouldRepoke(state.architect?.lastPokeAt, nowMs, architectSilenceMs)) {
-    const message = '(ORACLE PEER-WAKE): Architect silent >2m during active window. Status check now.';
+    const message = `(ORACLE PEER-WAKE): Architect silent >${architectSilenceMinutes}m during active window. Status check now.`;
     const result = sendAgentAlert(message, {
       targets: ['architect'],
       role: 'oracle-peer-wake',
@@ -175,7 +178,16 @@ function runHeartbeatCycle(options = {}) {
   if (Number.isFinite(oracleLastSeenMs)
     && (nowMs - oracleLastSeenMs) >= oracleSilenceMs
     && shouldRepoke(state.oracle?.lastPokeAt, nowMs, oracleSilenceMs)) {
-    const message = '(ARCHITECT PEER-WAKE): Oracle silent >10m. Status check now.';
+    const message = await buildOracleWakeMessage(
+      `(ARCHITECT PEER-WAKE): Oracle silent >${oracleSilenceMinutes}m. Status check now.`,
+      {
+        watchRulesPath: options.watchRulesPath,
+        watchStatePath: options.watchStatePath,
+        marketScannerStatePath: options.marketScannerStatePath,
+        staleDistancePct: options.staleDistancePct,
+        nowMs,
+      }
+    );
     const result = sendAgentAlert(message, {
       targets: ['oracle'],
       role: 'architect-peer-wake',
@@ -206,13 +218,13 @@ async function runCli(argv = parseCliArgs()) {
   const intervalMs = Math.max(30_000, toNumber(getOption(argv.options, 'interval-ms', DEFAULT_INTERVAL_MS), DEFAULT_INTERVAL_MS));
 
   if (command === 'once') {
-    const result = runHeartbeatCycle({ statePath, intervalMs });
+    const result = await runHeartbeatCycle({ statePath, intervalMs });
     console.log(JSON.stringify(result, null, 2));
     return result;
   }
 
   while (true) {
-    const result = runHeartbeatCycle({ statePath, intervalMs });
+    const result = await runHeartbeatCycle({ statePath, intervalMs });
     console.log(JSON.stringify(result, null, 2));
     await sleep(intervalMs);
   }

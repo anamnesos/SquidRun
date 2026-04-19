@@ -24,10 +24,12 @@ const hyperliquidClient = require('../modules/trading/hyperliquid-client');
 const {
   evaluateReclaimHold,
   evaluateRelativeStrength,
+  evaluateRuleStaleness,
   resolveWatchedTickers,
   runWatchCycle,
   formatOracleAlert,
   formatTelegramTradeAlert,
+  collectStaleRules,
 } = require('../scripts/hm-oracle-watch-engine');
 const { main: watchRulesCli } = require('../scripts/hm-oracle-watch-rules');
 
@@ -408,5 +410,143 @@ describe('hm-oracle-watch-engine', () => {
 
     expect(message).toContain('TRADE ALERT: SUI SHORT invalidated / hard-stop touch');
     expect(message).toContain('Exit now.');
+  });
+
+  test('evaluateRuleStaleness proposes refreshed levels after a rule drifts too far from live price', () => {
+    const result = evaluateRuleStaleness({
+      id: 'btc-short-lose-75300-fail-retest',
+      ticker: 'BTC/USD',
+      trigger: 'lose_fail_retest',
+      enabled: true,
+      loseLevel: 75300,
+      retestMin: 75300,
+      retestMax: 75380,
+    }, {
+      market: {
+        price: 76500,
+      },
+      hasLivePosition: false,
+    }, {}, {
+      enabled: true,
+      distancePct: 0.015,
+      persistAfterMs: 0,
+      loseOffsetPct: 0.006,
+      minRetestBandPct: 0.0015,
+    }, Date.now());
+
+    expect(result.event).toBe('stale');
+    expect(result.summary).toEqual(expect.objectContaining({
+      ticker: 'BTC/USD',
+      trigger: 'lose_fail_retest',
+      proposal: expect.objectContaining({
+        mode: 'manual_validation',
+        proposedFields: expect.objectContaining({
+          loseLevel: expect.any(Number),
+          retestMin: expect.any(Number),
+          retestMax: expect.any(Number),
+        }),
+      }),
+    }));
+    expect(result.summary.distancePct).toBeGreaterThan(0.015);
+  });
+
+  test('runWatchCycle persists stale rules and alerts oracle when enabled rules are materially offside', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-watch-engine-stale-'));
+    const rulesPath = path.join(tempDir, 'oracle-watch-rules.json');
+    const statePath = path.join(tempDir, 'oracle-watch-state.json');
+
+    fs.writeFileSync(rulesPath, JSON.stringify({
+      version: 1,
+      mode: 'normal',
+      staleRulePolicy: {
+        enabled: true,
+        distancePct: 0.015,
+        persistAfterMs: 0,
+        loseOffsetPct: 0.006,
+        minRetestBandPct: 0.0015,
+      },
+      targets: ['oracle'],
+      symbols: ['BTC/USD'],
+      hotSymbols: [],
+      rules: [
+        {
+          id: 'btc-short-lose-75300-fail-retest',
+          name: 'BTC short — lose 75300 then fail retest',
+          enabled: true,
+          ticker: 'BTC/USD',
+          trigger: 'lose_fail_retest',
+          loseLevel: 75300,
+          retestMin: 75300,
+          retestMax: 75380,
+          cooldownMs: 600000,
+        },
+      ],
+    }, null, 2));
+
+    hyperliquidClient.getUniverseMarketData.mockResolvedValue([
+      {
+        coin: 'BTC',
+        ticker: 'BTC/USD',
+        price: 76500,
+        fundingRate: -0.00003,
+        openInterest: 1250000,
+      },
+    ]);
+    hyperliquidClient.getHistoricalBars
+      .mockResolvedValueOnce(new Map([
+        ['BTC/USD', [
+          { close: 76490, high: 76510, low: 76420, open: 76440 },
+          { close: 76500, high: 76530, low: 76470, open: 76490 },
+        ]],
+      ]))
+      .mockResolvedValueOnce(new Map([
+        ['BTC/USD', [
+          { open: 76440, high: 76530, low: 76420, close: 76500 },
+        ]],
+      ]));
+    hyperliquidClient.getPredictedFundings.mockResolvedValue({
+      byCoin: {
+        BTC: { fundingRate: -0.00003 },
+      },
+    });
+    hyperliquidClient.getOpenPositions.mockResolvedValue([]);
+    hyperliquidClient.getL2Book.mockResolvedValue({
+      nearTouchSkew: 'bid_heavy',
+      depthImbalanceTop5: 0.12,
+      bestBid: 76499,
+      bestAsk: 76501,
+    });
+
+    const result = await runWatchCycle({
+      rulesPath,
+      statePath,
+    });
+    const persistedState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+
+    expect(result.alertCount).toBe(1);
+    expect(persistedState.staleRules).toHaveLength(1);
+    expect(persistedState.staleRules[0]).toEqual(expect.objectContaining({
+      ticker: 'BTC/USD',
+      trigger: 'lose_fail_retest',
+      distancePct: expect.any(Number),
+    }));
+    expect(persistedState.counters).toEqual(expect.objectContaining({
+      staleRulesDetected: 1,
+      lastCycleStaleCount: 1,
+    }));
+    expect(sendAgentAlert).toHaveBeenCalledWith(
+      expect.stringContaining('"state":"stale"'),
+      expect.objectContaining({
+        role: 'oracle-watch',
+        targets: ['oracle'],
+      })
+    );
+
+    const currentStaleRules = collectStaleRules(
+      JSON.parse(fs.readFileSync(rulesPath, 'utf8')),
+      persistedState,
+      { persistAfterMs: 0, distancePct: 0.015, nowMs: Date.now() }
+    );
+    expect(currentStaleRules).toHaveLength(1);
   });
 });

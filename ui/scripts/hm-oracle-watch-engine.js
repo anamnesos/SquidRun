@@ -19,6 +19,11 @@ const DEFAULT_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_ALERT_TIMEOUT_MS = 15_000;
 const DEFAULT_TELEGRAM_ALERT_TICKERS = ['SUI/USD', 'ZEC/USD'];
 const MAX_HOT_SYMBOLS = 2;
+const DEFAULT_STALE_RULE_DISTANCE_PCT = 0.015;
+const DEFAULT_STALE_RULE_PERSIST_AFTER_MS = 15 * 60 * 1000;
+const DEFAULT_STALE_RULE_RECLAIM_OFFSET_PCT = 0.006;
+const DEFAULT_STALE_RULE_LOSE_OFFSET_PCT = 0.006;
+const DEFAULT_STALE_RULE_MIN_RETEST_BAND_PCT = 0.0015;
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -26,6 +31,11 @@ function toText(value, fallback = '') {
 }
 
 function toNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function pickFiniteNumber(value, fallback) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 }
@@ -95,6 +105,14 @@ function defaultRulesConfig() {
     mode: 'normal',
     pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
     macroPollIntervalMs: DEFAULT_MACRO_POLL_INTERVAL_MS,
+    staleRulePolicy: {
+      enabled: true,
+      distancePct: DEFAULT_STALE_RULE_DISTANCE_PCT,
+      persistAfterMs: DEFAULT_STALE_RULE_PERSIST_AFTER_MS,
+      reclaimOffsetPct: DEFAULT_STALE_RULE_RECLAIM_OFFSET_PCT,
+      loseOffsetPct: DEFAULT_STALE_RULE_LOSE_OFFSET_PCT,
+      minRetestBandPct: DEFAULT_STALE_RULE_MIN_RETEST_BAND_PCT,
+    },
     targets: DEFAULT_TARGETS,
     symbols: DEFAULT_SYMBOLS,
     hotSymbols: [],
@@ -161,7 +179,7 @@ function defaultRulesConfig() {
 
 function defaultState() {
   return {
-    version: 2,
+    version: 3,
     updatedAt: null,
     mode: 'normal',
     heartbeat: {
@@ -177,13 +195,350 @@ function defaultState() {
       triggersInvalidated: 0,
       triggersActedOn: 0,
       alertsSent: 0,
+      staleRulesDetected: 0,
       lastCycleSeen: 0,
       lastCycleFired: 0,
       lastCycleAlertCount: 0,
+      lastCycleStaleCount: 0,
     },
     marketByTicker: {},
     rules: {},
+    staleRules: [],
   };
+}
+
+function countDecimals(value) {
+  const text = String(value ?? '');
+  if (!text.includes('.')) return 0;
+  return text.split('.')[1].replace(/0+$/, '').length;
+}
+
+function roundToPrecision(value, digits = 4) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Number(numeric.toFixed(Math.max(0, digits)));
+}
+
+function resolveRulePrecision(rule = {}) {
+  const values = [
+    rule.level,
+    rule.loseLevel,
+    rule.retestMin,
+    rule.retestMax,
+    rule?.zone?.min,
+    rule?.zone?.max,
+    ...(Array.isArray(rule?.chartLocation?.validLongZones)
+      ? rule.chartLocation.validLongZones.flatMap((zone) => [zone?.min, zone?.max])
+      : []),
+  ].filter((value) => Number.isFinite(Number(value)));
+  return values.length > 0 ? Math.max(...values.map((value) => countDecimals(value))) : 4;
+}
+
+function resolveStaleRulePolicy(config = {}, overrides = {}) {
+  const policy = {
+    ...(config?.staleRulePolicy || {}),
+    ...(overrides || {}),
+  };
+  return {
+    enabled: policy.enabled !== false,
+    distancePct: Math.max(0.001, pickFiniteNumber(policy.distancePct, DEFAULT_STALE_RULE_DISTANCE_PCT)),
+    persistAfterMs: Math.max(0, pickFiniteNumber(policy.persistAfterMs, DEFAULT_STALE_RULE_PERSIST_AFTER_MS)),
+    reclaimOffsetPct: Math.max(0.001, pickFiniteNumber(policy.reclaimOffsetPct, DEFAULT_STALE_RULE_RECLAIM_OFFSET_PCT)),
+    loseOffsetPct: Math.max(0.001, pickFiniteNumber(policy.loseOffsetPct, DEFAULT_STALE_RULE_LOSE_OFFSET_PCT)),
+    minRetestBandPct: Math.max(0.0005, pickFiniteNumber(policy.minRetestBandPct, DEFAULT_STALE_RULE_MIN_RETEST_BAND_PCT)),
+  };
+}
+
+function formatAnchorLabel(anchor = {}, digits = 4) {
+  if (Number.isFinite(Number(anchor.floor)) && Number.isFinite(Number(anchor.ceiling)) && anchor.floor !== anchor.ceiling) {
+    return `${formatPrice(anchor.floor, digits)}-${formatPrice(anchor.ceiling, digits)}`;
+  }
+  return formatPrice(anchor.anchorPrice, digits);
+}
+
+function getRuleReference(rule = {}, livePrice = NaN) {
+  if (rule.trigger === 'lose_fail_retest' && Number.isFinite(Number(rule.loseLevel))) {
+    const loseLevel = Number(rule.loseLevel);
+    return {
+      supported: true,
+      kind: 'lose_level',
+      anchorPrice: loseLevel,
+      floor: Number.isFinite(Number(rule.retestMin)) ? Number(rule.retestMin) : loseLevel,
+      ceiling: Number.isFinite(Number(rule.retestMax)) ? Number(rule.retestMax) : loseLevel,
+    };
+  }
+
+  if (Number.isFinite(Number(rule.level))) {
+    const level = Number(rule.level);
+    return {
+      supported: true,
+      kind: 'level',
+      anchorPrice: level,
+      floor: level,
+      ceiling: level,
+    };
+  }
+
+  if (rule.zone && Number.isFinite(Number(rule.zone.min)) && Number.isFinite(Number(rule.zone.max))) {
+    const min = Number(rule.zone.min);
+    const max = Number(rule.zone.max);
+    return {
+      supported: true,
+      kind: 'zone',
+      anchorPrice: (min + max) / 2,
+      floor: min,
+      ceiling: max,
+    };
+  }
+
+  const validZones = Array.isArray(rule?.chartLocation?.validLongZones)
+    ? rule.chartLocation.validLongZones.filter((zone) => Number.isFinite(Number(zone?.min)) && Number.isFinite(Number(zone?.max)))
+    : [];
+  if (validZones.length > 0) {
+    const fallbackZone = validZones[0];
+    const targetZone = Number.isFinite(livePrice)
+      ? (validZones.reduce((best, zone) => {
+        const zoneCenter = (Number(zone.min) + Number(zone.max)) / 2;
+        const bestCenter = (Number(best.min) + Number(best.max)) / 2;
+        return Math.abs(zoneCenter - livePrice) < Math.abs(bestCenter - livePrice) ? zone : best;
+      }, fallbackZone))
+      : fallbackZone;
+    const min = Number(targetZone.min);
+    const max = Number(targetZone.max);
+    return {
+      supported: true,
+      kind: 'chart_zone',
+      anchorPrice: (min + max) / 2,
+      floor: min,
+      ceiling: max,
+      label: toText(targetZone.label, 'chart_zone'),
+    };
+  }
+
+  return {
+    supported: false,
+    kind: 'unsupported',
+    anchorPrice: NaN,
+    floor: NaN,
+    ceiling: NaN,
+  };
+}
+
+function buildRuleRefreshProposal(rule = {}, livePrice, policy = {}) {
+  const numericLivePrice = Number(livePrice);
+  if (!Number.isFinite(numericLivePrice) || numericLivePrice <= 0) return null;
+  const digits = resolveRulePrecision(rule);
+
+  if (rule.trigger === 'reclaim_hold') {
+    if (rule.zone && Number.isFinite(Number(rule.zone.min)) && Number.isFinite(Number(rule.zone.max))) {
+      const width = Math.max(
+        Math.abs(Number(rule.zone.max) - Number(rule.zone.min)),
+        numericLivePrice * Number(policy.minRetestBandPct || DEFAULT_STALE_RULE_MIN_RETEST_BAND_PCT)
+      );
+      const nextMin = roundToPrecision(numericLivePrice * (1 + Number(policy.reclaimOffsetPct || DEFAULT_STALE_RULE_RECLAIM_OFFSET_PCT)), digits);
+      const nextMax = roundToPrecision(nextMin + width, digits);
+      return {
+        mode: 'manual_validation',
+        summary: `shift reclaim zone to ${formatPrice(nextMin, digits)}-${formatPrice(nextMax, digits)}`,
+        proposedFields: {
+          zone: {
+            min: nextMin,
+            max: nextMax,
+          },
+        },
+      };
+    }
+
+    const nextLevel = roundToPrecision(
+      numericLivePrice * (1 + Number(policy.reclaimOffsetPct || DEFAULT_STALE_RULE_RECLAIM_OFFSET_PCT)),
+      digits
+    );
+    return {
+      mode: 'manual_validation',
+      summary: `raise reclaim to ${formatPrice(nextLevel, digits)}`,
+      proposedFields: {
+        level: nextLevel,
+      },
+    };
+  }
+
+  if (rule.trigger === 'lose_fail_retest') {
+    const existingBand = Number.isFinite(Number(rule.retestMax)) && Number.isFinite(Number(rule.retestMin))
+      ? Math.abs(Number(rule.retestMax) - Number(rule.retestMin))
+      : 0;
+    const bandWidth = Math.max(
+      existingBand,
+      numericLivePrice * Number(policy.minRetestBandPct || DEFAULT_STALE_RULE_MIN_RETEST_BAND_PCT)
+    );
+    const nextLoseLevel = roundToPrecision(
+      numericLivePrice * (1 - Number(policy.loseOffsetPct || DEFAULT_STALE_RULE_LOSE_OFFSET_PCT)),
+      digits
+    );
+    const nextRetestMax = roundToPrecision(nextLoseLevel + bandWidth, digits);
+    return {
+      mode: 'manual_validation',
+      summary: `reset lose/retest to ${formatPrice(nextLoseLevel, digits)}-${formatPrice(nextRetestMax, digits)}`,
+      proposedFields: {
+        loseLevel: nextLoseLevel,
+        retestMin: nextLoseLevel,
+        retestMax: nextRetestMax,
+      },
+    };
+  }
+
+  if (rule.trigger === 'relative_strength') {
+    const zones = Array.isArray(rule?.chartLocation?.validLongZones)
+      ? rule.chartLocation.validLongZones.filter((zone) => Number.isFinite(Number(zone?.min)) && Number.isFinite(Number(zone?.max)))
+      : [];
+    if (zones.length === 0) return null;
+    const firstZone = zones[0];
+    const nextCenter = numericLivePrice * (1 + Number(policy.reclaimOffsetPct || DEFAULT_STALE_RULE_RECLAIM_OFFSET_PCT));
+    const firstCenter = (Number(firstZone.min) + Number(firstZone.max)) / 2;
+    const delta = nextCenter - firstCenter;
+    const shiftedZones = zones.map((zone) => ({
+      ...zone,
+      min: roundToPrecision(Number(zone.min) + delta, digits),
+      max: roundToPrecision(Number(zone.max) + delta, digits),
+    }));
+    const nextChartLocation = {
+      ...(rule.chartLocation || {}),
+      validLongZones: shiftedZones,
+    };
+    if (Number.isFinite(Number(rule?.chartLocation?.dayRange?.min)) && Number.isFinite(Number(rule?.chartLocation?.dayRange?.max))) {
+      nextChartLocation.dayRange = {
+        min: roundToPrecision(Number(rule.chartLocation.dayRange.min) + delta, digits),
+        max: roundToPrecision(Number(rule.chartLocation.dayRange.max) + delta, digits),
+      };
+    }
+    return {
+      mode: 'manual_validation',
+      summary: `shift relative-strength framework nearer ${formatPrice(nextCenter, digits)}`,
+      proposedFields: {
+        chartLocation: nextChartLocation,
+      },
+    };
+  }
+
+  return null;
+}
+
+function evaluateRuleStaleness(rule = {}, symbolContext = {}, ruleState = {}, policy = {}, nowMs = Date.now()) {
+  const livePrice = Number(symbolContext?.market?.price ?? symbolContext?.snapshot?.tradePrice);
+  const nowIso = new Date(nowMs).toISOString();
+  const previousStaleState = ruleState?.stale || null;
+
+  if (!policy.enabled || !rule.enabled || !Number.isFinite(livePrice) || livePrice <= 0 || symbolContext?.hasLivePosition) {
+    return {
+      state: previousStaleState?.active
+        ? {
+          stale: {
+            ...previousStaleState,
+            active: false,
+            resolvedAt: nowIso,
+            lastSeenAt: nowIso,
+          },
+        }
+        : {},
+      summary: null,
+      event: null,
+    };
+  }
+
+  const anchor = getRuleReference(rule, livePrice);
+  if (!anchor.supported || !Number.isFinite(anchor.anchorPrice) || anchor.anchorPrice <= 0) {
+    return { state: {}, summary: null, event: null };
+  }
+
+  const distancePct = Math.abs(livePrice - anchor.anchorPrice) / anchor.anchorPrice;
+  const digits = Math.max(resolveRulePrecision(rule), 2);
+  if (distancePct < Number(policy.distancePct || DEFAULT_STALE_RULE_DISTANCE_PCT)) {
+    return {
+      state: previousStaleState?.active
+        ? {
+          stale: {
+            ...previousStaleState,
+            active: false,
+            resolvedAt: nowIso,
+            lastSeenAt: nowIso,
+            distancePct: round(distancePct, 4),
+            livePrice: round(livePrice, 6),
+            anchorPrice: round(anchor.anchorPrice, 6),
+            anchorLabel: formatAnchorLabel(anchor, digits),
+          },
+        }
+        : {},
+      summary: null,
+      event: null,
+    };
+  }
+
+  const detectedAt = toText(previousStaleState?.detectedAt, nowIso);
+  const detectedAtMs = Date.parse(detectedAt);
+  const persistedEnough = Number.isFinite(detectedAtMs)
+    ? (nowMs - detectedAtMs) >= pickFiniteNumber(policy.persistAfterMs, DEFAULT_STALE_RULE_PERSIST_AFTER_MS)
+    : false;
+  const proposal = buildRuleRefreshProposal(rule, livePrice, policy);
+  const nextStaleState = {
+    active: persistedEnough,
+    detectedAt,
+    lastSeenAt: nowIso,
+    resolvedAt: null,
+    distancePct: round(distancePct, 4),
+    livePrice: round(livePrice, 6),
+    anchorPrice: round(anchor.anchorPrice, 6),
+    anchorLabel: formatAnchorLabel(anchor, digits),
+    proposal,
+  };
+
+  const summary = persistedEnough
+    ? {
+      ruleId: rule.id,
+      ticker: normalizeTicker(rule.ticker),
+      trigger: toText(rule.trigger),
+      livePrice: nextStaleState.livePrice,
+      anchorPrice: nextStaleState.anchorPrice,
+      anchorLabel: nextStaleState.anchorLabel,
+      distancePct: nextStaleState.distancePct,
+      detectedAt,
+      proposal,
+    }
+    : null;
+
+  return {
+    state: {
+      stale: nextStaleState,
+    },
+    summary,
+    event: persistedEnough && previousStaleState?.active !== true ? 'stale' : null,
+  };
+}
+
+function collectStaleRules(config = {}, state = {}, options = {}) {
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+  const policy = resolveStaleRulePolicy(config, {
+    distancePct: options.distancePct,
+    persistAfterMs: options.persistAfterMs,
+  });
+  const rules = Array.isArray(config?.rules) ? config.rules : [];
+  const staleRules = [];
+
+  for (const rule of rules) {
+    const ticker = normalizeTicker(rule.ticker);
+    const market = state?.marketByTicker?.[ticker] || null;
+    if (!market) continue;
+    const evaluation = evaluateRuleStaleness(
+      rule,
+      { ticker, market, hasLivePosition: false },
+      state?.rules?.[rule.id] || {},
+      policy,
+      nowMs
+    );
+    if (evaluation.summary) {
+      staleRules.push(evaluation.summary);
+    }
+  }
+
+  return staleRules.sort((left, right) => Number(right.distancePct || 0) - Number(left.distancePct || 0));
 }
 
 function getRuleThreshold(rule = {}) {
@@ -346,6 +701,18 @@ function buildAlertPayload(rule = {}, symbolContext = {}, previousMarket = {}) {
 }
 
 function formatOracleAlert(eventType, rule = {}, payload = {}, mode = 'normal') {
+  if (eventType === 'stale') {
+    return `(ORACLE WATCH): ${JSON.stringify({
+      mode,
+      ticker: payload.ticker,
+      state: 'stale',
+      trigger: payload.trigger,
+      livePrice: payload.livePrice,
+      staleRule: payload.staleRule || null,
+      executionReady: false,
+      command: null,
+    })}`;
+  }
   const chartLocation = evaluateChartLocation(rule, payload);
   const compact = {
     mode,
@@ -790,17 +1157,27 @@ async function runWatchCycle(options = {}) {
     triggersArmed: 0,
     triggersFired: 0,
     triggersInvalidated: 0,
+    staleRulesDetected: 0,
   };
   const nextRulesState = {
     ...(state.rules || {}),
   };
+  const staleRules = [];
 
   for (const rule of Array.isArray(config.rules) ? config.rules : []) {
     const previousRuleState = nextRulesState[rule.id] || {};
     const evaluation = evaluateRule(rule, context, previousRuleState, nowMs);
+    const staleEvaluation = evaluateRuleStaleness(
+      rule,
+      context.byTicker?.[normalizeTicker(rule.ticker)] || null,
+      previousRuleState,
+      resolveStaleRulePolicy(config),
+      nowMs
+    );
     const nextRuleState = {
       ...previousRuleState,
       ...evaluation.state,
+      ...staleEvaluation.state,
       lastSeenAt: new Date(nowMs).toISOString(),
     };
     const symbolContext = context.byTicker?.[normalizeTicker(rule.ticker)] || null;
@@ -808,6 +1185,9 @@ async function runWatchCycle(options = {}) {
       ? buildAlertPayload(rule, symbolContext, state.marketByTicker?.[normalizeTicker(rule.ticker)] || {})
       : null;
     const cooldownMs = Math.max(1000, Number(rule.cooldownMs) || DEFAULT_ALERT_COOLDOWN_MS);
+    if (staleEvaluation.summary) {
+      staleRules.push(staleEvaluation.summary);
+    }
 
     for (const eventType of evaluation.events) {
       cycleCounters.triggersSeen += 1;
@@ -837,6 +1217,29 @@ async function runWatchCycle(options = {}) {
         ...(nextRuleState.lastAlertAtByType || {}),
         [eventType]: nowMs,
       };
+    }
+
+    if (staleEvaluation.event === 'stale' && payload) {
+      cycleCounters.staleRulesDetected += 1;
+      const lastAlertAt = previousRuleState?.lastAlertAtByType?.stale;
+      if (shouldAlert(lastAlertAt, cooldownMs, nowMs)) {
+        const stalePayload = {
+          ...payload,
+          staleRule: staleEvaluation.summary,
+        };
+        alerts.push({
+          eventType: 'stale',
+          ruleId: rule.id,
+          ticker: payload.ticker,
+          rule,
+          message: formatOracleAlert('stale', rule, stalePayload, mode),
+          payload: stalePayload,
+        });
+        nextRuleState.lastAlertAtByType = {
+          ...(nextRuleState.lastAlertAtByType || {}),
+          stale: nowMs,
+        };
+      }
     }
     nextRulesState[rule.id] = nextRuleState;
   }
@@ -882,12 +1285,15 @@ async function runWatchCycle(options = {}) {
       triggersInvalidated: Number(counters.triggersInvalidated || 0) + cycleCounters.triggersInvalidated,
       triggersActedOn: Number(counters.triggersActedOn || 0),
       alertsSent: Number(counters.alertsSent || 0) + alerts.length,
+      staleRulesDetected: Number(counters.staleRulesDetected || 0) + cycleCounters.staleRulesDetected,
       lastCycleSeen: cycleCounters.triggersSeen,
       lastCycleFired: cycleCounters.triggersFired,
       lastCycleAlertCount: alerts.length,
+      lastCycleStaleCount: staleRules.length,
     },
     marketByTicker: context.marketByTicker,
     rules: nextRulesState,
+    staleRules,
     lastError: null,
     lastFailureAt: null,
   };
@@ -992,8 +1398,13 @@ module.exports = {
   normalizeMode,
   loadRulesConfig,
   loadWatchState,
+  resolveStaleRulePolicy,
   getRuleThreshold,
   getRuleFloor,
+  getRuleReference,
+  buildRuleRefreshProposal,
+  evaluateRuleStaleness,
+  collectStaleRules,
   getLastCloses,
   buildAlertPayload,
   formatOracleAlert,
