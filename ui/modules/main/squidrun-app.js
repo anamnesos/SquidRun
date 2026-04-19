@@ -104,6 +104,7 @@ const {
 const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
 const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
+const { executeAppControlAction } = require('./app-control-service');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
@@ -2595,6 +2596,17 @@ class SquidRunApp {
                 currentSettings: this.ctx.currentSettings,
                 recoveryManager: this.ctx.recoveryManager,
                 agentRunning: this.ctx.agentRunning,
+              },
+              data.message.action,
+              data.message.payload || {}
+            );
+          }
+
+          if (data.message.type === 'app-control') {
+            return executeAppControlAction(
+              {
+                mainWindow: this.ctx.mainWindow,
+                getAppWindows: () => this.getAppWindows(),
               },
               data.message.action,
               data.message.payload || {}
