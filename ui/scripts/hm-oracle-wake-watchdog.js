@@ -8,6 +8,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: t
 
 const { resolveCoordPath } = require('../config');
 const { sendAgentAlert } = require('./hm-agent-alert');
+const { buildOracleWakeMessage } = require('./hm-oracle-wake-context');
 
 const DEFAULT_STATE_PATH = resolveCoordPath(path.join('runtime', 'oracle-wake-state.json'), { forWrite: true });
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
@@ -52,8 +53,17 @@ function defaultState() {
   };
 }
 
-function buildWakeMessage() {
-  return '(ARCHITECT ORACLE-WAKE): scan now and emit signal directly to architect if any name is armed.';
+async function buildWakeMessage(options = {}) {
+  return buildOracleWakeMessage(
+    '(ARCHITECT ORACLE-WAKE): scan now and emit signal directly to architect if any name is armed.',
+    {
+      watchRulesPath: options.watchRulesPath,
+      watchStatePath: options.watchStatePath,
+      marketScannerStatePath: options.marketScannerStatePath,
+      staleDistancePct: options.staleDistancePct,
+      nowMs: options.nowMs,
+    }
+  );
 }
 
 function loadState(statePath = DEFAULT_STATE_PATH) {
@@ -97,12 +107,12 @@ async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function runWakeCycle(options = {}) {
+async function runWakeCycle(options = {}) {
   const nowIso = new Date().toISOString();
   const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
   const intervalMs = Math.max(60_000, toNumber(options.intervalMs, DEFAULT_INTERVAL_MS));
   const previousState = loadState(statePath);
-  const message = toText(options.message, buildWakeMessage());
+  const message = toText(options.message, await buildWakeMessage(options));
   const alertResult = sendAgentAlert(message, {
     targets: ['oracle'],
     role: 'oracle-wake-watchdog',
@@ -133,13 +143,13 @@ async function runCli(argv = parseCliArgs()) {
   const intervalMs = Math.max(60_000, toNumber(getOption(argv.options, 'interval-ms', DEFAULT_INTERVAL_MS), DEFAULT_INTERVAL_MS));
 
   if (command === 'once') {
-    const result = runWakeCycle({ statePath, intervalMs });
+    const result = await runWakeCycle({ statePath, intervalMs });
     console.log(JSON.stringify(result, null, 2));
     return result;
   }
 
   while (true) {
-    const result = runWakeCycle({ statePath, intervalMs });
+    const result = await runWakeCycle({ statePath, intervalMs });
     console.log(JSON.stringify(result, null, 2));
     await sleep(intervalMs);
   }
