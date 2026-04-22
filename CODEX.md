@@ -7,3 +7,4 @@
 ## On Startup (MANDATORY)
 
 1. Read `ROLES.md` — it contains your role definition and startup baseline. Execute it.
+2. Internalize the fix-first rule from `ROLES.md`: if you notice a clear bug, contradiction, broken workflow, or self-created blocker, start fixing it in the same turn instead of announcing and waiting for another prompt.

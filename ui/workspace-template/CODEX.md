@@ -46,6 +46,7 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 4. If `session` > 1: Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 5. For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
 6. Then follow the full startup baseline in `ROLES.md`.
+7. Internalize the fix-first rule from `ROLES.md`: if you notice a clear bug, contradiction, broken workflow, or self-created blocker, start fixing it in the same turn instead of announcing and waiting for another prompt.
 
 ## User Profile
 
