@@ -50,3 +50,4 @@ Before ANY agent states "we can't", "we don't have access", "there is no tool", 
 1. Read `ROLES.md` — it contains your role definition and startup baseline. Execute it.
 2. Main window: do NOT force-load Eunbyeol case files by default. That context is injected through the dedicated Eunbyeol window startup path.
 3. Read `workspace/knowledge/trading-operations.md` for live trading state.
+4. Internalize the fix-first rule from `ROLES.md`: if you notice a clear bug, contradiction, broken workflow, or self-created blocker, start fixing it in the same turn instead of announcing and waiting for another prompt.
