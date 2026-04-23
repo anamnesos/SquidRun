@@ -8229,7 +8229,9 @@ class SupervisorDaemon {
 
     this.memoryIndexWatcher.on('all', (eventName, changedPath) => {
       const relPath = String(changedPath || '');
-      this.logger.info(`Memory index watcher event ${eventName}: ${relPath}`);
+      // Per-file event logs were noisy in the pane when a burst of memory
+      // files saved. The aggregate "Memory index refresh complete: ..." line
+      // still fires once per debounced batch and is the useful signal.
       this.scheduleMemoryIndexRefresh(`${eventName}:${path.basename(relPath)}`);
     });
 
