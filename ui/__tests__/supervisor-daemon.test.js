@@ -80,6 +80,23 @@ jest.mock('../modules/trading/hyperliquid-client', () => ({
   getUniverseMarketData: jest.fn().mockResolvedValue([]),
 }));
 
+jest.mock('../modules/trading/spark-capture', () => ({
+  DEFAULT_SPARK_STATE_PATH: '/tmp/spark-state.json',
+  DEFAULT_SPARK_EVENTS_PATH: '/tmp/spark-events.jsonl',
+  DEFAULT_SPARK_FIREPLANS_PATH: '/tmp/spark-fireplans.json',
+  DEFAULT_SPARK_WATCHLIST_PATH: '/tmp/spark-watchlist.json',
+  runSparkScan: jest.fn().mockResolvedValue({
+    ok: true,
+    scannedAt: '2026-04-23T09:00:00.000Z',
+    upbitListingCount: 1,
+    hyperliquidListingCount: 0,
+    tokenUnlockCount: 1,
+    newAlertEvents: [],
+    firePlans: [],
+    alertMessage: '',
+  }),
+}));
+
 jest.mock('../modules/trading/hyperliquid-native-layer', () => ({
   buildNativeFeatureBundle: jest.fn().mockResolvedValue({
     ok: true,
@@ -114,6 +131,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
+const sparkCapture = require('../modules/trading/spark-capture');
 const executor = require('../modules/trading/executor');
 const macroRiskGate = require('../modules/trading/macro-risk-gate');
 const tradingWatchlist = require('../modules/trading/watchlist');
@@ -608,6 +626,108 @@ describe('supervisor-daemon integrations', () => {
     expect(restartDelayMs).toBe(daemon.pollMs);
 
     daemon.lastOracleWatchRunAtMs = Date.now();
+    daemon.lastOracleWatchRelaunchAtMs = 0;
+    const recoveredResult = await daemon.maybeRunOracleWatchEngine(Date.now());
+    const recoveredState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+
+    expect(recoveredResult).toEqual(expect.objectContaining({ ok: true, alertCount: 0 }));
+    expect(daemon.lastOracleWatchSummary).toEqual(expect.objectContaining({
+      status: 'ok',
+      statePath,
+      rulesPath,
+    }));
+    expect(recoveredState.heartbeat).toEqual(expect.objectContaining({
+      stale: false,
+      state: 'green',
+    }));
+    expect(new Date(recoveredState.heartbeat.lastTickAt).getTime()).toBeGreaterThan(new Date(staleAt).getTime());
+    expect(daemon.logger.warn).toHaveBeenCalledWith(expect.stringContaining('forcing relaunch'));
+  });
+
+  test('restarts the oracle watch lane after rate-limit backoff expires even if the state file still says backoff', async () => {
+    const rulesPath = path.join(tempRoot, 'oracle-watch-rules.json');
+    const statePath = path.join(tempRoot, 'oracle-watch-state.json');
+    const scriptPath = path.join(tempRoot, 'oracle-watch-backoff-expired-recover.js');
+    const staleAt = '2026-04-20T05:52:33.876Z';
+    const expiredBackoffAt = '2026-04-20T06:04:25.574Z';
+
+    fs.writeFileSync(rulesPath, JSON.stringify({
+      mode: 'normal',
+      pollIntervalMs: 120000,
+      macroPollIntervalMs: 5000,
+      targets: ['oracle'],
+      symbols: ['BTC/USD', 'ETH/USD', 'SOL/USD'],
+      hotSymbols: [],
+      rules: [],
+    }, null, 2));
+    fs.writeFileSync(statePath, JSON.stringify({
+      version: 2,
+      updatedAt: '2026-04-20T16:30:07.245Z',
+      heartbeat: {
+        lastTickAt: staleAt,
+        intervalMs: 120000,
+        stale: false,
+        state: 'backoff',
+        lastErrorAt: '2026-04-20T06:00:25.574Z',
+        backoffUntil: expiredBackoffAt,
+      },
+      rateLimit: {
+        consecutive429s: 1,
+        backoffUntil: expiredBackoffAt,
+        last429At: '2026-04-20T06:00:25.574Z',
+        lastBackoffMs: 240000,
+        lastError: '429 Too Many Requests - null',
+      },
+      counters: {},
+      rules: {},
+    }, null, 2));
+    fs.writeFileSync(scriptPath, [
+      "const fs = require('fs');",
+      "const args = process.argv.slice(2);",
+      "const statePath = args[args.indexOf('--state') + 1];",
+      "const now = new Date().toISOString();",
+      "fs.writeFileSync(statePath, JSON.stringify({",
+      "  version: 2,",
+      "  updatedAt: now,",
+      "  mode: 'normal',",
+      "  heartbeat: { lastTickAt: now, intervalMs: 120000, stale: false, state: 'green' },",
+      "  counters: { triggersSeen: 0, triggersArmed: 0, triggersFired: 0, triggersInvalidated: 0, triggersActedOn: 0, alertsSent: 0, lastCycleSeen: 0, lastCycleFired: 0, lastCycleAlertCount: 0 },",
+      "  rateLimit: { consecutive429s: 0, backoffUntil: null, last429At: '2026-04-20T06:00:25.574Z', lastBackoffMs: 240000, lastError: null },",
+      "  marketByTicker: {},",
+      "  rules: {},",
+      "  lastError: null,",
+      "  lastFailureAt: null",
+      "}, null, 2));",
+      "console.log(JSON.stringify({ ok: true, alertCount: 0, alerts: [] }));",
+    ].join('\n'));
+
+    daemon = new SupervisorDaemon({
+      projectRoot: tempRoot,
+      store: createMockStore(),
+      logger: createMockLogger(),
+      env: process.env,
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: false,
+      newsScanEnabled: false,
+      pendingFollowupEnabled: false,
+      marketResearchEnabled: false,
+      eunbyeolCheckInEnabled: false,
+      pidPath: path.join(tempRoot, 'oracle-watch-backoff-expired-restart.pid'),
+      statusPath: path.join(tempRoot, 'oracle-watch-backoff-expired-status.json'),
+      logPath: path.join(tempRoot, 'oracle-watch-backoff-expired.log'),
+      taskLogDir: path.join(tempRoot, 'oracle-watch-backoff-expired-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'oracle-watch-backoff-expired-wake.signal'),
+      oracleWatchEnabled: true,
+      oracleWatchEngineScriptPath: scriptPath,
+      oracleWatchRulesPath: rulesPath,
+      oracleWatchStatePath: statePath,
+      saylorWatcherEnabled: false,
+      hyperliquidSqueezeDetectorEnabled: false,
+    });
+
     const recoveredResult = await daemon.maybeRunOracleWatchEngine(Date.now());
     const recoveredState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 
@@ -912,6 +1032,66 @@ describe('supervisor-daemon integrations', () => {
     } finally {
       await monitorDaemon.stop('test-cleanup-hyperliquid-monitor');
     }
+  });
+
+  test('pauses the Hyperliquid monitor while manual Hyperliquid activity is active', async () => {
+    const hyperliquidMonitorOrchestrator = {
+      runDefiMonitorCycle: jest.fn(),
+    };
+    const manualActivityPath = path.join(tempRoot, 'hyperliquid-manual-activity.json');
+    fs.writeFileSync(manualActivityPath, JSON.stringify({
+      ownerId: 'manual-lock',
+      command: 'hm-defi-execute',
+      caller: 'manual',
+      pid: 4242,
+      startedAt: '2026-04-23T00:00:00.000Z',
+      lastHeartbeatAt: '2026-04-23T00:00:05.000Z',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      metadata: {
+        argv: ['trade', '--asset', 'AAVE'],
+      },
+    }, null, 2));
+
+    const monitorDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      smartMoneyScanner: null,
+      circuitBreaker: null,
+      cryptoTradingEnabled: false,
+      tradingEnabled: false,
+      polymarketTradingEnabled: false,
+      hyperliquidMonitorEnabled: true,
+      hyperliquidExecutor: {},
+      hyperliquidManualActivityPath: manualActivityPath,
+      hyperliquidMonitorOrchestrator,
+      pidPath: path.join(tempRoot, 'hyperliquid-monitor-pause.pid'),
+      statusPath: path.join(tempRoot, 'hyperliquid-monitor-pause-status.json'),
+      logPath: path.join(tempRoot, 'hyperliquid-monitor-pause.log'),
+      taskLogDir: path.join(tempRoot, 'hyperliquid-monitor-pause-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'hyperliquid-monitor-pause-wake.signal'),
+    });
+    monitorDaemon.writeStatus = jest.fn();
+
+    const result = await monitorDaemon.runHyperliquidPositionMonitorCycle('manual');
+
+    expect(hyperliquidMonitorOrchestrator.runDefiMonitorCycle).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: true,
+      reason: 'manual_hyperliquid_activity',
+      manualActivity: expect.objectContaining({
+        command: 'hm-defi-execute',
+        caller: 'manual',
+      }),
+    }));
+    expect(monitorDaemon.lastHyperliquidMonitorSummary).toEqual(expect.objectContaining({
+      status: 'paused_for_manual_activity',
+      riskExit: expect.objectContaining({
+        reason: 'manual_activity_pause',
+      }),
+    }));
   });
 
   test('enables the Hyperliquid monitor with HYPERLIQUID_WALLET_ADDRESS fallback', async () => {
@@ -2213,6 +2393,7 @@ describe('supervisor-daemon integrations', () => {
             markPrice: 2080.5,
             liquidationPx: 2361.69,
             stopLossPrice: 2075,
+            stopLossVerifiedAt: '2026-03-29T01:04:59.000Z',
             peakUnrealizedPnl: 17.46,
             retainedPeakRatio: -0.4651,
             drawdownFromPeakPct: 1,
@@ -3342,6 +3523,8 @@ describe('supervisor-daemon integrations', () => {
   });
 
   test('runs a proactive news scan loop and stores level-0 results without Telegram spam', async () => {
+    const originalNewsAutomation = process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
+    process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = '1';
     const newsDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
@@ -3395,11 +3578,18 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][NEWS]');
       expect(notifySpy).not.toHaveBeenCalled();
     } finally {
+      if (originalNewsAutomation == null) {
+        delete process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = originalNewsAutomation;
+      }
       await newsDaemon.stop('test-cleanup-news-scan');
     }
   });
 
   test('routes a level-2 news scan alert to Architect only when it hits a live position', async () => {
+    const originalNewsAutomation = process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
+    process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = '1';
     const newsDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
@@ -3455,11 +3645,18 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy).toHaveBeenCalledTimes(1);
       expect(notifySpy).not.toHaveBeenCalled();
     } finally {
+      if (originalNewsAutomation == null) {
+        delete process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = originalNewsAutomation;
+      }
       await newsDaemon.stop('test-cleanup-news-scan-alert');
     }
   });
 
   test('keeps Eunbyeol-blocked pending follow-ups internal instead of alerting James', async () => {
+    const originalPendingAutomation = process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
+    process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = '1';
     const caseOperationsPath = path.join(tempRoot, 'case-operations.md');
     fs.writeFileSync(caseOperationsPath, [
       '## ACTIVE PENDING ITEMS',
@@ -3513,11 +3710,18 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][FOLLOWUPS]');
       expect(notifySpy).not.toHaveBeenCalled();
     } finally {
+      if (originalPendingAutomation == null) {
+        delete process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = originalPendingAutomation;
+      }
       await proactiveDaemon.stop('test-cleanup-pending-followups');
     }
   });
 
   test('routes James-owned pending follow-up items to Architect for decision, not Telegram', async () => {
+    const originalPendingAutomation = process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
+    process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = '1';
     const caseOperationsPath = path.join(tempRoot, 'case-operations-james.md');
     fs.writeFileSync(caseOperationsPath, [
       '## ACTIVE PENDING ITEMS',
@@ -3563,11 +3767,18 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy).toHaveBeenCalledTimes(1);
       expect(notifySpy).not.toHaveBeenCalled();
     } finally {
+      if (originalPendingAutomation == null) {
+        delete process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = originalPendingAutomation;
+      }
       await proactiveDaemon.stop('test-cleanup-pending-followups-james');
     }
   });
 
   test('runs market research automation and stores a macro-plus-news summary without Telegram spam by default', async () => {
+    const originalResearchAutomation = process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION;
+    process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = '1';
     jest.spyOn(macroRiskGate, 'assessMacroRisk').mockResolvedValueOnce({
       regime: 'red',
       score: 55,
@@ -3631,11 +3842,18 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][RESEARCH]');
       expect(notifySpy).not.toHaveBeenCalled();
     } finally {
+      if (originalResearchAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = originalResearchAutomation;
+      }
       await researchDaemon.stop('test-cleanup-market-research');
     }
   });
 
   test('drafts an Eunbyeol check-in after 24 hours of silence without auto-sending it', async () => {
+    const originalCheckInAutomation = process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION;
+    process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION = '1';
     const caseOperationsPath = path.join(tempRoot, 'eunbyeol-case-operations.md');
     fs.writeFileSync(caseOperationsPath, [
       '## ACTIVE PENDING ITEMS',
@@ -3694,6 +3912,11 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][EUNBYEOL]');
       expect(notifySpy).not.toHaveBeenCalled();
     } finally {
+      if (originalCheckInAutomation == null) {
+        delete process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION = originalCheckInAutomation;
+      }
       await checkInDaemon.stop('test-cleanup-eunbyeol-checkin');
     }
   });
@@ -3754,7 +3977,81 @@ describe('supervisor-daemon integrations', () => {
     }
   });
 
+  test('runs the spark monitor lane and alerts Architect and Telegram on new catalyst events', async () => {
+    sparkCapture.runSparkScan.mockResolvedValueOnce({
+      ok: true,
+      scannedAt: '2026-04-23T09:01:00.000Z',
+      upbitListingCount: 1,
+      hyperliquidListingCount: 1,
+      tokenUnlockCount: 1,
+      newAlertEvents: [
+        { eventKey: 'upbit:9999', tickers: ['CHIP/USD'] },
+      ],
+      firePlans: [],
+      alertMessage: '[LIVE SPARK] New catalyst alerts\n- UPBIT Test notice | CHIP/USD | entry 0.1-0.101 stop 0.097 tp1 0.12',
+    });
+
+    const sparkDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: false,
+      newsScanEnabled: false,
+      pendingFollowupEnabled: false,
+      marketResearchEnabled: false,
+      tokenomistEnabled: false,
+      sparkMonitorEnabled: true,
+      sparkMonitorIntervalMinutes: 1,
+      pidPath: path.join(tempRoot, 'spark.pid'),
+      statusPath: path.join(tempRoot, 'spark-status.json'),
+      logPath: path.join(tempRoot, 'spark.log'),
+      taskLogDir: path.join(tempRoot, 'spark-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'spark-wake.signal'),
+      sparkMonitorStatePath: path.join(tempRoot, 'spark-monitor-state.json'),
+      sparkMonitorDataStatePath: path.join(tempRoot, 'spark-state.json'),
+      sparkMonitorEventsPath: path.join(tempRoot, 'spark-events.jsonl'),
+      sparkMonitorFirePlansPath: path.join(tempRoot, 'spark-fireplans.json'),
+      sparkMonitorWatchlistPath: path.join(tempRoot, 'spark-watchlist.json'),
+    });
+
+    try {
+      sparkDaemon.sparkMonitorState.lastProcessedAt = '2026-04-23T08:58:00.000Z';
+      sparkDaemon.notifyArchitectInternal = jest.fn();
+      sparkDaemon.notifyTelegramTrading = jest.fn();
+
+      const result = await sparkDaemon.maybeRunSparkAutomation(Date.parse('2026-04-23T09:01:30.000Z'));
+
+      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
+      expect(sparkCapture.runSparkScan).toHaveBeenCalledWith(expect.objectContaining({
+        statePath: path.join(tempRoot, 'spark-state.json'),
+        eventsPath: path.join(tempRoot, 'spark-events.jsonl'),
+        firePlansPath: path.join(tempRoot, 'spark-fireplans.json'),
+        watchlistPath: path.join(tempRoot, 'spark-watchlist.json'),
+      }));
+      expect(sparkDaemon.lastSparkMonitorSummary).toEqual(expect.objectContaining({
+        status: 'scan_complete',
+        alertCount: 1,
+        upbitListingCount: 1,
+        hyperliquidListingCount: 1,
+        tokenUnlockCount: 1,
+      }));
+      expect(sparkDaemon.notifyArchitectInternal).toHaveBeenCalledWith(
+        '[LIVE SPARK] New catalyst alerts\n- UPBIT Test notice | CHIP/USD | entry 0.1-0.101 stop 0.097 tp1 0.12',
+        'spark_monitor'
+      );
+      expect(sparkDaemon.notifyTelegramTrading).toHaveBeenCalledWith(
+        expect.stringContaining('[LIVE SPARK] New catalyst alerts')
+      );
+    } finally {
+      await sparkDaemon.stop('test-cleanup-spark-monitor');
+    }
+  });
+
   test('runs the market scanner loop and alerts Architect on newly flagged movers', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
@@ -3833,8 +4130,10 @@ describe('supervisor-daemon integrations', () => {
       jest.spyOn(scanDaemon, 'filterExecutableMarketScannerMovers').mockResolvedValue([]);
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
-      const result = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const result = await scanDaemon.marketScannerPhasePromise;
 
+      expect(started).toEqual(expect.objectContaining({ ok: true, skipped: false, started: true }));
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(scanDaemon.marketScanner.runMarketScan).toHaveBeenCalledTimes(1);
       expect(scanDaemon.lastMarketScannerSummary).toEqual(expect.objectContaining({
@@ -3849,11 +4148,17 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][MARKET]');
       expect(architectSpy.mock.calls[0][0]).toContain('AVAX');
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner');
     }
-  });
+  }, 30000);
 
   test('triggers an immediate crypto mini-consultation for 3%+ 4h scanner movers and promotes them into the watchlist first', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
@@ -3954,8 +4259,10 @@ describe('supervisor-daemon integrations', () => {
       ]));
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
-      const result = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const result = await scanDaemon.marketScannerPhasePromise;
 
+      expect(started).toEqual(expect.objectContaining({ ok: true, skipped: false, started: true }));
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(result.executed?.[0]).toEqual(expect.objectContaining({
         urgentPromotedSymbols: expect.arrayContaining(['BOME/USD']),
@@ -3969,11 +4276,17 @@ describe('supervisor-daemon integrations', () => {
       }));
       expect(architectSpy).toHaveBeenCalledTimes(1);
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner-immediate');
     }
-  });
+  }, 15000);
 
   test('triggers an immediate crypto mini-consultation from current urgent 4h flagged movers even when no new alerts are emitted', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
@@ -4051,8 +4364,10 @@ describe('supervisor-daemon integrations', () => {
       ]));
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
-      const result = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const result = await scanDaemon.marketScannerPhasePromise;
 
+      expect(started).toEqual(expect.objectContaining({ ok: true, skipped: false, started: true }));
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(result.executed?.[0]).toEqual(expect.objectContaining({
         urgentMovers: expect.arrayContaining([
@@ -4067,11 +4382,17 @@ describe('supervisor-daemon integrations', () => {
         trigger: 'market_scanner',
       }));
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner-urgent-existing');
     }
   });
 
   test('filters non-executable market-scanner movers before triggering immediate consultation', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
@@ -4146,6 +4467,7 @@ describe('supervisor-daemon integrations', () => {
 
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
       await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      await scanDaemon.marketScannerPhasePromise;
 
       expect(architectSpy).toHaveBeenCalledTimes(1);
       expect(architectSpy.mock.calls[0][0]).toContain('Tracked pairs: 229');
@@ -4153,6 +4475,11 @@ describe('supervisor-daemon integrations', () => {
         symbols: ['AVAX/USD'],
       }), expect.any(Object));
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner-filter');
     }
   });
@@ -4615,7 +4942,7 @@ describe('supervisor-daemon integrations', () => {
     writeSpy.mockRestore();
   });
 
-  test('dispatches per-agent paper trading prompts and applies a valid builder response with audit logging', async () => {
+  test('returns the paper-trading deletion sentinel instead of dispatching agent prompts', async () => {
     const tradingDir = path.join(tempRoot, 'workspace', 'agent-trading');
     fs.mkdirSync(tradingDir, { recursive: true });
     for (const agentId of ['architect', 'builder', 'oracle']) {
@@ -4659,59 +4986,12 @@ describe('supervisor-daemon integrations', () => {
       },
     };
 
-    const firstSummary = await daemon.maybeRunPaperTradingAutomation(Date.parse('2026-04-16T20:00:00.000Z'));
-    expect(firstSummary.dispatched).toBe(3);
-    expect(daemon.dispatchAgentQueuedTask).toHaveBeenCalledTimes(3);
-
-    const builderRequestId = daemon.paperTradingAutomationState.agents.builder.pendingRequestId;
-    queryCommsJournalEntries.mockImplementation(({ senderRole }) => {
-      if (senderRole !== 'builder') return [];
-      return [{
-        rawBody: `[AGENT MSG - reply via hm-send.js] (BUILDER #42): ${JSON.stringify({
-          requestId: builderRequestId,
-          agentId: 'builder',
-          action: {
-            type: 'open',
-            ticker: 'BTC/USD',
-            side: 'LONG',
-            marginUsd: 100,
-            leverage: 5,
-          },
-          rationale: 'Opening a paper BTC long on the cycle wake.',
-          stopDeclaration: {
-            type: 'stop_loss',
-            price: 74220,
-            note: 'Hard invalidation.',
-          },
-        })}`,
-      }];
+    const result = await daemon.maybeRunPaperTradingAutomation(Date.parse('2026-04-16T20:00:00.000Z'));
+    expect(result).toEqual({
+      ok: false,
+      skipped: true,
+      reason: 'paper_trading_automation_deleted',
     });
-
-    await daemon.maybeRunPaperTradingAutomation(Date.parse('2026-04-16T20:01:00.000Z'));
-    expect(daemon.lastPaperTradingAutomationSummary).toEqual(expect.objectContaining({
-      enabled: true,
-    }));
-
-    const builderPortfolio = JSON.parse(fs.readFileSync(path.join(tradingDir, 'builder-portfolio.json'), 'utf8'));
-    expect(builderPortfolio.openPositions).toHaveLength(1);
-    expect(builderPortfolio.openPositions[0]).toEqual(expect.objectContaining({
-      ticker: 'BTC/USD',
-      side: 'LONG',
-    }));
-
-    const auditLogPath = path.join(tradingDir, 'paper-trading-actions.jsonl');
-    const auditLines = fs.readFileSync(auditLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-    expect(auditLines).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'paper_trading_request_dispatched',
-        agentId: 'builder',
-        requestId: builderRequestId,
-      }),
-      expect.objectContaining({
-        kind: 'paper_trading_response_applied',
-        agentId: 'builder',
-        requestId: builderRequestId,
-      }),
-    ]));
+    expect(daemon.dispatchAgentQueuedTask).not.toHaveBeenCalled();
   });
 });

@@ -589,9 +589,7 @@ function buildFirePlan(event = {}, context = {}) {
       trailing1hHigh: round(stats1h.high, 8),
       trailing1hLow: round(stats1h.low, 8),
     },
-    note: direction === 'BUY'
-      ? 'Manual approve only. Route to Architect then James confirmation before execution.'
-      : 'Manual approve only. Route to Architect then James confirmation before execution.',
+    note: '',
   };
 }
 
@@ -631,7 +629,6 @@ function buildAlertMessage(result = {}) {
       + `${plan?.ready ? ` | entry ${plan.entryZone.lower}-${plan.entryZone.upper} stop ${plan.stopPrice} tp1 ${plan.takeProfit1}` : ' | plan pending / non-tradeable on HL'}`
     );
   }
-  lines.push('Manual approve only. No auto-execute.');
   return lines.join('\n');
 }
 
