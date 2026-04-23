@@ -8,6 +8,7 @@ const path = require('path');
 
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
 const {
+  inspectTokenomistSource,
   parseTokenUnlockRows,
   runScan,
 } = require('../scripts/hm-tokenomist-unlocks');
@@ -63,6 +64,10 @@ describe('hm-tokenomist-unlocks', () => {
       });
 
       expect(result.ok).toBe(true);
+      expect(result.sourceFreshness).toEqual(expect.objectContaining({
+        exists: true,
+        stale: false,
+      }));
       expect(result.unlocks).toEqual(expect.arrayContaining([
         expect.objectContaining({
           token: 'APT',
@@ -73,6 +78,31 @@ describe('hm-tokenomist-unlocks', () => {
           hyperliquidVolumeUsd24h: 45678901,
         }),
       ]));
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('reports stale source metadata after the 12 hour hard block threshold', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-tokenomist-source-test-'));
+    const sourcePath = path.join(tempRoot, 'tokenomist-current.yml');
+    fs.writeFileSync(sourcePath, 'row "Picture of OP token OP $0.123 +1.23% $123.00M 50.00% $9.81M 0.68% 0 D 4 H 3 M 51 S $10.77M 0.75%"');
+    const staleTime = Date.parse('2026-04-15T00:00:00.000Z') - (13 * 60 * 60 * 1000);
+    fs.utimesSync(sourcePath, staleTime / 1000, staleTime / 1000);
+
+    try {
+      const status = inspectTokenomistSource(sourcePath, {
+        now: '2026-04-15T00:00:00.000Z',
+      });
+
+      expect(status).toEqual(expect.objectContaining({
+        exists: true,
+        stale: true,
+        warn: true,
+        warning: expect.objectContaining({
+          kind: 'stale_tokenomist_source',
+        }),
+      }));
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
