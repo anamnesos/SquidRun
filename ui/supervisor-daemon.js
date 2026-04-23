@@ -27,12 +27,18 @@ const tradingOrchestrator = require('./modules/trading/orchestrator');
 const tradingScheduler = require('./modules/trading/scheduler');
 const tradingWatchlist = require('./modules/trading/watchlist');
 const dynamicWatchlist = require('./modules/trading/dynamic-watchlist');
+const oracleWatchRegime = require('./modules/trading/oracle-watch-regime');
 const tradingRiskEngine = require('./modules/trading/risk-engine');
 const consensusSizer = require('./modules/trading/consensus-sizer');
 const convictionEngine = require('./modules/trading/conviction-engine');
 const rangeStructure = require('./modules/trading/range-structure');
 const [private-live-ops]Client = require('./modules/trading/[private-live-ops]-client');
 const [private-live-ops]NativeLayer = require('./modules/trading/[private-live-ops]-native-layer');
+const {
+  DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH,
+  readManual[private-live-ops]Activity,
+  isManual[private-live-ops]ActivityActive,
+} = require('./modules/trading/[private-live-ops]-manual-activity');
 const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
 const macroRiskGate = require('./modules/trading/macro-risk-gate');
 const { CircuitBreaker } = require('./modules/trading/circuit-breaker');
@@ -43,6 +49,7 @@ const polymarketSizer = require('./modules/trading/polymarket-sizer');
 const launchRadar = require('./modules/trading/launch-radar');
 const yieldRouterModule = require('./modules/trading/yield-router');
 const marketScannerModule = require('./modules/trading/market-scanner');
+const sparkCapture = require('./modules/trading/spark-capture');
 const paperTradingAutomation = require('./modules/trading/paper-trading-automation');
 const predictionTrackerModule = require('./modules/trading/prediction-tracker');
 const eventVeto = require('./modules/trading/event-veto');
@@ -60,6 +67,25 @@ const CONSULTATION_NATIVE_FUNDING_MAX_AGE_MS = 15 * 60 * 1000;
 try {
   require('dotenv').config({ path: path.join(getProjectRoot(), '.env'), quiet: true, override: true });
 } catch {}
+
+// [private-profile] profile MUST NOT spawn wallet-touching trading lanes. The dotenv.config
+// call above uses override:true and would clobber any pre-set process.env values
+// that ui/profile.js applyProfileEnv tried to inject. So we re-apply the private-profile
+// disable AFTER the .env load. Belt + suspenders: kill all SQUIDRUN_* trading flags
+// AND blank the HL credentials so even if a lane slipped through, has[private-live-ops]Credentials returns false.
+if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'private-profile') {
+  process.env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
+  process.env.SQUIDRUN_ORACLE_WATCH = '0';
+  process.env.SQUIDRUN_PAPER_TRADING_AUTOMATION = '0';
+  process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION = '0';
+  process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
+  process.env.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR = '0';
+  process.env.SQUIDRUN_LIVE_OPS_MONITOR = '0';
+  process.env.LIVE_OPS_WALLET_ADDRESS = '';
+  process.env.LIVE_OPS_ADDRESS = '';
+  process.env.POLYMARKET_FUNDER_ADDRESS = '';
+  process.env.LIVE_OPS_PRIVATE_KEY = '';
+}
 
 function hardenStandardStream(stream, { silence = false } = {}) {
   if (!stream || typeof stream.write !== 'function') {
@@ -165,6 +191,7 @@ const DEFAULT_NEWS_SCAN_STATE_PATH = resolveRuntimePath('news-scan-supervisor-st
 const DEFAULT_PENDING_FOLLOWUP_STATE_PATH = resolveRuntimePath('pending-followup-supervisor-state.json');
 const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
 const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
+const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-supervisor-state.json');
 const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-state.json');
 const DEFAULT_ORACLE_WATCH_RULES_PATH = resolveRuntimePath('oracle-watch-rules.json');
 const DEFAULT_ORACLE_WATCH_STATE_PATH = resolveRuntimePath('oracle-watch-state.json');
@@ -188,6 +215,7 @@ const DEFAULT_ORACLE_WATCH_MACRO_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_MACRO_INTERVAL_MS || '5000', 10) || 5_000
 );
+const DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS = 5 * 60 * 1000;
 const ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS = 60_000;
 const DEFAULT_LIVE_OPS_MONITOR_POLL_MS = Math.max(
   60_000,
@@ -256,6 +284,7 @@ const EUNBYEOL_CHECKIN_PHASES = Object.freeze([
 const DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
+const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
 const DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES = 30;
 const DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS = Math.max(
@@ -351,6 +380,17 @@ function buildOracleWatchHeartbeat(summary = {}, state = {}) {
     stale,
     state: stale ? 'red' : 'green',
   };
+}
+
+function resolveOracleWatchBackoffUntilMs(state = {}, nowMs = Date.now()) {
+  const heartbeatBackoffMs = new Date(state?.heartbeat?.backoffUntil || '').getTime();
+  const rateLimitBackoffMs = new Date(state?.rateLimit?.backoffUntil || '').getTime();
+  const backoffUntilMs = Math.max(
+    Number.isFinite(heartbeatBackoffMs) ? heartbeatBackoffMs : 0,
+    Number.isFinite(rateLimitBackoffMs) ? rateLimitBackoffMs : 0
+  );
+  if (!Number.isFinite(backoffUntilMs) || backoffUntilMs <= nowMs) return null;
+  return backoffUntilMs;
 }
 
 function getTodayRealizedTargetProgress(journalPath, now = new Date()) {
@@ -770,6 +810,10 @@ function create[private-live-ops]Executor(options = {}) {
   const dryRun = options.dryRun === true;
   const defiExecuteScriptPath = options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', cwd);
   const defiCloseScriptPath = options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', cwd);
+  const supervisorEnv = {
+    ...env,
+    SQUIDRUN_LIVE_OPS_CALLER: 'supervisor',
+  };
 
   function normalizeAsset(asset = 'ETH') {
     return String(asset || 'ETH').trim().toUpperCase();
@@ -806,7 +850,7 @@ function create[private-live-ops]Executor(options = {}) {
       }
       return executeNodeScript(defiExecuteScriptPath, args, {
         cwd,
-        env,
+        env: supervisorEnv,
       });
     },
 
@@ -816,7 +860,7 @@ function create[private-live-ops]Executor(options = {}) {
         : ['--asset', normalizeAsset(asset)];
       return executeNodeScript(defiCloseScriptPath, args, {
         cwd,
-        env,
+        env: supervisorEnv,
       });
     },
 
@@ -1038,6 +1082,16 @@ function default[private-live-ops]State() {
   };
 }
 
+function defaultSparkMonitorState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    lastScan: null,
+    updatedAt: null,
+  };
+}
+
 function defaultMarketScannerState() {
   return marketScannerModule.defaultMarketScannerState();
 }
@@ -1200,6 +1254,26 @@ function getNext[private-live-ops]Event(referenceDate = new Date(), options = {}
   for (let offset = 0; offset < 3; offset += 1) {
     const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
     const day = build[private-live-ops]DailySchedule(candidateDate, options);
+    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
+    if (nextEvent) {
+      return {
+        ...nextEvent,
+        day,
+      };
+    }
+  }
+  return null;
+}
+
+function buildSparkMonitorDailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, [{ key: 'spark_monitor', label: 'Spark monitor scan' }], options.intervalMinutes || DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES);
+}
+
+function getNextSparkMonitorEvent(referenceDate = new Date(), options = {}) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
+    const day = buildSparkMonitorDailySchedule(candidateDate, options);
     const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
     if (nextEvent) {
       return {
@@ -1513,6 +1587,7 @@ class MemoryLeaseJanitor {
 class SupervisorDaemon {
   constructor(options = {}) {
     this.projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+    this.[private-live-ops]ManualActivityPath = options.[private-live-ops]ManualActivityPath || DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH;
     this.hmSendScriptPath = path.resolve(String(options.hmSendScriptPath || resolveProjectUiScriptPath('hm-send.js', this.projectRoot)));
     this.hmDefiStatusScriptPath = path.resolve(String(options.defiStatusScriptPath || resolveProjectUiScriptPath('hm-defi-status.js', this.projectRoot)));
     this.hmDefiExecuteScriptPath = path.resolve(String(options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', this.projectRoot)));
@@ -1635,7 +1710,14 @@ class SupervisorDaemon {
     this.sleepCyclePromise = null;
     this.lastSleepCycleSummary = null;
     this.wakeSignalPath = options.wakeSignalPath || DEFAULT_WAKE_SIGNAL_PATH;
-    this.manualTradingOnly = true;
+    // Previously hardcoded to true → produced manualOnly=true, [private-live-ops]Execution.enabled=false,
+    // approvedTrades=0, convictionSelection=null cascade because consensus + execution phases
+    // all gate on !manualTradingOnly. Now env-gated: set SQUIDRUN_MANUAL_TRADING=0 to allow
+    // the automation phases to run. Default stays true for safety.
+    this.manualTradingOnly = options.manualTradingOnly === false
+      || String(this.runtimeEnv.SQUIDRUN_MANUAL_TRADING || '').trim() === '0'
+      ? false
+      : true;
     this.[private-live-ops]ScalpModeArmed = options.[private-live-ops]ScalpModeArmed === true
       || this.runtimeEnv.SQUIDRUN_LIVE_OPS_SCALP_MODE === '1';
     const stockTradingAutomationRequested = options.tradingEnabled === true
@@ -1741,11 +1823,20 @@ class SupervisorDaemon {
       };
     this.oracleWatchRulesPath = path.resolve(String(options.oracleWatchRulesPath || DEFAULT_ORACLE_WATCH_RULES_PATH));
     this.oracleWatchStatePath = path.resolve(String(options.oracleWatchStatePath || DEFAULT_ORACLE_WATCH_STATE_PATH));
+    this.oracleShortRegimeStatePath = path.resolve(String(
+      options.oracleShortRegimeStatePath || oracleWatchRegime.DEFAULT_SHARED_SHORT_REGIME_STATE_PATH
+    ));
     this.oracleWatchEnabled = options.oracleWatchEnabled !== false
       && readProjectWatcherEnabled(this.projectRoot, true)
       && this.runtimeEnv.SQUIDRUN_ORACLE_WATCH !== '0';
     this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath);
     this.lastOracleWatchRunAtMs = 0;
+    this.lastOracleWatchRelaunchAtMs = 0;
+    this.oracleWatchRelaunchCooldownMs = Math.max(
+      DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS,
+      Number.parseInt(options.oracleWatchRelaunchCooldownMs || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS, 10)
+      || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS
+    );
     this.oracleWatchPromise = null;
     this.oracleWatchStaleAlertActive = false;
     this.lastOracleWatchSummary = this.oracleWatchEnabled
@@ -2217,6 +2308,41 @@ class SupervisorDaemon {
         enabled: false,
         status: 'disabled',
         intervalMinutes: this.[private-live-ops]IntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.sparkMonitorEnabled = options.sparkMonitorEnabled === true
+      || (
+        options.sparkMonitorEnabled !== false
+        && RUNNING_SUPERVISOR_MAIN
+        && process.env.SQUIDRUN_SPARK_MONITOR_AUTOMATION !== '0'
+      );
+    this.sparkMonitorIntervalMinutes = Math.max(
+      1,
+      Math.floor(Number(options.sparkMonitorIntervalMinutes) || DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES)
+    );
+    this.sparkMonitorStatePath = options.sparkMonitorStatePath || DEFAULT_SPARK_MONITOR_STATE_PATH;
+    this.sparkMonitorState = {
+      ...defaultSparkMonitorState(),
+      ...(readJsonFile(this.sparkMonitorStatePath, defaultSparkMonitorState()) || {}),
+    };
+    this.sparkMonitorDataStatePath = options.sparkMonitorDataStatePath || sparkCapture.DEFAULT_SPARK_STATE_PATH;
+    this.sparkMonitorEventsPath = options.sparkMonitorEventsPath || sparkCapture.DEFAULT_SPARK_EVENTS_PATH;
+    this.sparkMonitorFirePlansPath = options.sparkMonitorFirePlansPath || sparkCapture.DEFAULT_SPARK_FIREPLANS_PATH;
+    this.sparkMonitorWatchlistPath = options.sparkMonitorWatchlistPath || sparkCapture.DEFAULT_SPARK_WATCHLIST_PATH;
+    this.sparkMonitorPhasePromise = null;
+    this.lastSparkMonitorSummary = this.sparkMonitorEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
         lastProcessedAt: null,
         nextEvent: null,
       };
@@ -2813,6 +2939,7 @@ class SupervisorDaemon {
     const pendingFollowupResult = await this.maybeRunPendingFollowupAutomation(nowMs);
     const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
     const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
+    const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
@@ -2839,6 +2966,7 @@ class SupervisorDaemon {
       pendingFollowupResult,
       marketResearchResult,
       [private-live-ops]Result,
+      sparkMonitorResult,
       marketScannerResult,
       saylorWatcherResult,
       oracleWatchResult,
@@ -3101,6 +3229,11 @@ class SupervisorDaemon {
   persist[private-live-ops]State() {
     this.[private-live-ops]State.updatedAt = new Date().toISOString();
     writeJsonFile(this.[private-live-ops]StatePath, this.[private-live-ops]State);
+  }
+
+  persistSparkMonitorState() {
+    this.sparkMonitorState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.sparkMonitorStatePath, this.sparkMonitorState);
   }
 
   persistMarketScannerState() {
@@ -3718,41 +3851,11 @@ class SupervisorDaemon {
   }
 
   async maybeRunPaperTradingAutomation(nowMs = Date.now()) {
-    if (!this.paperTradingAutomationEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'paper_trading_automation_disabled' };
-    }
-    if (this.paperTradingAutomationPromise) {
-      return this.paperTradingAutomationPromise;
-    }
-    const currentState = this.paperTradingAutomationState || defaultPaperTradingAutomationState();
-    const agentStates = currentState.agents || {};
-    const hasPendingRequest = paperTradingAutomation.AGENT_IDS.some(
-      (agentId) => Boolean(agentStates?.[agentId]?.pendingRequestId)
-    );
-    const hasDueTimer = paperTradingAutomation.AGENT_IDS.some((agentId) => {
-      const triggerConfig = paperTradingAutomation.loadTriggerConfig(this.projectRoot, agentId, { writeDefaults: true }).normalized;
-      const wake = paperTradingAutomation.evaluateWakeCondition(triggerConfig, agentStates?.[agentId] || { agentId }, nowMs);
-      return wake.shouldWake === true;
-    });
-    if (!hasPendingRequest && !hasDueTimer) {
-      return { ok: false, skipped: true, reason: 'paper_trading_automation_idle' };
-    }
-    this.paperTradingAutomationPromise = Promise.resolve(this.runPaperTradingAutomationPhase(nowMs))
-      .catch((error) => {
-        const summary = {
-          enabled: true,
-          status: 'failed',
-          error: error?.message || String(error),
-          lastProcessedAt: new Date().toISOString(),
-        };
-        this.lastPaperTradingAutomationSummary = summary;
-        this.logger.warn(`Paper trading automation failed: ${summary.error}`);
-        return { ok: false, error: summary.error };
-      })
-      .finally(() => {
-        this.paperTradingAutomationPromise = null;
-      });
-    return this.paperTradingAutomationPromise;
+    // Paper-trading automation removed per the user directive (2026-04-20T04:35Z).
+    // Always returns disabled. Trigger configs forced enabled:false in JSON;
+    // .env SQUIDRUN_PAPER_TRADING_AUTOMATION=0; loadTriggerConfig no longer
+    // re-writes defaults when enabled is false.
+    return { ok: false, skipped: true, reason: 'paper_trading_automation_deleted' };
   }
 
   async maybeRunSaylorWatcher(nowMs = Date.now()) {
@@ -3806,6 +3909,22 @@ class SupervisorDaemon {
     if (!this.[private-live-ops]SqueezeDetectorEnabled || this.stopping) {
       return { ok: false, skipped: true, reason: '[private-live-ops]_squeeze_detector_disabled' };
     }
+    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    if (manualActivity) {
+      this.last[private-live-ops]SqueezeDetectorSummary = {
+        enabled: true,
+        status: 'paused_for_manual_activity',
+        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        lastRunAt: this.last[private-live-ops]SqueezeDetectorSummary?.lastRunAt || null,
+        manualActivity,
+      };
+      return {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        manualActivity,
+      };
+    }
     if (this.[private-live-ops]SqueezeDetectorPromise) {
       return this.[private-live-ops]SqueezeDetectorPromise;
     }
@@ -3853,17 +3972,51 @@ class SupervisorDaemon {
     if (!this.oracleWatchEnabled || this.stopping) {
       return { ok: false, skipped: true, reason: 'oracle_watch_disabled' };
     }
+    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    if (manualActivity) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        manualActivity,
+      };
+    }
     if (this.oracleWatchPromise) {
       return this.oracleWatchPromise;
     }
     this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath, this.oracleWatchIntervalMs);
     const oracleWatchState = readJsonFile(this.oracleWatchStatePath, {}) || {};
+    this.lastOracleShortRegimeSummary = readJsonFile(this.oracleShortRegimeStatePath, null) || null;
     const heartbeat = buildOracleWatchHeartbeat(this.lastOracleWatchSummary, oracleWatchState);
+    const backoffUntilMs = resolveOracleWatchBackoffUntilMs(oracleWatchState, nowMs);
     const forceRelaunch = Boolean(
       heartbeat?.stale === true
       && Number.isFinite(Number(heartbeat?.ageMs))
       && Number(heartbeat.ageMs) >= this.oracleWatchIntervalMs
     );
+    if (forceRelaunch && Number.isFinite(backoffUntilMs)) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'oracle_watch_backoff_active',
+        backoffUntil: Number.isFinite(backoffUntilMs) ? new Date(backoffUntilMs).toISOString() : null,
+        nextEligibleAtMs: Number.isFinite(backoffUntilMs)
+          ? backoffUntilMs
+          : (Number(this.lastOracleWatchRunAtMs || 0) + Number(this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS)),
+      };
+    }
+    const relaunchCooldownMs = Math.max(
+      Number(this.oracleWatchRelaunchCooldownMs || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS) || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS,
+      Number(this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS) || DEFAULT_ORACLE_WATCH_INTERVAL_MS
+    );
+    if (forceRelaunch && (nowMs - this.lastOracleWatchRelaunchAtMs) < relaunchCooldownMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'oracle_watch_relaunch_cooldown',
+        nextEligibleAtMs: this.lastOracleWatchRelaunchAtMs + relaunchCooldownMs,
+      };
+    }
     if (!forceRelaunch && (nowMs - this.lastOracleWatchRunAtMs) < this.oracleWatchIntervalMs) {
       return {
         ok: false,
@@ -3873,6 +4026,7 @@ class SupervisorDaemon {
       };
     }
     if (forceRelaunch) {
+      this.lastOracleWatchRelaunchAtMs = nowMs;
       this.logger.warn(
         `[ORACLE WATCH][INPROC_RELAUNCH] Oracle watch heartbeat is stale with no running lane; forcing relaunch ` +
         `(lastTickAt=${heartbeat?.lastTickAt || 'unknown'}, ageMs=${Number(heartbeat?.ageMs || 0) || 0}).`
@@ -4591,6 +4745,98 @@ class SupervisorDaemon {
     return this.[private-live-ops]PhasePromise;
   }
 
+  async maybeRunSparkAutomation(nowMs = Date.now()) {
+    if (!this.sparkMonitorEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'spark_monitor_disabled' };
+    }
+    if (this.sparkMonitorPhasePromise) {
+      return this.sparkMonitorPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNextSparkMonitorEvent(now, {
+      intervalMinutes: this.sparkMonitorIntervalMinutes,
+    });
+    const day = buildSparkMonitorDailySchedule(now, {
+      intervalMinutes: this.sparkMonitorIntervalMinutes,
+    });
+    const lastProcessedAtMs = this.sparkMonitorState.lastProcessedAt
+      ? new Date(this.sparkMonitorState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = day.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.sparkMonitorState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistSparkMonitorState();
+
+    if (dueEvents.length === 0) {
+      this.lastSparkMonitorSummary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_due_spark_phase', nextEvent: this.sparkMonitorState.nextEvent };
+    }
+
+    this.sparkMonitorPhasePromise = (async () => {
+      const dueEvent = dueEvents[dueEvents.length - 1];
+      const phaseResult = await sparkCapture.runSparkScan({
+        now: dueEvent.scheduledAt,
+        statePath: this.sparkMonitorDataStatePath,
+        eventsPath: this.sparkMonitorEventsPath,
+        firePlansPath: this.sparkMonitorFirePlansPath,
+        watchlistPath: this.sparkMonitorWatchlistPath,
+        fetch: this.fetch || global.fetch,
+      });
+
+      this.sparkMonitorState.lastProcessedAt = dueEvent.scheduledAt;
+      this.sparkMonitorState.lastResult = phaseResult;
+      this.sparkMonitorState.lastScan = phaseResult;
+
+      const upcomingEvent = getNextSparkMonitorEvent(new Date(), {
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+      });
+      this.sparkMonitorState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistSparkMonitorState();
+
+      const alertCount = Array.isArray(phaseResult?.newAlertEvents) ? phaseResult.newAlertEvents.length : 0;
+      const summary = {
+        enabled: true,
+        status: phaseResult?.ok === true ? 'scan_complete' : 'scan_failed',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent,
+        alertCount,
+        upbitListingCount: Number(phaseResult?.upbitListingCount || 0),
+        [private-live-ops]ListingCount: Number(phaseResult?.[private-live-ops]ListingCount || 0),
+        tokenUnlockCount: Number(phaseResult?.tokenUnlockCount || 0),
+        lastResult: phaseResult || null,
+      };
+      this.lastSparkMonitorSummary = summary;
+
+      if (alertCount > 0 && phaseResult?.alertMessage) {
+        const notification = phaseResult.alertMessage;
+        this.notifyArchitectInternal(notification, 'spark_monitor');
+        this.notifyTelegramTrading(notification);
+      }
+
+      return {
+        ok: phaseResult?.ok !== false,
+        skipped: false,
+        nextEvent: this.sparkMonitorState.nextEvent,
+        result: phaseResult,
+      };
+    })().finally(() => {
+      this.sparkMonitorPhasePromise = null;
+    });
+
+    return this.sparkMonitorPhasePromise;
+  }
+
   async runMarketScannerPhase(event) {
     const phaseKey = event?.key || 'market_scanner';
     this.logTradingEventHeader(phaseKey);
@@ -4656,6 +4902,31 @@ class SupervisorDaemon {
     const promotionResult = this.promoteMarketScannerMovers(summary.topMovers, phaseResult.scannedAt);
     summary.promotedSymbols = Array.isArray(promotionResult?.promotedTickers) ? promotionResult.promotedTickers : [];
     summary.refreshedSymbols = Array.isArray(promotionResult?.refreshedTickers) ? promotionResult.refreshedTickers : [];
+    try {
+      const regimeResult = await oracleWatchRegime.applySharedShortRegime({
+        marketScannerState: this.marketScannerState,
+        movers: canonicalFlaggedMovers.length > 0 ? canonicalFlaggedMovers : canonicalTopMovers,
+        rulesPath: this.oracleWatchRulesPath,
+        watchStatePath: this.oracleWatchStatePath,
+        statePath: this.oracleShortRegimeStatePath,
+      });
+      this.lastOracleShortRegimeSummary = regimeResult;
+      summary.sharedShortRegime = {
+        active: regimeResult?.active === true,
+        candidateCount: Number(regimeResult?.candidateCount || 0),
+        promotedTickers: Array.isArray(regimeResult?.promotedTickers) ? regimeResult.promotedTickers : [],
+        promotedRuleIds: Array.isArray(regimeResult?.promotedRuleIds) ? regimeResult.promotedRuleIds : [],
+        retiredRuleIds: Array.isArray(regimeResult?.retiredRuleIds) ? regimeResult.retiredRuleIds : [],
+        statePath: this.oracleShortRegimeStatePath,
+      };
+    } catch (error) {
+      summary.sharedShortRegime = {
+        active: false,
+        error: error?.message || String(error),
+        statePath: this.oracleShortRegimeStatePath,
+      };
+      this.logger.warn(`Oracle shared short regime update failed: ${error?.message || String(error)}`);
+    }
     if (summary.alerts.length > 0) {
       this.notifyArchitectInternal(this.buildMarketScannerArchitectAlert(summary), 'market_scanner');
       summary.notified = true;
@@ -4708,6 +4979,23 @@ class SupervisorDaemon {
   async maybeRunMarketScannerAutomation(nowMs = Date.now()) {
     if (!this.marketScannerEnabled || this.stopping || !this.marketScanner || typeof this.marketScanner.runMarketScan !== 'function') {
       return { ok: false, skipped: true, reason: 'market_scanner_disabled' };
+    }
+    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    if (manualActivity) {
+      this.lastMarketScannerSummary = {
+        enabled: true,
+        status: 'paused_for_manual_activity',
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent || null,
+        manualActivity,
+      };
+      return {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        manualActivity,
+      };
     }
     if (this.marketScannerPhasePromise) {
       this.lastMarketScannerSummary = {
@@ -5299,11 +5587,12 @@ class SupervisorDaemon {
       5_000,
       Number(heartbeat?.intervalMs || this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS) || DEFAULT_ORACLE_WATCH_INTERVAL_MS
     );
+    const staleThresholdMs = Math.max(ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS, intervalMs * 2);
     const isStale = Boolean(
       this.oracleWatchEnabled
       && heartbeat?.stale === true
       && Number.isFinite(ageMs)
-      && ageMs >= ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS
+      && ageMs >= staleThresholdMs
     );
 
     if (isStale && !this.oracleWatchStaleAlertActive) {
@@ -5362,6 +5651,37 @@ class SupervisorDaemon {
         telegramAlerts: [],
       };
     }
+    const checkedAt = new Date().toISOString();
+    const manualActivity = this.getActive[private-live-ops]ManualActivity();
+    if (manualActivity) {
+      const pausedResult = {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        trigger,
+        checkedAt,
+        positions: [],
+        warnings: [],
+        telegramAlerts: [],
+        manualActivity,
+      };
+      this.last[private-live-ops]MonitorSummary = {
+        enabled: true,
+        status: 'paused_for_manual_activity',
+        trigger,
+        pollMs: this.[private-live-ops]MonitorPollMs,
+        checkedAt,
+        warnings: [],
+        telegramAlerts: [],
+        positions: [],
+        peakStatePath: this.defiPeakPnlPath,
+        riskExit: { attempted: false, reason: 'manual_activity_pause', executions: [] },
+        manualActivity,
+        error: null,
+      };
+      this.writeStatus();
+      return pausedResult;
+    }
 
     const result = await this.[private-live-ops]MonitorOrchestrator.runDefiMonitorCycle({
       trigger,
@@ -5398,6 +5718,22 @@ class SupervisorDaemon {
 
     this.writeStatus();
     return result;
+  }
+
+  getActive[private-live-ops]ManualActivity(nowMs = Date.now()) {
+    const activity = readManual[private-live-ops]Activity(this.[private-live-ops]ManualActivityPath);
+    if (!isManual[private-live-ops]ActivityActive(activity, { nowMs })) {
+      return null;
+    }
+    return {
+      command: String(activity.command || '[private-live-ops]_manual'),
+      caller: String(activity.caller || 'manual'),
+      pid: Number(activity.pid) || null,
+      startedAt: activity.startedAt || null,
+      lastHeartbeatAt: activity.lastHeartbeatAt || null,
+      expiresAt: activity.expiresAt || null,
+      metadata: activity.metadata && typeof activity.metadata === 'object' ? activity.metadata : {},
+    };
   }
 
   async sync[private-live-ops]PeakStateFromAccountState(accountState = {}, options = {}) {
@@ -6064,7 +6400,8 @@ class SupervisorDaemon {
 
   build[private-live-ops]GivebackAlert(position) {
     const drawdownPct = Number(position?.drawdownFromPeakPct || 0);
-    const stopLossText = Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
+    const stopLossText = position?.stopLossVerifiedAt
+      && Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
       ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
       : '';
     return `[TRADING] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} has given back ${(drawdownPct * 100).toFixed(0)}% of peak PnL. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} peak=$${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText}`;
@@ -6072,7 +6409,8 @@ class SupervisorDaemon {
 
   build[private-live-ops]ManualActionAlert(position = {}, reasons = []) {
     const reasonText = Array.isArray(reasons) && reasons.length > 0 ? reasons.join('+') : 'risk_exit_signal';
-    const stopLossText = Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
+    const stopLossText = position?.stopLossVerifiedAt
+      && Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
       ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
       : '';
     return `[ACTION REQUIRED] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} hit ${reasonText}. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} entry=$${toNumber(position?.entryPx, 0).toFixed(4)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText} Manual-only reset is active, so the supervisor did not close it.`;
@@ -6082,7 +6420,7 @@ class SupervisorDaemon {
     const stopLossPrice = Number(position?.stopLossPrice);
     const markPrice = Number(position?.markPrice);
     const side = String(position?.side || '').trim().toLowerCase();
-    if (!Number.isFinite(stopLossPrice) || stopLossPrice <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
+    if (!position?.stopLossVerifiedAt || !Number.isFinite(stopLossPrice) || stopLossPrice <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
       return false;
     }
     if (side === 'short') {
@@ -8326,6 +8664,19 @@ class SupervisorDaemon {
         nextEvent: this.[private-live-ops]State.nextEvent || null,
         lastSummary: this.last[private-live-ops]Summary || null,
       },
+      sparkMonitorAutomation: {
+        enabled: this.sparkMonitorEnabled,
+        running: Boolean(this.sparkMonitorPhasePromise),
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        statePath: this.sparkMonitorStatePath,
+        dataStatePath: this.sparkMonitorDataStatePath,
+        eventsPath: this.sparkMonitorEventsPath,
+        firePlansPath: this.sparkMonitorFirePlansPath,
+        watchlistPath: this.sparkMonitorWatchlistPath,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent || null,
+        lastSummary: this.lastSparkMonitorSummary || null,
+      },
       marketScannerAutomation: {
         enabled: this.marketScannerEnabled,
         running: Boolean(this.marketScannerPhasePromise),
@@ -8352,11 +8703,13 @@ class SupervisorDaemon {
         scriptPath: this.hmOracleWatchEngineScriptPath,
         rulesPath: this.oracleWatchRulesPath,
         statePath: this.oracleWatchStatePath,
+        sharedShortRegimeStatePath: this.oracleShortRegimeStatePath,
         heartbeat: oracleWatchHeartbeat,
         counters: oracleWatchState?.counters || null,
         lastRunAt: this.lastOracleWatchSummary?.lastRunAt || null,
         lastSummary: this.lastOracleWatchSummary || null,
       },
+      oracleShortRegime: readJsonFile(this.oracleShortRegimeStatePath, null) || this.lastOracleShortRegimeSummary || null,
       paperTradingAutomation: {
         enabled: this.paperTradingAutomationEnabled,
         running: Boolean(this.paperTradingAutomationPromise),
