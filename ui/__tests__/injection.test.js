@@ -1667,12 +1667,15 @@ describe('Terminal Injection', () => {
       mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 5, chunkSize: 2048 });
       await controller.doSendToPane('1', longText, jest.fn());
 
-      // Home reset is now prepended to payload in the writeChunked call (no separate write)
+      // Long-payload home-reset suppression: \x1b[H is NOT prepended for
+      // payloads >= longMessageBytes because cursor-home overwrites the
+      // visible buffer in Claude Code CLI and the head of the message gets
+      // swallowed (matches pane-host-renderer.js:588-593 fix on the parallel path).
       const ptyWrites = mockPty.write.mock.calls.map(call => call[1]);
-      expect(ptyWrites).toEqual([]); // No separate writes — Home reset merged into chunked payload
+      expect(ptyWrites).toEqual([]);
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        expect.stringMatching(timestampedPayloadRegex('A'.repeat(9000), { prefix: '\x1b[H' })),
+        expect.stringMatching(timestampedPayloadRegex('A'.repeat(9000))),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
@@ -1687,9 +1690,10 @@ describe('Terminal Injection', () => {
       const text = `[MSG from architect]: ${'B'.repeat(3000)}\r`;
       await controller.doSendToPane('1', text, jest.fn());
 
+      // Long payload (~3022 bytes >= longMessageBytes=1024) skips \x1b[H prefix.
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        expect.stringMatching(timestampedPayloadRegex(text.slice(0, -1), { prefix: '\x1b[H' })),
+        expect.stringMatching(timestampedPayloadRegex(text.slice(0, -1))),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
@@ -1703,12 +1707,50 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(100);
       await promise;
 
+      // 1024 bytes is at threshold (>= longMessageBytes), home-reset suppressed.
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        expect.stringMatching(timestampedPayloadRegex('C'.repeat(1024), { prefix: '\x1b[H' })),
+        expect.stringMatching(timestampedPayloadRegex('C'.repeat(1024))),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
+    });
+
+    test('REGRESSION: long payload preserves head bytes (no \\x1b[H prefix)', async () => {
+      // Reproduces the multi-session truncation bug:
+      //   sent: 1892 bytes via hm-send architect->builder
+      //   received in Builder transcript: 877 bytes (TAIL only)
+      //   lost: 991 prefix chars, mid-word at "preserved" — bytes 0..990 swallowed
+      // Cause: \x1b[H prepended to PTY write moves cursor to top of viewport,
+      //   then incoming payload overwrites the visible buffer; Claude Code CLI's
+      //   input area submits only what's visible after overwrite (= the tail).
+      // Fix: skip \x1b[H for any payload >= longMessageBytes, mirroring the
+      //   pre-existing fix in pane-host-renderer.js:588-593.
+      const headMarker = 'HEAD-SENTINEL-MUST-SURVIVE';
+      const tailMarker = 'TAIL-SENTINEL';
+      const longText = `${headMarker} ${'X'.repeat(1400)} ${tailMarker}\r`;
+      mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 1, chunkSize: 2048 });
+
+      await controller.doSendToPane('1', longText, jest.fn());
+
+      const writeChunkedArgs = mockPty.writeChunked.mock.calls[0];
+      expect(writeChunkedArgs).toBeDefined();
+      const writeText = writeChunkedArgs[1];
+      expect(writeText).not.toMatch(/^\x1b\[H/);
+      expect(writeText).toContain(headMarker);
+      expect(writeText).toContain(tailMarker);
+    });
+
+    test('short Claude payload is unaffected (uses non-chunked write path)', async () => {
+      // The home-reset gate applies inside the chunked branch only. Short
+      // messages take the non-chunked write path, so the fix preserves their
+      // original behavior. Just assert no chunked write was triggered.
+      const shortText = 'short message\r';
+      mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 1, chunkSize: 2048 });
+
+      await controller.doSendToPane('1', shortText, jest.fn());
+
+      expect(mockPty.writeChunked).not.toHaveBeenCalled();
     });
 
     test('defers before programmatic write when pane is actively outputting', async () => {

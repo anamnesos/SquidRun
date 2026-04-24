@@ -1053,9 +1053,21 @@ function createInjectionController(options = {}) {
             `${capabilities.modeLabel} pane: pre-PTY fingerprint textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
           );
 
-          // Prepend Home reset to payload so it arrives in the same PTY write,
-          // preventing split-chunk rendering of \x1b[H as literal "[H" text.
-          const writeText = capabilities.homeResetBeforeWrite
+          // Prepend Home reset (\x1b[H) to payload so it arrives in the same
+          // PTY write, preventing split-chunk rendering of the escape as
+          // literal "[H" text.
+          //
+          // BUT: for long messages above the longMessageBytes threshold,
+          // \x1b[H overwrites the visible buffer at the top of Claude Code
+          // CLI's input area, swallowing the head of the payload — the
+          // receiving agent sees only the tail (e.g. byte 991+ of a 1892-byte
+          // message). pane-host-renderer.js documents and handles the same
+          // bug at line 588-593 by unconditionally disabling the home-reset
+          // for IPC-reassembled messages. Mirror that decision here for the
+          // doSendToPane path so hm-send AND the SquidRun UI text-area both
+          // deliver long messages intact.
+          const skipHomeResetForLongPayload = payloadBytes >= longMessageBytes;
+          const writeText = capabilities.homeResetBeforeWrite && !skipHomeResetForLongPayload
             ? '\x1b[H' + payloadText
             : payloadText;
 
