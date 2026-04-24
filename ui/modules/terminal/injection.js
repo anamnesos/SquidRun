@@ -800,6 +800,12 @@ function createInjectionController(options = {}) {
     const hmSendFastEnterOverride = item && typeof item === 'object'
       ? item.hmSendFastEnter
       : undefined;
+    const preferClipboardPasteForLongMessageOverride = item && typeof item === 'object'
+      ? item.preferClipboardPasteForLongMessage
+      : undefined;
+    const clipboardPasteThresholdBytesOverride = item && typeof item === 'object'
+      ? item.clipboardPasteThresholdBytes
+      : undefined;
     const injectMeta = item && typeof item === 'object' && item.meta && typeof item.meta === 'object'
       ? { ...item.meta }
       : null;
@@ -874,6 +880,8 @@ function createInjectionController(options = {}) {
       startupInjection: startupInjectionOverride,
       acceptOutputTransitionOnly: acceptOutputTransitionOnlyOverride,
       hmSendFastEnter: hmSendFastEnterOverride,
+      preferClipboardPasteForLongMessage: preferClipboardPasteForLongMessageOverride,
+      clipboardPasteThresholdBytes: clipboardPasteThresholdBytesOverride,
       meta: injectMeta,
     });
   }
@@ -986,10 +994,6 @@ function createInjectionController(options = {}) {
       }
     };
 
-    if (capabilities.requiresFocusForEnter && textarea) {
-      textarea.focus();
-    }
-
     const normalizedText = String(text || '');
     const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
     const rawPayloadBytes = Buffer.byteLength(normalizedText, 'utf8');
@@ -1003,6 +1007,16 @@ function createInjectionController(options = {}) {
       ? normalizedText.replace(/[\r\n]/g, ' ').trimEnd()
       : normalizedText;
     const payloadBytes = Buffer.byteLength(payloadText, 'utf8');
+    const preferClipboardPasteForLongMessage = behaviorOverrides.preferClipboardPasteForLongMessage === true;
+    const clipboardPasteThresholdBytes = Number.isFinite(Number(behaviorOverrides.clipboardPasteThresholdBytes))
+      ? Math.max(1, Number(behaviorOverrides.clipboardPasteThresholdBytes))
+      : longMessageBytes;
+    const shouldAttemptClipboardPaste = preferClipboardPasteForLongMessage
+      && payloadBytes >= clipboardPasteThresholdBytes
+      && typeof window?.squidrun?.pty?.clipboardPasteText === 'function';
+    if ((capabilities.requiresFocusForEnter || shouldAttemptClipboardPaste) && textarea) {
+      textarea.focus();
+    }
     const enterDelayMs = computeScaledEnterDelayMs(capabilities.enterDelayMs, payloadBytes, capabilities);
     const hmSendFastChunkThresholdBytes = Math.max(
       64,
@@ -1036,7 +1050,44 @@ function createInjectionController(options = {}) {
     }
 
     try {
-      if (preferChunkedWrite) {
+      let appliedInjectionMethod = capabilities.appliedMethod;
+      let usedClipboardPaste = false;
+
+      if (shouldAttemptClipboardPaste) {
+        const pasteResult = await window.squidrun.pty.clipboardPasteText(payloadText);
+        if (pasteResult?.success !== false) {
+          usedClipboardPaste = true;
+          appliedInjectionMethod = 'clipboard-paste-text';
+          log.info(
+            `doSendToPane ${id}`,
+            `${capabilities.modeLabel} pane: used clipboard paste for ${payloadBytes}-byte payload`
+          );
+        } else {
+          log.warn(
+            `doSendToPane ${id}`,
+            `${capabilities.modeLabel} pane: clipboard paste failed (${pasteResult?.error || 'unknown'}), falling back to PTY write`
+          );
+        }
+      }
+
+      // Pre-PTY fingerprint helper: captures head/tail/length of every
+      // payload reaching a pty.write / writeChunked call inside doSendToPane.
+      // Consumed by the truncation trace diagnostic — if the receiving agent
+      // reports a clipped head, grep supervisor logs for `pre-PTY fingerprint`
+      // to confirm what this process actually handed to the PTY. Intentionally
+      // covers ALL three write call sites in this function (unchunked fast
+      // path, chunked fallback single-write, and the preferChunkedWrite=false
+      // else-branch) — previously only the chunked branch logged.
+      const logPrePtyFingerprint = (branch) => {
+        const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        log.info(
+          `doSendToPane ${id}`,
+          `${capabilities.modeLabel} pane: pre-PTY fingerprint branch=${branch} textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
+        );
+      };
+
+      if (!usedClipboardPaste && preferChunkedWrite) {
         const chunkThresholdBytes = Math.max(
           1024,
           Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES
@@ -1044,32 +1095,29 @@ function createInjectionController(options = {}) {
         const shouldChunkWrite = forceChunkedWriteForHmSendFastPath || payloadBytes >= chunkThresholdBytes;
 
         if (!shouldChunkWrite) {
+          logPrePtyFingerprint('chunked-preferred-below-threshold');
           await window.squidrun.pty.write(id, payloadText, createKernelMeta());
         } else {
-          const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-          const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-          log.info(
-            `doSendToPane ${id}`,
-            `${capabilities.modeLabel} pane: pre-PTY fingerprint textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
-          );
+          logPrePtyFingerprint('chunked-or-forced');
 
-          // Prepend Home reset (\x1b[H) to payload so it arrives in the same
-          // PTY write, preventing split-chunk rendering of the escape as
-          // literal "[H" text.
+          // The \x1b[H (cursor-home) prefix was historically prepended to
+          // payloads so the escape arrived in the same PTY write, preventing
+          // split-chunk rendering of the escape as literal "[H" text.
           //
-          // BUT: for long messages above the longMessageBytes threshold,
-          // \x1b[H overwrites the visible buffer at the top of Claude Code
-          // CLI's input area, swallowing the head of the payload — the
-          // receiving agent sees only the tail (e.g. byte 991+ of a 1892-byte
-          // message). pane-host-renderer.js documents and handles the same
-          // bug at line 588-593 by unconditionally disabling the home-reset
-          // for IPC-reassembled messages. Mirror that decision here for the
-          // doSendToPane path so hm-send AND the SquidRun UI text-area both
-          // deliver long messages intact.
-          const skipHomeResetForLongPayload = payloadBytes >= longMessageBytes;
-          const writeText = capabilities.homeResetBeforeWrite && !skipHomeResetForLongPayload
-            ? '\x1b[H' + payloadText
-            : payloadText;
+          // In practice it caused silent head-truncation: \x1b[H moves the
+          // cursor to the top of Claude Code CLI's input viewport, and the
+          // subsequent bytes overwrite the visible buffer — any payload that
+          // wraps past the visible area loses its head (see d0f2183). A prior
+          // fix gated this suppression at >=1024 bytes, but truncation also
+          // occurs below that threshold once line-wrap pushes the wrapped
+          // payload past the visible viewport (reproduced on a ~700-byte
+          // user prompt). Match the pane-host-renderer.js path (line 588-593)
+          // which unconditionally disables the home-reset for IPC-reassembled
+          // messages: always skip \x1b[H here too, regardless of size. The
+          // theoretical split-chunk failure mode is visible ("[H" in the
+          // pane) rather than silent, and has never been reported in the
+          // wild; silent head-truncation is the worse failure.
+          const writeText = payloadText;
 
           if (typeof window.squidrun?.pty?.writeChunked !== 'function') {
             log.warn(`doSendToPane ${id}`, 'writeChunked API unavailable, falling back to single PTY write');
@@ -1094,13 +1142,14 @@ function createInjectionController(options = {}) {
             }
           }
         }
-      } else {
+      } else if (!usedClipboardPaste) {
+        logPrePtyFingerprint('no-chunked-preference');
         await window.squidrun.pty.write(id, payloadText, createKernelMeta());
       }
 
       bus.emit('inject.applied', {
         paneId: id,
-        payload: { method: capabilities.appliedMethod, textLen: payloadText.length },
+        payload: { method: appliedInjectionMethod, textLen: payloadText.length },
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
@@ -1234,6 +1283,18 @@ function createInjectionController(options = {}) {
     }
 
     const submitEnter = async () => {
+      // F2: For Codex panes, write a bracketed-paste-end sequence (ESC [ 201 ~) to
+      // PTY before the Enter. If the host emulator auto-bracketed our payload as a
+      // paste burst, this closes the bracket so the subsequent Enter is interpreted
+      // as a real keystroke rather than a literal newline inside the paste body.
+      // No-op on non-Codex panes. Errors are non-fatal — the Enter attempt still runs.
+      if (typeof isCodexPane === 'function' && isCodexPane(id)) {
+        try {
+          await window.squidrun.pty.write(id, '\u001b[201~', createKernelMeta());
+        } catch (err) {
+          log.warn(`doSendToPane ${id}`, `Codex paste-end pre-Enter write failed (continuing): ${err?.message || err}`);
+        }
+      }
       if (capabilities.enterMethod === 'trusted') {
         return sendEnterToPane(id);
       }
@@ -1253,7 +1314,7 @@ function createInjectionController(options = {}) {
       return { success: true, method: 'none' };
     };
 
-    setTimeout(async () => {
+    const submitTimerId = setTimeout(async () => {
       if (capabilities.requiresFocusForEnter) {
         const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
         textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
@@ -1269,6 +1330,9 @@ function createInjectionController(options = {}) {
       safetyTimerId = setTimeout(() => {
         finish({ success: true, verified: false, status: 'submit_unverified_timeout', reason: 'timeout' });
       }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
+      if (safetyTimerId && typeof safetyTimerId.unref === 'function') {
+        safetyTimerId.unref();
+      }
 
       if (capabilities.requiresFocusForEnter && typeof userInputFocused === 'function' && userInputFocused()) {
         log.info(`doSendToPane ${id}`, 'User actively composing before Enter - waiting for idle');
@@ -1397,6 +1461,9 @@ function createInjectionController(options = {}) {
         ...successResult,
       });
     }, enterDelayMs);
+    if (submitTimerId && typeof submitTimerId.unref === 'function') {
+      submitTimerId.unref();
+    }
   }
   // Send message to a specific pane (queues if pane is busy)
   // options.priority = true puts message at FRONT of queue (for user messages)
@@ -1458,6 +1525,10 @@ function createInjectionController(options = {}) {
       priority: options.priority || false,
       immediate: options.immediate || false,
       hmSendFastEnter: options.hmSendFastEnter === true,
+      preferClipboardPasteForLongMessage: options.preferClipboardPasteForLongMessage === true,
+      clipboardPasteThresholdBytes: Number.isFinite(Number(options.clipboardPasteThresholdBytes))
+        ? Math.max(1, Number(options.clipboardPasteThresholdBytes))
+        : undefined,
       correlationId: corrId,
       traceContext: queueTraceContext,
       verifySubmitAccepted: typeof options.verifySubmitAccepted === 'boolean'
