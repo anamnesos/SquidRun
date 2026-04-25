@@ -303,6 +303,11 @@ function createPaneHostWindowManager(options = {}) {
 
   return {
     getPaneWindow,
+    getPaneHostWindows: () => (
+      hostWindow && !hostWindow.isDestroyed()
+        ? [['pane-host', hostWindow]]
+        : []
+    ),
     createPaneWindow,
     ensurePaneWindows,
     sendToPaneWindow,

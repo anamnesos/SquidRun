@@ -2606,6 +2606,7 @@ class SquidRunApp {
               {
                 mainWindow: this.ctx.mainWindow,
                 getAppWindows: () => this.getAppWindows(),
+                getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
               },
               data.message.action,
               data.message.payload || {}
