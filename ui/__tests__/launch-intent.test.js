@@ -24,13 +24,13 @@ describe('launch-intent', () => {
 
   test('parses standalone Eunbyeol launch flags', () => {
     expect(parseLaunchIntent(['--window=eunbyeol', '--solo-window'])).toEqual({
-      profileName: 'main',
+      profileName: 'eunbyeol',
       windowKey: 'eunbyeol',
       includeMainWindow: false,
       focusWindowKey: 'eunbyeol',
     });
     expect(parseLaunchIntent(['--eunbyul'])).toEqual({
-      profileName: 'main',
+      profileName: 'eunbyeol',
       windowKey: 'eunbyeol',
       includeMainWindow: false,
       focusWindowKey: 'eunbyeol',
@@ -39,7 +39,7 @@ describe('launch-intent', () => {
 
   test('keeps the main window included when explicitly requested', () => {
     expect(parseLaunchIntent(['--window', 'eunbyeol', '--with-main-window'])).toEqual({
-      profileName: 'main',
+      profileName: 'eunbyeol',
       windowKey: 'eunbyeol',
       includeMainWindow: true,
       focusWindowKey: 'eunbyeol',
@@ -64,6 +64,15 @@ describe('launch-intent', () => {
       windowKey: 'main',
       includeMainWindow: true,
       focusWindowKey: 'main',
+    });
+  });
+
+  test('allows an explicit profile to override an Eunbyeol window launch', () => {
+    expect(parseLaunchIntent(['--profile=main', '--window=eunbyeol', '--solo-window'])).toEqual({
+      profileName: 'main',
+      windowKey: 'eunbyeol',
+      includeMainWindow: false,
+      focusWindowKey: 'eunbyeol',
     });
   });
 });
