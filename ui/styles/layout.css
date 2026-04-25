@@ -1218,7 +1218,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  z-index: 10;
+  z-index: 30;
   transition: width var(--transition-slow), border-color var(--transition-slow), box-shadow var(--transition-slow);
   border-left: 1px solid transparent;
   box-shadow: none;
