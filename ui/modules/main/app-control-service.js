@@ -26,13 +26,23 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
   }
 
   if (normalizedAction === 'reload-renderers') {
-    const windows = typeof ctx.getAppWindows === 'function'
+    const appWindows = typeof ctx.getAppWindows === 'function'
       ? ctx.getAppWindows()
       : [['main', ctx.mainWindow].filter(Boolean)];
+    const paneHostWindows = typeof ctx.getPaneHostWindows === 'function'
+      ? ctx.getPaneHostWindows()
+      : [];
+    const windows = [
+      ...(Array.isArray(appWindows) ? appWindows : []),
+      ...(Array.isArray(paneHostWindows) ? paneHostWindows : []),
+    ];
     const reloaded = [];
+    const seen = new Set();
 
     for (const [windowKey, windowRef] of Array.isArray(windows) ? windows : []) {
       if (!canReload(windowRef)) continue;
+      if (seen.has(windowRef)) continue;
+      seen.add(windowRef);
       try {
         windowRef.webContents.reloadIgnoringCache();
         reloaded.push(String(windowKey || 'main'));
