@@ -609,15 +609,24 @@ function readFreshRequestPoolEntry(cacheKey, options = {}) {
 
 function readAnyRequestPoolEntry(cacheKey, options = {}) {
   const memoryEntry = REQUEST_POOL_STATE.memory.get(cacheKey);
+  const maxStaleMs = Number.isFinite(Number(options.maxStaleMs)) ? Number(options.maxStaleMs) : 5 * 60 * 1000;
+  const now = Date.now();
+
   if (memoryEntry && Object.prototype.hasOwnProperty.call(memoryEntry, 'value')) {
-    return clonePooledValue(memoryEntry.value);
+    const cachedAt = Number(memoryEntry.cachedAt);
+    if (Number.isFinite(cachedAt) && (now - cachedAt) <= maxStaleMs) {
+      return clonePooledValue(memoryEntry.value);
+    }
   }
   const filePath = resolveRequestPoolPath(options);
   const payload = readRequestPoolFile(filePath);
   const fileEntry = payload?.[cacheKey];
   if (fileEntry && Object.prototype.hasOwnProperty.call(fileEntry, 'value')) {
-    REQUEST_POOL_STATE.memory.set(cacheKey, fileEntry);
-    return clonePooledValue(fileEntry.value);
+    const cachedAt = Number(fileEntry.cachedAt);
+    if (Number.isFinite(cachedAt) && (now - cachedAt) <= maxStaleMs) {
+      REQUEST_POOL_STATE.memory.set(cacheKey, fileEntry);
+      return clonePooledValue(fileEntry.value);
+    }
   }
   return null;
 }
