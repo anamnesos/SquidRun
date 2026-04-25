@@ -24,6 +24,9 @@ function makeState(overrides = {}) {
 
 function setupWatcher(options = {}) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watcher-'));
+  const configOverrides = typeof options.configOverrides === 'function'
+    ? options.configOverrides(tempDir)
+    : options.configOverrides;
   const configMock = {
     WORKSPACE_PATH: tempDir,
     TRIGGER_TARGETS: { 'architect.txt': ['1'] },
@@ -32,7 +35,7 @@ function setupWatcher(options = {}) {
       '1': 'Architect',
       '2': 'Builder',
     },
-    ...options.configOverrides,
+    ...configOverrides,
   };
 
   const logMock = {
@@ -290,6 +293,33 @@ describe('watcher module', () => {
     jest.advanceTimersByTime(250);
 
     expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'architect.txt');
+
+    cleanupDir(tempDir);
+  });
+
+  test('trigger routing only accepts configured trigger roots', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, triggers } = setupWatcher({
+      configOverrides: (workspacePath) => ({
+        resolveCoordPath: (relPath) => path.join(workspacePath, '.squidrun', relPath),
+        getCoordRoots: () => [path.join(workspacePath, '.squidrun')],
+      }),
+    });
+    const triggerPath = path.join(tempDir, '.squidrun', 'triggers');
+    fs.mkdirSync(triggerPath, { recursive: true });
+    const triggerFile = path.join(triggerPath, 'foo.txt');
+    fs.writeFileSync(triggerFile, 'Ping', 'utf-8');
+
+    watcher.handleFileChange(triggerFile);
+    jest.advanceTimersByTime(250);
+
+    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'foo.txt');
+
+    triggers.handleTriggerFile.mockClear();
+    watcher.handleFileChange('D:/projects/eunbyeol-casework/some/triggers/path/x.txt');
+    jest.advanceTimersByTime(250);
+
+    expect(triggers.handleTriggerFile).not.toHaveBeenCalled();
 
     cleanupDir(tempDir);
   });
