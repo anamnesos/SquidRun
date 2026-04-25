@@ -20,6 +20,7 @@ const { getProfileInstructionFilename } = require('../profile');
 const log = require('./logger');
 const bus = require('./event-bus');
 const diagnosticLog = require('./diagnostic-log');
+const { stripAnsi } = require('./ansi');
 const { showToast } = require('./notifications');
 const uiView = require('./ui-view');
 const {
@@ -352,12 +353,6 @@ const SHELL_PROMPT_REGEXES = [
   /(^|\n)[A-Z]:\\[^\n>]*>\s/m, // cmd.exe prompt
   /(^|\n)[^\n]*[$%#]\s*$/m,   // Unix shell prompt (bash/zsh)
 ];
-
-function stripAnsi(value) {
-  return String(value || '')
-    .replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
-    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
-}
 
 function stripInternalRoutingWrappers(value) {
   if (typeof value !== 'string') return value;

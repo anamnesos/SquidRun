@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const bus = require('./event-bus');
+const { stripAnsi: stripAnsiCodes } = require('./ansi');
 const settings = require('./settings');
 const compactionDetector = require('./compaction-detector');
 const contracts = require('./contracts');
@@ -343,17 +344,12 @@ const UI_FOCUS_TYPING_WINDOW_MS = 2000;
 
 const SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-const ACTIVITY_OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
-const ACTIVITY_CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
-
 /**
  * Strip ANSI escape codes from string (OSC + CSI + charset sequences)
  */
 function stripAnsi(text) {
   if (typeof text !== 'string') return text;
-  return text
-    .replace(ACTIVITY_OSC_REGEX, '')
-    .replace(ACTIVITY_CSI_REGEX, '')
+  return stripAnsiCodes(text)
     .replace(/\u001b[\(\)][A-Za-z0-9]/g, '');
 }
 
@@ -380,8 +376,6 @@ function isMeaningfulActivity(data) {
 
 // Non-timing constants that stay here
 const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
-const STARTUP_OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
-const STARTUP_CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const STARTUP_READY_PATTERNS = [
   { pattern: /(^|\n)(?:codex|claude|gemini|cursor)>\s*(\n|$)/im, models: null },        // All CLIs
   { pattern: /(^|\n)PS\s+[^\n>]*>\s*(\n|$)/m, models: ['codex'] },                      // PS prompt — Codex only (fires before Claude Code starts)
@@ -875,9 +869,7 @@ function teardownTerminalPane(paneId) {
 
 
 function stripAnsiForStartup(input) {
-  return String(input || '')
-    .replace(STARTUP_OSC_REGEX, '')
-    .replace(STARTUP_CSI_REGEX, '')
+  return stripAnsiCodes(input)
     .replace(/\u001b[\(\)][A-Za-z0-9]/g, '')
     .replace(/\u00a0/g, ' ')
     .replace(/\r/g, '\n');
