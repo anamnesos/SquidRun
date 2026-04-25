@@ -496,6 +496,7 @@ function handleFileChangeDebounced(filePath) {
       handleFileChangeCore(file);
     }
   }, WATCHER_DEBOUNCE_MS);
+  debounceTimer?.unref?.();
 }
 
 /**
@@ -542,7 +543,8 @@ function handleFileChangeCore(filePath) {
   }
   else if (filename === 'checkpoint.md' && currentState === States.EXECUTING) {
     transition(States.CHECKPOINT);
-    setTimeout(() => transition(States.CHECKPOINT_REVIEW), 500);
+    const timer = setTimeout(() => transition(States.CHECKPOINT_REVIEW), 500);
+    timer?.unref?.();
   }
   else if (filename === 'checkpoint-approved.md' && currentState === States.CHECKPOINT_REVIEW) {
     if (!fs.existsSync(filePath)) {
@@ -579,7 +581,8 @@ function handleFileChangeCore(filePath) {
       updatedState.friction_count = (updatedState.friction_count || 0) + 1;
       writeState(updatedState);
       transition(States.FRICTION_LOGGED);
-      setTimeout(() => transition(States.FRICTION_SYNC), 500);
+      const timer = setTimeout(() => transition(States.FRICTION_SYNC), 500);
+      timer?.unref?.();
     }
   }
 
@@ -604,7 +607,7 @@ function handleFileChangeCore(filePath) {
   }
 
   // TARGETED TRIGGERS: workspace/triggers/{target}.txt
-  else if (filePath.includes('triggers') && filename.endsWith('.txt') && triggers) {
+  else if (TRIGGER_PATHS.some((tp) => filePath.startsWith(tp)) && filename.endsWith('.txt') && triggers) {
     handleTriggerFileWithRetry(filePath, filename);
   }
 }
@@ -631,6 +634,7 @@ function scheduleWatcherWorkerRestart(watcherName, startFn) {
       log.error('Watcher', `Failed restarting ${watcherName} worker`, err);
     }
   }, WATCHER_WORKER_RESTART_DELAY_MS);
+  timer?.unref?.();
   watcherRestartTimers.set(watcherName, timer);
 }
 
@@ -776,6 +780,7 @@ function scheduleTriggerReadRetry(filePath, filename, attempt, lastKnownSize = n
     triggerRetryTimers.delete(filePath);
     handleTriggerFileWithRetry(filePath, filename, attempt + 1, lastKnownSize);
   }, TRIGGER_READ_RETRY_MS);
+  timer?.unref?.();
   triggerRetryTimers.set(filePath, timer);
 }
 
@@ -1200,6 +1205,7 @@ function scheduleMessageDeliveryRetry(entry, reason) {
     entry.retryTimer = null;
     attemptQueueMessageDelivery(entry);
   }, nextDelay);
+  entry.retryTimer?.unref?.();
 
   log.warn(
     'MessageQueue',
@@ -1239,6 +1245,7 @@ async function attemptMarkQueueMessageDelivered(entry) {
       log.warn('MessageQueue', `Retry mark-delivered failed: ${err.message}`);
     });
   }, nextDelay);
+  entry.markRetryTimer?.unref?.();
 
   log.warn(
     'MessageQueue',
@@ -1323,6 +1330,7 @@ function attemptQueueMessageDelivery(entry) {
     entry.deliveryId = null;
     scheduleMessageDeliveryRetry(entry, 'ack_timeout');
   }, MESSAGE_DELIVERY_ACK_TIMEOUT_MS);
+  entry.ackTimer?.unref?.();
 
   log.info(
     'MessageQueue',
