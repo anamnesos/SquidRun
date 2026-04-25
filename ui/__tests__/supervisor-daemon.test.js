@@ -139,7 +139,7 @@ const dynamicWatchlist = require('../modules/trading/dynamic-watchlist');
 const hyperliquidNativeLayer = require('../modules/trading/hyperliquid-native-layer');
 const predictionTracker = require('../modules/trading/prediction-tracker');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
-const { SupervisorDaemon } = require('../supervisor-daemon');
+const { SupervisorDaemon, resolveProjectUiScriptPath } = require('../supervisor-daemon');
 
 function createMockStore() {
   return {
@@ -904,6 +904,37 @@ describe('supervisor-daemon integrations', () => {
     expect(mockLeaseJanitor.close).toHaveBeenCalled();
   });
 
+  test('resolves packaged hm-send path through app.asar/ui/scripts instead of app.asar/scripts', () => {
+    const asarRoot = path.join(tempRoot, 'resources', 'app.asar');
+    const packagedScript = path.join(asarRoot, 'ui', 'scripts', 'hm-send.js');
+    fs.mkdirSync(path.dirname(packagedScript), { recursive: true });
+    fs.writeFileSync(packagedScript, 'module.exports = {};\n', 'utf8');
+
+    expect(resolveProjectUiScriptPath('hm-send.js', asarRoot)).toBe(packagedScript);
+  });
+
+  test('resolves hm-send when the packaged project root is already the ui directory', () => {
+    const packagedUiRoot = path.join(tempRoot, 'resources', 'app.asar', 'ui');
+    const packagedScript = path.join(packagedUiRoot, 'scripts', 'hm-send.js');
+    fs.mkdirSync(path.dirname(packagedScript), { recursive: true });
+    fs.writeFileSync(packagedScript, 'module.exports = {};\n', 'utf8');
+
+    expect(resolveProjectUiScriptPath('hm-send.js', packagedUiRoot)).toBe(packagedScript);
+  });
+
+  test('suppresses default hm-send side effects under Jest unless a capture script is provided', () => {
+    daemon.logger.info.mockClear();
+
+    daemon.notifyOracleWatchLane('(SUPERVISOR): test-only stale alert', 'stale');
+
+    expect(daemon.logger.info).toHaveBeenCalledWith(
+      'hm-send suppressed during stale: architect'
+    );
+    expect(daemon.logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('Oracle watch notify failed')
+    );
+  });
+
   test('uses the configured hm-send script path for trading Telegram and agent notifications', async () => {
     const projectRoot = path.join(tempRoot, 'repo-root');
     const capturePath = path.join(tempRoot, 'hm-send-calls.jsonl');
@@ -1589,6 +1620,72 @@ describe('supervisor-daemon integrations', () => {
     }));
     expect(daemon.logger.warn).toHaveBeenCalledWith(
       'Memory consistency (tick): status=drift_detected entries=15 nodes=19 missing=2 orphans=6 duplicates=0'
+    );
+  });
+
+  test('rate-limits repeated memory consistency drift while still logging state changes', () => {
+    const drift = {
+      ok: true,
+      checkedAt: '2026-03-15T00:05:00.000Z',
+      status: 'drift_detected',
+      synced: false,
+      summary: {
+        knowledgeEntryCount: 15,
+        knowledgeNodeCount: 19,
+        missingInCognitiveCount: 2,
+        orphanedNodeCount: 6,
+        duplicateKnowledgeHashCount: 0,
+        issueCount: 0,
+      },
+    };
+    const changedDrift = {
+      ...drift,
+      summary: {
+        ...drift.summary,
+        missingInCognitiveCount: 3,
+      },
+    };
+    runMemoryConsistencyCheck.mockReturnValue(drift);
+    daemon.memoryConsistencyRepeatLogMs = 60_000;
+    daemon.logger.warn.mockClear();
+
+    daemon.runMemoryConsistencyAudit('tick', 100_000);
+    daemon.runMemoryConsistencyAudit('tick', 110_000);
+
+    expect(daemon.logger.warn).toHaveBeenCalledTimes(1);
+    expect(daemon.logger.warn).toHaveBeenLastCalledWith(
+      'Memory consistency (tick): status=drift_detected entries=15 nodes=19 missing=2 orphans=6 duplicates=0'
+    );
+
+    runMemoryConsistencyCheck.mockReturnValue(changedDrift);
+    daemon.runMemoryConsistencyAudit('tick', 120_000);
+
+    expect(daemon.logger.warn).toHaveBeenCalledTimes(2);
+    expect(daemon.logger.warn).toHaveBeenLastCalledWith(
+      'Memory consistency (tick): status=drift_detected entries=15 nodes=19 missing=3 orphans=6 duplicates=0'
+    );
+  });
+
+  test('rate-limits steady-state memory index refresh completions', async () => {
+    daemon.memoryIndexRepeatLogMs = 60_000;
+    daemon.logger.info.mockClear();
+    jest.spyOn(Date, 'now')
+      .mockReturnValueOnce(100_000)
+      .mockReturnValueOnce(110_000)
+      .mockReturnValueOnce(170_001);
+
+    await daemon.runMemoryIndexRefresh('change:session.md');
+    await daemon.runMemoryIndexRefresh('change:session.md');
+    await daemon.runMemoryIndexRefresh('change:session.md');
+
+    expect(daemon.logger.info).toHaveBeenCalledTimes(2);
+    expect(daemon.logger.info).toHaveBeenNthCalledWith(
+      1,
+      'Memory index refresh (change:session.md) complete: groups=1 skipped=0 docs=3'
+    );
+    expect(daemon.logger.info).toHaveBeenNthCalledWith(
+      2,
+      'Memory index refresh (change:session.md) complete: groups=1 skipped=0 docs=3 (suppressed 1 repeat)'
     );
   });
 
