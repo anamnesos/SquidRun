@@ -25,7 +25,7 @@ describe('pane-host-renderer internals', () => {
     }));
   });
 
-  test('forces reassembled IPC payloads onto the chunked PTY path', () => {
+  test('keeps reassembled IPC payloads chunked without prepending Home', () => {
     expect(
       _internals.buildPtyWriteDispatchPlan({
         text: 'reassembled hidden host payload',
@@ -33,7 +33,7 @@ describe('pane-host-renderer internals', () => {
         hmSendTrace: false,
         ipcReassembled: true,
         hasChunkedWriter: true,
-        homeResetBeforeWrite: true,
+        homeResetBeforeWrite: false,
         chunkThresholdBytes: 1024,
         chunkSizeBytes: 4096,
         hmSendChunkThresholdBytes: 256,
@@ -42,12 +42,36 @@ describe('pane-host-renderer internals', () => {
     ).toEqual(expect.objectContaining({
       method: 'chunked',
       forceChunkedWrite: true,
-      writeText: '\x1b[Hreassembled hidden host payload',
+      writeText: 'reassembled hidden host payload',
       chunkOptions: expect.objectContaining({
         chunkSize: 4096,
         yieldEveryChunks: 0,
       }),
     }));
+  });
+
+  test('REGRESSION: preserves James 19:49 user message head after IPC reassembly', () => {
+    const userMessage = 'its kinda hard to look at a 24 hour graph and be like oh loook its gona dump big big in 24 hours.. lets get agead.. while that shit fluctuates 5-10 percent in between.. how many stop losses can we survive int aht time span? whats a more realistic number this thing will pump to and should we wait and watch? i havent been watching YGG at all. but from history this thing dumps then pumps higher .. dumps pumps higher over the last couple days.. the peak at around 0.452 around there is that the top ? or will this thing keep pumping.. sure maybe it is.. maybe it keeps dumping. but yall entered at 0.0431 after it came down from 0.0452 and now its climbed back up toe 0.0444 .. the previous patterns say sadly that when we have bad entries in this specific coin yall are in, i see dumps that have longer red candles for a 5 minute candle.. so we have to watch and wait and see how far these candles if they do come do dump before showing signs of it turning around.. i jsut think the entry was kinda weird tbh and the 33 hour thing confused me even more.. yall were trupping out on my ape coin last night but placed a bet on something that needs to hold up for 33 hours is fine but are you guys just placing hte  bets all sloppy and going off what should happen in such a big time frame is confusing to me';
+    const plan = _internals.buildPtyWriteDispatchPlan({
+      text: userMessage,
+      payloadBytes: Buffer.byteLength(userMessage, 'utf8'),
+      hmSendTrace: false,
+      ipcReassembled: true,
+      hasChunkedWriter: true,
+      homeResetBeforeWrite: false,
+      chunkThresholdBytes: 1024,
+      chunkSizeBytes: 4096,
+      hmSendChunkThresholdBytes: 256,
+      hmSendChunkYieldEveryChunks: 0,
+    });
+
+    expect(userMessage.length).toBeGreaterThan(1024);
+    expect(userMessage.slice(1041)).toMatch(/^me even more/);
+    expect(plan.method).toBe('chunked');
+    expect(plan.writeText).toBe(userMessage);
+    expect(plan.writeText).not.toMatch(/^\x1b\[H/);
+    expect(plan.writeText.startsWith('its kinda hard to look at')).toBe(true);
+    expect(plan.writeText).toContain('confusing to me');
   });
 
   test('keeps full routed hm-send payload intact for long chunked writes', () => {
