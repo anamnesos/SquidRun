@@ -1771,20 +1771,20 @@ describe('Terminal Injection', () => {
       expect(writeText).toContain(tailMarker);   // tail bytes intact
     });
 
-    test('short Claude payload still gets \\x1b[H home-reset (unchanged)', async () => {
-      // The fix is scoped to long payloads only; short messages keep the
-      // original home-reset behavior so the original split-chunk-rendering
-      // protection isn't regressed.
+    test('short Claude payload uses non-chunked PTY write with NO Home prefix', async () => {
+      // SYSTEM INVARIANT: no payload — short or long — gets a Home prefix.
+      // Short messages still bypass chunking (under chunkThreshold), but the
+      // bytes written are exactly the payload, never \x1b[H + payload.
       const shortText = 'short message\r';
       mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 1, chunkSize: 2048 });
 
       await controller.doSendToPane('1', shortText, jest.fn());
 
-      // Short payloads go through the non-chunked PTY write path (under
-      // chunkThreshold), so we just assert no chunked-write was triggered.
-      // The home-reset gate applies inside the chunked branch only; for
-      // short payloads pty.write is called with the message as-is.
       expect(mockPty.writeChunked).not.toHaveBeenCalled();
+      const writeCalls = mockPty.write.mock.calls.filter(([, payload]) => typeof payload === 'string');
+      for (const [, payload] of writeCalls) {
+        expect(payload).not.toMatch(/^\x1b\[H/);
+      }
     });
 
     test('chunks normal long [MSG from] payloads at the 1KB Claude threshold', async () => {
@@ -1801,7 +1801,7 @@ describe('Terminal Injection', () => {
       );
     });
 
-    test('chunks exact-threshold Claude payloads before Enter dispatch', async () => {
+    test('chunks exact-threshold Claude payloads before Enter dispatch with NO Home prefix', async () => {
       const text = `${'C'.repeat(1024)}\r`;
       const onComplete = jest.fn();
 
@@ -1809,14 +1809,16 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(100);
       await promise;
 
-      // 1024 bytes is at the threshold (>= longMessageBytes), so home-reset
-      // is suppressed. Anything below would still receive the \x1b[H prefix.
+      // SYSTEM INVARIANT: chunked write delivers the raw payload, no \x1b[H
+      // prepended. The historic gate at the threshold has been removed.
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
         expect.stringMatching(timestampedPayloadRegex('C'.repeat(1024))),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
+      const [, chunkPayload] = mockPty.writeChunked.mock.calls[0];
+      expect(chunkPayload).not.toMatch(/^\x1b\[H/);
     });
 
     test('defers before programmatic write when pane is actively outputting', async () => {

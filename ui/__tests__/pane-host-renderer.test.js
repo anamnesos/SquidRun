@@ -1,31 +1,35 @@
 const { _internals } = require('../pane-host-renderer');
 
 describe('pane-host-renderer internals', () => {
-  test('forces hm-send hidden-host writes onto the chunked PTY path', () => {
+  // SYSTEM INVARIANT: agent-message injection paths must NEVER prepend
+  // terminal-control sequences (\x1b[H cursor-home, etc). These tests guard
+  // the invariant — any future regression that re-adds Home will fail here.
+  // See workspace/knowledge/workflows.md "Inject Path Invariant".
+
+  test('hm-send hidden-host writes go through chunked PTY path with NO Home prefix', () => {
     expect(
       _internals.buildPtyWriteDispatchPlan({
         text: 'small hm-send payload',
         payloadBytes: Buffer.byteLength('small hm-send payload', 'utf8'),
         hmSendTrace: true,
         hasChunkedWriter: true,
-        homeResetBeforeWrite: true,
         chunkThresholdBytes: 1024,
-        chunkSizeBytes: 4096,
+        chunkSizeBytes: 256,
         hmSendChunkThresholdBytes: 256,
-        hmSendChunkYieldEveryChunks: 0,
+        hmSendChunkYieldEveryChunks: 1,
       })
     ).toEqual(expect.objectContaining({
       method: 'chunked',
       forceChunkedWrite: true,
-      writeText: '\x1b[Hsmall hm-send payload',
+      writeText: 'small hm-send payload',
       chunkOptions: expect.objectContaining({
-        chunkSize: 4096,
-        yieldEveryChunks: 0,
+        chunkSize: 256,
+        yieldEveryChunks: 1,
       }),
     }));
   });
 
-  test('keeps reassembled IPC payloads chunked without prepending Home', () => {
+  test('reassembled IPC payloads stay chunked without Home prefix', () => {
     expect(
       _internals.buildPtyWriteDispatchPlan({
         text: 'reassembled hidden host payload',
@@ -33,19 +37,18 @@ describe('pane-host-renderer internals', () => {
         hmSendTrace: false,
         ipcReassembled: true,
         hasChunkedWriter: true,
-        homeResetBeforeWrite: false,
         chunkThresholdBytes: 1024,
-        chunkSizeBytes: 4096,
+        chunkSizeBytes: 256,
         hmSendChunkThresholdBytes: 256,
-        hmSendChunkYieldEveryChunks: 0,
+        hmSendChunkYieldEveryChunks: 1,
       })
     ).toEqual(expect.objectContaining({
       method: 'chunked',
       forceChunkedWrite: true,
       writeText: 'reassembled hidden host payload',
       chunkOptions: expect.objectContaining({
-        chunkSize: 4096,
-        yieldEveryChunks: 0,
+        chunkSize: 256,
+        yieldEveryChunks: 1,
       }),
     }));
   });
@@ -58,11 +61,10 @@ describe('pane-host-renderer internals', () => {
       hmSendTrace: false,
       ipcReassembled: true,
       hasChunkedWriter: true,
-      homeResetBeforeWrite: false,
       chunkThresholdBytes: 1024,
-      chunkSizeBytes: 4096,
+      chunkSizeBytes: 256,
       hmSendChunkThresholdBytes: 256,
-      hmSendChunkYieldEveryChunks: 0,
+      hmSendChunkYieldEveryChunks: 1,
     });
 
     expect(userMessage.length).toBeGreaterThan(1024);
@@ -74,7 +76,7 @@ describe('pane-host-renderer internals', () => {
     expect(plan.writeText).toContain('confusing to me');
   });
 
-  test('keeps full routed hm-send payload intact for long chunked writes', () => {
+  test('REGRESSION: long routed hm-send payload preserves head AND has NO Home prefix', () => {
     const rawPayload = '[AGENT MSG - reply via hm-send.js] (ORACLE #11): '
       + `${'X'.repeat(5000)}`
       + '\n[CURRENT PROJECT] name=squidrun | path=D:\\projects\\squidrun';
@@ -84,11 +86,10 @@ describe('pane-host-renderer internals', () => {
       payloadBytes: Buffer.byteLength(strippedPayload, 'utf8'),
       hmSendTrace: true,
       hasChunkedWriter: true,
-      homeResetBeforeWrite: true,
       chunkThresholdBytes: 1024,
-      chunkSizeBytes: 4096,
+      chunkSizeBytes: 256,
       hmSendChunkThresholdBytes: 256,
-      hmSendChunkYieldEveryChunks: 0,
+      hmSendChunkYieldEveryChunks: 1,
     });
 
     expect(strippedPayload.startsWith('(ORACLE #11): ')).toBe(true);
@@ -96,12 +97,14 @@ describe('pane-host-renderer internals', () => {
       method: 'chunked',
       forceChunkedWrite: true,
       forceChunkForHmSend: true,
-      writeText: '\x1b[H' + strippedPayload,
+      writeText: strippedPayload,
       chunkOptions: expect.objectContaining({
-        chunkSize: 4096,
-        yieldEveryChunks: 0,
+        chunkSize: 256,
+        yieldEveryChunks: 1,
       }),
     }));
+    expect(plan.writeText).not.toMatch(/^\x1b\[H/);
+    expect(plan.writeText.startsWith('(ORACLE #11): ')).toBe(true);
     expect(plan.writeText).toContain('\n[CURRENT PROJECT] name=squidrun | path=D:\\projects\\squidrun');
   });
 
