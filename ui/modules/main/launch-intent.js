@@ -22,7 +22,9 @@ function normalizeLaunchIntent(rawIntent = {}) {
   const includeMainWindow = windowKey === 'main'
     ? true
     : rawIntent.includeMainWindow !== false;
-  const profileName = normalizeProfileName(rawIntent.profileName || DEFAULT_PROFILE);
+  const profileName = normalizeProfileName(
+    rawIntent.profileName || (windowKey === 'private-profile' ? 'private-profile' : DEFAULT_PROFILE)
+  );
   return {
     profileName,
     windowKey,
@@ -35,7 +37,7 @@ function parseLaunchIntent(argv = []) {
   const args = Array.isArray(argv) ? argv.slice() : [];
   let windowKey = null;
   let includeMainWindow = true;
-  const profileName = parseProfileArg(args);
+  let profileName = null;
 
   for (let index = 0; index < args.length; index += 1) {
     const token = toNonEmptyString(String(args[index] || ''));
@@ -44,6 +46,20 @@ function parseLaunchIntent(argv = []) {
     if (token === '--private-profile' || token === '--private-profile') {
       windowKey = 'private-profile';
       includeMainWindow = false;
+      continue;
+    }
+
+    if (token.startsWith('--profile=')) {
+      profileName = parseProfileArg([token]);
+      continue;
+    }
+
+    if (token === '--profile') {
+      const next = toNonEmptyString(String(args[index + 1] || ''));
+      if (next) {
+        profileName = parseProfileArg([token, next]);
+        index += 1;
+      }
       continue;
     }
 
