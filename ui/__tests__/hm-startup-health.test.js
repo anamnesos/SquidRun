@@ -104,4 +104,46 @@ describe('hm-startup-health lane freshness', () => {
     }));
     expect(lane.reason).toBeUndefined();
   });
+
+  test('keeps paper trading automation healthy during a scheduled 6h phase gap', () => {
+    const filePath = writeState(tempDir, {
+      lastProcessedAt: '2026-04-25T09:00:00.000Z',
+      nextEvent: {
+        key: 'intraday_review',
+        scheduledAt: '2026-04-25T15:00:00.000Z',
+      },
+    });
+    const nowMs = Date.parse('2026-04-25T13:30:00.000Z');
+
+    const phaseAwareLane = inspectLaneFreshness({
+      key: 'paper_trading_automation',
+      filePath,
+      enabled: true,
+      staleAfterMs: 60 * 60 * 1000,
+      extractTimestamp: (payload) => Date.parse(payload.lastProcessedAt),
+      extractNextEventTimestamp: (payload) => Date.parse(payload.nextEvent?.scheduledAt),
+      phaseGraceMs: SCHEDULED_PHASE_STALE_GRACE_MS,
+      nowMs,
+    });
+    const legacyLane = inspectLaneFreshness({
+      key: 'paper_trading_automation',
+      filePath,
+      enabled: true,
+      staleAfterMs: 60 * 60 * 1000,
+      extractTimestamp: (payload) => Date.parse(payload.lastProcessedAt),
+      nowMs,
+    });
+
+    expect(phaseAwareLane).toEqual(expect.objectContaining({
+      stale: false,
+      reason: 'awaiting_scheduled_phase',
+      nextEventAt: '2026-04-25T15:00:00.000Z',
+    }));
+    expect(phaseAwareLane.ageMinutes).toBe(270);
+    expect(legacyLane).toEqual(expect.objectContaining({
+      stale: true,
+      staleAfterMinutes: 60,
+    }));
+    expect(legacyLane.reason).toBeUndefined();
+  });
 });

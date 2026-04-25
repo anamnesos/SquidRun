@@ -316,6 +316,8 @@ function run({ autoFix = true } = {}) {
         enabled: status.paperTradingAutomation?.enabled !== false,
         staleAfterMs: 60 * 60 * 1000,
         extractTimestamp: (payload) => toTimestampMs(payload?.lastProcessedAt || payload?.updatedAt),
+        extractNextEventTimestamp: (payload) => toTimestampMs(payload?.nextEvent?.scheduledAt),
+        phaseGraceMs: SCHEDULED_PHASE_STALE_GRACE_MS,
       }),
       inspectLaneFreshness({
         key: 'tokenomist_supervisor',
