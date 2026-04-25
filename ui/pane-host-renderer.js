@@ -585,11 +585,12 @@ if (typeof window !== 'undefined') {
         hmSendTrace,
         ipcReassembled: payload?.meta?.ipcReassembled === true,
         hasChunkedWriter: Boolean(api.pty.writeChunked),
-        // Hidden pane-host deliveries should not prepend Home for hm-send traffic.
-        // In production this can overwrite the visible screen buffer and make long
-        // routed messages appear to lose their head even though the broker payload
-        // is intact. Keep Home only for IPC-reassembled payload recovery.
-        homeResetBeforeWrite: payload?.meta?.ipcReassembled === true,
+        // Hidden pane-host deliveries should never prepend Home before the PTY
+        // write. Long inbound human messages are IPC-packetized/reassembled, and
+        // forcing \x1b[H on those writes can overwrite the visible buffer so the
+        // head of the message appears swallowed even though the broker payload is
+        // intact.
+        homeResetBeforeWrite: false,
         chunkThresholdBytes: chunkThreshold,
         chunkSizeBytes: chunkSize,
         hmSendChunkThresholdBytes: hmSendChunkThreshold,
