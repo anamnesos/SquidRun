@@ -301,12 +301,19 @@ class CognitiveMemoryApi {
     }
   }
 
+  assertProfileScopedWrite(operation = 'write') {
+    if (typeof this.cognitiveStore?.assertProfileScopedWrite === 'function') {
+      this.cognitiveStore.assertProfileScopedWrite(`api.${operation}`);
+    }
+  }
+
   async embedText(text) {
     const embedder = await this.memorySearchIndex.getEmbedder();
     return normalizeVector(await embedder.embed(normalizeWhitespace(text)));
   }
 
   pruneExpiredLeases(nowMs = Date.now()) {
+    this.assertProfileScopedWrite('pruneExpiredLeases');
     this.init().prepare('DELETE FROM memory_leases WHERE expires_at_ms <= ?').run(nowMs);
   }
 
@@ -372,6 +379,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: true, updated: number, reactivated: number }}
    */
   markNodesAccessed(nodeIds = [], options = {}) {
+    this.assertProfileScopedWrite('markNodesAccessed');
     const ids = Array.from(new Set((nodeIds || []).map((value) => String(value || '').trim()).filter(Boolean)));
     if (ids.length === 0) return { ok: true, updated: 0, reactivated: 0 };
     const db = this.init();
@@ -437,6 +445,7 @@ class CognitiveMemoryApi {
    * @returns {void}
    */
   upsertTrace(nodeId, traceId, extractedAt) {
+    this.assertProfileScopedWrite('upsertTrace');
     const normalizedTraceId = normalizeWhitespace(traceId);
     if (!nodeId || !normalizedTraceId) return;
     const db = this.init();
@@ -612,6 +621,7 @@ class CognitiveMemoryApi {
    * @returns {Promise<CognitiveMemoryNode | null>}
    */
   async ensureNodeFromSearchResult(result) {
+    this.assertProfileScopedWrite('ensureNodeFromSearchResult');
     const db = this.init();
     const content = normalizeWhitespace(result.content || result.excerpt || '');
     if (!content) return null;
@@ -795,6 +805,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: true, linked: number }}
    */
   linkRelatedNodes(nodeIds, relationType = 'related_to', weight = 1) {
+    this.assertProfileScopedWrite('linkRelatedNodes');
     const ids = Array.from(new Set((nodeIds || []).map((value) => String(value || '').trim()).filter(Boolean)));
     if (ids.length < 2) return { ok: true, linked: 0 };
     const db = this.init();
@@ -830,6 +841,7 @@ class CognitiveMemoryApi {
    * @returns {MemoryLease}
    */
   createLease(nodeId, agentId, queryText, versionAtLease, leaseMs) {
+    this.assertProfileScopedWrite('createLease');
     const nowMs = Date.now();
     const leaseId = generateId('lease');
     const expiresAtMs = nowMs + Math.max(60_000, Number.parseInt(leaseMs || DEFAULT_LEASE_MS, 10) || DEFAULT_LEASE_MS);
@@ -863,6 +875,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: true, invalidated: number }}
    */
   invalidateLeasesForNode(nodeId, options = {}) {
+    this.assertProfileScopedWrite('invalidateLeasesForNode');
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) return { ok: true, invalidated: 0 };
     const db = this.init();
@@ -892,6 +905,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null, invalidation?: { ok: true, invalidated: number } }}
    */
   setAntibodyState(nodeId, status, options = {}) {
+    this.assertProfileScopedWrite('setAntibodyState');
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) return { ok: false, reason: 'node_id_required' };
     const existing = this.getNode(normalizedNodeId);
@@ -958,6 +972,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
    */
   deprecateNode(nodeId, options = {}) {
+    this.assertProfileScopedWrite('deprecateNode');
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) return { ok: false, reason: 'node_id_required' };
     const existing = this.getNode(normalizedNodeId);
@@ -986,6 +1001,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
    */
   adjudicateAntibodyConflict(input = {}) {
+    this.assertProfileScopedWrite('adjudicateAntibodyConflict');
     const nodeId = normalizeWhitespace(input.nodeId);
     const conflictingNodeId = normalizeWhitespace(input.conflictingNodeId || '');
     const decision = normalizeAdjudicationStatus(input.decision) || null;
@@ -1196,6 +1212,7 @@ class CognitiveMemoryApi {
    * @returns {Promise<Record<string, unknown>>}
    */
   async patch(leaseId, updatedContent, options = {}) {
+    this.assertProfileScopedWrite('patch');
     const db = this.init();
     this.pruneExpiredLeases();
 
@@ -1313,6 +1330,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, updates?: Array<Record<string, unknown>> }}
    */
   applySalienceField(input = {}) {
+    this.assertProfileScopedWrite('applySalienceField');
     const db = this.init();
     const nodeId = normalizeWhitespace(input.nodeId || input.node_id || '');
     if (!nodeId) return { ok: false, reason: 'node_id_required' };
@@ -1378,6 +1396,7 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
    */
   setImmune(nodeId, value = true, options = {}) {
+    this.assertProfileScopedWrite('setImmune');
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) {
       return { ok: false, reason: 'node_id_required' };

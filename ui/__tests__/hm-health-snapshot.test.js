@@ -69,7 +69,7 @@ describe('hm-health-snapshot', () => {
     `);
     evidenceDb.close();
 
-    const cognitiveDb = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    const cognitiveDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
     cognitiveDb.exec(`
       CREATE TABLE nodes (
         node_id TEXT PRIMARY KEY,
