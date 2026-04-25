@@ -81,6 +81,7 @@ maybeDescribe('cognitive-memory api', () => {
       workspaceDir,
       dbPath: path.join(workspaceDir, 'memory', 'cognitive-memory.db'),
       pendingPrPath: path.join(tempDir, '.squidrun', 'memory', 'pending-pr.json'),
+      allowUnscopedDbPath: true,
     });
     index = new MemorySearchIndex({ workspaceDir, embedder: mockEmbedder });
     await index.indexAll({ force: true });

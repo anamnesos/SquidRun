@@ -131,6 +131,7 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
       workspaceDir,
       dbPath: path.join(workspaceDir, 'memory', 'cognitive-memory.db'),
       pendingPrPath: path.join(tempDir, '.squidrun', 'memory', 'pending-pr.json'),
+      allowUnscopedDbPath: true,
     });
     teamMemoryStore = new TeamMemoryStore({ dbPath: teamMemoryDbPath });
     const teamInit = teamMemoryStore.init();

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { getProjectRoot } = require('../config');
+const { resolveDefaultCognitiveMemoryDbPath } = require('../modules/cognitive-memory-store');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capabilities');
 
@@ -619,7 +620,7 @@ function createHealthSnapshot(options = {}) {
   const testsRoot = path.join(projectRoot, 'ui', '__tests__');
   const modulesRoot = path.join(projectRoot, 'ui', 'modules');
   const evidenceLedgerDbPath = path.join(projectRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
-  const cognitiveMemoryDbPath = path.join(projectRoot, 'workspace', 'memory', 'cognitive-memory.db');
+  const cognitiveMemoryDbPath = resolveDefaultCognitiveMemoryDbPath({ projectRoot });
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
     ? options.generatedAt.trim()
