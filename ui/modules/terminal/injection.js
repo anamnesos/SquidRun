@@ -669,7 +669,6 @@ function createInjectionController(options = {}) {
       sanitizeMultiline: normalizeBoolean(source.sanitizeMultiline, false),
       clearLineBeforeWrite: normalizeBoolean(source.clearLineBeforeWrite, true),
       useChunkedWrite: normalizeBoolean(source.useChunkedWrite, true),
-      homeResetBeforeWrite: normalizeBoolean(source.homeResetBeforeWrite, true),
       verifySubmitAccepted: normalizeBoolean(source.verifySubmitAccepted, false),
       deferSubmitWhilePaneActive: normalizeBoolean(source.deferSubmitWhilePaneActive, false),
       scaleEnterDelayByPayload: normalizeBoolean(

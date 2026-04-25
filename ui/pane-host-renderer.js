@@ -155,13 +155,19 @@ function resolvePostEnterDeliveryResult({ outputObserved = false, enterSucceeded
   };
 }
 
+// SYSTEM INVARIANT: broker payload bytes are DATA, never terminal-control input.
+// Do not reintroduce a homeResetBeforeWrite parameter or any path that prepends
+// ESC sequences (\x1b[H, \x1b[J, etc.) to inject payloads. Cursor-home before a
+// long payload moves the cursor to the top of Claude CLI's input viewport so the
+// wrapped payload overwrites its own head — silently dropping bytes the model
+// never sees. See workspace/knowledge/workflows.md "Inject Path Invariant" and
+// the regression history in commits 6ea6c58, d0f2183, 702a0e9.
 function buildPtyWriteDispatchPlan({
   text = '',
   payloadBytes = null,
   hmSendTrace = false,
   ipcReassembled = false,
   hasChunkedWriter = false,
-  homeResetBeforeWrite = false,
   chunkThresholdBytes = 1024,
   chunkSizeBytes = 4096,
   hmSendChunkThresholdBytes = 256,
@@ -207,9 +213,7 @@ function buildPtyWriteDispatchPlan({
     };
   }
 
-  const writeText = homeResetBeforeWrite
-    ? '\x1b[H' + normalizedText
-    : normalizedText;
+  const writeText = normalizedText;
   const chunkOptions = {
     chunkSize: normalizedChunkSizeBytes,
   };
@@ -282,9 +286,21 @@ if (typeof window !== 'undefined') {
   const DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = isDarwin ? 700 : 800;
   const DEFAULT_MIN_ENTER_DELAY_MS = isDarwin ? 150 : 500;
   const DEFAULT_CHUNK_THRESHOLD_BYTES = 1024;
-  const DEFAULT_CHUNK_SIZE_BYTES = 4096;
+  // SYSTEM INVARIANT: chunk SIZE on Windows must match the chunk THRESHOLD.
+  // Commit 88e6987 (Mar 12 2026) lowered the threshold to 256 bytes because
+  // ConPTY/Claude CLI's input handler drops chars on single PTY writes >256
+  // bytes — but it left chunk SIZE at 4096, so messages 256..4096 bytes still
+  // wrote in one chunk (the threshold gated whether to chunk; the size gated
+  // how big each chunk was). Net effect: zero protection for the typical
+  // agent-to-agent reply size range, which is exactly what was firing the
+  // tail-only truncation the user kept seeing. macOS PTY does not have this
+  // limit so 4096 stays.
+  const DEFAULT_CHUNK_SIZE_BYTES = isDarwin ? 4096 : 256;
   const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = isDarwin ? 1024 : 256;
-  const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = 0;
+  // Yield to event loop between chunks on Windows so ConPTY's pipe buffer
+  // drains before the next chunk arrives. 0 means no yield (back-to-back),
+  // which on Windows starves the input handler.
+  const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = isDarwin ? 0 : 1;
 
   const POST_ENTER_VERIFY_TIMEOUT_MS = readPositiveIntFromQuery(
     params,
@@ -585,12 +601,6 @@ if (typeof window !== 'undefined') {
         hmSendTrace,
         ipcReassembled: payload?.meta?.ipcReassembled === true,
         hasChunkedWriter: Boolean(api.pty.writeChunked),
-        // Hidden pane-host deliveries should never prepend Home before the PTY
-        // write. Long inbound human messages are IPC-packetized/reassembled, and
-        // forcing \x1b[H on those writes can overwrite the visible buffer so the
-        // head of the message appears swallowed even though the broker payload is
-        // intact.
-        homeResetBeforeWrite: false,
         chunkThresholdBytes: chunkThreshold,
         chunkSizeBytes: chunkSize,
         hmSendChunkThresholdBytes: hmSendChunkThreshold,
