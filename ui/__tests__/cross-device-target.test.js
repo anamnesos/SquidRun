@@ -2,6 +2,8 @@ const {
   parseCrossDeviceTarget,
   normalizeDeviceId,
   getLocalDeviceId,
+  getProfileDeviceId,
+  getProfileSpecificDeviceId,
   isCrossDeviceEnabled,
 } = require('../modules/cross-device-target');
 
@@ -49,5 +51,24 @@ describe('cross-device-target parser', () => {
     expect(getLocalDeviceId({ SQUIDRUN_DEVICE_ID: ' team_2 ' })).toBe('TEAM_2');
     expect(isCrossDeviceEnabled({ SQUIDRUN_CROSS_DEVICE: '1' })).toBe(true);
     expect(isCrossDeviceEnabled({ SQUIDRUN_CROSS_DEVICE: '0' })).toBe(false);
+  });
+
+  test('derives profile-specific bridge device IDs without colliding with main', () => {
+    expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'main')).toBe('VIGIL');
+    expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'eunbyeol')).toBe('VIGIL-EUNBYEOL');
+    expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'eunbyeol', {
+      baseDeviceId: 'PAIR_A',
+    })).toBe('PAIR_A-EUNBYEOL');
+  });
+
+  test('honors explicit profile-specific bridge IDs', () => {
+    const env = {
+      SQUIDRUN_DEVICE_ID: 'VIGIL',
+      SQUIDRUN_DEVICE_ID_EUNBYEOL: 'case-pane',
+      SQUIDRUN_MAIN_DEVICE_ID: 'main-pane',
+    };
+    expect(getProfileSpecificDeviceId(env, 'eunbyeol')).toBe('CASE-PANE');
+    expect(getProfileDeviceId(env, 'eunbyeol')).toBe('CASE-PANE');
+    expect(getProfileDeviceId(env, 'main')).toBe('MAIN-PANE');
   });
 });

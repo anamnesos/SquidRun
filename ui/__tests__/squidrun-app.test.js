@@ -3346,6 +3346,40 @@ describe('SquidRunApp', () => {
       app.bridgeDeviceId = 'LOCAL';
     });
 
+    it('uses profile-specific bridge IDs so Eunbyeol cannot replace the main relay identity', () => {
+      const envKeys = [
+        'SQUIDRUN_CROSS_DEVICE',
+        'SQUIDRUN_RELAY_URL',
+        'SQUIDRUN_RELAY_SECRET',
+        'SQUIDRUN_DEVICE_ID',
+        'SQUIDRUN_PROFILE',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      try {
+        process.env.SQUIDRUN_CROSS_DEVICE = '1';
+        process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
+        process.env.SQUIDRUN_RELAY_SECRET = 'shared';
+        process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
+        process.env.SQUIDRUN_PROFILE = 'eunbyeol';
+
+        const config = app.resolveEnvBridgeRuntimeConfig();
+
+        expect(config).toEqual(expect.objectContaining({
+          source: 'env',
+          deviceId: 'VIGIL-EUNBYEOL',
+          relayUrl: 'wss://relay.example.test',
+        }));
+      } finally {
+        for (const key of envKeys) {
+          if (previousEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousEnv[key];
+          }
+        }
+      }
+    });
+
     it('tracks bridge lifecycle status for reconnect visibility', () => {
       app.kernelBridge.emitBridgeEvent = jest.fn();
 
