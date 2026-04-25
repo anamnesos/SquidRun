@@ -154,6 +154,9 @@ const DEFAULT_PENDING_TASK_TTL_MS = parseOptionalDurationMs(
 const DEFAULT_STDIO_TAIL_BYTES = Math.max(2048, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STDIO_TAIL_BYTES || '16384', 10) || 16384);
 const DEFAULT_MEMORY_INDEX_DEBOUNCE_MS = Math.max(500, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_DEBOUNCE_MS || '2000', 10) || 2000);
 const DEFAULT_MEMORY_CONSISTENCY_POLL_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_CONSISTENCY_POLL_MS || '300000', 10) || 300000);
+const DEFAULT_SUPERVISOR_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_REPEAT_LOG_MS || '900000', 10) || 900000);
+const DEFAULT_MEMORY_INDEX_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_REPEAT_LOG_MS || '900000', 10) || 900000);
+const DEFAULT_MEMORY_CONSISTENCY_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_CONSISTENCY_REPEAT_LOG_MS || '1800000', 10) || 1800000);
 const DEFAULT_MAX_IDLE_BACKOFF_MS = Math.max(
   DEFAULT_POLL_MS,
   Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_MAX_IDLE_BACKOFF_MS || String(DEFAULT_POLL_MS * 8), 10)
@@ -168,7 +171,20 @@ function resolveRuntimePath(relPath) {
 
 function resolveProjectUiScriptPath(scriptName, projectRoot = getProjectRoot()) {
   const root = path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
-  return path.join(root, 'ui', 'scripts', scriptName);
+  const candidates = [
+    path.join(root, 'ui', 'scripts', scriptName),
+    path.join(root, 'scripts', scriptName),
+    path.join(root, '.squidrun', 'bin', 'runtime', 'ui', 'scripts', scriptName),
+    path.join(__dirname, 'scripts', scriptName),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const packagedCandidate = candidates.find((candidate) => {
+    const normalized = String(candidate || '').replace(/\\/g, '/').toLowerCase();
+    return normalized.includes('/app.asar/') || normalized.includes('/app.asar.unpacked/');
+  });
+  return packagedCandidate || candidates[0];
 }
 
 function resolveProjectUiSettingsPath(projectRoot = getProjectRoot()) {
@@ -922,6 +938,12 @@ function createLogger(logPath) {
   };
 }
 
+function appendSuppressedRepeatCount(message, suppressedCount = 0) {
+  const count = Number(suppressedCount || 0);
+  if (!Number.isFinite(count) || count <= 0) return String(message || '');
+  return `${message} (suppressed ${count} repeat${count === 1 ? '' : 's'})`;
+}
+
 function processExists(pid) {
   const numeric = Number(pid);
   if (!Number.isFinite(numeric) || numeric <= 0) return false;
@@ -1589,6 +1611,8 @@ class SupervisorDaemon {
     this.projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
     this.[private-live-ops]ManualActivityPath = options.[private-live-ops]ManualActivityPath || DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH;
     this.hmSendScriptPath = path.resolve(String(options.hmSendScriptPath || resolveProjectUiScriptPath('hm-send.js', this.projectRoot)));
+    this.hmSendExternalDisabled = options.hmSendExternalDisabled === true
+      || (Boolean(process.env.JEST_WORKER_ID) && !options.hmSendScriptPath);
     this.hmDefiStatusScriptPath = path.resolve(String(options.defiStatusScriptPath || resolveProjectUiScriptPath('hm-defi-status.js', this.projectRoot)));
     this.hmDefiExecuteScriptPath = path.resolve(String(options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', this.projectRoot)));
     this.hmDefiCloseScriptPath = path.resolve(String(options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', this.projectRoot)));
@@ -1653,6 +1677,22 @@ class SupervisorDaemon {
       };
     this.workerLeaseOwnerPrefix = String(options.workerLeaseOwnerPrefix || 'supervisor');
     this.logger = options.logger || createLogger(this.logPath);
+    this.rateLimitedLogState = new Map();
+    this.supervisorRepeatLogMs = Math.max(
+      60_000,
+      Number.parseInt(options.supervisorRepeatLogMs || DEFAULT_SUPERVISOR_REPEAT_LOG_MS, 10)
+      || DEFAULT_SUPERVISOR_REPEAT_LOG_MS
+    );
+    this.memoryIndexRepeatLogMs = Math.max(
+      60_000,
+      Number.parseInt(options.memoryIndexRepeatLogMs || DEFAULT_MEMORY_INDEX_REPEAT_LOG_MS, 10)
+      || DEFAULT_MEMORY_INDEX_REPEAT_LOG_MS
+    );
+    this.memoryConsistencyRepeatLogMs = Math.max(
+      60_000,
+      Number.parseInt(options.memoryConsistencyRepeatLogMs || DEFAULT_MEMORY_CONSISTENCY_REPEAT_LOG_MS, 10)
+      || DEFAULT_MEMORY_CONSISTENCY_REPEAT_LOG_MS
+    );
     this.activeWorkers = new Map();
     this.runtimeEnv = options.env || process.env;
     this.loopEvents = new EventEmitter();
@@ -2502,6 +2542,102 @@ class SupervisorDaemon {
     });
   }
 
+  emitRateLimitedLog({
+    key,
+    level = 'warn',
+    message,
+    state = '',
+    intervalMs = this.supervisorRepeatLogMs,
+    nowMs = Date.now(),
+  } = {}) {
+    const resolvedKey = String(key || message || '').trim();
+    const resolvedMessage = String(message || '').trim();
+    if (!resolvedKey || !resolvedMessage) return false;
+    const resolvedLevel = ['info', 'warn', 'error'].includes(level) ? level : 'warn';
+    const resolvedState = String(state || resolvedMessage);
+    const resolvedIntervalMs = Math.max(60_000, Number(intervalMs || this.supervisorRepeatLogMs) || this.supervisorRepeatLogMs);
+    const previous = this.rateLimitedLogState.get(resolvedKey);
+    const stateChanged = !previous || previous.state !== resolvedState;
+    const intervalElapsed = previous && (Number(nowMs || Date.now()) - Number(previous.lastEmittedAtMs || 0)) >= resolvedIntervalMs;
+    if (stateChanged || intervalElapsed) {
+      const suppressedCount = previous && !stateChanged ? Number(previous.suppressed || 0) : 0;
+      this.logger[resolvedLevel](appendSuppressedRepeatCount(resolvedMessage, suppressedCount));
+      this.rateLimitedLogState.set(resolvedKey, {
+        state: resolvedState,
+        lastEmittedAtMs: Number(nowMs || Date.now()),
+        suppressed: 0,
+      });
+      return true;
+    }
+    previous.suppressed = Number(previous.suppressed || 0) + 1;
+    this.rateLimitedLogState.set(resolvedKey, previous);
+    return false;
+  }
+
+  emitMemoryConsistencyLog(reason, message, synced, nowMs = Date.now()) {
+    const normalizedReason = String(reason || '').trim().toLowerCase();
+    const level = synced ? 'info' : 'warn';
+    if (normalizedReason === 'startup') {
+      this.logger[level](message);
+      return true;
+    }
+    const summary = this.lastMemoryConsistencySummary || {};
+    const counts = summary.summary || {};
+    const state = [
+      summary.status || 'unknown',
+      counts.knowledgeEntryCount || 0,
+      counts.knowledgeNodeCount || 0,
+      counts.missingInCognitiveCount || 0,
+      counts.orphanedNodeCount || 0,
+      counts.duplicateKnowledgeHashCount || 0,
+    ].join(':');
+    return this.emitRateLimitedLog({
+      key: 'memory-consistency',
+      level,
+      message,
+      state,
+      intervalMs: this.memoryConsistencyRepeatLogMs,
+      nowMs,
+    });
+  }
+
+  emitMemoryIndexRefreshLog(reason, result, nowMs = Date.now()) {
+    const indexedGroups = Number(result?.indexedGroups || 0);
+    const skippedGroups = Number(result?.skippedGroups || 0);
+    const documentCount = Number(result?.status?.document_count || 0);
+    const message = `Memory index refresh (${reason}) complete: `
+      + `groups=${indexedGroups} skipped=${skippedGroups} docs=${documentCount}`;
+    const state = `${indexedGroups}:${skippedGroups}:${documentCount}`;
+    return this.emitRateLimitedLog({
+      key: 'memory-index-refresh',
+      level: 'info',
+      message,
+      state,
+      intervalMs: this.memoryIndexRepeatLogMs,
+      nowMs,
+    });
+  }
+
+  executeHmSendSync(args = [], reason = 'hm_send', options = {}) {
+    if (this.hmSendExternalDisabled) {
+      this.emitRateLimitedLog({
+        key: 'hm-send-external-disabled',
+        level: 'info',
+        message: `hm-send suppressed during ${reason}: ${Array.isArray(args) ? args[0] || 'unknown' : 'unknown'}`,
+        state: String(reason || 'hm_send'),
+      });
+      return { ok: false, skipped: true, reason: 'hm_send_external_disabled' };
+    }
+    execFileSync(process.execPath, [this.hmSendScriptPath, ...args], {
+      cwd: options.cwd || this.projectRoot,
+      env: options.env || this.runtimeEnv,
+      timeout: options.timeout || 15000,
+      stdio: options.stdio || 'ignore',
+      windowsHide: true,
+    });
+    return { ok: true };
+  }
+
   refreshSleepExtractionCommand() {
     const snapshot = readSystemCapabilitiesSnapshot(this.projectRoot);
     this.lastSystemCapabilities = snapshot;
@@ -2791,6 +2927,9 @@ class SupervisorDaemon {
     ensureDirectory(this.taskLogDir);
     const messagePath = path.join(this.taskLogDir, `hm-msg-${target}-${task.taskId || createAgentTaskId(target)}.txt`);
     fs.writeFileSync(messagePath, `${message}\n`, 'utf8');
+    if (this.hmSendExternalDisabled) {
+      return { ok: false, skipped: true, reason: 'hm_send_external_disabled', messagePath };
+    }
     return executeNodeScript(this.hmSendScriptPath, [target, '--file', messagePath], {
       cwd: this.projectRoot,
       timeoutMs: 20_000,
@@ -3008,7 +3147,12 @@ class SupervisorDaemon {
       this.tickTimer = null;
       this.nextTickAtMs = 0;
       this.runScheduledTick(reason).catch((err) => {
-        this.logger.error(`Supervisor tick failed: ${err.message}`);
+        this.emitRateLimitedLog({
+          key: 'supervisor-tick-failed',
+          level: 'error',
+          message: `Supervisor tick failed: ${err.message}`,
+          state: err.message,
+        });
       });
     }, safeDelayMs);
     if (typeof this.tickTimer.unref === 'function') {
@@ -4027,10 +4171,16 @@ class SupervisorDaemon {
     }
     if (forceRelaunch) {
       this.lastOracleWatchRelaunchAtMs = nowMs;
-      this.logger.warn(
-        `[ORACLE WATCH][INPROC_RELAUNCH] Oracle watch heartbeat is stale with no running lane; forcing relaunch ` +
-        `(lastTickAt=${heartbeat?.lastTickAt || 'unknown'}, ageMs=${Number(heartbeat?.ageMs || 0) || 0}).`
-      );
+      const lastTickAt = heartbeat?.lastTickAt || 'unknown';
+      this.emitRateLimitedLog({
+        key: 'oracle-watch-inproc-relaunch',
+        level: 'warn',
+        message: `[ORACLE WATCH][INPROC_RELAUNCH] Oracle watch heartbeat is stale with no running lane; forcing relaunch `
+          + `(lastTickAt=${lastTickAt}, ageMs=${Number(heartbeat?.ageMs || 0) || 0}).`,
+        state: lastTickAt,
+        intervalMs: this.supervisorRepeatLogMs,
+        nowMs,
+      });
     }
 
     this.oracleWatchPromise = executeNodeScript(
@@ -4055,9 +4205,21 @@ class SupervisorDaemon {
         lastSummary: summary,
       };
       if (summary?.ok !== true) {
-        this.logger.warn(`Oracle watch engine failed: ${summary?.error || 'unknown'}`);
+        const errorMessage = summary?.error || 'unknown';
+        this.emitRateLimitedLog({
+          key: 'oracle-watch-engine-failed',
+          level: 'warn',
+          message: `Oracle watch engine failed: ${errorMessage}`,
+          state: errorMessage,
+        });
       } else if (Number(summary?.alertCount || 0) > 0) {
-        this.logger.warn(`Oracle watch engine sent ${summary.alertCount} alert(s).`);
+        this.emitRateLimitedLog({
+          key: 'oracle-watch-engine-alerts',
+          level: 'warn',
+          message: `Oracle watch engine sent ${summary.alertCount} alert(s).`,
+          state: `${summary.alertCount}:${Array.isArray(summary.tickers) ? summary.tickers.join(',') : ''}`,
+          intervalMs: this.supervisorRepeatLogMs,
+        });
       }
       return summary;
     }).finally(() => {
@@ -4176,10 +4338,21 @@ class SupervisorDaemon {
         if (Array.isArray(bars) && bars.length > 0) {
           supported.push(mover);
         } else {
-          this.logger.warn(`Skipping market-scanner mover without executable historical support: ${ticker}`);
+          this.emitRateLimitedLog({
+            key: `market-scanner-missing-history:${ticker}`,
+            level: 'warn',
+            message: `Skipping market-scanner mover without executable historical support: ${ticker}`,
+            state: ticker,
+          });
         }
       } catch (error) {
-        this.logger.warn(`Skipping market-scanner mover ${ticker}: ${error?.message || String(error)}`);
+        const errorMessage = error?.message || String(error);
+        this.emitRateLimitedLog({
+          key: `market-scanner-history-error:${ticker}`,
+          level: 'warn',
+          message: `Skipping market-scanner mover ${ticker}: ${errorMessage}`,
+          state: errorMessage,
+        });
       }
     }
     return supported;
@@ -5520,12 +5693,7 @@ class SupervisorDaemon {
       const message = messages[target];
       if (!message) continue;
       try {
-        execFileSync(process.execPath, [this.hmSendScriptPath, target, message], {
-          cwd: this.projectRoot,
-          env: this.runtimeEnv,
-          timeout: 15000,
-          stdio: 'ignore',
-        });
+        this.executeHmSendSync([target, message], phaseKey);
       } catch (err) {
         this.logger.warn(`Trading notify failed for ${target} during ${phaseKey}: ${err.message}`);
       }
@@ -5537,12 +5705,7 @@ class SupervisorDaemon {
     if (!text) return;
     for (const target of TRADING_AGENT_TARGETS) {
       try {
-        execFileSync(process.execPath, [this.hmSendScriptPath, target, text], {
-          cwd: this.projectRoot,
-          env: this.runtimeEnv,
-          timeout: 15000,
-          stdio: 'ignore',
-        });
+        this.executeHmSendSync([target, text], reason);
       } catch (err) {
         this.logger.warn(`Trading notify failed for ${target} during ${reason}: ${err.message}`);
       }
@@ -5553,12 +5716,7 @@ class SupervisorDaemon {
     const text = String(message || '').trim();
     if (!text) return;
     try {
-      execFileSync(process.execPath, [this.hmSendScriptPath, 'architect', text], {
-        cwd: this.projectRoot,
-        env: this.runtimeEnv,
-        timeout: 15000,
-        stdio: 'ignore',
-      });
+      this.executeHmSendSync(['architect', text], reason);
     } catch (err) {
       this.logger.warn(`Architect internal notify failed during ${reason}: ${err.message}`);
     }
@@ -5569,12 +5727,7 @@ class SupervisorDaemon {
     if (!text) return;
     for (const target of ['architect', 'oracle']) {
       try {
-        execFileSync(process.execPath, [this.hmSendScriptPath, target, text], {
-          cwd: this.projectRoot,
-          env: this.runtimeEnv,
-          timeout: 15000,
-          stdio: 'ignore',
-        });
+        this.executeHmSendSync([target, text], reason);
       } catch (err) {
         this.logger.warn(`Oracle watch notify failed for ${target} during ${reason}: ${err.message}`);
       }
@@ -5629,12 +5782,7 @@ class SupervisorDaemon {
       return;
     }
     try {
-      execFileSync(process.execPath, [this.hmSendScriptPath, 'telegram', message, '--chat-id', chatId], {
-        cwd: this.projectRoot,
-        env: this.runtimeEnv,
-        timeout: 15000,
-        stdio: 'ignore',
-      });
+      this.executeHmSendSync(['telegram', message, '--chat-id', chatId], 'telegram_trading');
     } catch (err) {
       this.logger.warn(`Trading Telegram notify failed: ${err.message}`);
     }
@@ -6099,7 +6247,13 @@ class SupervisorDaemon {
         symbols: normalized.map((entry) => entry.ticker),
       });
     } catch (error) {
-      this.logger?.warn?.(`[market-scanner-rank] native funding boost unavailable: ${error?.message || String(error)}`);
+      const errorMessage = error?.message || String(error);
+      this.emitRateLimitedLog({
+        key: 'market-scanner-native-funding-unavailable',
+        level: 'warn',
+        message: `[market-scanner-rank] native funding boost unavailable: ${errorMessage}`,
+        state: errorMessage,
+      });
     }
 
     const nativeAsOfMs = Date.parse(nativeBundle?.asOf || '');
@@ -7921,11 +8075,12 @@ class SupervisorDaemon {
         + ` missing=${counts.missingInCognitiveCount}`
         + ` orphans=${counts.orphanedNodeCount}`
         + ` duplicates=${counts.duplicateKnowledgeHashCount}`;
-      if (this.lastMemoryConsistencySummary.synced) {
-        this.logger.info(message);
-      } else {
-        this.logger.warn(message);
-      }
+      this.emitMemoryConsistencyLog(
+        reason,
+        message,
+        this.lastMemoryConsistencySummary.synced,
+        nowMs
+      );
       return this.lastMemoryConsistencySummary;
     } catch (err) {
       this.lastMemoryConsistencySummary = this.buildMemoryConsistencySummary({
@@ -7936,7 +8091,14 @@ class SupervisorDaemon {
         summary: {},
       });
       this.lastMemoryConsistencyCheckAtMs = nowMs;
-      this.logger.warn(`Memory consistency (${reason}) failed: ${err.message}`);
+      this.emitRateLimitedLog({
+        key: 'memory-consistency-failed',
+        level: 'warn',
+        message: `Memory consistency (${reason}) failed: ${err.message}`,
+        state: err.message,
+        intervalMs: this.memoryConsistencyRepeatLogMs,
+        nowMs,
+      });
       return this.lastMemoryConsistencySummary;
     }
   }
@@ -8168,7 +8330,13 @@ class SupervisorDaemon {
       const nextReason = this.pendingMemoryIndexReason || 'manual';
       this.pendingMemoryIndexReason = null;
       this.runMemoryIndexRefresh(nextReason).catch((err) => {
-        this.logger.warn(`Memory index refresh failed: ${err.message}`);
+        this.emitRateLimitedLog({
+          key: 'memory-index-refresh-failed',
+          level: 'warn',
+          message: `Memory index refresh failed: ${err.message}`,
+          state: err.message,
+          intervalMs: this.memoryIndexRepeatLogMs,
+        });
       });
     }, this.memoryIndexDebounceMs);
     this.requestTick(`memory-index:${this.pendingMemoryIndexReason}`);
@@ -8188,15 +8356,17 @@ class SupervisorDaemon {
 
     this.memoryIndexRefreshPromise = this.memorySearchIndex.indexAll()
       .then((result) => {
-        this.logger.info(
-          `Memory index refresh (${reason}) complete: `
-          + `groups=${result.indexedGroups} skipped=${result.skippedGroups} `
-          + `docs=${result.status.document_count}`
-        );
+        this.emitMemoryIndexRefreshLog(reason, result);
         return result;
       })
       .catch((err) => {
-        this.logger.warn(`Memory index refresh (${reason}) failed: ${err.message}`);
+        this.emitRateLimitedLog({
+          key: 'memory-index-refresh-failed',
+          level: 'warn',
+          message: `Memory index refresh (${reason}) failed: ${err.message}`,
+          state: err.message,
+          intervalMs: this.memoryIndexRepeatLogMs,
+        });
         throw err;
       })
       .finally(() => {
@@ -8821,4 +8991,5 @@ module.exports = {
   DEFAULT_MAX_WORKERS,
   DEFAULT_SLEEP_IDLE_MS,
   DEFAULT_SLEEP_MIN_INTERVAL_MS,
+  resolveProjectUiScriptPath,
 };
