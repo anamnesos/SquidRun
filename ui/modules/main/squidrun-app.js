@@ -69,6 +69,7 @@ const {
   normalizeDeviceId,
   parseCrossDeviceTarget,
   getLocalDeviceId,
+  getProfileDeviceId,
   isCrossDeviceEnabled,
 } = require('../cross-device-target');
 const {
@@ -514,7 +515,7 @@ class SquidRunApp {
     this.pendingPaneDeliveryQueuePath = path.join(WORKSPACE_PATH, '.squidrun', 'runtime', 'pending-pane-deliveries.json');
     this.pendingPaneDeliveryReplayPromise = Promise.resolve();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
-    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
     this.bridgeRelayStatus = {
       enabled: this.bridgeEnabled === true,
       configured: Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId),
@@ -7180,11 +7181,13 @@ class SquidRunApp {
 
   resolveEnvBridgeRuntimeConfig() {
     if (!isCrossDeviceEnabled(process.env)) return null;
+    const profileName = getActiveProfileName();
     const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim() || DEFAULT_BRIDGE_RELAY_URL;
     const sharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
-    const deviceId = getLocalDeviceId(process.env)
+    const baseDeviceId = getLocalDeviceId(process.env)
       || normalizeDeviceId(os.hostname())
       || normalizeDeviceId(`DEVICE-${process.pid}`);
+    const deviceId = getProfileDeviceId(process.env, profileName, { baseDeviceId });
     if (!relayUrl || !deviceId) return null;
     return {
       source: 'env',
@@ -7197,13 +7200,16 @@ class SquidRunApp {
   }
 
   resolveBridgeRuntimeConfig() {
+    const profileName = getActiveProfileName();
     const pairedResult = readPairedConfig();
     if (pairedResult?.ok && pairedResult.config) {
+      const baseDeviceId = normalizeDeviceId(pairedResult.config.device_id);
+      const deviceId = getProfileDeviceId(process.env, profileName, { baseDeviceId }) || baseDeviceId;
       return {
         source: 'devices.json',
         relayUrl: pairedResult.config.relay_url,
         sharedSecret: pairedResult.config.shared_secret,
-        deviceId: pairedResult.config.device_id,
+        deviceId,
         pairedDeviceId: pairedResult.config.paired_device_id || null,
         pairedAt: pairedResult.config.paired_at || null,
       };
@@ -7217,7 +7223,7 @@ class SquidRunApp {
   refreshBridgeRuntimeConfig() {
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
-    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
     this.bridgeRelayStatus.enabled = this.bridgeEnabled === true;
     this.bridgeRelayStatus.configured = Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId);
     this.bridgeRelayStatus.relayUrl = this.bridgeRuntimeConfig?.relayUrl || null;
