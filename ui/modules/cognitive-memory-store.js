@@ -3,7 +3,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { getDatabaseSync } = require('./sqlite-compat');
 const DatabaseSync = getDatabaseSync();
-const { resolveCoordPath, getProjectRoot } = require('../config');
+const {
+  getActiveProfile,
+  getProjectRoot,
+  resolveCoordPath,
+} = require('../config');
+const { isMainProfile, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
 
 /** @typedef {import('../types/contracts').MemoryPrCandidate} MemoryPrCandidate */
 /** @typedef {import('../types/contracts').MemoryPrRow} MemoryPrRow */
@@ -20,17 +25,88 @@ function ensureDir(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 }
 
+function sqlStringLiteral(value) {
+  return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function fileSize(targetPath) {
+  try {
+    return fs.statSync(targetPath).size;
+  } catch {
+    return 0;
+  }
+}
+
+function fileExists(targetPath) {
+  try {
+    return fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+}
+
+function isPathInside(childPath, parentPath) {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
+  return Boolean(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+    || relative === '';
+}
+
+function resolveDefaultCognitiveMemoryDbPath(options = {}) {
+  if (options.projectRoot) {
+    const profileName = normalizeProfileName(options.profileName || getActiveProfile());
+    const relPath = namespaceCoordRelPath(path.join('runtime', 'cognitive-memory.db'), profileName);
+    return path.resolve(path.join(path.resolve(String(options.projectRoot)), '.squidrun', relPath));
+  }
+  return path.resolve(resolveCoordPath(path.join('runtime', 'cognitive-memory.db'), { forWrite: true }));
+}
+
+function resolveLegacyCognitiveMemoryDbPath(projectRoot) {
+  return path.resolve(path.join(projectRoot, 'workspace', 'memory', 'cognitive-memory.db'));
+}
+
+function resolveDefaultPendingPrPath(options = {}) {
+  if (options.projectRoot) {
+    const profileName = normalizeProfileName(options.profileName || getActiveProfile());
+    const relPath = namespaceCoordRelPath(path.join('memory', 'pending-pr.json'), profileName);
+    return path.resolve(path.join(path.resolve(String(options.projectRoot)), '.squidrun', relPath));
+  }
+  return path.resolve(resolveCoordPath(path.join('memory', 'pending-pr.json'), { forWrite: true }));
+}
+
 /**
  * @param {Record<string, unknown>} [options]
- * @returns {WorkspacePaths}
+ * @returns {WorkspacePaths & { profileName: string, coordRoot: string, expectedDbPath: string, legacyDbPath: string, explicitDbPath: boolean, allowUnscopedDbPath: boolean }}
  */
 function resolveWorkspacePaths(options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
   const workspaceDir = path.resolve(String(options.workspaceDir || path.join(projectRoot, 'workspace')));
-  const memoryDir = path.resolve(String(options.memoryDir || path.join(workspaceDir, 'memory')));
-  const dbPath = path.resolve(String(options.dbPath || path.join(memoryDir, 'cognitive-memory.db')));
-  const pendingPrPath = path.resolve(String(options.pendingPrPath || resolveCoordPath(path.join('memory', 'pending-pr.json'), { forWrite: true })));
-  return { projectRoot, workspaceDir, memoryDir, dbPath, pendingPrPath };
+  const profileName = normalizeProfileName(options.profileName || getActiveProfile());
+  const coordRoot = path.resolve(String(options.coordRoot || path.join(projectRoot, '.squidrun')));
+  const expectedDbPath = path.resolve(String(options.expectedDbPath || resolveDefaultCognitiveMemoryDbPath({
+    projectRoot,
+    profileName,
+  })));
+  const legacyDbPath = path.resolve(String(options.legacyDbPath || resolveLegacyCognitiveMemoryDbPath(projectRoot)));
+  const explicitDbPath = options.dbPath != null;
+  const dbPath = path.resolve(String(options.dbPath || expectedDbPath));
+  const memoryDir = path.resolve(String(options.memoryDir || path.dirname(dbPath)));
+  const pendingPrPath = path.resolve(String(options.pendingPrPath || resolveDefaultPendingPrPath({
+    projectRoot,
+    profileName,
+  })));
+  return {
+    projectRoot,
+    workspaceDir,
+    memoryDir,
+    dbPath,
+    pendingPrPath,
+    profileName,
+    coordRoot,
+    expectedDbPath,
+    legacyDbPath,
+    explicitDbPath,
+    allowUnscopedDbPath: options.allowUnscopedDbPath === true,
+  };
 }
 
 /**
@@ -89,10 +165,49 @@ class CognitiveMemoryStore {
     this.dbPath = this.paths.dbPath;
     this.pendingPrPath = this.paths.pendingPrPath;
     this.db = null;
+    this.writeAssertionLabel = `profile=${this.paths.profileName} db=${this.dbPath}`;
+  }
+
+  assertProfileScopedWrite(operation = 'write') {
+    const expected = path.resolve(this.paths.expectedDbPath);
+    const actual = path.resolve(this.dbPath);
+    if (this.paths.allowUnscopedDbPath === true) return;
+    if (actual !== expected) {
+      throw new Error(
+        `Cognitive memory ${operation} blocked: dbPath is not profile-scoped (${this.writeAssertionLabel}; expected=${expected}).`
+      );
+    }
+    if (!isPathInside(actual, this.paths.coordRoot)) {
+      throw new Error(
+        `Cognitive memory ${operation} blocked: dbPath is outside coord root (${this.writeAssertionLabel}; coordRoot=${this.paths.coordRoot}).`
+      );
+    }
+  }
+
+  seedMainRuntimeDbFromLegacyIfNeeded() {
+    if (!isMainProfile(this.paths.profileName)) return;
+    if (this.paths.allowUnscopedDbPath === true) return;
+    const targetPath = path.resolve(this.dbPath);
+    const legacyPath = path.resolve(this.paths.legacyDbPath);
+    if (targetPath === legacyPath) return;
+    const targetSize = fileSize(targetPath);
+    if (targetSize > 0 || fileSize(legacyPath) <= 0) return;
+    ensureDir(targetPath);
+    if (fileExists(targetPath) && targetSize === 0) {
+      try { fs.rmSync(targetPath, { force: true }); } catch {}
+    }
+    const sourceDb = new DatabaseSync(legacyPath);
+    try {
+      sourceDb.exec(`VACUUM INTO ${sqlStringLiteral(targetPath)};`);
+    } finally {
+      try { sourceDb.close(); } catch {}
+    }
   }
 
   init() {
     if (this.db) return this.db;
+    this.assertProfileScopedWrite('init');
+    this.seedMainRuntimeDbFromLegacyIfNeeded();
     ensureDir(this.dbPath);
     ensureDir(this.pendingPrPath);
     const db = new DatabaseSync(this.dbPath);
@@ -259,6 +374,7 @@ class CognitiveMemoryStore {
    * @returns {{ ok: true, staged: string[], merged: string[], pendingCount: number }}
    */
   stageMemoryPRs(candidates = [], options = {}) {
+    this.assertProfileScopedWrite('stageMemoryPRs');
     const db = this.init();
     const nowMs = Date.now();
     const staged = [];
@@ -358,6 +474,7 @@ class CognitiveMemoryStore {
    * @returns {{ version: number, updatedAt: string, items: Array<Record<string, unknown>> }}
    */
   syncPendingPrFile() {
+    this.assertProfileScopedWrite('syncPendingPrFile');
     const payload = {
       version: 1,
       updatedAt: new Date().toISOString(),
@@ -387,6 +504,7 @@ class CognitiveMemoryStore {
    * @returns {Record<string, unknown>}
    */
   recordTransactiveUse(input = {}) {
+    this.assertProfileScopedWrite('recordTransactiveUse');
     const db = this.init();
     const domain = String(input.domain || '').trim();
     const agentId = String(input.agent_id || input.primary_agent_id || '').trim();
@@ -450,6 +568,7 @@ class CognitiveMemoryStore {
    * @returns {{ ok: boolean, reason?: string, queue_id?: string, status?: string }}
    */
   enqueueAntibodyJob(input = {}) {
+    this.assertProfileScopedWrite('enqueueAntibodyJob');
     const db = this.init();
     const nodeId = String(input.node_id || '').trim();
     if (!nodeId) {
@@ -576,6 +695,7 @@ class CognitiveMemoryStore {
    * @returns {{ ok: boolean, reason?: string }}
    */
   updateAntibodyJob(queueId, patch = {}) {
+    this.assertProfileScopedWrite('updateAntibodyJob');
     const normalizedQueueId = String(queueId || '').trim();
     if (!normalizedQueueId) {
       return { ok: false, reason: 'queue_id_required' };
@@ -616,6 +736,7 @@ class CognitiveMemoryStore {
    * @returns {{ ok: boolean, reason?: string, row?: AgentDomainTrustRow }}
    */
   updateAgentDomainTrust(input = {}) {
+    this.assertProfileScopedWrite('updateAgentDomainTrust');
     const db = this.init();
     const agentId = String(input.agent_id || '').trim();
     const domain = String(input.domain || '').trim().toLowerCase();
@@ -693,6 +814,7 @@ class CognitiveMemoryStore {
    * @returns {{ ok: boolean, reason?: string, updated: number, rows: MemoryPrRow[] }}
    */
   reviewMemoryPRs(input = {}) {
+    this.assertProfileScopedWrite('reviewMemoryPRs');
     const db = this.init();
     const ids = Array.from(new Set(
       (Array.isArray(input.ids) ? input.ids : [input.ids])
@@ -737,5 +859,8 @@ class CognitiveMemoryStore {
 
 module.exports = {
   CognitiveMemoryStore,
+  resolveDefaultCognitiveMemoryDbPath,
+  resolveDefaultPendingPrPath,
+  resolveLegacyCognitiveMemoryDbPath,
   resolveWorkspacePaths,
 };

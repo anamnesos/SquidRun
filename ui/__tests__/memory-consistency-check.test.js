@@ -109,6 +109,7 @@ describe('memory consistency check', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-memory-consistency-'));
     fs.mkdirSync(path.join(tempDir, 'workspace', 'knowledge'), { recursive: true });
     fs.mkdirSync(path.join(tempDir, 'workspace', 'memory'), { recursive: true });
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'runtime'), { recursive: true });
 
     fs.writeFileSync(
       path.join(tempDir, 'workspace', 'knowledge', 'user-context.md'),
@@ -142,7 +143,7 @@ describe('memory consistency check', () => {
 
     const paths = resolveWorkspacePaths({ projectRoot: tempDir });
     const entries = collectKnowledgeEntries(paths);
-    const db = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    const db = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
     createCognitiveSchema(db);
 
     entries.forEach((entry, index) => {
@@ -177,7 +178,7 @@ describe('memory consistency check', () => {
 
     const paths = resolveWorkspacePaths({ projectRoot: tempDir });
     const entries = collectKnowledgeEntries(paths);
-    const dbPath = path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db');
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
     const db = createDatabase(dbPath);
     createCognitiveSchema(db);
 
@@ -224,7 +225,7 @@ describe('memory consistency check', () => {
 
     const paths = resolveWorkspacePaths({ projectRoot: tempDir });
     const entries = collectKnowledgeEntries(paths);
-    const dbPath = path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db');
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
     const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
     fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
 
@@ -274,7 +275,7 @@ describe('memory consistency check', () => {
   test('repair skips deleted-source orphans with an explanation', () => {
     const { runMemoryConsistencyRepair } = helpers;
 
-    const db = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    const db = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
     createCognitiveSchema(db);
     insertKnowledgeNode(db, {
       nodeId: 'deleted-orphan',
@@ -308,7 +309,7 @@ describe('memory consistency check', () => {
 
     const paths = resolveWorkspacePaths({ projectRoot: tempDir });
     const entries = collectKnowledgeEntries(paths);
-    const db = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    const db = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
     createCognitiveSchema(db);
     insertKnowledgeNode(db, {
       nodeId: 'relational-orphan',
@@ -359,7 +360,7 @@ describe('memory consistency check', () => {
 
     const paths = resolveWorkspacePaths({ projectRoot: tempDir });
     const entries = collectKnowledgeEntries(paths);
-    const db = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    const db = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
     createCognitiveSchema(db);
     insertKnowledgeNode(db, {
       nodeId: 'immune-orphan',
@@ -396,7 +397,7 @@ describe('memory consistency check', () => {
 
     const paths = resolveWorkspacePaths({ projectRoot: tempDir });
     const entries = collectKnowledgeEntries(paths);
-    const dbPath = path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db');
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
     const db = createDatabase(dbPath);
     createCognitiveSchema(db);
 
@@ -481,7 +482,7 @@ describe('memory consistency check', () => {
 
     const paths = resolveWorkspacePaths({ projectRoot: tempDir });
     const entries = collectKnowledgeEntries(paths);
-    const dbPath = path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db');
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
     const db = createDatabase(dbPath);
     createCognitiveSchema(db);
 
