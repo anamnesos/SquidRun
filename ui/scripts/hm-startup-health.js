@@ -31,6 +31,7 @@ const WATCH_RULE_STALE_DISTANCE_PCT = 0.02;
 const TOKENOMIST_SCAN_STALE_MS = 12 * 60 * 60 * 1000;
 const TOKENOMIST_SOURCE_STALE_MS = 24 * 60 * 60 * 1000;
 const SUPERVISOR_HEARTBEAT_STALE_MS = 60 * 1000;
+const SCHEDULED_PHASE_STALE_GRACE_MS = 10 * 60 * 1000;
 
 const REQUIRED_LANES = [
   'SQUIDRUN_ORACLE_WATCH',
@@ -90,7 +91,16 @@ function toTimestampMs(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function inspectLaneFreshness({ key, filePath, enabled, staleAfterMs, extractTimestamp }) {
+function inspectLaneFreshness({
+  key,
+  filePath,
+  enabled,
+  staleAfterMs,
+  extractTimestamp,
+  extractNextEventTimestamp = null,
+  phaseGraceMs = 0,
+  nowMs = Date.now(),
+}) {
   if (enabled === false) {
     return null;
   }
@@ -102,7 +112,26 @@ function inspectLaneFreshness({ key, filePath, enabled, staleAfterMs, extractTim
   if (!Number.isFinite(observedAtMs) || observedAtMs <= 0) {
     return { key, stale: true, reason: 'missing_timestamp', filePath };
   }
-  const ageMs = Date.now() - observedAtMs;
+  const effectiveNowMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  const ageMs = effectiveNowMs - observedAtMs;
+  const nextEventAtMs = typeof extractNextEventTimestamp === 'function'
+    ? Number(extractNextEventTimestamp(payload) || 0)
+    : 0;
+  if (Number.isFinite(nextEventAtMs) && nextEventAtMs > 0) {
+    const graceMs = Math.max(0, Number(phaseGraceMs) || 0);
+    const staleBySchedule = effectiveNowMs > (nextEventAtMs + graceMs);
+    return {
+      key,
+      stale: staleBySchedule,
+      observedAt: new Date(observedAtMs).toISOString(),
+      ageMinutes: Math.round(ageMs / 60000),
+      staleAfterMinutes: Math.round((Math.max(0, nextEventAtMs + graceMs - observedAtMs)) / 60000),
+      nextEventAt: new Date(nextEventAtMs).toISOString(),
+      graceMinutes: Math.round(graceMs / 60000),
+      reason: staleBySchedule ? 'scheduled_phase_overdue' : 'awaiting_scheduled_phase',
+      filePath,
+    };
+  }
   return {
     key,
     stale: ageMs > staleAfterMs,
@@ -278,6 +307,8 @@ function run({ autoFix = true } = {}) {
         enabled: status.cryptoTradingAutomation?.enabled !== false,
         staleAfterMs: 45 * 60 * 1000,
         extractTimestamp: (payload) => toTimestampMs(payload?.lastProcessedAt || payload?.updatedAt),
+        extractNextEventTimestamp: (payload) => toTimestampMs(payload?.nextEvent?.scheduledAt),
+        phaseGraceMs: SCHEDULED_PHASE_STALE_GRACE_MS,
       }),
       inspectLaneFreshness({
         key: 'paper_trading_automation',
@@ -445,4 +476,8 @@ if (require.main === module) {
   }
 }
 
-module.exports = { run };
+module.exports = {
+  SCHEDULED_PHASE_STALE_GRACE_MS,
+  inspectLaneFreshness,
+  run,
+};
