@@ -33,6 +33,7 @@ const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { createExternalNotifier } = require('../external-notifications');
+const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
@@ -277,9 +278,7 @@ function resolveSupervisorLaunchExecutable() {
 }
 
 function stripAnsiForStartupReady(value) {
-  return String(value || '')
-    .replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
-    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+  return stripAnsi(value);
 }
 
 function hasCliStartupReadySignal(buffer = '') {

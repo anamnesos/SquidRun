@@ -4,6 +4,7 @@
  */
 
 const log = require('./logger');
+const { stripAnsi: stripAnsiCodes } = require('./ansi');
 
 const DEFAULT_CONFIG = {
   stuckThresholdMs: 120000,
@@ -26,13 +27,8 @@ const DEFAULT_CONFIG = {
 const MAX_TASK_CHARS = 4000;
 const TOKEN_REGEX = /(\d+(?:\.\d+)?)\s*([kKmM]?)\s*tokens\b/g;
 const TIMER_REGEX = /(\d{1,4})s\b/g;
-const OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
-const CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
-
 function stripAnsi(input) {
-  return String(input || '')
-    .replace(OSC_REGEX, '')
-    .replace(CSI_REGEX, '')
+  return stripAnsiCodes(input)
     .replace(/\u001b[\(\)][A-Za-z0-9]/g, '')
     .replace(/\r/g, '\n');
 }
