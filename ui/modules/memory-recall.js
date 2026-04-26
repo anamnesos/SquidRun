@@ -455,19 +455,6 @@ function buildTimeAwareness(input = {}) {
     lines.push(`Last [private-live-ops] check: ${describeElapsedSince([private-live-ops]CheckMs, { nowMs })}`);
   }
 
-  const newsScanMs = selectLatestTimestamp(
-    override.lastNewsScanAtMs,
-    getNestedValue(supervisorStatus, 'newsScanAutomation.lastProcessedAt'),
-    getNestedValue(supervisorStatus, 'eventNewsAutomation.lastProcessedAt'),
-    getNestedValue(supervisorStatus, 'marketNewsAutomation.lastProcessedAt')
-  );
-  raw.lastNewsScanAtMs = newsScanMs;
-  lines.push(
-    Number.isFinite(newsScanMs)
-      ? `Last news scan: ${describeElapsedSince(newsScanMs, { nowMs })}`
-      : 'Last news scan: never (not automated)'
-  );
-
   if (shouldBoostKoreanCase(input, input.message || input.text || input.query || '')) {
     const private-profileFromComms = findLatestCommsTimestamp(commsRows, (row) => {
       const metadata = asObject(row.metadata);
