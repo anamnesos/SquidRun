@@ -34,6 +34,7 @@ const convictionEngine = require('./modules/trading/conviction-engine');
 const rangeStructure = require('./modules/trading/range-structure');
 const [private-live-ops]Client = require('./modules/trading/[private-live-ops]-client');
 const [private-live-ops]NativeLayer = require('./modules/trading/[private-live-ops]-native-layer');
+const agentPositionAttribution = require('./modules/trading/agent-position-attribution');
 const {
   DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH,
   readManual[private-live-ops]Activity,
@@ -1999,6 +2000,36 @@ class SupervisorDaemon {
         warnings: [],
         telegramAlerts: [],
       };
+    this.positionAttributionStatePath = options.positionAttributionStatePath
+      || agentPositionAttribution.DEFAULT_POSITION_ATTRIBUTION_STATE_PATH;
+    this.positionAttributionSnapshotProvider = typeof options.positionAttributionSnapshotProvider === 'function'
+      ? options.positionAttributionSnapshotProvider
+      : null;
+    const positionAttributionReconciliationRequested = options.positionAttributionReconciliationEnabled === true
+      || (options.positionAttributionReconciliationEnabled !== false && !process.env.JEST_WORKER_ID);
+    this.positionAttributionReconciliationEnabled = positionAttributionReconciliationRequested
+      && (Boolean(resolve[private-live-ops]WalletAddress(this.runtimeEnv)) || Boolean(this.positionAttributionSnapshotProvider));
+    this.lastPositionAttributionReconciliationSummary = this.positionAttributionReconciliationEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        statePath: this.positionAttributionStatePath,
+        checkedAt: null,
+        liveCount: 0,
+        updatedCount: 0,
+        createdCount: 0,
+        quarantinedCount: 0,
+      }
+      : {
+        enabled: false,
+        status: resolve[private-live-ops]WalletAddress(this.runtimeEnv) ? 'manual_opt_out' : 'wallet_unavailable',
+        statePath: this.positionAttributionStatePath,
+        checkedAt: null,
+        liveCount: 0,
+        updatedCount: 0,
+        createdCount: 0,
+        quarantinedCount: 0,
+      };
     const [private-live-ops]AutomationRequested = options.[private-live-ops]ExecutionEnabled !== false
       && this.runtimeEnv.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0';
     this.[private-live-ops]ExecutionEnabled = Boolean(this.cryptoTradingEnabled && [private-live-ops]AutomationRequested && [private-live-ops]Configured);
@@ -3070,6 +3101,7 @@ class SupervisorDaemon {
     }
 
     const tradingResult = await this.maybeRunTradingAutomation(nowMs);
+    const positionAttributionReconciliationResult = await this.maybeRunPositionAttributionReconciliation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
     const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
@@ -3097,6 +3129,7 @@ class SupervisorDaemon {
       leaseHousekeeping,
       memoryConsistency,
       tradingResult,
+      positionAttributionReconciliationResult,
       tradeReconciliationResult,
       cryptoTradingResult,
       polymarketTradingResult,
@@ -3169,6 +3202,8 @@ class SupervisorDaemon {
     const pendingPruned = Number(summary?.queueHousekeeping?.pruneResult?.pruned || 0);
     const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
     const tradingRan = summary?.tradingResult && summary.tradingResult.skipped !== true;
+    const positionAttributionReconciliationRan = summary?.positionAttributionReconciliationResult
+      && summary.positionAttributionReconciliationResult.skipped !== true;
     const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
     const polymarketTradingRan = summary?.polymarketTradingResult && summary.polymarketTradingResult.skipped !== true;
@@ -3189,6 +3224,7 @@ class SupervisorDaemon {
       || pendingPruned > 0
       || leasePruned > 0
       || tradingRan
+      || positionAttributionReconciliationRan
       || tradeReconciliationRan
       || cryptoTradingRan
       || polymarketTradingRan
@@ -6047,6 +6083,67 @@ class SupervisorDaemon {
     ));
   }
 
+  async maybeRunPositionAttributionReconciliation(nowMs = Date.now()) {
+    const checkedAt = new Date(nowMs).toISOString();
+    if (!this.positionAttributionReconciliationEnabled) {
+      return {
+        ok: false,
+        skipped: true,
+        enabled: false,
+        reason: this.lastPositionAttributionReconciliationSummary?.status || 'position_attribution_reconciliation_disabled',
+        checkedAt,
+        statePath: this.positionAttributionStatePath,
+      };
+    }
+
+    const walletAddress = resolve[private-live-ops]WalletAddress(this.runtimeEnv);
+    try {
+      const livePositions = this.positionAttributionSnapshotProvider
+        ? await Promise.resolve(this.positionAttributionSnapshotProvider({ walletAddress, env: this.runtimeEnv, nowMs }))
+        : await [private-live-ops]Client.getOpenPositions({ walletAddress, env: this.runtimeEnv });
+      const reconcileSummary = agentPositionAttribution.reconcilePositionAttributionWithLivePositions(
+        Array.isArray(livePositions) ? livePositions : [],
+        {
+          statePath: this.positionAttributionStatePath,
+          walletAddress,
+          nowIso: checkedAt,
+        }
+      );
+      const summary = {
+        enabled: true,
+        status: 'ok',
+        ...reconcileSummary,
+        checkedAt,
+        statePath: reconcileSummary.path || this.positionAttributionStatePath,
+      };
+      this.lastPositionAttributionReconciliationSummary = summary;
+      if (summary.createdCount > 0 || summary.quarantinedCount > 0) {
+        this.logger.info(
+          `Position attribution reconciled: live=${summary.liveCount}, created=${summary.createdCount}, quarantined=${summary.quarantinedCount}`
+        );
+      }
+      return summary;
+    } catch (error) {
+      const message = error?.message || String(error);
+      const summary = {
+        ok: false,
+        enabled: true,
+        status: 'error',
+        checkedAt,
+        statePath: this.positionAttributionStatePath,
+        error: message,
+      };
+      this.lastPositionAttributionReconciliationSummary = summary;
+      this.emitRateLimitedLog({
+        key: 'position-attribution-reconciliation-failed',
+        level: 'warn',
+        message: `Position attribution reconciliation failed: ${message}`,
+        state: message,
+      });
+      return summary;
+    }
+  }
+
   async getCryptoSymbolCandidates(options = {}) {
     const openPositionSymbols = await this.getCurrent[private-live-ops]PositionSymbols();
     const prioritySymbols = (Array.isArray(options.prioritySymbols) ? options.prioritySymbols : [])
@@ -8733,6 +8830,11 @@ class SupervisorDaemon {
         pollMs: this.tradeReconciliationPollMs,
         state: this.tradeReconciliationState || defaultTradeReconciliationState(),
         lastSummary: this.lastTradeReconciliationSummary || null,
+      },
+      positionAttributionReconciliation: {
+        enabled: this.positionAttributionReconciliationEnabled,
+        statePath: this.positionAttributionStatePath,
+        lastSummary: this.lastPositionAttributionReconciliationSummary || null,
       },
       cryptoTradingAutomation: {
         enabled: this.cryptoTradingEnabled,
