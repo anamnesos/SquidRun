@@ -17,6 +17,7 @@ const {
   DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
   DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
 } = require('../inject-message-ipc');
+const { appendInputShadowLog } = require('../input-shadow-log');
 const DEFAULT_CHUNK_SIZE = DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES;
 const MIN_CHUNK_SIZE = 64;
 const MAX_CHUNK_SIZE = 8192;
@@ -353,6 +354,13 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('pty-write', async (event, paneId, data, kernelMeta = null) => {
+    appendInputShadowLog({
+      paneId,
+      source: 'ipc-handler',
+      byteLen: Buffer.byteLength(String(data ?? ''), 'utf8'),
+      text: data,
+    });
+
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
       return { success: false, error: 'daemon_not_connected' };
     }
