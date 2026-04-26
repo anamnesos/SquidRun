@@ -6,10 +6,6 @@ jest.mock('child_process', () => ({
   execFile: (...args) => mockExecFile(...args),
 }));
 
-jest.mock('../data-ingestion', () => ({
-  createAlpacaClient: jest.fn(),
-}));
-
 jest.mock('../journal', () => ({
   getDb: jest.fn(() => ({})),
   recordTrade: jest.fn(() => ({ lastInsertRowid: 1 })),

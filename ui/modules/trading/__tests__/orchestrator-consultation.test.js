@@ -6,9 +6,6 @@ const path = require('path');
 
 const mockJournalDb = { mocked: true };
 let mockTrades = [];
-let mockAlpacaClient = {
-  getOrder: jest.fn(),
-};
 let mockRecordedDailySummaries = [];
 const mockExecFile = jest.fn();
 
@@ -36,7 +33,6 @@ jest.mock('../data-ingestion', () => ({
     ]],
   ])),
   getNews: jest.fn().mockResolvedValue([]),
-  createAlpacaClient: jest.fn(() => mockAlpacaClient),
 }));
 
 jest.mock('../executor', () => ({
@@ -76,7 +72,7 @@ jest.mock('../journal', () => ({
       ...(patch.shares !== undefined ? { shares: patch.shares } : {}),
       ...(patch.price !== undefined ? { price: patch.price } : {}),
       ...(patch.status !== undefined ? { status: String(patch.status).toUpperCase() } : {}),
-      ...(patch.alpacaOrderId !== undefined ? { alpaca_order_id: patch.alpacaOrderId } : {}),
+      ...(patch.brokerOrderId !== undefined ? { alpaca_order_id: patch.brokerOrderId } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
       ...(patch.filledAt !== undefined ? { filled_at: patch.filledAt } : {}),
       ...(patch.reconciledAt !== undefined ? { reconciled_at: patch.reconciledAt } : {}),
@@ -319,12 +315,12 @@ jest.mock('../portfolio-tracker', () => ({
 jest.mock('../dynamic-watchlist', () => ({
   cloneEntry: jest.fn((entry) => ({ ...entry })),
   getActiveEntries: jest.fn(() => [
-    { ticker: 'AAPL', broker: 'alpaca', assetClass: 'us_equity', exchange: 'SMART' },
+    { ticker: 'AAPL', broker: 'ibkr', assetClass: 'us_equity', exchange: 'SMART' },
   ]),
   getEntry: jest.fn(() => null),
   addTicker: jest.fn(() => true),
   isWatched: jest.fn(() => true),
-  normalizeBroker: jest.fn((value, fallback = 'alpaca') => value || fallback),
+  normalizeBroker: jest.fn((value, fallback = 'ibkr') => value || fallback),
   normalizeExchange: jest.fn((value, fallback = 'SMART') => value || fallback),
   normalizeAssetClass: jest.fn((value, fallback = 'us_equity') => value || fallback),
   DEFAULT_WATCHLIST: [],
@@ -341,7 +337,6 @@ const consensusSizer = require('../consensus-sizer');
 const portfolioTracker = require('../portfolio-tracker');
 const riskEngine = require('../risk-engine');
 const dynamicWatchlist = require('../dynamic-watchlist');
-const dataIngestion = require('../data-ingestion');
 const telegramSummary = require('../telegram-summary');
 const agentAttribution = require('../agent-attribution');
 const macroRiskGate = require('../macro-risk-gate');
@@ -357,9 +352,6 @@ describe('orchestrator real consultation flow', () => {
     mockTrades = [];
     mockRecordedDailySummaries = [];
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-defi-monitor-'));
-    mockAlpacaClient = {
-      getOrder: jest.fn(),
-    };
     portfolioTracker.getPortfolioSnapshot.mockResolvedValue({
       totalEquity: 12000,
       positions: [],
@@ -1891,9 +1883,7 @@ describe('orchestrator real consultation flow', () => {
     const portfolioSnapshot = {
       totalEquity: 1000,
       markets: {
-        alpaca_stocks: { equity: 250 },
-        alpaca_crypto: { equity: 150 },
-        ibkr_global: { equity: 0 },
+        ibkr_global: { equity: 400 },
         defi_yield: { equity: 100 },
         solana_tokens: { equity: 0 },
         cash_reserve: { cash: 500, equity: 500 },
@@ -1948,9 +1938,7 @@ describe('orchestrator real consultation flow', () => {
     const portfolioSnapshot = {
       totalEquity: 1000,
       markets: {
-        alpaca_stocks: { equity: 100 },
-        alpaca_crypto: { equity: 0 },
-        ibkr_global: { equity: 0 },
+        ibkr_global: { equity: 100 },
         defi_yield: { equity: 250 },
         solana_tokens: { equity: 0 },
         cash_reserve: { cash: 250, equity: 250 },
@@ -2000,9 +1988,7 @@ describe('orchestrator real consultation flow', () => {
       portfolioSnapshot: {
         totalEquity: 1000,
         markets: {
-          alpaca_stocks: { equity: 100 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
+          ibkr_global: { equity: 100 },
           defi_yield: { equity: 250 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 350, equity: 350 },
@@ -2043,7 +2029,7 @@ describe('orchestrator real consultation flow', () => {
     }));
   });
 
-  test('reconciles pending fills, records closed-position outcomes, and builds daily trade stats', async () => {
+  test('records closed-position outcomes and builds daily trade stats', async () => {
     mockTrades = [
       {
         id: 1,
@@ -2053,8 +2039,7 @@ describe('orchestrator real consultation flow', () => {
         shares: 2,
         price: 100,
         total_value: 200,
-        status: 'PENDING_NEW',
-        alpaca_order_id: 'alpaca-buy-1',
+        status: 'FILLED',
       },
       {
         id: 2,
@@ -2065,18 +2050,8 @@ describe('orchestrator real consultation flow', () => {
         price: 110,
         total_value: 220,
         status: 'FILLED',
-        alpaca_order_id: 'alpaca-sell-1',
       },
     ];
-    mockAlpacaClient.getOrder.mockResolvedValue({
-      id: 'alpaca-buy-1',
-      symbol: 'AAPL',
-      status: 'filled',
-      qty: 2,
-      filled_qty: 2,
-      filled_avg_price: 101,
-      filled_at: '2026-03-19T14:31:00.000Z',
-    });
 
     const orchestrator = createOrchestrator();
     const result = await orchestrator.runReconciliation({
@@ -2084,17 +2059,10 @@ describe('orchestrator real consultation flow', () => {
       agentAttributionStatePath: '/tmp/agent-attribution.json',
     });
 
-    expect(dataIngestion.createAlpacaClient).toHaveBeenCalled();
-    expect(mockAlpacaClient.getOrder).toHaveBeenCalledWith('alpaca-buy-1');
-    expect(journal.updateTrade).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({
-      status: 'FILLED',
-      shares: 2,
-      price: 101,
-    }));
     expect(agentAttribution.recordOutcome).toHaveBeenCalledWith(
       'AAPL',
       'BUY',
-      expect.closeTo(18 / 202, 6),
+      expect.closeTo(20 / 200, 6),
       '2026-03-19T19:30:00.000Z',
       expect.objectContaining({
         assetClass: 'us_equity',
@@ -2107,33 +2075,26 @@ describe('orchestrator real consultation flow', () => {
       reportType: 'trade_outcome',
       tradeId: 2,
       ticker: 'AAPL',
-      realizedPnl: 18,
+      realizedPnl: 20,
     }));
     expect(result).toEqual(expect.objectContaining({
       phase: 'reconciliation',
       marketDate: '2026-03-19',
-      orderUpdates: [
-        expect.objectContaining({
-          tradeId: 1,
-          status: 'FILLED',
-          filledQty: 2,
-          filledPrice: 101,
-        }),
-      ],
+      orderUpdates: [],
       recordedOutcomes: [
         expect.objectContaining({
           tradeId: 2,
           ticker: 'AAPL',
-          realizedPnl: 18,
+          realizedPnl: 20,
         }),
       ],
       dailySummary: expect.objectContaining({
         totalTrades: 2,
         wins: 1,
         losses: 0,
-        netPnl: 18,
-        bestTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 18 }),
-        worstTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 18 }),
+        netPnl: 20,
+        bestTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 20 }),
+        worstTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 20 }),
       }),
     }));
   });

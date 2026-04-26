@@ -2,13 +2,9 @@
 
 Autonomous multi-model swing trading system.
 
-## Architecture
-
-See `workspace/specs/trading-system-design.md` for full spec.
-
 ## Modules
 
-- `data-ingestion.js` — Broker-routed market data + news feeds (Alpaca equities, Alpaca crypto, IBKR)
+- `data-ingestion.js` — Broker-routed market data + news feeds (IBKR + Hyperliquid)
 - `watchlist.js` — Backward-compatible watchlist facade for the live trading pipeline
 - `dynamic-watchlist.js` — Persistent static + dynamic watchlist with source tagging and expiry pruning
 - `agent-attribution.js` — Persistent per-agent prediction/outcome tracking with asset-class-specific stats and leaderboards
@@ -17,22 +13,20 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `consultation-store.js` — Runtime request/response store for real pane-agent market consultations via `hm-send`
 - `consensus.js` — 2-of-3 multi-model voting engine
 - `risk-engine.js` — Hard limits, stop losses, kill switch
-- `executor.js` — Broker-routed order placement (Alpaca + IBKR)
-- `broker-adapter.js` — Unified broker interface for Alpaca and IBKR
+- `executor.js` — Broker-routed order placement (Hyperliquid + IBKR)
+- `broker-adapter.js` — Unified broker interface for Hyperliquid and IBKR
 - `ibkr-client.js` — Interactive Brokers client wrapper for account, positions, orders, and snapshots
-- `portfolio-tracker.js` — Unified capital snapshot across Alpaca, IBKR, DeFi yield, and future token positions
+- `portfolio-tracker.js` — Unified capital snapshot across IBKR, DeFi yield, and future token positions
 - `journal.js` — SQLite trade journal
 - `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto automation cadences
 - `telegram-summary.js` — Daily trading summary via Telegram
 
 ## Setup
 
-1. Sign up at https://alpaca.markets and/or configure Interactive Brokers TWS or IB Gateway
-2. Get API keys / connection settings from the broker dashboard or gateway
+1. Configure Interactive Brokers TWS or IB Gateway, plus Hyperliquid credentials for live crypto execution.
+2. Get connection settings from the broker gateway.
 3. Add to `.env`:
    ```
-   ALPACA_API_KEY=your_key
-   ALPACA_API_SECRET=your_secret
    IBKR_HOST=127.0.0.1
    IBKR_PORT=4002
    IBKR_CLIENT_ID=17

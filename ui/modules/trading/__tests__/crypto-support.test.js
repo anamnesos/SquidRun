@@ -1,6 +1,5 @@
 'use strict';
 
-const dataIngestion = require('../data-ingestion');
 const riskEngine = require('../risk-engine');
 const scheduler = require('../scheduler');
 const watchlist = require('../watchlist');
@@ -19,39 +18,7 @@ describe('crypto trading support', () => {
     expect(watchlist.getAssetClassForTicker('AVAX/USD')).toBe('crypto');
     expect(watchlist.getBrokerForTicker('BTC/USD')).toBe('hyperliquid');
     expect(watchlist.getAssetClassForTicker('AAPL')).toBe('us_equity');
-  });
-
-  test('data ingestion routes Alpaca crypto snapshots through the crypto endpoint', async () => {
-    const client = {
-      getSnapshots: jest.fn().mockResolvedValue(new Map([[
-        'AAPL',
-        {
-          LatestTrade: { Symbol: 'AAPL', Price: 200 },
-          LatestQuote: { Symbol: 'AAPL', BidPrice: 199, AskPrice: 201 },
-          DailyBar: { ClosePrice: 200, Volume: 1000 },
-          PrevDailyBar: { ClosePrice: 198 },
-        },
-      ]])),
-      getCryptoSnapshots: jest.fn().mockResolvedValue(new Map([[
-        'BTC/USD',
-        {
-          LatestTrade: { Symbol: 'BTC/USD', Price: 64000 },
-          LatestQuote: { Symbol: 'BTC/USD', BidPrice: 63900, AskPrice: 64100 },
-          DailyBar: { ClosePrice: 64000, Volume: 42 },
-          PrevDailyBar: { ClosePrice: 63000 },
-        },
-      ]])),
-    };
-
-    const snapshots = await dataIngestion.getAlpacaWatchlistSnapshots({
-      client,
-      watchlistEntries: [watchlist.getEntry('AAPL'), watchlist.getEntry('BTC/USD')],
-    });
-
-    expect(client.getSnapshots).toHaveBeenCalledWith(['AAPL']);
-    expect(client.getCryptoSnapshots).toHaveBeenCalledWith(['BTC/USD']);
-    expect(snapshots.get('AAPL')?.tradePrice).toBe(200);
-    expect(snapshots.get('BTC/USD')?.tradePrice).toBe(64000);
+    expect(watchlist.getBrokerForTicker('AAPL')).toBe('ibkr');
   });
 
   test('risk engine applies crypto-specific position sizing with fractional quantities', () => {

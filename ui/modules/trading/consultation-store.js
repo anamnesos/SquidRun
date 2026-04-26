@@ -73,7 +73,7 @@ function derivePrimaryDataSource(payload = {}) {
   if (symbols.some((symbol) => isCryptoSymbol(symbol))) {
     return 'hyperliquid';
   }
-  return 'alpaca';
+  return 'ibkr';
 }
 
 function buildHyperliquidAccount(serializedAccountSnapshot = null, serializedDefiStatus = null) {
@@ -284,7 +284,7 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
   const positionManagementContext = request?.positionManagementContext || null;
   const primaryVenueInstruction = primaryDataSource === 'hyperliquid'
     ? 'Primary live-trading venue is Hyperliquid. Base the consultation on liveTradingContext plus the attached crypto market snapshots/bars.'
-    : 'Primary venue is Alpaca market data. Use the attached snapshots/bars/news as your main market context.';
+    : 'Primary venue is IBKR market data. Use the attached snapshots/bars/news as your main market context.';
   const defiInstruction = defiStatus?.positions?.length
     ? `Live Hyperliquid positions are included in the request JSON (${defiStatus.positions.length} open). Factor them into your signal reasoning before considering any new idea.`
     : '';

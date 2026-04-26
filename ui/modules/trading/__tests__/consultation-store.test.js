@@ -33,7 +33,7 @@ describe('consultation-store', () => {
         equity: 10000,
         markets: {
           hyperliquid: { equity: 692, cash: 410, marketValue: 282 },
-          alpaca_crypto: { equity: 10000, cash: 10000, marketValue: 0 },
+          ibkr_global: { equity: 10000, cash: 10000, marketValue: 0 },
         },
       },
       macroRisk: { regime: 'red', score: 66, constraints: { allowLongs: false } },
@@ -91,7 +91,7 @@ describe('consultation-store', () => {
         equity: 10000,
         markets: {
           hyperliquid: { equity: 692, cash: 410, marketValue: 282 },
-          alpaca_crypto: { equity: 10000, cash: 10000, marketValue: 0 },
+          ibkr_global: { equity: 10000, cash: 10000, marketValue: 0 },
         },
       },
       macroRisk: {

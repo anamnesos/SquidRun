@@ -300,7 +300,7 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
     violations.push(`POSITION_TOO_SMALL: Max position $${maxDollars.toFixed(2)} cannot buy ${minimumQuantityText} at $${trade.price}`);
   }
 
-  // --- MINIMUM NOTIONAL (Alpaca crypto requires >= $10 per order) ---
+  // --- MINIMUM NOTIONAL ---
   if (assetClass === 'crypto' && direction === 'SELL' && !opensHyperliquidCryptoShort && trade.price > 0) {
     const position = normalizedAccount.openPositions?.find(p => normTicker(p.ticker) === tradeTicker);
     const positionValue = (position?.shares || 0) * trade.price;

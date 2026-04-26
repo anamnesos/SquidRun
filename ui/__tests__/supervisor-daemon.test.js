@@ -260,7 +260,6 @@ describe('supervisor-daemon integrations', () => {
       sleepConsolidator: mockSleepConsolidator,
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
-      tradingEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
       statusPath: path.join(tempRoot, 'supervisor-status.json'),
@@ -351,7 +350,6 @@ describe('supervisor-daemon integrations', () => {
     const callOrder = [];
     const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
     daemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
-    daemon.maybeRunTradingAutomation = skippedLane;
     daemon.maybeRunPositionAttributionReconciliation = jest.fn(async () => {
       callOrder.push('position_attribution');
       return { ok: true, status: 'ok' };
@@ -416,7 +414,6 @@ describe('supervisor-daemon integrations', () => {
       sleepConsolidator: mockSleepConsolidator,
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
-      tradingEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
       statusPath: path.join(tempRoot, 'supervisor-status.json'),
@@ -482,7 +479,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-heartbeat.pid'),
@@ -591,7 +587,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-relaunch.pid'),
@@ -685,7 +680,6 @@ describe('supervisor-daemon integrations', () => {
       },
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-crash-restart.pid'),
@@ -812,7 +806,6 @@ describe('supervisor-daemon integrations', () => {
       env: process.env,
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-backoff-expired-restart.pid'),
@@ -1036,7 +1029,7 @@ describe('supervisor-daemon integrations', () => {
     );
   });
 
-  test('uses the configured hm-send script path for trading Telegram and agent notifications', async () => {
+  test('uses the configured hm-send script path for trading Telegram notifications', async () => {
     const projectRoot = path.join(tempRoot, 'repo-root');
     const capturePath = path.join(tempRoot, 'hm-send-calls.jsonl');
     const captureScriptPath = path.join(tempRoot, 'capture-hm-send.js');
@@ -1063,7 +1056,6 @@ describe('supervisor-daemon integrations', () => {
       },
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       pidPath: path.join(tempRoot, 'notify.pid'),
       statusPath: path.join(tempRoot, 'notify-status.json'),
@@ -1074,7 +1066,6 @@ describe('supervisor-daemon integrations', () => {
 
     try {
       notifyDaemon.notifyTelegramTrading('Trading Day Summary - 2026-03-29');
-      notifyDaemon.notifyTradingAgents('end_of_day', { marketDate: '2026-03-29' });
     } finally {
       await notifyDaemon.stop('test-cleanup-notify-script-path');
     }
@@ -1085,10 +1076,8 @@ describe('supervisor-daemon integrations', () => {
       .filter(Boolean)
       .map((line) => JSON.parse(line));
 
-    expect(capturedCalls).toHaveLength(4);
+    expect(capturedCalls).toHaveLength(1);
     expect(capturedCalls[0].args).toEqual(['telegram', 'Trading Day Summary - 2026-03-29', '--chat-id', '5613428850']);
-    expect(capturedCalls.slice(1).map((entry) => entry.args[0])).toEqual(['architect', 'builder', 'oracle']);
-    expect(capturedCalls.slice(1).every((entry) => String(entry.args[1] || '').includes('2026-03-29'))).toBe(true);
   });
 
   test('runs a Hyperliquid monitor loop independent of consultations', async () => {
@@ -1131,7 +1120,6 @@ describe('supervisor-daemon integrations', () => {
       smartMoneyScanner: null,
       circuitBreaker: null,
       cryptoTradingEnabled: false,
-      tradingEnabled: false,
       hyperliquidMonitorEnabled: true,
       hyperliquidMonitorPollMs: 50,
       hyperliquidExecutor: {},
@@ -1190,7 +1178,6 @@ describe('supervisor-daemon integrations', () => {
       smartMoneyScanner: null,
       circuitBreaker: null,
       cryptoTradingEnabled: false,
-      tradingEnabled: false,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutor: {},
       hyperliquidManualActivityPath: manualActivityPath,
@@ -1241,7 +1228,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       smartMoneyScanner: null,
       circuitBreaker: null,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       hyperliquidMonitorOrchestrator,
       env: {
@@ -1303,7 +1289,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidExecutionEnabled: true,
       hyperliquidExecutor,
@@ -1658,7 +1643,6 @@ describe('supervisor-daemon integrations', () => {
     jest.spyOn(daemon, 'launchTask').mockResolvedValue();
     const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
     daemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
-    daemon.maybeRunTradingAutomation = skippedLane;
     daemon.maybeRunPositionAttributionReconciliation = skippedLane;
     daemon.maybeRunCryptoTradingAutomation = skippedLane;
     daemon.maybeRunTradeReconciliation = skippedLane;
@@ -1838,151 +1822,6 @@ describe('supervisor-daemon integrations', () => {
     writeSpy.mockRestore();
   });
 
-  test('reconciles pending trades on a 5-minute cadence while pending orders remain', async () => {
-    const tradingOrchestrator = {
-      getPendingReconciliationTrades: jest.fn()
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([]),
-      runReconciliation: jest.fn()
-        .mockResolvedValueOnce({
-          phase: 'reconciliation',
-          marketDate: '2026-03-19',
-          orderUpdates: [{ tradeId: 1, status: 'FILLED' }],
-          recordedOutcomes: [],
-          asOf: '2026-03-19T14:35:00.000Z',
-        })
-        .mockResolvedValueOnce({
-          phase: 'reconciliation',
-          marketDate: '2026-03-19',
-          orderUpdates: [],
-          recordedOutcomes: [],
-          asOf: '2026-03-19T14:40:01.000Z',
-        }),
-    };
-    const tradingDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: true,
-      cryptoTradingEnabled: false,
-      tradingOrchestrator,
-      tradingStatePath: '/tmp/trade-reconcile-cadence-trading-state.json',
-      pidPath: '/tmp/trade-reconcile-cadence.pid',
-      statusPath: '/tmp/trade-reconcile-cadence-status.json',
-      logPath: '/tmp/trade-reconcile-cadence.log',
-      taskLogDir: '/tmp/trade-reconcile-cadence-tasks',
-      wakeSignalPath: '/tmp/trade-reconcile-cadence-wake.signal',
-    });
-
-    const first = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:35:00.000Z'));
-    expect(first).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-      remainingPendingCount: 1,
-    }));
-
-    const second = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:39:00.000Z'));
-    expect(second).toEqual(expect.objectContaining({
-      ok: false,
-      skipped: true,
-      reason: 'interval_guard',
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-    }));
-
-    const third = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:40:01.000Z'));
-    expect(third).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-      remainingPendingCount: 0,
-    }));
-
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenCalledTimes(2);
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenNthCalledWith(1, expect.objectContaining({ date: '2026-03-19' }));
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenNthCalledWith(2, expect.objectContaining({ date: '2026-03-19' }));
-
-    await tradingDaemon.stop('test-cleanup-trade-reconcile-cadence');
-  });
-
-  test('runs reconciliation from the supervisor tick without waiting for end of day', async () => {
-    jest.setSystemTime(new Date('2026-03-19T21:10:00.000Z'));
-
-    const tradingOrchestrator = {
-      getPendingReconciliationTrades: jest.fn()
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([]),
-      runReconciliation: jest.fn().mockResolvedValue({
-        phase: 'reconciliation',
-        marketDate: '2026-03-19',
-        orderUpdates: [{ tradeId: 1, status: 'FILLED' }],
-        recordedOutcomes: [],
-        asOf: '2026-03-19T21:10:00.000Z',
-      }),
-      runPreMarket: jest.fn(),
-      runConsensusRound: jest.fn(),
-      runMarketOpen: jest.fn(),
-      runMidDayCheck: jest.fn(),
-      runMarketClose: jest.fn(),
-      runEndOfDay: jest.fn(),
-    };
-    const tradingDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: true,
-      cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: false,
-      tradingOrchestrator,
-      tradingStatePath: '/tmp/trade-reconcile-tick-trading-state.json',
-      pidPath: '/tmp/trade-reconcile-tick.pid',
-      statusPath: '/tmp/trade-reconcile-tick-status.json',
-      logPath: '/tmp/trade-reconcile-tick.log',
-      taskLogDir: '/tmp/trade-reconcile-tick-tasks',
-      wakeSignalPath: '/tmp/trade-reconcile-tick-wake.signal',
-    });
-    jest.spyOn(tradingDaemon, 'getTradingDaySchedule').mockResolvedValue(null);
-    jest.spyOn(tradingDaemon, 'getNextTradingEvent').mockResolvedValue(null);
-    const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
-    tradingDaemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
-    tradingDaemon.maybeRunTradingAutomation = skippedLane;
-    tradingDaemon.maybeRunPositionAttributionReconciliation = skippedLane;
-    tradingDaemon.maybeRunCryptoTradingAutomation = skippedLane;
-    tradingDaemon.maybeRunTokenomistAutomation = skippedLane;
-    tradingDaemon.maybeRunSparkAutomation = skippedLane;
-    tradingDaemon.maybeRunMarketScannerAutomation = skippedLane;
-    tradingDaemon.maybeRunSaylorWatcher = skippedLane;
-    tradingDaemon.maybeRunOracleWatchEngine = skippedLane;
-    tradingDaemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
-    tradingDaemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
-    tradingDaemon.maybeRunYieldRouterAutomation = skippedLane;
-    tradingDaemon.maybeRunSleepCycle = skippedLane;
-
-    const result = await tradingDaemon.tick();
-
-    expect(result.tradeReconciliationResult).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-      remainingPendingCount: 0,
-    }));
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-19',
-    }));
-    expect(tradingOrchestrator.runEndOfDay).not.toHaveBeenCalled();
-
-    await tradingDaemon.stop('test-cleanup-trade-reconcile-tick');
-  });
-
   test('opens a Hyperliquid ETH short after approved crypto SELL consensus', async () => {
     jest.spyOn(macroRiskGate, 'assessMacroRisk').mockResolvedValue({
       regime: 'red',
@@ -2043,7 +1882,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -2169,7 +2007,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -2242,7 +2079,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -2342,7 +2178,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: true,
       hyperliquidExecutionEnabled: true,
@@ -2436,7 +2271,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       circuitBreaker: null,
       hyperliquidMonitorEnabled: true,
@@ -2508,7 +2342,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2573,7 +2406,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2642,7 +2474,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2716,7 +2547,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2810,7 +2640,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -2880,9 +2709,7 @@ describe('supervisor-daemon integrations', () => {
       getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
         totalEquity: 1000,
         markets: {
-          alpaca_stocks: { equity: 400 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
+          ibkr_global: { equity: 400 },
           defi_yield: { equity: 100 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 500, equity: 500 },
@@ -2908,7 +2735,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       yieldRouterEnabled: true,
       yieldRouter,
@@ -2969,9 +2795,7 @@ describe('supervisor-daemon integrations', () => {
       getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
         totalEquity: 700,
         markets: {
-          alpaca_stocks: { equity: 250 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
+          ibkr_global: { equity: 250 },
           defi_yield: { equity: 180 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 270, equity: 270 },
@@ -3000,7 +2824,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       yieldRouterEnabled: true,
       yieldRouter,
@@ -3035,18 +2858,6 @@ describe('supervisor-daemon integrations', () => {
   });
 
   test('runs yield rebalance after market close review and on the 6-hour schedule', async () => {
-    const tradingOrchestrator = {
-      runMarketClose: jest.fn().mockResolvedValue({
-        phase: 'market_close',
-        marketDate: '2026-03-19',
-        openPositions: [],
-      }),
-      runPreMarket: jest.fn(),
-      runConsensusRound: jest.fn(),
-      runMarketOpen: jest.fn(),
-      runMidDayCheck: jest.fn(),
-      runEndOfDay: jest.fn(),
-    };
     const yieldRouter = {
       requestCapital: jest.fn(),
       returnCapital: jest.fn(),
@@ -3055,9 +2866,7 @@ describe('supervisor-daemon integrations', () => {
       getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
         totalEquity: 1000,
         markets: {
-          alpaca_stocks: { equity: 400 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
+          ibkr_global: { equity: 400 },
           defi_yield: { equity: 150 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 450, equity: 450 },
@@ -3083,9 +2892,7 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: true,
       cryptoTradingEnabled: false,
-      tradingOrchestrator,
       yieldRouterEnabled: true,
       yieldRouter,
       yieldRouterOrchestrator,
@@ -3096,23 +2903,23 @@ describe('supervisor-daemon integrations', () => {
       wakeSignalPath: '/tmp/yield-router-trigger-wake.signal',
     });
 
-    const tradingResult = await yieldDaemon.runTradingPhase({
-      key: 'market_close_review',
+    const rebalanceResult = await yieldDaemon.runYieldRebalancePhase({
+      key: 'yield_rebalance',
+      marketDate: '2026-03-19',
       scheduledAt: '2026-03-19T20:00:00.000Z',
       windowKey: '2026-03-19T20:00:00.000Z',
-    }, {
-      marketDate: '2026-03-19',
+      triggerSource: 'yield_rebalance',
     });
 
-    expect(tradingResult).toEqual(expect.objectContaining({
+    expect(rebalanceResult).toEqual(expect.objectContaining({
       ok: true,
-      phase: 'market_close_review',
+      phase: 'yield_rebalance',
     }));
     expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
       killSwitchTriggered: false,
     }));
     expect(yieldDaemon.yieldRouterState.lastRebalance).toEqual(expect.objectContaining({
-      triggerSource: 'market_close_review',
+      triggerSource: 'yield_rebalance',
     }));
 
     yieldDaemon.yieldRouterState.lastProcessedAt = '2026-03-19T06:00:00.000Z';
@@ -3128,32 +2935,6 @@ describe('supervisor-daemon integrations', () => {
     }));
 
     await yieldDaemon.stop('test-cleanup-yield-router-trigger');
-  });
-
-  test('keeps legacy stock automation disabled by default until explicitly opted in', async () => {
-    const stockDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      cryptoTradingEnabled: true,
-      pidPath: '/tmp/stock-default-off.pid',
-      statusPath: '/tmp/stock-default-off-status.json',
-      logPath: '/tmp/stock-default-off.log',
-      taskLogDir: '/tmp/stock-default-off-tasks',
-      wakeSignalPath: '/tmp/stock-default-off-wake.signal',
-    });
-
-    expect(stockDaemon.tradingEnabled).toBe(false);
-    expect(stockDaemon.tradingOrchestrator).toBeNull();
-    expect(stockDaemon.circuitBreaker).toBeNull();
-    expect(stockDaemon.lastTradingSummary).toEqual(expect.objectContaining({
-      enabled: false,
-      status: 'disabled',
-      reason: 'manual_opt_in_required',
-    }));
-
-    await stockDaemon.stop('test-cleanup-stock-default-off');
   });
 
   test('drafts an Eunbyeol check-in after 24 hours of silence without auto-sending it', async () => {
@@ -3174,7 +2955,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       eunbyeolCheckInEnabled: true,
       eunbyeolCheckInIntervalMinutes: 240,
@@ -3241,7 +3021,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       tokenomistEnabled: true,
       tokenomistIntervalMinutes: 360,
@@ -3295,7 +3074,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       tokenomistEnabled: false,
       sparkMonitorEnabled: true,
@@ -3353,7 +3131,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -3463,7 +3240,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       marketScannerEnabled: true,
       marketScanner: {
@@ -3543,7 +3319,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -3667,7 +3442,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -3776,7 +3550,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -3859,7 +3632,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       marketScannerEnabled: true,
       marketScanner: {
@@ -3927,7 +3699,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       marketScannerEnabled: false,
       cryptoTradingOrchestrator: {
@@ -3999,7 +3770,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       eunbyeolCheckInEnabled: false,
       hyperliquidExecutionEnabled: true,
@@ -4046,7 +3816,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       marketScannerEnabled: false,
       cryptoTradingOrchestrator: {

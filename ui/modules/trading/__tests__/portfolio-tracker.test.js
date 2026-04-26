@@ -1,10 +1,5 @@
 'use strict';
 
-jest.mock('../executor', () => ({
-  getAlpacaAccountSnapshot: jest.fn(),
-  getAlpacaOpenPositions: jest.fn(),
-}));
-
 jest.mock('../ibkr-client', () => ({
   getAccount: jest.fn(),
   getPositions: jest.fn(),
@@ -16,7 +11,6 @@ jest.mock('../yield-router', () => ({
   })),
 }));
 
-const executor = require('../executor');
 const ibkrClient = require('../ibkr-client');
 const yieldRouter = require('../yield-router');
 const portfolioTracker = require('../portfolio-tracker');
@@ -29,19 +23,20 @@ describe('portfolio-tracker', () => {
     });
   });
 
-  test('builds a unified portfolio snapshot across Alpaca, DeFi, and Solana tokens', async () => {
-    executor.getAlpacaAccountSnapshot.mockResolvedValue({
+  test('builds a unified portfolio snapshot across IBKR, DeFi, and Solana tokens', async () => {
+    ibkrClient.getAccount.mockResolvedValue({
       equity: 10000,
       cash: 6000,
       buyingPower: 12000,
     });
-    executor.getAlpacaOpenPositions.mockResolvedValue([
+    ibkrClient.getPositions.mockResolvedValue([
       {
         ticker: 'AAPL',
         shares: 10,
         avgPrice: 230,
         marketValue: 2500,
         assetClass: 'us_equity',
+        broker: 'ibkr',
         raw: { unrealized_pl: 200 },
       },
       {
@@ -50,12 +45,13 @@ describe('portfolio-tracker', () => {
         avgPrice: 70000,
         marketValue: 1500,
         assetClass: 'crypto',
+        broker: 'ibkr',
         raw: { unrealized_pl: -100 },
       },
     ]);
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
-      includeAlpaca: true,
+      includeIbkr: true,
       state: {
         peakEquity: null,
         dayStartEquity: null,
@@ -74,15 +70,11 @@ describe('portfolio-tracker', () => {
     expect(snapshot.totalCash).toBe(6000);
     expect(snapshot.liquidCapital).toBe(10025);
     expect(snapshot.lockedCapital).toBe(52);
-    expect(snapshot.markets.alpaca_stocks).toMatchObject({
-      equity: 2500,
-      liquidCapital: 2500,
-      pnl: 200,
-    });
-    expect(snapshot.markets.alpaca_crypto).toMatchObject({
-      equity: 1500,
-      liquidCapital: 1500,
-      pnl: -100,
+    expect(snapshot.markets.ibkr_global).toMatchObject({
+      equity: 4000,
+      liquidCapital: 4000,
+      pnl: 100,
+      buyingPower: 12000,
     });
     expect(snapshot.markets.defi_yield).toMatchObject({
       equity: 52,
@@ -106,12 +98,6 @@ describe('portfolio-tracker', () => {
   });
 
   test('includes IBKR when explicitly requested and computes drawdown from prior state', async () => {
-    executor.getAlpacaAccountSnapshot.mockResolvedValue({
-      equity: 800,
-      cash: 800,
-      buyingPower: 1600,
-    });
-    executor.getAlpacaOpenPositions.mockResolvedValue([]);
     ibkrClient.getAccount.mockResolvedValue({
       equity: 200,
       cash: 100,
@@ -129,55 +115,39 @@ describe('portfolio-tracker', () => {
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
-      includeAlpaca: true,
       includeIbkr: true,
       state: {
-        peakEquity: 1200,
-        dayStartEquity: 1100,
+        peakEquity: 220,
+        dayStartEquity: 200,
         dayStartDate: '2026-03-18',
       },
       now: '2026-03-18T20:00:00.000Z',
     });
 
-    expect(snapshot.totalEquity).toBe(1000);
+    expect(snapshot.totalEquity).toBe(200);
     expect(snapshot.markets.ibkr_global.equity).toBe(100);
-    expect(snapshot.markets.cash_reserve.equity).toBe(900);
+    expect(snapshot.markets.cash_reserve.equity).toBe(100);
     expect(snapshot.risk.killSwitchTriggered).toBe(false);
-    expect(snapshot.risk.totalDrawdownPct).toBeCloseTo(1 / 6, 6);
-    expect(snapshot.risk.dailyLossPct).toBeCloseTo(100 / 1100, 6);
+    expect(snapshot.risk.totalDrawdownPct).toBeCloseTo(20 / 220, 6);
+    expect(snapshot.risk.dailyLossPct).toBeCloseTo(0, 6);
   });
 
   test('returns source errors without failing the whole snapshot', async () => {
-    executor.getAlpacaAccountSnapshot.mockRejectedValue(new Error('alpaca unavailable'));
-    executor.getAlpacaOpenPositions.mockResolvedValue([]);
+    ibkrClient.getAccount.mockRejectedValue(new Error('ibkr unavailable'));
+    ibkrClient.getPositions.mockResolvedValue([]);
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
-      includeAlpaca: true,
+      includeIbkr: true,
     });
 
     expect(snapshot.totalEquity).toBe(0);
     expect(snapshot.sourceErrors).toEqual(expect.arrayContaining([
-      'alpaca: alpaca unavailable',
+      'ibkr: ibkr unavailable',
     ]));
   });
 
   test('loads yield deposits from the yield router into the unified portfolio view', async () => {
-    executor.getAlpacaAccountSnapshot.mockResolvedValue({
-      equity: 1000,
-      cash: 700,
-      buyingPower: 1400,
-    });
-    executor.getAlpacaOpenPositions.mockResolvedValue([
-      {
-        ticker: 'SPY',
-        shares: 1,
-        avgPrice: 300,
-        marketValue: 300,
-        assetClass: 'us_equity',
-        raw: { unrealized_pl: 0 },
-      },
-    ]);
     yieldRouter.createYieldRouter.mockReturnValue({
       getDeposits: jest.fn(() => [
         {
@@ -193,7 +163,6 @@ describe('portfolio-tracker', () => {
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
-      includeAlpaca: true,
     });
 
     expect(yieldRouter.createYieldRouter).toHaveBeenCalled();
@@ -209,18 +178,17 @@ describe('portfolio-tracker', () => {
         }),
       ],
     });
-    expect(snapshot.totalEquity).toBe(1078);
+    expect(snapshot.totalEquity).toBe(78);
   });
 
-  test('keeps Alpaca markets zeroed by default so crypto consultations do not inherit stock cash', async () => {
+  test('keeps broker markets opt-in so crypto consultations do not inherit stock cash', async () => {
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
     });
 
-    expect(executor.getAlpacaAccountSnapshot).not.toHaveBeenCalled();
-    expect(executor.getAlpacaOpenPositions).not.toHaveBeenCalled();
-    expect(snapshot.markets.alpaca_stocks.equity).toBe(0);
-    expect(snapshot.markets.alpaca_crypto.equity).toBe(0);
+    expect(ibkrClient.getAccount).not.toHaveBeenCalled();
+    expect(ibkrClient.getPositions).not.toHaveBeenCalled();
+    expect(snapshot.markets.ibkr_global.equity).toBe(0);
     expect(snapshot.markets.cash_reserve.equity).toBe(0);
     expect(snapshot.totalEquity).toBe(0);
   });

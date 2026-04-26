@@ -33,7 +33,6 @@ const hyperliquidNativeLayer = require('./hyperliquid-native-layer');
 const multiTimeframeConfirmation = require('./multi-timeframe-confirmation');
 const {
 	STRATEGY_MODES,
-	buildBrokerCapabilityPayload,
 	deriveCrisisRiskLimits,
 	estimateCrisisBookExposure,
 	getCrisisUniverse,
@@ -465,27 +464,6 @@ function estimateTradeCapitalRequirement(trades = []) {
 	}, 0));
 }
 
-function normalizeBrokerOrderStatus(value) {
-	const normalized = String(value || '').trim().toLowerCase();
-	if (!normalized) return 'PENDING_NEW';
-	if (['accepted', 'pending_new', 'pending', 'new', 'accepted_for_bidding', 'held', 'calculated'].includes(normalized)) {
-		return 'PENDING_NEW';
-	}
-	if (normalized === 'partially_filled') {
-		return 'PARTIALLY_FILLED';
-	}
-	if (normalized === 'filled') {
-		return 'FILLED';
-	}
-	if (['canceled', 'cancelled', 'done_for_day', 'expired', 'stopped', 'suspended'].includes(normalized)) {
-		return 'CANCELLED';
-	}
-	if (['replaced', 'rejected'].includes(normalized)) {
-		return 'REJECTED';
-	}
-	return String(value || '').trim().toUpperCase();
-}
-
 function resolveTradeAssetClass(trade = {}) {
 	return resolveAssetClassForTicker(trade.ticker, 'us_equity');
 }
@@ -495,37 +473,6 @@ function resolveTradeMarketType(assetClass = 'us_equity') {
 	if (assetClass === 'solana_token') return 'solana';
 	if (assetClass === 'defi_yield') return 'defi';
 	return 'stocks';
-}
-
-function getOrderFilledQuantity(order = {}) {
-	return toNumber(
-		order.filledQty
-		?? order.filled_qty
-		?? order.qty
-		?? order.raw?.filled_qty,
-		0
-	);
-}
-
-function getOrderFilledPrice(order = {}) {
-	return toNumber(
-		order.filledAvgPrice
-		?? order.filled_avg_price
-		?? order.raw?.filled_avg_price
-		?? order.raw?.average_fill_price,
-		0
-	);
-}
-
-function getOrderFilledTimestamp(order = {}, fallback = new Date().toISOString()) {
-	const filledAt = order.raw?.filled_at
-		|| order.raw?.updated_at
-		|| order.raw?.timestamp
-		|| order.updated_at
-		|| order.timestamp
-		|| fallback;
-	const normalized = new Date(filledAt);
-	return Number.isNaN(normalized.getTime()) ? fallback : normalized.toISOString();
 }
 
 function buildOpenPositionTickerSet(positions = []) {
@@ -657,10 +604,7 @@ function pickReferencePrice(snapshot) {
 }
 
 function getReconcilablePendingTrades(db) {
-	return journal.getPendingTrades(db).filter((trade) => {
-		return watchlist.getBrokerForTicker(trade.ticker, 'alpaca') === 'alpaca'
-			&& String(trade.alpaca_order_id || '').trim().length > 0;
-	});
+	return [];
 }
 
 function normalizeSymbols(symbols, options = {}) {
@@ -998,36 +942,7 @@ function resolveLiveRiskLimits(options = {}, orchestratorOptions = {}, macroRisk
 }
 
 async function fetchBrokerCapabilities(symbols = [], options = {}) {
-	const uniqueSymbols = Array.from(new Set((Array.isArray(symbols) ? symbols : []).map(toTicker).filter(Boolean)));
-	if (uniqueSymbols.length === 0) return null;
-
-	try {
-		const client = options.alpacaClient
-			|| options.client
-			|| dataIngestion.createAlpacaClient(options);
-		if (!client || typeof client.getAsset !== 'function' || typeof client.getAccount !== 'function') {
-			return null;
-		}
-
-		const [account, assets] = await Promise.all([
-			client.getAccount(),
-			Promise.all(uniqueSymbols.map(async (ticker) => {
-				try {
-					return [ticker, await client.getAsset(ticker)];
-				} catch {
-					return [ticker, null];
-				}
-			})),
-		]);
-
-		return buildBrokerCapabilityPayload({
-			account,
-			assets: new Map(assets),
-			phase: 'phase1',
-		});
-	} catch {
-		return null;
-	}
+	return null;
 }
 
 function normalizeSignal(agentId, ticker, signal = {}) {
@@ -2466,7 +2381,7 @@ class TradingOrchestrator {
 		const defiStatus = context.defiStatus || options.defiStatus || null;
 		const primaryDataSource = Array.isArray(defiStatus?.positions) && defiStatus.positions.length > 0
 			? 'hyperliquid'
-			: (symbols.some((ticker) => /\/USD$/i.test(String(ticker || '').trim())) ? 'hyperliquid' : 'alpaca');
+			: (symbols.some((ticker) => /\/USD$/i.test(String(ticker || '').trim())) ? 'hyperliquid' : 'ibkr');
 		const timeoutMs = Math.max(
 			1_000,
 			toPositiveInteger(
@@ -2550,38 +2465,20 @@ class TradingOrchestrator {
 			return [];
 		}
 
-		const alpacaClient = options.alpacaClient
-			|| options.client
-			|| this.options.alpacaClient
-			|| this.options.client
-			|| null;
 		const generated = [];
 
 		for (const [agentId, missingTickers] of missingByAgent) {
-			const signalOptions = alpacaClient
-				? {
-					client: alpacaClient,
-					emptyPortfolio: Boolean(options.emptyPortfolio),
-					symbols: missingTickers,
-					macroRisk: options.macroRisk || null,
-					strategyMode: options.strategyMode || null,
-					snapshots: options.snapshots || null,
-					bars: options.bars || null,
-					news: options.news || null,
-					defiStatus: options.defiStatus || null,
-					rangeStructures: options.rangeStructures || null,
-				}
-				: {
-					emptyPortfolio: Boolean(options.emptyPortfolio),
-					symbols: missingTickers,
-					macroRisk: options.macroRisk || null,
-					strategyMode: options.strategyMode || null,
-					snapshots: options.snapshots || null,
-					bars: options.bars || null,
-					news: options.news || null,
-					defiStatus: options.defiStatus || null,
-					rangeStructures: options.rangeStructures || null,
-				};
+			const signalOptions = {
+				emptyPortfolio: Boolean(options.emptyPortfolio),
+				symbols: missingTickers,
+				macroRisk: options.macroRisk || null,
+				strategyMode: options.strategyMode || null,
+				snapshots: options.snapshots || null,
+				bars: options.bars || null,
+				news: options.news || null,
+				defiStatus: options.defiStatus || null,
+				rangeStructures: options.rangeStructures || null,
+			};
 			const producedSignals = await signalProducer.produceSignals(agentId, signalOptions);
 			const gatedSignals = producedSignals.map((signal) => buildCapabilityGateSignal(
 				signal,
@@ -2616,7 +2513,7 @@ class TradingOrchestrator {
 		}
 
 		const producedSignals = await signalProducer.produceSignals('builder', {
-			client: options.alpacaClient || options.client || this.options.alpacaClient || this.options.client || null,
+			client: options.client || this.options.client || null,
 			emptyPortfolio: Boolean(options.emptyPortfolio),
 			symbols: targetSymbols,
 			macroRisk: options.macroRisk || null,
@@ -2697,8 +2594,6 @@ class TradingOrchestrator {
 			reserve: roundCurrency(totalEquity * ratios.reserve),
 		};
 		const activeTradingCapital = sumSnapshotEquity(portfolioSnapshot, [
-			'alpaca_stocks',
-			'alpaca_crypto',
 			'ibkr_global',
 		]);
 		const yieldCapital = roundCurrency(portfolioSnapshot?.markets?.defi_yield?.equity);
@@ -2870,51 +2765,7 @@ class TradingOrchestrator {
 		const db = this.getJournalDb(options);
 		const marketDate = this.state.meta.marketDate || toDateKey(options.date || new Date());
 		const pendingTrades = this.getPendingReconciliationTrades({ ...options, journalDb: db });
-		const alpacaClient = pendingTrades.length > 0
-			? (options.alpacaClient || this.options.alpacaClient || this.options.client || dataIngestion.createAlpacaClient(options))
-			: null;
 		const orderUpdates = [];
-
-		for (const trade of pendingTrades) {
-			try {
-				let rawOrder = null;
-				if (typeof alpacaClient?.getOrder === 'function') {
-					rawOrder = await alpacaClient.getOrder(String(trade.alpaca_order_id));
-				} else if (typeof alpacaClient?.getOrderByClientOrderId === 'function') {
-					rawOrder = await alpacaClient.getOrderByClientOrderId(String(trade.alpaca_order_id));
-				} else {
-					throw new Error('alpaca_get_order_unavailable');
-				}
-				const order = executor.normalizeOrder(rawOrder || {});
-				const status = normalizeBrokerOrderStatus(order.status);
-				const filledQty = getOrderFilledQuantity(order);
-				const filledPrice = getOrderFilledPrice(order);
-				const update = journal.updateTrade(db, trade.id, {
-					status,
-					shares: filledQty > 0 ? filledQty : undefined,
-					price: filledPrice > 0 ? filledPrice : undefined,
-					filledAt: status === 'FILLED' ? getOrderFilledTimestamp(order) : undefined,
-					reconciledAt: new Date().toISOString(),
-				});
-				orderUpdates.push({
-					tradeId: trade.id,
-					ticker: trade.ticker,
-					orderId: trade.alpaca_order_id,
-					status,
-					filledQty,
-					filledPrice,
-					trade: update,
-				});
-			} catch (err) {
-				orderUpdates.push({
-					tradeId: trade.id,
-					ticker: trade.ticker,
-					orderId: trade.alpaca_order_id,
-					ok: false,
-					error: err.message,
-				});
-			}
-		}
 
 		const syncedPositions = await executor.syncJournalPositions({
 			...options,
@@ -3022,7 +2873,7 @@ class TradingOrchestrator {
 				phase: 'reconciliation',
 				ticker: outcome.ticker,
 				direction: updatedTrade?.direction || outcome.trade.direction || null,
-				broker: assetClass === 'crypto' ? 'hyperliquid' : 'alpaca',
+				broker: assetClass === 'crypto' ? 'hyperliquid' : 'ibkr',
 				assetClass,
 				status: updatedTrade?.status || outcome.trade.status || null,
 				ok: true,
@@ -3093,7 +2944,7 @@ class TradingOrchestrator {
 				source: 'smart_money',
 				reason: buildSmartMoneyReason(signal),
 				exchange: resolveSmartMoneyExchange(signal),
-				broker: 'alpaca',
+				broker: 'hyperliquid',
 				assetClass: resolveSmartMoneyAssetClass(signal),
 				expiry: options.smartMoneyExpiry || null,
 			});
@@ -3168,7 +3019,6 @@ class TradingOrchestrator {
 		);
 		const brokerCapabilities = strategyMode === STRATEGY_MODES.CRISIS
 			? await fetchBrokerCapabilities(symbols, {
-				alpacaClient: options.alpacaClient || this.options.alpacaClient || null,
 				client: options.client || this.options.client || null,
 				...options,
 			})
@@ -3901,7 +3751,7 @@ class TradingOrchestrator {
 				ticker: trade.ticker,
 				direction: trade.consensus?.decision || null,
 				broker: watchlist.getEntry(trade.ticker)?.broker
-					|| (resolveAssetClassForTicker(trade.ticker) === 'crypto' ? 'hyperliquid' : 'alpaca'),
+					|| (resolveAssetClassForTicker(trade.ticker) === 'crypto' ? 'hyperliquid' : 'ibkr'),
 				assetClass: resolveAssetClassForTicker(trade.ticker),
 				status: execution?.status || null,
 				ok: execution?.ok === true,

@@ -335,6 +335,10 @@ function requiresPositionsMigration(tableSql = '') {
   return /\bshares\s+INTEGER\b/i.test(normalized);
 }
 
+function getBrokerOrderId(record = {}) {
+  return record.brokerOrderId || record.alpacaOrderId || null;
+}
+
 /**
  * Record a trade execution.
  */
@@ -374,7 +378,7 @@ function recordTrade(db, trade) {
     trade.consensusDetail ? JSON.stringify(trade.consensusDetail) : null,
     trade.riskCheckDetail ? JSON.stringify(trade.riskCheckDetail) : null,
     status,
-    trade.alpacaOrderId || null,
+    getBrokerOrderId(trade),
     trade.notes || null,
     sourceScope,
   );
@@ -707,7 +711,7 @@ function updateTrade(db, tradeId, patch = {}) {
     ? (patch.riskCheckDetail ? JSON.stringify(patch.riskCheckDetail) : null)
     : undefined);
   assign('status', patch.status !== undefined ? normalizeTradeStatus(patch.status) : undefined);
-  assign('alpaca_order_id', patch.alpacaOrderId);
+  assign('alpaca_order_id', patch.brokerOrderId !== undefined ? patch.brokerOrderId : patch.alpacaOrderId);
   assign('notes', patch.notes);
   assign('filled_at', patch.filledAt);
   assign('reconciled_at', patch.reconciledAt);

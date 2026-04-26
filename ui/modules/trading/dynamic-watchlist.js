@@ -23,7 +23,7 @@ function toIsoTimestamp(value, fallback = null) {
   return date.toISOString();
 }
 
-function normalizeBroker(value, fallback = 'alpaca') {
+function normalizeBroker(value, fallback = 'ibkr') {
   const normalized = String(value || '').trim().toLowerCase();
   return normalized || fallback;
 }
@@ -67,7 +67,7 @@ function defaultExchangeForAssetClass(assetClass = 'us_equity') {
 
 function defaultBrokerForAssetClass(assetClass = 'us_equity') {
   if (assetClass === 'crypto') return 'hyperliquid';
-  return 'alpaca';
+  return 'ibkr';
 }
 
 function normalizeWatchlistEntry(entryOrTicker, options = {}) {

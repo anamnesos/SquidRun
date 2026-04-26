@@ -25,7 +25,7 @@ function getTickers(options = {}) {
   return getWatchlist(options).map((entry) => entry.ticker);
 }
 
-function getBrokerForTicker(ticker, fallback = 'alpaca') {
+function getBrokerForTicker(ticker, fallback = 'ibkr') {
   const entry = getEntry(ticker);
   if (entry?.broker) {
     return entry.broker;

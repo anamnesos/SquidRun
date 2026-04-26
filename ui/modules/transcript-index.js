@@ -144,7 +144,7 @@ function deriveTags(text, speaker = '') {
   if (/(^|\b)(?:telegram|chat\s*8754356993|8754356993|은별|eunbyeol|rachelchoi)/i.test(value)) {
     tags.push('telegram');
   }
-  if (/(^|\b)(?:hyperliquid|alpaca|macro regime|consultation|btc\/usd|eth\/usd)/i.test(value)) {
+  if (/(^|\b)(?:hyperliquid|macro regime|consultation|btc\/usd|eth\/usd)/i.test(value)) {
     tags.push('trading');
   }
   if (speaker === 'user' && lowered.includes('james')) {

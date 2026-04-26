@@ -162,7 +162,7 @@ function buildBrokerCapabilityPayload({ account = null, assets = new Map(), phas
   }
 
   return {
-    broker: 'alpaca',
+    broker: 'ibkr',
     phase,
     account: {
       shortingEnabled: Boolean(account?.shorting_enabled || account?.shortingEnabled),
@@ -210,7 +210,7 @@ function validateCrisisSignalCapability(signal = {}, brokerCapabilities = null, 
   const capability = brokerCapabilities?.instruments?.[ticker] || {};
   if (direction === 'BUY') {
     if (capability.tradable !== true) {
-      return { ok: false, reason: `${ticker} is not tradable on Alpaca` };
+      return { ok: false, reason: `${ticker} is not tradable on IBKR` };
     }
     if (capability.phase1Executable !== true) {
       return { ok: false, reason: `${ticker} is not Phase 1 executable` };

@@ -55,9 +55,7 @@ function getTimeOrientation() {
     nowUnixMs: now,
     supervisor: null,
     lastCryptoTrade: null,
-    lastStockTrade: null,
     nextCryptoEvent: null,
-    nextStockEvent: null,
     positions: null,
     walletLastChecked: null,
   };
@@ -97,25 +95,6 @@ function getTimeOrientation() {
         label: cryptoState.nextEvent.label,
       };
     }
-  }
-
-  // Stock trading state
-  const tradingStatePath = resolveCoordPath(path.join('runtime', 'trading-supervisor-state.json'), { forWrite: false });
-  const tradingState = readJsonSafe(tradingStatePath);
-  if (tradingState) {
-    if (tradingState.nextEvent) {
-      const nextMs = Date.parse(tradingState.nextEvent.scheduledAt);
-      result.nextStockEvent = {
-        at: formatPT(nextMs),
-        inMs: nextMs - now,
-        in: ago(now - nextMs),
-        label: tradingState.nextEvent.label,
-      };
-    }
-    result.lastStockTrade = {
-      marketDate: tradingState.marketDate,
-      sleeping: tradingState.sleeping,
-    };
   }
 
   // Trading journal — last trade
@@ -164,13 +143,6 @@ function printOrientation() {
   }
   if (o.nextCryptoEvent) {
     lines.push(`Next crypto event: ${o.nextCryptoEvent.at} (${o.nextCryptoEvent.in}) — ${o.nextCryptoEvent.label}`);
-  }
-
-  if (o.lastStockTrade) {
-    lines.push(`Stock market date: ${o.lastStockTrade.marketDate}, sleeping: ${o.lastStockTrade.sleeping}`);
-  }
-  if (o.nextStockEvent) {
-    lines.push(`Next stock event: ${o.nextStockEvent.at} (${o.nextStockEvent.in}) — ${o.nextStockEvent.label}`);
   }
 
   if (o.lastExecutedTrade) {
