@@ -367,6 +367,30 @@ function resolveSafeStopDistancePct(stopDistancePct, leverageValue) {
   return Math.min(normalizedStopDistancePct, bufferedMaxStopDistancePct);
 }
 
+function assertStopLossBeforeLiquidation({
+  stopPrice,
+  liquidationPx,
+  isLong,
+  referencePrice = stopPrice,
+  szDecimals = 0,
+  asset = 'position',
+} = {}) {
+  const normalizedStopPrice = toNumber(stopPrice, NaN);
+  const normalizedLiquidationPx = toNumber(liquidationPx, NaN);
+  if (!Number.isFinite(normalizedStopPrice) || !Number.isFinite(normalizedLiquidationPx) || normalizedLiquidationPx <= 0) {
+    return true;
+  }
+  const stopLabel = formatPrice(normalizedStopPrice, referencePrice, szDecimals);
+  const liquidationLabel = formatPrice(normalizedLiquidationPx, referencePrice, szDecimals);
+  const assetLabel = String(asset || 'position').trim() || 'position';
+  if (isLong && normalizedStopPrice <= normalizedLiquidationPx) {
+    throw new Error(`${assetLabel} long stop loss ${stopLabel} is at or below liquidation ${liquidationLabel}; refusing unsafe stop`);
+  }
+  if (!isLong && normalizedStopPrice >= normalizedLiquidationPx) {
+    throw new Error(`${assetLabel} short stop loss ${stopLabel} is at or above liquidation ${liquidationLabel}; refusing unsafe stop`);
+  }
+  return true;
+}
 function constrainStopPriceWithinLiquidationBuffer({
   stopPrice,
   entryPrice,
@@ -378,12 +402,17 @@ function constrainStopPriceWithinLiquidationBuffer({
   const normalizedStopPrice = toNumber(stopPrice, NaN);
   const normalizedEntryPrice = toNumber(entryPrice, NaN);
   const normalizedLiquidationPx = toNumber(liquidationPx, NaN);
-  if (
-    !Number.isFinite(normalizedStopPrice)
-    || !Number.isFinite(normalizedEntryPrice)
-    || !Number.isFinite(normalizedLiquidationPx)
-    || normalizedLiquidationPx <= 0
-  ) {
+  if (!Number.isFinite(normalizedStopPrice) || !Number.isFinite(normalizedLiquidationPx) || normalizedLiquidationPx <= 0) {
+    return normalizedStopPrice;
+  }
+  assertStopLossBeforeLiquidation({
+    stopPrice: normalizedStopPrice,
+    liquidationPx: normalizedLiquidationPx,
+    isLong,
+    referencePrice,
+    szDecimals,
+  });
+  if (!Number.isFinite(normalizedEntryPrice)) {
     return normalizedStopPrice;
   }
   const liquidationGap = Math.abs(normalizedLiquidationPx - normalizedEntryPrice);
@@ -2093,6 +2122,7 @@ module.exports = {
   resolvePerpPriceDecimals,
   resolvePricePrecision,
   resolveSafeStopDistancePct,
+  assertStopLossBeforeLiquidation,
   constrainStopPriceWithinLiquidationBuffer,
   roundPrice,
   formatPrice,

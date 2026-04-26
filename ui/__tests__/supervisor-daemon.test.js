@@ -183,6 +183,8 @@ describe('supervisor-daemon integrations', () => {
     watcherRecords.length = 0;
     queryCommsJournalEntries.mockReset();
     queryCommsJournalEntries.mockReturnValue([]);
+    hyperliquidClient.getOpenPositions.mockReset();
+    hyperliquidClient.getOpenPositions.mockResolvedValue([]);
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-supervisor-test-'));
     originalMarketScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
@@ -248,6 +250,84 @@ describe('supervisor-daemon integrations', () => {
     }
     jest.restoreAllMocks();
     jest.useRealTimers();
+  });
+
+  test('reconciles position attribution from the live Hyperliquid snapshot', async () => {
+    const statePath = path.join(tempRoot, 'agent-position-attribution.json');
+    fs.writeFileSync(statePath, JSON.stringify({
+      version: 2,
+      positions: {
+        'AVAX/USD': {
+          ticker: 'AVAX/USD',
+          agentId: 'architect',
+          direction: 'SHORT',
+          entryPrice: 9.1,
+          currentSize: 12,
+        },
+      },
+      closedPositions: [],
+      quarantinedPositions: [],
+    }, null, 2));
+    hyperliquidClient.getOpenPositions.mockResolvedValueOnce([
+      {
+        coin: 'AXS',
+        size: -18,
+        entryPx: 2.72,
+        liquidationPx: 3.12,
+        markPrice: 2.76,
+      },
+    ]);
+    daemon.positionAttributionReconciliationEnabled = true;
+    daemon.positionAttributionStatePath = statePath;
+    daemon.runtimeEnv = { HYPERLIQUID_WALLET_ADDRESS: '0xabc' };
+
+    const result = await daemon.maybeRunPositionAttributionReconciliation(
+      new Date('2026-04-25T23:58:00.000Z').getTime()
+    );
+
+    expect(hyperliquidClient.getOpenPositions).toHaveBeenCalledWith(expect.objectContaining({
+      walletAddress: '0xabc',
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      status: 'ok',
+      liveCount: 1,
+      createdCount: 1,
+      quarantinedCount: 1,
+      created: ['AXS/USD'],
+      quarantined: ['AVAX/USD'],
+    }));
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    expect(state.positions['AXS/USD']).toEqual(expect.objectContaining({
+      agentId: '',
+      source: 'live_snapshot_reconciliation',
+      strategyLane: 'manual_unattributed',
+      currentSize: 18,
+      liquidationPx: 3.12,
+    }));
+    expect(state.quarantinedPositions).toEqual([
+      expect.objectContaining({
+        ticker: 'AVAX/USD',
+        quarantineReason: 'not_in_live_hyperliquid_snapshot',
+      }),
+    ]);
+  });
+
+  test('tick runs position attribution reconciliation before crypto automation', async () => {
+    const callOrder = [];
+    daemon.maybeRunPositionAttributionReconciliation = jest.fn(async () => {
+      callOrder.push('position_attribution');
+      return { ok: true, status: 'ok' };
+    });
+    daemon.maybeRunCryptoTradingAutomation = jest.fn(async () => {
+      callOrder.push('crypto');
+      return { ok: true, skipped: true };
+    });
+
+    const result = await daemon.tick();
+
+    expect(daemon.maybeRunPositionAttributionReconciliation).toHaveBeenCalledTimes(1);
+    expect(result.positionAttributionReconciliationResult).toEqual({ ok: true, status: 'ok' });
+    expect(callOrder).toEqual(['position_attribution', 'crypto']);
   });
 
   test('runs the oracle watch engine through the supervisor lane and reports status', async () => {

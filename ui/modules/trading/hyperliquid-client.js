@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { resolveCoordPath } = require('../../config');
 
@@ -52,18 +53,16 @@ const DEFAULT_RATE_LIMIT_QUEUE_TIMEOUT_MS = Math.max(
   100,
   Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_QUEUE_TIMEOUT_MS || '5000', 10) || 5000
 );
-const DEFAULT_RATE_LIMIT_STATE_PATH = resolveCoordPath(
-  path.join('runtime', 'hyperliquid-rate-limit-state.json'),
-  { forWrite: true }
-);
-const DEFAULT_REQUEST_POOL_PATH = resolveCoordPath(
-  path.join('runtime', 'hyperliquid-request-pool.json'),
-  { forWrite: true }
-);
-const DEFAULT_REQUEST_POOL_LOCK_PATH = resolveCoordPath(
-  path.join('runtime', 'hyperliquid-request-pool.lock'),
-  { forWrite: true }
-);
+function resolveSharedRuntimePath(fileName) {
+  if (process.env.JEST_WORKER_ID) {
+    return path.join(os.tmpdir(), `squidrun-hyperliquid-client-jest-${process.pid}`, fileName);
+  }
+  return resolveCoordPath(path.join('runtime', fileName), { forWrite: true });
+}
+
+const DEFAULT_RATE_LIMIT_STATE_PATH = resolveSharedRuntimePath('hyperliquid-rate-limit-state.json');
+const DEFAULT_REQUEST_POOL_PATH = resolveSharedRuntimePath('hyperliquid-request-pool.json');
+const DEFAULT_REQUEST_POOL_LOCK_PATH = resolveSharedRuntimePath('hyperliquid-request-pool.lock');
 const REQUEST_POOL_STATE = {
   memory: new Map(),
   inflight: new Map(),

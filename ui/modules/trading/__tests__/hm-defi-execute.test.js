@@ -75,6 +75,24 @@ describe('hm-defi-execute', () => {
     expect(hmDefiExecute.formatPrice(0.126936, 0.126936, 0)).toBe('0.12694');
   });
 
+  test('constrainStopPriceWithinLiquidationBuffer rejects stops on the liquidation side', () => {
+    expect(() => hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 102,
+      entryPrice: 90,
+      liquidationPx: 100,
+      isLong: false,
+      referencePrice: 90,
+    })).toThrow(/short stop loss 102 is at or above liquidation 100/);
+
+    expect(() => hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 78,
+      entryPrice: 90,
+      liquidationPx: 80,
+      isLong: true,
+      referencePrice: 90,
+    })).toThrow(/long stop loss 78 is at or below liquidation 80/);
+  });
+
   test('resolveAssetMaxLeverage reads the venue cap from Hyperliquid meta', () => {
     expect(hmDefiExecute.resolveAssetMaxLeverage({
       asset: { name: 'RESOLV', maxLeverage: 3 },
