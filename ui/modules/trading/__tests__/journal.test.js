@@ -93,4 +93,93 @@ describe('trade journal execution reports', () => {
       price: 2400,
     }));
   });
+
+  test('hides archived static positions from live open-position reads', () => {
+    const db = journal.getDb(dbPath);
+
+    journal.upsertPosition(db, {
+      ticker: 'ETH/USD',
+      shares: -2.1169,
+      avgPrice: 2352.48,
+      stopLossPrice: 2500,
+    });
+
+    expect(journal.getOpenPositions(db)).toEqual([
+      expect.objectContaining({
+        ticker: 'ETH/USD',
+        source_scope: 'live',
+        archived_at: null,
+      }),
+    ]);
+
+    journal.archivePosition(db, 'ETH/USD', 'stale_paper_position', {
+      archivedAt: '2026-04-25T23:45:00.000Z',
+      sourceScope: 'archive_static',
+    });
+
+    expect(journal.getOpenPositions(db)).toEqual([]);
+    expect(journal.getOpenPositions(db, { includeArchived: true })).toEqual([
+      expect.objectContaining({
+        ticker: 'ETH/USD',
+        source_scope: 'archive_static',
+        archived_at: '2026-04-25T23:45:00.000Z',
+        archive_reason: 'stale_paper_position',
+      }),
+    ]);
+  });
+
+  test('quarantines DRY_RUN trades from live trade reads', () => {
+    const db = journal.getDb(dbPath);
+
+    journal.recordTrade(db, {
+      ticker: 'BTC/USD',
+      direction: 'BUY',
+      shares: 0.01,
+      price: 65000,
+      status: 'FILLED',
+      notes: 'live-fill',
+    });
+    journal.recordTrade(db, {
+      ticker: 'ETH/USD',
+      direction: 'SELL',
+      shares: 0.132812,
+      price: 2000,
+      status: 'DRY_RUN',
+      notes: 'paper residue',
+    });
+
+    expect(journal.getAllTrades(db)).toEqual([
+      expect.objectContaining({
+        ticker: 'BTC/USD',
+        status: 'FILLED',
+      }),
+    ]);
+
+    const archiveResult = journal.archiveDryRunTrades(db, {
+      ticker: 'ETH/USD',
+      archivedAt: '2026-04-25T23:46:00.000Z',
+      reason: 'paper_dry_run_quarantine_2026-04-22',
+    });
+    expect(archiveResult.changes).toBe(1);
+
+    expect(journal.getRecentTrades(db, 10)).toEqual([
+      expect.objectContaining({
+        ticker: 'BTC/USD',
+        status: 'FILLED',
+      }),
+    ]);
+    expect(journal.getAllTrades(db, { includeArchived: true })).toEqual([
+      expect.objectContaining({
+        ticker: 'BTC/USD',
+        status: 'FILLED',
+      }),
+      expect.objectContaining({
+        ticker: 'ETH/USD',
+        status: 'DRY_RUN',
+        source_scope: 'dry_run',
+        archived_at: '2026-04-25T23:46:00.000Z',
+        archive_reason: 'paper_dry_run_quarantine_2026-04-22',
+      }),
+    ]);
+  });
 });
