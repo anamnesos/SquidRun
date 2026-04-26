@@ -207,7 +207,6 @@ const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-sup
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
 const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-trading-state.json');
 const DEFAULT_NEWS_SCAN_STATE_PATH = resolveRuntimePath('news-scan-supervisor-state.json');
-const DEFAULT_PENDING_FOLLOWUP_STATE_PATH = resolveRuntimePath('pending-followup-supervisor-state.json');
 const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
 const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
 const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-supervisor-state.json');
@@ -283,9 +282,6 @@ const NEWS_SCAN_PHASES = Object.freeze([
   { key: 'news_scan', label: 'News and market scan' },
 ]);
 const DEFAULT_NEWS_SCAN_INTERVAL_MINUTES = 2 * 60;
-const PENDING_FOLLOWUP_PHASES = Object.freeze([
-  { key: 'pending_followups', label: 'Pending follow-up scan' },
-]);
 const MARKET_RESEARCH_PHASES = Object.freeze([
   { key: 'market_research', label: 'Market research scan' },
 ]);
@@ -295,7 +291,6 @@ const MARKET_SCANNER_PHASES = Object.freeze([
 const EUNBYEOL_CHECKIN_PHASES = Object.freeze([
   { key: 'private-profile_checkin', label: '[private-profile] check-in review' },
 ]);
-const DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
@@ -1007,17 +1002,6 @@ function defaultNewsScanState() {
   };
 }
 
-function defaultPendingFollowupState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    lastAlertFingerprint: null,
-    updatedAt: null,
-  };
-}
-
 function defaultMarketResearchState() {
   return {
     lastProcessedAt: null,
@@ -1284,28 +1268,6 @@ function getLatest[private-profile]MessageTimestamp(rows = []) {
     }
   }
   return 0;
-}
-
-function is[private-profile]OwnedPendingItem(item = {}) {
-  const blockedOn = String(item?.blockedOn || '');
-  const label = `${item?.item || ''} ${item?.caseLabel || ''} ${item?.status || ''}`;
-  return /은별 input|은별 action|은별|private-profile/i.test(blockedOn)
-    || /은별|private-profile/i.test(label);
-}
-
-function isthe userOwnedPendingItem(item = {}) {
-  const blockedOn = String(item?.blockedOn || '');
-  const label = `${item?.item || ''} ${item?.caseLabel || ''} ${item?.status || ''}`;
-  return /james\b|james action|builder|architect|oracle/i.test(blockedOn)
-    || /\bthe user\b|미국 filings|US filings|test buy/i.test(label);
-}
-
-function buildPendingFollowupDailySchedule(referenceDate = new Date(), options = {}) {
-  return buildUtcIntervalSchedule(referenceDate, PENDING_FOLLOWUP_PHASES, options.intervalMinutes || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES);
-}
-
-function getNextPendingFollowupEvent(referenceDate = new Date(), options = {}) {
-  return getNextUtcIntervalEvent(referenceDate, PENDING_FOLLOWUP_PHASES, options.intervalMinutes || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES);
 }
 
 function buildMarketResearchDailySchedule(referenceDate = new Date(), options = {}) {
@@ -2093,33 +2055,6 @@ class SupervisorDaemon {
       const state = await this.[private-live-ops]Executor?.getAccountState?.().catch(() => null);
       return Array.isArray(state?.positions) ? state.positions : [];
     });
-    this.pendingFollowupEnabled = options.pendingFollowupEnabled !== false
-      && process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION !== '0';
-    this.pendingFollowupIntervalMinutes = Math.max(
-      30,
-      Math.floor(Number(options.pendingFollowupIntervalMinutes) || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES)
-    );
-    this.pendingFollowupStatePath = options.pendingFollowupStatePath || DEFAULT_PENDING_FOLLOWUP_STATE_PATH;
-    this.pendingFollowupState = {
-      ...defaultPendingFollowupState(),
-      ...(readJsonFile(this.pendingFollowupStatePath, defaultPendingFollowupState()) || {}),
-    };
-    this.pendingFollowupPhasePromise = null;
-    this.lastPendingFollowupSummary = this.pendingFollowupEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
     this.marketResearchEnabled = options.marketResearchEnabled !== false
       && process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION !== '0';
     this.marketResearchIntervalMinutes = Math.max(
@@ -2901,7 +2836,6 @@ class SupervisorDaemon {
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
     const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
     const newsScanResult = await this.maybeRunNewsScanAutomation(nowMs);
-    const pendingFollowupResult = await this.maybeRunPendingFollowupAutomation(nowMs);
     const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
     const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
     const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
@@ -2927,7 +2861,6 @@ class SupervisorDaemon {
       cryptoTradingResult,
       polymarketTradingResult,
       newsScanResult,
-      pendingFollowupResult,
       marketResearchResult,
       [private-live-ops]Result,
       sparkMonitorResult,
@@ -2999,7 +2932,6 @@ class SupervisorDaemon {
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
     const polymarketTradingRan = summary?.polymarketTradingResult && summary.polymarketTradingResult.skipped !== true;
     const newsScanRan = summary?.newsScanResult && summary.newsScanResult.skipped !== true;
-    const pendingFollowupRan = summary?.pendingFollowupResult && summary.pendingFollowupResult.skipped !== true;
     const marketResearchRan = summary?.marketResearchResult && summary.marketResearchResult.skipped !== true;
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
     const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
@@ -3019,7 +2951,6 @@ class SupervisorDaemon {
       || cryptoTradingRan
       || polymarketTradingRan
       || newsScanRan
-      || pendingFollowupRan
       || marketResearchRan
       || saylorWatcherRan
       || oracleWatchRan
@@ -3170,11 +3101,6 @@ class SupervisorDaemon {
     writeJsonFile(this.newsScanStatePath, this.newsScanState);
   }
 
-  persistPendingFollowupState() {
-    this.pendingFollowupState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.pendingFollowupStatePath, this.pendingFollowupState);
-  }
-
   persistMarketResearchState() {
     this.marketResearchState.updatedAt = new Date().toISOString();
     writeJsonFile(this.marketResearchStatePath, this.marketResearchState);
@@ -3227,25 +3153,6 @@ class SupervisorDaemon {
     } catch {
       return [];
     }
-  }
-
-  buildPendingFollowupTelegramAlert(summary = {}) {
-    return [
-      '[PROACTIVE] Pending follow-up scan found items needing your action.',
-      `the user-actionable items: ${Number(summary.jamesActionCount || 0)}`,
-      summary.jamesTopItems?.length ? `Your items: ${summary.jamesTopItems.join(' | ')}` : null,
-    ].filter(Boolean).join('\n');
-  }
-
-  buildPendingFollowupArchitectAlert(summary = {}) {
-    return [
-      '[PROACTIVE][FOLLOWUPS] Pending follow-up scan complete.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `the user-actionable items: ${Number(summary.jamesActionCount || 0)}`,
-      `Internal-only items: ${Number(summary.internalOnlyCount || 0)}`,
-      summary.jamesTopItems?.length ? `the user items: ${summary.jamesTopItems.join(' | ')}` : null,
-      summary.private-profileTopItems?.length ? `Internal items: ${summary.private-profileTopItems.join(' | ')}` : null,
-    ].filter(Boolean).join('\n');
   }
 
   build[private-profile]CheckInDraft(summary = {}) {
@@ -4107,138 +4014,6 @@ class SupervisorDaemon {
     });
 
     return this.newsScanPhasePromise;
-  }
-
-  async runPendingFollowupPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const dashboard = this.readCaseOperationsDashboard();
-    const pendingItems = Array.isArray(dashboard.pendingItems) ? dashboard.pendingItems : [];
-    const waitingItems = pendingItems.filter((item) => /waiting|대기|⚠️/i.test(String(item.status || '')));
-    const blockedItems = pendingItems.filter((item) => /blocked|⛔/i.test(String(item.status || '')));
-    const laterItems = pendingItems.filter((item) => /later|다음|내일|예정|📝|⏳/i.test(String(item.status || '')));
-    const private-profileOwnedItems = pendingItems.filter((item) => is[private-profile]OwnedPendingItem(item));
-    const jamesOwnedItems = pendingItems.filter((item) => isthe userOwnedPendingItem(item));
-    const internalOnlyItems = pendingItems.filter((item) => !isthe userOwnedPendingItem(item));
-    const jamesActionableItems = Array.from(new Set([
-      ...jamesOwnedItems,
-      ...blockedItems.filter((item) => isthe userOwnedPendingItem(item)),
-      ...waitingItems.filter((item) => isthe userOwnedPendingItem(item)),
-    ]));
-    const overdue[private-profile]Schedule = Boolean(dashboard.scheduleDate && (dashboard.scheduleItems || []).length > 0);
-    const topItems = [
-      ...waitingItems.slice(0, 2).map((item) => `[WAITING] ${item.item}`),
-      ...blockedItems.slice(0, 2).map((item) => `[BLOCKED] ${item.item}`),
-      ...(overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).slice(0, 2).map((item) => `[EUNBYEOL] ${item}`) : []),
-    ].slice(0, 4);
-    const jamesTopItems = jamesActionableItems
-      .slice(0, 4)
-      .map((item) => `[ACTION] ${item.item}`);
-    const private-profileTopItems = [
-      ...private-profileOwnedItems.slice(0, 3).map((item) => item.item),
-      ...(overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).slice(0, 2) : []),
-    ].slice(0, 4);
-    const alertLevel = jamesActionableItems.length > 0 ? 'level_2' : 'level_0';
-    const fingerprint = JSON.stringify({
-      alertLevel,
-      jamesTopItems,
-      private-profileTopItems,
-    });
-    const shouldNotifyArchitect = fingerprint !== this.pendingFollowupState.lastAlertFingerprint;
-    const summary = {
-      ok: true,
-      key: event?.key || 'pending_followups',
-      scannedAt,
-      waitingCount: waitingItems.length,
-      blockedCount: blockedItems.length,
-      laterCount: laterItems.length,
-      overdueSchedule: false,
-      overdue[private-profile]Schedule,
-      scheduleDate: dashboard.scheduleDate || null,
-      topItems,
-      jamesActionCount: jamesActionableItems.length,
-      jamesTopItems,
-      private-profileActionCount: private-profileOwnedItems.length + (overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).length : 0),
-      private-profileTopItems,
-      internalOnlyCount: internalOnlyItems.length + (overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).length : 0),
-      alertLevel,
-      notified: shouldNotifyArchitect,
-    };
-
-    if (shouldNotifyArchitect) {
-      this.notifyArchitectInternal(this.buildPendingFollowupArchitectAlert(summary), 'pending_followups');
-      this.pendingFollowupState.lastAlertFingerprint = fingerprint;
-    }
-    return summary;
-  }
-
-  async maybeRunPendingFollowupAutomation(nowMs = Date.now()) {
-    if (!this.pendingFollowupEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'pending_followup_disabled' };
-    }
-    if (this.pendingFollowupPhasePromise) {
-      return this.pendingFollowupPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextPendingFollowupEvent(now, {
-      intervalMinutes: this.pendingFollowupIntervalMinutes,
-    });
-    const day = buildPendingFollowupDailySchedule(now, {
-      intervalMinutes: this.pendingFollowupIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.pendingFollowupState.lastProcessedAt
-      ? new Date(this.pendingFollowupState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = day.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.pendingFollowupState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistPendingFollowupState();
-
-    if (dueEvents.length === 0) {
-      this.lastPendingFollowupSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent,
-      };
-      return { ok: false, skipped: true, reason: 'no_due_pending_followup', nextEvent: this.pendingFollowupState.nextEvent };
-    }
-
-    this.pendingFollowupPhasePromise = (async () => {
-      const executed = [];
-      for (const dueEvent of dueEvents) {
-        const phaseResult = await this.runPendingFollowupPhase(dueEvent);
-        executed.push(phaseResult);
-        this.pendingFollowupState.lastProcessedAt = dueEvent.scheduledAt;
-        this.pendingFollowupState.lastResult = phaseResult;
-        this.pendingFollowupState.lastScan = phaseResult;
-        this.persistPendingFollowupState();
-      }
-
-      const upcomingEvent = getNextPendingFollowupEvent(new Date(), {
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-      });
-      this.pendingFollowupState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistPendingFollowupState();
-      this.lastPendingFollowupSummary = {
-        enabled: true,
-        status: executed.some((entry) => entry.notified) ? 'alert_sent' : 'scan_complete',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return { ok: true, skipped: false, executed, nextEvent: this.pendingFollowupState.nextEvent };
-    })().finally(() => {
-      this.pendingFollowupPhasePromise = null;
-    });
-
-    return this.pendingFollowupPhasePromise;
   }
 
   async runMarketResearchPhase(event) {
@@ -8316,15 +8091,6 @@ class SupervisorDaemon {
         lastProcessedAt: this.newsScanState.lastProcessedAt || null,
         nextEvent: this.newsScanState.nextEvent || null,
         lastSummary: this.lastNewsScanSummary || null,
-      },
-      pendingFollowupAutomation: {
-        enabled: this.pendingFollowupEnabled,
-        running: Boolean(this.pendingFollowupPhasePromise),
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        statePath: this.pendingFollowupStatePath,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent || null,
-        lastSummary: this.lastPendingFollowupSummary || null,
       },
       marketResearchAutomation: {
         enabled: this.marketResearchEnabled,
