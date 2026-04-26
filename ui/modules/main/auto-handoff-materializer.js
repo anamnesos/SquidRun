@@ -302,6 +302,10 @@ function selectSourceSessionRows(currentSessionId, currentRows = [], allRows = [
       rows: currentSessionRows,
       meaningfulRows: currentMeaningfulRows,
       usedFallback: false,
+      fallbackSessionId: null,
+      fallbackRows: [],
+      fallbackMeaningfulRows: [],
+      fallbackLatestTsMs: 0,
     };
   }
 
@@ -332,14 +336,22 @@ function selectSourceSessionRows(currentSessionId, currentRows = [], allRows = [
       rows: currentSessionRows,
       meaningfulRows: currentMeaningfulRows,
       usedFallback: false,
+      fallbackSessionId: null,
+      fallbackRows: [],
+      fallbackMeaningfulRows: [],
+      fallbackLatestTsMs: 0,
     };
   }
 
   return {
-    sessionId: fallback.sessionId,
-    rows: fallback.rows,
-    meaningfulRows: fallback.meaningfulRows,
+    sessionId: normalizedCurrentSessionId,
+    rows: currentSessionRows,
+    meaningfulRows: currentMeaningfulRows,
     usedFallback: true,
+    fallbackSessionId: fallback.sessionId,
+    fallbackRows: fallback.rows,
+    fallbackMeaningfulRows: fallback.meaningfulRows,
+    fallbackLatestTsMs: fallback.latestTsMs,
   };
 }
 
@@ -586,6 +598,34 @@ function isWithinCrossSessionAgeLimit(rowSessionId, currentSessionId, ageLimit =
   return (currentSessionNumber - rowSessionNumber) <= limit;
 }
 
+function formatSessionNumberLabel(sessionId) {
+  const sessionNumber = toAppSessionNumber(sessionId);
+  if (Number.isInteger(sessionNumber)) return String(sessionNumber);
+  return toOptionalString(sessionId, 'unknown') || 'unknown';
+}
+
+function formatPriorContextAge(currentSessionId, priorSessionId, latestTsMs = 0, nowMs = Date.now()) {
+  const currentSessionNumber = toAppSessionNumber(currentSessionId);
+  const priorSessionNumber = toAppSessionNumber(priorSessionId);
+  if (Number.isInteger(currentSessionNumber) && Number.isInteger(priorSessionNumber)) {
+    const diff = currentSessionNumber - priorSessionNumber;
+    if (diff > 0) return `${diff} ${diff === 1 ? 'session' : 'sessions'}`;
+  }
+
+  const latest = Number(latestTsMs);
+  const now = Number(nowMs);
+  if (Number.isFinite(latest) && latest > 0 && Number.isFinite(now) && now >= latest) {
+    const ageMinutes = Math.max(0, Math.round((now - latest) / 60000));
+    if (ageMinutes < 60) return `${ageMinutes} ${ageMinutes === 1 ? 'minute' : 'minutes'}`;
+    const ageHours = Math.round(ageMinutes / 60);
+    if (ageHours < 48) return `${ageHours} ${ageHours === 1 ? 'hour' : 'hours'}`;
+    const ageDays = Math.round(ageHours / 24);
+    return `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`;
+  }
+
+  return 'unknown';
+}
+
 function buildSessionHandoffMarkdown(rows, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const sessionId = toOptionalString(options.sessionId, '-') || '-';
@@ -677,11 +717,56 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     `- decision_digest_sessions: ${decisionDigestGroups.length}`,
     `- failed_rows: ${failedRows.length}`,
     `- pending_rows: ${pendingRows.length}`,
+  ];
+
+  const priorContextRows = sortByEventTsAsc(
+    Array.isArray(options.priorContextRows) ? options.priorContextRows : []
+  );
+  const priorContextSessionId = toOptionalString(options.priorContextSessionId, null);
+  if (priorContextRows.length > 0) {
+    const priorLatestTsMs = Number.isFinite(Number(options.priorContextLatestTsMs))
+      ? Number(options.priorContextLatestTsMs)
+      : toEventTsMs(priorContextRows[priorContextRows.length - 1]);
+    lines.push(
+      '',
+      `## Prior Context (session ${formatSessionNumberLabel(priorContextSessionId)}, age ${formatPriorContextAge(sessionId, priorContextSessionId, priorLatestTsMs, nowMs)})`,
+      `- source_session_id: ${priorContextSessionId || '-'}`,
+      '- note: Current session had no meaningful handoff rows; these rows are prior context only.',
+      '',
+      '| sent_at | message_id | trace_id | sender | target | channel | direction | status | excerpt |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    );
+    for (const row of priorContextRows.slice(Math.max(0, priorContextRows.length - recentLimit))) {
+      lines.push([
+        '|',
+        escapeMarkdownCell(toIso(toEventTsMs(row))),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.messageId, '-')),
+        '|',
+        escapeMarkdownCell(extractTraceId(row)),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.senderRole, '-')),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.targetRole, '-')),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.channel, '-')),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.direction, '-')),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.status, '-')),
+        '|',
+        escapeMarkdownCell(normalizeInline(row?.rawBody || '')),
+        '|',
+      ].join(' '));
+    }
+  }
+
+  lines.push(
     '',
     '## Unresolved Claims',
     '| claim_id | status | statement excerpt | confidence |',
     '| --- | --- | --- | --- |',
-  ];
+  );
 
   if (unresolvedClaims.length === 0) {
     lines.push('| - | - | - | - |');
@@ -1040,8 +1125,8 @@ async function materializeSessionHandoff(options = {}) {
       readFallbackSummary: options.readFallbackSummary,
     });
   }
-  if (sourceSession.usedFallback && sourceSession.sessionId) {
-    const snapshotSummary = await querySessionSnapshotSummary(sourceSession.sessionId, options);
+  if (sourceSession.usedFallback && sourceSession.fallbackSessionId) {
+    const snapshotSummary = await querySessionSnapshotSummary(sourceSession.fallbackSessionId, options);
     if (snapshotSummary) {
       const dedupKey = `${snapshotSummary.sessionNumber || 'unknown'}:${snapshotSummary.content}`;
       const existingKeys = new Set(priorSessionSummaries
@@ -1059,7 +1144,11 @@ async function materializeSessionHandoff(options = {}) {
     .filter(Boolean);
 
   const primaryPath = toOptionalString(options.outputPath, null) || resolvePrimarySessionHandoffPath();
+  const hasPriorContextRows = sourceSession.usedFallback === true
+    && Array.isArray(sourceSession.fallbackMeaningfulRows)
+    && sourceSession.fallbackMeaningfulRows.length > 0;
   const fallbackOnly = sourceSession.meaningfulRows.length === 0
+    && !hasPriorContextRows
     && normalizedPriorSessionSummaries.length === 0
     && unresolvedClaims.length === 0;
   if (fallbackOnly) {
@@ -1072,6 +1161,7 @@ async function materializeSessionHandoff(options = {}) {
       skipped: true,
       reason: 'no_meaningful_content',
       sourceSessionId: sourceSession.sessionId || sessionId || null,
+      fallbackSourceSessionId: sourceSession.fallbackSessionId || null,
     };
   }
 
@@ -1087,6 +1177,9 @@ async function materializeSessionHandoff(options = {}) {
     failureLimit: options.failureLimit,
     pendingLimit: options.pendingLimit,
     crossSessionTaggedRows: crossSessionRows,
+    priorContextRows: sourceSession.usedFallback ? sourceSession.fallbackMeaningfulRows : [],
+    priorContextSessionId: sourceSession.usedFallback ? sourceSession.fallbackSessionId : null,
+    priorContextLatestTsMs: sourceSession.usedFallback ? sourceSession.fallbackLatestTsMs : 0,
     unresolvedClaims,
     unresolvedClaimsMax: options.unresolvedClaimsMax,
     priorSessionSummaries: normalizedPriorSessionSummaries,
@@ -1134,6 +1227,7 @@ async function materializeSessionHandoff(options = {}) {
     written: writes.some((entry) => entry.changed),
     writes,
     sourceSessionId: sourceSession.sessionId || sessionId || null,
+    fallbackSourceSessionId: sourceSession.fallbackSessionId || null,
     usedFallbackSession: sourceSession.usedFallback === true,
   };
 }
