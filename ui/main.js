@@ -7,10 +7,21 @@ const path = require('path');
 const os = require('os');
 const { app, Menu } = require('electron');
 const { parseLaunchIntent } = require('./modules/main/launch-intent');
-const { applyProfileEnv, getActiveProfileName, isMainProfile } = require('./profile');
+const {
+  applyProfileEnv,
+  getActiveProfileName,
+  getProfileProjectRootOverride,
+  isMainProfile,
+} = require('./profile');
 
 const initialLaunchIntent = parseLaunchIntent(process.argv.slice(1));
 const activeProfileName = applyProfileEnv(initialLaunchIntent.profileName || 'main');
+if (!process.env.SQUIDRUN_PROJECT_ROOT) {
+  const profileProjectRoot = getProfileProjectRootOverride(activeProfileName);
+  if (profileProjectRoot) {
+    process.env.SQUIDRUN_PROJECT_ROOT = profileProjectRoot;
+  }
+}
 
 if (!isMainProfile(activeProfileName) && typeof app?.getPath === 'function' && typeof app?.setPath === 'function') {
   try {

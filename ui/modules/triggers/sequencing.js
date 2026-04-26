@@ -168,6 +168,15 @@ function startDeliveryTracking(deliveryId, sender, seq, recipient, targets, msgT
   pendingDeliveries.set(deliveryId, pending);
 }
 
+function clearPendingDeliveryTracking() {
+  for (const pending of pendingDeliveries.values()) {
+    if (pending?.timeoutId) {
+      clearTimeout(pending.timeoutId);
+    }
+  }
+  pendingDeliveries.clear();
+}
+
 function handleDeliveryOutcome(deliveryId, paneId, outcome = {}) {
   if (!deliveryId) return;
   const pending = pendingDeliveries.get(deliveryId);
@@ -246,6 +255,7 @@ module.exports = {
   startDeliveryTracking,
   handleDeliveryAck,
   handleDeliveryOutcome,
+  clearPendingDeliveryTracking,
   getNextSequence,
   getSequenceState,
   setMetricsFunctions,

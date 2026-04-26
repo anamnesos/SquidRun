@@ -68,6 +68,7 @@ const { onBridge } = require('../modules/renderer-bridge');
 const bus = require('../modules/event-bus');
 const websocketServer = require('../modules/websocket-server');
 const triggers = require('../modules/triggers');
+const sequencing = require('../modules/triggers/sequencing');
 const daemonHandlers = require('../modules/daemon-handlers');
 const terminal = require('../modules/terminal');
 const { createInjectionController } = require('../modules/terminal/injection');
@@ -127,11 +128,26 @@ function closeClient(ws) {
 
     const timeout = setTimeout(() => {
       if (ws.readyState !== ws.CLOSED) ws.terminate();
+      if (typeof ws.removeAllListeners === 'function') {
+        ws.removeAllListeners();
+      }
+      if (ws._socket && typeof ws._socket.destroy === 'function') {
+        ws._socket.destroy();
+      }
       resolve();
     }, 500);
+    if (typeof timeout.unref === 'function') {
+      timeout.unref();
+    }
 
     ws.on('close', () => {
       clearTimeout(timeout);
+      if (typeof ws.removeAllListeners === 'function') {
+        ws.removeAllListeners();
+      }
+      if (ws._socket && typeof ws._socket.destroy === 'function') {
+        ws._socket.destroy();
+      }
       resolve();
     });
 
@@ -296,6 +312,12 @@ describe('evidence-ledger integration: trace continuity', () => {
     await Promise.all(clients.map(closeClient));
 
     mockInjectionController = null;
+    if (typeof daemonHandlers.teardownDaemonListeners === 'function') {
+      daemonHandlers.teardownDaemonListeners();
+    }
+    if (typeof sequencing.clearPendingDeliveryTracking === 'function') {
+      sequencing.clearPendingDeliveryTracking();
+    }
     if (typeof bus.reset === 'function') bus.reset();
 
     jest.clearAllMocks();

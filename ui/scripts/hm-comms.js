@@ -8,6 +8,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  getActiveProfileName,
+  namespaceCoordRelPath,
+} = require('../profile');
 
 const DEFAULT_LAST = 20;
 const MAX_LAST = 5000;
@@ -21,7 +25,7 @@ function usage() {
   console.log('  --session <n|id>          Filter by session number (e.g. 174) or session id (e.g. app-session-174)');
   console.log('  --between <a> <b>         Filter bidirectionally between roles a and b');
   console.log('  --json                    Output machine-readable JSON');
-  console.log('  --db <path>               Override DB path (default: .squidrun/runtime/evidence-ledger.db)');
+  console.log('  --db <path>               Override DB path (default: profile-scoped .squidrun/runtime*/evidence-ledger.db)');
   console.log('Examples:');
   console.log('  node hm-comms.js history --last 15');
   console.log('  node hm-comms.js history --session 174');
@@ -93,16 +97,20 @@ function normalizeSessionId(value) {
 }
 
 function resolveDefaultDbPath() {
+  const profileName = getActiveProfileName();
+  const ledgerRelPath = namespaceCoordRelPath(path.join('runtime', 'evidence-ledger.db'), profileName);
+  const resolveForProjectRoot = (projectRoot) => path.join(projectRoot, '.squidrun', ledgerRelPath);
+
   // When running from the extracted .squidrun/bin/ layout, __dirname-based resolution
   // produces a double-nested path. Use SQUIDRUN_PROJECT_ROOT if the launcher set it.
   const envRoot = process.env.SQUIDRUN_PROJECT_ROOT;
   if (envRoot && fs.existsSync(envRoot)) {
-    return path.join(envRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
+    return resolveForProjectRoot(envRoot);
   }
   // Walk up from cwd to find .squidrun/link.json (same pattern as hm-send.js).
   let dir = path.resolve(process.cwd());
   while (true) {
-    const candidate = path.join(dir, '.squidrun', 'runtime', 'evidence-ledger.db');
+    const candidate = resolveForProjectRoot(dir);
     if (fs.existsSync(path.join(dir, '.squidrun', 'link.json')) || fs.existsSync(candidate)) {
       return candidate;
     }
@@ -111,7 +119,7 @@ function resolveDefaultDbPath() {
     dir = parent;
   }
   // Final fallback: original __dirname-based resolution (works in dev layout).
-  return path.resolve(__dirname, '..', '..', '.squidrun', 'runtime', 'evidence-ledger.db');
+  return path.resolve(__dirname, '..', '..', '.squidrun', ledgerRelPath);
 }
 
 function resolveDbPath(options) {

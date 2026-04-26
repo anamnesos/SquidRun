@@ -15,6 +15,10 @@ const {
   resolveCoordPath,
 } = require('../config');
 const {
+  getActiveProfileName,
+  namespaceCoordRelPath,
+} = require('../profile');
+const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
@@ -41,7 +45,16 @@ try {
   }
 }
 
-const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+function resolveDefaultPort() {
+  if (process.env.HM_SEND_PORT) return process.env.HM_SEND_PORT;
+  try {
+    const { getProfileWebSocketPort } = require('../profile');
+    const profilePort = getProfileWebSocketPort(process.env.SQUIDRUN_PROFILE || 'main');
+    if (Number.isFinite(profilePort)) return String(profilePort);
+  } catch {}
+  return '9900';
+}
+const parsedPort = Number.parseInt(resolveDefaultPort(), 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 500;
@@ -427,15 +440,16 @@ function getLocalCoordRoot(context = localProjectContext) {
 function resolveLocalCoordPath(relativePath, options = {}) {
   const relPath = String(relativePath || '').trim();
   if (!relPath) return getLocalCoordRoot();
+  const scopedRelPath = namespaceCoordRelPath(relPath, getActiveProfileName());
   const localCoordRoot = getLocalCoordRoot();
   const preferLocal = options.preferLocal !== false;
   if (preferLocal && localCoordRoot) {
-    return path.join(localCoordRoot, relPath);
+    return path.join(localCoordRoot, scopedRelPath);
   }
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath(relPath, options);
   }
-  return path.join(localCoordRoot, relPath);
+  return path.join(localCoordRoot, scopedRelPath);
 }
 
 function normalizeSessionId(value) {

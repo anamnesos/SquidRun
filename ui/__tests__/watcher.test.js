@@ -6,6 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const activeWatcherFixtures = [];
+
 function makeState(overrides = {}) {
   return {
     state: 'idle',
@@ -101,6 +103,8 @@ function setupWatcher(options = {}) {
   const settingsGetter = options.settingsGetter || (() => ({ autoSync: true }));
   watcher.init(mainWindow, triggers, settingsGetter);
 
+  activeWatcherFixtures.push({ watcher, tempDir });
+
   return {
     tempDir,
     watcher,
@@ -123,10 +127,42 @@ function cleanupDir(tempDir) {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
 
+async function waitForCondition(assertion, { timeoutMs = 1000, intervalMs = 20 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      await assertion();
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error('Condition not met before timeout');
+}
+
 describe('watcher module', () => {
   afterEach(() => {
     jest.useRealTimers();
+    while (activeWatcherFixtures.length > 0) {
+      const { watcher, tempDir } = activeWatcherFixtures.pop();
+      try {
+        watcher.stopMessageWatcher?.();
+      } catch {}
+      try {
+        watcher.stopTriggerWatcher?.();
+      } catch {}
+      try {
+        watcher.stopWatcher?.();
+      } catch {}
+      cleanupDir(tempDir);
+    }
   });
+
 
   test('readState returns defaults when state file missing', () => {
     const { watcher, tempDir } = setupWatcher();
@@ -593,8 +629,9 @@ describe('watcher module', () => {
     const deliveryId = triggers.notifyAgents.mock.calls[0][2].deliveryId;
     emitDeliveryAck(deliveryId, '2');
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(await watcher.getMessages('2', true)).toHaveLength(0);
+    await waitForCondition(async () => {
+      expect(await watcher.getMessages('2', true)).toHaveLength(0);
+    });
     watcher.stopMessageWatcher();
     cleanupDir(tempDir);
   });
@@ -609,11 +646,12 @@ describe('watcher module', () => {
     const worker = getWorker(0);
     const queuePath = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-2.json');
     worker.emit('message', { watcherName: 'message', type: 'change', path: queuePath });
-    await new Promise((resolve) => setTimeout(resolve, 25));
-
-    expect(triggers.notifyAgents).toHaveBeenCalledTimes(1);
-    await new Promise((resolve) => setTimeout(resolve, 650));
-    expect(triggers.notifyAgents).toHaveBeenCalledTimes(2);
+    await waitForCondition(() => {
+      expect(triggers.notifyAgents).toHaveBeenCalledTimes(1);
+    });
+    await waitForCondition(() => {
+      expect(triggers.notifyAgents).toHaveBeenCalledTimes(2);
+    }, { timeoutMs: 1500 });
     expect(await watcher.getMessages('2', true)).toHaveLength(1);
 
     watcher.stopMessageWatcher();

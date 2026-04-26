@@ -180,6 +180,21 @@ jest.mock('../modules/status-strip', () => ({
   updateStatusStrip: jest.fn(),
 }));
 
+jest.mock('../modules/window-team-bootstrap', () => ({
+  createWindowTeamBootstrap: jest.fn(() => ({
+    getState: jest.fn(() => ({ windowKey: 'main', loaded: true, autoBootAgents: false, startupSourceFiles: [] })),
+    shouldDeferAutoSpawn: jest.fn(() => false),
+    handleWindowContext: jest.fn((payload) => payload || {}),
+    maybeRunSecondaryAutoBoot: jest.fn().mockResolvedValue({ ok: false, skipped: true }),
+  })),
+  readInitialWindowContextFromLocation: jest.fn(() => ({
+    windowKey: 'main',
+    loaded: false,
+    autoBootAgents: false,
+    startupSourceFiles: [],
+  })),
+}));
+
 // Mock model-selector
 jest.mock('../modules/model-selector', () => ({
   initModelSelectors: jest.fn(),
@@ -207,6 +222,7 @@ describe('renderer.js smoke tests', () => {
       utils: require('../modules/utils'),
       commandPalette: require('../modules/command-palette'),
       statusStrip: require('../modules/status-strip'),
+      windowTeamBootstrap: require('../modules/window-team-bootstrap'),
       modelSelector: require('../modules/model-selector'),
       config: require('../config'),
       bus: require('../modules/event-bus'),
@@ -232,23 +248,15 @@ describe('renderer.js smoke tests', () => {
   });
 
   describe('window.squidrun API', () => {
-    it('should expose pty API on window.squidrun', () => {
-      expect(window.squidrun.pty).toBeDefined();
+    it('should preserve bridge invoke/send/on methods on window.squidrun', () => {
+      expect(typeof window.squidrun.invoke).toBe('function');
+      expect(typeof window.squidrun.send).toBe('function');
+      expect(typeof window.squidrun.on).toBe('function');
     });
 
-    it('should expose claude API on window.squidrun', () => {
-      expect(window.squidrun.claude).toBeDefined();
-    });
-
-    it('pty API should have expected methods', () => {
-      expect(typeof window.squidrun.pty.create).toBe('function');
-      expect(typeof window.squidrun.pty.write).toBe('function');
-      expect(typeof window.squidrun.pty.resize).toBe('function');
-      expect(typeof window.squidrun.pty.kill).toBe('function');
-    });
-
-    it('claude API should have spawn method', () => {
-      expect(typeof window.squidrun.claude.spawn).toBe('function');
+    it('should expose rendererModules on the bridge', () => {
+      expect(window.squidrun.rendererModules).toBeDefined();
+      expect(window.squidrun.rendererModules.windowTeamBootstrap).toBeDefined();
     });
 
   });

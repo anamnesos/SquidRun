@@ -207,7 +207,11 @@ function assessWatcherHealth(input = {}) {
   const nowMs = Number(input.nowMs || Date.now());
   const watchdogPid = toNumber(input.watchdogPid, process.pid);
   const lastTickAt = toText(watcherState?.heartbeat?.lastTickAt, '');
-  const stale = computeHeartbeatStale(lastTickAt, nowMs, HEARTBEAT_STALE_AFTER_MS);
+  const watcherStaleAfterMs = Number(watcherState?.heartbeat?.staleAfterMs);
+  const effectiveStaleAfterMs = Number.isFinite(watcherStaleAfterMs) && watcherStaleAfterMs > 0
+    ? watcherStaleAfterMs
+    : HEARTBEAT_STALE_AFTER_MS;
+  const stale = computeHeartbeatStale(lastTickAt, nowMs, effectiveStaleAfterMs);
   const processCount = processes.length;
   const normalizedProcesses = processes.map((row) => ({
     processId: toNumber(row?.ProcessId ?? row?.processId ?? null, null),

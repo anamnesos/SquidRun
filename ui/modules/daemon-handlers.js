@@ -780,6 +780,11 @@ function teardownDaemonListeners() {
   syncIndicatorSetup = false;
   throttleQueues.clear();
   throttlingPanes.clear();
+  sessionStartTimes.clear();
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
 }
 
 function setupRefreshButtons(sendToPaneFn) {

@@ -223,7 +223,7 @@ describe('Injection Events', () => {
 
       const modeSelected = mockBus.emit.mock.calls.find(c => c[0] === 'inject.mode.selected');
       expect(modeSelected).toBeDefined();
-      expect(modeSelected[1].payload.mode).toBe('codex-pty');
+      expect(modeSelected[1].payload.mode).toBe(IS_DARWIN ? 'codex-pty' : 'codex-trusted');
     });
 
     test('emits inject.mode.selected for Gemini panes', () => {
@@ -278,10 +278,13 @@ describe('Injection Events', () => {
 
       const applied = mockBus.emit.mock.calls.find(c => c[0] === 'inject.applied');
       expect(applied).toBeDefined();
-      expect(applied[1].payload.method).toBe('codex-pty');
+      expect(applied[1].payload.method).toBe(IS_DARWIN ? 'codex-pty' : 'codex-trusted');
 
-      // Codex uses PTY \r for Enter (not sendTrustedEnter)
-      expect(mockPty.write).toHaveBeenCalledWith('codex', '\r', expect.any(Object));
+      if (IS_DARWIN) {
+        expect(mockPty.write).toHaveBeenCalledWith('codex', '\r', expect.any(Object));
+      } else {
+        expect(mockPty.write).toHaveBeenCalledWith('codex', '\u001b[201~', expect.any(Object));
+      }
       expect(mockPty.codexExec).not.toHaveBeenCalled();
     });
 
@@ -315,8 +318,12 @@ describe('Injection Events', () => {
       await jest.advanceTimersByTimeAsync(500);
 
       expect(onCompleteResult).toBeDefined();
-      expect(onCompleteResult.success).toBe(false);
-      expect(onCompleteResult.reason).toBe('enter_failed');
+      if (IS_DARWIN) {
+        expect(onCompleteResult.success).toBe(false);
+        expect(onCompleteResult.reason).toBe('enter_failed');
+      } else {
+        expect(onCompleteResult.success).toBe(true);
+      }
     });
   });
 

@@ -2146,6 +2146,8 @@ function blurAllTerminals() {
 
 // Send message to Architect only (user interacts with Architect, Architect coordinates execution)
 // User messages get PRIORITY + IMMEDIATE - bypass queue ordering AND idle gating
+const USER_BROADCAST_CLIPBOARD_PASTE_THRESHOLD_BYTES = 1024;
+
 function broadcast(message, options = {}) {
   const messageText = typeof message === 'string' ? message.trim() : String(message ?? '').trim();
   if (messageText) {
@@ -2179,7 +2181,13 @@ function broadcast(message, options = {}) {
     }
   }
 
-  sendToPane('1', messageText || String(message ?? ''), { priority: true, immediate: true, ...options });
+  sendToPane('1', messageText || String(message ?? ''), {
+    priority: true,
+    immediate: true,
+    preferClipboardPasteForLongMessage: true,
+    clipboardPasteThresholdBytes: USER_BROADCAST_CLIPBOARD_PASTE_THRESHOLD_BYTES,
+    ...options,
+  });
   updateConnectionStatus('Message sent to Architect');
 }
 
