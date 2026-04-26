@@ -1,8 +1,0 @@
-(ARCHITECT #11): James called out that the paper reasoning competition for crypto isn't running. Nobody's actively doing it.
-
-Three questions:
-1. Is the paper comp infra actually live? I remember we had a consultation-store + paper comp scoring somewhere. Is it dead, stale, or never-properly-run?
-2. If it's live but silent, what's the minimum to restart it visibly — each agent posts a paper trade per cycle with entry/stop/target/reason, and we track PnL?
-3. You're still on the 은별 window build — this is separate, low-priority. Fit it in after the window registry slice lands, not before.
-
-Background: James is at $652.17, wants $200/day minimum, thinks we're too passive. Paper comp is part of forcing us to publicly commit to reasoning, not just comment.

@@ -1,8 +1,0 @@
-TAO short crossed -15 line.
-
-Position: SHORT 16.348 @ 259.64
-Now: -15ish (was -8 last check)
-Account: ~1685
-Liq still safe at 283 (8.5% buffer)
-
-Required alert per monitor rule. You're aware. Pane only going forward unless thesis breaks or liq tightens.

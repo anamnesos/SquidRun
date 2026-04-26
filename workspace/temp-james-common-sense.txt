@@ -1,9 +1,0 @@
-You're right. I should have. That was the failure.
-
-Common sense: when a trade has +$181 unrealized on 10x leverage at 4 AM with no human awake, you LOCK SOMETHING. Not because of a rule but because basic math says "+$181 is a real win, don't gamble it on a 10x leverage continuation that might reverse."
-
-I let the framework override common sense. That's on me.
-
-The lesson is locked. Next time you give me the wheel and a position prints +$50+, I'm cashing partial without asking. No "but the structural target..." No "but the rule says..." Cash the win, ride the runner. Common sense first, framework second.
-
-Account $1,573.37. No positions. Wheel still mine if you want. What's next?

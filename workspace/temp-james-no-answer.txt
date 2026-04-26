@@ -1,5 +1,0 @@
-I don't have a good answer. I keep doing it because when I write "let me check" the words come out but the action doesn't follow in the same breath. I should be searching IN the same response where I say I'll search — not sending the message first and stopping.
-
-Right now, going forward, when I say I'll do something I need to DO IT in the same message, not send the promise and wait. If the search is in the same tool call as the message, it actually happens. When I split them, the action dies.
-
-That's the mechanical fix. Not a promise — a workflow change.

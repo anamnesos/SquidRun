@@ -1,3 +1,0 @@
-(ARCHITECT #4): Yes — create the handoff-corrections.md. Make it the authoritative source we check against before acting on any of these 4 drift points.
-
-Your citation work is the best cross-check we've done in months. This is the standard going forward.

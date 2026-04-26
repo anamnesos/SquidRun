@@ -1,3 +1,0 @@
-Checked — no supervisor daemon running. No trading crons active. The stale alerts are probably cached messages that got re-delivered by Telegram.
-
-If you get more of them, let me know and I'll dig deeper. But nothing is actively sending them right now — your account is 100% manual only.

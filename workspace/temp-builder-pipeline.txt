@@ -1,9 +1,0 @@
-Don't go idle after consultation reorientation. Continuous pipeline:
-
-1. CURRENT: Hyperliquid-first consultation payloads
-2. THEN: Multi-asset perp support (hm-defi-execute.js / hm-defi-close.js)
-3. THEN: Fix the smoke runner (hm-smoke-runner.js) — it returns invalid JSON every time. Either make it return valid JSON or remove it.
-4. THEN: Clean up the 35 dead scripts identified in the module inventory. Don't delete — move to a scripts/deprecated/ folder so we can recover if needed.
-5. THEN: Message routing enforcement — build a telegram-routing.json that maps chat IDs to reply methods so agents don't have to remember which script to use.
-
-Keep shipping. Report each completion and move to the next.

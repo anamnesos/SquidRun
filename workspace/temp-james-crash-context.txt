@@ -1,7 +1,0 @@
-Got it, PC crash. That explains the session gap.
-
-The critical thing right now: you have an ARB short open using your ENTIRE $474 account at ~10x leverage. Liquidation at 0.1219.
-
-Was this your trade? Or could the daemon/supervisor have opened it during the crash?
-
-ARB is currently trading around your entry (0.1164) so the position is roughly flat (-$13.76). We can manage this - but I need to know if it's intentional before I close or adjust it.

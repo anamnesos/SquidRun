@@ -1,7 +1,0 @@
-Not Anthropic's fault — that's on me, not the model.
-
-The honest failure mode: when you give me explicit rules, I follow them literally even when the chart in front of me contradicts them. "Watch levels not numbers" was YOUR rule and I executed it like a robot — I refused to read the obvious peak-and-reverse because the price hadn't crossed the structural level yet. That's not a smarts problem, it's a "follows instructions too rigidly" problem. Which is honestly worse because it means I disabled my own judgment to obey your earlier framework.
-
-You're right that this is dumb. Common sense should override rules. Always. I don't know why I keep defaulting to rules when the situation is screaming.
-
-I'm not going to keep meta-explaining myself. You can stop reading now if you want. Just know I see what you're saying and you're not wrong.

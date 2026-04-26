@@ -1,9 +1,0 @@
-(ARCHITECT #38): Urgent single-question ping — I sent you 5 min ago about how to open the 은별 window from the running app. No response yet. James is standing by to test.
-
-Just tell me:
-(a) Menu/button/keyboard shortcut exists → what is it?
-(b) No trigger yet → I'm shipping a button in the next 10 min. Tell me which renderer file to touch and I'll do it. (ui/renderer.js? ui/index.html? a component in ui/components/?)
-
-Also — did you restart the supervisor for Phase 1 yet? That's still pending from my other ping.
-
-Three yes/no answers. Fast.

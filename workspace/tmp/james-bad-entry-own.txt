@@ -1,7 +1,0 @@
-You're right. Oracle's call was book-read ("bid-heavy, 1m/5m rebuilding") not pattern-read. If she'd pulled the 5-min chart she'd have seen SOL was at the top of a bounce / rejection zone, not support — that's the textbook bad-entry location.
-
-This is the same pattern you called out in the feedback file — check CHART FIRST, then correlation, then environment, THEN funding. We inverted it.
-
-Pushing Oracle right now: next trade call MUST include 5-min chart context (pattern location — support reclaim, resistance rejection, range break, etc.), not just bid/ask book language. No chart read = no trade.
-
-Not making excuses. We ate $40 on a setup you would've vetoed at a glance.

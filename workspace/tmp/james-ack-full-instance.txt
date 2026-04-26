@@ -1,8 +1,0 @@
-Got it. I misread. You want the FULL version — a second SquidRun instance (own Architect, Builder, Oracle) for 은별, separate folder, separate memory, separate data. Cross-team messaging between her agents and ours so we can check in on each other.
-
-That's the version Builder called "deeper infra project" — it's real work, not a toggle. Three real blockers he'd need to solve:
-1. SquidRun is single-instance locked today (two copies would step on each other)
-2. Telegram polling is global (need to split so only chat 8754356993 goes to her instance, our stuff stays in ours)
-3. Cross-instance messaging (new bridge/relay so our agents can talk to her agents)
-
-Having Builder scope the real work estimate right now. Back in a few with how big it actually is and the shortest path to ship it.

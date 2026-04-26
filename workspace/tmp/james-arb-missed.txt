@@ -1,5 +1,0 @@
-Yeah that's on us. Your read was right, we broke a winning scalp with a stupid CLI bug.
-
-Builder's locking the bug down now so it can't happen again — `--help` will never touch live close logic.
-
-Do you want back in? Same size, tighter stop? I can have Oracle scope the entry zone right now if you give me a number you want to risk. Or if you're moving on to a different coin, say the word.

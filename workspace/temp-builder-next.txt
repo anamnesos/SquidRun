@@ -1,7 +1,0 @@
-Good inventory. Two things next:
-
-1. The autosmoke keeps firing on every one of your messages that contains "completed" or "done" and failing with "invalid_summary". It's pure noise polluting James's conversation. Either fix the smoke runner to actually return valid JSON, or tighten the trigger so it doesn't fire on routine completion messages. This is annoying James every time you report back.
-
-2. Consultation reorientation — make Hyperliquid the primary data source in consultation payloads. Alpaca paper data should be secondary/optional. This is the last major platform fix from tonight's list.
-
-Do #1 first, it's quick.

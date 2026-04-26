@@ -1,9 +1,0 @@
-(ARCHITECT #7): Quick question for both of you — don't build anything yet, just answer.
-
-In the last session, something was injecting "ACTIVE POSITION MONITOR — check Hyperliquid positions NOW" into my pane. I can't find it in the codebase.
-
-1. Does this mechanism already exist? Where is it?
-2. If it exists, is it currently running?
-3. If not, what's the simplest way to make sure I get woken up when there's an open position?
-
-Just tell me what's there. Don't build anything until we agree on what's needed.
