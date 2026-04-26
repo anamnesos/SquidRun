@@ -390,4 +390,4 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
   - Shared IPC harness helpers in `ui/__tests__/helpers/ipc-harness.js`.
   - Config mocking helpers in `ui/__tests__/helpers/mock-config.js` and `ui/__tests__/helpers/real-config.js`.
   - Frequent fake-timer tests for watcher/terminal/runtime behavior.
-- Current suite scale: 193 suites / 3494 tests in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.
+- Current suite scale: 298 suites / 4325 tests discovered in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.

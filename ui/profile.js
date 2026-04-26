@@ -80,7 +80,6 @@ function applyProfileEnv(profileName, env = process.env) {
   if (normalized === 'private-profile') {
     env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
     env.SQUIDRUN_ORACLE_WATCH = '0';
-    env.SQUIDRUN_PAPER_TRADING_AUTOMATION = '0';
     env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION = '0';
     env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
     env.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR = '0';

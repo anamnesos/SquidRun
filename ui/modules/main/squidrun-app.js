@@ -2217,10 +2217,6 @@ class SquidRunApp {
       if (!packet.ipcChunk || packet.ipcChunk.index === 0) {
         log.info('InjectIPC', `Pre-IPC route pane ${paneId}: ${totalBytes} bytes -> ${packet.ipcChunk?.count || 1} packet(s) (startup=${startupInjection})`);
       }
-      const packetPreview = typeof packet.message === 'string' ? packet.message : String(packet.message || '');
-      const isPaperTradingCyclePayload = /paper trading cycle\s+paper-cycle-/i.test(packetPreview)
-        || /"requestId"\s*:\s*"paper-cycle-/i.test(packetPreview);
-
       if (!this.isHiddenPaneHostModeEnabled() || startupInjection) {
         const delivered = this.sendToVisibleWindow('inject-message', {
           ...packet,
@@ -2246,12 +2242,6 @@ class SquidRunApp {
       const canRouteToHiddenHost = hostWindowPresent && hostReady && !hostLoading;
 
       if (canRouteToHiddenHost) {
-        if (isPaperTradingCyclePayload && (!packet.ipcChunk || packet.ipcChunk.index === 0)) {
-          log.info(
-            'InjectRoute',
-            `Paper cycle route pane ${paneId}: hidden_host bytes=${totalBytes} packets=${packet.ipcChunk?.count || 1} deliveryId=${packet.deliveryId || 'none'}`
-          );
-        }
         const routedToHost = this.sendPaneHostBridgeEvent(paneId, 'inject-message', {
           message: packet.message,
           messageBytes: packet.messageBytes,
@@ -2284,12 +2274,6 @@ class SquidRunApp {
         windowKey: packet?.windowKey || fallbackMeta?.windowKey || 'main',
       });
 
-      if (isPaperTradingCyclePayload && (!packet.ipcChunk || packet.ipcChunk.index === 0)) {
-        log.info(
-          'InjectRoute',
-          `Paper cycle route pane ${paneId}: visible_fallback bytes=${totalBytes} packets=${packet.ipcChunk?.count || 1} deliveryId=${packet.deliveryId || 'none'} hiddenHostReady=${hostReady} hiddenHostWindowPresent=${hostWindowPresent} hiddenHostLoading=${hostLoading}`
-        );
-      }
       if (routedToVisible) {
         routed = true;
         this.reportPaneHostDegraded({
