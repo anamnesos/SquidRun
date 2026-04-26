@@ -59,6 +59,54 @@ function readStartupBriefing(options = {}) {
   }
 }
 
+function stripLiveAccountBlocks(markdown) {
+  const out = [];
+  let skip = false;
+  for (const line of String(markdown || '').split(/\r?\n/)) {
+    if (/^#{1,3}\s+/.test(line)) {
+      const lower = line.toLowerCase();
+      skip = /live account|verified live|live positions|open positions|hyperliquid.*snapshot/.test(lower);
+    }
+    if (!skip) out.push(line);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function resolveNowMs(options = {}) {
+  const explicitNowMs = Number(options.nowMs);
+  if (Number.isFinite(explicitNowMs)) return explicitNowMs;
+
+  const explicitNow = options.now instanceof Date
+    ? options.now.getTime()
+    : Date.parse(String(options.now || ''));
+  return Number.isFinite(explicitNow) ? explicitNow : Date.now();
+}
+
+function readStartupBriefingForInjection(options = {}) {
+  let body = readStartupBriefing(options).trim();
+  if (!body) return '';
+
+  const status = safeReadJson(resolveStatusPath(options));
+  const generatedAtMs = Date.parse(status?.generatedAt || '');
+  const ageMinutes = Number.isFinite(generatedAtMs)
+    ? Math.max(0, Math.round((resolveNowMs(options) - generatedAtMs) / 60000))
+    : null;
+
+  const notes = [];
+  if (ageMinutes === null) {
+    notes.push('STALE SNAPSHOT generated at unknown time, account values may have moved.');
+  } else if (ageMinutes > 60) {
+    notes.push(`STALE SNAPSHOT generated ${ageMinutes} minutes ago; live-account block omitted, account values may have moved.`);
+    body = stripLiveAccountBlocks(body);
+  } else if (ageMinutes > 15) {
+    notes.push(`STALE SNAPSHOT generated ${ageMinutes} minutes ago, account values may have moved.`);
+  } else {
+    notes.push(`AI startup briefing age: ${ageMinutes} minutes.`);
+  }
+
+  return `${notes.join('\n')}\n\n${body}\n`;
+}
+
 function stripRecallNoise(value) {
   return String(value || '')
     .replace(RECALL_BLOCK_RE, '')
@@ -493,6 +541,7 @@ async function generateStartupBriefing(options = {}) {
 module.exports = {
   generateStartupBriefing,
   readStartupBriefing,
+  readStartupBriefingForInjection,
   resolveBriefingPath,
   _internals: {
     listRecentTranscriptFiles,
@@ -505,5 +554,6 @@ module.exports = {
     requestStartupBriefing,
     resolveLiveDefiSnapshot,
     formatLiveSnapshotBlock,
+    stripLiveAccountBlocks,
   },
 };
