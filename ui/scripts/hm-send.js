@@ -24,6 +24,16 @@ const {
 } = require('../modules/main/comms-journal');
 const { sendTelegram, sendTelegramPhoto, normalizeChatId } = require('./hm-telegram');
 const {
+  detectPermissionAskViolation,
+  appendPermissionAskViolation,
+  appendPermissionAskBypass,
+} = require('./hm-send-permission-guard');
+const {
+  detectContextLeakViolation,
+  appendContextLeakViolation,
+  appendContextLeakBypass,
+} = require('./hm-send-context-leak-guard');
+const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
   buildWebSocketDispatchMessage,
@@ -114,6 +124,7 @@ if (!listDevicesMode && args.length < 2) {
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
   console.log('  --retries: retry count after first send (default: 3)');
   console.log('  --no-fallback: disable trigger file fallback');
+  console.log('  --bypass-guard: bypass outbound guardrails and log any would-block match');
   process.exit(1);
 }
 
@@ -130,12 +141,13 @@ let cleanupMessageFilePathOnSuccess = null;
 let useStdin = false;
 let telegramPhotoPath = null;
 let telegramChatIdOverride = null;
+let bypassGuard = String(process.env.HM_SEND_BYPASS_GUARD || '').trim() === '1';
 
 // Known flags that signal end of inline message content.
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id',
+  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--bypass-guard',
 ]);
 
 function shouldCleanupMessageFile(filePath) {
@@ -223,6 +235,10 @@ for (; i < args.length; i++) {
   }
   if (token === '--no-fallback') {
     enableFallback = false;
+    continue;
+  }
+  if (token === '--bypass-guard') {
+    bypassGuard = true;
     continue;
   }
   if (token === '--list-devices') {
@@ -450,6 +466,105 @@ function resolveLocalCoordPath(relativePath, options = {}) {
     return resolveCoordPath(relPath, options);
   }
   return path.join(localCoordRoot, scopedRelPath);
+}
+
+function resolveGuardLogPath(fileName) {
+  return resolveLocalCoordPath(path.join('runtime', fileName), { forWrite: true });
+}
+
+function writeGuardBlock(messageLines = []) {
+  const lines = Array.isArray(messageLines) ? messageLines : [String(messageLines || '')];
+  console.error('');
+  for (const line of lines) {
+    if (line) console.error(line);
+  }
+  console.error('');
+}
+
+function runOutputGuards({ messageId, targetRole } = {}) {
+  const guardInput = {
+    content: message,
+    messageId,
+    senderRole: role || 'cli',
+    targetRole,
+    targetRaw: target,
+    profile: getActiveProfileName(process.env),
+  };
+
+  if (bypassGuard) {
+    const permissionBypass = detectPermissionAskViolation({
+      ...guardInput,
+      bypass: '0',
+    });
+    if (permissionBypass) {
+      appendPermissionAskBypass(
+        {
+          ...permissionBypass,
+          messageId,
+          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+        },
+        { logPath: resolveGuardLogPath('permission-ask-bypasses.jsonl') }
+      );
+    }
+
+    const contextBypass = detectContextLeakViolation({
+      ...guardInput,
+      bypass: '0',
+    });
+    if (contextBypass) {
+      appendContextLeakBypass(
+        {
+          ...contextBypass,
+          messageId,
+          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+        },
+        { logPath: resolveGuardLogPath('context-leak-bypasses.jsonl') }
+      );
+    }
+
+    return { ok: true, bypassed: true };
+  }
+
+  const permissionViolation = detectPermissionAskViolation({
+    ...guardInput,
+    bypass: '0',
+  });
+  if (permissionViolation) {
+    const logResult = appendPermissionAskViolation(
+      {
+        ...permissionViolation,
+        messageId,
+      },
+      { logPath: resolveGuardLogPath('permission-ask-violations.jsonl') }
+    );
+    writeGuardBlock([
+      `BLOCKED: permission-ask phrase detected '${permissionViolation.phrase}'. Rewrite as a decision.`,
+      `Log: ${logResult.path}`,
+    ]);
+    return { ok: false, type: 'permission_ask', violation: permissionViolation };
+  }
+
+  const contextViolation = detectContextLeakViolation({
+    ...guardInput,
+    bypass: '0',
+  });
+  if (contextViolation) {
+    const logResult = appendContextLeakViolation(
+      {
+        ...contextViolation,
+        messageId,
+      },
+      { logPath: resolveGuardLogPath('context-leak-violations.jsonl') }
+    );
+    writeGuardBlock([
+      'BLOCKED: Eunbyeol/case context in main pane. This belongs in the Eunbyeol window.',
+      `Phrase: '${contextViolation.phrase}'`,
+      `Log: ${logResult.path}`,
+    ]);
+    return { ok: false, type: 'context_leak', violation: contextViolation };
+  }
+
+  return { ok: true };
 }
 
 function normalizeSessionId(value) {
@@ -1471,6 +1586,11 @@ async function main() {
   const targetRole = normalizeRole(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
+  const guardResult = runOutputGuards({ messageId, targetRole });
+  if (guardResult?.ok !== true) {
+    closeCommsJournalStores();
+    process.exit(1);
+  }
   const envelope = buildOutboundMessageEnvelope({
     message_id: messageId,
     session_id: projectMetadata?.session_id || null,

@@ -289,7 +289,9 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-screenshot-window.ps1: PowerShell helper script (window/screenshot automation).
 - ui/scripts/hm-screenshot.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-search.js: Safe `rg` wrapper for Windows/PowerShell with optional glob filters and escaped-pattern default behavior.
-- ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket; hot-loads outbound guardrails before journaling or websocket dispatch.
+- ui/scripts/hm-send-context-leak-guard.js: Outbound hm-send guard that blocks Eunbyeol/case-context leakage from the main profile and records violations/bypasses as JSONL runtime audit rows.
+- ui/scripts/hm-send-permission-guard.js: Outbound hm-send guard that detects permission-ask phrases, records violations/bypasses as JSONL runtime audit rows, and supports summary reporting.
 - ui/scripts/hm-sms.js: Exports parseMessage, getTwilioConfig, getMissingConfigKeys, buildAuthHeader, ....
 - ui/scripts/hm-surface-audit.js: UI/documentation surface audit helper used to check exposed commands and runtime-facing features.
 - ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, .... Outbound sends reuse caller-provided journal `messageId` when present so live comms events and evidence-ledger rows stay correlated.
@@ -350,7 +352,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 1. User types in pane 1 broadcast input (`ui/index.html#broadcastInput`, `ui/renderer.js`).
 2. Renderer forwards through IPC (`send-broadcast-message` / task-parser handlers) into main process routing.
 3. Architect delegates via `hm-send.js` to target role/pane.
-4. `hm-send.js` sends a canonical envelope over WebSocket and records outbound comms metadata.
+4. `hm-send.js` runs hot-loadable outbound guardrails, then sends a canonical envelope over WebSocket and records outbound comms metadata.
 5. WebSocket runtime dispatch in `squidrun-app.js` calls `triggers.sendDirectMessage()` / `broadcastToAllAgents()`.
 6. If direct WS verification fails, `hm-send.js` writes trigger fallback file under `.squidrun/triggers/`.
 7. Watcher picks trigger/message changes, parses target/sequence, and routes to injection.
