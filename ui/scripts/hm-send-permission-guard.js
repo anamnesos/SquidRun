@@ -9,8 +9,13 @@ const DEFAULT_PERMISSION_ASK_VIOLATIONS_PATH = resolveCoordPath(
   path.join('runtime', 'permission-ask-violations.jsonl'),
   { forWrite: true }
 );
+const DEFAULT_PERMISSION_ASK_BYPASSES_PATH = resolveCoordPath(
+  path.join('runtime', 'permission-ask-bypasses.jsonl'),
+  { forWrite: true }
+);
 
 const CORE_AGENT_ROLES = new Set(['architect', 'builder', 'oracle']);
+const ENFORCED_SENDER_ROLES = new Set([...CORE_AGENT_ROLES, 'cli']);
 const SPECIAL_TARGETS = new Set(['user', 'telegram']);
 const SKIP_PREFIXES = ['(PEER CALL-OUT):', '(PERMISSION GUARD):'];
 const PERMISSION_ASK_PATTERNS = Object.freeze([
@@ -87,7 +92,7 @@ function shouldEnforcePermissionGuard(input = {}) {
   const targetRole = normalizeRole(input.targetRole || input.targetRaw);
   const bypass = String(input.bypass || '').trim() === '1';
   if (bypass) return false;
-  if (!CORE_AGENT_ROLES.has(senderRole)) return false;
+  if (!ENFORCED_SENDER_ROLES.has(senderRole)) return false;
   if (!(CORE_AGENT_ROLES.has(targetRole) || SPECIAL_TARGETS.has(targetRole))) return false;
   if (shouldSkipContent(input.content)) return false;
   return true;
@@ -130,6 +135,28 @@ function appendPermissionAskViolation(record = {}, options = {}) {
   };
 }
 
+function appendPermissionAskBypass(record = {}, options = {}) {
+  const logPath = toText(options.logPath, DEFAULT_PERMISSION_ASK_BYPASSES_PATH);
+  const payload = {
+    type: 'permission_ask_bypass',
+    senderRole: normalizeRole(record.senderRole),
+    targetRole: normalizeRole(record.targetRole),
+    targetRaw: toText(record.targetRaw, null),
+    messageId: toText(record.messageId, null),
+    phrase: toText(record.phrase, null),
+    pattern: toText(record.pattern, null),
+    contentPreview: toText(record.contentPreview, ''),
+    occurredAt: toText(record.occurredAt, new Date().toISOString()),
+    bypassReason: toText(record.bypassReason, 'bypass_guard'),
+  };
+  appendJsonLine(logPath, payload);
+  return {
+    ok: true,
+    path: logPath,
+    record: payload,
+  };
+}
+
 function summarizePermissionAskViolations(options = {}) {
   const logPath = toText(options.logPath, DEFAULT_PERMISSION_ASK_VIOLATIONS_PATH);
   const sinceMs = options.since
@@ -161,10 +188,12 @@ function summarizePermissionAskViolations(options = {}) {
 
 module.exports = {
   DEFAULT_PERMISSION_ASK_VIOLATIONS_PATH,
+  DEFAULT_PERMISSION_ASK_BYPASSES_PATH,
   CORE_AGENT_ROLES,
   PERMISSION_ASK_PATTERNS,
   detectPermissionAskViolation,
   appendPermissionAskViolation,
+  appendPermissionAskBypass,
   summarizePermissionAskViolations,
   _internals: {
     findPermissionAskMatch,
