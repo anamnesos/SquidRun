@@ -59,6 +59,8 @@ function createInjectionController(options = {}) {
     CLAUDE_LONG_MESSAGE_BYTES = 1024,
     CLAUDE_LONG_MESSAGE_BASE_ENTER_DELAY_MS = 200,
     HM_SEND_FAST_CHUNK_THRESHOLD_BYTES = IS_DARWIN ? 1024 : 256,
+    HM_SEND_FAST_CHUNK_SIZE_BYTES = IS_DARWIN ? DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES : 256,
+    HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS = IS_DARWIN ? 0 : 1,
     HM_SEND_FAST_ENTER_DELAY_MS = IS_DARWIN ? 150 : 500,
     CLAUDE_ENTER_DELAY_SCALE_START_BYTES = 256,
     CLAUDE_ENTER_DELAY_BYTES_PER_MS = 64,
@@ -1124,8 +1126,21 @@ function createInjectionController(options = {}) {
           } else {
             const chunkMin = Math.max(1, Number(CLAUDE_CHUNK_MIN_SIZE) || 1024);
             const chunkMax = Math.max(chunkMin, Number(CLAUDE_CHUNK_MAX_SIZE) || 8192);
-            const chunkSize = Math.max(chunkMin, Math.min(chunkMax, Number(CLAUDE_CHUNK_SIZE) || 2048));
-            const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
+            const claudeChunkSize = Math.max(chunkMin, Math.min(chunkMax, Number(CLAUDE_CHUNK_SIZE) || 2048));
+            const hmSendChunkSize = Math.max(
+              1,
+              Number(HM_SEND_FAST_CHUNK_SIZE_BYTES) || (IS_DARWIN ? claudeChunkSize : 256)
+            );
+            const hmSendYieldEveryChunks = Math.max(
+              0,
+              Number.isFinite(Number(HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS))
+                ? Number(HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS)
+                : (IS_DARWIN ? 0 : 1)
+            );
+            const chunkSize = forceChunkedWriteForHmSendFastPath ? hmSendChunkSize : claudeChunkSize;
+            const yieldEveryChunks = forceChunkedWriteForHmSendFastPath
+              ? hmSendYieldEveryChunks
+              : ((Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0);
             const chunkOptions = { chunkSize, yieldEveryChunks };
             if (forceChunkedWriteForHmSendFastPath) {
               chunkOptions.waitForWriteAck = true;

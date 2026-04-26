@@ -416,6 +416,23 @@ describe('PTY Handlers', () => {
       expect(sent).toBe(payload);
     });
 
+    test('honors 256-byte chunks for hm-send visible fallback writes', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = `HEAD-${'M'.repeat(740)}-MIDDLE-${'T'.repeat(740)}-TAIL`;
+      const result = await harness.invoke('pty-write-chunked', '1', payload, {
+        chunkSize: 256,
+        yieldEveryChunks: 0,
+      });
+
+      expect(result).toEqual({ success: true, chunks: 6, chunkSize: 256 });
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(6);
+      expect(ctx.daemonClient.write.mock.calls[0][1]).toContain('HEAD-');
+      expect(ctx.daemonClient.write.mock.calls[2][1]).toContain('MIDDLE');
+      expect(ctx.daemonClient.write.mock.calls[5][1]).toContain('-TAIL');
+      const sent = ctx.daemonClient.write.mock.calls.map(call => call[1]).join('');
+      expect(sent).toBe(payload);
+    });
+
     test('does nothing when daemon not connected', async () => {
       ctx.daemonClient.connected = false;
       const result = await harness.invoke('pty-write-chunked', '1', 'test data', { chunkSize: 2048 });
