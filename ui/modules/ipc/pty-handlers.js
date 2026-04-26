@@ -18,7 +18,7 @@ const {
   DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
 } = require('../inject-message-ipc');
 const DEFAULT_CHUNK_SIZE = DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES;
-const MIN_CHUNK_SIZE = 1024;
+const MIN_CHUNK_SIZE = 64;
 const MAX_CHUNK_SIZE = 8192;
 const DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES = DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES;
 const WRITE_ACK_TIMEOUT_MS = 2500;
@@ -248,7 +248,7 @@ async function writeChunkedText(daemonClient, paneId, fullText, options = {}, ke
 
     const hasMore = (offset + chunkSize) < text.length;
     if (hasMore && yieldEveryChunks > 0 && (chunkCount % yieldEveryChunks) === 0) {
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
   }
 
