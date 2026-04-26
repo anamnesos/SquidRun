@@ -79,7 +79,6 @@ if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'private-profil
   process.env.SQUIDRUN_SAYLOR_WATCHER = '0';
   process.env.SQUIDRUN_TRADING_AUTOMATION = '0';
   process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION = '0';
-  process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = '0';
   process.env.LIVE_OPS_WALLET_ADDRESS = '';
   process.env.LIVE_OPS_ADDRESS = '';
   process.env.LIVE_OPS_PRIVATE_KEY = '';
@@ -199,7 +198,6 @@ const DEFAULT_AGENT_TASK_QUEUE_PATH = resolveRuntimePath('agent-task-queue.json'
 const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
-const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
 const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
 const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-supervisor-state.json');
 const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-state.json');
@@ -261,16 +259,12 @@ const TRADING_PHASES = Object.freeze([
   { key: 'market_close_review', label: 'Market close review', anchor: 'close', offsetMinutes: 0 },
   { key: 'end_of_day', label: 'End of day', anchor: 'close', offsetMinutes: 30 },
 ]);
-const MARKET_RESEARCH_PHASES = Object.freeze([
-  { key: 'market_research', label: 'Market research scan' },
-]);
 const MARKET_SCANNER_PHASES = Object.freeze([
   { key: 'market_scanner', label: '[private-live-ops] market scanner' },
 ]);
 const EUNBYEOL_CHECKIN_PHASES = Object.freeze([
   { key: 'private-profile_checkin', label: '[private-profile] check-in review' },
 ]);
-const DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
 const DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES = 30;
@@ -881,20 +875,10 @@ function parseOptionalDurationMs(value, fallback) {
   return Math.max(1000, numeric);
 }
 
-function normalizeNewsTicker(value = '') {
+function normalizeUsdTicker(value = '') {
   const raw = String(value || '').trim().toUpperCase();
   if (!raw) return '';
   return raw.includes('/') ? raw : `${raw}/USD`;
-}
-
-function buildNewsFingerprint(payload = {}) {
-  const headlines = Array.isArray(payload.headlines) ? payload.headlines : [];
-  const reason = String(payload.reason || '').trim();
-  return JSON.stringify({
-    level: String(payload.level || '').trim(),
-    reason,
-    headlines: headlines.slice(0, 5).map((headline) => String(headline || '').trim().toLowerCase()),
-  });
 }
 
 function tokenizeCaseKeywords(text = '') {
@@ -950,17 +934,6 @@ function defaultYieldRouterState() {
     lastResult: null,
     nextEvent: null,
     lastRebalance: null,
-    updatedAt: null,
-  };
-}
-
-function defaultMarketResearchState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    lastAlertFingerprint: null,
     updatedAt: null,
   };
 }
@@ -1175,14 +1148,6 @@ function getLatest[private-profile]MessageTimestamp(rows = []) {
     }
   }
   return 0;
-}
-
-function buildMarketResearchDailySchedule(referenceDate = new Date(), options = {}) {
-  return buildUtcIntervalSchedule(referenceDate, MARKET_RESEARCH_PHASES, options.intervalMinutes || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES);
-}
-
-function getNextMarketResearchEvent(referenceDate = new Date(), options = {}) {
-  return getNextUtcIntervalEvent(referenceDate, MARKET_RESEARCH_PHASES, options.intervalMinutes || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES);
 }
 
 function buildMarketScannerDailySchedule(referenceDate = new Date(), options = {}) {
@@ -1891,33 +1856,6 @@ class SupervisorDaemon {
 
     this.caseOperationsPath = options.caseOperationsPath || path.join(this.projectRoot, 'workspace', 'knowledge', 'case-operations.md');
     this.newsVetoModule = options.newsVetoModule || eventVeto;
-    this.marketResearchEnabled = options.marketResearchEnabled !== false
-      && process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION !== '0';
-    this.marketResearchIntervalMinutes = Math.max(
-      30,
-      Math.floor(Number(options.marketResearchIntervalMinutes) || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES)
-    );
-    this.marketResearchStatePath = options.marketResearchStatePath || DEFAULT_MARKET_RESEARCH_STATE_PATH;
-    this.marketResearchState = {
-      ...defaultMarketResearchState(),
-      ...(readJsonFile(this.marketResearchStatePath, defaultMarketResearchState()) || {}),
-    };
-    this.marketResearchPhasePromise = null;
-    this.lastMarketResearchSummary = this.marketResearchEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
     this.[private-live-ops]Enabled = options.[private-live-ops]Enabled === true
       || (
         options.[private-live-ops]Enabled !== false
@@ -2070,10 +2008,6 @@ class SupervisorDaemon {
       order: 'desc',
       limit: 200,
     }));
-    this.marketResearchOpenPositionProvider = options.marketResearchOpenPositionProvider || (async () => {
-      const state = await this.[private-live-ops]Executor?.getAccountState?.().catch(() => null);
-      return Array.isArray(state?.positions) ? state.positions : [];
-    });
     const yieldRouterAutomationRequested = options.yieldRouterEnabled === true
       || process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION === '1';
     this.yieldRouterEnabled = Boolean(yieldRouterAutomationRequested);
@@ -2670,7 +2604,6 @@ class SupervisorDaemon {
     const positionAttributionReconciliationResult = await this.maybeRunPositionAttributionReconciliation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
-    const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
     const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
     const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
@@ -2693,7 +2626,6 @@ class SupervisorDaemon {
       positionAttributionReconciliationResult,
       tradeReconciliationResult,
       cryptoTradingResult,
-      marketResearchResult,
       [private-live-ops]Result,
       sparkMonitorResult,
       marketScannerResult,
@@ -2762,7 +2694,6 @@ class SupervisorDaemon {
       && summary.positionAttributionReconciliationResult.skipped !== true;
     const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
-    const marketResearchRan = summary?.marketResearchResult && summary.marketResearchResult.skipped !== true;
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
     const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
     const [private-live-ops]SqueezeDetectorRan = summary?.[private-live-ops]SqueezeDetectorResult && summary.[private-live-ops]SqueezeDetectorResult.skipped !== true;
@@ -2779,7 +2710,6 @@ class SupervisorDaemon {
       || positionAttributionReconciliationRan
       || tradeReconciliationRan
       || cryptoTradingRan
-      || marketResearchRan
       || saylorWatcherRan
       || oracleWatchRan
       || [private-live-ops]SqueezeDetectorRan
@@ -2919,11 +2849,6 @@ class SupervisorDaemon {
     writeJsonFile(this.yieldRouterStatePath, this.yieldRouterState);
   }
 
-  persistMarketResearchState() {
-    this.marketResearchState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.marketResearchStatePath, this.marketResearchState);
-  }
-
   persist[private-live-ops]State() {
     this.[private-live-ops]State.updatedAt = new Date().toISOString();
     writeJsonFile(this.[private-live-ops]StatePath, this.[private-live-ops]State);
@@ -2984,20 +2909,6 @@ class SupervisorDaemon {
       '',
       '오늘/내일 진행 상황이나 필요한 자료 있으면 보내주세요. 제가 이어서 바로 정리해둘게요.',
     ].filter((line) => line !== null).join('\n');
-  }
-
-  buildMarketResearchArchitectAlert(summary = {}) {
-    const findings = Array.isArray(summary.findings) ? summary.findings : [];
-    const top = findings[0] || {};
-    const headline = String(top.headline || top.summary || 'none').trim();
-    return [
-      '[PROACTIVE][RESEARCH] Market research scan complete.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `Macro: ${summary.macroRisk?.regime || 'unknown'} (${summary.macroRisk?.score ?? 'n/a'})`,
-      `Event decision: ${summary.eventDecision || 'DEGRADED'} (${summary.sourceTier || 'none'})`,
-      `Headline count: ${Number(summary.headlineCount || 0)}`,
-      headline ? `Top headline: ${headline}` : null,
-    ].filter(Boolean).join('\n');
   }
 
   buildMarketScannerArchitectAlert(summary = {}) {
@@ -3632,137 +3543,6 @@ class SupervisorDaemon {
       summary.topItems?.length ? `Top items: ${summary.topItems.join(' | ')}` : null,
       summary.draft ? `Draft:\n${summary.draft}` : null,
     ].filter(Boolean).join('\n');
-  }
-
-  async runMarketResearchPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const watchlistSymbols = await this.getCryptoSymbols();
-    const openPositions = await Promise.resolve(this.marketResearchOpenPositionProvider()).catch(() => []);
-    const livePositionSymbols = Array.from(new Set(
-      (Array.isArray(openPositions) ? openPositions : [])
-        .map((position) => normalizeNewsTicker(position?.coin || position?.asset || position?.ticker || ''))
-        .filter(Boolean)
-    ));
-    const scanSymbols = Array.from(new Set([...livePositionSymbols, ...watchlistSymbols]));
-    const [macroRisk, newsItems, veto] = await Promise.all([
-      macroRiskGate.assessMacroRisk().catch(() => null),
-      this.newsVetoModule.fetchTier1News({
-        symbols: scanSymbols,
-        timeoutMs: 8_000,
-        limit: 12,
-      }).catch(() => []),
-      this.newsVetoModule.buildEventVeto({
-        symbols: scanSymbols,
-        now: scannedAt,
-      }).catch(() => ({
-        decision: 'DEGRADED',
-        matchedEvents: [],
-        sourceTier: 'none',
-      })),
-    ]);
-    const summary = {
-      ok: true,
-      key: event?.key || 'market_research',
-      scannedAt,
-      scanSymbols,
-      livePositionSymbols,
-      macroRisk: macroRisk ? {
-        regime: macroRisk.regime,
-        score: macroRisk.score,
-        reason: macroRisk.reason,
-      } : null,
-      eventDecision: veto?.decision || 'DEGRADED',
-      sourceTier: veto?.sourceTier || 'none',
-      headlineCount: Array.isArray(newsItems) ? newsItems.length : 0,
-      findings: Array.isArray(veto?.matchedEvents) && veto.matchedEvents.length > 0
-        ? veto.matchedEvents.slice(0, 5)
-        : (Array.isArray(newsItems) ? newsItems.slice(0, 5) : []),
-      alertLevel: 'level_0',
-      notified: false,
-    };
-    const fingerprint = buildNewsFingerprint({
-      level: summary.alertLevel,
-      reason: `${summary.macroRisk?.regime || 'unknown'}:${summary.eventDecision || 'DEGRADED'}`,
-      headlines: summary.findings.map((item) => item?.headline || item?.summary || ''),
-    });
-    const shouldNotifyArchitect = Boolean(fingerprint)
-      && fingerprint !== this.marketResearchState.lastAlertFingerprint;
-    if (shouldNotifyArchitect) {
-      this.notifyArchitectInternal(this.buildMarketResearchArchitectAlert(summary), 'market_research');
-      this.marketResearchState.lastAlertFingerprint = fingerprint;
-      summary.notified = true;
-    }
-    return summary;
-  }
-
-  async maybeRunMarketResearchAutomation(nowMs = Date.now()) {
-    if (!this.marketResearchEnabled || this.stopping || !this.newsVetoModule) {
-      return { ok: false, skipped: true, reason: 'market_research_disabled' };
-    }
-    if (this.marketResearchPhasePromise) {
-      return this.marketResearchPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextMarketResearchEvent(now, {
-      intervalMinutes: this.marketResearchIntervalMinutes,
-    });
-    const day = buildMarketResearchDailySchedule(now, {
-      intervalMinutes: this.marketResearchIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.marketResearchState.lastProcessedAt
-      ? new Date(this.marketResearchState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = day.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.marketResearchState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistMarketResearchState();
-
-    if (dueEvents.length === 0) {
-      this.lastMarketResearchSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent,
-      };
-      return { ok: false, skipped: true, reason: 'no_due_market_research', nextEvent: this.marketResearchState.nextEvent };
-    }
-
-    this.marketResearchPhasePromise = (async () => {
-      const executed = [];
-      for (const dueEvent of dueEvents) {
-        const phaseResult = await this.runMarketResearchPhase(dueEvent);
-        executed.push(phaseResult);
-        this.marketResearchState.lastProcessedAt = dueEvent.scheduledAt;
-        this.marketResearchState.lastResult = phaseResult;
-        this.marketResearchState.lastScan = phaseResult;
-        this.persistMarketResearchState();
-      }
-
-      const upcomingEvent = getNextMarketResearchEvent(new Date(), {
-        intervalMinutes: this.marketResearchIntervalMinutes,
-      });
-      this.marketResearchState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistMarketResearchState();
-      this.lastMarketResearchSummary = {
-        enabled: true,
-        status: 'scan_complete',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return { ok: true, skipped: false, executed, nextEvent: this.marketResearchState.nextEvent };
-    })().finally(() => {
-      this.marketResearchPhasePromise = null;
-    });
-
-    return this.marketResearchPhasePromise;
   }
 
   async run[private-live-ops]Phase(event) {
@@ -5056,7 +4836,7 @@ class SupervisorDaemon {
     }
     return Array.from(new Set(
       sources
-        .map((position) => normalizeNewsTicker(position?.ticker || position?.coin || ''))
+        .map((position) => normalizeUsdTicker(position?.ticker || position?.coin || ''))
         .filter((ticker) => /\/USD$/i.test(ticker))
     ));
   }
@@ -7353,15 +7133,6 @@ class SupervisorDaemon {
         passCount: this.circuitBreaker?.passCount || 0,
         highWaterMarks: this.circuitBreaker ? Object.keys(this.circuitBreaker.highWaterMarks).length : 0,
         recentExits: this.circuitBreaker?.exits?.slice(-5) || [],
-      },
-      marketResearchAutomation: {
-        enabled: this.marketResearchEnabled,
-        running: Boolean(this.marketResearchPhasePromise),
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        statePath: this.marketResearchStatePath,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent || null,
-        lastSummary: this.lastMarketResearchSummary || null,
       },
       [private-live-ops]Automation: {
         enabled: this.[private-live-ops]Enabled,
