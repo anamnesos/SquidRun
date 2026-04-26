@@ -876,8 +876,9 @@ async function recall(input = {}) {
         items: [],
       }])
     );
-    const backendPromises = backendSpecs.map(([name, runner]) => Promise.race([
-      Promise.resolve()
+    const timedBackendPromises = backendSpecs.map(([name, runner]) => {
+      let timeoutId = null;
+      const backendPromise = Promise.resolve()
         .then(runner)
         .then((items) => {
           const result = {
@@ -900,9 +901,9 @@ async function recall(input = {}) {
           };
           backendResults.set(name, result);
           return result;
-        }),
-      new Promise((resolve) => {
-        setTimeout(() => {
+        });
+      const timeoutPromise = new Promise((resolve) => {
+        timeoutId = setTimeout(() => {
           const result = {
             name,
             ok: false,
@@ -913,17 +914,33 @@ async function recall(input = {}) {
           backendResults.set(name, result);
           resolve(result);
         }, timeoutMs);
-      }),
-    ]));
+        if (timeoutId && typeof timeoutId.unref === 'function') {
+          timeoutId.unref();
+        }
+      });
+      return Promise.race([backendPromise, timeoutPromise]).finally(() => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      });
+    });
 
+    let overallTimeoutId = null;
     const settledBackendResults = await Promise.race([
-      Promise.all(backendPromises),
+      Promise.all(timedBackendPromises),
       new Promise((resolve) => {
-        setTimeout(() => {
+        overallTimeoutId = setTimeout(() => {
           resolve(backendSpecs.map(([name]) => backendResults.get(name)));
         }, timeoutMs);
+        if (overallTimeoutId && typeof overallTimeoutId.unref === 'function') {
+          overallTimeoutId.unref();
+        }
       }),
-    ]);
+    ]).finally(() => {
+      if (overallTimeoutId) {
+        clearTimeout(overallTimeoutId);
+      }
+    });
 
     const resultByName = new Map(
       asArray(settledBackendResults)

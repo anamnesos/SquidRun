@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveCoordPath } = require('../config');
+const { EUNBYEOL_CHAT_ID, getActiveProfileName } = require('../profile');
 const { sendTelegram, normalizeChatId } = require('./hm-telegram');
 
 const TELEGRAM_ROUTING_RELATIVE_PATH = path.join('runtime', 'telegram-routing.json');
@@ -97,13 +98,18 @@ function readTelegramRoutingConfig() {
   }
 }
 
-function resolveTelegramRoute({ chatId = null } = {}) {
+function getProfileDefaultRouteKey(env = process.env) {
+  return getActiveProfileName(env) === 'private-profile' ? EUNBYEOL_CHAT_ID : 'default';
+}
+
+function resolveTelegramRoute({ chatId = null, env = process.env } = {}) {
   const normalizedChatId = normalizeChatId(chatId);
   const { routes, routingPath, source } = readTelegramRoutingConfig();
+  const defaultRouteKey = getProfileDefaultRouteKey(env);
   const route = cloneRoute(
     (normalizedChatId && routes[normalizedChatId])
       ? routes[normalizedChatId]
-      : routes.default
+      : (routes[defaultRouteKey] || routes.default)
   ) || cloneRoute(DEFAULT_TELEGRAM_ROUTING.default);
 
   return {
@@ -184,7 +190,7 @@ async function sendLongTelegramMessage(message, env = process.env, options = {})
 
 async function sendRoutedTelegramMessage(message, env = process.env, options = {}) {
   const normalizedChatId = normalizeChatId(options.chatId);
-  const resolved = resolveTelegramRoute({ chatId: normalizedChatId });
+  const resolved = resolveTelegramRoute({ chatId: normalizedChatId, env });
   const route = resolved.route || cloneRoute(DEFAULT_TELEGRAM_ROUTING.default);
   const dispatchOptions = {
     ...options,

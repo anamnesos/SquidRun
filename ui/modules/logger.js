@@ -40,6 +40,7 @@ let logDirReady = false;
 const LOG_FLUSH_INTERVAL_MS = 500;
 const LOG_ROTATE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_ROTATE_MAX_FILES = 3;
+const MIRROR_STATE_KEY = Symbol.for('squidrun.logger.mirrorState');
 
 function ensureLogDir() {
   if (logDirReady || !LOG_DIR) return;
@@ -77,18 +78,28 @@ function createMirrorWriter(stream) {
   if (!stream || typeof stream.write !== 'function') {
     return () => {};
   }
-  let disabled = false;
-  const markBroken = () => {
-    disabled = true;
-    try { stream.removeListener('error', markBroken); } catch {}
+  const state = stream[MIRROR_STATE_KEY] || {
+    disabled: false,
+    listenerAttached: false,
   };
-  try {
-    stream.on('error', markBroken);
-  } catch {
-    disabled = true;
+  stream[MIRROR_STATE_KEY] = state;
+  const markBroken = () => {
+    state.disabled = true;
+    if (state.listenerAttached) {
+      try { stream.removeListener('error', markBroken); } catch {}
+      state.listenerAttached = false;
+    }
+  };
+  if (!state.listenerAttached) {
+    try {
+      stream.on('error', markBroken);
+      state.listenerAttached = true;
+    } catch {
+      state.disabled = true;
+    }
   }
   return (line) => {
-    if (disabled || !line || stream.destroyed || stream.writable === false) return;
+    if (state.disabled || !line || stream.destroyed || stream.writable === false) return;
     try {
       stream.write(line, (error) => {
         if (error) markBroken();

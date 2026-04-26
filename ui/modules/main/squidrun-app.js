@@ -122,7 +122,6 @@ const {
 } = require('../startup-ai-briefing');
 const {
   buildSystemCapabilitiesSnapshot,
-  detectOllamaRuntime,
   resolveSleepExtractionCommandFromSnapshot,
   writeSystemCapabilitiesSnapshot,
 } = require('../local-model-capabilities');
@@ -418,11 +417,85 @@ function formatLocalClockTime(value = Date.now()) {
   return `${hours}:${minutes}`;
 }
 
+function stripLeadingAgentSequencePrefix(text = '') {
+  return String(text || '')
+    .replace(/^\([A-Z][A-Z0-9 _-]*#?\d+\):\s*/i, '')
+    .trim();
+}
+
+function isStructuredConsultationReplyPayload(content) {
+  const text = toNonEmptyString(content);
+  if (!text) return false;
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace <= firstBrace) return false;
+  try {
+    const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+    return Boolean(
+      toNonEmptyString(parsed?.requestId)
+      && toNonEmptyString(parsed?.agentId)
+      && Array.isArray(parsed?.signals)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAcknowledgementOnlyAgentUpdate(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  if (/\bno substantive task\b/i.test(text)) return true;
+  if (/\bno resend needed\b/i.test(text)) return true;
+  if (/\bnothing substantive missed\b/i.test(text)) return true;
+  if (/\bnothing additional to resend\b/i.test(text)) return true;
+
+  if (!/^(copy|ack(?:nowledged)?|confirmed|received|aligned|alignment confirmed|stand(?:ing)? by)\b/i.test(text)) {
+    return false;
+  }
+
+  return !/\b(task|proof|investigat|analy[sz]e|review|write|implement|urgent|priority|objective|scope|validation|acceptance|deadline|reply|resend|please|need|check if)\b/i.test(text);
+}
+
+function isExplicitAgentTaskRequest(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  if (/^\[TASK\]/i.test(text)) return true;
+  if (/\bneed from you\b/i.test(text)) return true;
+  if (/\b(can|could|would) you\b/i.test(text)) return true;
+  if (/\bplease\b/i.test(text)) return true;
+  if (/\bcheck if\b/i.test(text)) return true;
+  if (/\breply via\b/i.test(text)) return true;
+  if (/\bdeadline:\b/i.test(text)) return true;
+  if (/[?]\s*$/.test(text)) return true;
+
+  return /^(analy[sz]e|review|investigat(?:e|ion)?|check|verify|confirm|resend|reply|read|write|implement|fix|summari[sz]e|ask|send)\b/i.test(text);
+}
+
 function shouldWatchdogAgentTask(content) {
   const text = toNonEmptyString(content);
   if (!text) return false;
-  if (text.includes('\n')) return true;
-  return /\b(task|fix|proof|investigat|analy[sz]e|review|read|write|implement|urgent|priority|objective|scope|validation|acceptance|deadline|reply|now)\b/i.test(text);
+  if (isStructuredConsultationReplyPayload(text)) return false;
+  if (isAcknowledgementOnlyAgentUpdate(text)) return false;
+  if (/\bno (further )?(acknowledg(e)?ment|reply) needed\b/i.test(text)) return false;
+  if (/\bno reply needed\b/i.test(text)) return false;
+  if (/\bstanding by\b/i.test(text)) return false;
+  if (/\[WATCHDOG\]/i.test(text)) return false;
+  return isExplicitAgentTaskRequest(text);
+}
+
+const WATCHDOG_ELIGIBLE_AGENT_ROLES = new Set(['architect', 'builder', 'oracle']);
+
+function normalizeWatchdogAgentRole(role) {
+  const normalized = toNonEmptyString(role)?.toLowerCase();
+  if (!normalized || !WATCHDOG_ELIGIBLE_AGENT_ROLES.has(normalized)) return null;
+  return normalized;
+}
+
+function createAgentResponseWatchdogKey(senderRole, targetRole) {
+  const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+  const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
+  if (!normalizedSenderRole || !normalizedTargetRole) return null;
+  return `${normalizedSenderRole}->${normalizedTargetRole}`;
 }
 
 class SquidRunApp {
@@ -906,22 +979,10 @@ class SquidRunApp {
 
   async refreshSystemCapabilities(options = {}) {
     const projectRoot = options.projectRoot || getProjectRoot();
-    const persistedSettings = typeof this.settings.readPersistedSettingsSnapshot === 'function'
-      ? (this.settings.readPersistedSettingsSnapshot() || {})
-      : {};
-    const hasExplicitLocalModelSetting = Object.prototype.hasOwnProperty.call(persistedSettings, 'localModelEnabled');
-    const ollama = await detectOllamaRuntime({
-      nowMs: options.nowMs,
-      timeoutMs: options.timeoutMs,
-    });
-    if (!hasExplicitLocalModelSetting && ollama.suitableModelAvailable === true) {
-      this.settings.saveSettings({ localModelEnabled: true });
-    }
     const snapshot = buildSystemCapabilitiesSnapshot({
       projectRoot,
       nowMs: options.nowMs,
       settings: this.ctx.currentSettings,
-      ollama,
     });
     writeSystemCapabilitiesSnapshot(snapshot, snapshot.path);
     this.lastSystemCapabilities = snapshot;
@@ -1739,6 +1800,7 @@ class SquidRunApp {
         this.paneHostBootstrapVerifyTimer = null;
         this.verifyPaneHostWindowsAfterBootstrap('loading_wait');
       }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      this.paneHostBootstrapVerifyTimer?.unref?.();
       return;
     }
 
@@ -1761,6 +1823,7 @@ class SquidRunApp {
         this.paneHostBootstrapVerifyTimer = null;
         this.verifyPaneHostWindowsAfterBootstrap('ready_wait');
       }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      this.paneHostBootstrapVerifyTimer?.unref?.();
       return;
     }
 
@@ -1809,6 +1872,7 @@ class SquidRunApp {
       log.warn('PaneHost', `Scheduling hidden pane host recovery (${reason})`);
       this.schedulePaneHostBootstrap();
     }, waitMs);
+    this.paneHostRecoveryTimer?.unref?.();
   }
 
   handlePaneHostLifecycleEvent(payload = {}) {
@@ -1904,8 +1968,10 @@ class SquidRunApp {
           this.paneHostBootstrapVerifyTimer = null;
           this.verifyPaneHostWindowsAfterBootstrap('createWindow');
         }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+        this.paneHostBootstrapVerifyTimer?.unref?.();
       });
     }, 0);
+    this.paneHostBootstrapTimer?.unref?.();
   }
 
   sendPaneHostMessage(paneId, channel, payload = {}) {
@@ -2334,18 +2400,10 @@ class SquidRunApp {
     // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
     await this.launchWindowsForProfile(this.launchWindowProfile);
 
-    if (process.platform === 'win32') {
-      try {
-        const shortcutResult = this.ensure[private-profile]DesktopShortcut();
-        if (shortcutResult?.ok) {
-          log.info('Shortcut', `[private-profile] desktop shortcut ready at ${shortcutResult.shortcutPath}`);
-        } else if (shortcutResult?.skipped !== true) {
-          log.warn('Shortcut', `Failed ensuring [private-profile] desktop shortcut: ${shortcutResult?.reason || 'unknown'}`);
-        }
-      } catch (err) {
-        log.warn('Shortcut', `Failed ensuring [private-profile] desktop shortcut: ${err.message}`);
-      }
-    }
+    // [private-profile] desktop shortcut is owned manually by Launch-[private-profile]-SquidRun.ps1
+    // in D:\projects\private-profile-casework. Auto-creation here previously overwrote
+    // it with a raw electron.exe launch that lacked SQUIDRUN_PROJECT_ROOT —
+    // see memory feedback S294. Do not re-enable.
 
     // 3. Generate firmware files on startup when feature flag is enabled.
     if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
@@ -3303,7 +3361,19 @@ class SquidRunApp {
     }
 
     this.startSmsPoller();
-    this.startTelegramPoller();
+    // Telegram bot getUpdates is single-consumer. With two SquidRun windows
+    // (main + private-profile) running off the same TELEGRAM_BOT_TOKEN, both pollers
+    // race on the same long-poll connection and Telegram returns HTTP 409
+    // "terminated by other getUpdates request", silently losing inbound from
+    // 은별's chat 8754356993. The private-profile window owns case comms and is the
+    // only window that needs inbound routing for that chat, so it gets the
+    // sole poller. The main/trading window now skips polling entirely; the user's
+    // chat inbound goes via SMS/terminal while at PC.
+    if (String(this.activeProfileName || '').toLowerCase() === 'private-profile') {
+      this.startTelegramPoller();
+    } else {
+      log.info('Telegram', `Polling disabled for profile=${this.activeProfileName || 'main'} (single-consumer constraint; private-profile window owns the bot)`);
+    }
     this.startBridgeClient();
     this.startAutoHandoffMaterializer();
 
@@ -3777,8 +3847,8 @@ class SquidRunApp {
     return {
       target: process.execPath,
       args: isPackaged
-        ? '--profile=private-profile'
-        : `"${uiRoot}" --profile=private-profile`,
+        ? '--profile=private-profile --window=private-profile --standalone-window'
+        : `"${uiRoot}" --profile=private-profile --window=private-profile --standalone-window`,
       cwd: isPackaged ? path.dirname(process.execPath) : uiRoot,
       description: 'Open the [private-profile] SquidRun profile.',
       icon: path.join(uiRoot, 'assets', 'squidrun-favicon.ico'),
@@ -6466,13 +6536,26 @@ class SquidRunApp {
     return journalResult;
   }
 
-  clearAgentResponseWatchdog(targetRole = null) {
-    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
-    if (!normalizedTargetRole) return false;
-    const entry = this.pendingAgentResponseWatchdogs.get(normalizedTargetRole);
+  clearAgentResponseWatchdog(senderRole = null, targetRole = null) {
+    if (targetRole === null) {
+      const normalizedRole = normalizeWatchdogAgentRole(senderRole);
+      if (!normalizedRole) return false;
+      let cleared = false;
+      for (const [key, entry] of this.pendingAgentResponseWatchdogs.entries()) {
+        if (entry?.targetRole !== normalizedRole) continue;
+        clearTimeout(entry.timerId);
+        this.pendingAgentResponseWatchdogs.delete(key);
+        cleared = true;
+      }
+      return cleared;
+    }
+
+    const key = createAgentResponseWatchdogKey(senderRole, targetRole);
+    if (!key) return false;
+    const entry = this.pendingAgentResponseWatchdogs.get(key);
     if (!entry) return false;
     clearTimeout(entry.timerId);
-    this.pendingAgentResponseWatchdogs.delete(normalizedTargetRole);
+    this.pendingAgentResponseWatchdogs.delete(key);
     return true;
   }
 
@@ -6483,7 +6566,7 @@ class SquidRunApp {
     this.pendingAgentResponseWatchdogs.clear();
   }
 
-  sendArchitectInternalHmMessage(message, options = {}) {
+  sendInternalHmMessage(targetRoles, message, options = {}) {
     const text = toNonEmptyString(message);
     if (!text) return false;
     if (!fs.existsSync(HM_SEND_SCRIPT_PATH)) {
@@ -6494,45 +6577,67 @@ class SquidRunApp {
     const payload = text.startsWith(AGENT_MESSAGE_PREFIX)
       ? text
       : `${AGENT_MESSAGE_PREFIX}${text}`;
-    try {
-      const child = spawn('node', [HM_SEND_SCRIPT_PATH, 'architect', payload, '--role', role], {
-        cwd: getProjectRoot() || WORKSPACE_PATH || process.cwd(),
-        env: process.env,
-        windowsHide: true,
-      });
-      if (typeof child?.unref === 'function') {
-        child.unref();
+    const normalizedTargets = Array.from(new Set(
+      (Array.isArray(targetRoles) ? targetRoles : [targetRoles])
+        .map((target) => toNonEmptyString(target)?.toLowerCase())
+        .filter(Boolean)
+    ));
+    if (normalizedTargets.length === 0) return false;
+
+    let delivered = false;
+    for (const target of normalizedTargets) {
+      try {
+        const child = spawn('node', [HM_SEND_SCRIPT_PATH, target, payload, '--role', role], {
+          cwd: getProjectRoot() || WORKSPACE_PATH || process.cwd(),
+          env: process.env,
+          windowsHide: true,
+        });
+        if (typeof child?.unref === 'function') {
+          child.unref();
+        }
+        delivered = true;
+      } catch (error) {
+        log.warn('ArchitectComms', `Failed sending internal ${target} message via hm-send: ${error.message}`);
       }
-      return true;
-    } catch (error) {
-      log.warn('ArchitectComms', `Failed sending internal architect message via hm-send: ${error.message}`);
-      return false;
     }
+
+    return delivered;
+  }
+
+  sendArchitectInternalHmMessage(message, options = {}) {
+    return this.sendInternalHmMessage('architect', message, options);
   }
 
   scheduleAgentResponseWatchdog({ senderRole = null, targetRole = null, content = '', sentAtMs = Date.now() } = {}) {
-    const normalizedSenderRole = toNonEmptyString(senderRole)?.toLowerCase();
-    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
-    if (normalizedSenderRole !== 'architect') return false;
-    if (!['builder', 'oracle'].includes(normalizedTargetRole || '')) return false;
+    const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
+    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+    if (normalizedSenderRole === normalizedTargetRole) return false;
     if (!shouldWatchdogAgentTask(content)) return false;
 
     const watchdogMs = resolveRuntimeInt(
       'agentResponseWatchdogMs',
       DEFAULT_AGENT_RESPONSE_WATCHDOG_MS
     );
-    this.clearAgentResponseWatchdog(normalizedTargetRole);
+    const key = createAgentResponseWatchdogKey(normalizedSenderRole, normalizedTargetRole);
+    if (!key) return false;
+    this.clearAgentResponseWatchdog(normalizedSenderRole, normalizedTargetRole);
 
     const sentAtLabel = formatLocalClockTime(sentAtMs);
     const timerId = setTimeout(() => {
-      this.pendingAgentResponseWatchdogs.delete(normalizedTargetRole);
-      const warning = `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`;
+      this.pendingAgentResponseWatchdogs.delete(key);
+      const warning = normalizedSenderRole === 'architect'
+        ? `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`
+        : `[WATCHDOG] No response from ${normalizedTargetRole} to ${normalizedSenderRole} for task sent at ${sentAtLabel}. Check if task was received.`;
+      const alertTargets = normalizedSenderRole === 'architect'
+        ? ['architect']
+        : [normalizedSenderRole, 'architect'];
       try {
-        this.sendArchitectInternalHmMessage(`(SYSTEM WATCHDOG): ${warning}`, {
+        this.sendInternalHmMessage(alertTargets, `(SYSTEM WATCHDOG): ${warning}`, {
           role: 'system',
         });
       } catch (error) {
-        log.warn('Watchdog', `Failed routing response watchdog alert for ${normalizedTargetRole}: ${error.message}`);
+        log.warn('Watchdog', `Failed routing response watchdog alert for ${key}: ${error.message}`);
       }
     }, watchdogMs);
 
@@ -6540,7 +6645,8 @@ class SquidRunApp {
       timerId.unref();
     }
 
-    this.pendingAgentResponseWatchdogs.set(normalizedTargetRole, {
+    this.pendingAgentResponseWatchdogs.set(key, {
+      key,
       timerId,
       watchdogMs,
       sentAtMs,
@@ -6551,12 +6657,12 @@ class SquidRunApp {
   }
 
   maybeResolveAgentResponseWatchdog({ senderRole = null, targetRole = null, deliveryAccepted = false } = {}) {
-    const normalizedSenderRole = toNonEmptyString(senderRole)?.toLowerCase();
-    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
+    const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
     if (!deliveryAccepted) return false;
-    if (!['builder', 'oracle'].includes(normalizedSenderRole || '')) return false;
-    if (normalizedTargetRole !== 'architect') return false;
-    return this.clearAgentResponseWatchdog(normalizedSenderRole);
+    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+    if (normalizedSenderRole === normalizedTargetRole) return false;
+    return this.clearAgentResponseWatchdog(normalizedTargetRole, normalizedSenderRole);
   }
 
   async recordDeliveryFailurePattern(args = {}) {

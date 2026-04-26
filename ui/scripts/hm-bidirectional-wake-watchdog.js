@@ -125,9 +125,9 @@ function isActiveWindow(nowMs = Date.now()) {
     || (hour >= 16 && hour < 20);
 }
 
-function latestSeenAt(senderRole, nowMs = Date.now()) {
+function latestSeenAt(filters = {}, nowMs = Date.now()) {
   const rows = queryCommsJournalEntries({
-    senderRole,
+    ...filters,
     sinceMs: nowMs - (24 * 60 * 60 * 1000),
     order: 'desc',
     limit: 50,
@@ -154,8 +154,16 @@ async function runHeartbeatCycle(options = {}) {
   const oracleSilenceMinutes = Math.round(oracleSilenceMs / 60_000);
   const state = loadState(statePath);
 
-  const architectLastSeenAt = latestSeenAt('architect', nowMs);
-  const oracleLastSeenAt = latestSeenAt('oracle', nowMs);
+  const architectLastSeenAt = latestSeenAt({
+    senderRole: 'architect',
+    targetRole: 'oracle',
+    direction: 'outbound',
+  }, nowMs);
+  const oracleLastSeenAt = latestSeenAt({
+    senderRole: 'oracle',
+    targetRole: 'architect',
+    direction: 'outbound',
+  }, nowMs);
   const architectLastSeenMs = new Date(toText(architectLastSeenAt, '')).getTime();
   const oracleLastSeenMs = new Date(toText(oracleLastSeenAt, '')).getTime();
   const alerts = [];

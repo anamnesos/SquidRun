@@ -58,12 +58,21 @@ describe('launch-intent', () => {
     });
   });
 
-  test('parses profile launches independently of the window key', () => {
+  test('routes profile-only [private-profile] launches to the standalone [private-profile] window', () => {
     expect(parseLaunchIntent(['--profile=private-profile'])).toEqual({
       profileName: 'private-profile',
-      windowKey: 'main',
+      windowKey: 'private-profile',
+      includeMainWindow: false,
+      focusWindowKey: 'private-profile',
+    });
+  });
+
+  test('lets profile-only [private-profile] launches include main when explicitly requested', () => {
+    expect(parseLaunchIntent(['--profile=private-profile', '--with-main-window'])).toEqual({
+      profileName: 'private-profile',
+      windowKey: 'private-profile',
       includeMainWindow: true,
-      focusWindowKey: 'main',
+      focusWindowKey: 'private-profile',
     });
   });
 
