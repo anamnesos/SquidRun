@@ -11,6 +11,7 @@ describe('hm-defi-close', () => {
 
     expect(hmDefiClose.parseCloseOptions(argv)).toEqual({
       asset: 'AVAX',
+      closePct: null,
       dryRun: false,
       help: false,
       retryDelayMs: 800,
@@ -23,11 +24,34 @@ describe('hm-defi-close', () => {
 
     expect(hmDefiClose.parseCloseOptions(argv)).toEqual({
       asset: null,
+      closePct: null,
       dryRun: false,
       help: true,
       retryDelayMs: 0,
       size: null,
     });
+  });
+
+  test('parseCloseOptions reads close pct and clamps it into range', () => {
+    const argv = hmDefiClose.parseCliArgs([
+      '--asset', 'ETH',
+      '--close-pct', '150',
+    ]);
+
+    expect(hmDefiClose.parseCloseOptions(argv)).toEqual({
+      asset: 'ETH',
+      closePct: 100,
+      dryRun: false,
+      help: false,
+      retryDelayMs: 0,
+      size: null,
+    });
+  });
+
+  test('resolveRequestedCloseSize supports size and close pct inputs', () => {
+    expect(hmDefiClose.resolveRequestedCloseSize(-4.2, 1.5, null)).toBe(1.5);
+    expect(hmDefiClose.resolveRequestedCloseSize(-4.2, 0, 50)).toBeCloseTo(2.1, 6);
+    expect(hmDefiClose.resolveRequestedCloseSize(-4.2, 0, null)).toBeCloseTo(4.2, 6);
   });
 
   test('buildCloseOrderPlan formats low-priced closes without collapsing to zero', () => {

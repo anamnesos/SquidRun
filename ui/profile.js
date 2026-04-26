@@ -2,6 +2,7 @@
 
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 
 const DEFAULT_PROFILE = 'main';
 const EUNBYEOL_CHAT_ID = '8754356993';
@@ -71,6 +72,24 @@ function parseProfileArg(argv = []) {
 function applyProfileEnv(profileName, env = process.env) {
   const normalized = normalizeProfileName(profileName);
   env.SQUIDRUN_PROFILE = normalized;
+  // Eunbyeol profile MUST NOT spawn wallet-touching trading lanes — it shares the
+  // same .env wallet with the main profile and would cause duplicate HL polling
+  // (root cause of the 429 wall during live betting). Force every wallet-touching
+  // lane to disabled at supervisor construction time, and blank out HL credentials
+  // as defense in depth so any lane that slips through cannot reach the wallet.
+  if (normalized === 'eunbyeol') {
+    env.SQUIDRUN_HYPERLIQUID_AUTOMATION = '0';
+    env.SQUIDRUN_ORACLE_WATCH = '0';
+    env.SQUIDRUN_PAPER_TRADING_AUTOMATION = '0';
+    env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION = '0';
+    env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
+    env.SQUIDRUN_HYPERLIQUID_SQUEEZE_DETECTOR = '0';
+    env.SQUIDRUN_HYPERLIQUID_MONITOR = '0';
+    env.HYPERLIQUID_WALLET_ADDRESS = '';
+    env.HYPERLIQUID_ADDRESS = '';
+    env.POLYMARKET_FUNDER_ADDRESS = '';
+    env.HYPERLIQUID_PRIVATE_KEY = '';
+  }
   return normalized;
 }
 
@@ -127,6 +146,26 @@ function getProfileWebSocketPort(profileName = null, basePort = 9900) {
     hash = (hash + ch.charCodeAt(0)) % 97;
   }
   return basePort + 10 + hash;
+}
+
+function getProfileProjectRootOverride(profileName = null, env = process.env) {
+  const normalizedProfile = normalizeProfileName(profileName || env?.SQUIDRUN_PROFILE || DEFAULT_PROFILE);
+  if (isMainProfile(normalizedProfile)) return null;
+
+  const specificEnvName = `SQUIDRUN_${normalizedProfile.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_PROJECT_ROOT`;
+  const explicitRoot = toNonEmptyString(env?.[specificEnvName]);
+  if (explicitRoot && fs.existsSync(explicitRoot)) {
+    return path.resolve(explicitRoot);
+  }
+
+  if (normalizedProfile === 'eunbyeol') {
+    const siblingCaseworkRoot = path.resolve(__dirname, '..', '..', 'eunbyeol-casework');
+    if (fs.existsSync(siblingCaseworkRoot)) {
+      return siblingCaseworkRoot;
+    }
+  }
+
+  return null;
 }
 
 function getProfileInstructionFilename(baseName, profileName = null) {
@@ -189,6 +228,7 @@ module.exports = {
   namespaceCoordRelPath,
   getProfilePipePath,
   getProfileWebSocketPort,
+  getProfileProjectRootOverride,
   getProfileInstructionFilename,
   resolveProfileInstructionPath,
   buildProfileTelegramEnv,

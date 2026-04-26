@@ -58,7 +58,6 @@ jest.mock('../modules/local-model-capabilities', () => ({
   readSystemCapabilitiesSnapshot: jest.fn(() => ({
     localModels: {
       enabled: true,
-      provider: 'ollama',
       sleepExtraction: {
         enabled: true,
         available: true,
@@ -314,6 +313,9 @@ describe('supervisor-daemon integrations', () => {
 
   test('tick runs position attribution reconciliation before crypto automation', async () => {
     const callOrder = [];
+    const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
+    daemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
+    daemon.maybeRunTradingAutomation = skippedLane;
     daemon.maybeRunPositionAttributionReconciliation = jest.fn(async () => {
       callOrder.push('position_attribution');
       return { ok: true, status: 'ok' };
@@ -322,6 +324,22 @@ describe('supervisor-daemon integrations', () => {
       callOrder.push('crypto');
       return { ok: true, skipped: true };
     });
+    daemon.maybeRunTradeReconciliation = skippedLane;
+    daemon.maybeRunPolymarketTradingAutomation = skippedLane;
+    daemon.maybeRunLaunchRadarAutomation = skippedLane;
+    daemon.maybeRunNewsScanAutomation = skippedLane;
+    daemon.maybeRunPendingFollowupAutomation = skippedLane;
+    daemon.maybeRunMarketResearchAutomation = skippedLane;
+    daemon.maybeRunTokenomistAutomation = skippedLane;
+    daemon.maybeRunSparkAutomation = skippedLane;
+    daemon.maybeRunMarketScannerAutomation = skippedLane;
+    daemon.maybeRunSaylorWatcher = skippedLane;
+    daemon.maybeRunOracleWatchEngine = skippedLane;
+    daemon.maybeRunPaperTradingAutomation = skippedLane;
+    daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
+    daemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
+    daemon.maybeRunYieldRouterAutomation = skippedLane;
+    daemon.maybeRunSleepCycle = skippedLane;
 
     const result = await daemon.tick();
 
@@ -933,9 +951,10 @@ describe('supervisor-daemon integrations', () => {
       enoughGap: true,
     });
 
-    await daemon.tick();
+    const result = await daemon.maybeRunSleepCycle();
 
     expect(mockSleepConsolidator.runOnce).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({ generatedPrCount: 1 }));
     expect(daemon.lastSleepCycleSummary).toEqual(expect.objectContaining({ generatedPrCount: 1 }));
   });
 
@@ -1604,9 +1623,10 @@ describe('supervisor-daemon integrations', () => {
       pruned: 3,
     });
 
-    await daemon.tick();
+    const result = daemon.runMemoryLeaseHousekeeping(Date.now(), 'tick');
 
     expect(mockLeaseJanitor.pruneExpiredLeases).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({ pruned: 3 }));
     expect(daemon.logger.warn).toHaveBeenCalledWith('Pruned 3 expired memory lease(s) during tick');
   });
 
@@ -1638,6 +1658,27 @@ describe('supervisor-daemon integrations', () => {
       daemon.activeWorkers.delete(taskId);
     });
     jest.spyOn(daemon, 'launchTask').mockResolvedValue();
+    const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
+    daemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
+    daemon.maybeRunTradingAutomation = skippedLane;
+    daemon.maybeRunPositionAttributionReconciliation = skippedLane;
+    daemon.maybeRunCryptoTradingAutomation = skippedLane;
+    daemon.maybeRunTradeReconciliation = skippedLane;
+    daemon.maybeRunPolymarketTradingAutomation = skippedLane;
+    daemon.maybeRunLaunchRadarAutomation = skippedLane;
+    daemon.maybeRunNewsScanAutomation = skippedLane;
+    daemon.maybeRunPendingFollowupAutomation = skippedLane;
+    daemon.maybeRunMarketResearchAutomation = skippedLane;
+    daemon.maybeRunTokenomistAutomation = skippedLane;
+    daemon.maybeRunSparkAutomation = skippedLane;
+    daemon.maybeRunMarketScannerAutomation = skippedLane;
+    daemon.maybeRunSaylorWatcher = skippedLane;
+    daemon.maybeRunOracleWatchEngine = skippedLane;
+    daemon.maybeRunPaperTradingAutomation = skippedLane;
+    daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
+    daemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
+    daemon.maybeRunYieldRouterAutomation = skippedLane;
+    daemon.maybeRunSleepCycle = skippedLane;
 
     await daemon.tick();
 
@@ -1661,13 +1702,14 @@ describe('supervisor-daemon integrations', () => {
       tasks: [{ taskId: 'task-1' }, { taskId: 'task-2' }],
     });
 
-    await daemon.tick();
+    const result = daemon.runQueueHousekeeping(Date.now(), 'tick');
 
     expect(daemon.store.pruneExpiredPendingTasks).toHaveBeenCalledWith(
       expect.objectContaining({
         maxAgeMs: 60000,
       })
     );
+    expect(result.pruneResult).toEqual(expect.objectContaining({ pruned: 2 }));
     expect(daemon.logger.warn).toHaveBeenCalledWith('Pruned 2 stale pending supervisor task(s) during tick');
   });
 
@@ -1688,8 +1730,9 @@ describe('supervisor-daemon integrations', () => {
     });
     daemon.lastMemoryConsistencyCheckAtMs = Date.now() - daemon.memoryConsistencyPollMs - 1;
 
-    await daemon.tick();
+    const result = daemon.maybeRunMemoryConsistencyAudit(Date.now(), 'tick');
 
+    expect(result).toEqual(expect.objectContaining({ status: 'drift_detected' }));
     expect(daemon.lastMemoryConsistencySummary).toEqual(expect.objectContaining({
       status: 'drift_detected',
       synced: false,
@@ -1921,6 +1964,26 @@ describe('supervisor-daemon integrations', () => {
     });
     jest.spyOn(tradingDaemon, 'getTradingDaySchedule').mockResolvedValue(null);
     jest.spyOn(tradingDaemon, 'getNextTradingEvent').mockResolvedValue(null);
+    const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
+    tradingDaemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
+    tradingDaemon.maybeRunTradingAutomation = skippedLane;
+    tradingDaemon.maybeRunPositionAttributionReconciliation = skippedLane;
+    tradingDaemon.maybeRunCryptoTradingAutomation = skippedLane;
+    tradingDaemon.maybeRunPolymarketTradingAutomation = skippedLane;
+    tradingDaemon.maybeRunLaunchRadarAutomation = skippedLane;
+    tradingDaemon.maybeRunNewsScanAutomation = skippedLane;
+    tradingDaemon.maybeRunPendingFollowupAutomation = skippedLane;
+    tradingDaemon.maybeRunMarketResearchAutomation = skippedLane;
+    tradingDaemon.maybeRunTokenomistAutomation = skippedLane;
+    tradingDaemon.maybeRunSparkAutomation = skippedLane;
+    tradingDaemon.maybeRunMarketScannerAutomation = skippedLane;
+    tradingDaemon.maybeRunSaylorWatcher = skippedLane;
+    tradingDaemon.maybeRunOracleWatchEngine = skippedLane;
+    tradingDaemon.maybeRunPaperTradingAutomation = skippedLane;
+    tradingDaemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
+    tradingDaemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
+    tradingDaemon.maybeRunYieldRouterAutomation = skippedLane;
+    tradingDaemon.maybeRunSleepCycle = skippedLane;
 
     const result = await tradingDaemon.tick();
 
@@ -4241,6 +4304,7 @@ describe('supervisor-daemon integrations', () => {
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
       marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
@@ -4348,6 +4412,7 @@ describe('supervisor-daemon integrations', () => {
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
       marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
@@ -4476,6 +4541,7 @@ describe('supervisor-daemon integrations', () => {
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
       marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
@@ -4582,6 +4648,7 @@ describe('supervisor-daemon integrations', () => {
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
       marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({

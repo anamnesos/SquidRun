@@ -19,10 +19,12 @@ if [ "$SOURCE" != "compact" ] && command -v node >/dev/null 2>&1; then
     >> "$AUDIT_DIR/memory-pr-approval.log" 2>> "$AUDIT_DIR/memory-pr-approval-errors.log" || true
 fi
 
+PROFILE="${SQUIDRUN_PROFILE:-main}"
+
 STARTUP_HEALTH=""
 if [ "$SOURCE" != "compact" ] && command -v node >/dev/null 2>&1; then
   STARTUP_HEALTH=$(
-    node "$PROJECT_DIR/ui/scripts/hm-startup-health.js" 2>> "$AUDIT_DIR/startup-health-errors.log"
+    node "$PROJECT_DIR/ui/scripts/hm-startup-health.js" "--profile=$PROFILE" 2>> "$AUDIT_DIR/startup-health-errors.log"
   )
 fi
 
@@ -80,7 +82,14 @@ if [ "$SOURCE" = "compact" ] || [ "$SOURCE" = "resume" ]; then
   PREFIX="Session resumed/compacted."
 fi
 
-COMBINED_CONTEXT="$PREFIX\n\nSYSTEM HEALTH (auto-fixed where safe):\n$STARTUP_HEALTH\n\nMANDATORY READS BEFORE DOING ANYTHING:\n1. $LATEST_HANDOFF_PATH - Latest session handoff with open items, live positions, and James's feedback\n2. workspace/knowledge/trading-operations.md - Hyperliquid=REAL money, Alpaca=FAKE. Check positions FIRST.\n3. workspace/knowledge/case-operations.md - 은별 pending items and routing rules.\n\nROUTING: 은별=send-long-telegram.js 8754356993. James=hm-send.js telegram (ENGLISH ONLY). Use Builder/Oracle not subagents.\n\nTRADING: Alpaca is paper. Hyperliquid is real. Run hm-defi-status.js every cycle. Don't wait for prompts.\n\n$AI_BRIEFING\n\n$AGENCY_LAYER"
+if [ "$PROFILE" = "eunbyeol" ]; then
+  # Eunbyeol window: case work only. NO trading context, NO trading routing,
+  # NO architect agency layer. Cross-contamination here historically caused
+  # agents to mix James's trading state into 은별's case window after compaction.
+  COMBINED_CONTEXT="$PREFIX\n\n[EUNBYEOL WINDOW — case work only. Do not discuss trading, account balances, or Hyperliquid positions in this window. James has a separate trading window.]\n\nSYSTEM HEALTH (auto-fixed where safe):\n$STARTUP_HEALTH\n\nMANDATORY READS BEFORE REPLYING TO 은별:\n1. workspace/knowledge/case-operations.md - 은별 pending items dashboard + routing\n2. workspace/knowledge/handoff-corrections.md - drift guard: disputed facts that MUST be re-checked against source evidence\n3. D:/projects/Korean Fraud/reference/confirmed-facts.md - Qeline counterfeit case\n4. D:/projects/Hillstate Case/reference/confirmed-facts.md - Hillstate apartment fraud\n5. D:/projects/Jeon Myeongsam Case/reference/confirmed-facts.md - 전명삼 investment fraud\n\nROUTING: 은별 = node ../tools/send-long-telegram.js 8754356993 <filepath> (Korean only). Builder/Oracle = hm-send.js builder|oracle (NOT subagents).\n\nTERMINOLOGY: When you see 'session NNN' in handoffs/memory, that refers to a SquidRun session number — distinct from this CLI conversation and from Anthropic's per-conversation context. Don't conflate them.\n\nDO NOT auto-load: trading-operations.md, ai-briefing.md (trading half), Architect agency layer."
+else
+  COMBINED_CONTEXT="$PREFIX\n\nSYSTEM HEALTH (auto-fixed where safe):\n$STARTUP_HEALTH\n\nMANDATORY READS BEFORE DOING ANYTHING:\n1. $LATEST_HANDOFF_PATH - Latest session handoff with open items, live positions, and James's feedback\n2. workspace/knowledge/trading-operations.md - Hyperliquid=REAL money, Alpaca=FAKE. Check positions FIRST.\n3. workspace/knowledge/case-operations.md - 은별 pending items and routing rules.\n\nROUTING: 은별=send-long-telegram.js 8754356993. James=hm-send.js telegram (ENGLISH ONLY). Use Builder/Oracle not subagents.\n\nTRADING: Alpaca is paper. Hyperliquid is real. Run hm-defi-status.js every cycle. Don't wait for prompts.\n\n$AI_BRIEFING\n\n$AGENCY_LAYER"
+fi
 JSON_SAFE_CONTEXT=$(echo -n "$COMBINED_CONTEXT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.stringify(d)))" 2>/dev/null || echo '"context unavailable"')
 
 echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":'"$JSON_SAFE_CONTEXT"'}}'

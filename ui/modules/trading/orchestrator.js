@@ -29,7 +29,9 @@ const cryptoMechBoard = require('./crypto-mech-board');
 const eventVeto = require('./event-veto');
 const consensusSizer = require('./consensus-sizer');
 const positionManagement = require('./position-management');
+const bracketManager = require('./bracket-manager');
 const signalValidationRecorder = require('./signal-validation-recorder');
+const hyperliquidClient = require('./hyperliquid-client');
 const hyperliquidNativeLayer = require('./hyperliquid-native-layer');
 const multiTimeframeConfirmation = require('./multi-timeframe-confirmation');
 const {
@@ -71,6 +73,8 @@ const DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE = 0.6;
 const DEFAULT_HYPERLIQUID_AUTO_LEVERAGE = 5;
 const DEFAULT_HYPERLIQUID_SCALP_LEVERAGE = 20;
 const DEFAULT_HYPERLIQUID_AUTO_OPEN_ENABLED = false;
+const DEFAULT_SMALL_WALLET_SINGLE_NAME_MAX_EQUITY = 1000;
+const AUTONOMOUS_MAJOR_CRYPTO_TICKERS = Object.freeze(['BTC/USD', 'ETH/USD', 'SOL/USD']);
 const DEFAULT_HYPERLIQUID_EXECUTION_RETRIES = Math.max(
 	0,
 	Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_EXECUTION_RETRIES || '2', 10) || 2
@@ -207,6 +211,22 @@ function toPositiveQuantity(value, assetClass = 'us_equity') {
 
 function resolveAssetClassForTicker(ticker, fallback = 'us_equity') {
 	return watchlist.getAssetClassForTicker(ticker, fallback);
+}
+
+function ensureSignalTickerTracked(ticker) {
+	const normalizedTicker = toTicker(ticker);
+	if (!normalizedTicker) return false;
+	if (watchlist.isWatched(normalizedTicker)) return true;
+	if (!/\/USD$/i.test(normalizedTicker)) return false;
+	if (resolveAssetClassForTicker(normalizedTicker, 'us_equity') !== 'crypto') return false;
+	return watchlist.addToWatchlist(
+		normalizedTicker,
+		normalizedTicker,
+		'Crypto',
+		'CRYPTO',
+		'hyperliquid',
+		'crypto'
+	);
 }
 
 function isPolymarketMode(options = {}) {
@@ -387,6 +407,8 @@ function normalizeDefiPosition(position = {}) {
 	};
 	if (position?.stopLossPrice != null) result.stopLossPrice = toNumber(position.stopLossPrice, 0) || null;
 	if (position?.takeProfitPrice != null) result.takeProfitPrice = toNumber(position.takeProfitPrice, 0) || null;
+	if (position?.stopLossVerifiedAt) result.stopLossVerifiedAt = toIsoTimestamp(position.stopLossVerifiedAt, null);
+	if (position?.takeProfitVerifiedAt) result.takeProfitVerifiedAt = toIsoTimestamp(position.takeProfitVerifiedAt, null);
 	return result;
 }
 
@@ -774,6 +796,11 @@ function selectTopTradeIdeas(candidates = [], options = {}, orchestratorOptions 
 	const sorted = candidates.slice().sort((left, right) => {
 		const leftConfidence = toNumber(left?.averageAgreeConfidence, averageConfidence(left?.consensus?.agreeing || []));
 		const rightConfidence = toNumber(right?.averageAgreeConfidence, averageConfidence(right?.consensus?.agreeing || []));
+		const leftRankScore = toNumber(left?.autoExecutionRankScore, leftConfidence);
+		const rightRankScore = toNumber(right?.autoExecutionRankScore, rightConfidence);
+		if (rightRankScore !== leftRankScore) {
+			return rightRankScore - leftRankScore;
+		}
 		return rightConfidence - leftConfidence;
 	});
 	if (capped <= 0) {
@@ -786,6 +813,97 @@ function selectTopTradeIdeas(candidates = [], options = {}, orchestratorOptions 
 		selected: sorted.slice(0, capped),
 		excluded: sorted.slice(capped),
 	};
+}
+
+function isAutonomousMajorCryptoTicker(ticker = '') {
+	return AUTONOMOUS_MAJOR_CRYPTO_TICKERS.includes(toTicker(ticker));
+}
+
+function hasActionableOracleSignal(signalLookup = {}, ticker = '') {
+	const oracleSignal = signalLookup?.oracle || null;
+	if (!oracleSignal) return false;
+	if (ticker && toTicker(oracleSignal.ticker || ticker) !== toTicker(ticker)) {
+		return false;
+	}
+	const direction = String(oracleSignal.direction || '').trim().toUpperCase();
+	return direction !== '' && direction !== 'HOLD';
+}
+
+function narrowEventVetoForTicker(eventVetoValue = null, ticker = '') {
+	if (!eventVetoValue || typeof eventVetoValue !== 'object') {
+		return null;
+	}
+	const normalizedTicker = toTicker(ticker);
+	const affectedAssets = Array.isArray(eventVetoValue.affectedAssets)
+		? eventVetoValue.affectedAssets.map(toTicker).filter(Boolean)
+		: [];
+	if (affectedAssets.length > 0 && normalizedTicker && !affectedAssets.includes(normalizedTicker)) {
+		return {
+			...eventVetoValue,
+			decision: 'CLEAR',
+			sizeMultiplier: 1,
+			affectedAssets: [],
+			narrowedForTicker: normalizedTicker,
+			narrowedFromDecision: String(eventVetoValue.decision || '').trim().toUpperCase() || 'CLEAR',
+		};
+	}
+	return eventVetoValue;
+}
+
+function resolveHyperliquidWalletEquity(defiStatus = {}) {
+	return toNumber(
+		defiStatus?.accountValue
+		?? defiStatus?.withdrawable
+		?? defiStatus?.account?.equity
+		?? defiStatus?.account?.cash,
+		0
+	);
+}
+
+function buildCryptoAutoExecutionPolicy(defiStatus = {}, macroRisk = null, options = {}, orchestratorOptions = {}) {
+	const livePositions = Array.isArray(defiStatus?.positions) ? defiStatus.positions : [];
+	const walletEquity = resolveHyperliquidWalletEquity(defiStatus);
+	const subSmallWalletCap = toNumber(
+		options.smallWalletSingleNameMaxEquity
+		?? orchestratorOptions.smallWalletSingleNameMaxEquity,
+		DEFAULT_SMALL_WALLET_SINGLE_NAME_MAX_EQUITY
+	);
+	const subSmallWallet = walletEquity > 0 && walletEquity < subSmallWalletCap;
+	const flatWallet = livePositions.length === 0;
+	const regime = String(macroRisk?.regime || '').trim().toLowerCase();
+	const macroEligible = regime !== 'red' && regime !== 'stay_cash';
+	const singleBestNameMode = subSmallWallet && flatWallet && macroEligible;
+	return {
+		walletEquity,
+		subSmallWallet,
+		flatWallet,
+		macroEligible,
+		singleBestNameMode,
+		maxIdeasPerRound: singleBestNameMode
+			? 1
+			: resolveMaxIdeasPerRound(options, orchestratorOptions),
+	};
+}
+
+function scoreTradeIdeaForAutoExecution(trade = {}) {
+	const confidence = toNumber(
+		trade?.averageAgreeConfidence,
+		averageConfidence(trade?.consensus?.agreeing || [])
+	);
+	let score = confidence;
+	if (hasActionableOracleSignal(trade?.signalLookup || {}, trade?.ticker)) {
+		score += 0.2;
+	}
+	if (isAutonomousMajorCryptoTicker(trade?.ticker)) {
+		score += 0.05;
+	}
+	if (String(trade?.sizeGuide?.bucket || 'normal').trim().toLowerCase() === 'normal') {
+		score += 0.03;
+	}
+	if (String(trade?.mechanicalEntry?.tradeFlag || '').trim().toLowerCase() === 'trade') {
+		score += 0.02;
+	}
+	return Number(score.toFixed(4));
 }
 
 function selectConvictionSignalMetadata(consensusResult = {}) {
@@ -1213,6 +1331,10 @@ class TradingOrchestrator {
 		) || DEFAULT_DEFI_MONITOR_TIMEOUT_MS;
 		const { stdout } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
 			cwd: getProjectRoot(),
+			env: {
+				...process.env,
+				SQUIDRUN_HYPERLIQUID_CALLER: 'supervisor',
+			},
 			windowsHide: true,
 			timeout,
 		});
@@ -1224,9 +1346,6 @@ class TradingOrchestrator {
 			return [];
 		}
 		try {
-			const { HttpTransport, InfoClient } = await import('@nktkas/hyperliquid');
-			const transport = new HttpTransport();
-			const info = new InfoClient({ transport });
 			const walletAddress = String(
 				process.env.HYPERLIQUID_WALLET_ADDRESS
 				|| process.env.HYPERLIQUID_ADDRESS
@@ -1234,7 +1353,9 @@ class TradingOrchestrator {
 				|| ''
 			).trim();
 			if (!walletAddress) return [];
-			return await info.openOrders({ user: walletAddress });
+			return await hyperliquidClient.getOpenOrders({
+				walletAddress,
+			});
 		} catch (_err) {
 			return [];
 		}
@@ -1336,7 +1457,9 @@ class TradingOrchestrator {
 				? 0.5
 				: (drawdownFromPeakPct >= 0.3 ? 0.3 : 0);
 			const previousGivebackAlertThreshold = toNumber(previous.givebackAlertThreshold, 0);
-			const stopLossPrice = toNumber(position.stopLossPrice ?? previous.stopLossPrice, 0) || null;
+			const stopLossPrice = position.stopLossVerifiedAt
+				? (toNumber(position.stopLossPrice, 0) || null)
+				: null;
 			let warningLevel = null;
 			if (liquidationDistancePct != null && liquidationDistancePct <= DEFI_CRITICAL_LIQUIDATION_BUFFER_PCT) {
 				warningLevel = 'critical';
@@ -1361,6 +1484,11 @@ class TradingOrchestrator {
 				givebackAlertThreshold,
 				previousGivebackAlertThreshold,
 				stopLossPrice,
+				stopLossVerifiedAt: position.stopLossVerifiedAt || null,
+				takeProfitPrice: position.takeProfitVerifiedAt
+					? (toNumber(position.takeProfitPrice, 0) || null)
+					: null,
+				takeProfitVerifiedAt: position.takeProfitVerifiedAt || null,
 				warningLevel,
 			};
 			enrichedPositions.push(enrichedPosition);
@@ -1400,6 +1528,11 @@ class TradingOrchestrator {
 				drawdownFromPeakPct,
 				givebackAlertThreshold,
 				stopLossPrice,
+				stopLossVerifiedAt: position.stopLossVerifiedAt || null,
+				takeProfitPrice: position.takeProfitVerifiedAt
+					? (toNumber(position.takeProfitPrice, 0) || null)
+					: null,
+				takeProfitVerifiedAt: position.takeProfitVerifiedAt || null,
 				lastAlertLevel: warningLevel,
 				lastAlertSentAt: warningLevel && previous.lastAlertLevel !== warningLevel ? checkedAt : (previous.lastAlertSentAt || null),
 				updatedAt: checkedAt,
@@ -1469,31 +1602,14 @@ class TradingOrchestrator {
 				for (const position of liveStatus.positions) {
 					const coin = position.coin || position.asset;
 					if (!coin) continue;
-					const side = (position.side || (toNumber(position.size || position.szi, 0) >= 0 ? 'long' : 'short'));
 					const reduceOnlyOrders = openOrders.filter(
 						(o) => o.coin === coin && o.reduceOnly === true
 					);
-					if (reduceOnlyOrders.length > 0) {
-						// For a long position, reduce-only sells below entry are stops, above entry are TPs
-						// For a short position, reduce-only buys above entry are stops, below entry are TPs
-						const entryPx = toNumber(position.entryPx, 0);
-						for (const order of reduceOnlyOrders) {
-							const orderPx = toNumber(order.triggerPx, 0) || toNumber(order.limitPx, 0);
-							if (!orderPx) continue;
-							const isStopCandidate = side === 'long'
-								? orderPx < entryPx
-								: orderPx > entryPx;
-							if (isStopCandidate && !position.stopLossPrice) {
-								position.stopLossPrice = orderPx;
-							}
-							const isTpCandidate = side === 'long'
-								? orderPx > entryPx
-								: orderPx < entryPx;
-							if (isTpCandidate && !position.takeProfitPrice) {
-								position.takeProfitPrice = orderPx;
-							}
-						}
-					}
+					const protection = bracketManager.deriveExchangeProtection(position, reduceOnlyOrders);
+					position.stopLossPrice = protection.activeStopPrice;
+					position.takeProfitPrice = protection.activeTakeProfitPrice;
+					position.stopLossVerifiedAt = protection.verified ? checkedAt : null;
+					position.takeProfitVerifiedAt = protection.verified ? checkedAt : null;
 				}
 			}
 		} catch (_err) {
@@ -1657,6 +1773,20 @@ class TradingOrchestrator {
 		const approvedByTicker = new Map(
 			(Array.isArray(approvedTrades) ? approvedTrades : []).map((trade) => [toTicker(trade?.ticker), trade])
 		);
+		const autoExecutionPolicy = options.autoExecutionPolicy && typeof options.autoExecutionPolicy === 'object'
+			? options.autoExecutionPolicy
+			: buildCryptoAutoExecutionPolicy(defiStatus, options.macroRisk || null, options, this.options);
+		const rankedApprovedTrades = (Array.isArray(approvedTrades) ? approvedTrades : [])
+			.slice()
+			.sort((left, right) => {
+				const leftScore = toNumber(left?.autoExecutionRankScore, scoreTradeIdeaForAutoExecution(left));
+				const rightScore = toNumber(right?.autoExecutionRankScore, scoreTradeIdeaForAutoExecution(right));
+				return rightScore - leftScore;
+			});
+		const topSingleBestTrade = autoExecutionPolicy.singleBestNameMode
+			? rankedApprovedTrades.find((trade) => hasActionableOracleSignal(trade?.signalLookup || {}, trade?.ticker))
+			: null;
+		const singleBestTicker = toTicker(topSingleBestTrade?.ticker);
 		const executions = [];
 		const skipped = [];
 		const positionManagementPlan = options.positionManagementPlan && typeof options.positionManagementPlan === 'object'
@@ -1820,12 +1950,24 @@ class TradingOrchestrator {
 
 			const decision = toDirection(result?.decision || 'HOLD');
 			const asset = extractHyperliquidAssetFromTicker(ticker);
+			const narrowedEventVeto = narrowEventVetoForTicker(options.eventVeto || null, ticker);
+			const narrowedEventDecision = String(narrowedEventVeto?.decision || 'CLEAR').trim().toUpperCase();
 			if (positionManagedAssets.has(asset) || executionManagedAssets.has(asset)) {
 				skipped.push({ ticker, asset, reason: 'managed_by_position_management', confidence });
 				continue;
 			}
 			const openPosition = positionsByAsset.get(asset) || null;
 			const approvedTrade = approvedByTicker.get(ticker) || null;
+			if (autoExecutionPolicy.singleBestNameMode && singleBestTicker) {
+				if (ticker !== singleBestTicker && !openPosition) {
+					skipped.push({ ticker, asset, reason: 'single_best_name_cap', confidence });
+					continue;
+				}
+				if (!openPosition && narrowedEventDecision !== 'CLEAR') {
+					skipped.push({ ticker, asset, reason: 'event_veto_active', confidence, eventDecision: narrowedEventDecision });
+					continue;
+				}
+			}
 			let action = null;
 			let args = [];
 			let side = null;
@@ -2157,7 +2299,7 @@ class TradingOrchestrator {
 
 	registerSignal(agentId, ticker, signal = {}) {
 		const normalized = normalizeSignal(agentId, ticker, signal);
-		if (!watchlist.isWatched(normalized.ticker)) {
+		if (!watchlist.isWatched(normalized.ticker) && !ensureSignalTickerTracked(normalized.ticker)) {
 			throw new Error(`Ticker ${normalized.ticker} is not on the watchlist`);
 		}
 
@@ -2320,9 +2462,6 @@ class TradingOrchestrator {
 	}
 
 	async consultMissingSignals(symbols, context = {}, options = {}) {
-		for (const symbol of Array.isArray(symbols) ? symbols : []) {
-			this.clearSignals(symbol);
-		}
 		if (String(options.strategyMode || '').trim().toLowerCase() === 'range_conviction') {
 			return {
 				requestId: null,
@@ -2335,8 +2474,21 @@ class TradingOrchestrator {
 				reason: 'range_conviction_local_only',
 			};
 		}
+		if (!this.isRealConsultationEnabled(options)) {
+			return {
+				requestId: null,
+				requestPath: null,
+				requestedAgents: [],
+				deliveries: [],
+				responses: [],
+				missingAgents: [],
+			};
+		}
+		for (const symbol of Array.isArray(symbols) ? symbols : []) {
+			this.clearSignals(symbol);
+		}
 		const missingByAgent = this.buildMissingSignalMap(symbols);
-		if (missingByAgent.length === 0 || !this.isRealConsultationEnabled(options)) {
+		if (missingByAgent.length === 0) {
 			return {
 				requestId: null,
 				requestPath: null,
@@ -3531,6 +3683,7 @@ class TradingOrchestrator {
 		const candidateTrades = [];
 		const consensusRecords = [];
 		let simulatedAccountState = cloneAccountState(accountState);
+		const autoExecutionPolicy = buildCryptoAutoExecutionPolicy(defiStatus, macroRisk, options, this.options);
 
 		for (const result of results) {
 			const signals = signalBuckets.get(result.ticker) || [];
@@ -3590,12 +3743,13 @@ class TradingOrchestrator {
 						},
 					});
 				} else {
+					const narrowedEventVeto = narrowEventVetoForTicker(compactEventVeto, result.ticker);
 					const sizeGuide = consensusSizer.sizeConsensusTrade({
 						ticker: result.ticker,
 						consensus: result,
 						mechanicalBoard,
 						nativeSignals: nativeEntry,
-						eventVeto: compactEventVeto,
+						eventVeto: narrowedEventVeto,
 					});
 					if (sizeGuide.bucket === 'block') {
 						rejectedTrades.push({
@@ -3623,6 +3777,16 @@ class TradingOrchestrator {
 						mechanicalEntry,
 						nativeEntry,
 						sizeGuide,
+						eventVeto: narrowedEventVeto,
+						oracleActionable: hasActionableOracleSignal(signalLookup, result.ticker),
+						autoExecutionRankScore: scoreTradeIdeaForAutoExecution({
+							ticker: result.ticker,
+							averageAgreeConfidence: entryDecision.averageAgreeConfidence,
+							consensus: result,
+							signalLookup,
+							mechanicalEntry,
+							sizeGuide,
+						}),
 					});
 				}
 			}
@@ -3634,7 +3798,30 @@ class TradingOrchestrator {
 			});
 		}
 
-		const { selected: selectedTrades, excluded: excludedTrades } = selectTopTradeIdeas(candidateTrades, options, this.options);
+		const singleBestEligibleTrades = autoExecutionPolicy.singleBestNameMode
+			? candidateTrades.filter((trade) => {
+				const vetoDecision = String(trade?.eventVeto?.decision || 'CLEAR').trim().toUpperCase();
+				return trade.oracleActionable === true && vetoDecision === 'CLEAR';
+			})
+			: [];
+		const rankedSingleBestTrades = singleBestEligibleTrades.length > 0
+			? selectTopTradeIdeas(singleBestEligibleTrades, {
+				...options,
+				maxIdeasPerRound: 1,
+			}, this.options)
+			: null;
+		const tradeSelection = rankedSingleBestTrades && rankedSingleBestTrades.selected.length > 0
+			? {
+				selected: rankedSingleBestTrades.selected,
+				excluded: candidateTrades.filter((trade) => {
+					return !rankedSingleBestTrades.selected.some((selectedTrade) => toTicker(selectedTrade?.ticker) === toTicker(trade?.ticker));
+				}),
+			}
+			: selectTopTradeIdeas(candidateTrades, {
+				...options,
+				maxIdeasPerRound: autoExecutionPolicy.maxIdeasPerRound,
+			}, this.options);
+		const { selected: selectedTrades, excluded: excludedTrades } = tradeSelection;
 		for (const trade of excludedTrades) {
 			rejectedTrades.push({
 				ticker: trade.ticker,
@@ -3642,7 +3829,7 @@ class TradingOrchestrator {
 				referencePrice: trade.referencePrice,
 				riskCheck: {
 					approved: false,
-					violations: [`ENTRY_CAP: only top ${resolveMaxIdeasPerRound(options, this.options)} ideas per round are executable`],
+					violations: [`ENTRY_CAP: only top ${autoExecutionPolicy.maxIdeasPerRound} ideas per round are executable`],
 				},
 			});
 		}
@@ -3774,6 +3961,9 @@ class TradingOrchestrator {
 		);
 		const autoExecution = await this.maybeAutoExecuteLiveConsensus(results, approvedTrades, defiStatus, {
 			...options,
+			macroRisk,
+			eventVeto: compactEventVeto,
+			autoExecutionPolicy,
 			positionManagementPlan,
 			killSwitchTriggered: killSwitch.triggered,
 			hyperliquidKillSwitchAction: resolveHyperliquidKillSwitchAction(options, this.options),
@@ -3947,6 +4137,7 @@ class TradingOrchestrator {
 			killSwitch,
 			dailyPause,
 			autoExecution,
+			autoExecutionPolicy,
 			candidateFeatureLog,
 			validationSettlement,
 			incompleteSignals: incomplete,

@@ -281,4 +281,55 @@ describe('spark-capture', () => {
       unlockCount: 0,
     }));
   });
+
+  test('runSparkScan fails loudly when Hyperliquid universe fetch rejects (e.g. 429) and preserves state', async () => {
+    const statePath = path.join(tempRoot, 'spark-state.json');
+    const eventsPath = path.join(tempRoot, 'spark-events.jsonl');
+    const firePlansPath = path.join(tempRoot, 'spark-fireplans.json');
+    const watchlistPath = path.join(tempRoot, 'spark-watchlist.json');
+    const tokenomistSourcePath = path.join(tempRoot, 'tokenomist-current.yml');
+    fs.writeFileSync(tokenomistSourcePath, 'fresh tokenomist payload\n', 'utf8');
+
+    // Seed prior state so we can verify it is not wiped on degraded scans.
+    const priorState = {
+      ...sparkCapture.defaultSparkState(),
+      lastRunAt: '2026-04-23T09:00:00.000Z',
+      hyperliquid: { knownUniverseCoins: ['BTC', 'ETH', 'CHIP'] },
+      upbit: { seenNoticeIds: [6100] },
+    };
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify(priorState, null, 2));
+
+    hyperliquidClient.getUniverseMarketData.mockRejectedValueOnce(new Error('http_429'));
+
+    const result = await sparkCapture.runSparkScan({
+      now: '2026-04-23T09:30:00.000Z',
+      statePath,
+      eventsPath,
+      firePlansPath,
+      watchlistPath,
+      tokenomistSourcePath,
+      fetch: jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { notices: [] } }),
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBe(true);
+    expect(result.reason).toBe('universe_fetch_failed');
+    expect(result.error).toBe('http_429');
+    expect(result.firePlans).toEqual([]);
+    expect(result.newAlertEvents).toEqual([]);
+    expect(result.warnings[0]).toEqual(expect.objectContaining({
+      kind: 'hyperliquid_universe_unavailable',
+      reason: 'universe_fetch_failed',
+    }));
+
+    // State must be preserved — not wiped to empty knownUniverseCoins.
+    const persisted = sparkCapture.readSparkState(statePath);
+    expect(persisted.hyperliquid.knownUniverseCoins).toEqual(['BTC', 'ETH', 'CHIP']);
+    expect(persisted.upbit.seenNoticeIds).toEqual([6100]);
+    expect(persisted.lastRunAt).toBe('2026-04-23T09:00:00.000Z');
+  });
 });

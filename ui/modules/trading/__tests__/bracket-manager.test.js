@@ -145,4 +145,25 @@ describe('Hyperliquid bracket manager', () => {
       needsBreakEvenStopMove: false,
     }));
   });
+
+  test('derives active exchange-native stop and take-profit for a short from reduce-only orders', () => {
+    const protection = bracketManager.deriveExchangeProtection({
+      coin: 'APT',
+      size: -2695.25,
+      side: 'short',
+      entryPx: 0.9273,
+    }, [
+      { oid: 1, coin: 'APT', reduceOnly: true, triggerPx: '0.9661', sz: '2695.25' },
+      { oid: 2, coin: 'APT', reduceOnly: true, triggerPx: '0.9376', sz: '2695.25' },
+      { oid: 3, coin: 'APT', reduceOnly: true, triggerPx: '0.8784', sz: '1347.62' },
+    ]);
+
+    expect(protection).toEqual(expect.objectContaining({
+      verified: true,
+      activeStopPrice: 0.9376,
+      activeTakeProfitPrice: 0.8784,
+      activeStopOrder: expect.objectContaining({ oid: 2 }),
+      activeTakeProfitOrder: expect.objectContaining({ oid: 3 }),
+    }));
+  });
 });

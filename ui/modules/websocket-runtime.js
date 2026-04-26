@@ -901,6 +901,56 @@ function closeServerQuietly(server) {
   }
 }
 
+function closeClientSocket(info, timeoutMs = 250) {
+  const ws = info?.ws;
+  if (!ws) return Promise.resolve();
+  if (ws.readyState === ws.CLOSED) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        ws.removeListener('close', handleClose);
+      } catch {
+        // Best effort cleanup.
+      }
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+      }
+      resolve();
+    };
+    const handleClose = () => finish();
+    ws.once('close', handleClose);
+
+    let closeTimer = setTimeout(() => {
+      try {
+        if (ws.readyState !== ws.CLOSED) {
+          ws.terminate();
+        }
+      } catch {
+        // Best effort cleanup.
+      }
+      finish();
+    }, timeoutMs);
+    if (closeTimer && typeof closeTimer.unref === 'function') {
+      closeTimer.unref();
+    }
+
+    try {
+      ws.close(1000, 'Server shutting down');
+    } catch {
+      try {
+        ws.terminate();
+      } catch {
+        // Best effort cleanup.
+      }
+      finish();
+    }
+  });
+}
+
 /**
  * Start the WebSocket server
  * @param {object} options - Configuration options
@@ -1528,10 +1578,10 @@ async function stop() {
     return;
   }
 
-  // Close all client connections
-  for (const [, info] of clients) {
-    info.ws.close(1000, 'Server shutting down');
-  }
+  const rawServer = server._server;
+  const serverClients = server.clients instanceof Set ? Array.from(server.clients) : [];
+  const serverClientClosures = serverClients.map((client) => closeClientSocket({ ws: client }));
+  const clientClosures = Array.from(clients.values()).map((info) => closeClientSocket(info));
   clients.clear();
   recentMessageAcks.clear();
   pendingMessageAcks.clear();
@@ -1539,10 +1589,47 @@ async function stop() {
   pendingDispatchAcks.clear();
   outboundQueueFlushInProgress = false;
   outboundQueue = [];
+  await Promise.allSettled([...clientClosures, ...serverClientClosures]);
+
+  try {
+    if (rawServer && typeof rawServer.closeIdleConnections === 'function') {
+      rawServer.closeIdleConnections();
+    }
+  } catch {
+    // Best effort cleanup.
+  }
+  try {
+    if (rawServer && typeof rawServer.closeAllConnections === 'function') {
+      rawServer.closeAllConnections();
+    }
+  } catch {
+    // Best effort cleanup.
+  }
+  try {
+    if (rawServer && typeof rawServer.unref === 'function') {
+      rawServer.unref();
+    }
+  } catch {
+    // Best effort cleanup.
+  }
 
   await new Promise((resolve) => {
     server.close(() => {
       log.info('WebSocket', 'Server stopped');
+      try {
+        if (typeof server.removeAllListeners === 'function') {
+          server.removeAllListeners();
+        }
+      } catch {
+        // Best effort cleanup.
+      }
+      try {
+        if (rawServer && typeof rawServer.unref === 'function') {
+          rawServer.unref();
+        }
+      } catch {
+        // Best effort cleanup.
+      }
       if (wss === server) {
         wss = null;
       }

@@ -1495,6 +1495,83 @@ describe('orchestrator real consultation flow', () => {
     ]));
   });
 
+  test('caps flat sub-1k Hyperliquid auto-execution to the single best oracle-backed name', async () => {
+    mockExecFile.mockImplementation((_command, _args, _options, callback) => {
+      callback(null, { stdout: 'ok', stderr: '' });
+    });
+    const orchestrator = createOrchestrator();
+
+    const autoExecution = await orchestrator.maybeAutoExecuteLiveConsensus([
+      {
+        ticker: 'ETH/USD',
+        consensus: true,
+        decision: 'SHORT',
+        confidence: 0.81,
+      },
+      {
+        ticker: 'BTC/USD',
+        consensus: true,
+        decision: 'BUY',
+        confidence: 0.87,
+      },
+    ], [
+      {
+        ticker: 'ETH/USD',
+        consensus: { ticker: 'ETH/USD', decision: 'SHORT', agreeing: [{ confidence: 0.81 }, { confidence: 0.78 }] },
+        referencePrice: 2100,
+        riskCheck: { maxShares: 0.25, margin: 105, stopLossPrice: 2140.5, leverage: 5 },
+        signalLookup: {
+          oracle: { ticker: 'ETH/USD', direction: 'SHORT', confidence: 0.81 },
+        },
+      },
+      {
+        ticker: 'BTC/USD',
+        consensus: { ticker: 'BTC/USD', decision: 'BUY', agreeing: [{ confidence: 0.87 }, { confidence: 0.82 }] },
+        referencePrice: 76000,
+        riskCheck: { maxShares: 0.003, margin: 95, stopLossPrice: 74800, leverage: 5 },
+        signalLookup: {
+          oracle: { ticker: 'BTC/USD', direction: 'BUY', confidence: 0.87 },
+        },
+      },
+    ], {
+      accountValue: 689,
+      withdrawable: 689,
+      positions: [],
+    }, {
+      autoExecuteLiveConsensus: true,
+      allowHyperliquidAutoOpen: true,
+      hyperliquidExecutionDryRun: true,
+      eventVeto: { decision: 'CLEAR', affectedAssets: [] },
+      macroRisk: { regime: 'yellow' },
+      hyperliquidExecuteScriptPath: path.join(tempDir, 'hm-defi-execute.js'),
+      hyperliquidCloseScriptPath: path.join(tempDir, 'hm-defi-close.js'),
+    });
+
+    expect(autoExecution.executions).toEqual([
+      expect.objectContaining({
+        ticker: 'BTC/USD',
+        action: 'open',
+        ok: true,
+      }),
+    ]);
+    expect(autoExecution.skipped).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ticker: 'ETH/USD',
+        reason: 'single_best_name_cap',
+      }),
+    ]));
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+    expect(mockExecFile.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      path.join(tempDir, 'hm-defi-execute.js'),
+      '--dry-run',
+      'trade',
+      '--asset',
+      'BTC',
+      '--direction',
+      'BUY',
+    ]));
+  });
+
   test('rejects an exact-threshold 0.60 average confidence instead of passing a blind spot downstream', async () => {
     const orchestrator = createOrchestrator({
       consultationEnabled: false,
@@ -1520,7 +1597,6 @@ describe('orchestrator real consultation flow', () => {
     const result = await orchestrator.runConsensusRound({
       symbols: ['AAPL'],
     });
-
     expect(result.approvedTrades).toEqual([]);
     expect(result.rejectedTrades).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1570,14 +1646,14 @@ describe('orchestrator real consultation flow', () => {
       hyperliquidExecuteScriptPath: path.join(tempDir, 'hm-defi-execute.js'),
       hyperliquidCloseScriptPath: path.join(tempDir, 'hm-defi-close.js'),
     });
-
-    expect(autoExecution.executions).toEqual([
+    expect(autoExecution.executions).toEqual([]);
+    expect(autoExecution.skipped).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ticker: 'LINK/USD',
-        action: 'close',
-        ok: true,
+        asset: 'LINK',
+        reason: 'auto_close_disabled_agent_managed',
       }),
-    ]);
+    ]));
     expect(autoExecution.skipped).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ticker: 'ETH/USD',
@@ -1585,13 +1661,7 @@ describe('orchestrator real consultation flow', () => {
         reason: 'auto_open_disabled_stop_ship',
       }),
     ]));
-    expect(mockExecFile).toHaveBeenCalledTimes(1);
-    expect(mockExecFile).toHaveBeenCalledWith(
-      process.execPath,
-      [path.join(tempDir, 'hm-defi-close.js'), '--dry-run', '--asset', 'LINK'],
-      expect.objectContaining({ cwd: expect.any(String), windowsHide: true }),
-      expect.any(Function)
-    );
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
   test('flattens live Hyperliquid positions when kill switch action is flatten_positions', async () => {
@@ -1801,7 +1871,6 @@ describe('orchestrator real consultation flow', () => {
     const result = await orchestrator.runConsensusRound({
       symbols: ['AAPL'],
     });
-
     expect(result.approvedTrades).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ticker: 'AAPL',
@@ -2382,7 +2451,6 @@ describe('orchestrator real consultation flow', () => {
     ]);
 
     const result = await orchestrator.runDefiMonitorCycle({ trigger: 'interval' });
-
     expect(result.positions[0]).toEqual(expect.objectContaining({
       coin: 'ETH',
       stopLossPrice: 2352,
@@ -2411,7 +2479,6 @@ describe('orchestrator real consultation flow', () => {
     ]);
 
     const result = await orchestrator.runDefiMonitorCycle({ trigger: 'interval' });
-
     // triggerPx (88.0) should be used, not limitPx (89.0)
     expect(result.positions[0]).toEqual(expect.objectContaining({
       coin: 'SOL',

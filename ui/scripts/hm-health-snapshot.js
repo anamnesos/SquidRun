@@ -242,6 +242,7 @@ function listJestTests(projectRoot, timeoutMs = 30000) {
           windowsHide: true,
           timeout: timeoutMs,
           maxBuffer: 16 * 1024 * 1024,
+          env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }),
         })
       : (process.platform === 'win32'
       ? execFileSync(windowsCmd, ['/d', '/s', '/c', 'npx jest --listTests'], {
@@ -522,13 +523,6 @@ function inspectSystemCapabilities(projectRoot, options = {}) {
     generatedAt: null,
     localModels: {
       enabled: false,
-      provider: 'ollama',
-      ollama: {
-        running: false,
-        reachable: false,
-        selectedModel: null,
-        error: 'not_detected',
-      },
       sleepExtraction: {
         enabled: false,
         available: false,
@@ -734,13 +728,10 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   }
 
   const localModels = snapshot.systemCapabilities?.localModels || {};
-  const ollama = localModels.ollama || {};
   const sleepExtraction = localModels.sleepExtraction || {};
   lines.push('');
   lines.push('LOCAL MODELS');
   lines.push(`- Feature Enabled: ${localModels.enabled === true ? 'yes' : 'no'}`);
-  lines.push(`- Ollama: ${ollama.running === true ? 'running' : 'unavailable'}${ollama.error ? ` (${ollama.error})` : ''}`);
-  lines.push(`- Selected Model: ${ollama.selectedModel || 'none'}`);
   lines.push(`- Sleep Extraction: path=${sleepExtraction.path || 'fallback'}, enabled=${sleepExtraction.enabled === true ? 'yes' : 'no'}, available=${sleepExtraction.available === true ? 'yes' : 'no'}${sleepExtraction.model ? `, model=${sleepExtraction.model}` : ''}`);
 
   return `${lines.join('\n')}\n`;

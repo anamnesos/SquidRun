@@ -6,6 +6,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: t
 
 const bracketManager = require('../modules/trading/bracket-manager');
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
+const manualStopOverrides = require('../modules/trading/manual-stop-overrides');
 const hmDefiExecute = require('./hm-defi-execute');
 const hyperliquidBracketManager = require('./hm-hyperliquid-bracket-manager');
 
@@ -53,6 +54,16 @@ function parseTrailingStopOptions(argv = hmDefiExecute.parseCliArgs()) {
     dryRun: Boolean(getOption(options, 'dry-run', false)),
     help: Boolean(getOption(options, 'help', false)),
   };
+}
+
+function normalizeTrailingStopParams(input = {}) {
+  const params = { ...parseTrailingStopOptions(), ...input };
+  params.asset = normalizeAsset(params.asset);
+  params.trailPct = toNumber(params.trailPct, NaN);
+  params.trailFraction = toTrailFraction(params.trailPct, NaN);
+  params.dryRun = Boolean(params.dryRun);
+  params.help = Boolean(params.help);
+  return params;
 }
 
 function resolveLivePrice(position = null, assetCtx = {}) {
@@ -150,7 +161,7 @@ function evaluateTrailingStopMove({
 }
 
 async function manageTrailingStop(input = {}, options = {}) {
-  const params = { ...parseTrailingStopOptions(), ...input };
+  const params = normalizeTrailingStopParams(input);
   if (!params.asset) {
     throw new Error('Trailing stop manager requires --asset');
   }
@@ -196,7 +207,11 @@ async function manageTrailingStop(input = {}, options = {}) {
   }
 
   const openOrders = await hmDefiExecute.withTimeout(
-    info.openOrders({ user: walletAddress }),
+    hyperliquidClient.getOpenOrders({
+      walletAddress,
+      infoClient: info,
+      requestPoolTtlMs: 8_000,
+    }),
     timeoutMs,
     'trailingStopOpenOrders'
   ).catch(() => []);
@@ -232,6 +247,20 @@ async function manageTrailingStop(input = {}, options = {}) {
 
   if (!decision.shouldMove) {
     return response;
+  }
+
+  const guard = manualStopOverrides.maybeBlockTrailingStopTighten({
+    asset: params.asset,
+    livePosition,
+    activeStopOrder,
+    candidateStop: newStop,
+  });
+  if (guard.blocked) {
+    return {
+      ...response,
+      reason: guard.reason,
+      manualStopOverride: guard.override,
+    };
   }
 
   response.action = params.dryRun ? 'dry_run' : 'replace_stop';
@@ -336,6 +365,7 @@ if (require.main === module) {
 
 module.exports = {
   parseTrailingStopOptions,
+  normalizeTrailingStopParams,
   toTrailFraction,
   formatHelpText,
   resolveLivePrice,

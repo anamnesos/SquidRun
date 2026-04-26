@@ -136,11 +136,11 @@ describe('oracle wake watchdog context injection', () => {
   test('bidirectional wake watchdog injects the same context into Oracle repokes', async () => {
     const nowMs = Date.parse('2026-04-19T05:20:00.000Z');
     jest.spyOn(Date, 'now').mockReturnValue(nowMs);
-    queryCommsJournalEntries.mockImplementation(({ senderRole }) => {
-      if (senderRole === 'architect') {
+    queryCommsJournalEntries.mockImplementation(({ senderRole, targetRole, direction }) => {
+      if (senderRole === 'architect' && targetRole === 'oracle' && direction === 'outbound') {
         return [{ sentAtMs: nowMs - (2 * 60 * 1000) }];
       }
-      if (senderRole === 'oracle') {
+      if (senderRole === 'oracle' && targetRole === 'architect' && direction === 'outbound') {
         return [{ sentAtMs: nowMs - (20 * 60 * 1000) }];
       }
       return [];
@@ -168,5 +168,34 @@ describe('oracle wake watchdog context injection', () => {
       expect.stringContaining('topMovers=ORDI/USD -33.0% @ 3.8765'),
       expect.any(Object)
     );
+  });
+
+  test('bidirectional wake watchdog suppresses architect peer-wakes when architect recently messaged oracle', async () => {
+    const nowMs = Date.parse('2026-04-19T05:20:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(nowMs);
+    queryCommsJournalEntries.mockImplementation(({ senderRole, targetRole, direction }) => {
+      if (senderRole === 'architect' && targetRole === 'oracle' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (60 * 1000) }];
+      }
+      if (senderRole === 'oracle' && targetRole === 'architect' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (2 * 60 * 1000) }];
+      }
+      return [];
+    });
+
+    const result = await runHeartbeatCycle({
+      statePath: bidirectionalStatePath,
+      watchRulesPath,
+      watchStatePath,
+      marketScannerStatePath,
+      staleDistancePct: 0.015,
+      oracleSilenceMs: 10 * 60 * 1000,
+      architectSilenceMs: 8 * 60 * 1000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.alerts).toEqual([]);
+    expect(sendAgentAlert).not.toHaveBeenCalled();
+    expect(result.state.architect.lastSeenAt).toBe(new Date(nowMs - (60 * 1000)).toISOString());
   });
 });

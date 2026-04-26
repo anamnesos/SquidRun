@@ -21,20 +21,26 @@ describe('executor Hyperliquid crypto behavior', () => {
     }, {
       broker: 'hyperliquid',
       dryRun: true,
+      recordJournal: false,
     });
 
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       status: 'dry_run',
+      broker: 'hyperliquid',
       payload: expect.objectContaining({
+        asset: 'ETH',
+        direction: 'SHORT',
+        closingPosition: false,
+        args: expect.arrayContaining(['--dry-run', 'trade', '--asset', 'ETH', '--direction', 'SHORT']),
+      }),
+      order: expect.objectContaining({
         symbol: 'ETH/USD',
         side: 'sell',
-        broker: 'hyperliquid',
-        direction: 'SHORT',
-        position_effect: 'open_short',
-        reduce_only: false,
+        type: 'market',
       }),
     }));
-    expect(result.payload.qty).toBeGreaterThan(0);
+    expect(result.payload.margin).toBeGreaterThan(0);
+    expect(result.order.qty).toBeGreaterThan(0);
   });
 });

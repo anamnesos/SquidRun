@@ -642,9 +642,61 @@ async function runSparkScan(options = {}) {
     watchlistPath: options.watchlistPath,
   });
 
-  const universeMarketData = Array.isArray(options.universeMarketData)
-    ? options.universeMarketData
-    : await hyperliquidClient.getUniverseMarketData(options).catch(() => []);
+  const universeProvided = Array.isArray(options.universeMarketData);
+  let universeMarketData;
+  let universeError = null;
+  if (universeProvided) {
+    universeMarketData = options.universeMarketData;
+  } else {
+    try {
+      const fetched = await hyperliquidClient.getUniverseMarketData(options);
+      if (!Array.isArray(fetched)) {
+        universeError = 'universe_not_array';
+        universeMarketData = [];
+      } else {
+        universeMarketData = fetched;
+      }
+    } catch (error) {
+      universeError = toText(error?.message, String(error || 'universe_fetch_failed'));
+      universeMarketData = [];
+    }
+  }
+
+  if (!universeProvided && (universeError || universeMarketData.length === 0)) {
+    // Fail loudly. Self-fetch failed or returned empty — do NOT mutate spark state,
+    // do NOT emit fire plans, do NOT fire alerts. Poisoning state here causes:
+    //   (1) all plans get ready:false because tradeableOnHyperliquid collapses,
+    //   (2) knownUniverseCoins gets wiped so the next scan treats every HL coin
+    //       as a brand-new listing and floods false hyperliquid_new_listing events.
+    const reason = universeError ? 'universe_fetch_failed' : 'universe_empty';
+    const warning = {
+      kind: 'hyperliquid_universe_unavailable',
+      reason,
+      error: universeError,
+    };
+    return {
+      ok: false,
+      degraded: true,
+      reason,
+      error: universeError,
+      scannedAt: now,
+      statePath,
+      eventsPath,
+      firePlansPath,
+      watchlistPath,
+      upbitListingCount: 0,
+      hyperliquidListingCount: 0,
+      tokenUnlockCount: 0,
+      newAlertEvents: [],
+      allCandidateEvents: [],
+      firePlans: [],
+      warnings: [warning],
+      warningMessage: `[LIVE SPARK] Degraded scan\n- Hyperliquid universe unavailable (${universeError || 'empty result'}); skipping alerts to avoid false negatives. State preserved.`,
+      alertMessage: '',
+      tokenomist: null,
+    };
+  }
+
   const universeByTicker = buildUniverseByTicker(universeMarketData);
 
   const [upbitNotices, tokenomistResult] = await Promise.all([

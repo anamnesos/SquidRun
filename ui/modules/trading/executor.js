@@ -239,10 +239,15 @@ async function resolveHyperliquidPositionContext(input = {}, options = {}) {
     options.account?.openPositions,
   ];
   const ticker = String(input.ticker || input.symbol || '').trim().toUpperCase();
+  let sawExplicitCandidateCollection = false;
   for (const candidate of candidateCollections) {
     if (!Array.isArray(candidate)) continue;
+    sawExplicitCandidateCollection = true;
     const match = findMatchingHyperliquidPosition(candidate, ticker);
     if (match) return match;
+  }
+  if (sawExplicitCandidateCollection) {
+    return null;
   }
   const positions = await hyperliquidClient.getOpenPositions(options);
   return findMatchingHyperliquidPosition(positions, ticker);
@@ -814,6 +819,8 @@ async function executeConsensusTrade(input = {}, options = {}) {
       ticker: trade.ticker,
       direction: executionDirection,
       shares,
+      account,
+      hyperliquidOpenPositions: account.openPositions,
       assetClass: trade.assetClass,
       referencePrice: trade.price,
       stopLossPrice: input.riskCheckDetail?.stopLossPrice ?? riskCheck.stopLossPrice,

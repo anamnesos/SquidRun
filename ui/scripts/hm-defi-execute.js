@@ -13,7 +13,9 @@ const path = require('path');
 const crypto = require('crypto');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 const { resolveCoordPath } = require('../config');
+const { withManualHyperliquidActivity } = require('../modules/trading/hyperliquid-manual-activity');
 const bracketManager = require('../modules/trading/bracket-manager');
+const agentPositionAttribution = require('../modules/trading/agent-position-attribution');
 
 // ── Contract addresses ──────────────────────────────────────────────
 const CONTRACTS = {
@@ -41,6 +43,7 @@ const TRADE_CONFIG = {
   volatilityAtrPeriod: 14,
 };
 const HYPERLIQUID_MIN_ORDER_NOTIONAL_USD = 10;
+const FRESH_CLEARINGHOUSE_STATE_MAX_AGE_MS = 10 * 1000;
 
 const isDryRun = process.argv.includes('--dry-run');
 const noStopLoss = process.argv.includes('--no-stop');
@@ -147,14 +150,92 @@ async function paceHyperliquidOrder(executionOptions = {}) {
 }
 
 async function withTimeout(promise, ms = DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS, label = 'hyperliquid_call') {
-  return Promise.race([
-    Promise.resolve(promise),
-    new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`${label} timed out after ${ms}ms`));
-      }, Math.max(1, Number(ms) || DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS));
-    }),
-  ]);
+  const timeoutMs = Math.max(1, Number(ms) || DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS);
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          timeoutId = null;
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timeoutId?.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+  }
+}
+
+function resolveRateLimitBackoffMs(executionOptions = {}, attempt = 0) {
+  const baseDelayMs = toNonNegativeInteger(executionOptions.retryDelayMs, 500) || 500;
+  const jitterMs = toNonNegativeInteger(executionOptions.jitterMs, 250);
+  // Increased from 5000ms to 15000ms: observed HL rate-limit windows run 10-30s+;
+  // 5s cap meant all retries drained inside the window and bailed.
+  const maxDelayMs = toNonNegativeInteger(executionOptions.maxDelayMs, 15000) || 15000;
+  const randomValue = typeof executionOptions.randomFn === 'function'
+    ? Number(executionOptions.randomFn())
+    : Math.random();
+  const safeRandom = Number.isFinite(randomValue) ? Math.min(Math.max(randomValue, 0), 1) : 0;
+  const exponentialDelayMs = Math.min(baseDelayMs * (2 ** Math.max(0, attempt)), maxDelayMs);
+  const jitterDelayMs = jitterMs > 0 ? Math.round(safeRandom * jitterMs) : 0;
+  return exponentialDelayMs + jitterDelayMs;
+}
+
+async function executeHyperliquidInfoCall(factory, executionOptions = {}) {
+  if (typeof factory !== 'function') {
+    throw new Error('executeHyperliquidInfoCall requires a call factory function');
+  }
+  const timeoutMs = toNonNegativeInteger(
+    executionOptions.timeoutMs,
+    DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS
+  ) || DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS;
+  const label = String(executionOptions.label || 'hyperliquidInfo');
+  // Increased from 3 to 7: 8 attempts with exp backoff+jitter up to 15s cap gives
+  // ~75s total retry window, enough for a typical HL rate-limit window to clear.
+  const maxRetries = toNonNegativeInteger(executionOptions.maxRetries, 7);
+  const callerStack = captureCallerStack(executionOptions);
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    appendTradingWriteAudit({
+      type: 'hyperliquid_info_attempt',
+      label,
+      attempt,
+      maxRetries,
+      timeoutMs,
+      callerStack,
+    });
+    try {
+      const result = await withTimeout(factory(), timeoutMs, label);
+      appendTradingWriteAudit({
+        type: 'hyperliquid_info_result',
+        label,
+        attempt,
+        callerStack,
+      });
+      return result;
+    } catch (error) {
+      appendTradingWriteAudit({
+        type: 'hyperliquid_info_error',
+        label,
+        attempt,
+        error: error?.message || String(error),
+        callerStack,
+      });
+      if (!isRateLimitError(error) || attempt >= maxRetries) {
+        throw error;
+      }
+      const backoffMs = resolveRateLimitBackoffMs(executionOptions, attempt);
+      warn(`${label} rate-limited; retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
+      await sleep(backoffMs);
+    }
+  }
+
+  throw new Error(`${label} failed without returning a result`);
 }
 
 async function executeHyperliquidOrder(exchange, payload, executionOptions = {}) {
@@ -165,7 +246,9 @@ async function executeHyperliquidOrder(exchange, payload, executionOptions = {})
     DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS
   ) || DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS;
   const label = String(executionOptions.label || 'exchangeOrder');
-  const maxRetries = toNonNegativeInteger(executionOptions.maxRetries, retryDelayMs > 0 ? 2 : 0);
+  // Bumped 4 -> 7: same reasoning as executeHyperliquidInfoCall — 5s backoff cap
+  // was too short to outlast a real HL rate-limit window.
+  const maxRetries = toNonNegativeInteger(executionOptions.maxRetries, 7);
   const callerStack = captureCallerStack(executionOptions);
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -220,34 +303,98 @@ async function executeHyperliquidCancel(exchange, payload, executionOptions = {}
     DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS
   ) || DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS;
   const label = String(executionOptions.label || 'exchangeCancel');
+  const maxRetries = toNonNegativeInteger(executionOptions.maxRetries, 7);
   const callerStack = captureCallerStack(executionOptions);
-  appendTradingWriteAudit({
-    type: 'hyperliquid_cancel_attempt',
-    label,
-    timeoutMs,
-    payload,
-    callerStack,
-  });
-  try {
-    const result = await withTimeout(exchange.cancel(payload), timeoutMs, label);
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     appendTradingWriteAudit({
-      type: 'hyperliquid_cancel_result',
+      type: 'hyperliquid_cancel_attempt',
       label,
+      attempt,
+      maxRetries,
+      timeoutMs,
       payload,
-      result,
       callerStack,
     });
-    return result;
-  } catch (error) {
-    appendTradingWriteAudit({
-      type: 'hyperliquid_cancel_error',
-      label,
-      payload,
-      error: error?.message || String(error),
-      callerStack,
-    });
-    throw error;
+    try {
+      const result = await withTimeout(exchange.cancel(payload), timeoutMs, label);
+      appendTradingWriteAudit({
+        type: 'hyperliquid_cancel_result',
+        label,
+        attempt,
+        payload,
+        result,
+        callerStack,
+      });
+      return result;
+    } catch (error) {
+      appendTradingWriteAudit({
+        type: 'hyperliquid_cancel_error',
+        label,
+        attempt,
+        payload,
+        error: error?.message || String(error),
+        callerStack,
+      });
+      if (!isRateLimitError(error) || attempt >= maxRetries) {
+        throw error;
+      }
+      const backoffMs = resolveRateLimitBackoffMs(executionOptions, attempt);
+      warn(`${label} rate-limited; retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
+      await sleep(backoffMs);
+    }
   }
+  throw new Error(`${label} exhausted ${maxRetries + 1} attempts on rate-limit`);
+}
+
+async function executeHyperliquidLeverageUpdate(exchange, payload, executionOptions = {}) {
+  const timeoutMs = toNonNegativeInteger(
+    executionOptions.timeoutMs,
+    DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS
+  ) || DEFAULT_HYPERLIQUID_CALL_TIMEOUT_MS;
+  const label = String(executionOptions.label || 'updateLeverage');
+  const maxRetries = toNonNegativeInteger(executionOptions.maxRetries, 3);
+  const callerStack = captureCallerStack(executionOptions);
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    appendTradingWriteAudit({
+      type: 'hyperliquid_leverage_attempt',
+      label,
+      attempt,
+      maxRetries,
+      timeoutMs,
+      payload,
+      callerStack,
+    });
+    try {
+      const result = await withTimeout(exchange.updateLeverage(payload), timeoutMs, label);
+      appendTradingWriteAudit({
+        type: 'hyperliquid_leverage_result',
+        label,
+        attempt,
+        payload,
+        result,
+        callerStack,
+      });
+      return result;
+    } catch (error) {
+      appendTradingWriteAudit({
+        type: 'hyperliquid_leverage_error',
+        label,
+        attempt,
+        payload,
+        error: error?.message || String(error),
+        callerStack,
+      });
+      if (!isRateLimitError(error) || attempt >= maxRetries) {
+        throw error;
+      }
+      const backoffMs = resolveRateLimitBackoffMs(executionOptions, attempt);
+      warn(`${label} rate-limited; retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
+      await sleep(backoffMs);
+    }
+  }
+
+  throw new Error(`${label} failed without returning a result`);
 }
 
 function parseCliArgs(argv = process.argv.slice(2)) {
@@ -307,6 +454,63 @@ function toPositiveNumber(value, fallback = null) {
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function toTimestampMs(value) {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resolveClearinghouseSnapshotCachedAtMs(executionSnapshot = {}) {
+  return toTimestampMs(
+    executionSnapshot?.clearinghouseStateCachedAt
+    || executionSnapshot?.clearinghouseState?.cachedAt
+    || executionSnapshot?.cachedAt
+  );
+}
+
+function isClearinghouseSnapshotFresh(executionSnapshot = {}, {
+  nowMs = Date.now(),
+  maxAgeMs = FRESH_CLEARINGHOUSE_STATE_MAX_AGE_MS,
+} = {}) {
+  if (!executionSnapshot?.clearinghouseState) return false;
+  const cachedAtMs = resolveClearinghouseSnapshotCachedAtMs(executionSnapshot);
+  if (!cachedAtMs) return false;
+  const ageMs = Number(nowMs) - cachedAtMs;
+  return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= maxAgeMs;
+}
+
+async function resolveFreshClearinghouseState({
+  info,
+  walletAddress,
+  executionSnapshot = {},
+  infoExecutionOptions = {},
+  maxAgeMs = FRESH_CLEARINGHOUSE_STATE_MAX_AGE_MS,
+  nowMs = Date.now(),
+} = {}) {
+  if (isClearinghouseSnapshotFresh(executionSnapshot, { nowMs, maxAgeMs })) {
+    return executionSnapshot.clearinghouseState;
+  }
+  if (executionSnapshot?.clearinghouseState) {
+    const cachedAtMs = resolveClearinghouseSnapshotCachedAtMs(executionSnapshot);
+    warn(
+      'Ignoring stale executionSnapshot.clearinghouseState before order placement'
+      + `${cachedAtMs ? `; cachedAt=${new Date(cachedAtMs).toISOString()}` : '; missing cachedAt'}`
+    );
+  }
+  try {
+    return await executeHyperliquidInfoCall(
+      () => info.clearinghouseState({ user: walletAddress }),
+      {
+        ...infoExecutionOptions,
+        label: 'freshClearinghouseState',
+      }
+    );
+  } catch (error) {
+    throw new Error(`Fresh clearinghouseState required before Hyperliquid order placement: ${error?.message || error}`);
+  }
 }
 
 function clamp(value, min, max) {
@@ -391,6 +595,7 @@ function assertStopLossBeforeLiquidation({
   }
   return true;
 }
+
 function constrainStopPriceWithinLiquidationBuffer({
   stopPrice,
   entryPrice,
@@ -690,6 +895,17 @@ function resolveTradeClientOrderId(tradeRequest = {}, tradePlan = {}, options = 
   return null;
 }
 
+function buildAllMidsFromUniverseMarketData(marketData = []) {
+  const mids = {};
+  for (const entry of Array.isArray(marketData) ? marketData : []) {
+    const coin = normalizeAssetName(entry?.coin || entry?.ticker || '', '');
+    const price = Number(entry?.price);
+    if (!coin || !Number.isFinite(price) || price <= 0) continue;
+    mids[coin] = String(price);
+  }
+  return mids;
+}
+
 function normalizeHyperliquidOrderStatus(value) {
   return String(value || '').trim().toLowerCase();
 }
@@ -752,12 +968,98 @@ function extractHyperliquidOrderId(result = null) {
   return null;
 }
 
+function readTradingWriteAuditEntries(logPath = TRADING_WRITES_LOG_PATH, limit = 500) {
+  const resolvedPath = String(logPath || TRADING_WRITES_LOG_PATH || '').trim();
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+    return [];
+  }
+  try {
+    const content = fs.readFileSync(resolvedPath, 'utf8');
+    const lines = content.split(/\r?\n/u).filter(Boolean);
+    const sliced = limit > 0 ? lines.slice(-limit) : lines;
+    return sliced.map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function isSuccessfulHyperliquidAuditResult(result = null) {
+  const normalizedStatus = normalizeHyperliquidOrderStatus(result?.status);
+  return !normalizedStatus || normalizedStatus === 'ok' || normalizedStatus === 'success';
+}
+
+function findLatestActiveHyperliquidTriggerOrderFromAudit({
+  logPath = TRADING_WRITES_LOG_PATH,
+  entries = null,
+  assetIndex = null,
+  tpsl = 'sl',
+  limit = 500,
+} = {}) {
+  const normalizedTpsl = String(tpsl || '').trim().toLowerCase();
+  const resolvedEntries = Array.isArray(entries) ? entries : readTradingWriteAuditEntries(logPath, limit);
+  const canceledOrderIds = new Set();
+
+  for (let index = resolvedEntries.length - 1; index >= 0; index -= 1) {
+    const entry = resolvedEntries[index];
+    if (!entry || typeof entry !== 'object') continue;
+
+    if (entry.type === 'hyperliquid_cancel_result' && isSuccessfulHyperliquidAuditResult(entry.result)) {
+      const cancels = Array.isArray(entry?.payload?.cancels) ? entry.payload.cancels : [];
+      for (const cancel of cancels) {
+        if (assetIndex != null && Number(cancel?.a) !== Number(assetIndex)) continue;
+        if (cancel?.o != null) {
+          canceledOrderIds.add(String(cancel.o).trim());
+        }
+      }
+      continue;
+    }
+
+    if (entry.type !== 'hyperliquid_order_result' || !isSuccessfulHyperliquidAuditResult(entry.result)) {
+      continue;
+    }
+
+    const orders = Array.isArray(entry?.payload?.orders) ? entry.payload.orders : [];
+    const matchingOrder = orders.find((order) => {
+      if (assetIndex != null && Number(order?.a) !== Number(assetIndex)) return false;
+      const triggerType = String(order?.t?.trigger?.tpsl || '').trim().toLowerCase();
+      return normalizedTpsl ? triggerType === normalizedTpsl : true;
+    });
+    if (!matchingOrder) continue;
+
+    const oid = extractHyperliquidOrderId(entry.result);
+    if (oid == null) continue;
+    const normalizedOid = String(oid).trim();
+    if (!normalizedOid || canceledOrderIds.has(normalizedOid)) continue;
+
+    return {
+      oid,
+      label: entry.label || null,
+      timestamp: entry.timestamp || null,
+      order: matchingOrder,
+      entry,
+    };
+  }
+
+  return null;
+}
+
 async function getExistingHyperliquidOrderByCloid(info, walletAddress, cloid) {
   if (!info || typeof info.orderStatus !== 'function' || !walletAddress || !cloid) {
     return null;
   }
   try {
-    const status = await info.orderStatus({ user: walletAddress, oid: cloid });
+    const status = await executeHyperliquidInfoCall(
+      () => info.orderStatus({ user: walletAddress, oid: cloid }),
+      {
+        label: 'orderStatus',
+      }
+    );
     if (!status || status.status === 'unknownOid') {
       return null;
     }
@@ -771,6 +1073,33 @@ async function getExistingHyperliquidOrderByCloid(info, walletAddress, cloid) {
   } catch {
     return null;
   }
+}
+
+function extractFilledHyperliquidOrder(result = null) {
+  const queue = [result];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object') continue;
+
+    if (current.filled && typeof current.filled === 'object') {
+      const size = Number(current.filled.totalSz || current.filled.sz || 0);
+      const entryPx = Number(current.filled.avgPx || current.filled.px || 0);
+      if (Number.isFinite(size) && size > 0 && Number.isFinite(entryPx) && entryPx > 0) {
+        return {
+          absSize: size,
+          entryPx,
+          oid: current.filled.oid != null ? current.filled.oid : null,
+        };
+      }
+    }
+
+    if (Array.isArray(current.statuses)) queue.push(...current.statuses);
+    if (Array.isArray(current.responses)) queue.push(...current.responses);
+    if (Array.isArray(current.orders)) queue.push(...current.orders);
+    if (current.response) queue.push(current.response);
+    if (current.data) queue.push(current.data);
+  }
+  return null;
 }
 
 function findAssetMeta(meta, assetName) {
@@ -873,7 +1202,10 @@ async function cancelAssetOrders({
   if (typeof info?.openOrders !== 'function') {
     return [];
   }
-  const openOrders = await info.openOrders({ user: walletAddress });
+  const openOrders = await getHyperliquidClientModule().getOpenOrders({
+    walletAddress,
+    infoClient: info,
+  });
   const cancelled = [];
   for (const order of Array.isArray(openOrders) ? openOrders : []) {
     if (normalizeAssetName(order?.coin, '') !== normalizeAssetName(asset, '')) {
@@ -1642,12 +1974,32 @@ async function openHyperliquidPosition(options = {}) {
 
   const runtime = await resolveHyperliquidRuntime(options);
   const { walletAddress, info, exchange } = runtime;
+  const tradeTicker = `${tradeRequest.asset}/USD`;
+  const executionSnapshot = options.executionSnapshot && typeof options.executionSnapshot === 'object'
+    ? options.executionSnapshot
+    : {};
+  const infoExecutionOptions = {
+    timeoutMs: options.hyperliquidCallTimeoutMs,
+    retryDelayMs: options.infoRetryDelayMs,
+    jitterMs: options.infoJitterMs,
+    maxDelayMs: options.infoMaxDelayMs,
+    maxRetries: options.infoMaxRetries,
+  };
 
-  const clearinghouse = await withTimeout(
-    info.clearinghouseState({ user: walletAddress }),
-    options.hyperliquidCallTimeoutMs,
-    'clearinghouseState'
-  );
+  let clearinghouse;
+  try {
+    clearinghouse = await resolveFreshClearinghouseState({
+      info,
+      walletAddress,
+      executionSnapshot,
+      infoExecutionOptions,
+      maxAgeMs: options.freshClearinghouseMaxAgeMs,
+      nowMs: options.nowMs,
+    });
+  } catch (error) {
+    err(error?.message || String(error));
+    return null;
+  }
   const availableBalance = parseFloat(clearinghouse.marginSummary.accountValue);
   log(`Hyperliquid account value: $${availableBalance.toFixed(2)}`);
 
@@ -1656,8 +2008,16 @@ async function openHyperliquidPosition(options = {}) {
     return null;
   }
 
-  const meta = await withTimeout(info.meta(), options.hyperliquidCallTimeoutMs, 'meta');
-  const resolvedAsset = findAssetMeta(meta, tradeRequest.asset);
+  const meta = executionSnapshot.meta || null;
+  const resolvedAsset = executionSnapshot.resolvedAsset
+    || findAssetMeta(meta, tradeRequest.asset)
+    || findAssetMeta(await executeHyperliquidInfoCall(
+      () => info.meta(),
+      {
+        ...infoExecutionOptions,
+        label: 'meta',
+      }
+    ), tradeRequest.asset);
   if (!resolvedAsset) {
     err(`${tradeRequest.asset} not found in Hyperliquid universe`);
     return null;
@@ -1668,7 +2028,13 @@ async function openHyperliquidPosition(options = {}) {
   const executionLeverage = Math.min(requestedLeverage, maxAllowedLeverage);
   const assetSzDecimals = resolveAssetSzDecimals(resolvedAsset, 4);
 
-  const mids = await withTimeout(info.allMids(), options.hyperliquidCallTimeoutMs, 'allMids');
+  const mids = executionSnapshot.allMids || await executeHyperliquidInfoCall(
+    () => info.allMids(),
+    {
+      ...infoExecutionOptions,
+      label: 'allMids',
+    }
+  );
   const assetPrice = parseFloat(mids[tradeRequest.asset]);
   if (!Number.isFinite(assetPrice) || assetPrice <= 0) {
     err(`Could not resolve ${tradeRequest.asset} market price`);
@@ -1789,14 +2155,22 @@ async function openHyperliquidPosition(options = {}) {
       state: { lastOrderAt: 0 },
     };
     if (clientOrderId) {
-      const existingOrder = await withTimeout(
-        getExistingHyperliquidOrderByCloid(info, walletAddress, clientOrderId),
-        options.hyperliquidCallTimeoutMs,
-        'orderStatus'
-      );
+      const existingOrder = options.skipDuplicateCheck === true
+        ? null
+        : await withTimeout(
+          getExistingHyperliquidOrderByCloid(info, walletAddress, clientOrderId),
+          options.hyperliquidCallTimeoutMs,
+          'orderStatus'
+        );
       if (existingOrder && isBlockingExistingHyperliquidOrder(existingOrder.status)) {
         warn(`Existing Hyperliquid order found for ${clientOrderId} with status ${existingOrder.status}; skipping duplicate entry broadcast.`);
-        const updatedClearinghouse = await info.clearinghouseState({ user: walletAddress });
+        const updatedClearinghouse = await executeHyperliquidInfoCall(
+          () => info.clearinghouseState({ user: walletAddress }),
+          {
+            ...infoExecutionOptions,
+            label: 'duplicateCheckClearinghouseState',
+          }
+        );
         const existingPosition = extractOpenHyperliquidPosition(updatedClearinghouse, tradePlan.asset);
         return {
           size: existingPosition?.absSize || 0,
@@ -1818,11 +2192,18 @@ async function openHyperliquidPosition(options = {}) {
     }
 
     log(`Setting ${tradePlan.leverage}x isolated leverage on ${tradePlan.asset}...`);
-    await withTimeout(exchange.updateLeverage({
+    await executeHyperliquidLeverageUpdate(exchange, {
       asset: assetIndex,
       isCross: false,
       leverage: tradePlan.leverage,
-    }), options.hyperliquidCallTimeoutMs, 'updateLeverage');
+    }, {
+      timeoutMs: options.hyperliquidCallTimeoutMs,
+      label: 'updateLeverage',
+      maxRetries: 3,
+      retryDelayMs: toNonNegativeInteger(tradeRequest.retryDelayMs, 750) || 750,
+      jitterMs: 350,
+      maxDelayMs: 4000,
+    });
     log('Leverage set');
 
     log(`Opening ${tradePlan.direction.toLowerCase()}: ${tradePlan.size} ${tradePlan.asset} @ limit $${formatPrice(tradePlan.limitPrice, tradePlan.entryPrice, tradePlan.szDecimals)} (IOC)...`);
@@ -1843,12 +2224,29 @@ async function openHyperliquidPosition(options = {}) {
     });
     log(`Order result: ${JSON.stringify(result)}`);
 
-    const updatedClearinghouse = await withTimeout(
-      info.clearinghouseState({ user: walletAddress }),
-      options.hyperliquidCallTimeoutMs,
-      'postEntryClearinghouseState'
-    );
-    const filledPosition = extractOpenHyperliquidPosition(updatedClearinghouse, tradePlan.asset);
+    const filledOrder = extractFilledHyperliquidOrder(result);
+    let filledPosition = null;
+    if (filledOrder) {
+      filledPosition = {
+        coin: tradePlan.asset,
+        absSize: filledOrder.absSize,
+        entryPx: filledOrder.entryPx,
+        isLong: tradePlan.isLong,
+        side: tradePlan.direction,
+        signedSize: tradePlan.isLong ? filledOrder.absSize : -filledOrder.absSize,
+        liquidationPx: null,
+      };
+    }
+    if (!filledPosition) {
+      const updatedClearinghouse = await executeHyperliquidInfoCall(
+        () => info.clearinghouseState({ user: walletAddress }),
+        {
+          ...infoExecutionOptions,
+          label: 'postEntryClearinghouseState',
+        }
+      );
+      filledPosition = extractOpenHyperliquidPosition(updatedClearinghouse, tradePlan.asset);
+    }
     if (!filledPosition || filledPosition.absSize <= 0) {
       warn(`No ${tradePlan.asset} fill detected after entry IOC. Skipping stop/TP placement.`);
       return null;
@@ -1858,6 +2256,54 @@ async function openHyperliquidPosition(options = {}) {
     const actualSize = filledPosition.absSize;
     const actualDirection = filledPosition.side;
     const liveEntryPrice = filledPosition.entryPx || tradePlan.entryPrice;
+    const actualNotional = actualSize * liveEntryPrice;
+    if (!Number.isFinite(actualNotional) || actualNotional < HYPERLIQUID_MIN_ORDER_NOTIONAL_USD) {
+      warn(
+        `Rejecting undersized live fill on ${tradePlan.asset}: actual notional $${Number.isFinite(actualNotional) ? actualNotional.toFixed(4) : '0.0000'} is below minimum $${HYPERLIQUID_MIN_ORDER_NOTIONAL_USD.toFixed(2)}.`
+      );
+      try {
+        await closeExistingHyperliquidPosition({
+          info,
+          exchange,
+          walletAddress,
+          asset: tradePlan.asset,
+          assetIndex,
+          position: filledPosition,
+          midPrice: liveEntryPrice,
+          szDecimals: tradePlan.szDecimals,
+          retryDelayMs: toNonNegativeInteger(tradeRequest.retryDelayMs, 750) || 750,
+          timeoutMs: options.hyperliquidCallTimeoutMs,
+        });
+      } catch (dustCloseError) {
+        warn(`Failed to auto-close undersized ${tradePlan.asset} fill: ${dustCloseError?.message || dustCloseError}`);
+      }
+      return null;
+    }
+    const attributedOwner = String(
+      options.originatingAgentId
+      || agentPositionAttribution.resolveAgentPositionOwnership([
+        { ticker: tradeTicker, coin: tradePlan.asset },
+      ]).ownersByTicker[tradeTicker]
+      || ''
+    ).trim().toLowerCase();
+    if (attributedOwner) {
+      agentPositionAttribution.upsertOpenPosition({
+        ticker: tradeTicker,
+        agentId: attributedOwner,
+        direction: actualDirection,
+        entryPrice: liveEntryPrice,
+        currentSize: actualSize,
+        initialSize: actualSize,
+        marginUsd: tradePlan.collateral,
+        leverage: tradePlan.leverage,
+        strategyLane: String(options.strategyLane || '').trim(),
+        clientOrderId,
+        source: String(options.attributionSource || 'hm-defi-execute').trim(),
+        reasoning: String(options.attributionReasoning || '').trim(),
+        openedAt: new Date().toISOString(),
+        walletAddress,
+      });
+    }
     const liveBracket = bracketManager.buildBracketPlan({
       asset: tradePlan.asset,
       direction: actualDirection,
@@ -2098,7 +2544,16 @@ async function main(argv = parseCliArgs()) {
 }
 
 if (require.main === module) {
-  main();
+  withManualHyperliquidActivity(
+    () => main(),
+    {
+      command: 'hm-defi-execute',
+      caller: process.env.SQUIDRUN_HYPERLIQUID_CALLER || 'manual',
+      metadata: {
+        argv: process.argv.slice(2),
+      },
+    }
+  );
 }
 
 module.exports = {
@@ -2111,6 +2566,8 @@ module.exports = {
   buildClientOrderIdFingerprint,
   resolveTradeClientOrderId,
   extractHyperliquidOrderId,
+  readTradingWriteAuditEntries,
+  findLatestActiveHyperliquidTriggerOrderFromAudit,
   getExistingHyperliquidOrderByCloid,
   isBlockingExistingHyperliquidOrder,
   toPositiveNumber,
@@ -2132,6 +2589,7 @@ module.exports = {
   buildVolatilitySnapshot,
   resolveVolatilitySnapshot,
   withTimeout,
+  executeHyperliquidInfoCall,
   parseTradeOptions,
   formatHelpText,
   findAssetMeta,

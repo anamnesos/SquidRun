@@ -82,6 +82,14 @@ if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'eunbyeol') {
   process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
   process.env.SQUIDRUN_HYPERLIQUID_SQUEEZE_DETECTOR = '0';
   process.env.SQUIDRUN_HYPERLIQUID_MONITOR = '0';
+  process.env.SQUIDRUN_SPARK_MONITOR_AUTOMATION = '0';
+  process.env.SQUIDRUN_TOKENOMIST_AUTOMATION = '0';
+  process.env.SQUIDRUN_LAUNCH_RADAR_AUTOMATION = '0';
+  process.env.SQUIDRUN_SAYLOR_WATCHER = '0';
+  process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = '0';
+  process.env.SQUIDRUN_TRADING_AUTOMATION = '0';
+  process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION = '0';
+  process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = '0';
   process.env.HYPERLIQUID_WALLET_ADDRESS = '';
   process.env.HYPERLIQUID_ADDRESS = '';
   process.env.POLYMARKET_FUNDER_ADDRESS = '';
@@ -2419,6 +2427,8 @@ class SupervisorDaemon {
       };
     this.marketScannerEnabled = options.marketScannerEnabled !== false
       && process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION !== '0';
+    this.marketScannerImmediateConsultationEnabled = options.marketScannerImmediateConsultationEnabled === true
+      || process.env.SQUIDRUN_MARKET_SCANNER_IMMEDIATE_CONSULTATION === '1';
     this.marketScannerIntervalMinutes = Math.max(
       30,
       Math.floor(Number(options.marketScannerIntervalMinutes) || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES)
@@ -2733,7 +2743,8 @@ class SupervisorDaemon {
       return initResult;
     }
 
-    this.logger.info(`Supervisor daemon started (pid=${process.pid}, db=${this.store.dbPath})`);
+    const bootedProfile = String(process.env.SQUIDRUN_PROFILE || 'unset').toLowerCase() || 'unset';
+    this.logger.info(`Supervisor daemon started (pid=${process.pid}, profile=${bootedProfile}, db=${this.store.dbPath})`);
     this.startMemoryIndexWatcher();
     this.startWakeSignalWatcher();
     if (this.smartMoneyScanner) {
@@ -5154,7 +5165,13 @@ class SupervisorDaemon {
         : [];
       const triggerDecision = this.shouldTriggerImmediateMarketScannerConsultation(urgentMovers, phaseResult.scannedAt);
       summary.immediateConsultationEligibility = triggerDecision.reason;
-      if (triggerDecision.shouldTrigger) {
+      if (triggerDecision.shouldTrigger && !this.marketScannerImmediateConsultationEnabled) {
+        summary.immediateConsultation = {
+          ok: false,
+          skipped: true,
+          reason: 'market_scanner_immediate_consultation_disabled',
+        };
+      } else if (triggerDecision.shouldTrigger) {
         const nowIso = new Date().toISOString();
         const urgentSymbols = urgentMovers.map((entry) => entry.ticker).filter(Boolean);
         this.marketScannerLastTrigger = {
@@ -8789,7 +8806,6 @@ class SupervisorDaemon {
       },
       localModels: this.lastSystemCapabilities?.localModels || {
         enabled: false,
-        provider: 'ollama',
         sleepExtraction: {
           enabled: false,
           available: false,

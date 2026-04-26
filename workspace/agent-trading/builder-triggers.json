@@ -1,9 +1,9 @@
 {
   "version": 1,
   "agentId": "builder",
-  "enabled": true,
+  "enabled": false,
   "timer": {
-    "enabled": true,
+    "enabled": false,
     "intervalMinutes": 15
   },
   "eventTriggers": [

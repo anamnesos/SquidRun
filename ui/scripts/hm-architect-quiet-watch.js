@@ -11,6 +11,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: t
 const { resolveCoordPath } = require('../config');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const agentPositionAttribution = require('../modules/trading/agent-position-attribution');
+const bracketManager = require('../modules/trading/bracket-manager');
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
 const hardRiskGuard = require('../modules/trading/hard-risk-guard');
 const macroRiskGate = require('../modules/trading/macro-risk-gate');
@@ -23,13 +24,14 @@ const DEFAULT_STATE_PATH = resolveCoordPath(path.join('runtime', 'architect-quie
 const DEFAULT_CANDIDATE_BOARD_PATH = resolveCoordPath(path.join('runtime', 'candidate-board.json'), { forWrite: true });
 const DEFAULT_POWWOW_REQUESTS_DIR = resolveCoordPath(path.join('runtime', 'powwow-requests'), { forWrite: true });
 const DEFAULT_POWWOW_RESULTS_PATH = resolveCoordPath(path.join('runtime', 'powwow-results.jsonl'), { forWrite: true });
-const DEFAULT_LOOP_INTERVAL_MS = 60 * 1000;
+const DEFAULT_LOOP_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_POSITION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const ACTIVE_POSITION_CHECK_INTERVAL_MS = 60 * 1000;
 const DEFAULT_SCALP_SCAN_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_SETUP_SCAN_INTERVAL_MS = 3 * 60 * 1000;
 const DEFAULT_PACE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_MACRO_CHECK_INTERVAL_MS = 5 * 60 * 1000;
-const HEARTBEAT_STALE_AFTER_MS = 5 * 60 * 1000;
+const HEARTBEAT_STALE_AFTER_MS = 12 * 60 * 1000;
 const POSITION_MOVE_ALERT_PCT = 0.003;
 const NEAR_LEVEL_PCT = 0.01;
 const PEAK_GIVEBACK_PCT = 0.30;
@@ -833,6 +835,8 @@ function buildPositionAlert(position = {}, livePosition = {}, evaluation = {}) {
     `(ARCH WATCH): ${toText(normalizedPosition.ticker, toText(normalizedLivePosition.ticker, 'UNKNOWN/USD'))} ${toText(normalizedPosition.side, normalizedLivePosition?.side || '').toUpperCase()} check`,
     `price=${round(metrics.currentPrice, 6)} pnl=${formatUsd(metrics.currentPnlUsd)} peak=${formatUsd(metrics.peakUnrealizedPnlUsd)} margin_gain=${formatPct(metrics.gainMarginPct)}`,
     `stop=${normalizedPosition.stopPrice || 'n/a'} tp1=${normalizedPosition.takeProfit1Price || 'n/a'} tp2=${normalizedPosition.takeProfit2Price || 'n/a'}`,
+    `fast_reduce=node ui/scripts/hm-defi-close.js --asset ${toText(normalizedLivePosition.coin, '').toUpperCase()} --close-pct 50`,
+    `fast_close=node ui/scripts/hm-defi-close.js --asset ${toText(normalizedLivePosition.coin, '').toUpperCase()} --close-pct 100`,
     triggerText,
   ].join(' | ');
 }
@@ -860,6 +864,19 @@ function buildPositionClosedAlert(position = {}, previousState = {}) {
     `last_pnl=${formatUsd(previousState.currentPnlUsd)}`,
     `action=${toText(position.closeAction, 'position closed for any reason, verify whether stop fired and reassess immediately')}`,
   ].join(' | ');
+}
+
+function resolvePositionCadenceMs(config = {}, state = {}) {
+  const configuredMs = Math.max(
+    1_000,
+    toNumber(config?.cadences?.positionCheckMs, DEFAULT_POSITION_CHECK_INTERVAL_MS)
+  );
+  const trackedPositions = Object.values(state?.positions || {});
+  const hasOpenPosition = trackedPositions.some((position) => position?.wasOpen === true);
+  if (!hasOpenPosition) {
+    return configuredMs;
+  }
+  return Math.min(configuredMs, ACTIVE_POSITION_CHECK_INTERVAL_MS);
 }
 
 function computeFlatteningMetrics(closes = []) {
@@ -1250,13 +1267,11 @@ function normalizeLivePosition(position = {}) {
 
 async function fetchPositionContext(runtime, config) {
   const [account, positionsRaw, universe] = await Promise.all([
-    hyperliquidClient.getAccountSnapshot({ walletAddress: runtime.walletAddress, disableRequestPool: true, requestPoolTtlMs: 0 }),
-    hyperliquidClient.getOpenPositions({ walletAddress: runtime.walletAddress, disableRequestPool: true, requestPoolTtlMs: 0 }),
-    hyperliquidClient.getUniverseMarketData({ disableRequestPool: true, requestPoolTtlMs: 0 }),
+    hyperliquidClient.getAccountSnapshot({ walletAddress: runtime.walletAddress }),
+    hyperliquidClient.getOpenPositions({ walletAddress: runtime.walletAddress }),
+    hyperliquidClient.getUniverseMarketData({}),
   ]);
-  const openOrders = typeof runtime?.info?.openOrders === 'function'
-    ? await runtime.info.openOrders({ user: runtime.walletAddress })
-    : [];
+  const openOrders = await hyperliquidClient.getOpenOrders({ walletAddress: runtime.walletAddress }).catch(() => []);
   const positions = (Array.isArray(positionsRaw) ? positionsRaw : []).map((position) => normalizeLivePosition(position));
   const universeByTicker = new Map((Array.isArray(universe) ? universe : []).map((entry) => [normalizeTicker(entry.ticker || `${entry.coin}/USD`), entry]));
   const positionsByTicker = new Map(positions.map((position) => [position.ticker, position]));
@@ -1281,6 +1296,29 @@ function resolvePaceWindowStartMs(config = {}, nowMs = Date.now()) {
     return localDayStartMs;
   }
   return Math.max(localDayStartMs, configuredStartMs);
+}
+
+async function fetchUserFillsSafely(runtime, startTimeMs = 0) {
+  try {
+    if (typeof runtime?.info?.userFillsByTime === 'function') {
+      return await runtime.info.userFillsByTime({
+        user: runtime.walletAddress,
+        startTime: startTimeMs,
+        aggregateByTime: false,
+        reversed: true,
+      });
+    }
+    if (typeof runtime?.info?.userFills === 'function') {
+      const allFills = await runtime.info.userFills({
+        user: runtime.walletAddress,
+        aggregateByTime: false,
+      });
+      return (Array.isArray(allFills) ? allFills : []).filter((fill) => Number(fill?.time || 0) >= startTimeMs);
+    }
+  } catch (error) {
+    console.error(`[ARCH WATCH] user fills unavailable: ${formatErrorForLog(error)}`);
+  }
+  return [];
 }
 
 function resolveTrackedAgentAssets(config = {}, options = {}) {
@@ -1319,21 +1357,7 @@ async function computeTrackedRealizedPnl(runtime, config) {
     };
   }
 
-  let fills = [];
-  if (typeof runtime.info.userFillsByTime === 'function') {
-    fills = await runtime.info.userFillsByTime({
-      user: runtime.walletAddress,
-      startTime: startTimeMs,
-      aggregateByTime: false,
-      reversed: true,
-    });
-  } else if (typeof runtime.info.userFills === 'function') {
-    const allFills = await runtime.info.userFills({
-      user: runtime.walletAddress,
-      aggregateByTime: false,
-    });
-    fills = (Array.isArray(allFills) ? allFills : []).filter((fill) => Number(fill?.time || 0) >= startTimeMs);
-  }
+  const fills = await fetchUserFillsSafely(runtime, startTimeMs);
 
   const realizedPnlUsd = (Array.isArray(fills) ? fills : []).reduce((sum, fill) => {
     const coin = toText(fill?.coin).toUpperCase();
@@ -1441,20 +1465,7 @@ async function runRiskLane(config, state, nowMs, context = null, runtime = null)
   const weeklyLookbackDays = Math.max(1, Number(riskConfig.weeklyMetrics?.lookbackDays) || 7);
   if (runtime?.info) {
     const startTime = nowMs - (weeklyLookbackDays * 24 * 60 * 60 * 1000);
-    if (typeof runtime.info.userFillsByTime === 'function') {
-      weeklyFills = await runtime.info.userFillsByTime({
-        user: runtime.walletAddress,
-        startTime,
-        aggregateByTime: false,
-        reversed: true,
-      });
-    } else if (typeof runtime.info.userFills === 'function') {
-      const allFills = await runtime.info.userFills({
-        user: runtime.walletAddress,
-        aggregateByTime: false,
-      });
-      weeklyFills = (Array.isArray(allFills) ? allFills : []).filter((fill) => Number(fill?.time || 0) >= startTime);
-    }
+    weeklyFills = await fetchUserFillsSafely(runtime, startTime);
   }
   const filteredWeeklyFills = (Array.isArray(weeklyFills) ? weeklyFills : []).filter((fill) => {
     if (trackedAssets.length === 0) return true;
@@ -2170,7 +2181,17 @@ function detectFreedMarginEvent(config = {}, state = {}, context = {}, nowMs = D
 }
 
 async function runPositionLane(config, state, runtime, nowMs, context = null) {
-  const activeContext = context || await fetchPositionContext(runtime, config);
+  let activeContext = context;
+  if (!activeContext) {
+    try {
+      activeContext = await fetchPositionContext(runtime, config);
+    } catch (fetchErr) {
+      if (String(fetchErr?.message || '').includes('429')) {
+        return { nextState: state, alerts: [], routedAlerts: [], positionSummaries: [], context: null };
+      }
+      throw fetchErr;
+    }
+  }
   const alerts = [];
   const routedAlerts = [];
   const nextPositions = { ...(state.positions || {}) };
@@ -2181,11 +2202,21 @@ async function runPositionLane(config, state, runtime, nowMs, context = null) {
     const livePosition = activeContext.positionsByTicker.get(ticker) || null;
     const marketEntry = activeContext.universeByTicker.get(ticker) || null;
     const openOrders = activeContext.openOrders.filter((order) => normalizeTicker(`${order.coin}/USD`) === ticker);
+    const protection = livePosition
+      ? bracketManager.deriveExchangeProtection(livePosition, openOrders)
+      : { activeStopPrice: null, activeTakeProfitPrice: null, verified: false };
+    const effectiveWatchedPosition = livePosition
+      ? {
+        ...watchedPosition,
+        stopPrice: protection.activeStopPrice,
+        takeProfit1Price: protection.activeTakeProfitPrice,
+      }
+      : watchedPosition;
     const currentPrice = toNumber(marketEntry?.markPx ?? marketEntry?.midPx ?? marketEntry?.price, 0);
     const previousState = nextPositions[ticker] || {};
     const evaluation = evaluatePositionTriggers({
       nowMs,
-      configPosition: watchedPosition,
+      configPosition: effectiveWatchedPosition,
       livePosition,
       previousState,
       currentPrice,
@@ -2195,6 +2226,9 @@ async function runPositionLane(config, state, runtime, nowMs, context = null) {
       ...evaluation.nextState,
       lastCheckedAt: new Date(nowMs).toISOString(),
       wasOpen: Boolean(livePosition),
+      stopPrice: protection.activeStopPrice,
+      takeProfit1Price: protection.activeTakeProfitPrice,
+      protectionVerifiedAt: protection.verified ? new Date(nowMs).toISOString() : null,
     };
     const previousWasOpen = previousState.wasOpen === true;
     const watchWhenFlat = watchedPosition.watchWhenFlat === true;
@@ -2219,12 +2253,12 @@ async function runPositionLane(config, state, runtime, nowMs, context = null) {
     if (evaluation.triggers.length === 0) {
       continue;
     }
-    alerts.push(buildPositionAlert(watchedPosition, livePosition, evaluation));
+    alerts.push(buildPositionAlert(effectiveWatchedPosition, livePosition, evaluation));
     for (const trigger of evaluation.triggers) {
       const targets = normalizeTargets(trigger.routeTargets || []);
       if (targets.length > 0) {
         routedAlerts.push({
-          message: toText(trigger.routeMessage, buildPositionAlert(watchedPosition, livePosition, { triggers: [trigger], metrics: evaluation.metrics })),
+          message: toText(trigger.routeMessage, buildPositionAlert(effectiveWatchedPosition, livePosition, { triggers: [trigger], metrics: evaluation.metrics })),
           targets,
         });
       }
@@ -2236,7 +2270,9 @@ async function runPositionLane(config, state, runtime, nowMs, context = null) {
     if (!watchedPosition) return null;
     const marketEntry = activeContext.universeByTicker.get(position.ticker) || null;
     const currentPrice = toNumber(marketEntry?.markPx ?? marketEntry?.midPx ?? marketEntry?.price, 0);
-    const tp1Price = toNumber(watchedPosition.takeProfit1Price, 0);
+    const openOrders = activeContext.openOrders.filter((order) => normalizeTicker(`${order.coin}/USD`) === position.ticker);
+    const protection = bracketManager.deriveExchangeProtection(position, openOrders);
+    const tp1Price = toNumber(protection.activeTakeProfitPrice, 0);
     const distanceToTp1 = pctDistance(currentPrice, tp1Price);
     return `${position.coin} pnl ${formatUsd(position.unrealizedPnl)}, TP1 ${distanceToTp1 == null ? 'n/a' : formatPct(distanceToTp1)} away`;
   }).filter(Boolean);
@@ -2333,7 +2369,7 @@ async function runScalpLane(config, state, nowMs, context = null, riskState = {}
       disableRequestPool: true,
       requestPoolTtlMs: 0,
     }),
-    hyperliquidClient.getPredictedFundings({ disableRequestPool: true, requestPoolTtlMs: 0 }),
+    hyperliquidClient.getPredictedFundings({}),
   ]);
 
   const scored = watchedSymbols
@@ -2434,8 +2470,8 @@ async function runSetupLane(config, state, nowMs, riskState = {}) {
       .map((ticker) => normalizeTicker(ticker))
   );
   const [universe, predictedFundings] = await Promise.all([
-    hyperliquidClient.getUniverseMarketData({ disableRequestPool: true, requestPoolTtlMs: 0 }),
-    hyperliquidClient.getPredictedFundings({ disableRequestPool: true, requestPoolTtlMs: 0 }),
+    hyperliquidClient.getUniverseMarketData({}),
+    hyperliquidClient.getPredictedFundings({}),
   ]);
 
   const rows = (Array.isArray(universe) ? universe : [])
@@ -2579,12 +2615,20 @@ async function runSetupLane(config, state, nowMs, riskState = {}) {
 }
 
 async function runPaceLane(config, state, runtime, nowMs, positionSummaries = [], context = null, riskState = {}) {
-  const activeContext = context || await fetchPositionContext(runtime, config);
+  let activeContext = context;
+  if (!activeContext) {
+    try {
+      activeContext = await fetchPositionContext(runtime, config);
+    } catch (fetchErr) {
+      if (String(fetchErr?.message || '').includes('429')) {
+        return { nextState: state, alerts: [], routedAlerts: [] };
+      }
+      throw fetchErr;
+    }
+  }
   const [account, realized] = await Promise.all([
     Promise.resolve(activeContext.account || null).then((value) => value || hyperliquidClient.getAccountSnapshot({
       walletAddress: runtime.walletAddress,
-      disableRequestPool: true,
-      requestPoolTtlMs: 0,
     })),
     computeTrackedRealizedPnl(runtime, config),
   ]);
@@ -2659,14 +2703,22 @@ async function runCycle(options = {}) {
   let activeRiskState = state.risk || hardRiskGuard.defaultRiskState();
 
   if (config.enabled !== false) {
-    const positionDue = nowMs - new Date(state.cadence?.lastPositionCheckAt || 0).getTime() >= toNumber(config.cadences?.positionCheckMs, DEFAULT_POSITION_CHECK_INTERVAL_MS);
+    const positionDue = nowMs - new Date(state.cadence?.lastPositionCheckAt || 0).getTime() >= resolvePositionCadenceMs(config, state);
     const macroDue = nowMs - new Date(state.cadence?.lastMacroCheckAt || 0).getTime() >= toNumber(config.cadences?.macroCheckMs, DEFAULT_MACRO_CHECK_INTERVAL_MS);
     const scalpDue = nowMs - new Date(state.cadence?.lastScalpScanAt || 0).getTime() >= toNumber(config.cadences?.scalpScanMs, DEFAULT_SCALP_SCAN_INTERVAL_MS);
     const setupDue = nowMs - new Date(state.cadence?.lastSetupScanAt || 0).getTime() >= toNumber(config.cadences?.setupScanMs, DEFAULT_SETUP_SCAN_INTERVAL_MS);
     const paceDue = nowMs - new Date(state.cadence?.lastPaceCheckAt || 0).getTime() >= toNumber(config.cadences?.paceCheckMs, DEFAULT_PACE_CHECK_INTERVAL_MS);
 
     if (positionDue || scalpDue) {
-      sharedPositionContext = await fetchPositionContext(runtime, config);
+      try {
+        sharedPositionContext = await fetchPositionContext(runtime, config);
+      } catch (fetchErr) {
+        if (String(fetchErr?.message || '').includes('429')) {
+          sharedPositionContext = null;
+        } else {
+          throw fetchErr;
+        }
+      }
     }
 
     if (positionDue) {
@@ -2697,7 +2749,22 @@ async function runCycle(options = {}) {
     }
 
     if (!sharedPositionContext) {
-      sharedPositionContext = await fetchPositionContext(runtime, config);
+      try {
+        sharedPositionContext = await fetchPositionContext(runtime, config);
+      } catch (fetchErr) {
+        const isRateLimit = String(fetchErr?.message || '').includes('429');
+        if (isRateLimit) {
+          sharedPositionContext = null;
+        } else {
+          throw fetchErr;
+        }
+      }
+    }
+    if (!sharedPositionContext) {
+      state.heartbeat = state.heartbeat || {};
+      state.heartbeat.lastSkipReason = 'rate_limit_429';
+      writeJson(statePath, state);
+      return { ok: true, state, alerts: [], routedAlerts: [] };
     }
     const riskResult = await runRiskLane(config, state, nowMs, sharedPositionContext, runtime);
     state = riskResult.nextState;
@@ -2798,19 +2865,41 @@ async function runCli(argv = process.argv.slice(2)) {
   if (command === 'run') {
     const once = getOption(parsed.options, 'once', false) === true;
     const loopIntervalMs = Math.max(5_000, Number(getOption(parsed.options, 'loop-ms', DEFAULT_LOOP_INTERVAL_MS)) || DEFAULT_LOOP_INTERVAL_MS);
-    let result = await runCycle({
-      configPath,
-      statePath,
-    });
+    const safeRunCycle = async () => {
+      try {
+        return await runCycle({ configPath, statePath });
+      } catch (cycleErr) {
+        if (String(cycleErr?.message || '').includes('429')) {
+          const skipResult = { ok: false, skipped: true, reason: '429', error: String(cycleErr?.message || cycleErr) };
+          try {
+            const state = loadState(statePath);
+            const lastTickAt = new Date().toISOString();
+            state.heartbeat = {
+              ...(state.heartbeat || {}),
+              lastTickAt,
+              lastObservedAt: lastTickAt,
+              intervalMs: loopIntervalMs,
+              staleAfterMs: HEARTBEAT_STALE_AFTER_MS,
+              expiresAt: new Date(Date.now() + HEARTBEAT_STALE_AFTER_MS).toISOString(),
+              pid: process.pid,
+              state: 'rate_limited',
+              staleReason: '429_skip',
+              stale: false,
+            };
+            writeJson(statePath, state);
+          } catch {}
+          return skipResult;
+        }
+        throw cycleErr;
+      }
+    };
+    let result = await safeRunCycle();
     console.log(JSON.stringify(result, null, 2));
     if (once) return result;
 
     while (true) {
       await sleep(loopIntervalMs);
-      result = await runCycle({
-        configPath,
-        statePath,
-      });
+      result = await safeRunCycle();
       console.log(JSON.stringify(result, null, 2));
     }
   }
@@ -2836,6 +2925,7 @@ module.exports = {
   computeHeartbeatStale,
   buildPositionAlert,
   buildFlatLevelAlert,
+  resolvePositionCadenceMs,
   evaluatePositionTriggers,
   evaluateOilMacroTriggers,
   detectFreedMarginEvent,

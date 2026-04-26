@@ -93,8 +93,8 @@ describe('Consensus Engine', () => {
   });
 
   test('rejects wrong number of signals', () => {
-    expect(() => evaluateConsensus([makeSignal('a', 'BUY')])).toThrow('exactly 3');
-    expect(() => evaluateConsensus([])).toThrow('exactly 3');
+    expect(() => evaluateConsensus([makeSignal('a', 'BUY')])).toThrow('2 or 3 signals');
+    expect(() => evaluateConsensus([])).toThrow('2 or 3 signals');
   });
 
   test('rejects mismatched tickers', () => {

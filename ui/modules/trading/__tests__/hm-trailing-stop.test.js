@@ -21,6 +21,20 @@ describe('hm-trailing-stop', () => {
     });
   });
 
+  test('normalizeTrailingStopParams rebuilds trailFraction for programmatic calls', () => {
+    expect(hmTrailingStop.normalizeTrailingStopParams({
+      asset: 'XAI',
+      trailPct: 0.6,
+      dryRun: false,
+    })).toEqual({
+      asset: 'XAI',
+      trailPct: 0.6,
+      trailFraction: 0.006,
+      dryRun: false,
+      help: false,
+    });
+  });
+
   test('computeTrailingStopPrice tightens shorts above the live mark', () => {
     const price = hmTrailingStop.computeTrailingStopPrice({
       isLong: false,
@@ -82,5 +96,17 @@ describe('hm-trailing-stop', () => {
       oid: 2,
       price: 0.9688,
     }));
+  });
+
+  test('evaluateTrailingStopMove still treats breakeven-or-better short stops as tighter when price has moved enough', () => {
+    expect(hmTrailingStop.evaluateTrailingStopMove({
+      isLong: false,
+      livePrice: 4.2,
+      currentStop: 4.35,
+      candidateStop: 4.3084,
+    })).toEqual({
+      shouldMove: true,
+      reason: 'trailing_stop_tightened',
+    });
   });
 });

@@ -225,7 +225,7 @@ describe('hm-telegram', () => {
     expect(https.request).not.toHaveBeenCalled();
   });
 
-  test('resolveOutboundChatId prefers reply context when it differs from default chat', () => {
+  test('resolveOutboundChatId only uses reply context when explicitly enabled', () => {
     const config = hmTelegram.getTelegramConfig({
       TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
       TELEGRAM_CHAT_ID: '111111',
@@ -235,9 +235,17 @@ describe('hm-telegram', () => {
       replyContext: {
         chatId: '8754356993',
       },
+    })).toBe('111111');
+
+    expect(hmTelegram.resolveOutboundChatId(config, {
+      useReplyContext: true,
+      replyContext: {
+        chatId: '8754356993',
+      },
     })).toBe('8754356993');
 
     expect(hmTelegram.resolveOutboundChatId(config, {
+      useReplyContext: true,
       replyContext: {
         chatId: '111111',
       },

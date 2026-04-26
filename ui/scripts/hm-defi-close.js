@@ -10,13 +10,16 @@
  */
 
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 const {
   formatPrice,
   executeHyperliquidOrder,
   executeHyperliquidCancel,
+  executeHyperliquidInfoCall,
   toNonNegativeInteger,
 } = require('./hm-defi-execute');
+const { withManualHyperliquidActivity } = require('../modules/trading/hyperliquid-manual-activity');
+const agentPositionAttribution = require('../modules/trading/agent-position-attribution');
 
 function resolveWalletAddress(env = process.env) {
   return String(
@@ -73,9 +76,13 @@ function getOption(options, key, fallback = null) {
 
 function parseCloseOptions(argv = parseCliArgs()) {
   const options = argv?.options instanceof Map ? argv.options : new Map();
+  const closePct = Number(getOption(options, 'close-pct', NaN));
   return {
     asset: normalizeAssetName(getOption(options, 'asset', null)),
     size: Number(getOption(options, 'size', 0)) || null,
+    closePct: Number.isFinite(closePct) && closePct > 0
+      ? Math.max(0, Math.min(100, closePct))
+      : null,
     dryRun: Boolean(getOption(options, 'dry-run', false)),
     help: Boolean(getOption(options, 'help', false)),
     retryDelayMs: toNonNegativeInteger(getOption(options, 'retry-delay', 0), 0),
@@ -96,12 +103,27 @@ function formatHelpText() {
     'Options:',
     '  --asset <SYMBOL>       Close only one asset',
     '  --size <AMOUNT>        Partially close up to this size',
+    '  --close-pct <0-100>    Close this percent of the live position size',
     '  --dry-run              Show what would close without sending orders',
     '  --retry-delay <ms>     Delay before retrying close submission',
     '  --help                 Show this help and exit safely',
     '  -h                     Alias for --help',
     '  --usage                Alias for --help',
   ].join('\n');
+}
+
+function resolveRequestedCloseSize(positionSize, requestedSize = 0, closePct = null) {
+  const absPositionSize = Math.abs(Number(positionSize) || 0);
+  if (!(absPositionSize > 0)) return 0;
+  const numericRequestedSize = Number(requestedSize) || 0;
+  if (numericRequestedSize > 0) {
+    return Math.min(absPositionSize, numericRequestedSize);
+  }
+  const numericClosePct = Number(closePct);
+  if (Number.isFinite(numericClosePct) && numericClosePct > 0) {
+    return absPositionSize * Math.max(0, Math.min(100, numericClosePct)) / 100;
+  }
+  return absPositionSize;
 }
 
 function buildCloseOrderPlan({ size, midPrice, szDecimals = 0 }) {
@@ -140,6 +162,7 @@ async function closeHyperliquidPositions(options = {}) {
   };
   const assetFilter = normalizeAssetName(parsed.asset);
   const requestedSize = Number(parsed.size || 0) || 0;
+  const requestedClosePct = Number(parsed.closePct);
   const dryRun = Boolean(parsed.dryRun);
   const retryDelayMs = toNonNegativeInteger(parsed.retryDelayMs, 0);
 
@@ -148,9 +171,9 @@ async function closeHyperliquidPositions(options = {}) {
   const info = new InfoClient({ transport });
   const exchange = new ExchangeClient({ transport, wallet });
 
-  const state = await info.clearinghouseState({ user: walletAddress });
-  const meta = await info.meta();
-  const mids = await info.allMids();
+  const state = await executeHyperliquidInfoCall(() => info.clearinghouseState({ user: walletAddress }), { label: 'close_clearinghouseState' });
+  const meta = await executeHyperliquidInfoCall(() => info.meta(), { label: 'close_meta' });
+  const mids = await executeHyperliquidInfoCall(() => info.allMids(), { label: 'close_allMids' });
 
   let closeAttempted = 0;
   let closeFailures = 0;
@@ -165,9 +188,7 @@ async function closeHyperliquidPositions(options = {}) {
 
     const size = parseFloat(position.szi);
     if (size === 0) continue;
-    const requestedCloseSize = requestedSize > 0
-      ? Math.min(Math.abs(size), requestedSize)
-      : Math.abs(size);
+    const requestedCloseSize = resolveRequestedCloseSize(size, requestedSize, requestedClosePct);
 
     const asset = meta.universe.find((entry) => normalizeAssetName(entry.name) === normalizeAssetName(coin));
     if (!asset) {
@@ -177,6 +198,11 @@ async function closeHyperliquidPositions(options = {}) {
     }
     const assetIndex = meta.universe.indexOf(asset);
     const midPrice = parseFloat(mids[coin]);
+    const ticker = `${normalizeAssetName(coin)}/USD`;
+    const ownerByTicker = agentPositionAttribution.resolveAgentPositionOwnership([
+      { ticker, coin },
+    ]).ownersByTicker;
+    const ownerAgentId = String(ownerByTicker[ticker] || '').trim().toLowerCase();
     const orderPlan = buildCloseOrderPlan({
       size: size < 0 ? -requestedCloseSize : requestedCloseSize,
       midPrice,
@@ -191,6 +217,8 @@ async function closeHyperliquidPositions(options = {}) {
     console.log(`  Action: ${orderPlan.sideLabel} ${orderPlan.absSize} ${coin} @ limit $${orderPlan.limitPrice} (IOC, reduce-only)`);
     if (requestedSize > 0 && requestedCloseSize < Math.abs(size)) {
       console.log(`  Partial close requested: ${requestedCloseSize} / ${Math.abs(size)} ${coin}`);
+    } else if (Number.isFinite(requestedClosePct) && requestedClosePct > 0 && requestedClosePct < 100) {
+      console.log(`  Partial close requested: ${requestedClosePct}% = ${requestedCloseSize} / ${Math.abs(size)} ${coin}`);
     }
 
     closeAttempted += 1;
@@ -202,7 +230,10 @@ async function closeHyperliquidPositions(options = {}) {
 
     try {
       console.log('  Cancelling existing TP/SL orders...');
-      const openOrders = await info.openOrders({ user: walletAddress });
+      const openOrders = await require('../modules/trading/hyperliquid-client').getOpenOrders({
+        walletAddress,
+        infoClient: info,
+      });
       for (const order of openOrders) {
         if (order.coin === coin) {
           try {
@@ -233,15 +264,41 @@ async function closeHyperliquidPositions(options = {}) {
 
       console.log(`  Order result: ${JSON.stringify(result)}`);
 
-      const newState = await info.clearinghouseState({ user: walletAddress });
+      const newState = await executeHyperliquidInfoCall(() => info.clearinghouseState({ user: walletAddress }), { label: 'close_verify_clearinghouseState' });
       const newPos = newState.assetPositions.find((entry) => entry.position.coin === coin);
       const newSize = newPos ? parseFloat(newPos.position.szi) : 0;
 
       if (newSize === 0) {
+        agentPositionAttribution.recordClosedPosition({
+          ticker,
+          agentId: ownerAgentId,
+          direction: size < 0 ? 'SHORT' : 'LONG',
+          entryPrice: Number(position.entryPx || 0),
+          exitPrice: midPrice,
+          closedSize: requestedCloseSize,
+          currentSize: 0,
+          marginUsd: Number(position.marginUsed || 0),
+          leverage: Number(position?.leverage?.value || 0),
+          source: 'hm-defi-close',
+          closeOrderId: null,
+          walletAddress,
+        });
         closedCount += 1;
         console.log(`  ✓ ${coin} position CLOSED successfully`);
         console.log(`  New account value: $${newState.marginSummary.accountValue}`);
       } else {
+        agentPositionAttribution.upsertOpenPosition({
+          ticker,
+          agentId: ownerAgentId,
+          direction: newSize < 0 ? 'SHORT' : 'LONG',
+          entryPrice: Number(newPos?.position?.entryPx || position.entryPx || 0),
+          currentSize: Math.abs(newSize),
+          initialSize: Math.abs(size),
+          marginUsd: Number(newPos?.position?.marginUsed || position.marginUsed || 0),
+          leverage: Number(newPos?.position?.leverage?.value || position?.leverage?.value || 0),
+          source: 'hm-defi-close',
+          walletAddress,
+        });
         closeFailures += 1;
         console.log(`  ⚠ Position partially closed. Remaining: ${newSize}`);
       }
@@ -278,7 +335,16 @@ async function main(argv = parseCliArgs()) {
 }
 
 if (require.main === module) {
-  main();
+  withManualHyperliquidActivity(
+    () => main(),
+    {
+      command: 'hm-defi-close',
+      caller: process.env.SQUIDRUN_HYPERLIQUID_CALLER || 'manual',
+      metadata: {
+        argv: process.argv.slice(2),
+      },
+    }
+  );
 }
 
 module.exports = {
@@ -288,6 +354,7 @@ module.exports = {
   parseCliArgs,
   parseCloseOptions,
   formatHelpText,
+  resolveRequestedCloseSize,
   buildCloseOrderPlan,
   closeHyperliquidPositions,
   main,

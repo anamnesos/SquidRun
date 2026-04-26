@@ -3,6 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  inspectTokenomistSource,
+  TOKENOMIST_SOURCE_STALE_MS,
+} = require('./hm-tokenomist-source');
 const { spawnSync, spawn } = require('child_process');
 const {
   loadRulesConfig,
@@ -29,7 +33,6 @@ const handoffPath = path.join(projectRoot, '.squidrun', 'handoffs', 'session.md'
 
 const WATCH_RULE_STALE_DISTANCE_PCT = 0.02;
 const TOKENOMIST_SCAN_STALE_MS = 12 * 60 * 60 * 1000;
-const TOKENOMIST_SOURCE_STALE_MS = 24 * 60 * 60 * 1000;
 const SUPERVISOR_HEARTBEAT_STALE_MS = 60 * 1000;
 const SCHEDULED_PHASE_STALE_GRACE_MS = 10 * 60 * 1000;
 
@@ -37,7 +40,6 @@ const REQUIRED_LANES = [
   'SQUIDRUN_ORACLE_WATCH',
   'SQUIDRUN_MARKET_SCANNER_AUTOMATION',
   'SQUIDRUN_CRYPTO_TRADING_AUTOMATION',
-  'SQUIDRUN_PAPER_TRADING_AUTOMATION',
 ];
 
 function readEnv() {
@@ -89,6 +91,45 @@ function toTimestampMs(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+const TRADING_BLOCKER_KINDS = new Set([
+  'defi',
+  'missing_tokenomist_source',
+]);
+const TRADING_WARNING_KINDS = new Set([
+  'stale_tokenomist_source',
+  'stale_tokenomist_scan',
+  'oracle_watch_stale_rules',
+]);
+const TRADING_LANE_KEYS = new Set([
+  'oracle_watch',
+  'market_scanner',
+  'crypto_trading_supervisor',
+  'paper_trading_automation',
+  'tokenomist_supervisor',
+]);
+const TRADING_STATUS_LANE_KEYS = new Set([
+  'oracleWatch',
+  'cryptoTradingAutomation',
+  'marketScannerAutomation',
+  'paperTradingAutomation',
+]);
+
+function stripTradingFromReport(report) {
+  if (report.defi) delete report.defi;
+  report.blockers = (report.blockers || []).filter((b) => !TRADING_BLOCKER_KINDS.has(b.kind));
+  report.warnings = (report.warnings || []).filter((w) => {
+    if (TRADING_WARNING_KINDS.has(w.kind)) return false;
+    if (w.kind === 'stale_lane' && TRADING_LANE_KEYS.has(w.lane)) return false;
+    if (w.kind === 'lanes_still_disabled_in_status') {
+      const filteredLanes = (w.lanes || []).filter((l) => !TRADING_STATUS_LANE_KEYS.has(l));
+      if (filteredLanes.length === 0) return false;
+      w.lanes = filteredLanes;
+    }
+    return true;
+  });
+  return report;
 }
 
 function inspectLaneFreshness({
@@ -381,17 +422,13 @@ function run({ autoFix = true } = {}) {
     });
   }
 
-  if (fs.existsSync(tokenomistSourcePath)) {
-    const tokenomistSourceAgeMs = Date.now() - fs.statSync(tokenomistSourcePath).mtimeMs;
-    if (tokenomistSourceAgeMs > TOKENOMIST_SOURCE_STALE_MS) {
-      report.warnings.push({
-        kind: 'stale_tokenomist_source',
-        path: tokenomistSourcePath,
-        ageHours: Math.round(tokenomistSourceAgeMs / (60 * 60 * 1000)),
-      });
-    }
-  } else {
+  const tokenomistSourceStatus = inspectTokenomistSource(tokenomistSourcePath, {
+    tokenomistSourceStaleMs: TOKENOMIST_SOURCE_STALE_MS,
+  });
+  if (!tokenomistSourceStatus.exists) {
     report.blockers.push({ kind: 'missing_tokenomist_source', path: tokenomistSourcePath });
+  } else if (tokenomistSourceStatus.warning) {
+    report.warnings.push(tokenomistSourceStatus.warning);
   }
 
   const tokenomistState = readJsonFile(tokenomistSupervisorStatePath, {});
@@ -458,7 +495,14 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const autoFix = !args.includes('--report-only');
   const json = args.includes('--json');
-  const report = run({ autoFix });
+  const profileArg = args.find((a) => a.startsWith('--profile='));
+  const profile = profileArg
+    ? profileArg.slice('--profile='.length)
+    : (process.env.SQUIDRUN_PROFILE || 'main');
+  let report = run({ autoFix });
+  if (profile === 'eunbyeol') {
+    report = stripTradingFromReport(report);
+  }
   if (json) {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   } else {

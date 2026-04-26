@@ -18,13 +18,17 @@ function normalizeWindowKey(value) {
 }
 
 function normalizeLaunchIntent(rawIntent = {}) {
-  const windowKey = normalizeWindowKey(rawIntent.windowKey || rawIntent.targetWindowKey || 'main');
+  const explicitWindowKey = toNonEmptyString(String(rawIntent.windowKey || rawIntent.targetWindowKey || ''));
+  const profileName = normalizeProfileName(
+    rawIntent.profileName || (normalizeWindowKey(explicitWindowKey) === 'eunbyeol' ? 'eunbyeol' : DEFAULT_PROFILE)
+  );
+  const profileOnlyEunbyeolLaunch = !explicitWindowKey && profileName === 'eunbyeol';
+  const windowKey = profileOnlyEunbyeolLaunch
+    ? 'eunbyeol'
+    : normalizeWindowKey(explicitWindowKey || 'main');
   const includeMainWindow = windowKey === 'main'
     ? true
-    : rawIntent.includeMainWindow !== false;
-  const profileName = normalizeProfileName(
-    rawIntent.profileName || (windowKey === 'eunbyeol' ? 'eunbyeol' : DEFAULT_PROFILE)
-  );
+    : (profileOnlyEunbyeolLaunch ? rawIntent.includeMainWindow === true : rawIntent.includeMainWindow !== false);
   return {
     profileName,
     windowKey,
@@ -36,7 +40,7 @@ function normalizeLaunchIntent(rawIntent = {}) {
 function parseLaunchIntent(argv = []) {
   const args = Array.isArray(argv) ? argv.slice() : [];
   let windowKey = null;
-  let includeMainWindow = true;
+  let includeMainWindow = null;
   let profileName = null;
 
   for (let index = 0; index < args.length; index += 1) {

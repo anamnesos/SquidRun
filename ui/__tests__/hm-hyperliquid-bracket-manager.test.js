@@ -5,16 +5,22 @@ jest.mock('../modules/trading/journal', () => ({
   recordExecutionReport: jest.fn(() => ({ lastInsertRowid: 1 })),
 }));
 
+jest.mock('../modules/trading/hyperliquid-client', () => ({
+  getOpenOrders: jest.fn(),
+}));
+
 jest.mock('../scripts/hm-defi-execute', () => ({
   resolveHyperliquidRuntime: jest.fn(),
   findAssetMeta: jest.fn(),
   extractOpenHyperliquidPosition: jest.fn(),
   extractHyperliquidOrderId: jest.fn((result) => result?.statuses?.[0]?.resting?.oid ?? null),
   resolveAssetSzDecimals: jest.fn(() => 4),
+  executeHyperliquidCancel: jest.fn(),
   placeHyperliquidStopLoss: jest.fn(),
 }));
 
 const journal = require('../modules/trading/journal');
+const hyperliquidClient = require('../modules/trading/hyperliquid-client');
 const hmDefiExecute = require('../scripts/hm-defi-execute');
 const manager = require('../scripts/hm-hyperliquid-bracket-manager');
 
@@ -40,6 +46,10 @@ describe('hm-hyperliquid-bracket-manager', () => {
       info,
       exchange,
     });
+    hyperliquidClient.getOpenOrders.mockResolvedValue([
+      { oid: 11, coin: 'ETH', reduceOnly: true, triggerPx: '2341.3', sz: '2.1169' },
+    ]);
+    hmDefiExecute.executeHyperliquidCancel.mockResolvedValue({ status: 'ok' });
     hmDefiExecute.findAssetMeta.mockReturnValue({ assetIndex: 2, asset: { name: 'ETH', szDecimals: 4 } });
     hmDefiExecute.extractOpenHyperliquidPosition.mockReturnValue({
       coin: 'ETH',
@@ -65,9 +75,11 @@ describe('hm-hyperliquid-bracket-manager', () => {
       dryRun: false,
     });
 
-    expect(exchange.cancel).toHaveBeenCalledWith({
+    expect(hmDefiExecute.executeHyperliquidCancel).toHaveBeenCalledWith(exchange, {
       cancels: [{ a: 2, o: 11 }],
-    });
+    }, expect.objectContaining({
+      label: 'bracket_cancel_2',
+    }));
     expect(hmDefiExecute.placeHyperliquidStopLoss).toHaveBeenCalledWith(expect.objectContaining({
       assetIndex: 2,
       isLong: true,
@@ -101,6 +113,10 @@ describe('hm-hyperliquid-bracket-manager', () => {
       info,
       exchange,
     });
+    hyperliquidClient.getOpenOrders.mockResolvedValue([
+      { oid: 31, coin: 'ETH', reduceOnly: true, triggerPx: '2341.3', sz: '2.1169' },
+    ]);
+    hmDefiExecute.executeHyperliquidCancel.mockResolvedValue({ status: 'ok' });
     hmDefiExecute.findAssetMeta.mockReturnValue({ assetIndex: 2, asset: { name: 'ETH', szDecimals: 4 } });
     hmDefiExecute.extractOpenHyperliquidPosition.mockReturnValue({
       coin: 'ETH',
@@ -126,9 +142,11 @@ describe('hm-hyperliquid-bracket-manager', () => {
       dryRun: false,
     });
 
-    expect(exchange.cancel).toHaveBeenCalledWith({
+    expect(hmDefiExecute.executeHyperliquidCancel).toHaveBeenCalledWith(exchange, {
       cancels: [{ a: 2, o: 31 }],
-    });
+    }, expect.objectContaining({
+      label: 'bracket_cancel_2',
+    }));
     expect(hmDefiExecute.placeHyperliquidStopLoss).toHaveBeenNthCalledWith(1, expect.objectContaining({
       assetIndex: 2,
       stopPrice: 2352.5,
@@ -161,6 +179,9 @@ describe('hm-hyperliquid-bracket-manager', () => {
       info,
       exchange: { cancel: jest.fn() },
     });
+    hyperliquidClient.getOpenOrders.mockResolvedValue([
+      { oid: 21, coin: 'ETH', reduceOnly: true, triggerPx: '2341.3', sz: '2.1169' },
+    ]);
     hmDefiExecute.findAssetMeta.mockReturnValue({ assetIndex: 2, asset: { name: 'ETH', szDecimals: 4 } });
     hmDefiExecute.extractOpenHyperliquidPosition.mockReturnValue({
       coin: 'ETH',

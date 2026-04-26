@@ -58,12 +58,21 @@ describe('launch-intent', () => {
     });
   });
 
-  test('parses profile launches independently of the window key', () => {
+  test('routes profile-only Eunbyeol launches to the standalone Eunbyeol window', () => {
     expect(parseLaunchIntent(['--profile=eunbyeol'])).toEqual({
       profileName: 'eunbyeol',
-      windowKey: 'main',
+      windowKey: 'eunbyeol',
+      includeMainWindow: false,
+      focusWindowKey: 'eunbyeol',
+    });
+  });
+
+  test('lets profile-only Eunbyeol launches include main when explicitly requested', () => {
+    expect(parseLaunchIntent(['--profile=eunbyeol', '--with-main-window'])).toEqual({
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
       includeMainWindow: true,
-      focusWindowKey: 'main',
+      focusWindowKey: 'eunbyeol',
     });
   });
 

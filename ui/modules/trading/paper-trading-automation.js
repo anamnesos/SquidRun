@@ -441,7 +441,7 @@ function loadTriggerConfig(projectRoot, agentId, options = {}) {
   const paths = getPortfolioPaths(projectRoot, agentId);
   const raw = readJson(paths.triggerConfigPath, null);
   const normalized = normalizeTriggerConfig(raw || {}, agentId);
-  if (!raw || options.writeDefaults === true) {
+  if ((!raw || options.writeDefaults === true) && normalized.enabled !== false) {
     writeJson(paths.triggerConfigPath, normalized);
   }
   return {
