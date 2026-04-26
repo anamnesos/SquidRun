@@ -238,6 +238,8 @@ function normalizeSourceScope(value, fallback = LIVE_SOURCE_SCOPE) {
   return normalized || fallback || LIVE_SOURCE_SCOPE;
 }
 
+// Keep non-live filters after the one-time paper cleanup: future DRY_RUN/test rows
+// must stay inert unless a caller explicitly opts into archived/non-live state.
 function buildTradeVisibilityWhere(options = {}) {
   const includeArchived = options.includeArchived === true;
   const includeNonLive = options.includeNonLive === true || includeArchived;
