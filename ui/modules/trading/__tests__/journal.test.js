@@ -112,7 +112,7 @@ describe('trade journal execution reports', () => {
       }),
     ]);
 
-    journal.archivePosition(db, 'ETH/USD', 'stale_paper_position', {
+    journal.archivePosition(db, 'ETH/USD', 'stale_non_live_position', {
       archivedAt: '2026-04-25T23:45:00.000Z',
       sourceScope: 'archive_static',
     });
@@ -123,7 +123,7 @@ describe('trade journal execution reports', () => {
         ticker: 'ETH/USD',
         source_scope: 'archive_static',
         archived_at: '2026-04-25T23:45:00.000Z',
-        archive_reason: 'stale_paper_position',
+        archive_reason: 'stale_non_live_position',
       }),
     ]);
   });
@@ -145,7 +145,7 @@ describe('trade journal execution reports', () => {
       shares: 0.132812,
       price: 2000,
       status: 'DRY_RUN',
-      notes: 'paper residue',
+      notes: 'dry run residue',
     });
 
     expect(journal.getAllTrades(db)).toEqual([
@@ -158,7 +158,7 @@ describe('trade journal execution reports', () => {
     const archiveResult = journal.archiveDryRunTrades(db, {
       ticker: 'ETH/USD',
       archivedAt: '2026-04-25T23:46:00.000Z',
-      reason: 'paper_dry_run_quarantine_2026-04-22',
+      reason: 'dry_run_cleanup_2026-04-22',
     });
     expect(archiveResult.changes).toBe(1);
 
@@ -178,7 +178,7 @@ describe('trade journal execution reports', () => {
         status: 'DRY_RUN',
         source_scope: 'dry_run',
         archived_at: '2026-04-25T23:46:00.000Z',
-        archive_reason: 'paper_dry_run_quarantine_2026-04-22',
+        archive_reason: 'dry_run_cleanup_2026-04-22',
       }),
     ]);
   });

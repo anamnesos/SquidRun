@@ -26,7 +26,6 @@ const oracleWatchStatePath = path.join(runtimeDir, 'oracle-watch-state.json');
 const oracleWatchProposalPath = path.join(runtimeDir, 'oracle-watch-stale-proposals.json');
 const marketScannerStatePath = path.join(runtimeDir, 'market-scanner-state.json');
 const cryptoTradingSupervisorStatePath = path.join(runtimeDir, 'crypto-trading-supervisor-state.json');
-const paperTradingAutomationStatePath = path.join(runtimeDir, 'paper-trading-automation-state.json');
 const tokenomistSupervisorStatePath = path.join(runtimeDir, 'tokenomist-supervisor-state.json');
 const tokenomistSourcePath = path.join(projectRoot, 'tokenomist-current.yml');
 const handoffPath = path.join(projectRoot, '.squidrun', 'handoffs', 'session.md');
@@ -106,14 +105,12 @@ const TRADING_LANE_KEYS = new Set([
   'oracle_watch',
   'market_scanner',
   'crypto_trading_supervisor',
-  'paper_trading_automation',
   'tokenomist_supervisor',
 ]);
 const TRADING_STATUS_LANE_KEYS = new Set([
   'oracleWatch',
   'cryptoTradingAutomation',
   'marketScannerAutomation',
-  'paperTradingAutomation',
 ]);
 
 function stripTradingFromReport(report) {
@@ -310,7 +307,7 @@ function run({ autoFix = true } = {}) {
 
   if (status) {
     const lanesOff = [];
-    for (const k of ['oracleWatch', 'cryptoTradingAutomation', 'marketScannerAutomation', 'paperTradingAutomation']) {
+    for (const k of ['oracleWatch', 'cryptoTradingAutomation', 'marketScannerAutomation']) {
       if (status[k] && status[k].enabled === false) lanesOff.push(k);
     }
     if (lanesOff.length > 0) {
@@ -347,15 +344,6 @@ function run({ autoFix = true } = {}) {
         filePath: cryptoTradingSupervisorStatePath,
         enabled: status.cryptoTradingAutomation?.enabled !== false,
         staleAfterMs: 45 * 60 * 1000,
-        extractTimestamp: (payload) => toTimestampMs(payload?.lastProcessedAt || payload?.updatedAt),
-        extractNextEventTimestamp: (payload) => toTimestampMs(payload?.nextEvent?.scheduledAt),
-        phaseGraceMs: SCHEDULED_PHASE_STALE_GRACE_MS,
-      }),
-      inspectLaneFreshness({
-        key: 'paper_trading_automation',
-        filePath: paperTradingAutomationStatePath,
-        enabled: status.paperTradingAutomation?.enabled !== false,
-        staleAfterMs: 60 * 60 * 1000,
         extractTimestamp: (payload) => toTimestampMs(payload?.lastProcessedAt || payload?.updatedAt),
         extractNextEventTimestamp: (payload) => toTimestampMs(payload?.nextEvent?.scheduledAt),
         phaseGraceMs: SCHEDULED_PHASE_STALE_GRACE_MS,

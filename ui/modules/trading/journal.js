@@ -238,7 +238,7 @@ function normalizeSourceScope(value, fallback = LIVE_SOURCE_SCOPE) {
   return normalized || fallback || LIVE_SOURCE_SCOPE;
 }
 
-// Keep non-live filters after the one-time paper cleanup: future DRY_RUN/test rows
+// Keep non-live filters after the one-time cleanup: future DRY_RUN/test rows
 // must stay inert unless a caller explicitly opts into archived/non-live state.
 function buildTradeVisibilityWhere(options = {}) {
   const includeArchived = options.includeArchived === true;
@@ -587,7 +587,7 @@ function closePosition(db, ticker) {
 /**
  * Mark a position as archived/static so it cannot leak into live-position reasoning.
  */
-function archivePosition(db, ticker, reason = 'paper_state_quarantine', options = {}) {
+function archivePosition(db, ticker, reason = 'stale_non_live_position', options = {}) {
   const archivedAt = options.archivedAt || new Date().toISOString();
   const sourceScope = normalizeSourceScope(options.sourceScope || ARCHIVE_STATIC_SCOPE, ARCHIVE_STATIC_SCOPE);
   return db.prepare(`
@@ -603,7 +603,7 @@ function archivePosition(db, ticker, reason = 'paper_state_quarantine', options 
 
 function archiveDryRunTrades(db, options = {}) {
   const archivedAt = options.archivedAt || new Date().toISOString();
-  const reason = options.reason || 'paper_dry_run_quarantine';
+  const reason = options.reason || 'dry_run_cleanup';
   const clauses = ["UPPER(COALESCE(status, '')) = 'DRY_RUN'"];
   const values = [DRY_RUN_SOURCE_SCOPE, archivedAt, reason];
   if (options.includeAlreadyArchived !== true) {
@@ -632,7 +632,7 @@ function archiveDryRunTrades(db, options = {}) {
 }
 
 /**
- * Get live open positions by default. Archived/static paper rows require includeArchived.
+ * Get live open positions by default. Archived/static rows require includeArchived.
  */
 function getOpenPositions(db, options = {}) {
   const visibilityWhere = buildPositionVisibilityWhere(options);

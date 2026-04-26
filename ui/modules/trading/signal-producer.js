@@ -833,11 +833,11 @@ async function produceSignals(agentId, alpacaClientOrOptions) {
 	const isOptions = alpacaClientOrOptions && typeof alpacaClientOrOptions === 'object' && !alpacaClientOrOptions.getAccount;
 	const clientOptions = isOptions ? alpacaClientOrOptions : (alpacaClientOrOptions ? { client: alpacaClientOrOptions } : {});
 	const macroRisk = clientOptions.macroRisk || null;
-	const providedSnapshots = clientOptions.snapshots || clientOptions.paperTradingContext?.snapshots || null;
-	const providedBars = clientOptions.bars || clientOptions.paperTradingContext?.bars || null;
-	const providedMultiTimeframeBars = clientOptions.multiTimeframeBars || clientOptions.paperTradingContext?.multiTimeframeBars || null;
-	const providedRangeStructures = clientOptions.rangeStructures || clientOptions.paperTradingContext?.rangeStructures || null;
-	const providedNews = clientOptions.news || clientOptions.paperTradingContext?.news || null;
+	const providedSnapshots = clientOptions.snapshots || null;
+	const providedBars = clientOptions.bars || null;
+	const providedMultiTimeframeBars = clientOptions.multiTimeframeBars || null;
+	const providedRangeStructures = clientOptions.rangeStructures || null;
+	const providedNews = clientOptions.news || null;
 	const providedDefiStatus = clientOptions.defiStatus || clientOptions.liveTradingContext || null;
 	const strategyMode = String(clientOptions.strategyMode || '').trim().toLowerCase();
 	const symbols = dataIngestion.normalizeSymbols(

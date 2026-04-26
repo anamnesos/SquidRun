@@ -51,12 +51,10 @@ const launchRadar = require('./modules/trading/launch-radar');
 const yieldRouterModule = require('./modules/trading/yield-router');
 const marketScannerModule = require('./modules/trading/market-scanner');
 const sparkCapture = require('./modules/trading/spark-capture');
-const paperTradingAutomation = require('./modules/trading/paper-trading-automation');
 const predictionTrackerModule = require('./modules/trading/prediction-tracker');
 const eventVeto = require('./modules/trading/event-veto');
 const tradeJournal = require('./modules/trading/journal');
 const { queryCommsJournalEntries } = require('./modules/main/comms-journal');
-const { buildAudit: buildPaperCompetitionAudit } = require('./scripts/hm-paper-competition-audit');
 const RUNNING_SUPERVISOR_MAIN = require.main === module;
 
 const CONSULTATION_FUNDING_DIVERGENCE_STRONG_BPS = 50;
@@ -77,7 +75,6 @@ try {
 if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'eunbyeol') {
   process.env.SQUIDRUN_HYPERLIQUID_AUTOMATION = '0';
   process.env.SQUIDRUN_ORACLE_WATCH = '0';
-  process.env.SQUIDRUN_PAPER_TRADING_AUTOMATION = '0';
   process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION = '0';
   process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
   process.env.SQUIDRUN_HYPERLIQUID_SQUEEZE_DETECTOR = '0';
@@ -221,7 +218,6 @@ const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-sta
 const DEFAULT_ORACLE_WATCH_RULES_PATH = resolveRuntimePath('oracle-watch-rules.json');
 const DEFAULT_ORACLE_WATCH_STATE_PATH = resolveRuntimePath('oracle-watch-state.json');
 const DEFAULT_EUNBYEOL_CHECKIN_STATE_PATH = resolveRuntimePath('eunbyeol-checkin-supervisor-state.json');
-const DEFAULT_PAPER_TRADING_AUTOMATION_STATE_PATH = resolveRuntimePath('paper-trading-automation-state.json');
 const DEFAULT_YIELD_ROUTER_STATE_PATH = resolveRuntimePath('yield-router-supervisor-state.json');
 const DEFAULT_TELEGRAM_CHAT_ID = '5613428850';
 const DEFAULT_SAYLOR_WATCHER_INTERVAL_MS = Math.max(
@@ -312,10 +308,6 @@ const DEFAULT_TOKENOMIST_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
 const DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES = 30;
 const DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES = 4 * 60;
-const DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS = Math.max(
-  15_000,
-  Number.parseInt(process.env.SQUIDRUN_PAPER_TRADING_RESPONSE_TIMEOUT_MS || '90000', 10) || 90_000
-);
 const DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT = Math.max(
   1,
@@ -469,56 +461,6 @@ function getTodayRealizedTargetProgress(journalPath, now = new Date()) {
       targetHit: false,
       closedTrades: 0,
       source: 'unavailable',
-      error: error?.message || String(error),
-    };
-  }
-}
-
-function buildPaperCompetitionStatus(projectRoot = getProjectRoot(), now = new Date()) {
-  const tradingDir = path.join(projectRoot, 'workspace', 'agent-trading');
-  const closedDateKey = toLocalDateKey(now);
-  const summary = {
-    path: tradingDir,
-    filesChecked: 0,
-    missingSameDayRootCauseReviews: 0,
-    agents: [],
-    compliant: true,
-  };
-  try {
-    if (!fs.existsSync(tradingDir)) {
-      return { ...summary, compliant: false, error: 'missing_agent_trading_dir' };
-    }
-    const files = fs.readdirSync(tradingDir)
-      .filter((name) => name.endsWith('-portfolio.json'));
-    summary.filesChecked = files.length;
-    summary.agents = files.map((fileName) => {
-      const filePath = path.join(tradingDir, fileName);
-      const data = readJsonFile(filePath, {}) || {};
-      const closedTrades = Array.isArray(data.closedTrades) ? data.closedTrades : [];
-      const missing = closedTrades.filter((trade) => {
-        const closedAt = String(trade?.closedAt || '').trim();
-        if (!closedAt || !closedAt.startsWith(closedDateKey)) return false;
-        const review = trade?.rootCauseReview || null;
-        const reviewedAt = String(review?.reviewedAt || '').trim();
-        const summaryText = String(review?.plainEnglishSummary || review?.whatWentWrong || '').trim();
-        return !review || !reviewedAt.startsWith(closedDateKey) || !summaryText;
-      });
-      summary.missingSameDayRootCauseReviews += missing.length;
-      return {
-        agentId: String(data.agentId || data.agent || path.basename(fileName, '.json')).trim(),
-        filePath,
-        totalPnl: Number(data.totalPnl ?? ((Number(data.equity || data.currentEquity || 0) || 0) - (Number(data.startingBalance || 0) || 0))) || 0,
-        openPositionCount: Array.isArray(data.openPositions) ? data.openPositions.length : 0,
-        closedTradeCount: closedTrades.length,
-        missingSameDayRootCauseReviews: missing.length,
-      };
-    });
-    summary.compliant = summary.missingSameDayRootCauseReviews === 0;
-    return summary;
-  } catch (error) {
-    return {
-      ...summary,
-      compliant: false,
       error: error?.message || String(error),
     };
   }
@@ -1144,31 +1086,6 @@ function defaultTradeReconciliationState() {
     lastPendingCount: 0,
     lastResult: null,
     lastError: null,
-  };
-}
-
-function defaultPaperTradingAutomationState() {
-  return {
-    updatedAt: null,
-    lastProcessedAt: null,
-    lastSummary: null,
-    agents: Object.fromEntries(
-      paperTradingAutomation.AGENT_IDS.map((agentId) => [agentId, {
-        agentId,
-        lastDispatchAt: null,
-        lastDispatchAtMs: 0,
-        nextTimerWakeAt: null,
-        nextTimerWakeAtMs: 0,
-        pendingRequestId: null,
-        pendingRequestCreatedAt: null,
-        pendingRequestCreatedAtMs: 0,
-        lastResponseAt: null,
-        lastResponseAtMs: 0,
-        lastWakeReason: null,
-        lastActionType: null,
-        lastError: null,
-      }])
-    ),
   };
 }
 
@@ -1907,34 +1824,6 @@ class SupervisorDaemon {
         lastRunAt: null,
         lastSummary: null,
       };
-    this.paperTradingAutomationEnabled = options.paperTradingAutomationEnabled !== false
-      && this.runtimeEnv.SQUIDRUN_PAPER_TRADING_AUTOMATION !== '0';
-    this.paperTradingAutomationStatePath = options.paperTradingAutomationStatePath || DEFAULT_PAPER_TRADING_AUTOMATION_STATE_PATH;
-    this.paperTradingResponseTimeoutMs = Math.max(
-      15_000,
-      Number.parseInt(
-        options.paperTradingResponseTimeoutMs || this.runtimeEnv.SQUIDRUN_PAPER_TRADING_RESPONSE_TIMEOUT_MS || DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS,
-        10
-      ) || DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS
-    );
-    this.paperTradingAutomationState = {
-      ...defaultPaperTradingAutomationState(),
-      ...(readJsonFile(this.paperTradingAutomationStatePath, defaultPaperTradingAutomationState()) || {}),
-    };
-    this.paperTradingAutomationPromise = null;
-    this.lastPaperTradingAutomationSummary = this.paperTradingAutomationEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        statePath: this.paperTradingAutomationStatePath,
-        lastProcessedAt: this.paperTradingAutomationState.lastProcessedAt || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        statePath: this.paperTradingAutomationStatePath,
-        lastProcessedAt: null,
-      };
     this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
       && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
     this.cryptoMonitorOnly = options.cryptoMonitorOnly === true
@@ -2151,7 +2040,7 @@ class SupervisorDaemon {
     // Circuit breaker — continuous position monitor with stop-loss execution
     const executor = require('./modules/trading/executor');
     const dataIngestion = require('./modules/trading/data-ingestion');
-    // Circuit breaker DISABLED — was monitoring stale Alpaca paper positions and spamming
+    // Circuit breaker DISABLED — was monitoring stale Alpaca positions and spamming
     // James's Telegram with ghost ETH SHORT alerts for 3+ days. Hyperliquid has its own
     // position monitor. — Session 268
     this.circuitBreaker = false && this.tradingEnabled && options.circuitBreaker !== null
@@ -3125,7 +3014,6 @@ class SupervisorDaemon {
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
-    const paperTradingAutomationResult = await this.maybeRunPaperTradingAutomation(nowMs);
     const hyperliquidSqueezeDetectorResult = await this.maybeRunHyperliquidSqueezeDetector(nowMs);
     const eunbyeolCheckInResult = await this.maybeRunEunbyeolCheckInAutomation(nowMs);
     const yieldRouterResult = await this.maybeRunYieldRouterAutomation(nowMs);
@@ -3153,7 +3041,6 @@ class SupervisorDaemon {
       marketScannerResult,
       saylorWatcherResult,
       oracleWatchResult,
-      paperTradingAutomationResult,
       hyperliquidSqueezeDetectorResult,
       eunbyeolCheckInResult,
       yieldRouterResult,
@@ -3223,7 +3110,6 @@ class SupervisorDaemon {
     const marketResearchRan = summary?.marketResearchResult && summary.marketResearchResult.skipped !== true;
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
     const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
-    const paperTradingAutomationRan = summary?.paperTradingAutomationResult && summary.paperTradingAutomationResult.skipped !== true;
     const hyperliquidSqueezeDetectorRan = summary?.hyperliquidSqueezeDetectorResult && summary.hyperliquidSqueezeDetectorResult.skipped !== true;
     const eunbyeolCheckInRan = summary?.eunbyeolCheckInResult && summary.eunbyeolCheckInResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
@@ -3244,7 +3130,6 @@ class SupervisorDaemon {
       || marketResearchRan
       || saylorWatcherRan
       || oracleWatchRan
-      || paperTradingAutomationRan
       || hyperliquidSqueezeDetectorRan
       || eunbyeolCheckInRan
       || sleepRan
@@ -3275,16 +3160,6 @@ class SupervisorDaemon {
           - Date.now()
         );
         nextDelayMs = Math.min(nextDelayMs, nextOracleWatchDueMs);
-      }
-    }
-
-    if (this.paperTradingAutomationEnabled && !this.paperTradingAutomationPromise) {
-      const nextWakeAtMs = paperTradingAutomation.AGENT_IDS
-        .map((agentId) => Number(this.paperTradingAutomationState?.agents?.[agentId]?.nextTimerWakeAtMs || 0) || 0)
-        .filter((value) => value > 0)
-        .map((value) => Math.max(0, value - Date.now()));
-      if (nextWakeAtMs.length > 0) {
-        nextDelayMs = Math.min(nextDelayMs, ...nextWakeAtMs);
       }
     }
 
@@ -3438,11 +3313,6 @@ class SupervisorDaemon {
   persistEunbyeolCheckInState() {
     this.eunbyeolCheckInState.updatedAt = new Date().toISOString();
     writeJsonFile(this.eunbyeolCheckInStatePath, this.eunbyeolCheckInState);
-  }
-
-  persistPaperTradingAutomationState() {
-    this.paperTradingAutomationState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.paperTradingAutomationStatePath, this.paperTradingAutomationState);
   }
 
   readCaseOperationsDashboard() {
@@ -3654,399 +3524,6 @@ class SupervisorDaemon {
         exitCode: result?.exitCode ?? null,
       };
     }
-  }
-
-  async buildPaperTradingLiveContext(portfolios = []) {
-    const trackedTickers = new Set(paperTradingAutomation.CORE_TICKERS);
-    for (const portfolio of Array.isArray(portfolios) ? portfolios : []) {
-      for (const position of Array.isArray(portfolio?.openPositions) ? portfolio.openPositions : []) {
-        const ticker = String(position?.ticker || '').trim().toUpperCase();
-        if (ticker) trackedTickers.add(ticker);
-      }
-    }
-    const symbols = Array.from(trackedTickers);
-    const [marketData, bars5mMap] = await Promise.all([
-      hyperliquidClient.getUniverseMarketData({ requestPoolTtlMs: 10_000 }),
-      hyperliquidClient.getHistoricalBars({
-        symbols,
-        timeframe: '5m',
-        limit: 3,
-        requestPoolTtlMs: 10_000,
-      }).catch(() => new Map()),
-    ]);
-    const marketByTicker = new Map(
-      (Array.isArray(marketData) ? marketData : [])
-        .map((entry) => [String(entry?.ticker || '').trim().toUpperCase(), entry])
-        .filter(([ticker]) => ticker)
-    );
-    const livePrices = symbols.map((ticker) => {
-      const market = marketByTicker.get(ticker) || {};
-      return {
-        ticker,
-        price: Number(market?.price || 0) || 0,
-        change24hPct: Number(market?.change24hPct || 0) || 0,
-        openInterest: Number(market?.openInterest || 0) || 0,
-        fundingRate: Number(market?.fundingRate || 0) || 0,
-      };
-    });
-    const structureSummary = paperTradingAutomation.CORE_TICKERS.map((ticker) => {
-      const market = marketByTicker.get(ticker) || {};
-      const bars5m = bars5mMap instanceof Map ? (bars5mMap.get(ticker) || []) : [];
-      return paperTradingAutomation.summarizeStructure({
-        ticker,
-        price: market?.price || 0,
-        bars5m,
-      });
-    });
-    const livePriceMap = Object.fromEntries(
-      livePrices
-        .filter((entry) => Number.isFinite(Number(entry?.price)) && Number(entry.price) > 0)
-        .map((entry) => [entry.ticker, Number(entry.price)])
-    );
-    return {
-      symbols,
-      livePrices,
-      livePriceMap,
-      structureSummary,
-    };
-  }
-
-  collectPaperTradingAgentResponse(agentId, requestId, sinceMs) {
-    const entries = queryCommsJournalEntries({
-      channel: 'ws',
-      direction: 'outbound',
-      senderRole: agentId,
-      targetRole: 'builder',
-      sinceMs,
-      order: 'desc',
-      limit: 100,
-    });
-    for (const entry of entries) {
-      const rawBody = entry?.rawBody || entry?.body || '';
-      const parsed = paperTradingAutomation.parsePaperTradingResponseBody(rawBody);
-      if (!parsed) continue;
-      if (parsed.requestId !== requestId) continue;
-      if (parsed.agentId !== agentId) continue;
-      return {
-        entry,
-        parsed,
-      };
-    }
-    return null;
-  }
-
-  async sendPaperTradingAgentMessage(agentId, message, requestId = null) {
-    return this.dispatchAgentQueuedTask(agentId, {
-      taskId: requestId ? `paper-${requestId}` : `paper-${agentId}-${Date.now()}`,
-      message,
-    });
-  }
-
-  async runPaperTradingAutomationPhase(nowMs = Date.now()) {
-    const nowIso = new Date(nowMs).toISOString();
-    const previousState = this.paperTradingAutomationState || defaultPaperTradingAutomationState();
-    const nextState = {
-      ...defaultPaperTradingAutomationState(),
-      ...previousState,
-      agents: {
-        ...defaultPaperTradingAutomationState().agents,
-        ...(previousState.agents || {}),
-      },
-    };
-    const portfoliosByAgent = Object.fromEntries(
-      paperTradingAutomation.AGENT_IDS.map((agentId) => {
-        const portfolioResult = paperTradingAutomation.readPortfolio(this.projectRoot, agentId);
-        return [agentId, portfolioResult];
-      })
-    );
-    const normalizedPortfolios = paperTradingAutomation.AGENT_IDS.map((agentId) => portfoliosByAgent[agentId].normalized);
-    const liveContext = await this.buildPaperTradingLiveContext(normalizedPortfolios);
-    const summary = {
-      enabled: true,
-      status: 'ok',
-      processedAt: nowIso,
-      dispatched: 0,
-      responded: 0,
-      rejected: 0,
-      timedOut: 0,
-      agents: {},
-    };
-
-    for (const agentId of paperTradingAutomation.AGENT_IDS) {
-      const agentState = {
-        ...defaultPaperTradingAutomationState().agents[agentId],
-        ...(nextState.agents?.[agentId] || {}),
-      };
-      if (agentState.pendingRequestId) {
-        const response = this.collectPaperTradingAgentResponse(
-          agentId,
-          agentState.pendingRequestId,
-          Number(agentState.pendingRequestCreatedAtMs || 0) || 0
-        );
-        if (response?.parsed) {
-          const validation = paperTradingAutomation.validatePaperTradingResponse(response.parsed);
-          if (!validation.ok) {
-            const errorMessage = paperTradingAutomation.buildAgentErrorMessage(
-              { requestId: agentState.pendingRequestId },
-              validation.error
-            );
-            await this.sendPaperTradingAgentMessage(agentId, errorMessage, agentState.pendingRequestId);
-            paperTradingAutomation.writeResponse(this.projectRoot, {
-              requestId: agentState.pendingRequestId,
-              agentId,
-              ok: false,
-              error: validation.error,
-              receivedAt: nowIso,
-            });
-            paperTradingAutomation.appendJsonLine(
-              paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
-              {
-                kind: 'paper_trading_response_rejected',
-                requestId: agentState.pendingRequestId,
-                agentId,
-                receivedAt: nowIso,
-                error: validation.error,
-                raw: response.parsed.raw || null,
-              }
-            );
-            nextState.agents[agentId] = {
-              ...agentState,
-              pendingRequestId: null,
-              pendingRequestCreatedAt: null,
-              pendingRequestCreatedAtMs: 0,
-              lastResponseAt: nowIso,
-              lastResponseAtMs: nowMs,
-              lastError: validation.error,
-            };
-            summary.rejected += 1;
-          } else {
-            const previousRaw = portfoliosByAgent[agentId].raw;
-            const applied = paperTradingAutomation.applyPaperTradingResponse({
-              agentId,
-              portfolio: portfoliosByAgent[agentId].normalized,
-              response: response.parsed,
-              livePriceMap: liveContext.livePriceMap,
-              now: nowIso,
-              wakeReason: agentState.lastWakeReason || 'timer_cycle',
-            });
-            const nextRaw = paperTradingAutomation.serializePortfolio(applied.portfolio, previousRaw);
-            const auditPortfolios = paperTradingAutomation.AGENT_IDS.map((trackedAgentId) => (
-              trackedAgentId === agentId
-                ? nextRaw
-                : portfoliosByAgent[trackedAgentId].raw
-            ));
-            const auditResult = buildPaperCompetitionAudit(this.projectRoot, new Date(nowMs), auditPortfolios);
-            const commitResult = paperTradingAutomation.commitPortfolioMutation(
-              this.projectRoot,
-              {
-                agentId,
-                portfolio: applied.portfolio,
-                previousRaw,
-                now: nowIso,
-                pendingAudit: {
-                  requestId: agentState.pendingRequestId,
-                  agentId,
-                  wakeReason: agentState.lastWakeReason || 'timer_cycle',
-                  action: response.parsed.action,
-                  rationale: response.parsed.rationale,
-                  stopDeclaration: response.parsed.stopDeclaration || null,
-                  noStopDeclaration: response.parsed.noStopDeclaration || null,
-                  timeStop: response.parsed.timeStop || null,
-                  mutation: applied.mutation,
-                },
-                committedAudit: {
-                  kind: 'paper_trading_response_applied',
-                  requestId: agentState.pendingRequestId,
-                  agentId,
-                  receivedAt: nowIso,
-                  wakeReason: agentState.lastWakeReason || 'timer_cycle',
-                  action: response.parsed.action,
-                  rationale: response.parsed.rationale,
-                  stopDeclaration: response.parsed.stopDeclaration || null,
-                  noStopDeclaration: response.parsed.noStopDeclaration || null,
-                  timeStop: response.parsed.timeStop || null,
-                  mutation: applied.mutation,
-                  audit: auditResult,
-                },
-                abortAudit: {
-                  requestId: agentState.pendingRequestId,
-                  agentId,
-                },
-              }
-            );
-            portfoliosByAgent[agentId] = {
-              ...portfoliosByAgent[agentId],
-              raw: nextRaw,
-              normalized: applied.portfolio,
-            };
-            try {
-              paperTradingAutomation.writeResponse(this.projectRoot, {
-                requestId: agentState.pendingRequestId,
-                agentId,
-                ok: true,
-                receivedAt: nowIso,
-                action: response.parsed.action,
-                rationale: response.parsed.rationale,
-                mutation: applied.mutation,
-                audit: auditResult,
-                transactionId: commitResult.transactionId,
-                committedAuditOk: commitResult.committedAuditOk,
-              });
-            } catch (responseWriteError) {
-              summary.status = 'degraded';
-              summary.agents[agentId] = {
-                ...(summary.agents[agentId] || {}),
-                responseWriteError: responseWriteError?.message || String(responseWriteError),
-              };
-            }
-            if (!commitResult.committedAuditOk) {
-              summary.status = 'degraded';
-              summary.agents[agentId] = {
-                ...(summary.agents[agentId] || {}),
-                auditWarning: commitResult.committedAuditError?.message || 'pending_audit_only',
-              };
-            }
-            nextState.agents[agentId] = {
-              ...agentState,
-              pendingRequestId: null,
-              pendingRequestCreatedAt: null,
-              pendingRequestCreatedAtMs: 0,
-              lastResponseAt: nowIso,
-              lastResponseAtMs: nowMs,
-              lastActionType: response.parsed.action?.type || null,
-              lastError: null,
-            };
-            summary.responded += 1;
-          }
-        } else if (
-          Number(agentState.pendingRequestCreatedAtMs || 0) > 0
-          && (nowMs - Number(agentState.pendingRequestCreatedAtMs)) >= this.paperTradingResponseTimeoutMs
-        ) {
-          nextState.agents[agentId] = {
-            ...agentState,
-            pendingRequestId: null,
-            pendingRequestCreatedAt: null,
-            pendingRequestCreatedAtMs: 0,
-            lastError: 'response_timeout',
-          };
-          paperTradingAutomation.appendJsonLine(
-            paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
-            {
-              kind: 'paper_trading_response_timeout',
-              requestId: agentState.pendingRequestId,
-              agentId,
-              timedOutAt: nowIso,
-            }
-          );
-          summary.timedOut += 1;
-        } else {
-          nextState.agents[agentId] = agentState;
-        }
-      } else {
-        nextState.agents[agentId] = agentState;
-      }
-    }
-
-    const refreshedPortfolios = paperTradingAutomation.AGENT_IDS.map((agentId) => portfoliosByAgent[agentId].normalized);
-    const competitionSnapshot = paperTradingAutomation.buildPaperCompetitionSnapshot(refreshedPortfolios);
-    for (const agentId of paperTradingAutomation.AGENT_IDS) {
-      const agentState = {
-        ...defaultPaperTradingAutomationState().agents[agentId],
-        ...(nextState.agents?.[agentId] || {}),
-      };
-      const triggerConfig = paperTradingAutomation.loadTriggerConfig(this.projectRoot, agentId, { writeDefaults: true }).normalized;
-      const wake = paperTradingAutomation.evaluateWakeCondition(triggerConfig, agentState, nowMs);
-      if (agentState.pendingRequestId || !wake.shouldWake) {
-        nextState.agents[agentId] = {
-          ...agentState,
-          nextTimerWakeAtMs: wake.nextTimerWakeAtMs || agentState.nextTimerWakeAtMs || 0,
-          nextTimerWakeAt: wake.nextTimerWakeAtMs ? new Date(wake.nextTimerWakeAtMs).toISOString() : (agentState.nextTimerWakeAt || null),
-        };
-        summary.agents[agentId] = {
-          wakeReason: wake.wakeReason,
-          dispatched: false,
-          pendingRequestId: agentState.pendingRequestId || null,
-        };
-        continue;
-      }
-      const request = paperTradingAutomation.buildRequestPayload(agentId, {
-        requestId: `paper-cycle-${Date.now()}-${agentId}`,
-        portfolio: portfoliosByAgent[agentId].normalized,
-        livePrices: liveContext.livePrices.filter((entry) => paperTradingAutomation.CORE_TICKERS.includes(entry.ticker)),
-        structureSummary: liveContext.structureSummary,
-        competitionSnapshot,
-        wakeReason: wake.wakeReason,
-        createdAt: nowIso,
-        deadline: new Date(nowMs + this.paperTradingResponseTimeoutMs).toISOString(),
-      });
-      const requestPath = paperTradingAutomation.writeRequest(this.projectRoot, request);
-      const prompt = paperTradingAutomation.buildPaperTradingPrompt(request, requestPath);
-      const dispatchResult = await this.sendPaperTradingAgentMessage(agentId, prompt, request.requestId);
-      if (dispatchResult?.ok) {
-        const nextWakeAtMs = paperTradingAutomation.computeNextTimerWakeMs(nowMs, triggerConfig.timer.intervalMinutes);
-        nextState.agents[agentId] = {
-          ...agentState,
-          lastDispatchAt: nowIso,
-          lastDispatchAtMs: nowMs,
-          nextTimerWakeAt: new Date(nextWakeAtMs).toISOString(),
-          nextTimerWakeAtMs: nextWakeAtMs,
-          pendingRequestId: request.requestId,
-          pendingRequestCreatedAt: nowIso,
-          pendingRequestCreatedAtMs: nowMs,
-          lastWakeReason: wake.wakeReason,
-          lastError: null,
-        };
-        paperTradingAutomation.appendJsonLine(
-          paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
-          {
-            kind: 'paper_trading_request_dispatched',
-            requestId: request.requestId,
-            agentId,
-            dispatchedAt: nowIso,
-            wakeReason: wake.wakeReason,
-            triggerConfig,
-          }
-        );
-        summary.dispatched += 1;
-        summary.agents[agentId] = {
-          wakeReason: wake.wakeReason,
-          dispatched: true,
-          requestId: request.requestId,
-        };
-      } else {
-        nextState.agents[agentId] = {
-          ...agentState,
-          lastError: dispatchResult?.error || dispatchResult?.stderr || 'dispatch_failed',
-        };
-        summary.status = 'degraded';
-        summary.agents[agentId] = {
-          wakeReason: wake.wakeReason,
-          dispatched: false,
-          error: nextState.agents[agentId].lastError,
-        };
-      }
-    }
-
-    nextState.lastProcessedAt = nowIso;
-    nextState.lastSummary = summary;
-    this.paperTradingAutomationState = nextState;
-    this.persistPaperTradingAutomationState();
-    this.lastPaperTradingAutomationSummary = {
-      enabled: true,
-      status: summary.status,
-      statePath: this.paperTradingAutomationStatePath,
-      lastProcessedAt: nowIso,
-      lastSummary: summary,
-    };
-    return summary;
-  }
-
-  async maybeRunPaperTradingAutomation(nowMs = Date.now()) {
-    // Paper-trading automation removed per James directive (2026-04-20T04:35Z).
-    // Always returns disabled. Trigger configs forced enabled:false in JSON;
-    // .env SQUIDRUN_PAPER_TRADING_AUTOMATION=0; loadTriggerConfig no longer
-    // re-writes defaults when enabled is false.
-    return { ok: false, skipped: true, reason: 'paper_trading_automation_deleted' };
   }
 
   async maybeRunSaylorWatcher(nowMs = Date.now()) {
@@ -8707,7 +8184,6 @@ class SupervisorDaemon {
     const oracleWatchHeartbeat = buildOracleWatchHeartbeat(this.lastOracleWatchSummary, oracleWatchState);
     this.maybeAlertOracleWatchHeartbeat(oracleWatchHeartbeat);
     const dailyTargetProgress = getTodayRealizedTargetProgress(resolveRuntimePath('trade-journal.db'));
-    const paperCompetition = buildPaperCompetitionStatus(this.projectRoot);
     const pairsScanned = Number(
       this.marketScannerState?.assetCount
       || this.lastMarketScannerSummary?.lastResult?.assetCount
@@ -8785,7 +8261,6 @@ class SupervisorDaemon {
       cryptoConsultationPolicy,
       cryptoRiskPolicy,
       dailyTargetProgress,
-      paperCompetition,
       agentTaskQueue: {
         enabled: this.agentTaskQueueEnabled,
         path: this.agentTaskQueuePath,
@@ -9000,15 +8475,6 @@ class SupervisorDaemon {
         lastSummary: this.lastOracleWatchSummary || null,
       },
       oracleShortRegime: readJsonFile(this.oracleShortRegimeStatePath, null) || this.lastOracleShortRegimeSummary || null,
-      paperTradingAutomation: {
-        enabled: this.paperTradingAutomationEnabled,
-        running: Boolean(this.paperTradingAutomationPromise),
-        statePath: this.paperTradingAutomationStatePath,
-        responseTimeoutMs: this.paperTradingResponseTimeoutMs,
-        lastProcessedAt: this.paperTradingAutomationState?.lastProcessedAt || null,
-        agents: this.paperTradingAutomationState?.agents || null,
-        lastSummary: this.lastPaperTradingAutomationSummary || null,
-      },
       hyperliquidSqueezeDetector: {
         enabled: this.hyperliquidSqueezeDetectorEnabled,
         running: Boolean(this.hyperliquidSqueezeDetectorPromise),

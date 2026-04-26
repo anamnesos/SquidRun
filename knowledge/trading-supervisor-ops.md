@@ -55,6 +55,5 @@ This keeps the daemon from re-running already completed trading phases after a r
 
 The `startup-health` checks monitor lane staleness based on fixed time thresholds, which currently conflict with phase-based scheduling:
 - `crypto_trading_supervisor`: Idles for 4 hours between `crypto_consensus` phases, but triggers a staleness warning after 45 minutes.
-- `paper_trading_automation`: Idles for 6 hours intraday and 16 hours overnight between market phases, but triggers a staleness warning after 60 minutes.
 
 **Recommendation:** The staleness thresholds in `ui/scripts/hm-startup-health.js` should be made phase-aware or raised above the maximum natural idle gap for these lanes to prevent false alarms.

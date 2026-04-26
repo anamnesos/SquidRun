@@ -282,106 +282,6 @@ async function resolveLiveDefiSnapshot(options = {}) {
   }
 }
 
-function resolvePaperPortfolioDir(options = {}) {
-  if (options.paperPortfolioDir) return path.resolve(String(options.paperPortfolioDir));
-  const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
-  return path.join(projectRoot, 'workspace', 'agent-trading');
-}
-
-function normalizePaperPortfolioSummary(portfolio = {}, fallbackAgentId = '') {
-  const openPositions = Array.isArray(portfolio.openPositions)
-    ? portfolio.openPositions.map((position) => normalizeBriefingPosition(position)).filter((position) => position.ticker)
-    : [];
-  const recentClosedTrades = Array.isArray(portfolio.closedTrades)
-    ? portfolio.closedTrades
-      .slice()
-      .sort((left, right) => {
-        const leftMs = Date.parse(left?.closedAt || left?.openedAt || 0) || 0;
-        const rightMs = Date.parse(right?.closedAt || right?.openedAt || 0) || 0;
-        return rightMs - leftMs;
-      })
-      .slice(0, 3)
-      .map((trade) => ({
-        ticker: toText(trade?.ticker || (trade?.symbol ? `${trade.symbol}/USD` : ''), ''),
-        side: toText(trade?.side || trade?.direction, ''),
-        exitPrice: toNumber(trade?.exitPrice ?? trade?.exit, 0),
-        realizedPnl: toNumber(trade?.realizedPnl, 0),
-        closedAt: toText(trade?.closedAt, ''),
-      }))
-      .filter((trade) => trade.ticker)
-    : [];
-
-  return {
-    agentId: toText(portfolio.agentId || portfolio.agent || fallbackAgentId, fallbackAgentId || 'unknown'),
-    equity: toNumber(portfolio.equity ?? portfolio.currentEquity, 0),
-    cashBalance: toNumber(portfolio.cashBalance, 0),
-    totalPnl: toNumber(portfolio.totalPnl, 0),
-    openPositions,
-    recentClosedTrades,
-  };
-}
-
-function resolvePaperPortfolioSummary(options = {}) {
-  if (options.paperPortfolioSummary && typeof options.paperPortfolioSummary === 'object') {
-    return options.paperPortfolioSummary;
-  }
-
-  const portfolioDir = resolvePaperPortfolioDir(options);
-  if (!fs.existsSync(portfolioDir)) {
-    return {
-      ok: false,
-      portfolioDir,
-      portfolios: [],
-    };
-  }
-
-  const files = fs.readdirSync(portfolioDir)
-    .filter((name) => name.toLowerCase().endsWith('-portfolio.json'))
-    .sort();
-
-  const portfolios = files
-    .map((name) => {
-      const fullPath = path.join(portfolioDir, name);
-      const parsed = safeReadJson(fullPath);
-      if (!parsed) return null;
-      return normalizePaperPortfolioSummary(parsed, name.replace(/-portfolio\.json$/i, ''));
-    })
-    .filter(Boolean);
-
-  return {
-    ok: true,
-    portfolioDir,
-    portfolios,
-  };
-}
-
-function detectLivePaperConflicts(liveSnapshot = {}, paperSummary = {}) {
-  const livePositions = Array.isArray(liveSnapshot?.positions) ? liveSnapshot.positions : [];
-  const portfolios = Array.isArray(paperSummary?.portfolios) ? paperSummary.portfolios : [];
-  const conflicts = [];
-
-  for (const livePosition of livePositions) {
-    const ticker = toText(livePosition?.ticker, '');
-    if (!ticker) continue;
-    for (const portfolio of portfolios) {
-      const openMatch = (portfolio.openPositions || []).some((position) => position.ticker === ticker);
-      if (openMatch) continue;
-      const recentClosedMatch = (portfolio.recentClosedTrades || []).find((trade) => trade.ticker === ticker);
-      if (!recentClosedMatch) continue;
-      conflicts.push({
-        ticker,
-        liveState: 'open',
-        paperState: 'closed',
-        agentId: portfolio.agentId,
-        paperClosedAt: recentClosedMatch.closedAt || null,
-        paperExitPrice: recentClosedMatch.exitPrice || null,
-      });
-    }
-  }
-
-  return conflicts;
-}
-
 function formatLiveSnapshotBlock(liveSnapshot = {}) {
   if (liveSnapshot?.ok !== true) {
     return [
@@ -410,42 +310,9 @@ function formatLiveSnapshotBlock(liveSnapshot = {}) {
   return lines.join('\n');
 }
 
-function formatPaperSummaryBlock(paperSummary = {}) {
-  const portfolios = Array.isArray(paperSummary?.portfolios) ? paperSummary.portfolios : [];
-  if (portfolios.length === 0) {
-    return 'Paper trading state: unavailable.';
-  }
-
-  const lines = ['Paper trading state (keep separate from live account state):'];
-  for (const portfolio of portfolios) {
-    lines.push(`- ${portfolio.agentId}: equity=${portfolio.equity}, totalPnl=${portfolio.totalPnl}, openPositions=${portfolio.openPositions.length}`);
-    for (const position of portfolio.openPositions) {
-      lines.push(`  - OPEN ${position.ticker} ${position.side} entry=${position.entryPx}`);
-    }
-    for (const trade of portfolio.recentClosedTrades || []) {
-      lines.push(`  - RECENT_CLOSED ${trade.ticker} exit=${trade.exitPrice} closedAt=${toText(trade.closedAt, 'unknown')}`);
-    }
-  }
-  return lines.join('\n');
-}
-
-function formatConflictBlock(conflicts = []) {
-  if (!Array.isArray(conflicts) || conflicts.length === 0) return '';
-  const lines = [
-    'Live/Paper conflict warnings:',
-    'Do not describe any paper trade or paper account number as live state.',
-  ];
-  for (const conflict of conflicts) {
-    lines.push(`- ${conflict.ticker}: live is OPEN, but ${conflict.agentId} paper is CLOSED at ${toText(conflict.paperClosedAt, 'unknown')} exit=${toNumber(conflict.paperExitPrice, 0)}`);
-  }
-  return lines.join('\n');
-}
-
 function buildBriefingPrompt(files = [], transcriptCorpus = '', context = {}) {
   const sourceList = files.map((file, index) => `${index + 1}. ${file.name} | modified ${file.modifiedAt}`).join('\n');
   const liveSnapshotBlock = formatLiveSnapshotBlock(context.liveSnapshot);
-  const paperSummaryBlock = formatPaperSummaryBlock(context.paperSummary);
-  const conflictBlock = formatConflictBlock(context.livePaperConflicts);
   return [
     'Read these conversations and write a briefing for the agents starting up: what happened, what\'s unfinished, what decisions were made, what James cares about right now.',
     '',
@@ -456,18 +323,11 @@ function buildBriefingPrompt(files = [], transcriptCorpus = '', context = {}) {
     '- Prefer recent facts when the transcripts disagree, but call out uncertainty when needed.',
     '- Write for the SquidRun startup context so Architect, Builder, and Oracle can act immediately.',
     '- Use the verified live snapshot for any live-position or live-account prose.',
-    '- Keep live trading state and paper trading state in separate sections.',
-    '- Never use paper trades, paper exits, or paper account balances to describe the live account.',
-    '- If live and paper mention the same ticker, call out the distinction explicitly instead of merging them.',
     '- Do not include analysis process or mention token budgets.',
     '',
     'Transcript order: newest first.',
     '',
     liveSnapshotBlock,
-    '',
-    paperSummaryBlock,
-    '',
-    conflictBlock,
     '',
     'Source transcripts:',
     sourceList || 'None found.',
@@ -523,8 +383,6 @@ async function requestStartupBriefing(prompt, options = {}) {
           role: 'user',
           content: buildBriefingPrompt(options.transcriptFiles || [], prompt, {
             liveSnapshot: options.liveSnapshot,
-            paperSummary: options.paperSummary,
-            livePaperConflicts: options.livePaperConflicts,
           }),
         },
       ],
@@ -570,20 +428,12 @@ async function generateStartupBriefing(options = {}) {
   const outputPath = resolveBriefingPath(options);
   const statusPath = resolveStatusPath(options);
   const liveSnapshot = await resolveLiveDefiSnapshot(options);
-  const paperSummary = resolvePaperPortfolioSummary(options);
-  const livePaperConflicts = detectLivePaperConflicts(liveSnapshot, paperSummary);
 
   try {
-    if (liveSnapshot?.ok !== true && livePaperConflicts.length > 0) {
-      throw new Error('live_paper_conflict_requires_live_snapshot');
-    }
-
     const body = await requestStartupBriefing(transcriptCorpus, {
       ...options,
       transcriptFiles,
       liveSnapshot,
-      paperSummary,
-      livePaperConflicts,
     });
     const document = formatBriefingDocument(body, transcriptFiles, {
       ...options,
@@ -602,7 +452,6 @@ async function generateStartupBriefing(options = {}) {
       model: toText(options.model || DEFAULT_MODEL, DEFAULT_MODEL),
       liveSnapshotOk: liveSnapshot?.ok === true,
       liveOpenPositionCount: Array.isArray(liveSnapshot?.positions) ? liveSnapshot.positions.length : 0,
-      livePaperConflictCount: livePaperConflicts.length,
     });
 
     return {
@@ -614,8 +463,6 @@ async function generateStartupBriefing(options = {}) {
       promptChars: transcriptCorpus.length,
       content: document,
       liveSnapshot,
-      paperSummary,
-      livePaperConflicts,
     };
   } catch (error) {
     writeStatusFile(statusPath, {
@@ -629,7 +476,6 @@ async function generateStartupBriefing(options = {}) {
       error: error.message,
       liveSnapshotOk: liveSnapshot?.ok === true,
       liveOpenPositionCount: Array.isArray(liveSnapshot?.positions) ? liveSnapshot.positions.length : 0,
-      livePaperConflictCount: livePaperConflicts.length,
     });
     return {
       ok: false,
@@ -640,8 +486,6 @@ async function generateStartupBriefing(options = {}) {
       promptChars: transcriptCorpus.length,
       error: error.message,
       liveSnapshot,
-      paperSummary,
-      livePaperConflicts,
     };
   }
 }
@@ -660,10 +504,6 @@ module.exports = {
     formatBriefingDocument,
     requestStartupBriefing,
     resolveLiveDefiSnapshot,
-    resolvePaperPortfolioSummary,
-    detectLivePaperConflicts,
     formatLiveSnapshotBlock,
-    formatPaperSummaryBlock,
-    formatConflictBlock,
   },
 };

@@ -235,7 +235,7 @@ describe('portfolio-tracker', () => {
     expect(snapshot.totalEquity).toBe(1078);
   });
 
-  test('keeps Alpaca markets zeroed by default so crypto consultations do not inherit paper cash', async () => {
+  test('keeps Alpaca markets zeroed by default so crypto consultations do not inherit stock cash', async () => {
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
       includePolymarket: false,

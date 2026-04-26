@@ -73,7 +73,7 @@ function derivePrimaryDataSource(payload = {}) {
   if (symbols.some((symbol) => isCryptoSymbol(symbol))) {
     return 'hyperliquid';
   }
-  return 'alpaca_paper';
+  return 'alpaca';
 }
 
 function buildHyperliquidAccount(serializedAccountSnapshot = null, serializedDefiStatus = null) {
@@ -108,29 +108,6 @@ function buildLiveTradingContext(payload = {}, serializedAccountSnapshot = null,
     positions,
     warnings: Array.isArray(serializedWarnings) ? serializedWarnings : [],
     account: hyperliquidAccount || null,
-  };
-}
-
-function buildPaperTradingContext(payload = {}, serializedAccountSnapshot = null) {
-  if (derivePrimaryDataSource(payload) === 'hyperliquid') {
-    return null;
-  }
-  const snapshots = serializeMap(payload.snapshots || {});
-  const bars = serializeMap(payload.bars || {});
-  const news = serializeMap(payload.news || []);
-  const paperAccount = serializeMap(
-    serializedAccountSnapshot?.markets?.alpaca_stocks
-    || serializedAccountSnapshot?.markets?.alpaca_crypto
-    || serializedAccountSnapshot
-    || null
-  );
-  return {
-    venue: 'alpaca_paper',
-    isSecondary: derivePrimaryDataSource(payload) === 'hyperliquid',
-    snapshots,
-    bars,
-    news,
-    account: paperAccount || null,
   };
 }
 
@@ -177,7 +154,6 @@ function createConsultationRequest(payload = {}) {
     primaryDataSource,
     executionVenue: primaryDataSource,
     liveTradingContext: buildLiveTradingContext(payload, serializedAccountSnapshot, serializedDefiStatus, serializedWarnings),
-    paperTradingContext: buildPaperTradingContext(payload, serializedAccountSnapshot),
     snapshots: serializedSnapshots,
     bars: serializedBars,
     news: serializedNews,
@@ -303,13 +279,12 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
   const defiStatus = request?.defiStatus || null;
   const primaryDataSource = derivePrimaryDataSource(request);
   const liveTradingContext = request?.liveTradingContext || null;
-  const paperTradingContext = request?.paperTradingContext || null;
   const cryptoMechBoard = request?.cryptoMechBoard || null;
   const eventVeto = request?.eventVeto || null;
   const positionManagementContext = request?.positionManagementContext || null;
   const primaryVenueInstruction = primaryDataSource === 'hyperliquid'
     ? 'Primary live-trading venue is Hyperliquid. Base the consultation on liveTradingContext plus the attached crypto market snapshots/bars.'
-    : 'Primary venue is paper trading. Use the paperTradingContext as your main market snapshot.';
+    : 'Primary venue is Alpaca market data. Use the attached snapshots/bars/news as your main market context.';
   const defiInstruction = defiStatus?.positions?.length
     ? `Live Hyperliquid positions are included in the request JSON (${defiStatus.positions.length} open). Factor them into your signal reasoning before considering any new idea.`
     : '';
@@ -326,11 +301,6 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
     : '';
   const positionManagementInstruction = taskType === 'position_management' && positionManagementContext
     ? 'The request JSON includes positionManagementContext built from position_management(portfolio_state, market_context, risk_state). Use it to decide hold/add/reduce/close/tighten-stop thesis management for existing positions.'
-    : '';
-  const paperContextInstruction = primaryDataSource !== 'hyperliquid'
-    && paperTradingContext?.snapshots
-    && Object.keys(paperTradingContext.snapshots).length > 0
-    ? 'Paper Alpaca snapshots/bars/news are still included for secondary confirmation and backtesting context.'
     : '';
   const warningInstruction = consultationWarnings.length > 0
     ? `WARNING: ${consultationWarnings.map((warning) => toText(warning?.message)).filter(Boolean).join(' ')}`
@@ -353,7 +323,6 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
       liveAccountInstruction,
       mechanicalInstruction,
       eventVetoInstruction,
-      paperContextInstruction,
       warningInstruction,
       macroInstruction,
       `Reply via hm-send architect with JSON containing a signal for EVERY symbol: ${sample}`,
@@ -374,7 +343,6 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
     mechanicalInstruction,
     eventVetoInstruction,
     positionManagementInstruction,
-    paperContextInstruction,
     warningInstruction,
     macroInstruction,
     `Reply via hm-send architect with JSON containing a signal for EVERY symbol: ${sample}`,

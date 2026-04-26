@@ -2503,7 +2503,7 @@ class TradingOrchestrator {
 		const defiStatus = context.defiStatus || options.defiStatus || null;
 		const primaryDataSource = Array.isArray(defiStatus?.positions) && defiStatus.positions.length > 0
 			? 'hyperliquid'
-			: (symbols.some((ticker) => /\/USD$/i.test(String(ticker || '').trim())) ? 'hyperliquid' : 'alpaca_paper');
+			: (symbols.some((ticker) => /\/USD$/i.test(String(ticker || '').trim())) ? 'hyperliquid' : 'alpaca');
 		const timeoutMs = Math.max(
 			1_000,
 			toPositiveInteger(

@@ -31,17 +31,15 @@ See `workspace/specs/trading-system-design.md` for full spec.
 
 ## Setup
 
-1. Sign up at https://alpaca.markets (free paper trading account) and/or configure Interactive Brokers TWS or IB Gateway
+1. Sign up at https://alpaca.markets and/or configure Interactive Brokers TWS or IB Gateway
 2. Get API keys / connection settings from the broker dashboard or gateway
 3. Add to `.env`:
    ```
    ALPACA_API_KEY=your_key
    ALPACA_API_SECRET=your_secret
-   ALPACA_PAPER=true
    IBKR_HOST=127.0.0.1
    IBKR_PORT=4002
    IBKR_CLIENT_ID=17
-   IBKR_PAPER=true
    POLYMARKET_PRIVATE_KEY=your_exported_rabby_private_key
    POLYMARKET_FUNDER_ADDRESS=your_polygon_profile_address
    POLYMARKET_DRY_RUN=true

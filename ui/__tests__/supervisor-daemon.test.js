@@ -335,7 +335,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunMarketScannerAutomation = skippedLane;
     daemon.maybeRunSaylorWatcher = skippedLane;
     daemon.maybeRunOracleWatchEngine = skippedLane;
-    daemon.maybeRunPaperTradingAutomation = skippedLane;
     daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
     daemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
     daemon.maybeRunYieldRouterAutomation = skippedLane;
@@ -399,6 +398,7 @@ describe('supervisor-daemon integrations', () => {
       wakeSignalPath: path.join(tempRoot, 'supervisor-wake.signal'),
       sessionStatePath: path.join(tempRoot, 'session-state.json'),
       agentTaskQueuePath: path.join(tempRoot, 'agent-task-queue.json'),
+      hyperliquidManualActivityPath: path.join(tempRoot, 'hyperliquid-manual-activity.json'),
       oracleWatchEnabled: true,
       oracleWatchEngineScriptPath: scriptPath,
       oracleWatchRulesPath: rulesPath,
@@ -444,9 +444,6 @@ describe('supervisor-daemon integrations', () => {
     }));
     expect(status.dailyTargetProgress).toEqual(expect.objectContaining({
       targetUsd: 200,
-    }));
-    expect(status.paperCompetition).toEqual(expect.objectContaining({
-      path: expect.any(String),
     }));
   });
 
@@ -1674,7 +1671,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunMarketScannerAutomation = skippedLane;
     daemon.maybeRunSaylorWatcher = skippedLane;
     daemon.maybeRunOracleWatchEngine = skippedLane;
-    daemon.maybeRunPaperTradingAutomation = skippedLane;
     daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
     daemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
     daemon.maybeRunYieldRouterAutomation = skippedLane;
@@ -1979,7 +1975,6 @@ describe('supervisor-daemon integrations', () => {
     tradingDaemon.maybeRunMarketScannerAutomation = skippedLane;
     tradingDaemon.maybeRunSaylorWatcher = skippedLane;
     tradingDaemon.maybeRunOracleWatchEngine = skippedLane;
-    tradingDaemon.maybeRunPaperTradingAutomation = skippedLane;
     tradingDaemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
     tradingDaemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
     tradingDaemon.maybeRunYieldRouterAutomation = skippedLane;
@@ -5184,58 +5179,5 @@ describe('supervisor-daemon integrations', () => {
     }));
 
     writeSpy.mockRestore();
-  });
-
-  test('returns the paper-trading deletion sentinel instead of dispatching agent prompts', async () => {
-    const tradingDir = path.join(tempRoot, 'workspace', 'agent-trading');
-    fs.mkdirSync(tradingDir, { recursive: true });
-    for (const agentId of ['architect', 'builder', 'oracle']) {
-      fs.writeFileSync(path.join(tradingDir, `${agentId}-portfolio.json`), JSON.stringify({
-        schemaVersion: 1,
-        agentId,
-        startingBalance: 500,
-        cashBalance: 500,
-        equity: 500,
-        realizedPnl: 0,
-        unrealizedPnl: 0,
-        totalPnl: 0,
-        openPositions: [],
-        closedTrades: [],
-        hourlyMarks: [],
-      }, null, 2));
-    }
-
-    hyperliquidClient.getUniverseMarketData.mockResolvedValue([
-      { ticker: 'BTC/USD', price: 75000, openInterest: 1000, fundingRate: 0.0001 },
-      { ticker: 'ETH/USD', price: 2350, openInterest: 2000, fundingRate: -0.0001 },
-      { ticker: 'SOL/USD', price: 89.2, openInterest: 3000, fundingRate: -0.0002 },
-    ]);
-    hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-      ['BTC/USD', [{ close: 74880 }, { close: 74950 }, { close: 75000 }]],
-      ['ETH/USD', [{ close: 2335 }, { close: 2342 }, { close: 2350 }]],
-      ['SOL/USD', [{ close: 88.9 }, { close: 89.05 }, { close: 89.2 }]],
-    ]));
-
-    daemon.dispatchAgentQueuedTask = jest.fn().mockResolvedValue({ ok: true });
-    daemon.projectRoot = tempRoot;
-    daemon.paperTradingAutomationStatePath = path.join(tempRoot, 'paper-trading-automation-state.json');
-    daemon.paperTradingAutomationState = {
-      updatedAt: null,
-      lastProcessedAt: null,
-      lastSummary: null,
-      agents: {
-        architect: { agentId: 'architect', lastDispatchAtMs: 0, nextTimerWakeAtMs: 0 },
-        builder: { agentId: 'builder', lastDispatchAtMs: 0, nextTimerWakeAtMs: 0 },
-        oracle: { agentId: 'oracle', lastDispatchAtMs: 0, nextTimerWakeAtMs: 0 },
-      },
-    };
-
-    const result = await daemon.maybeRunPaperTradingAutomation(Date.parse('2026-04-16T20:00:00.000Z'));
-    expect(result).toEqual({
-      ok: false,
-      skipped: true,
-      reason: 'paper_trading_automation_deleted',
-    });
-    expect(daemon.dispatchAgentQueuedTask).not.toHaveBeenCalled();
   });
 });

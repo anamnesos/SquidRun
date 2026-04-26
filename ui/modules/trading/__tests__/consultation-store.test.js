@@ -81,7 +81,6 @@ describe('consultation-store', () => {
         ],
         account: { equity: 692, cash: 410, marketValue: 282 },
       },
-      paperTradingContext: null,
       snapshots: {
         'BTC/USD': { tradePrice: 64000 },
       },
@@ -166,8 +165,6 @@ describe('consultation-store', () => {
     expect(prompt).toContain('Live Hyperliquid positions are included');
     expect(prompt).toContain('cryptoMechBoard');
     expect(prompt).toContain('eventVeto');
-    expect(prompt).not.toContain('paperTradingContext as secondary paper-market color only');
-    expect(prompt).not.toContain('Paper Alpaca snapshots/bars/news');
     expect(prompt).toContain('WARNING: ETH SHORT unrealized P&L is now $57.00 vs peak $150.00');
   });
 
@@ -198,7 +195,6 @@ describe('consultation-store', () => {
       marketValue: 693.16,
       walletAddress: '0xwallet',
     });
-    expect(request.paperTradingContext).toBeNull();
   });
 
   test('builds macro-aware prompts that suppress BUYs when longs are blocked', () => {
