@@ -51,7 +51,7 @@ Paper trading is the only confirmed exact fake-removal pattern with an explicit 
 
 - `tradingAutomation` / Alpaca stocks: disabled/manual-only, but status still carries stale market phase data from `2026-03-19`; docs still describe Alpaca-driven stock supervisor operations.
 - `polymarketTradingAutomation`: disabled, but supervisor status still carries old `lastProcessedAt` and scheduled `nextEvent`.
-- `launchRadarAutomation`, `newsScanAutomation`, `pendingFollowupAutomation`, `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled, but status still carries stale run metadata.
+- `newsScanAutomation`, `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled, but status still carries stale run metadata.
 - `oracleWatch`: enabled and heartbeating, but supervisor status can read `running: false` because it is not inside an active tick at that instant. This can be misread as "watch loop dead."
 - `cryptoTradingAutomation` and `marketScannerAutomation`: not fake removals, but they remain broad automated consult/scanner lanes while the strategy directive has shifted to ORDI-pattern gating. They need clearer gating/status language so startup context does not imply generic broad-trade readiness.
 
@@ -185,7 +185,7 @@ These are not confirmed fake-removals, but they have the same user-facing trust 
 
 - `tradingAutomation`: disabled/manual-only with stale March market-phase state.
 - `polymarketTradingAutomation`: disabled with stale run metadata and scheduled next event.
-- `launchRadarAutomation`, `newsScanAutomation`, `pendingFollowupAutomation`, `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled but still present in supervisor status with old timestamps or events.
+- `newsScanAutomation`, `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled but still present in supervisor status with old timestamps or events.
 - `paperCompetition`: still present as a status concept even when empty.
 
 Severity: Medium. If they are intentionally dormant, status should either omit them from startup summaries or mark them explicitly as archived/dormant with no live schedule semantics.
@@ -217,4 +217,3 @@ Follow-up cleanup batch:
 2. Trading docs refresh.
 3. Context compressor contradiction guard.
 4. Startup health report-only mode for hooks.
-

@@ -263,7 +263,6 @@ describe('supervisor-daemon integrations', () => {
       tradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
@@ -367,7 +366,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunTradeReconciliation = skippedLane;
     daemon.maybeRunPolymarketTradingAutomation = skippedLane;
     daemon.maybeRunNewsScanAutomation = skippedLane;
-    daemon.maybeRunPendingFollowupAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
     daemon.maybeRunTokenomistAutomation = skippedLane;
     daemon.maybeRunSparkAutomation = skippedLane;
@@ -427,7 +425,6 @@ describe('supervisor-daemon integrations', () => {
       tradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
@@ -498,7 +495,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-heartbeat.pid'),
@@ -561,7 +557,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingResult: { skipped: true },
       polymarketTradingResult: { skipped: true },
       newsScanResult: { skipped: true },
-      pendingFollowupResult: { skipped: true },
       marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
@@ -615,7 +610,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-relaunch.pid'),
@@ -713,7 +707,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-crash-restart.pid'),
@@ -746,7 +739,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingResult: { skipped: true },
       polymarketTradingResult: { skipped: true },
       newsScanResult: { skipped: true },
-      pendingFollowupResult: { skipped: true },
       marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
@@ -848,7 +840,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-backoff-expired-restart.pid'),
@@ -1704,7 +1695,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunTradeReconciliation = skippedLane;
     daemon.maybeRunPolymarketTradingAutomation = skippedLane;
     daemon.maybeRunNewsScanAutomation = skippedLane;
-    daemon.maybeRunPendingFollowupAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
     daemon.maybeRunTokenomistAutomation = skippedLane;
     daemon.maybeRunSparkAutomation = skippedLane;
@@ -1987,7 +1977,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       tradingOrchestrator,
@@ -2007,7 +1996,6 @@ describe('supervisor-daemon integrations', () => {
     tradingDaemon.maybeRunCryptoTradingAutomation = skippedLane;
     tradingDaemon.maybeRunPolymarketTradingAutomation = skippedLane;
     tradingDaemon.maybeRunNewsScanAutomation = skippedLane;
-    tradingDaemon.maybeRunPendingFollowupAutomation = skippedLane;
     tradingDaemon.maybeRunMarketResearchAutomation = skippedLane;
     tradingDaemon.maybeRunTokenomistAutomation = skippedLane;
     tradingDaemon.maybeRunSparkAutomation = skippedLane;
@@ -3694,128 +3682,6 @@ describe('supervisor-daemon integrations', () => {
     }
   });
 
-  test('keeps Eunbyeol-blocked pending follow-ups internal instead of alerting James', async () => {
-    const originalPendingAutomation = process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
-    process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = '1';
-    const caseOperationsPath = path.join(tempRoot, 'case-operations.md');
-    fs.writeFileSync(caseOperationsPath, [
-      '## ACTIVE PENDING ITEMS',
-      '### Case 1: Jeon Myeongsam (전명삼) — Investment Fraud',
-      '| # | Item | Blocked on | Status |',
-      '|---|------|-----------|--------|',
-      '| 1 | 은별 real name/address/ID/phone in complaint | 은별 input | ⚠️ WAITING |',
-      '| 2 | Mail letters via registered post | items 7-9 | ⛔ BLOCKED |',
-      '',
-      '## 은별 내일 일정 (2026-04-03)',
-      '1. 대구 — 관세청에 USB 증거 제출',
-    ].join('\n'));
-
-    const proactiveDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: true,
-      pendingFollowupIntervalMinutes: 240,
-      caseOperationsPath,
-      pidPath: path.join(tempRoot, 'pending.pid'),
-      statusPath: path.join(tempRoot, 'pending-status.json'),
-      logPath: path.join(tempRoot, 'pending.log'),
-      taskLogDir: path.join(tempRoot, 'pending-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'pending-wake.signal'),
-      pendingFollowupStatePath: path.join(tempRoot, 'pending-state.json'),
-    });
-
-    try {
-      const architectSpy = jest.spyOn(proactiveDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(proactiveDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      proactiveDaemon.pendingFollowupState.lastProcessedAt = '2026-04-04T00:00:00.000Z';
-
-      const result = await proactiveDaemon.maybeRunPendingFollowupAutomation(Date.parse('2026-04-04T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(proactiveDaemon.pendingFollowupState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_0',
-        overdueEunbyeolSchedule: true,
-        waitingCount: 1,
-        blockedCount: 1,
-        jamesActionCount: 0,
-        eunbyeolActionCount: expect.any(Number),
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][FOLLOWUPS]');
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      if (originalPendingAutomation == null) {
-        delete process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
-      } else {
-        process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = originalPendingAutomation;
-      }
-      await proactiveDaemon.stop('test-cleanup-pending-followups');
-    }
-  });
-
-  test('routes James-owned pending follow-up items to Architect for decision, not Telegram', async () => {
-    const originalPendingAutomation = process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
-    process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = '1';
-    const caseOperationsPath = path.join(tempRoot, 'case-operations-james.md');
-    fs.writeFileSync(caseOperationsPath, [
-      '## ACTIVE PENDING ITEMS',
-      '### Case 3: Qeline Shop (큐라인샵) — Counterfeit Goods',
-      '| # | Item | Blocked on | Status |',
-      '|---|------|-----------|--------|',
-      '| 11 | USB 증거 관세청 제출 | 은별 action | ⏳ 내일 대구에서 직접 or 등기 |',
-      '| 12 | James US filings package submission | James action | ⚠️ WAITING |',
-    ].join('\n'));
-
-    const proactiveDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: true,
-      pendingFollowupIntervalMinutes: 240,
-      caseOperationsPath,
-      pidPath: path.join(tempRoot, 'pending-james.pid'),
-      statusPath: path.join(tempRoot, 'pending-james-status.json'),
-      logPath: path.join(tempRoot, 'pending-james.log'),
-      taskLogDir: path.join(tempRoot, 'pending-james-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'pending-james-wake.signal'),
-      pendingFollowupStatePath: path.join(tempRoot, 'pending-james-state.json'),
-    });
-
-    try {
-      const architectSpy = jest.spyOn(proactiveDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(proactiveDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      proactiveDaemon.pendingFollowupState.lastProcessedAt = '2026-04-04T00:00:00.000Z';
-
-      const result = await proactiveDaemon.maybeRunPendingFollowupAutomation(Date.parse('2026-04-04T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(proactiveDaemon.pendingFollowupState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_2',
-        jamesActionCount: 1,
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      if (originalPendingAutomation == null) {
-        delete process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION;
-      } else {
-        process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION = originalPendingAutomation;
-      }
-      await proactiveDaemon.stop('test-cleanup-pending-followups-james');
-    }
-  });
-
   test('runs market research automation and stores a macro-plus-news summary without Telegram spam by default', async () => {
     const originalResearchAutomation = process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION;
     process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = '1';
@@ -3982,7 +3848,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       tokenomistEnabled: true,
       tokenomistIntervalMinutes: 360,
@@ -4040,7 +3905,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       tokenomistEnabled: false,
       sparkMonitorEnabled: true,
@@ -4769,7 +4633,6 @@ describe('supervisor-daemon integrations', () => {
       cryptoTradingEnabled: true,
       polymarketTradingEnabled: false,
       newsScanEnabled: false,
-      pendingFollowupEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       hyperliquidExecutionEnabled: true,
