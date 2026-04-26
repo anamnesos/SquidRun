@@ -7,6 +7,7 @@ const { execFileSync } = require('child_process');
 
 const { resolveCoordPath } = require('../config');
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
+const { resolveExecutableCommandGate } = require('../modules/trading/oracle-watch-execution-gate');
 const { sendAgentAlert } = require('./hm-agent-alert');
 
 const DEFAULT_RULES_PATH = resolveCoordPath(path.join('runtime', 'oracle-watch-rules.json'), { forWrite: true });
@@ -636,8 +637,16 @@ function buildSuggestedCommand(rule = {}, payload = {}, eventType = 'fired') {
   const asset = toText(payload.ticker).split('/')[0];
   if (!asset) return null;
   const majors = new Set(['BTC', 'ETH']);
-  const leverage = majors.has(asset) ? 25 : asset === 'SOL' ? 20 : 10;
-  const margin = majors.has(asset) ? 12 : asset === 'SOL' ? 10 : 8;
+  const leverage = Number.isFinite(Number(rule?.suggestedLeverage))
+    ? Number(rule.suggestedLeverage)
+    : (majors.has(asset) ? 25 : asset === 'SOL' ? 20 : 10);
+  const margin = Number.isFinite(Number(rule?.suggestedMarginUsd))
+    ? Number(rule.suggestedMarginUsd)
+    : (majors.has(asset) ? 12 : asset === 'SOL' ? 10 : 8);
+  const executionGate = resolveExecutableCommandGate(rule, { fallbackMarginUsd: margin });
+  if (!executionGate.executable) {
+    return null;
+  }
   let direction = 'LONG';
   let stopLoss = null;
   if (rule.trigger === 'lose_fail_retest') {
@@ -714,6 +723,7 @@ function formatOracleAlert(eventType, rule = {}, payload = {}, mode = 'normal') 
     })}`;
   }
   const chartLocation = evaluateChartLocation(rule, payload);
+  const command = buildSuggestedCommand(rule, payload, eventType);
   const compact = {
     mode,
     ticker: payload.ticker,
@@ -728,8 +738,8 @@ function formatOracleAlert(eventType, rule = {}, payload = {}, mode = 'normal') 
     openInterestChangePct: payload.openInterestChangePct,
     hasLivePosition: payload.hasLivePosition,
     chartLocation,
-    executionReady: eventType === 'fired' && chartLocation.executable === true,
-    command: buildSuggestedCommand(rule, payload, eventType),
+    executionReady: command != null,
+    command,
   };
   return `(ORACLE WATCH): ${JSON.stringify(compact)}`;
 }

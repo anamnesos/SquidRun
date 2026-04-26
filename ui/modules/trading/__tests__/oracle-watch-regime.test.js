@@ -11,6 +11,62 @@ const path = require('path');
 const hyperliquidClient = require('../hyperliquid-client');
 const regimeModule = require('../oracle-watch-regime');
 
+function buildOrdiPatternBars(price = 0.15) {
+  const bars1h = [
+    { open: 0.08, high: 0.082, low: 0.079, close: 0.081 },
+    { open: 0.081, high: 0.096, low: 0.08, close: 0.095 },
+    { open: 0.095, high: 0.122, low: 0.093, close: 0.12 },
+    { open: 0.12, high: 0.168, low: 0.118, close: 0.162 },
+    { open: 0.162, high: 0.18, low: 0.138, close: 0.143 },
+    { open: 0.143, high: 0.158, low: 0.141, close: price },
+  ];
+  const bars5m = [
+    { high: price * 1.16, low: price * 1.08, close: price * 1.12, open: price * 1.15 },
+    { high: price * 1.12, low: price * 1.04, close: price * 1.06, open: price * 1.1 },
+    { high: price * 1.08, low: price * 1.01, close: price * 1.03, open: price * 1.05 },
+    { high: price * 1.06, low: price * 0.99, close: price * 1.04, open: price * 1.03 },
+    { high: price * 1.04, low: price * 0.985, close: price * 1.02, open: price * 1.04 },
+    { high: price * 1.01, low: price * 0.98, close: price, open: price * 1.02 },
+  ];
+  const bars15m = [
+    { high: price * 1.18, low: price * 1.07, close: price * 1.11, open: price * 1.16 },
+    { high: price * 1.12, low: price * 1.02, close: price * 1.05, open: price * 1.1 },
+    { high: price * 1.08, low: price * 0.99, close: price * 1.04, open: price * 1.05 },
+    { high: price * 1.025, low: price * 0.98, close: price, open: price * 1.04 },
+  ];
+  return { bars1h, bars5m, bars15m };
+}
+
+function mockHistoricalBarsByTimeframe(entries) {
+  hyperliquidClient.getHistoricalBars.mockImplementation(async ({ timeframe }) => {
+    const map = new Map();
+    for (const [ticker, bars] of Object.entries(entries)) {
+      if (timeframe === '5m') map.set(ticker, bars.bars5m || []);
+      else if (timeframe === '15m') map.set(ticker, bars.bars15m || []);
+      else map.set(ticker, bars.bars1h || []);
+    }
+    return map;
+  });
+}
+
+function buildSharedOrdiMovers() {
+  return [
+    { ticker: 'ORDI/USD', direction: 'DOWN', change4hPct: -0.04, change24hPct: 0.32, fundingRate: 0.0000125, volumeUsd24h: 5000000, score: 0.32, price: 4.16 },
+    { ticker: 'SCR/USD', direction: 'DOWN', change4hPct: -0.03, change24hPct: 0.24, fundingRate: 0.0000125, volumeUsd24h: 150000, score: 0.24, price: 0.0408 },
+    { ticker: 'SAGA/USD', direction: 'DOWN', change4hPct: -0.025, change24hPct: 0.2, fundingRate: -0.0001, volumeUsd24h: 300000, score: 0.2, price: 0.0191 },
+    { ticker: 'LIT/USD', direction: 'DOWN', change4hPct: -0.028, change24hPct: 0.18, fundingRate: 0.0000125, volumeUsd24h: 800000, score: 0.18, price: 0.8937 },
+  ];
+}
+
+function mockSharedOrdiBars() {
+  mockHistoricalBarsByTimeframe({
+    'ORDI/USD': buildOrdiPatternBars(4.16),
+    'SCR/USD': buildOrdiPatternBars(0.0408),
+    'SAGA/USD': buildOrdiPatternBars(0.0191),
+    'LIT/USD': buildOrdiPatternBars(0.8937),
+  });
+}
+
 describe('oracle-watch-regime', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -85,32 +141,10 @@ describe('oracle-watch-regime', () => {
       },
     }, null, 2));
     fs.writeFileSync(marketStatePath, JSON.stringify({
-      flaggedMovers: [
-        { ticker: 'ORDI/USD', direction: 'DOWN', change4hPct: -0.04, change24hPct: -0.18, fundingRate: 0.0000125, volumeUsd24h: 5000000, score: 0.18, price: 4.16 },
-        { ticker: 'SCR/USD', direction: 'DOWN', change4hPct: -0.03, change24hPct: -0.13, fundingRate: 0.0000125, volumeUsd24h: 150000, score: 0.13, price: 0.0408 },
-        { ticker: 'SAGA/USD', direction: 'DOWN', change4hPct: -0.025, change24hPct: -0.16, fundingRate: -0.0001, volumeUsd24h: 300000, score: 0.16, price: 0.0191 },
-        { ticker: 'LIT/USD', direction: 'DOWN', change4hPct: -0.028, change24hPct: -0.11, fundingRate: 0.0000125, volumeUsd24h: 800000, score: 0.11, price: 0.8937 },
-      ],
+      flaggedMovers: buildSharedOrdiMovers(),
     }, null, 2));
 
-    hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-      ['ORDI/USD', [
-        { high: 4.25, low: 4.12, close: 4.18 },
-        { high: 4.22, low: 4.11, close: 4.16 },
-      ]],
-      ['SCR/USD', [
-        { high: 0.0417, low: 0.0404, close: 0.0411 },
-        { high: 0.0413, low: 0.0403, close: 0.0408 },
-      ]],
-      ['SAGA/USD', [
-        { high: 0.0195, low: 0.0189, close: 0.0192 },
-        { high: 0.0193, low: 0.0188, close: 0.0191 },
-      ]],
-      ['LIT/USD', [
-        { high: 0.912, low: 0.89, close: 0.901 },
-        { high: 0.905, low: 0.889, close: 0.8937 },
-      ]],
-    ]));
+    mockSharedOrdiBars();
 
     const result = await regimeModule.applySharedShortRegime({
       statePath: regimeStatePath,
@@ -129,11 +163,11 @@ describe('oracle-watch-regime', () => {
     expect(savedRules.rules.some((rule) => rule.id === 'shared-regime-auto-short-old')).toBe(false);
     expect(savedRules.rules.filter((rule) => rule.sourceTag === regimeModule.AUTO_RULE_SOURCE).length).toBeGreaterThanOrEqual(4);
     expect(savedRules.rules.find((rule) => rule.id === 'shared-regime-auto-short-ordi')).toEqual(expect.objectContaining({
-      suggestedMarginUsd: 150,
+      suggestedMarginUsd: 250,
       suggestedLeverage: 10,
     }));
     expect(savedRules.rules.find((rule) => rule.id === 'shared-regime-auto-short-saga')).toEqual(expect.objectContaining({
-      suggestedMarginUsd: 125,
+      suggestedMarginUsd: 200,
       suggestedLeverage: 7,
     }));
     expect(savedWatchState.rules['shared-regime-auto-short-ordi']).toEqual(expect.objectContaining({
@@ -142,6 +176,45 @@ describe('oracle-watch-regime', () => {
     }));
     expect(savedRegimeState.promotedTickers).toEqual(expect.arrayContaining(['ORDI/USD', 'SCR/USD']));
     expect(savedRegimeState.retiredRuleIds).toContain('shared-regime-auto-short-old');
+  });
+
+  test('blocks generic shared short clusters that lack the ORDI-pattern setup', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-watch-regime-generic-block-'));
+    const rulesPath = path.join(tempDir, 'oracle-watch-rules.json');
+    const watchStatePath = path.join(tempDir, 'oracle-watch-state.json');
+    const regimeStatePath = path.join(tempDir, 'oracle-short-regime-state.json');
+    const marketStatePath = path.join(tempDir, 'market-scanner-state.json');
+    const promotionDecisionsPath = path.join(tempDir, 'oracle-watch-promotion-decisions.jsonl');
+
+    fs.writeFileSync(rulesPath, JSON.stringify({ version: 1, symbols: [], hotSymbols: [], rules: [] }, null, 2));
+    fs.writeFileSync(watchStatePath, JSON.stringify({ version: 2, rules: {} }, null, 2));
+    fs.writeFileSync(marketStatePath, JSON.stringify({
+      flaggedMovers: [
+        { ticker: 'ORDI/USD', direction: 'DOWN', change4hPct: -0.04, change24hPct: -0.18, fundingRate: 0.0000125, volumeUsd24h: 5000000, score: 0.18, price: 4.16 },
+        { ticker: 'SCR/USD', direction: 'DOWN', change4hPct: -0.03, change24hPct: -0.13, fundingRate: 0.0000125, volumeUsd24h: 150000, score: 0.13, price: 0.0408 },
+        { ticker: 'SAGA/USD', direction: 'DOWN', change4hPct: -0.025, change24hPct: -0.16, fundingRate: -0.0001, volumeUsd24h: 300000, score: 0.16, price: 0.0191 },
+        { ticker: 'LIT/USD', direction: 'DOWN', change4hPct: -0.028, change24hPct: -0.11, fundingRate: 0.0000125, volumeUsd24h: 800000, score: 0.11, price: 0.8937 },
+      ],
+    }, null, 2));
+
+    mockSharedOrdiBars();
+
+    const result = await regimeModule.applySharedShortRegime({
+      statePath: regimeStatePath,
+      rulesPath,
+      watchStatePath,
+      marketScannerStatePath: marketStatePath,
+      promotionDecisionsPath,
+    });
+
+    const savedRules = JSON.parse(fs.readFileSync(rulesPath, 'utf8'));
+    const decisionLog = fs.readFileSync(promotionDecisionsPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(result.active).toBe(true);
+    expect(result.promotedTickers).toEqual([]);
+    expect(savedRules.rules.filter((rule) => rule.sourceTag === regimeModule.AUTO_RULE_SOURCE)).toEqual([]);
+    expect(decisionLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ticker: 'ORDI/USD', promotionSource: 'shared_short_regime', accepted: false, reason: 'multi_day_pump_insufficient_bars' }),
+    ]));
   });
 
   test('refreshes retained auto rules when the mission sizing bucket changes', async () => {
@@ -182,32 +255,10 @@ describe('oracle-watch-regime', () => {
       },
     }, null, 2));
     fs.writeFileSync(marketStatePath, JSON.stringify({
-      flaggedMovers: [
-        { ticker: 'ORDI/USD', direction: 'DOWN', change4hPct: -0.04, change24hPct: -0.18, fundingRate: 0.0000125, volumeUsd24h: 5000000, score: 0.18, price: 4.16 },
-        { ticker: 'SCR/USD', direction: 'DOWN', change4hPct: -0.03, change24hPct: -0.13, fundingRate: 0.0000125, volumeUsd24h: 150000, score: 0.13, price: 0.0408 },
-        { ticker: 'SAGA/USD', direction: 'DOWN', change4hPct: -0.025, change24hPct: -0.16, fundingRate: -0.0001, volumeUsd24h: 300000, score: 0.16, price: 0.0191 },
-        { ticker: 'LIT/USD', direction: 'DOWN', change4hPct: -0.028, change24hPct: -0.11, fundingRate: 0.0000125, volumeUsd24h: 800000, score: 0.11, price: 0.8937 },
-      ],
+      flaggedMovers: buildSharedOrdiMovers(),
     }, null, 2));
 
-    hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-      ['ORDI/USD', [
-        { high: 4.25, low: 4.12, close: 4.18 },
-        { high: 4.22, low: 4.11, close: 4.16 },
-      ]],
-      ['SCR/USD', [
-        { high: 0.0417, low: 0.0404, close: 0.0411 },
-        { high: 0.0413, low: 0.0403, close: 0.0408 },
-      ]],
-      ['SAGA/USD', [
-        { high: 0.0195, low: 0.0189, close: 0.0192 },
-        { high: 0.0193, low: 0.0188, close: 0.0191 },
-      ]],
-      ['LIT/USD', [
-        { high: 0.912, low: 0.89, close: 0.901 },
-        { high: 0.905, low: 0.889, close: 0.8937 },
-      ]],
-    ]));
+    mockSharedOrdiBars();
 
     await regimeModule.applySharedShortRegime({
       statePath: regimeStatePath,
@@ -219,7 +270,7 @@ describe('oracle-watch-regime', () => {
     const savedRules = JSON.parse(fs.readFileSync(rulesPath, 'utf8'));
     const savedWatchState = JSON.parse(fs.readFileSync(watchStatePath, 'utf8'));
     expect(savedRules.rules.find((rule) => rule.id === 'shared-regime-auto-short-saga')).toEqual(expect.objectContaining({
-      suggestedMarginUsd: 125,
+      suggestedMarginUsd: 200,
       suggestedLeverage: 7,
     }));
     expect(savedWatchState.rules['shared-regime-auto-short-saga']).toEqual(expect.not.objectContaining({
@@ -252,7 +303,7 @@ describe('oracle-watch-regime', () => {
           retestMin: 4.2251,
           retestMax: 4.2445,
           sourceTag: regimeModule.AUTO_RULE_SOURCE,
-          suggestedMarginUsd: 150,
+          suggestedMarginUsd: 250,
           suggestedLeverage: 10,
           expiresAt: futureIso,
           metadata: {
@@ -279,32 +330,10 @@ describe('oracle-watch-regime', () => {
       },
     }, null, 2));
     fs.writeFileSync(marketStatePath, JSON.stringify({
-      flaggedMovers: [
-        { ticker: 'ORDI/USD', direction: 'DOWN', change4hPct: -0.04, change24hPct: -0.18, fundingRate: 0.0000125, volumeUsd24h: 5000000, score: 0.18, price: 4.16 },
-        { ticker: 'SCR/USD', direction: 'DOWN', change4hPct: -0.03, change24hPct: -0.13, fundingRate: 0.0000125, volumeUsd24h: 150000, score: 0.13, price: 0.0408 },
-        { ticker: 'SAGA/USD', direction: 'DOWN', change4hPct: -0.025, change24hPct: -0.16, fundingRate: -0.0001, volumeUsd24h: 300000, score: 0.16, price: 0.0191 },
-        { ticker: 'LIT/USD', direction: 'DOWN', change4hPct: -0.028, change24hPct: -0.11, fundingRate: 0.0000125, volumeUsd24h: 800000, score: 0.11, price: 0.8937 },
-      ],
+      flaggedMovers: buildSharedOrdiMovers(),
     }, null, 2));
 
-    hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-      ['ORDI/USD', [
-        { high: 4.25, low: 4.12, close: 4.18 },
-        { high: 4.22, low: 4.11, close: 4.16 },
-      ]],
-      ['SCR/USD', [
-        { high: 0.0417, low: 0.0404, close: 0.0411 },
-        { high: 0.0413, low: 0.0403, close: 0.0408 },
-      ]],
-      ['SAGA/USD', [
-        { high: 0.0195, low: 0.0189, close: 0.0192 },
-        { high: 0.0193, low: 0.0188, close: 0.0191 },
-      ]],
-      ['LIT/USD', [
-        { high: 0.912, low: 0.89, close: 0.901 },
-        { high: 0.905, low: 0.889, close: 0.8937 },
-      ]],
-    ]));
+    mockSharedOrdiBars();
 
     await regimeModule.applySharedShortRegime({
       statePath: regimeStatePath,
@@ -346,36 +375,21 @@ describe('oracle-watch-regime', () => {
     fs.writeFileSync(marketStatePath, JSON.stringify({
       lastResult: {
         scannedAt: '2026-04-23T17:00:13.110Z',
-        urgentPromotedSymbols: ['MEGA/USD', 'CHIP/USD'],
+        urgentPromotedSymbols: ['HYPER/USD'],
         flaggedMovers: [
-          { ticker: 'MEGA/USD', direction: 'DOWN', change4hPct: -0.2246, change24hPct: -0.2288, fundingRate: -0.00017694, volumeUsd24h: 2475681.52, openInterestChange24hPct: 0.0464, score: 0.2288, price: 0.15829 },
-          { ticker: 'CHIP/USD', direction: 'DOWN', change4hPct: -0.1333, change24hPct: -0.1452, fundingRate: -0.00005446, volumeUsd24h: 150558673.02, openInterestChange24hPct: 0.2505, score: 0.1452, price: 0.091985 },
+          { ticker: 'HYPER/USD', direction: 'UP', change4hPct: -0.033, change24hPct: 0.5967, fundingRate: -0.00228789, volumeUsd24h: 3956295.61, openInterestChange24hPct: 1.6361, score: 0.5967, price: 0.156405 },
         ],
       },
     }, null, 2));
     fs.writeFileSync(sparkFirePlansPath, JSON.stringify({ generatedAt: '2026-04-23T17:26:00.000Z', firePlans: [] }, null, 2));
     fs.writeFileSync(priorityOverridesPath, JSON.stringify({ version: 1, entries: [] }, null, 2));
 
-    hyperliquidClient.getHistoricalBars.mockImplementation(async ({ timeframe }) => new Map([
-      ['MEGA/USD', timeframe === '5m'
-        ? [
-          { high: 0.1705, low: 0.1592, close: 0.1614 },
-          { high: 0.1622, low: 0.1579, close: 0.15829 },
-        ]
-        : [
-          { high: 0.2037, low: 0.1581, close: 0.15829 },
-        ]],
-      ['CHIP/USD', timeframe === '5m'
-        ? [
-          { high: 0.0943, low: 0.0921, close: 0.0931 },
-          { high: 0.0932, low: 0.0918, close: 0.091985 },
-        ]
-        : [
-          { high: 0.1119, low: 0.0917, close: 0.091985 },
-        ]],
-    ]));
+    mockHistoricalBarsByTimeframe({
+      'HYPER/USD': buildOrdiPatternBars(0.156405),
+    });
 
     const result = await regimeModule.applySharedShortRegime({
+      now: '2026-04-23T17:30:00.000Z',
       statePath: regimeStatePath,
       rulesPath,
       watchStatePath,
@@ -390,32 +404,29 @@ describe('oracle-watch-regime', () => {
     const decisionLog = fs.readFileSync(promotionDecisionsPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
 
     expect(result.active).toBe(false);
-    expect(result.promotionPromotedTickers).toEqual(expect.arrayContaining(['MEGA/USD', 'CHIP/USD']));
-    expect(savedRules.rules.find((rule) => rule.id === 'promoted-watch-short-mega')).toEqual(expect.objectContaining({
+    expect(result.promotionPromotedTickers).toEqual(expect.arrayContaining(['HYPER/USD']));
+    expect(savedRules.rules.find((rule) => rule.id === 'promoted-watch-short-hyper')).toEqual(expect.objectContaining({
       sourceTag: regimeModule.PROMOTED_AUTO_RULE_SOURCE,
       trigger: 'lose_fail_retest',
+      suggestedMarginUsd: 200,
     }));
-    expect(savedRules.rules.find((rule) => rule.id === 'promoted-watch-short-chip')).toEqual(expect.objectContaining({
-      sourceTag: regimeModule.PROMOTED_AUTO_RULE_SOURCE,
-      trigger: 'lose_fail_retest',
-    }));
-    expect(savedWatchState.rules['promoted-watch-short-mega']).toEqual(expect.objectContaining({
+    expect(savedWatchState.rules['promoted-watch-short-hyper']).toEqual(expect.objectContaining({
       status: 'armed',
       lastEventType: 'armed_seeded',
     }));
     expect(decisionLog).toEqual(expect.arrayContaining([
-      expect.objectContaining({ ticker: 'MEGA/USD', promotionSource: 'market_scanner_urgent', accepted: true }),
-      expect.objectContaining({ ticker: 'CHIP/USD', promotionSource: 'market_scanner_urgent', accepted: true }),
+      expect.objectContaining({ ticker: 'HYPER/USD', promotionSource: 'market_scanner_urgent', desiredDirection: 'SELL', accepted: true }),
     ]));
   });
 
-  test('converts ready spark fireplans directly into oracle watch rules', async () => {
+  test('rejects catalyst-only spark longs instead of converting them into executable watch rules', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-watch-promotions-spark-'));
     const rulesPath = path.join(tempDir, 'oracle-watch-rules.json');
     const watchStatePath = path.join(tempDir, 'oracle-watch-state.json');
     const regimeStatePath = path.join(tempDir, 'oracle-short-regime-state.json');
     const marketStatePath = path.join(tempDir, 'market-scanner-state.json');
     const sparkFirePlansPath = path.join(tempDir, 'spark-fireplans.json');
+    const promotionDecisionsPath = path.join(tempDir, 'oracle-watch-promotion-decisions.jsonl');
 
     fs.writeFileSync(rulesPath, JSON.stringify({ version: 1, symbols: [], hotSymbols: [], rules: [] }, null, 2));
     fs.writeFileSync(watchStatePath, JSON.stringify({ version: 2, rules: {} }, null, 2));
@@ -439,31 +450,27 @@ describe('oracle-watch-regime', () => {
       ],
     }, null, 2));
 
-    hyperliquidClient.getHistoricalBars.mockImplementation(async ({ timeframe }) => new Map([
-      ['AERO/USD', timeframe === '5m'
-        ? [
-          { high: 0.441, low: 0.436, close: 0.439 },
-          { high: 0.4475, low: 0.4402, close: 0.44724 },
-        ]
-        : [
-          { high: 0.453, low: 0.4027, close: 0.44724 },
-        ]],
-    ]));
+    mockHistoricalBarsByTimeframe({
+      'AERO/USD': buildOrdiPatternBars(0.44724),
+    });
 
-    await regimeModule.applySharedShortRegime({
+    const result = await regimeModule.applySharedShortRegime({
+      now: '2026-04-23T17:30:00.000Z',
       statePath: regimeStatePath,
       rulesPath,
       watchStatePath,
       marketScannerStatePath: marketStatePath,
       sparkFirePlansPath,
+      promotionDecisionsPath,
     });
 
     const savedRules = JSON.parse(fs.readFileSync(rulesPath, 'utf8'));
-    expect(savedRules.rules.find((rule) => rule.id === 'promoted-watch-long-aero')).toEqual(expect.objectContaining({
-      sourceTag: regimeModule.PROMOTED_AUTO_RULE_SOURCE,
-      trigger: 'reclaim_hold',
-      ticker: 'AERO/USD',
-    }));
+    const decisionLog = fs.readFileSync(promotionDecisionsPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(result.promotionPromotedTickers).toEqual([]);
+    expect(savedRules.rules.find((rule) => rule.id === 'promoted-watch-long-aero')).toBeUndefined();
+    expect(decisionLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ticker: 'AERO/USD', promotionSource: 'spark_fireplan', accepted: false, reason: 'ordi_pattern_short_only' }),
+    ]));
   });
 
   test('manual priority override wins over bullish inputs and keeps direction bearish', async () => {
@@ -482,7 +489,7 @@ describe('oracle-watch-regime', () => {
         scannedAt: '2026-04-23T17:00:13.110Z',
         urgentPromotedSymbols: ['CHIP/USD'],
         flaggedMovers: [
-          { ticker: 'CHIP/USD', direction: 'UP', change4hPct: 0.081, change24hPct: 0.12, fundingRate: -0.0002, volumeUsd24h: 1500000, openInterestChange24hPct: 0.14, score: 0.12, price: 0.091985 },
+          { ticker: 'CHIP/USD', direction: 'UP', change4hPct: -0.041, change24hPct: 0.32, fundingRate: -0.0002, volumeUsd24h: 1500000, openInterestChange24hPct: 0.14, score: 0.32, price: 0.091985 },
         ],
       },
     }, null, 2));
@@ -517,18 +524,12 @@ describe('oracle-watch-regime', () => {
       ],
     }, null, 2));
 
-    hyperliquidClient.getHistoricalBars.mockImplementation(async ({ timeframe }) => new Map([
-      ['CHIP/USD', timeframe === '5m'
-        ? [
-          { high: 0.0934, low: 0.0921, close: 0.0928 },
-          { high: 0.0929, low: 0.0918, close: 0.091985 },
-        ]
-        : [
-          { high: 0.1119, low: 0.0892, close: 0.091985 },
-        ]],
-    ]));
+    mockHistoricalBarsByTimeframe({
+      'CHIP/USD': buildOrdiPatternBars(0.091985),
+    });
 
     await regimeModule.applySharedShortRegime({
+      now: '2026-04-23T17:30:00.000Z',
       statePath: regimeStatePath,
       rulesPath,
       watchStatePath,
@@ -564,7 +565,7 @@ describe('oracle-watch-regime', () => {
         scannedAt: '2026-04-23T17:00:13.110Z',
         urgentPromotedSymbols: ['CHIP/USD'],
         flaggedMovers: [
-          { ticker: 'CHIP/USD', direction: 'DOWN', change4hPct: -0.1333, change24hPct: -0.1452, fundingRate: -0.00005446, volumeUsd24h: 150558673.02, openInterestChange24hPct: 0.2505, score: 0.1452, price: 0.091985 },
+          { ticker: 'CHIP/USD', direction: 'UP', change4hPct: -0.041, change24hPct: 0.32, fundingRate: -0.00005446, volumeUsd24h: 150558673.02, openInterestChange24hPct: 0.2505, score: 0.32, price: 0.091985 },
         ],
       },
     }, null, 2));
@@ -587,18 +588,12 @@ describe('oracle-watch-regime', () => {
       ],
     }, null, 2));
 
-    hyperliquidClient.getHistoricalBars.mockImplementation(async ({ timeframe }) => new Map([
-      ['CHIP/USD', timeframe === '5m'
-        ? [
-          { high: 0.0946, low: 0.0926, close: 0.0924 },
-          { high: 0.0925, low: 0.0917, close: 0.091985 },
-        ]
-        : [
-          { high: 0.1119, low: 0.0892, close: 0.091985 },
-        ]],
-    ]));
+    mockHistoricalBarsByTimeframe({
+      'CHIP/USD': buildOrdiPatternBars(0.091985),
+    });
 
     await regimeModule.applySharedShortRegime({
+      now: '2026-04-23T17:30:00.000Z',
       statePath: regimeStatePath,
       rulesPath,
       watchStatePath,
@@ -613,8 +608,8 @@ describe('oracle-watch-regime', () => {
     expect(savedRules.rules.find((rule) => rule.id === 'promoted-watch-short-chip')).toBeDefined();
     expect(savedRules.rules.find((rule) => rule.id === 'promoted-watch-long-chip')).toBeUndefined();
     expect(decisionLog).toEqual(expect.arrayContaining([
-      expect.objectContaining({ ticker: 'CHIP/USD', promotionSource: 'spark_fireplan', accepted: false, reason: 'waterfall_dump_state' }),
-      expect.objectContaining({ ticker: 'CHIP/USD', promotionSource: 'market_scanner_urgent', accepted: true }),
+      expect.objectContaining({ ticker: 'CHIP/USD', promotionSource: 'spark_fireplan', accepted: false, reason: 'ordi_pattern_short_only' }),
+      expect.objectContaining({ ticker: 'CHIP/USD', promotionSource: 'market_scanner_urgent', desiredDirection: 'SELL', accepted: true }),
     ]));
   });
 

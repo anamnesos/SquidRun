@@ -6,6 +6,7 @@ const path = require('path');
 const { resolveCoordPath } = require('../../config');
 const hyperliquidClient = require('./hyperliquid-client');
 const marketScannerModule = require('./market-scanner');
+const { MIN_EXECUTABLE_MARGIN_USD } = require('./oracle-watch-execution-gate');
 
 const DEFAULT_SHARED_SHORT_REGIME_STATE_PATH = resolveCoordPath(path.join('runtime', 'oracle-short-regime-state.json'), { forWrite: true });
 const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveCoordPath(path.join('runtime', 'market-scanner-state.json'), { forWrite: true });
@@ -21,12 +22,16 @@ const DEFAULT_MIN_SHARED_SHORT_CANDIDATES = 4;
 const DEFAULT_MAX_PROMOTED_SHORTS = 6;
 const DEFAULT_MIN_VOLUME_USD_24H = 100000;
 const DEFAULT_RULE_TTL_MS = 2 * 60 * 60 * 1000;
-const DEFAULT_SHARED_SHORT_MISSION_FLOOR_MARGIN_USD = 125;
+const DEFAULT_SHARED_SHORT_MISSION_FLOOR_MARGIN_USD = MIN_EXECUTABLE_MARGIN_USD;
 const DEFAULT_PROMOTION_MIN_VOLUME_USD_24H = 250000;
 const DEFAULT_PROMOTION_MAX_SPREAD_BPS = 40;
 const DEFAULT_SCANNER_PROMOTION_TTL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_SPARK_PROMOTION_POST_EVENT_TTL_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_PROMOTION_COOLDOWN_MS = 10 * 60 * 1000;
+const ORDI_PATTERN_MIN_24H_PUMP_PCT = 0.15;
+const ORDI_PATTERN_MIN_LOOKBACK_PUMP_PCT = 0.25;
+const ORDI_PATTERN_MIN_DUMP_WICK_PCT = 0.08;
+const ORDI_PATTERN_MIN_DUMP_BODY_PCT = 0.045;
 
 const MANUAL_OVERRIDE_PRIORITY = 1;
 const SPARK_FIREPLAN_PRIORITY = 2;
@@ -107,6 +112,31 @@ function roundToPrecision(value, digits = 4) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   return Number(numeric.toFixed(Math.max(0, digits)));
+}
+
+function normalizeBars(bars = []) {
+  return (Array.isArray(bars) ? bars : [])
+    .map((bar = {}) => ({
+      open: toNumber(bar.open, NaN),
+      high: toNumber(bar.high, NaN),
+      low: toNumber(bar.low, NaN),
+      close: toNumber(bar.close, NaN),
+    }))
+    .filter((bar) => (
+      Number.isFinite(bar.open)
+      && Number.isFinite(bar.high)
+      && Number.isFinite(bar.low)
+      && Number.isFinite(bar.close)
+      && bar.high > 0
+      && bar.low > 0
+      && bar.close > 0
+    ));
+}
+
+function average(values = []) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (finite.length === 0) return NaN;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
 }
 
 function resolveDigitsFromPrice(price = NaN) {
@@ -216,13 +246,13 @@ function resolveSharedShortSizing(entry = {}) {
   const volumeUsd24h = toNumber(entry?.volumeUsd24h, 0);
   if (volumeUsd24h >= 5_000_000) {
     return {
-      suggestedMarginUsd: 150,
+      suggestedMarginUsd: 250,
       suggestedLeverage: 10,
     };
   }
   if (volumeUsd24h >= 1_000_000) {
     return {
-      suggestedMarginUsd: 125,
+      suggestedMarginUsd: MIN_EXECUTABLE_MARGIN_USD,
       suggestedLeverage: 8,
     };
   }
@@ -424,6 +454,162 @@ function hasObviousUrgentShortContext(scannerMover = {}) {
     && (!Number.isFinite(openInterestChange24hPct) || openInterestChange24hPct >= -0.05);
 }
 
+function evaluateHistoricalDumpHistory(bars1h = []) {
+  const bars = normalizeBars(bars1h);
+  if (bars.length < 6) {
+    return {
+      ok: false,
+      reason: 'dump_history_insufficient_bars',
+    };
+  }
+  let strongest = null;
+  for (const bar of bars) {
+    const wickDropPct = bar.high > 0 ? (bar.high - bar.low) / bar.high : 0;
+    const bodyDropPct = bar.open > 0 ? (bar.open - bar.close) / bar.open : 0;
+    const qualifies = wickDropPct >= ORDI_PATTERN_MIN_DUMP_WICK_PCT || bodyDropPct >= ORDI_PATTERN_MIN_DUMP_BODY_PCT;
+    if (!strongest || wickDropPct > strongest.wickDropPct || bodyDropPct > strongest.bodyDropPct) {
+      strongest = {
+        wickDropPct,
+        bodyDropPct,
+      };
+    }
+    if (qualifies) {
+      return {
+        ok: true,
+        reason: 'dump_history_confirmed',
+        wickDropPct: round(wickDropPct, 4),
+        bodyDropPct: round(bodyDropPct, 4),
+      };
+    }
+  }
+  return {
+    ok: false,
+    reason: 'dump_history_missing',
+    wickDropPct: round(strongest?.wickDropPct, 4),
+    bodyDropPct: round(strongest?.bodyDropPct, 4),
+  };
+}
+
+function evaluateMultiDayPump(candidate = {}, bars1h = [], currentPrice = NaN) {
+  const bars = normalizeBars(bars1h);
+  const change24hPct = toNumber(candidate?.scannerMover?.change24hPct, NaN);
+  if (change24hPct >= ORDI_PATTERN_MIN_24H_PUMP_PCT) {
+    return {
+      ok: true,
+      reason: 'scanner_24h_pump_confirmed',
+      change24hPct: round(change24hPct, 4),
+    };
+  }
+  if (bars.length < 24) {
+    return {
+      ok: false,
+      reason: 'multi_day_pump_insufficient_bars',
+      change24hPct: Number.isFinite(change24hPct) ? round(change24hPct, 4) : null,
+    };
+  }
+  const firstClose = bars[0].close;
+  const lookbackHigh = Math.max(...bars.map((bar) => bar.high));
+  const latestClose = Number.isFinite(currentPrice) ? currentPrice : bars[bars.length - 1].close;
+  const lookbackPumpPct = firstClose > 0 ? (lookbackHigh - firstClose) / firstClose : 0;
+  const retainedPumpPct = firstClose > 0 ? (latestClose - firstClose) / firstClose : 0;
+  const ok = lookbackPumpPct >= ORDI_PATTERN_MIN_LOOKBACK_PUMP_PCT || retainedPumpPct >= ORDI_PATTERN_MIN_24H_PUMP_PCT;
+  return {
+    ok,
+    reason: ok ? 'multi_day_pump_confirmed' : 'multi_day_pump_missing',
+    change24hPct: Number.isFinite(change24hPct) ? round(change24hPct, 4) : null,
+    lookbackPumpPct: round(lookbackPumpPct, 4),
+    retainedPumpPct: round(retainedPumpPct, 4),
+  };
+}
+
+function evaluateShortStructureAgreement(bars = [], currentPrice = NaN, label = 'structure') {
+  const normalized = normalizeBars(bars);
+  if (normalized.length < 3) {
+    return {
+      ok: false,
+      reason: `${label}_insufficient_bars`,
+    };
+  }
+  const closes = normalized.map((bar) => bar.close);
+  const latestClose = Number.isFinite(currentPrice) ? currentPrice : closes[closes.length - 1];
+  const previousClose = closes[closes.length - 2];
+  const sma = average(closes.slice(-Math.min(6, closes.length)));
+  const recentHigh = Math.max(...normalized.slice(-Math.min(8, normalized.length)).map((bar) => bar.high));
+  const losingMomentum = latestClose <= previousClose * 1.002;
+  const belowMean = Number.isFinite(sma) && latestClose <= sma;
+  const belowRecentHigh = recentHigh > 0 && latestClose <= recentHigh * 0.985;
+  const ok = losingMomentum && belowMean && belowRecentHigh;
+  return {
+    ok,
+    reason: ok ? `${label}_agrees_short` : `${label}_does_not_agree`,
+    latestClose: round(latestClose, 8),
+    previousClose: round(previousClose, 8),
+    sma: round(sma, 8),
+    recentHigh: round(recentHigh, 8),
+  };
+}
+
+function evaluateOrdiPatternPromotionGate(candidate = {}, bars5m = [], bars15m = [], bars1h = [], currentPrice = NaN) {
+  const desiredDirection = toText(candidate?.desiredDirection).toUpperCase();
+  if (desiredDirection !== 'SELL') {
+    return {
+      ok: false,
+      reason: 'ordi_pattern_short_only',
+    };
+  }
+
+  const pump = evaluateMultiDayPump(candidate, bars1h, currentPrice);
+  if (!pump.ok) {
+    return {
+      ok: false,
+      reason: pump.reason,
+      pump,
+    };
+  }
+
+  const dumpHistory = evaluateHistoricalDumpHistory(bars1h);
+  if (!dumpHistory.ok) {
+    return {
+      ok: false,
+      reason: dumpHistory.reason,
+      pump,
+      dumpHistory,
+    };
+  }
+
+  const structure5m = evaluateShortStructureAgreement(bars5m, currentPrice, 'structure_5m');
+  if (!structure5m.ok) {
+    return {
+      ok: false,
+      reason: structure5m.reason,
+      pump,
+      dumpHistory,
+      structure5m,
+    };
+  }
+
+  const structure15m = evaluateShortStructureAgreement(bars15m, currentPrice, 'structure_15m');
+  if (!structure15m.ok) {
+    return {
+      ok: false,
+      reason: structure15m.reason,
+      pump,
+      dumpHistory,
+      structure5m,
+      structure15m,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: 'ordi_pattern_gate_passed',
+    pump,
+    dumpHistory,
+    structure5m,
+    structure15m,
+  };
+}
+
 function evaluateLongStructure(candidate = {}, bars5m = [], currentPrice = NaN) {
   if (hasObviousUrgentShortContext(candidate?.scannerMover)) {
     return {
@@ -589,7 +775,7 @@ function buildPromotedLongRule(candidate = {}, bars5m = [], nowMs = Date.now(), 
   };
 }
 
-function evaluatePromotionCandidate(candidate = {}, bars5m = [], bars1h = [], nowMs = Date.now()) {
+function evaluatePromotionCandidate(candidate = {}, bars5m = [], bars15m = [], bars1h = [], nowMs = Date.now()) {
   const desiredDirection = toText(candidate?.desiredDirection).toUpperCase();
   const expiresAt = determinePromotionExpiry(candidate?.source, nowMs);
   const expiresAtMs = Date.parse(toText(expiresAt, ''));
@@ -612,6 +798,15 @@ function evaluatePromotionCandidate(candidate = {}, bars5m = [], bars1h = [], no
     return {
       accepted: false,
       reason: 'price_unavailable',
+      expiresAt,
+    };
+  }
+  const setupGate = evaluateOrdiPatternPromotionGate(candidate, bars5m, bars15m, bars1h, price);
+  if (!setupGate.ok) {
+    return {
+      accepted: false,
+      reason: setupGate.reason,
+      setupGate,
       expiresAt,
     };
   }
@@ -697,11 +892,14 @@ async function buildPromotedWatchOutcome(options = {}) {
     const record = ensureCandidateRecord(ticker);
     if (!record) continue;
     record.scannerMover = mover;
+    const scannerDirection = toText(mover?.direction).toUpperCase();
+    const fadingPumpShort = toNumber(mover?.change4hPct, 0) < 0
+      && toNumber(mover?.change24hPct, 0) >= ORDI_PATTERN_MIN_24H_PUMP_PCT;
     record.sources.push({
       type: 'market_scanner_urgent',
       priority: MARKET_SCANNER_PRIORITY,
       scannedAt,
-      direction: toText(mover?.direction).toUpperCase() === 'DOWN' ? 'SELL' : 'BUY',
+      direction: scannerDirection === 'DOWN' || fadingPumpShort ? 'SELL' : 'BUY',
     });
   }
 
@@ -731,7 +929,7 @@ async function buildPromotedWatchOutcome(options = {}) {
   }
 
   const candidateTickers = Array.from(candidatesByTicker.keys());
-  const [bars5m, bars1h] = await Promise.all([
+  const [bars5m, bars15m, bars1h] = await Promise.all([
     candidateTickers.length > 0
       ? hyperliquidClient.getHistoricalBars({
         symbols: candidateTickers,
@@ -742,8 +940,15 @@ async function buildPromotedWatchOutcome(options = {}) {
     candidateTickers.length > 0
       ? hyperliquidClient.getHistoricalBars({
         symbols: candidateTickers,
-        timeframe: '1Hour',
+        timeframe: '15m',
         limit: 24,
+      }).catch(() => new Map())
+      : Promise.resolve(new Map()),
+    candidateTickers.length > 0
+      ? hyperliquidClient.getHistoricalBars({
+        symbols: candidateTickers,
+        timeframe: '1Hour',
+        limit: 96,
       }).catch(() => new Map())
       : Promise.resolve(new Map()),
   ]);
@@ -770,6 +975,7 @@ async function buildPromotedWatchOutcome(options = {}) {
       const evaluation = evaluatePromotionCandidate(
         candidate,
         bars5m instanceof Map ? (bars5m.get(ticker) || []) : [],
+        bars15m instanceof Map ? (bars15m.get(ticker) || []) : [],
         bars1h instanceof Map ? (bars1h.get(ticker) || []) : [],
         nowMs
       );
@@ -927,6 +1133,8 @@ async function applySharedShortRegime(options = {}) {
   const retainedRuleIds = [];
   const nextSharedRuleStates = {};
   const candidateEntries = [];
+  const sharedRuleTickers = [];
+  const rejectedSharedTickers = [];
 
   if (regime.active) {
     const maxPromoted = Math.max(1, Math.floor(toNumber(options.maxPromoted, DEFAULT_MAX_PROMOTED_SHORTS)));
@@ -938,19 +1146,59 @@ async function applySharedShortRegime(options = {}) {
       candidateEntries.push(...regime.promotedCandidates.slice(0, maxPromoted));
     }
 
-    const barsByTicker = await hyperliquidClient.getHistoricalBars({
-      symbols: candidateEntries.map((entry) => entry.ticker),
-      timeframe: '5m',
-      limit: 12,
-    }).catch(() => new Map());
+    const candidateTickers = candidateEntries.map((entry) => entry.ticker);
+    const [bars5mByTicker, bars15mByTicker, bars1hByTicker] = await Promise.all([
+      hyperliquidClient.getHistoricalBars({
+        symbols: candidateTickers,
+        timeframe: '5m',
+        limit: 12,
+      }).catch(() => new Map()),
+      hyperliquidClient.getHistoricalBars({
+        symbols: candidateTickers,
+        timeframe: '15m',
+        limit: 24,
+      }).catch(() => new Map()),
+      hyperliquidClient.getHistoricalBars({
+        symbols: candidateTickers,
+        timeframe: '1Hour',
+        limit: 96,
+      }).catch(() => new Map()),
+    ]);
 
     for (const entry of candidateEntries.slice(0, maxPromoted)) {
       const ticker = normalizeTicker(entry.ticker);
+      const bars5m = bars5mByTicker instanceof Map ? (bars5mByTicker.get(ticker) || []) : [];
+      const setupGate = evaluateOrdiPatternPromotionGate(
+        {
+          ticker,
+          desiredDirection: 'SELL',
+          currentPrice: entry.price,
+          scannerMover: entry,
+        },
+        bars5m,
+        bars15mByTicker instanceof Map ? (bars15mByTicker.get(ticker) || []) : [],
+        bars1hByTicker instanceof Map ? (bars1hByTicker.get(ticker) || []) : [],
+        toNumber(entry.price, NaN)
+      );
+      if (!setupGate.ok) {
+        rejectedSharedTickers.push(ticker);
+        appendJsonLine(promotionDecisionsPath, {
+          recordedAt: new Date(nowMs).toISOString(),
+          ticker,
+          promotionSource: 'shared_short_regime',
+          desiredDirection: 'SELL',
+          accepted: false,
+          reason: setupGate.reason,
+          priority: SHARED_SHORT_PRIORITY,
+          setupGate,
+        });
+        continue;
+      }
       const existingRule = existingSharedRuleByTicker.get(ticker);
       const existingState = existingRule ? (watchState.rules?.[existingRule.id] || {}) : {};
       const refreshedRule = buildSharedShortRule(
         entry,
-        barsByTicker instanceof Map ? (barsByTicker.get(ticker) || []) : [],
+        bars5m,
         nowMs,
         toNumber(options.ruleTtlMs, DEFAULT_RULE_TTL_MS)
       );
@@ -968,6 +1216,7 @@ async function applySharedShortRegime(options = {}) {
         : refreshedRule;
       sharedRules.push(rule);
       promotedRuleIds.push(rule.id);
+      sharedRuleTickers.push(ticker);
       if (shouldKeepExisting) {
         retainedRuleIds.push(rule.id);
       }
@@ -1022,11 +1271,11 @@ async function applySharedShortRegime(options = {}) {
     symbols: Array.from(new Set([
       ...(Array.isArray(config.symbols) ? config.symbols : []),
       ...promotionOutcome.promotedTickers,
-      ...candidateEntries.map((entry) => normalizeTicker(entry.ticker)),
+      ...sharedRuleTickers,
     ])),
     hotSymbols: Array.from(new Set([
       ...promotionOutcome.promotedTickers,
-      ...candidateEntries.map((entry) => normalizeTicker(entry.ticker)),
+      ...sharedRuleTickers,
     ])).slice(0, 2),
     rules: finalRules,
   };
@@ -1043,7 +1292,8 @@ async function applySharedShortRegime(options = {}) {
     retainedRuleIds,
     retiredRuleIds: retiredSharedRuleIds,
     candidates: regime.candidates.slice(0, 10),
-    promotedTickers: candidateEntries.map((entry) => normalizeTicker(entry.ticker)),
+    promotedTickers: sharedRuleTickers,
+    rejectedTickers: rejectedSharedTickers,
     protectedTickers: Array.from(new Set((options.protectedTickers || DEFAULT_PROTECTED_TICKERS).map((ticker) => normalizeTicker(ticker)).filter(Boolean))),
     promotionBridge: {
       promotedRuleIds: promotionRuleIds,
@@ -1088,6 +1338,7 @@ module.exports = {
   applySharedShortRegime,
   buildSharedShortRule,
   detectSharedShortRegime,
+  evaluateOrdiPatternPromotionGate,
   isAutoRule,
   scoreShortMover,
   seedRuleState,
