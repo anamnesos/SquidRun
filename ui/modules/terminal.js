@@ -19,7 +19,7 @@ const { invokeBridge } = require('./renderer-bridge');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
 const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
-const { readStartupBriefing } = require('./startup-ai-briefing');
+const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
@@ -1033,7 +1033,7 @@ function fetchStartupHealthSummary() {
 
 function fetchStartupAiBriefing() {
   try {
-    return readStartupBriefing();
+    return readStartupBriefingForInjection();
   } catch (err) {
     log.warn('spawnAgent', `Startup AI briefing read failed: ${err.message}`);
     return '';

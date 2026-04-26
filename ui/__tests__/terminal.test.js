@@ -59,7 +59,7 @@ const mockContractPromotion = {
 jest.mock('../modules/contract-promotion', () => mockContractPromotion);
 
 const mockStartupAiBriefing = {
-  readStartupBriefing: jest.fn(() => ''),
+  readStartupBriefingForInjection: jest.fn(() => ''),
 };
 jest.mock('../modules/startup-ai-briefing', () => mockStartupAiBriefing);
 
@@ -553,9 +553,11 @@ describe('terminal.js module', () => {
 
   describe('startup health briefing', () => {
     test('reads startup ai briefing when present', () => {
-      mockStartupAiBriefing.readStartupBriefing.mockReturnValueOnce('# AI Startup Briefing\n\n- the user cares about shipping automation safely.');
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('STALE SNAPSHOT generated 16 minutes ago, account values may have moved.\n\n# AI Startup Briefing\n\n- the user cares about shipping automation safely.');
       const briefing = terminal._internals.fetchStartupAiBriefing();
 
+      expect(mockStartupAiBriefing.readStartupBriefingForInjection).toHaveBeenCalledTimes(1);
+      expect(briefing).toContain('STALE SNAPSHOT generated 16 minutes ago');
       expect(briefing).toContain('AI Startup Briefing');
       expect(briefing).not.toContain('[SQUIDRUN RECALL START]');
     });
@@ -579,7 +581,7 @@ describe('terminal.js module', () => {
     });
 
     test('builds startup identity without recall blocks', async () => {
-      mockStartupAiBriefing.readStartupBriefing.mockReturnValueOnce('# AI Startup Briefing\n\n- Current priority: supervisor stability.');
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('# AI Startup Briefing\n\n- Current priority: supervisor stability.');
       const existsSpy = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
 
       const message = await terminal._internals.buildStartupIdentityMessage('2');
