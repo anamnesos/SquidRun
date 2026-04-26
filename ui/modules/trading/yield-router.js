@@ -13,7 +13,6 @@ const DEFAULT_MIN_DEPOSIT_USD = 50;
 const DEFAULT_MIN_VENUE_TVL_USD = 10_000_000;
 const DEFAULT_YIELD_TARGET_RATIO = 0.35;
 const DEFAULT_RESERVE_RATIO = 0.2;
-const DEFAULT_LAUNCH_RADAR_ALLOCATION_RATIO = 0.05;
 const DEFAULT_MAX_SINGLE_VENUE_SHARE = 0.5;
 const DEFAULT_EXPECTED_HOLD_DAYS = 30;
 
@@ -337,11 +336,6 @@ class YieldRouter {
     this.minVenueTvlUsd = Math.max(0, toNumber(options.minVenueTvlUsd, DEFAULT_MIN_VENUE_TVL_USD));
     this.yieldTargetRatio = clamp(toNumber(options.yieldTargetRatio, DEFAULT_YIELD_TARGET_RATIO), 0, 1);
     this.reserveRatio = clamp(toNumber(options.reserveRatio, DEFAULT_RESERVE_RATIO), 0, 1);
-    this.launchRadarAllocationRatio = clamp(
-      toNumber(options.launchRadarAllocationRatio, DEFAULT_LAUNCH_RADAR_ALLOCATION_RATIO),
-      0,
-      1
-    );
     this.maxSingleVenueShare = clamp(
       toNumber(options.maxSingleVenueShare, DEFAULT_MAX_SINGLE_VENUE_SHARE),
       0.01,
@@ -447,8 +441,7 @@ class YieldRouter {
       0
     ));
     const reserve = totalCapital * this.reserveRatio;
-    const launchRadarReserve = totalCapital * this.launchRadarAllocationRatio;
-    const idleCapital = totalCash - activeTradeCapital - lockedVaultCapital - reserve - launchRadarReserve;
+    const idleCapital = totalCash - activeTradeCapital - lockedVaultCapital - reserve;
     return Number(Math.max(0, idleCapital).toFixed(2));
   }
 
@@ -818,7 +811,6 @@ function createYieldRouter(options = {}) {
 
 module.exports = {
   DEFAULT_EXPECTED_HOLD_DAYS,
-  DEFAULT_LAUNCH_RADAR_ALLOCATION_RATIO,
   DEFAULT_MAX_SINGLE_VENUE_SHARE,
   DEFAULT_MIN_DEPOSIT_USD,
   DEFAULT_MIN_VENUE_TVL_USD,

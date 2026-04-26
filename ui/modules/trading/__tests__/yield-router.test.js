@@ -349,7 +349,7 @@ describe('yield-router', () => {
     expect(router.getDeposits()).toEqual([]);
   });
 
-  test('computes idle capital after reserve and launch radar allocations', () => {
+  test('computes idle capital after reserve allocation', () => {
     const router = yieldRouter.createYieldRouter({
       persist: false,
       statePath,
@@ -367,6 +367,6 @@ describe('yield-router', () => {
       activeTradeCapital: 25,
     });
 
-    expect(idleCapital).toBe(75);
+    expect(idleCapital).toBe(125);
   });
 });

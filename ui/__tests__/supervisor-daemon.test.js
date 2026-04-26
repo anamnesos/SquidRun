@@ -366,7 +366,6 @@ describe('supervisor-daemon integrations', () => {
     });
     daemon.maybeRunTradeReconciliation = skippedLane;
     daemon.maybeRunPolymarketTradingAutomation = skippedLane;
-    daemon.maybeRunLaunchRadarAutomation = skippedLane;
     daemon.maybeRunNewsScanAutomation = skippedLane;
     daemon.maybeRunPendingFollowupAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
@@ -1704,7 +1703,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunCryptoTradingAutomation = skippedLane;
     daemon.maybeRunTradeReconciliation = skippedLane;
     daemon.maybeRunPolymarketTradingAutomation = skippedLane;
-    daemon.maybeRunLaunchRadarAutomation = skippedLane;
     daemon.maybeRunNewsScanAutomation = skippedLane;
     daemon.maybeRunPendingFollowupAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
@@ -2008,7 +2006,6 @@ describe('supervisor-daemon integrations', () => {
     tradingDaemon.maybeRunPositionAttributionReconciliation = skippedLane;
     tradingDaemon.maybeRunCryptoTradingAutomation = skippedLane;
     tradingDaemon.maybeRunPolymarketTradingAutomation = skippedLane;
-    tradingDaemon.maybeRunLaunchRadarAutomation = skippedLane;
     tradingDaemon.maybeRunNewsScanAutomation = skippedLane;
     tradingDaemon.maybeRunPendingFollowupAutomation = skippedLane;
     tradingDaemon.maybeRunMarketResearchAutomation = skippedLane;
@@ -3220,240 +3217,6 @@ describe('supervisor-daemon integrations', () => {
     expect(result.executed.map((entry) => entry.phase)).not.toContain('polymarket_execute');
 
     await polymarketDaemon.stop('test-cleanup-polymarket-schedule');
-  });
-
-  test('runs launch radar scans through the supervisor phase wiring', async () => {
-    const qualified = [
-      {
-        chain: 'solana',
-        symbol: 'SQD',
-        name: 'Squid Launch',
-        address: 'SoLaunch11111111111111111111111111111111111',
-        liquidityUsd: 12500,
-        holders: 44,
-        audit: { recommendation: 'proceed' },
-      },
-    ];
-    const launchRadarInstance = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        launches: qualified,
-        qualified,
-        rejected: [],
-      }),
-      stop: jest.fn(),
-    };
-    const launchRadarOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1200,
-        dayStartEquity: 1000,
-        positions: [],
-      }),
-      syncLaunchRadarWatchlist: jest.fn().mockResolvedValue({
-        ok: true,
-        qualifiedTokens: qualified,
-        added: ['SQD'],
-        refreshed: [],
-      }),
-    };
-    const launchRadarDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      launchRadarEnabled: true,
-      launchRadarDryRun: true,
-      launchRadar: launchRadarInstance,
-      launchRadarOrchestrator,
-      pidPath: '/tmp/launch-radar.pid',
-      statusPath: '/tmp/launch-radar-status.json',
-      logPath: '/tmp/launch-radar.log',
-      taskLogDir: '/tmp/launch-radar-tasks',
-      wakeSignalPath: '/tmp/launch-radar-wake.signal',
-    });
-
-    const result = await launchRadarDaemon.runLaunchRadarPhase({
-      key: 'launch_radar_scan',
-      marketDate: '2026-03-19',
-      scheduledAt: '2026-03-19T21:00:00.000Z',
-      windowKey: '2026-03-19T21:00:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'launch_radar_scan',
-      summary: expect.objectContaining({
-        launches: 1,
-        qualified: 1,
-        rejected: 0,
-        added: 1,
-        refreshed: 0,
-        killSwitch: false,
-        dryRun: true,
-      }),
-    }));
-    expect(launchRadarInstance.pollNow).toHaveBeenCalledWith({ reason: 'launch_radar_scan' });
-    expect(launchRadarOrchestrator.syncLaunchRadarWatchlist).toHaveBeenCalledWith(expect.objectContaining({
-      reason: 'launch_radar_scan',
-      date: '2026-03-19',
-      launchRadar: launchRadarInstance,
-      launchRadarQualifiedTokens: qualified,
-      launchRadarExpiryDays: 7,
-      persistDynamicWatchlist: false,
-    }));
-    expect(launchRadarDaemon.launchRadarState.lastScan).toEqual(expect.objectContaining({
-      syncResult: expect.objectContaining({
-        added: ['SQD'],
-      }),
-    }));
-
-    await launchRadarDaemon.stop('test-cleanup-launch-radar');
-  });
-
-  test('skips launch radar watchlist sync when the kill switch is triggered', async () => {
-    const launchRadarInstance = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        launches: [
-          {
-            chain: 'solana',
-            symbol: 'RISK',
-            address: 'SoRisk111111111111111111111111111111111111',
-            liquidityUsd: 9000,
-            holders: 22,
-            audit: { recommendation: 'proceed' },
-          },
-        ],
-        qualified: [
-          {
-            chain: 'solana',
-            symbol: 'RISK',
-            address: 'SoRisk111111111111111111111111111111111111',
-            liquidityUsd: 9000,
-            holders: 22,
-            audit: { recommendation: 'proceed' },
-          },
-        ],
-        rejected: [],
-      }),
-      stop: jest.fn(),
-    };
-    const launchRadarOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 700,
-        totalEquity: 700,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        positions: [],
-      }),
-      syncLaunchRadarWatchlist: jest.fn(),
-    };
-    const launchRadarDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      launchRadarEnabled: true,
-      launchRadar: launchRadarInstance,
-      launchRadarOrchestrator,
-      pidPath: '/tmp/launch-radar-kill.pid',
-      statusPath: '/tmp/launch-radar-kill-status.json',
-      logPath: '/tmp/launch-radar-kill.log',
-      taskLogDir: '/tmp/launch-radar-kill-tasks',
-      wakeSignalPath: '/tmp/launch-radar-kill-wake.signal',
-    });
-
-    const result = await launchRadarDaemon.runLaunchRadarPhase({
-      key: 'launch_radar_scan',
-      marketDate: '2026-03-19',
-      scheduledAt: '2026-03-19T21:15:00.000Z',
-      windowKey: '2026-03-19T21:15:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      summary: expect.objectContaining({
-        qualified: 1,
-        added: 0,
-        killSwitch: true,
-      }),
-    }));
-    expect(launchRadarOrchestrator.syncLaunchRadarWatchlist).not.toHaveBeenCalled();
-
-    await launchRadarDaemon.stop('test-cleanup-launch-radar-kill');
-  });
-
-  test('schedules launch radar scans every 15 minutes', async () => {
-    const qualified = [
-      {
-        chain: 'solana',
-        symbol: 'SQD',
-        address: 'SoLaunch11111111111111111111111111111111111',
-        liquidityUsd: 12500,
-        holders: 44,
-        audit: { recommendation: 'proceed' },
-      },
-    ];
-    const launchRadarInstance = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        launches: qualified,
-        qualified,
-        rejected: [],
-      }),
-      stop: jest.fn(),
-    };
-    const launchRadarOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        positions: [],
-      }),
-      syncLaunchRadarWatchlist: jest.fn().mockResolvedValue({
-        ok: true,
-        qualifiedTokens: qualified,
-        added: ['SQD'],
-        refreshed: [],
-      }),
-    };
-    const launchRadarDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      launchRadarEnabled: true,
-      launchRadar: launchRadarInstance,
-      launchRadarOrchestrator,
-      pidPath: '/tmp/launch-radar-schedule.pid',
-      statusPath: '/tmp/launch-radar-schedule-status.json',
-      logPath: '/tmp/launch-radar-schedule.log',
-      taskLogDir: '/tmp/launch-radar-schedule-tasks',
-      wakeSignalPath: '/tmp/launch-radar-schedule-wake.signal',
-    });
-    launchRadarDaemon.launchRadarState.lastProcessedAt = '2026-03-19T10:45:00.000Z';
-
-    const result = await launchRadarDaemon.maybeRunLaunchRadarAutomation(new Date('2026-03-19T11:00:00.000Z'));
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-    }));
-    expect(result.executed.map((entry) => entry.phase)).toEqual(['launch_radar_scan']);
-    expect(launchRadarDaemon.launchRadarState.nextEvent).toEqual(expect.objectContaining({
-      key: 'launch_radar_scan',
-    }));
-
-    await launchRadarDaemon.stop('test-cleanup-launch-radar-schedule');
   });
 
   test('runs yield rebalances through the supervisor phase wiring', async () => {

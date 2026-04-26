@@ -66,7 +66,6 @@ const DEFAULT_RECENT_TRADE_SCAN = 250;
 const DEFAULT_ACTIVE_TRADING_RATIO = 0.4;
 const DEFAULT_YIELD_ROUTER_RATIO = yieldRouterModule.DEFAULT_YIELD_TARGET_RATIO || 0.35;
 const DEFAULT_RESERVE_RATIO = yieldRouterModule.DEFAULT_RESERVE_RATIO || 0.2;
-const DEFAULT_LAUNCH_RADAR_RATIO = yieldRouterModule.DEFAULT_LAUNCH_RADAR_ALLOCATION_RATIO || 0.05;
 const DEFAULT_DEFI_MONITOR_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_DEFI_MONITOR_TIMEOUT_MS = 30_000;
 const DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE = 0.6;
@@ -255,24 +254,6 @@ function buildSmartMoneyReason(signal = {}) {
 	const totalUsdValue = Math.round(toNumber(signal.totalUsdValue, 0));
 	const chain = String(signal.chain || 'unknown').trim().toUpperCase();
 	return `Wallet convergence: ${wallets} wallets on ${chain}, ~$${totalUsdValue.toLocaleString('en-US')} total flow`;
-}
-
-function resolveLaunchRadarExchange(token = {}) {
-	const chain = String(token.chain || 'solana').trim().toLowerCase();
-	return chain === 'base' ? 'BASE' : 'SOLANA';
-}
-
-function buildLaunchRadarReason(token = {}) {
-	const chain = String(token.chain || 'unknown').trim().toUpperCase();
-	const liquidityUsd = Math.round(toNumber(token.liquidityUsd, 0));
-	const holders = toPositiveInteger(token.holders || token.holderCount || 0);
-	const recommendation = String(token.audit?.recommendation || 'proceed').trim().toLowerCase();
-	return `Launch radar: ${chain} token with ~$${liquidityUsd.toLocaleString('en-US')} liquidity, ${holders} holders, audit=${recommendation}`;
-}
-
-function resolveLaunchRadarExpiryDays(value) {
-	const numeric = toPositiveInteger(value);
-	return numeric > 0 ? numeric : 7;
 }
 
 function roundCurrency(value) {
@@ -478,13 +459,11 @@ function buildCapitalRatios(options = {}) {
 	const activeTrading = Math.max(0, toConfidence(options.activeTradingRatio ?? options.activeRatio ?? DEFAULT_ACTIVE_TRADING_RATIO));
 	const yieldCapital = Math.max(0, toConfidence(options.yieldRatio ?? options.yieldRouterRatio ?? DEFAULT_YIELD_ROUTER_RATIO));
 	const reserve = Math.max(0, toConfidence(options.reserveRatio ?? DEFAULT_RESERVE_RATIO));
-	const launchRadar = Math.max(0, toConfidence(options.launchRadarRatio ?? DEFAULT_LAUNCH_RADAR_RATIO));
 	return {
 		activeTrading,
 		yield: yieldCapital,
 		reserve,
-		launchRadar,
-		total: Number((activeTrading + yieldCapital + reserve + launchRadar).toFixed(6)),
+		total: Number((activeTrading + yieldCapital + reserve).toFixed(6)),
 	};
 }
 
@@ -2726,14 +2705,12 @@ class TradingOrchestrator {
 			activeTradingRatio: options.activeTradingRatio ?? this.options.activeTradingRatio,
 			yieldRouterRatio: options.yieldRouterRatio ?? this.options.yieldRouterRatio,
 			reserveRatio: options.reserveRatio ?? this.options.reserveRatio,
-			launchRadarRatio: options.launchRadarRatio ?? this.options.launchRadarRatio,
 		});
 		const totalEquity = roundCurrency(portfolioSnapshot?.totalEquity);
 		const targets = {
 			activeTrading: roundCurrency(totalEquity * ratios.activeTrading),
 			yield: roundCurrency(totalEquity * ratios.yield),
 			reserve: roundCurrency(totalEquity * ratios.reserve),
-			launchRadar: roundCurrency(totalEquity * ratios.launchRadar),
 		};
 		const activeTradingCapital = sumSnapshotEquity(portfolioSnapshot, [
 			'alpaca_stocks',
@@ -2747,18 +2724,12 @@ class TradingOrchestrator {
 			?? portfolioSnapshot?.markets?.cash_reserve?.cash
 			?? portfolioSnapshot?.markets?.cash_reserve?.equity
 		);
-		const launchRadarCapital = roundCurrency(
-			options.launchRadarCapital
-			?? portfolioSnapshot?.markets?.solana_tokens?.equity
-		);
-		const launchRadarGap = roundCurrency(Math.max(0, targets.launchRadar - launchRadarCapital));
-		const deployableTradingCapital = roundCurrency(Math.max(0, reserveCapital - targets.reserve - launchRadarGap));
+		const deployableTradingCapital = roundCurrency(Math.max(0, reserveCapital - targets.reserve));
 		const effectiveActiveCapital = roundCurrency(activeTradingCapital + deployableTradingCapital);
 		const gaps = {
 			activeTrading: roundCurrency(Math.max(0, targets.activeTrading - effectiveActiveCapital)),
 			yield: roundCurrency(Math.max(0, targets.yield - yieldCapital)),
 			reserve: roundCurrency(Math.max(0, targets.reserve - reserveCapital)),
-			launchRadar: launchRadarGap,
 		};
 		const excess = {
 			reserveCash: roundCurrency(Math.max(0, reserveCapital - targets.reserve)),
@@ -2774,7 +2745,6 @@ class TradingOrchestrator {
 				activeTrading: activeTradingCapital,
 				yield: yieldCapital,
 				reserve: reserveCapital,
-				launchRadar: launchRadarCapital,
 			},
 			effective: {
 				activeTrading: effectiveActiveCapital,
@@ -3158,51 +3128,6 @@ class TradingOrchestrator {
 		};
 	}
 
-	async syncLaunchRadarWatchlist(options = {}) {
-		const radar = options.launchRadar || this.options.launchRadar || null;
-		let pollResult = null;
-		let qualifiedTokens = Array.isArray(options.launchRadarQualifiedTokens) ? options.launchRadarQualifiedTokens : [];
-		if (qualifiedTokens.length === 0 && radar && typeof radar.pollNow === 'function') {
-			pollResult = await radar.pollNow({ reason: options.reason || 'orchestrator' });
-			if (pollResult?.ok && Array.isArray(pollResult.qualified)) {
-				qualifiedTokens = pollResult.qualified;
-			}
-		}
-
-		const statePath = options.dynamicWatchlistStatePath || this.options.dynamicWatchlistStatePath;
-		const expiryDays = resolveLaunchRadarExpiryDays(options.launchRadarExpiryDays || this.options.launchRadarExpiryDays);
-		const now = options.now instanceof Date ? options.now : (options.now ? new Date(options.now) : new Date());
-		const expiry = new Date(now.getTime() + (expiryDays * 24 * 60 * 60 * 1000)).toISOString();
-		const added = [];
-		const refreshed = [];
-		for (const token of qualifiedTokens) {
-			const ticker = toTicker(token.symbol || token.ticker || token.address);
-			if (!ticker) continue;
-			const existed = dynamicWatchlist.getEntry(ticker, { statePath });
-			dynamicWatchlist.addTicker(ticker, {
-				statePath,
-				persist: options.persistDynamicWatchlist,
-				name: token.name || ticker,
-				sector: 'Launch Radar',
-				source: 'launch_radar',
-				reason: buildLaunchRadarReason(token),
-				exchange: resolveLaunchRadarExchange(token),
-				broker: 'alpaca',
-				assetClass: 'solana_token',
-				expiry,
-			});
-			(existed ? refreshed : added).push(ticker);
-		}
-
-		return {
-			ok: pollResult?.ok !== false,
-			qualifiedTokens,
-			added,
-			refreshed,
-			pollResult,
-		};
-	}
-
 	async runPolymarketConsensusRound(options = {}) {
 		const db = this.getJournalDb(options);
 		const [smartMoneyWatchlist, portfolioSnapshot, markets] = await Promise.all([
@@ -3442,10 +3367,7 @@ class TradingOrchestrator {
 	}
 
 	async runPreMarket(options = {}) {
-		const [smartMoneyWatchlist, launchRadarWatchlist] = await Promise.all([
-			this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' }),
-			this.syncLaunchRadarWatchlist({ ...options, reason: 'premarket' }),
-		]);
+		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' });
 		const symbols = resolveDefaultSymbols(options.symbols, options);
 		const marketDate = this.resetForMarketDate(options.date || new Date());
 		const isCrypto = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity') === 'crypto';
@@ -3467,7 +3389,6 @@ class TradingOrchestrator {
 			phase: 'premarket',
 			marketDate: schedule?.marketDate || marketDate,
 			smartMoneyWatchlist,
-			launchRadarWatchlist,
 			watchlist: symbols.map((ticker) => watchlist.getEntry(ticker)).filter(Boolean),
 			symbols,
 			schedule,
@@ -3495,10 +3416,7 @@ class TradingOrchestrator {
 		}
 
 		const db = this.getJournalDb(options);
-		const [smartMoneyWatchlist, launchRadarWatchlist] = await Promise.all([
-			this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' }),
-			this.syncLaunchRadarWatchlist({ ...options, reason: 'consensus_round' }),
-		]);
+		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' });
 		const macroRisk = options.macroRisk || await macroRiskGate.assessMacroRisk().catch(() => null);
 		const strategyMode = resolveTradingStrategyMode(options, macroRisk);
 		const crisisUniverse = getCrisisUniverse(macroRisk);
@@ -4122,7 +4040,6 @@ class TradingOrchestrator {
 			phase: 'consensus',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
 			smartMoneyWatchlist,
-			launchRadarWatchlist,
 			consultation,
 			eventVeto: compactEventVeto,
 			cryptoMechBoard: mechanicalBoard,

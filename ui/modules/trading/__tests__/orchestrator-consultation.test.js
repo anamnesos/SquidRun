@@ -1995,80 +1995,6 @@ describe('orchestrator real consultation flow', () => {
     expect(result.approvedTrades).toEqual([]);
   });
 
-  test('syncs qualified launch radar tokens into the dynamic watchlist', async () => {
-    const launchRadarMock = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        qualified: [
-          {
-            chain: 'solana',
-            symbol: 'SQD',
-            name: 'Squid Launch',
-            address: 'SoLaunch11111111111111111111111111111111111',
-            liquidityUsd: 12500,
-            holders: 44,
-            audit: { recommendation: 'proceed' },
-          },
-        ],
-      }),
-    };
-    const orchestrator = createOrchestrator({
-      launchRadar: launchRadarMock,
-      dynamicWatchlistStatePath: '/tmp/dynamic-watchlist.json',
-    });
-
-    const result = await orchestrator.syncLaunchRadarWatchlist({
-      reason: 'test_launch_radar',
-      now: '2026-03-19T21:00:00.000Z',
-    });
-
-    expect(launchRadarMock.pollNow).toHaveBeenCalledWith({ reason: 'test_launch_radar' });
-    expect(dynamicWatchlist.addTicker).toHaveBeenCalledWith('SQD', expect.objectContaining({
-      statePath: '/tmp/dynamic-watchlist.json',
-      source: 'launch_radar',
-      assetClass: 'solana_token',
-      exchange: 'SOLANA',
-      expiry: '2026-03-26T21:00:00.000Z',
-    }));
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      qualifiedTokens: [
-        expect.objectContaining({
-          symbol: 'SQD',
-        }),
-      ],
-      added: ['SQD'],
-    }));
-  });
-
-  test('runs launch radar sync during both premarket and consensus rounds', async () => {
-    const orchestrator = createOrchestrator();
-    const syncLaunchRadarSpy = jest.spyOn(orchestrator, 'syncLaunchRadarWatchlist').mockResolvedValue({
-      ok: true,
-      qualifiedTokens: [],
-      added: [],
-      refreshed: [],
-      pollResult: null,
-    });
-
-    await orchestrator.runPreMarket({
-      symbols: ['AAPL'],
-      date: '2026-03-19',
-    });
-    await orchestrator.runConsensusRound({
-      symbols: ['AAPL'],
-      date: '2026-03-19',
-      consultationTimeoutMs: 50,
-    });
-
-    expect(syncLaunchRadarSpy).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      reason: 'premarket',
-    }));
-    expect(syncLaunchRadarSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      reason: 'consensus_round',
-    }));
-  });
-
   test('computes capital allocation and parks excess idle cash in yield', async () => {
     const yieldRouter = {
       returnCapital: jest.fn().mockResolvedValue({
@@ -2102,10 +2028,9 @@ describe('orchestrator real consultation flow', () => {
         activeTrading: 400,
         yield: 350,
         reserve: 200,
-        launchRadar: 50,
       }),
       excess: expect.objectContaining({
-        idleCapital: 250,
+        idleCapital: 300,
       }),
       gaps: expect.objectContaining({
         yield: 250,
@@ -2147,7 +2072,7 @@ describe('orchestrator real consultation flow', () => {
         polymarket: { equity: 0 },
         defi_yield: { equity: 250 },
         solana_tokens: { equity: 0 },
-        cash_reserve: { cash: 300, equity: 300 },
+        cash_reserve: { cash: 250, equity: 250 },
       },
       risk: {
         killSwitchTriggered: false,
@@ -2200,7 +2125,7 @@ describe('orchestrator real consultation flow', () => {
           polymarket: { equity: 0 },
           defi_yield: { equity: 250 },
           solana_tokens: { equity: 0 },
-          cash_reserve: { cash: 400, equity: 400 },
+          cash_reserve: { cash: 350, equity: 350 },
         },
         risk: {
           killSwitchTriggered: false,

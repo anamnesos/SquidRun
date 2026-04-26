@@ -42,7 +42,6 @@ describe('orchestrator range conviction', () => {
       autoExecuteLiveConsensus: false,
     });
     orchestrator.syncSmartMoneyWatchlist = jest.fn().mockResolvedValue([]);
-    orchestrator.syncLaunchRadarWatchlist = jest.fn().mockResolvedValue([]);
     orchestrator.runDefiMonitorCycle = jest.fn().mockResolvedValue({
       ok: true,
       checkedAt: new Date().toISOString(),
