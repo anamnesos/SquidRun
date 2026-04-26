@@ -20,13 +20,9 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `executor.js` — Broker-routed order placement (Alpaca + IBKR)
 - `broker-adapter.js` — Unified broker interface for Alpaca and IBKR
 - `ibkr-client.js` — Interactive Brokers client wrapper for account, positions, orders, and snapshots
-- `portfolio-tracker.js` — Unified capital snapshot across Alpaca, IBKR, Polymarket, DeFi yield, and future token positions
-- `polymarket-client.js` — Polymarket CLOB client wrapper for auth, markets, order books, balances, and dry-run order flow
-- `polymarket-scanner.js` — Polymarket market discovery and filtering for liquid, short-horizon binary markets with edge ranking support
-- `polymarket-signals.js` — Deterministic per-agent Polymarket probability assessment and consensus aggregation
-- `polymarket-sizer.js` — Half-Kelly Polymarket position sizing with bankroll, exposure, and stop-loss constraints
+- `portfolio-tracker.js` — Unified capital snapshot across Alpaca, IBKR, DeFi yield, and future token positions
 - `journal.js` — SQLite trade journal
-- `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto and Polymarket automation cadences
+- `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto automation cadences
 - `telegram-summary.js` — Daily trading summary via Telegram
 
 ## Setup
@@ -40,10 +36,8 @@ See `workspace/specs/trading-system-design.md` for full spec.
    IBKR_HOST=127.0.0.1
    IBKR_PORT=4002
    IBKR_CLIENT_ID=17
-   POLYMARKET_PRIVATE_KEY=your_exported_rabby_private_key
-   POLYMARKET_FUNDER_ADDRESS=your_polygon_profile_address
-   POLYMARKET_DRY_RUN=true
+   HYPERLIQUID_PRIVATE_KEY=your_hyperliquid_private_key
+   HYPERLIQUID_WALLET_ADDRESS=your_hyperliquid_wallet_address
    ```
 4. Crypto is tracked separately from the default equity watchlist.
    Default crypto pairs: `BTC/USD`, `ETH/USD`, `SOL/USD`, `AVAX/USD`, `LINK/USD`, `DOGE/USD`
-5. Polymarket starts in dry-run mode by default so new market modules can log intended orders before any live execution is enabled.

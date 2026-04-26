@@ -904,7 +904,7 @@ async function getUserFees(options = {}) {
     toText(options.walletAddress, resolveWalletAddress(options.env || process.env))
   );
   if (!user) {
-    throw new Error('Hyperliquid user address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
+    throw new Error('Hyperliquid user address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
   }
   const client = await createInfoClient(options);
   if (client && typeof client.userFees === 'function') {
@@ -1372,7 +1372,6 @@ function resolveWalletAddress(env = process.env) {
   return toText(
     env.HYPERLIQUID_WALLET_ADDRESS
     || env.HYPERLIQUID_ADDRESS
-    || env.POLYMARKET_FUNDER_ADDRESS
   );
 }
 
@@ -1382,7 +1381,7 @@ async function getClearinghouseState(options = {}) {
   }
   const walletAddress = toText(options.walletAddress, resolveWalletAddress(options.env || process.env));
   if (!walletAddress) {
-    throw new Error('Hyperliquid wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
+    throw new Error('Hyperliquid wallet address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
   }
   const client = await createInfoClient(options);
   const dex = normalizeDexName(options.dex, '');
@@ -1406,7 +1405,7 @@ async function getOpenOrders(options = {}) {
   }
   const walletAddress = toText(options.walletAddress, resolveWalletAddress(options.env || process.env));
   if (!walletAddress) {
-    throw new Error('Hyperliquid wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
+    throw new Error('Hyperliquid wallet address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
   }
   const client = await createInfoClient(options);
   const dex = normalizeDexName(options.dex, '');
@@ -1427,7 +1426,7 @@ async function getOpenOrders(options = {}) {
 async function getAllClearinghouseStates(options = {}) {
   const walletAddress = toText(options.walletAddress, resolveWalletAddress(options.env || process.env));
   if (!walletAddress) {
-    throw new Error('Hyperliquid wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
+    throw new Error('Hyperliquid wallet address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
   }
   const perpDexs = options.includePerpDexs === false && !options.dex && !Array.isArray(options.dexNames)
     ? []

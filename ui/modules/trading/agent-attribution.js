@@ -6,7 +6,7 @@ const path = require('path');
 const { resolveCoordPath } = require('../../config');
 
 const DEFAULT_AGENT_ATTRIBUTION_STATE_PATH = resolveCoordPath(path.join('runtime', 'agent-attribution-state.json'), { forWrite: true });
-const SUPPORTED_DIRECTIONS = new Set(['BUY', 'SELL', 'HOLD', 'BUY_YES', 'BUY_NO']);
+const SUPPORTED_DIRECTIONS = new Set(['BUY', 'SELL', 'HOLD']);
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -49,7 +49,7 @@ function normalizeDirection(value, fallback = 'HOLD') {
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
-  if (['crypto', 'prediction_market', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
+  if (['crypto', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
     return normalized;
   }
   return fallback;
@@ -58,7 +58,6 @@ function normalizeAssetClass(value, fallback = 'us_equity') {
 function normalizeMarketType(value, assetClass = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized) return normalized;
-  if (assetClass === 'prediction_market') return 'polymarket';
   if (assetClass === 'crypto') return 'crypto';
   if (assetClass === 'solana_token') return 'solana';
   if (assetClass === 'defi_yield') return 'defi';
@@ -171,19 +170,16 @@ function deriveActualDirection(actualReturn, options = {}) {
 
   const assetClass = normalizeAssetClass(options.assetClass || options.asset_class);
   const numericReturn = toNumber(actualReturn, 0);
-  if (assetClass === 'prediction_market') {
-    throw new Error('actualDirection is required for prediction_market outcomes');
-  }
   if (numericReturn > 0) return 'BUY';
   if (numericReturn < 0) return 'SELL';
   return 'HOLD';
 }
 
 function computeSignedReturn(predictedDirection, actualReturn, actualDirection) {
-  if (predictedDirection === 'BUY' || predictedDirection === 'BUY_YES') {
+  if (predictedDirection === 'BUY') {
     return actualReturn;
   }
-  if (predictedDirection === 'SELL' || predictedDirection === 'BUY_NO') {
+  if (predictedDirection === 'SELL') {
     return -actualReturn;
   }
   if (predictedDirection === 'HOLD' && actualDirection === 'HOLD') {

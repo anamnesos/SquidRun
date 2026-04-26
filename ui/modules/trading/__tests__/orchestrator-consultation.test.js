@@ -306,14 +306,7 @@ jest.mock('../portfolio-tracker', () => ({
   getPortfolioSnapshot: jest.fn().mockResolvedValue({
     totalEquity: 12000,
     positions: [],
-    markets: {
-      polymarket: {
-        equity: 162,
-        cash: 162,
-        marketValue: 0,
-        positions: [],
-      },
-    },
+    markets: {},
     risk: {
       peakEquity: 12000,
       dayStartEquity: 12000,
@@ -338,43 +331,6 @@ jest.mock('../dynamic-watchlist', () => ({
   DEFAULT_CRYPTO_WATCHLIST: [],
 }));
 
-jest.mock('../polymarket-scanner', () => ({
-  scanMarkets: jest.fn().mockResolvedValue([
-    {
-      conditionId: 'market-1',
-      question: 'Will BTC close above $120k by June 30?',
-      tokens: { yes: 'yes-token', no: 'no-token' },
-      currentPrices: { yes: 0.61, no: 0.39 },
-    },
-  ]),
-}));
-
-jest.mock('../polymarket-signals', () => ({
-  produceSignals: jest.fn(() => new Map([
-    ['architect', [{ agent: 'architect', conditionId: 'market-1', probability: 0.74, confidence: 0.84, direction: 'BUY_YES', reasoning: 'architect poly' }]],
-    ['builder', [{ agent: 'builder', conditionId: 'market-1', probability: 0.76, confidence: 0.86, direction: 'BUY_YES', reasoning: 'builder poly' }]],
-    ['oracle', [{ agent: 'oracle', conditionId: 'market-1', probability: 0.58, confidence: 0.70, direction: 'BUY_NO', reasoning: 'oracle poly' }]],
-  ])),
-  buildConsensus: jest.fn(() => ({
-    conditionId: 'market-1',
-    decision: 'BUY_YES',
-    consensus: true,
-    agreementCount: 2,
-    probability: 0.72,
-    edge: 0.11,
-    summary: 'BUY YES edge',
-  })),
-}));
-
-jest.mock('../polymarket-sizer', () => ({
-  positionSize: jest.fn(() => ({
-    executable: true,
-    stake: 24.3,
-    shares: 39.836,
-    reasons: [],
-  })),
-}));
-
 const executor = require('../executor');
 const journal = require('../journal');
 const signalProducer = require('../signal-producer');
@@ -388,9 +344,6 @@ const dynamicWatchlist = require('../dynamic-watchlist');
 const dataIngestion = require('../data-ingestion');
 const telegramSummary = require('../telegram-summary');
 const agentAttribution = require('../agent-attribution');
-const polymarketScanner = require('../polymarket-scanner');
-const polymarketSignals = require('../polymarket-signals');
-const polymarketSizer = require('../polymarket-sizer');
 const macroRiskGate = require('../macro-risk-gate');
 const signalValidationRecorder = require('../signal-validation-recorder');
 const hyperliquidNativeLayer = require('../hyperliquid-native-layer');
@@ -410,14 +363,7 @@ describe('orchestrator real consultation flow', () => {
     portfolioTracker.getPortfolioSnapshot.mockResolvedValue({
       totalEquity: 12000,
       positions: [],
-      markets: {
-        polymarket: {
-          equity: 162,
-          cash: 162,
-          marketValue: 0,
-          positions: [],
-        },
-      },
+      markets: {},
       risk: {
         peakEquity: 12000,
         dayStartEquity: 12000,
@@ -1883,69 +1829,6 @@ describe('orchestrator real consultation flow', () => {
     }));
   });
 
-  test('runs the polymarket branch end-to-end and auto-adds smart money convergence tickers', async () => {
-    const orchestrator = createOrchestrator();
-
-    const consensusPhase = await orchestrator.runConsensusRound({
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      smartMoneySignals: [
-        {
-          symbol: 'UNI',
-          chain: 'ethereum',
-          walletCount: 2,
-          totalUsdValue: 165000,
-        },
-      ],
-    });
-
-    expect(dynamicWatchlist.addTicker).toHaveBeenCalledWith('UNI', expect.objectContaining({
-      source: 'smart_money',
-      assetClass: 'crypto',
-    }));
-    expect(polymarketScanner.scanMarkets).toHaveBeenCalled();
-    expect(polymarketSignals.produceSignals).toHaveBeenCalled();
-    expect(polymarketSizer.positionSize).toHaveBeenCalledWith(
-      162,
-      0.72,
-      0.61,
-      expect.objectContaining({
-        dailyLossPct: 0,
-      })
-    );
-    expect(consensusPhase.approvedTrades).toEqual([
-      expect.objectContaining({
-        ticker: 'market-1',
-        tokenId: 'yes-token',
-        referencePrice: 0.61,
-      }),
-    ]);
-
-    const executionPhase = await orchestrator.runMarketOpen({
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      consensusPhase,
-    });
-
-    expect(executor.executeConsensusTrade).toHaveBeenCalledWith(expect.objectContaining({
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      tokenId: 'yes-token',
-      requestedShares: 39.836,
-      account: expect.objectContaining({
-        totalEquity: 12000,
-      }),
-    }), expect.objectContaining({
-      broker: 'polymarket',
-    }));
-    expect(executionPhase.executions).toEqual([
-      expect.objectContaining({
-        ticker: 'market-1',
-        execution: expect.objectContaining({ ok: true, status: 'dry_run' }),
-      }),
-    ]);
-  });
-
   test('macro red normalizes consultation and fallback BUY signals into HOLD before consensus', async () => {
     macroRiskGate.assessMacroRisk.mockResolvedValue({
       regime: 'red',
@@ -2011,7 +1894,6 @@ describe('orchestrator real consultation flow', () => {
         alpaca_stocks: { equity: 250 },
         alpaca_crypto: { equity: 150 },
         ibkr_global: { equity: 0 },
-        polymarket: { equity: 0 },
         defi_yield: { equity: 100 },
         solana_tokens: { equity: 0 },
         cash_reserve: { cash: 500, equity: 500 },
@@ -2069,7 +1951,6 @@ describe('orchestrator real consultation flow', () => {
         alpaca_stocks: { equity: 100 },
         alpaca_crypto: { equity: 0 },
         ibkr_global: { equity: 0 },
-        polymarket: { equity: 0 },
         defi_yield: { equity: 250 },
         solana_tokens: { equity: 0 },
         cash_reserve: { cash: 250, equity: 250 },
@@ -2122,7 +2003,6 @@ describe('orchestrator real consultation flow', () => {
           alpaca_stocks: { equity: 100 },
           alpaca_crypto: { equity: 0 },
           ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
           defi_yield: { equity: 250 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 350, equity: 350 },

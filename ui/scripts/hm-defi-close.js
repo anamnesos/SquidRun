@@ -25,16 +25,15 @@ function resolveWalletAddress(env = process.env) {
   return String(
     env.HYPERLIQUID_WALLET_ADDRESS
     || env.HYPERLIQUID_ADDRESS
-    || env.POLYMARKET_FUNDER_ADDRESS
     || ''
   ).trim();
 }
 
 function ensureDeFiSecrets() {
-  const privateKey = process.env.POLYMARKET_PRIVATE_KEY;
+  const privateKey = process.env.HYPERLIQUID_PRIVATE_KEY;
   const walletAddress = resolveWalletAddress(process.env);
   if (!privateKey || !walletAddress) {
-    throw new Error('Missing POLYMARKET_PRIVATE_KEY or Hyperliquid wallet address in .env');
+    throw new Error('Missing HYPERLIQUID_PRIVATE_KEY or Hyperliquid wallet address in .env');
   }
   return { privateKey, walletAddress };
 }

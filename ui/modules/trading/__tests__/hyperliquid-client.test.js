@@ -24,15 +24,13 @@ describe('hyperliquid-client native wrappers', () => {
     requestPoolPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hl-pool-')), 'request-pool.json');
   });
 
-  test('prefers Hyperliquid wallet env vars over Polymarket funder address', () => {
+  test('prefers explicit Hyperliquid wallet env vars', () => {
     expect(hyperliquidClient.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_WALLET_ADDRESS: '0xhyper',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xhyper');
 
     expect(hyperliquidClient.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xlegacy');
   });

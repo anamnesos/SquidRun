@@ -6,7 +6,6 @@ const path = require('path');
 const { resolveCoordPath } = require('../../config');
 const executor = require('./executor');
 const ibkrClient = require('./ibkr-client');
-const polymarketClient = require('./polymarket-client');
 const riskEngine = require('./risk-engine');
 const yieldRouter = require('./yield-router');
 
@@ -91,7 +90,6 @@ function createEmptySnapshot() {
       alpaca_stocks: createMarketSnapshot('alpaca_stocks', { label: 'Alpaca Stocks' }),
       alpaca_crypto: createMarketSnapshot('alpaca_crypto', { label: 'Alpaca Crypto' }),
       ibkr_global: createMarketSnapshot('ibkr_global', { label: 'IBKR Global' }),
-      polymarket: createMarketSnapshot('polymarket', { label: 'Polymarket' }),
       defi_yield: createMarketSnapshot('defi_yield', { label: 'DeFi Yield' }),
       solana_tokens: createMarketSnapshot('solana_tokens', { label: 'Solana Tokens' }),
       cash_reserve: createMarketSnapshot('cash_reserve', { label: 'Cash Reserve' }),
@@ -123,24 +121,6 @@ function normalizeEquityPosition(position = {}, defaults = {}) {
     marketValue: toNumber(position.marketValue || position.market_value, 0),
     unrealizedPnl: toNumber(position.unrealizedPnl ?? position.raw?.unrealized_pl, 0),
     side: toText(position.side, 'long'),
-    raw: position.raw || position,
-  };
-}
-
-function normalizePolymarketPosition(position = {}) {
-  return {
-    ticker: toText(position.market || position.tokenId || position.token_id),
-    broker: 'polymarket',
-    assetClass: 'prediction_market',
-    exchange: 'POLYMARKET',
-    tokenId: toText(position.tokenId || position.token_id),
-    outcome: toText(position.outcome),
-    shares: toNumber(position.size, 0),
-    avgPrice: toNumber(position.avgEntryPrice, 0),
-    marketValue: toNumber(position.marketValue, 0),
-    unrealizedPnl: toNumber(position.unrealizedPnl, 0),
-    realizedPnl: toNumber(position.realizedPnl, 0),
-    side: 'long',
     raw: position.raw || position,
   };
 }
@@ -254,15 +234,6 @@ async function collectIbkrData(options = {}) {
   };
 }
 
-async function collectPolymarketData(options = {}) {
-  const balance = options.polymarketBalance ?? await polymarketClient.getBalance(options);
-  const positions = options.polymarketPositions ?? await polymarketClient.getPositions(options);
-  return {
-    balance,
-    positions: Array.isArray(positions) ? positions : [],
-  };
-}
-
 async function collectYieldDeposits(options = {}) {
   if (Array.isArray(options.defiDeposits)) {
     return options.defiDeposits;
@@ -285,13 +256,6 @@ async function getPortfolioSnapshot(options = {}) {
   const snapshot = createEmptySnapshot();
   const includeAlpaca = options.includeAlpaca === true || options.alpacaAccount || options.alpacaPositions;
   const includeIbkr = options.includeIbkr === true || options.ibkrAccount || options.ibkrPositions;
-  const polymarketConfigured = polymarketClient.resolvePolymarketConfig(process.env).configured;
-  const includePolymarket = options.includePolymarket === false
-    ? false
-    : options.includePolymarket === true
-      || options.polymarketBalance
-      || options.polymarketPositions
-      || polymarketConfigured;
 
   if (includeAlpaca) {
     try {
@@ -347,26 +311,6 @@ async function getPortfolioSnapshot(options = {}) {
     } catch (err) {
       appendSourceError(snapshot, 'ibkr', err);
       snapshot.markets.ibkr_global.sourceErrors.push(err.message);
-    }
-  }
-
-  if (includePolymarket) {
-    try {
-      const { balance, positions } = await collectPolymarketData(options);
-      const normalizedPositions = positions.map(normalizePolymarketPosition);
-      const marketValue = sumPositionValues(normalizedPositions);
-      const available = toNumber(balance?.available ?? balance?.balance, 0);
-
-      snapshot.markets.polymarket.positions = normalizedPositions;
-      snapshot.markets.polymarket.cash = Number(available.toFixed(2));
-      snapshot.markets.polymarket.marketValue = Number(marketValue.toFixed(2));
-      snapshot.markets.polymarket.pnl = Number(sumPositionPnl(normalizedPositions).toFixed(2));
-      snapshot.markets.polymarket.equity = Number((available + marketValue).toFixed(2));
-      snapshot.markets.polymarket.liquidCapital = Number((available + marketValue).toFixed(2));
-      snapshot.positions.push(...normalizedPositions);
-    } catch (err) {
-      appendSourceError(snapshot, 'polymarket', err);
-      snapshot.markets.polymarket.sourceErrors.push(err.message);
     }
   }
 

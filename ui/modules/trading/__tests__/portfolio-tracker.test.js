@@ -10,12 +10,6 @@ jest.mock('../ibkr-client', () => ({
   getPositions: jest.fn(),
 }));
 
-jest.mock('../polymarket-client', () => ({
-  getBalance: jest.fn(),
-  getPositions: jest.fn(),
-  resolvePolymarketConfig: jest.fn(() => ({ configured: false })),
-}));
-
 jest.mock('../yield-router', () => ({
   createYieldRouter: jest.fn(() => ({
     getDeposits: jest.fn(() => []),
@@ -24,7 +18,6 @@ jest.mock('../yield-router', () => ({
 
 const executor = require('../executor');
 const ibkrClient = require('../ibkr-client');
-const polymarketClient = require('../polymarket-client');
 const yieldRouter = require('../yield-router');
 const portfolioTracker = require('../portfolio-tracker');
 
@@ -36,7 +29,7 @@ describe('portfolio-tracker', () => {
     });
   });
 
-  test('builds a unified portfolio snapshot across Alpaca, Polymarket, DeFi, and Solana tokens', async () => {
+  test('builds a unified portfolio snapshot across Alpaca, DeFi, and Solana tokens', async () => {
     executor.getAlpacaAccountSnapshot.mockResolvedValue({
       equity: 10000,
       cash: 6000,
@@ -60,10 +53,6 @@ describe('portfolio-tracker', () => {
         raw: { unrealized_pl: -100 },
       },
     ]);
-    polymarketClient.resolvePolymarketConfig.mockReturnValue({ configured: true });
-    polymarketClient.getBalance.mockResolvedValue({ available: 162, balance: 162 });
-    polymarketClient.getPositions.mockResolvedValue([]);
-
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
       includeAlpaca: true,
@@ -81,9 +70,9 @@ describe('portfolio-tracker', () => {
       now: '2026-03-18T20:00:00.000Z',
     });
 
-    expect(snapshot.totalEquity).toBe(10239);
-    expect(snapshot.totalCash).toBe(6162);
-    expect(snapshot.liquidCapital).toBe(10187);
+    expect(snapshot.totalEquity).toBe(10077);
+    expect(snapshot.totalCash).toBe(6000);
+    expect(snapshot.liquidCapital).toBe(10025);
     expect(snapshot.lockedCapital).toBe(52);
     expect(snapshot.markets.alpaca_stocks).toMatchObject({
       equity: 2500,
@@ -94,11 +83,6 @@ describe('portfolio-tracker', () => {
       equity: 1500,
       liquidCapital: 1500,
       pnl: -100,
-    });
-    expect(snapshot.markets.polymarket).toMatchObject({
-      equity: 162,
-      cash: 162,
-      liquidCapital: 162,
     });
     expect(snapshot.markets.defi_yield).toMatchObject({
       equity: 52,
@@ -114,10 +98,10 @@ describe('portfolio-tracker', () => {
       totalDrawdownPct: 0,
       dailyLossPct: 0,
       killSwitchTriggered: false,
-      liquidCapital: 10187,
+      liquidCapital: 10025,
       lockedCapital: 52,
-      peakEquity: 10239,
-      dayStartEquity: 10239,
+      peakEquity: 10077,
+      dayStartEquity: 10077,
     });
   });
 
@@ -147,7 +131,6 @@ describe('portfolio-tracker', () => {
       persist: false,
       includeAlpaca: true,
       includeIbkr: true,
-      includePolymarket: false,
       state: {
         peakEquity: 1200,
         dayStartEquity: 1100,
@@ -167,21 +150,16 @@ describe('portfolio-tracker', () => {
   test('returns source errors without failing the whole snapshot', async () => {
     executor.getAlpacaAccountSnapshot.mockRejectedValue(new Error('alpaca unavailable'));
     executor.getAlpacaOpenPositions.mockResolvedValue([]);
-    polymarketClient.resolvePolymarketConfig.mockReturnValue({ configured: true });
-    polymarketClient.getBalance.mockRejectedValue(new Error('polymarket auth failed'));
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
       includeAlpaca: true,
-      includePolymarket: true,
     });
 
     expect(snapshot.totalEquity).toBe(0);
     expect(snapshot.sourceErrors).toEqual(expect.arrayContaining([
       'alpaca: alpaca unavailable',
-      'polymarket: polymarket auth failed',
     ]));
-    expect(snapshot.markets.polymarket.sourceErrors).toEqual(['polymarket auth failed']);
   });
 
   test('loads yield deposits from the yield router into the unified portfolio view', async () => {
@@ -216,7 +194,6 @@ describe('portfolio-tracker', () => {
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
       includeAlpaca: true,
-      includePolymarket: false,
     });
 
     expect(yieldRouter.createYieldRouter).toHaveBeenCalled();
@@ -238,7 +215,6 @@ describe('portfolio-tracker', () => {
   test('keeps Alpaca markets zeroed by default so crypto consultations do not inherit stock cash', async () => {
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
-      includePolymarket: false,
     });
 
     expect(executor.getAlpacaAccountSnapshot).not.toHaveBeenCalled();

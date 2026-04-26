@@ -4,15 +4,13 @@ const fs = require('fs');
 const hmDefiExecute = require('../../../scripts/hm-defi-execute');
 
 describe('hm-defi-execute', () => {
-  test('resolveWalletAddress prefers Hyperliquid env vars over the Polymarket funder address', () => {
+  test('resolveWalletAddress prefers explicit Hyperliquid wallet env vars', () => {
     expect(hmDefiExecute.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_WALLET_ADDRESS: '0xhyper',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xhyper');
 
     expect(hmDefiExecute.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xlegacy');
   });

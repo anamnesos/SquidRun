@@ -48,7 +48,7 @@ function normalizeCryptoTicker(value) {
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
-  if (['crypto', 'prediction_market', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
+  if (['crypto', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
     return normalized;
   }
   return fallback;
@@ -61,14 +61,12 @@ function normalizeExchange(value, fallback = 'SMART') {
 
 function defaultExchangeForAssetClass(assetClass = 'us_equity') {
   if (assetClass === 'crypto') return 'CRYPTO';
-  if (assetClass === 'prediction_market') return 'POLYMARKET';
   if (assetClass === 'solana_token') return 'SOLANA';
   return 'SMART';
 }
 
 function defaultBrokerForAssetClass(assetClass = 'us_equity') {
   if (assetClass === 'crypto') return 'hyperliquid';
-  if (assetClass === 'prediction_market') return 'polymarket';
   return 'alpaca';
 }
 

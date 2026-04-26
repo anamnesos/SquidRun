@@ -52,7 +52,7 @@ const DEFAULT_RANGE_CONVICTION_MAX_POSITION_PCT = 0.25;
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
-  if (['crypto', 'prediction_market', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
+  if (['crypto', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
     return normalized;
   }
   return fallback;
@@ -61,7 +61,7 @@ function normalizeAssetClass(value, fallback = 'us_equity') {
 function resolveRiskLimits(limits = DEFAULT_LIMITS, assetClass = 'us_equity') {
   const normalizedAssetClass = normalizeAssetClass(assetClass);
   const customLimits = limits && limits !== DEFAULT_LIMITS ? limits : {};
-  if (normalizedAssetClass === 'crypto' || normalizedAssetClass === 'prediction_market' || normalizedAssetClass === 'solana_token') {
+  if (normalizedAssetClass === 'crypto' || normalizedAssetClass === 'solana_token') {
     return {
       ...DEFAULT_CRYPTO_LIMITS,
       ...customLimits,
@@ -139,9 +139,6 @@ function resolveCryptoPositionBudget(account = {}, trade = {}, limits = DEFAULT_
 function normalizeTradeDirection(direction, assetClass = 'us_equity') {
   const normalized = normalizeSignalDirection(direction, { fallback: '' });
   if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD' || normalized === 'SHORT' || normalized === 'COVER' || normalized === 'BUY_PUT') {
-    return normalized;
-  }
-  if (normalizeAssetClass(assetClass) === 'prediction_market' && (normalized === 'BUY_YES' || normalized === 'BUY_NO')) {
     return normalized;
   }
   return normalized;
@@ -230,7 +227,7 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   const effectiveLimits = resolveRiskLimits(limits, assetClass);
   const strategyMode = normalizeStrategyMode(trade?.strategyMode);
   const violations = [];
-  const isBuyExposure = direction === 'BUY' || direction === 'BUY_YES' || direction === 'BUY_NO';
+  const isBuyExposure = direction === 'BUY';
   const opensHyperliquidCryptoShort = isHyperliquidCryptoTrade(trade) && (direction === 'SELL' || direction === 'SHORT');
 
   // --- ABSOLUTE PROHIBITIONS ---
@@ -294,9 +291,7 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   const maxShares = trade.price > 0
     ? (assetClass === 'crypto'
       ? roundDownQuantity(maxDollars / trade.price, 6)
-      : (assetClass === 'prediction_market'
-        ? roundDownQuantity(maxDollars / trade.price, 4)
-      : Math.floor(maxDollars / trade.price))
+      : Math.floor(maxDollars / trade.price)
     )
     : 0;
 

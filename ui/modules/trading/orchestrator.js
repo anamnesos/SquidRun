@@ -16,9 +16,6 @@ const consultationStore = require('./consultation-store');
 const riskEngine = require('./risk-engine');
 const executor = require('./executor');
 const journal = require('./journal');
-const polymarketScanner = require('./polymarket-scanner');
-const polymarketSignals = require('./polymarket-signals');
-const polymarketSizer = require('./polymarket-sizer');
 const portfolioTracker = require('./portfolio-tracker');
 const macroRiskGate = require('./macro-risk-gate');
 const tradingScheduler = require('./scheduler');
@@ -202,9 +199,6 @@ function toPositiveQuantity(value, assetClass = 'us_equity') {
 	if (normalizedAssetClass === 'crypto') {
 		return Number(numeric.toFixed(6));
 	}
-	if (normalizedAssetClass === 'prediction_market') {
-		return Number(numeric.toFixed(4));
-	}
 	return toPositiveInteger(numeric);
 }
 
@@ -228,16 +222,8 @@ function ensureSignalTickerTracked(ticker) {
 	);
 }
 
-function isPolymarketMode(options = {}) {
-	const explicit = String(options.broker || options.marketType || options.market_type || '').trim().toLowerCase();
-	if (explicit === 'polymarket') return true;
-	return String(options.assetClass || options.asset_class || '').trim().toLowerCase() === 'prediction_market';
-}
-
 function toJournalDecision(value) {
 	const normalized = String(value || '').trim().toUpperCase();
-	if (normalized === 'BUY_YES') return 'BUY';
-	if (normalized === 'BUY_NO') return 'SELL';
 	return toDirection(normalized);
 }
 
@@ -505,7 +491,6 @@ function resolveTradeAssetClass(trade = {}) {
 }
 
 function resolveTradeMarketType(assetClass = 'us_equity') {
-	if (assetClass === 'prediction_market') return 'polymarket';
 	if (assetClass === 'crypto') return 'crypto';
 	if (assetClass === 'solana_token') return 'solana';
 	if (assetClass === 'defi_yield') return 'defi';
@@ -1328,7 +1313,6 @@ class TradingOrchestrator {
 			const walletAddress = String(
 				process.env.HYPERLIQUID_WALLET_ADDRESS
 				|| process.env.HYPERLIQUID_ADDRESS
-				|| process.env.POLYMARKET_FUNDER_ADDRESS
 				|| ''
 			).trim();
 			if (!walletAddress) return [];
@@ -2716,7 +2700,6 @@ class TradingOrchestrator {
 			'alpaca_stocks',
 			'alpaca_crypto',
 			'ibkr_global',
-			'polymarket',
 		]);
 		const yieldCapital = roundCurrency(portfolioSnapshot?.markets?.defi_yield?.equity);
 		const reserveCapital = roundCurrency(
@@ -3039,9 +3022,7 @@ class TradingOrchestrator {
 				phase: 'reconciliation',
 				ticker: outcome.ticker,
 				direction: updatedTrade?.direction || outcome.trade.direction || null,
-				broker: assetClass === 'prediction_market'
-					? 'polymarket'
-					: (assetClass === 'crypto' ? 'hyperliquid' : 'alpaca'),
+				broker: assetClass === 'crypto' ? 'hyperliquid' : 'alpaca',
 				assetClass,
 				status: updatedTrade?.status || outcome.trade.status || null,
 				ok: true,
@@ -3128,244 +3109,6 @@ class TradingOrchestrator {
 		};
 	}
 
-	async runPolymarketConsensusRound(options = {}) {
-		const db = this.getJournalDb(options);
-		const [smartMoneyWatchlist, portfolioSnapshot, markets] = await Promise.all([
-			this.syncSmartMoneyWatchlist({ ...options, reason: 'polymarket_consensus' }),
-			this.getUnifiedPortfolioSnapshot({ ...options, includePolymarket: true }),
-			Array.isArray(options.polymarketMarkets) && options.polymarketMarkets.length > 0
-				? Promise.resolve(options.polymarketMarkets)
-				: polymarketScanner.scanMarkets(options),
-		]);
-		const accountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || [], db, options);
-		const limits = options.limits || this.options.limits || riskEngine.DEFAULT_LIMITS;
-		const killSwitch = riskEngine.checkKillSwitch(portfolioSnapshot, limits);
-		const dailyPause = riskEngine.checkDailyPause(portfolioSnapshot, limits);
-		const polymarketMarket = portfolioSnapshot?.markets?.polymarket || {};
-		const bankroll = toNumber(polymarketMarket.equity ?? polymarketMarket.liquidCapital ?? portfolioSnapshot?.totalEquity, 0);
-		let currentExposure = toNumber(polymarketMarket.marketValue, 0);
-		const openPositions = Array.isArray(polymarketMarket.positions)
-			? polymarketMarket.positions.map((position) => ({ ...position }))
-			: [];
-		const signalsByAgent = polymarketSignals.produceSignals(markets, {
-			...options,
-			agentIds: REQUIRED_AGENTS,
-		});
-		const results = [];
-		const approvedTrades = [];
-		const rejectedTrades = [];
-
-		for (const market of markets) {
-			const marketSignals = REQUIRED_AGENTS.map((agentId) => {
-				return (signalsByAgent.get(agentId) || []).find((signal) => signal.conditionId === market.conditionId);
-			}).filter(Boolean);
-			if (marketSignals.length !== REQUIRED_AGENTS.length) continue;
-
-			const result = {
-				...polymarketSignals.buildConsensus(marketSignals, options),
-				ticker: market.conditionId,
-				market,
-			};
-			results.push(result);
-			const signalLookup = this.lookupSignalsByAgent(marketSignals);
-			let actedOn = false;
-			let sizing = null;
-			let rejectionReason = null;
-
-			for (const signal of marketSignals) {
-				try {
-					agentAttribution.recordPrediction(
-						signal.agent,
-						market.conditionId,
-						signal.direction,
-						signal.confidence,
-						Date.now(),
-						{
-							assetClass: 'prediction_market',
-							marketType: 'polymarket',
-							reasoning: signal.reasoning,
-							source: 'polymarket_consensus',
-							statePath: options.agentAttributionStatePath,
-						}
-					);
-				} catch (_) {
-					// Attribution should never block consensus evaluation.
-				}
-			}
-
-			if (result.consensus && result.decision !== 'HOLD' && !killSwitch.triggered && !dailyPause.paused) {
-				const buyYes = result.decision === 'BUY_YES';
-				const tokenId = buyYes ? market.tokens?.yes : market.tokens?.no;
-				const referencePrice = buyYes
-					? toNumber(market.currentPrices?.yes, 0)
-					: toNumber(market.currentPrices?.no, 0);
-				const probability = buyYes
-					? toNumber(result.probability, 0)
-					: Number((1 - toNumber(result.probability, 0)).toFixed(4));
-				const alreadyOpen = openPositions.some((position) => {
-					return String(position.market || '').trim() === String(market.conditionId || '').trim()
-						|| String(position.tokenId || '').trim() === String(tokenId || '').trim();
-				});
-				if (alreadyOpen) {
-					rejectionReason = 'market_already_open';
-				} else if (!tokenId || referencePrice <= 0) {
-					rejectionReason = 'missing_polymarket_execution_context';
-				} else {
-					sizing = polymarketSizer.positionSize(bankroll, probability, referencePrice, {
-						...options,
-						openPositions,
-						currentExposure,
-						dailyLossPct: dailyPause.dayLossPct,
-					});
-					actedOn = Boolean(sizing.executable);
-					if (sizing.executable) {
-						approvedTrades.push({
-							ticker: market.conditionId,
-							consensus: result,
-							market,
-							tokenId,
-							referencePrice,
-							probability,
-							sizing,
-							limits,
-						});
-						currentExposure = Number((currentExposure + sizing.stake).toFixed(2));
-						openPositions.push({
-							market: market.conditionId,
-							tokenId,
-							marketValue: sizing.stake,
-							costBasis: sizing.stake,
-						});
-					} else {
-						rejectionReason = sizing.reasons.join('; ') || 'not_executable';
-					}
-				}
-			}
-
-			if (!actedOn && result.consensus && result.decision !== 'HOLD') {
-				rejectedTrades.push({
-					ticker: market.conditionId,
-					consensus: result,
-					market,
-					sizing,
-					reason: rejectionReason,
-				});
-			}
-
-			journal.recordConsensus(db, {
-				ticker: market.conditionId,
-				decision: toJournalDecision(result.decision),
-				consensusReached: result.consensus,
-				agreementCount: result.agreementCount,
-				architectSignal: signalLookup.architect || null,
-				builderSignal: signalLookup.builder || null,
-				oracleSignal: signalLookup.oracle || null,
-				dissentReasoning: result.summary || rejectionReason || null,
-				actedOn,
-			});
-		}
-
-		const phaseResult = {
-			phase: 'polymarket_consensus',
-			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-			smartMoneyWatchlist,
-			portfolioSnapshot,
-			accountState,
-			killSwitch,
-			dailyPause,
-			markets,
-			agentSignals: Object.fromEntries(Array.from(signalsByAgent.entries())),
-			results,
-			approvedTrades,
-			rejectedTrades,
-			asOf: new Date().toISOString(),
-		};
-
-		this.state.phases.polymarketConsensus = phaseResult;
-		this.state.phases.consensus = phaseResult;
-		return phaseResult;
-	}
-
-	async runPolymarketMarketOpen(options = {}) {
-		const db = this.getJournalDb(options);
-		const consensusPhase = options.consensusPhase
-			|| this.state.phases.polymarketConsensus
-			|| this.state.phases.consensus
-			|| await this.runPolymarketConsensusRound(options);
-		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
-		const portfolioSnapshot = await this.getUnifiedPortfolioSnapshot({ ...options, includePolymarket: true });
-		const executions = [];
-
-		for (const trade of approvedTrades) {
-			let execution;
-			try {
-				execution = await executor.executeConsensusTrade({
-					consensus: trade.consensus,
-					ticker: trade.ticker,
-					conditionId: trade.market?.conditionId || trade.ticker,
-					tokenId: trade.tokenId,
-					yesTokenId: trade.market?.tokens?.yes,
-					noTokenId: trade.market?.tokens?.no,
-					currentPrices: trade.market?.currentPrices,
-					price: trade.referencePrice,
-					referencePrice: trade.referencePrice,
-					broker: 'polymarket',
-					assetClass: 'prediction_market',
-					account: portfolioSnapshot,
-					limits: trade.limits,
-					requestedShares: trade.sizing?.shares,
-					notes: `polymarket-open:${trade.ticker}`,
-				}, {
-					...options,
-					broker: 'polymarket',
-					journalDb: db,
-					journalPath: this.resolveJournalPath(options),
-				});
-			} catch (execErr) {
-				execution = { ok: false, status: 'error', error: execErr.message };
-			}
-
-			executions.push({
-				ticker: trade.ticker,
-				consensus: trade.consensus,
-				referencePrice: trade.referencePrice,
-				sizing: trade.sizing,
-				execution,
-			});
-			this.recordExecutionReport({
-				timestamp: new Date().toISOString(),
-				marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-				phase: 'polymarket_execute',
-				ticker: trade.ticker,
-				direction: trade.consensus?.decision || null,
-				broker: 'polymarket',
-				assetClass: 'prediction_market',
-				status: execution?.status || null,
-				ok: execution?.ok === true,
-				tradeId: execution?.tradeId ?? null,
-				reportType: 'polymarket_execution',
-				execution,
-				consensus: trade.consensus,
-				referencePrice: trade.referencePrice,
-				sizing: trade.sizing || null,
-				market: trade.market || null,
-			}, options);
-		}
-
-		const syncedPositions = await executor.getOpenPositions({ ...options, broker: 'polymarket' }).catch(() => []);
-		const phaseResult = {
-			phase: 'polymarket_execute',
-			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-			executions,
-			syncedPositions,
-			asOf: new Date().toISOString(),
-		};
-
-		this.state.phases.polymarketExecute = phaseResult;
-		this.state.phases.marketOpen = phaseResult;
-		return phaseResult;
-	}
-
 	async runPreMarket(options = {}) {
 		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' });
 		const symbols = resolveDefaultSymbols(options.symbols, options);
@@ -3411,10 +3154,6 @@ class TradingOrchestrator {
 	}
 
 	async runConsensusRound(options = {}) {
-		if (isPolymarketMode(options)) {
-			return this.runPolymarketConsensusRound(options);
-		}
-
 		const db = this.getJournalDb(options);
 		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' });
 		const macroRisk = options.macroRisk || await macroRiskGate.assessMacroRisk().catch(() => null);
@@ -4069,10 +3808,6 @@ class TradingOrchestrator {
 	}
 
 	async runMarketOpen(options = {}) {
-		if (isPolymarketMode(options)) {
-			return this.runPolymarketMarketOpen(options);
-		}
-
 		const db = this.getJournalDb(options);
 		const consensusPhase = options.consensusPhase || this.state.phases.consensus || await this.runConsensusRound(options);
 		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
@@ -4456,19 +4191,6 @@ class TradingOrchestrator {
 	}
 
 	async runFullDay(options = {}) {
-		if (isPolymarketMode(options)) {
-			const consensusPhase = await this.runPolymarketConsensusRound(options);
-			const marketOpen = await this.runPolymarketMarketOpen({ ...options, consensusPhase });
-			return {
-				preMarket: null,
-				consensus: consensusPhase,
-				marketOpen,
-				midDayCheck: null,
-				marketClose: null,
-				endOfDay: null,
-			};
-		}
-
 		const preMarket = await this.runPreMarket(options);
 		const consensusPhase = await this.runConsensusRound({ ...options, symbols: preMarket.symbols });
 		const marketOpen = await this.runMarketOpen({ ...options, consensusPhase });

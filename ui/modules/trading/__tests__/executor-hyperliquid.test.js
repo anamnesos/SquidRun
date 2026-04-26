@@ -15,14 +15,6 @@ jest.mock('../journal', () => ({
   recordTrade: jest.fn(() => ({ lastInsertRowid: 1 })),
 }));
 
-jest.mock('../polymarket-client', () => ({
-  createOrder: jest.fn(),
-  getBalance: jest.fn(),
-  getPositions: jest.fn(),
-  connect: jest.fn(),
-  disconnect: jest.fn(),
-}));
-
 jest.mock('../hyperliquid-client', () => ({
   getAccountSnapshot: jest.fn(),
   getOpenPositions: jest.fn(),

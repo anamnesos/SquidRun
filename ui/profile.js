@@ -86,7 +86,6 @@ function applyProfileEnv(profileName, env = process.env) {
     env.SQUIDRUN_HYPERLIQUID_MONITOR = '0';
     env.HYPERLIQUID_WALLET_ADDRESS = '';
     env.HYPERLIQUID_ADDRESS = '';
-    env.POLYMARKET_FUNDER_ADDRESS = '';
     env.HYPERLIQUID_PRIVATE_KEY = '';
   }
   return normalized;

@@ -261,7 +261,6 @@ describe('supervisor-daemon integrations', () => {
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
       tradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -364,7 +363,6 @@ describe('supervisor-daemon integrations', () => {
       return { ok: true, skipped: true };
     });
     daemon.maybeRunTradeReconciliation = skippedLane;
-    daemon.maybeRunPolymarketTradingAutomation = skippedLane;
     daemon.maybeRunNewsScanAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
     daemon.maybeRunTokenomistAutomation = skippedLane;
@@ -423,7 +421,6 @@ describe('supervisor-daemon integrations', () => {
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
       tradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -493,7 +490,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -555,7 +551,6 @@ describe('supervisor-daemon integrations', () => {
       tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
-      polymarketTradingResult: { skipped: true },
       newsScanResult: { skipped: true },
       marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
@@ -608,7 +603,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -705,7 +699,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -737,7 +730,6 @@ describe('supervisor-daemon integrations', () => {
       tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
-      polymarketTradingResult: { skipped: true },
       newsScanResult: { skipped: true },
       marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
@@ -838,7 +830,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -1092,7 +1083,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       pidPath: path.join(tempRoot, 'notify.pid'),
       statusPath: path.join(tempRoot, 'notify-status.json'),
       logPath: path.join(tempRoot, 'notify.log'),
@@ -1160,7 +1150,6 @@ describe('supervisor-daemon integrations', () => {
       circuitBreaker: null,
       cryptoTradingEnabled: false,
       tradingEnabled: false,
-      polymarketTradingEnabled: false,
       hyperliquidMonitorEnabled: true,
       hyperliquidMonitorPollMs: 50,
       hyperliquidExecutor: {},
@@ -1220,7 +1209,6 @@ describe('supervisor-daemon integrations', () => {
       circuitBreaker: null,
       cryptoTradingEnabled: false,
       tradingEnabled: false,
-      polymarketTradingEnabled: false,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutor: {},
       hyperliquidManualActivityPath: manualActivityPath,
@@ -1273,11 +1261,10 @@ describe('supervisor-daemon integrations', () => {
       circuitBreaker: null,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       hyperliquidMonitorOrchestrator,
       env: {
         ...process.env,
-        POLYMARKET_PRIVATE_KEY: '0xabc123',
+        HYPERLIQUID_PRIVATE_KEY: '0xabc123',
         HYPERLIQUID_WALLET_ADDRESS: '0xdef456',
       },
       pidPath: path.join(tempRoot, 'hl-wallet-fallback.pid'),
@@ -1693,7 +1680,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunPositionAttributionReconciliation = skippedLane;
     daemon.maybeRunCryptoTradingAutomation = skippedLane;
     daemon.maybeRunTradeReconciliation = skippedLane;
-    daemon.maybeRunPolymarketTradingAutomation = skippedLane;
     daemon.maybeRunNewsScanAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
     daemon.maybeRunTokenomistAutomation = skippedLane;
@@ -1903,7 +1889,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: true,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       tradingOrchestrator,
       tradingStatePath: '/tmp/trade-reconcile-cadence-trading-state.json',
       pidPath: '/tmp/trade-reconcile-cadence.pid',
@@ -1975,7 +1960,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: true,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -1994,7 +1978,6 @@ describe('supervisor-daemon integrations', () => {
     tradingDaemon.maybeRunTradingAutomation = skippedLane;
     tradingDaemon.maybeRunPositionAttributionReconciliation = skippedLane;
     tradingDaemon.maybeRunCryptoTradingAutomation = skippedLane;
-    tradingDaemon.maybeRunPolymarketTradingAutomation = skippedLane;
     tradingDaemon.maybeRunNewsScanAutomation = skippedLane;
     tradingDaemon.maybeRunMarketResearchAutomation = skippedLane;
     tradingDaemon.maybeRunTokenomistAutomation = skippedLane;
@@ -2912,301 +2895,6 @@ describe('supervisor-daemon integrations', () => {
     await tradingDaemon.stop('test-cleanup-hyperliquid-close');
   });
 
-  test('runs Polymarket scan through orchestrator consensus and execution', async () => {
-    const consensusPhase = {
-      markets: [
-        {
-          conditionId: 'market-1',
-          question: 'Will BTC close above $120k by June 30?',
-        },
-      ],
-      approvedTrades: [
-        {
-          ticker: 'market-1',
-          consensus: { decision: 'BUY_YES', consensus: true },
-        },
-      ],
-      rejectedTrades: [],
-    };
-    const executionPhase = {
-      executions: [
-        { ticker: 'market-1', execution: { ok: true, status: 'dry_run' } },
-        { ticker: 'market-2', execution: { ok: false, status: 'rejected' } },
-      ],
-    };
-    const polymarketTradingOrchestrator = {
-      runPolymarketConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
-      runPolymarketMarketOpen: jest.fn().mockResolvedValue(executionPhase),
-      getUnifiedPortfolioSnapshot: jest.fn(),
-    };
-    const polymarketDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: true,
-      polymarketTradingOrchestrator,
-      polymarketClient: {
-        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
-        getPositions: jest.fn().mockResolvedValue([]),
-        createOrder: jest.fn().mockResolvedValue({ ok: true, status: 'dry_run' }),
-      },
-      polymarketScanner: {
-        scanMarkets: jest.fn().mockResolvedValue([
-          {
-            conditionId: 'market-1',
-            question: 'Will BTC close above $120k by June 30?',
-            tokens: { yes: 'yes-token', no: 'no-token' },
-            currentPrices: { yes: 0.61, no: 0.39 },
-          },
-        ]),
-      },
-      polymarketSignals: {
-        produceSignals: jest.fn(() => new Map([
-          ['architect', [{ conditionId: 'market-1', probability: 0.74, confidence: 0.84, marketPrice: 0.61 }]],
-          ['builder', [{ conditionId: 'market-1', probability: 0.76, confidence: 0.86, marketPrice: 0.61 }]],
-          ['oracle', [{ conditionId: 'market-1', probability: 0.58, confidence: 0.7, marketPrice: 0.61 }]],
-        ])),
-        buildConsensus: jest.fn(() => ({
-          conditionId: 'market-1',
-          decision: 'BUY_YES',
-          consensus: true,
-          agreementCount: 2,
-          probability: 0.72,
-          edge: 0.11,
-        })),
-      },
-      polymarketSizer: {
-        positionSize: jest.fn().mockReturnValue({
-          executable: true,
-          stake: 24.3,
-          shares: 39.836,
-          reasons: [],
-        }),
-        shouldExit: jest.fn().mockReturnValue({ exit: false, reason: 'Hold', stopPrice: 0.48, adverseMovePct: 0 }),
-      },
-      pidPath: '/tmp/polymarket-supervisor.pid',
-      statusPath: '/tmp/polymarket-supervisor-status.json',
-      logPath: '/tmp/polymarket-supervisor.log',
-      taskLogDir: '/tmp/polymarket-supervisor-tasks',
-      wakeSignalPath: '/tmp/polymarket-supervisor-wake.signal',
-    });
-
-    const result = await polymarketDaemon.runPolymarketPhase({
-      key: 'polymarket_scan',
-      marketDate: '2026-03-18',
-      scheduledAt: '2026-03-18T08:10:00.000Z',
-      windowKey: '2026-03-18T08:00:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'polymarket_scan',
-      summary: expect.objectContaining({
-        markets: 1,
-        actionable: 1,
-        executions: 1,
-      }),
-    }));
-    expect(polymarketTradingOrchestrator.runPolymarketConsensusRound).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-18',
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      includePolymarket: true,
-    }));
-    expect(polymarketTradingOrchestrator.runPolymarketMarketOpen).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-18',
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      includePolymarket: true,
-      consensusPhase,
-    }));
-    expect(polymarketDaemon.polymarketTradingState.lastExecution).toEqual(expect.objectContaining({
-      executions: expect.arrayContaining([
-        expect.objectContaining({
-          ticker: 'market-1',
-        }),
-      ]),
-    }));
-
-    await polymarketDaemon.stop('test-cleanup-polymarket');
-  });
-
-  test('runs Polymarket monitor exits with unified portfolio gates', async () => {
-    const submitOrderSpy = jest.spyOn(executor, 'submitOrder').mockResolvedValue({
-      ok: true,
-      status: 'dry_run',
-      orderId: 'pm-exit-1',
-    });
-    const polymarketTradingOrchestrator = {
-      runPolymarketConsensusRound: jest.fn(),
-      runPolymarketMarketOpen: jest.fn(),
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        markets: {
-          polymarket: {
-            equity: 160,
-            positions: [],
-          },
-        },
-      }),
-    };
-    const polymarketDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: true,
-      polymarketTradingOrchestrator,
-      polymarketClient: {
-        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
-        getPositions: jest.fn().mockResolvedValue([
-          {
-            tokenId: 'yes-token',
-            market: 'market-1',
-            size: 12.5,
-            avgEntryPrice: 0.61,
-            currentPrice: 0.44,
-          },
-          {
-            tokenId: 'no-token',
-            market: 'market-2',
-            size: 5,
-            avgEntryPrice: 0.38,
-            currentPrice: 0.41,
-          },
-        ]),
-        createOrder: jest.fn(),
-      },
-      polymarketSizer: {
-        positionSize: jest.fn(),
-        shouldExit: jest.fn((position) => {
-          if (position.tokenId === 'yes-token') {
-            return { exit: true, reason: 'Stop loss triggered', stopPrice: 0.488, adverseMovePct: 27.87 };
-          }
-          return { exit: false, reason: 'Hold', stopPrice: 0.304, adverseMovePct: -7.89 };
-        }),
-      },
-      pidPath: '/tmp/polymarket-monitor.pid',
-      statusPath: '/tmp/polymarket-monitor-status.json',
-      logPath: '/tmp/polymarket-monitor.log',
-      taskLogDir: '/tmp/polymarket-monitor-tasks',
-      wakeSignalPath: '/tmp/polymarket-monitor-wake.signal',
-    });
-
-    const result = await polymarketDaemon.runPolymarketPhase({
-      key: 'polymarket_monitor',
-      marketDate: '2026-03-18',
-      scheduledAt: '2026-03-18T08:30:00.000Z',
-      windowKey: '2026-03-18T08:30:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'polymarket_monitor',
-      summary: expect.objectContaining({
-        positions: 2,
-        exits: 1,
-        killSwitch: false,
-        dailyPause: false,
-      }),
-    }));
-    expect(polymarketTradingOrchestrator.getUnifiedPortfolioSnapshot).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-18',
-      includePolymarket: true,
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-    }));
-    expect(polymarketDaemon.polymarketSizer.shouldExit).toHaveBeenCalledTimes(2);
-    expect(submitOrderSpy).toHaveBeenCalledWith(expect.objectContaining({
-      ticker: 'market-1',
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      direction: 'SELL',
-      shares: 12.5,
-      tokenId: 'yes-token',
-      price: 0.44,
-    }), expect.objectContaining({
-      broker: 'polymarket',
-    }));
-    expect(polymarketDaemon.polymarketTradingState.lastMonitor).toEqual(expect.objectContaining({
-      exits: [
-        expect.objectContaining({
-          tokenId: 'yes-token',
-          market: 'market-1',
-        }),
-      ],
-    }));
-
-    await polymarketDaemon.stop('test-cleanup-polymarket-monitor');
-  });
-
-  test('schedules only Polymarket scan and monitor phases for automation', async () => {
-    const consensusPhase = {
-      markets: [{ conditionId: 'market-1' }],
-      approvedTrades: [],
-      rejectedTrades: [],
-    };
-    const executionPhase = {
-      executions: [],
-    };
-    const polymarketTradingOrchestrator = {
-      runPolymarketConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
-      runPolymarketMarketOpen: jest.fn().mockResolvedValue(executionPhase),
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        markets: { polymarket: { equity: 1000, positions: [] } },
-      }),
-    };
-    const polymarketDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: true,
-      polymarketTradingOrchestrator,
-      polymarketClient: {
-        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
-        getPositions: jest.fn().mockResolvedValue([]),
-        createOrder: jest.fn(),
-      },
-      polymarketSizer: {
-        positionSize: jest.fn(),
-        shouldExit: jest.fn().mockReturnValue({ exit: false, reason: 'Hold', stopPrice: 0.48, adverseMovePct: 0 }),
-      },
-      pidPath: '/tmp/polymarket-schedule.pid',
-      statusPath: '/tmp/polymarket-schedule-status.json',
-      logPath: '/tmp/polymarket-schedule.log',
-      taskLogDir: '/tmp/polymarket-schedule-tasks',
-      wakeSignalPath: '/tmp/polymarket-schedule-wake.signal',
-    });
-    polymarketDaemon.polymarketTradingState.lastProcessedAt = '2026-03-18T10:30:00.000Z';
-
-    const result = await polymarketDaemon.maybeRunPolymarketTradingAutomation(new Date('2026-03-18T11:00:00.000Z'));
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-    }));
-    expect(result.executed.map((entry) => entry.phase)).toEqual(['polymarket_scan', 'polymarket_monitor']);
-    expect(result.executed.map((entry) => entry.phase)).not.toContain('polymarket_consensus');
-    expect(result.executed.map((entry) => entry.phase)).not.toContain('polymarket_execute');
-
-    await polymarketDaemon.stop('test-cleanup-polymarket-schedule');
-  });
-
   test('runs yield rebalances through the supervisor phase wiring', async () => {
     const yieldRouter = {
       requestCapital: jest.fn(),
@@ -3219,7 +2907,6 @@ describe('supervisor-daemon integrations', () => {
           alpaca_stocks: { equity: 400 },
           alpaca_crypto: { equity: 0 },
           ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
           defi_yield: { equity: 100 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 500, equity: 500 },
@@ -3247,7 +2934,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       yieldRouterEnabled: true,
       yieldRouter,
       yieldRouterOrchestrator,
@@ -3279,7 +2965,6 @@ describe('supervisor-daemon integrations', () => {
     }));
     expect(yieldRouterOrchestrator.getUnifiedPortfolioSnapshot).toHaveBeenCalledWith(expect.objectContaining({
       date: '2026-03-19',
-      includePolymarket: true,
       yieldRouter,
     }));
     expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
@@ -3311,7 +2996,6 @@ describe('supervisor-daemon integrations', () => {
           alpaca_stocks: { equity: 250 },
           alpaca_crypto: { equity: 0 },
           ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
           defi_yield: { equity: 180 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 270, equity: 270 },
@@ -3342,7 +3026,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       yieldRouterEnabled: true,
       yieldRouter,
       yieldRouterOrchestrator,
@@ -3399,7 +3082,6 @@ describe('supervisor-daemon integrations', () => {
           alpaca_stocks: { equity: 400 },
           alpaca_crypto: { equity: 0 },
           ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
           defi_yield: { equity: 150 },
           solana_tokens: { equity: 0 },
           cash_reserve: { cash: 450, equity: 450 },
@@ -3427,7 +3109,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: true,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       tradingOrchestrator,
       yieldRouterEnabled: true,
       yieldRouter,
@@ -3473,57 +3154,6 @@ describe('supervisor-daemon integrations', () => {
     await yieldDaemon.stop('test-cleanup-yield-router-trigger');
   });
 
-  test('keeps Polymarket automation disabled by default until explicitly opted in', async () => {
-    const originalPrivateKey = process.env.POLYMARKET_PRIVATE_KEY;
-    const originalFunder = process.env.POLYMARKET_FUNDER_ADDRESS;
-    const originalAutomation = process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
-
-    try {
-      process.env.POLYMARKET_PRIVATE_KEY = '0xabc123';
-      process.env.POLYMARKET_FUNDER_ADDRESS = '0xfunder';
-      delete process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
-
-      const polymarketDaemon = new SupervisorDaemon({
-        store: createMockStore(),
-        logger: createMockLogger(),
-        memoryIndexEnabled: false,
-        sleepEnabled: false,
-        tradingEnabled: false,
-        cryptoTradingEnabled: false,
-        pidPath: '/tmp/polymarket-default-off.pid',
-        statusPath: '/tmp/polymarket-default-off-status.json',
-        logPath: '/tmp/polymarket-default-off.log',
-        taskLogDir: '/tmp/polymarket-default-off-tasks',
-        wakeSignalPath: '/tmp/polymarket-default-off-wake.signal',
-      });
-
-      expect(polymarketDaemon.polymarketTradingEnabled).toBe(false);
-      expect(polymarketDaemon.lastPolymarketTradingSummary).toEqual(expect.objectContaining({
-        enabled: false,
-        status: 'disabled',
-        reason: 'manual_opt_in_required',
-      }));
-
-      await polymarketDaemon.stop('test-cleanup-polymarket-default-off');
-    } finally {
-      if (originalPrivateKey == null) {
-        delete process.env.POLYMARKET_PRIVATE_KEY;
-      } else {
-        process.env.POLYMARKET_PRIVATE_KEY = originalPrivateKey;
-      }
-      if (originalFunder == null) {
-        delete process.env.POLYMARKET_FUNDER_ADDRESS;
-      } else {
-        process.env.POLYMARKET_FUNDER_ADDRESS = originalFunder;
-      }
-      if (originalAutomation == null) {
-        delete process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
-      } else {
-        process.env.SQUIDRUN_POLYMARKET_AUTOMATION = originalAutomation;
-      }
-    }
-  });
-
   test('keeps legacy stock automation disabled by default until explicitly opted in', async () => {
     const stockDaemon = new SupervisorDaemon({
       store: createMockStore(),
@@ -3560,7 +3190,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: true,
       newsScanIntervalMinutes: 120,
       newsVetoModule: {
@@ -3625,7 +3254,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: true,
       newsScanIntervalMinutes: 120,
       newsVetoModule: {
@@ -3700,7 +3328,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: true,
       marketResearchIntervalMinutes: 240,
@@ -3777,7 +3404,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       eunbyeolCheckInEnabled: true,
       eunbyeolCheckInIntervalMinutes: 240,
@@ -3846,7 +3472,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       tokenomistEnabled: true,
@@ -3903,7 +3528,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       tokenomistEnabled: false,
@@ -3964,7 +3588,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
@@ -4077,7 +3700,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
@@ -4160,7 +3782,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
@@ -4287,7 +3908,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
@@ -4399,7 +4019,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
@@ -4485,7 +4104,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
@@ -4556,7 +4174,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: false,
@@ -4631,7 +4248,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
@@ -4681,7 +4297,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: false,

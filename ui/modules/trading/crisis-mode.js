@@ -48,8 +48,6 @@ const SUPPORTED_SIGNAL_DIRECTIONS = Object.freeze([
   'SHORT',
   'COVER',
   'BUY_PUT',
-  'BUY_YES',
-  'BUY_NO',
 ]);
 
 const STRATEGY_MODES = Object.freeze({
@@ -82,9 +80,6 @@ function toNumber(value, fallback = 0) {
 function normalizeSignalDirection(value, options = {}) {
   const normalized = toText(value, options.fallback || 'HOLD').toUpperCase();
   if (SUPPORTED_SIGNAL_DIRECTIONS.includes(normalized)) {
-    return normalized;
-  }
-  if (options.allowPolymarket === true && (normalized === 'BUY_YES' || normalized === 'BUY_NO')) {
     return normalized;
   }
   if (options.strict === true) {

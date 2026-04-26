@@ -10,7 +10,6 @@ const { createAlpacaClient } = require('./data-ingestion');
 const { checkTrade, checkKillSwitch, checkDailyPause, DEFAULT_LIMITS } = require('./risk-engine');
 const hyperliquidClient = require('./hyperliquid-client');
 const journal = require('./journal');
-const polymarketClient = require('./polymarket-client');
 const watchlist = require('./watchlist');
 const { normalizeSignalDirection } = require('./crisis-mode');
 
@@ -31,10 +30,6 @@ function toPositiveQuantity(value, assetClass = 'us_equity') {
     const factor = 1e6;
     return Math.floor(numeric * factor) / factor;
   }
-  if (normalizedAssetClass === 'prediction_market') {
-    const factor = 1e4;
-    return Math.floor(numeric * factor) / factor;
-  }
   return toPositiveInteger(numeric);
 }
 
@@ -44,16 +39,13 @@ function roundPrice(value, assetClass = 'us_equity') {
   const normalizedAssetClass = watchlist.normalizeAssetClass(assetClass);
   const decimals = normalizedAssetClass === 'crypto'
     ? 6
-    : (normalizedAssetClass === 'prediction_market' ? 4 : 2);
+    : 2;
   return Number(numeric.toFixed(decimals));
 }
 
-function normalizeDirection(value, options = {}) {
-  const normalized = normalizeSignalDirection(value, { allowPolymarket: options.allowPolymarket === true });
+function normalizeDirection(value) {
+  const normalized = normalizeSignalDirection(value);
   if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD' || normalized === 'SHORT' || normalized === 'COVER' || normalized === 'BUY_PUT') {
-    return normalized;
-  }
-  if (options.allowPolymarket === true && (normalized === 'BUY_YES' || normalized === 'BUY_NO')) {
     return normalized;
   }
   throw new Error(`Unsupported trade direction: ${value}`);
@@ -62,8 +54,6 @@ function normalizeDirection(value, options = {}) {
 function normalizeJournalDirection(value) {
   const normalized = String(value || '').trim().toUpperCase();
   if (normalized === 'LONG') return 'BUY';
-  if (normalized === 'BUY_YES') return 'BUY';
-  if (normalized === 'BUY_NO') return 'SELL';
   return normalizeDirection(normalized);
 }
 
@@ -459,30 +449,6 @@ function buildOrderPayload(input = {}) {
   return payload;
 }
 
-function resolvePolymarketTokenId(input = {}, direction = 'BUY_YES') {
-  const explicit = String(input.tokenId || input.assetId || '').trim();
-  if (explicit) return explicit;
-
-  if (direction === 'BUY_YES') {
-    return String(input.yesTokenId || input.tokens?.yes || '').trim();
-  }
-  if (direction === 'BUY_NO') {
-    return String(input.noTokenId || input.tokens?.no || '').trim();
-  }
-  return String(input.tokenId || '').trim();
-}
-
-function resolvePolymarketPrice(input = {}, direction = 'BUY_YES') {
-  const candidates = direction === 'BUY_NO'
-    ? [input.noPrice, input.currentPrices?.no, input.limitPrice, input.price, input.referencePrice]
-    : [input.yesPrice, input.currentPrices?.yes, input.limitPrice, input.price, input.referencePrice];
-  for (const candidate of candidates) {
-    const price = roundPrice(candidate, 'prediction_market');
-    if (price != null && price > 0) return price;
-  }
-  return null;
-}
-
 function normalizeAccount(account = {}) {
   return {
     id: account.id || account.account_number || null,
@@ -526,9 +492,6 @@ function normalizeOrder(order = {}) {
 
 async function submitOrder(input = {}, options = {}) {
   const brokerType = resolveBrokerType(input, options);
-  if (brokerType === 'polymarket') {
-    return submitPolymarketOrder(input, options);
-  }
   if (brokerType !== 'alpaca') {
     const broker = getBrokerAdapter(brokerType);
     const result = await broker.submitOrder({ ...input, broker: brokerType }, { ...options, broker: brokerType });
@@ -584,126 +547,6 @@ async function submitAlpacaOrder(input = {}, options = {}) {
   };
 }
 
-async function submitPolymarketOrder(input = {}, options = {}) {
-  const direction = normalizeDirection(input.direction, { allowPolymarket: true });
-  const tokenId = resolvePolymarketTokenId(input, direction);
-  const quantity = toPositiveQuantity(input.shares || input.qty, 'prediction_market');
-  const price = resolvePolymarketPrice(input, direction);
-  const side = direction === 'SELL' ? 'SELL' : 'BUY';
-
-  if (!tokenId) {
-    throw new Error('Polymarket orders require a tokenId');
-  }
-  if (quantity <= 0) {
-    throw new Error('Polymarket order size must be positive');
-  }
-  if (price == null || price <= 0) {
-    throw new Error('Polymarket order price must be positive');
-  }
-
-  const rawOrder = await polymarketClient.createOrder(tokenId, side, price, quantity, options);
-  const order = {
-    id: rawOrder?.orderId || null,
-    clientOrderId: null,
-    status: rawOrder?.status || null,
-    symbol: String(input.ticker || input.conditionId || tokenId).trim().toUpperCase(),
-    side: side.toLowerCase(),
-    qty: quantity,
-    filledQty: 0,
-    filledAvgPrice: price,
-    type: 'limit',
-    tokenId,
-    raw: rawOrder?.raw || rawOrder,
-  };
-  const result = {
-    ok: true,
-    status: rawOrder?.status || 'accepted',
-    payload: {
-      tokenId,
-      size: quantity,
-      price,
-      side,
-      direction,
-      ticker: input.ticker || input.conditionId || null,
-    },
-    order,
-    orderId: rawOrder?.orderId || null,
-  };
-
-  if (options.recordJournal !== false) {
-    result.tradeId = recordTradeSubmission(result, input, options);
-  }
-
-  return result;
-}
-
-async function executePredictionMarketConsensusTrade(input = {}, options = {}) {
-  const consensus = input.consensus || {};
-  const direction = normalizeDirection(consensus.decision || input.direction || 'HOLD', { allowPolymarket: true });
-  if (!consensus.consensus || direction === 'HOLD') {
-    return {
-      ok: false,
-      status: 'no_action',
-      reason: 'Consensus did not authorize a Polymarket trade',
-    };
-  }
-
-  const account = input.account || {};
-  const limits = input.limits || DEFAULT_LIMITS;
-  const killSwitch = checkKillSwitch(account, limits);
-  if (killSwitch.triggered) {
-    return {
-      ok: false,
-      status: 'rejected',
-      reason: 'Kill switch triggered',
-      riskCheck: killSwitch,
-    };
-  }
-
-  const dailyPause = checkDailyPause(account, limits);
-  if (dailyPause.paused) {
-    return {
-      ok: false,
-      status: 'rejected',
-      reason: 'Daily pause active',
-      riskCheck: dailyPause,
-    };
-  }
-
-  const shares = toPositiveQuantity(input.requestedShares || input.shares || input.qty, 'prediction_market');
-  if (shares <= 0) {
-    return {
-      ok: false,
-      status: 'rejected',
-      reason: 'Polymarket sizing did not produce an executable quantity',
-    };
-  }
-
-  return submitOrder({
-    ticker: input.ticker || consensus.ticker || consensus.conditionId,
-    conditionId: input.conditionId || consensus.conditionId || input.ticker || consensus.ticker,
-    direction,
-    shares,
-    broker: 'polymarket',
-    assetClass: 'prediction_market',
-    tokenId: input.tokenId,
-    yesTokenId: input.yesTokenId || consensus.market?.tokens?.yes,
-    noTokenId: input.noTokenId || consensus.market?.tokens?.no,
-    currentPrices: input.currentPrices || consensus.market?.currentPrices,
-    yesPrice: input.yesPrice,
-    noPrice: input.noPrice,
-    referencePrice: input.referencePrice || input.price,
-    price: input.price || input.referencePrice,
-    consensusDetail: consensus,
-    riskCheckDetail: {
-      killSwitch,
-      dailyPause,
-      requestedShares: shares,
-    },
-    notes: input.notes || null,
-  }, options);
-}
-
 async function executeConsensusTrade(input = {}, options = {}) {
   const consensus = input.consensus || {};
   const assetClass = resolveAssetClass({
@@ -714,10 +557,7 @@ async function executeConsensusTrade(input = {}, options = {}) {
     ...input,
     ticker: consensus.ticker || input.ticker,
   }, options);
-  const direction = normalizeDirection(consensus.decision || input.direction || 'HOLD', {
-    allowPolymarket: assetClass === 'prediction_market'
-      || brokerType === 'polymarket',
-  });
+  const direction = normalizeDirection(consensus.decision || input.direction || 'HOLD');
   const executionDirection = normalizeHyperliquidExecutionDirection(direction, {
     ...input,
     ticker: consensus.ticker || input.ticker,
@@ -733,10 +573,6 @@ async function executeConsensusTrade(input = {}, options = {}) {
       status: 'no_action',
       reason: 'Consensus did not authorize a BUY/SELL trade',
     };
-  }
-
-  if (assetClass === 'prediction_market' || direction === 'BUY_YES' || direction === 'BUY_NO') {
-    return executePredictionMarketConsensusTrade(input, options);
   }
 
   const allowHyperliquidShortExecution = brokerType === 'hyperliquid' && assetClass === 'crypto' && executionDirection === 'SHORT';
@@ -867,28 +703,6 @@ async function getAlpacaAccountSnapshot(options = {}) {
   return normalizeAccount(account);
 }
 
-async function getPolymarketAccountSnapshot(options = {}) {
-  const [balance, positions] = await Promise.all([
-    polymarketClient.getBalance(options),
-    polymarketClient.getPositions(options),
-  ]);
-  const available = Number(balance?.available ?? balance?.balance ?? 0) || 0;
-  const marketValue = Array.isArray(positions)
-    ? positions.reduce((sum, position) => sum + (Number(position?.marketValue || 0) || 0), 0)
-    : 0;
-  return normalizeAccount({
-    id: 'polymarket',
-    status: 'active',
-    equity: Number((available + marketValue).toFixed(2)),
-    cash: Number(available.toFixed(2)),
-    buying_power: Number(available.toFixed(2)),
-    raw: {
-      balance,
-      positions,
-    },
-  });
-}
-
 async function getOpenPositions(options = {}) {
   const brokerTypes = resolveBrokerTypes(options);
   const positions = await Promise.all(brokerTypes.map((brokerType) => {
@@ -902,29 +716,6 @@ async function getAlpacaOpenPositions(options = {}) {
   const positions = await client.getPositions();
   return Array.isArray(positions)
     ? positions.map((position) => ({ ...normalizePosition(position), broker: 'alpaca' }))
-    : [];
-}
-
-async function getPolymarketOpenPositions(options = {}) {
-  const positions = await polymarketClient.getPositions(options);
-  return Array.isArray(positions)
-    ? positions.map((position) => ({
-      ...normalizePosition({
-        ticker: position.market || position.tokenId,
-        qty: position.size,
-        avgPrice: position.avgEntryPrice,
-        marketValue: position.marketValue,
-        assetClass: 'prediction_market',
-      }),
-      broker: 'polymarket',
-      exchange: 'POLYMARKET',
-      tokenId: position.tokenId,
-      market: position.market,
-      outcome: position.outcome,
-      unrealizedPnl: Number(position.unrealizedPnl || 0) || 0,
-      realizedPnl: Number(position.realizedPnl || 0) || 0,
-      raw: position.raw || position,
-    }))
     : [];
 }
 
@@ -1063,16 +854,6 @@ function resolveBrokerTypes(options = {}) {
 }
 
 function getBrokerAdapter(brokerType) {
-  if (brokerType === 'polymarket') {
-    return {
-      type: 'polymarket',
-      connect: polymarketClient.connect,
-      disconnect: polymarketClient.disconnect,
-      getAccount: (options = {}) => getPolymarketAccountSnapshot(options),
-      getPositions: (options = {}) => getPolymarketOpenPositions(options),
-      submitOrder: (input = {}, options = {}) => submitPolymarketOrder(input, options),
-    };
-  }
   const { createBroker } = require('./broker-adapter');
   return createBroker(brokerType);
 }
@@ -1126,14 +907,11 @@ module.exports = {
   normalizeOrder,
   submitHyperliquidOrder,
   submitAlpacaOrder,
-  submitPolymarketOrder,
   submitOrder,
   executeConsensusTrade,
   getAlpacaAccountSnapshot,
-  getPolymarketAccountSnapshot,
   getAccountSnapshot,
   getAlpacaOpenPositions,
-  getPolymarketOpenPositions,
   getOpenPositions,
   syncJournalPositions,
   cancelAlpacaOrder,
