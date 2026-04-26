@@ -307,6 +307,7 @@ const DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
 const DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES = 30;
+const MARKET_SCANNER_ALERT_MIN_VOLUME_USD_24H = 1_000_000;
 const DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT = Math.max(
@@ -2336,6 +2337,9 @@ class SupervisorDaemon {
       ...(readJsonFile(this.marketScannerStatePath, defaultMarketScannerState()) || {}),
     });
     this.marketScanner = options.marketScanner || marketScannerModule;
+    this.marketScannerAlertGate = typeof options.marketScannerAlertGate === 'function'
+      ? options.marketScannerAlertGate
+      : null;
     this.marketScannerPhasePromise = null;
     this.marketScannerLastTrigger = null;
     this.lastMarketScannerSummary = this.marketScannerEnabled
@@ -3831,15 +3835,43 @@ class SupervisorDaemon {
 
   sanitizeMarketScannerMovers(entries = []) {
     const canonicalMovers = marketScannerModule.buildMoverMap([
-      ...(Array.isArray(this.marketScannerState?.flaggedMovers) ? this.marketScannerState.flaggedMovers : []),
-      ...(Array.isArray(this.marketScannerState?.topMovers) ? this.marketScannerState.topMovers : []),
       ...(Array.isArray(this.marketScannerState?.assets) ? this.marketScannerState.assets : []),
+      ...(Array.isArray(this.marketScannerState?.topMovers) ? this.marketScannerState.topMovers : []),
+      ...(Array.isArray(this.marketScannerState?.flaggedMovers) ? this.marketScannerState.flaggedMovers : []),
     ]);
     const sanitized = [];
+    const isMissing = (value) => value == null || value === '' || (typeof value === 'number' && Number.isNaN(value));
     for (const entry of Array.isArray(entries) ? entries : []) {
       const normalized = marketScannerModule.normalizeMover(entry);
       if (!normalized.coin) continue;
-      sanitized.push(canonicalMovers.get(normalized.coin) || normalized);
+      const canonical = canonicalMovers.get(normalized.coin);
+      if (!canonical) {
+        sanitized.push(normalized);
+        continue;
+      }
+      const merged = { ...canonical, ...normalized };
+      for (const key of [
+        'price',
+        'change4hPct',
+        'change24hPct',
+        'volumeUsd24h',
+        'fundingRate',
+        'openInterest',
+        'openInterestChange24hPct',
+        'score',
+      ]) {
+        if (isMissing(normalized[key]) && !isMissing(canonical[key])) {
+          merged[key] = canonical[key];
+        }
+      }
+      if ((normalized.direction === 'FLAT' || !normalized.direction) && canonical.direction && canonical.direction !== 'FLAT') {
+        merged.direction = canonical.direction;
+      }
+      if (!normalized.triggerWindow && canonical.triggerWindow) {
+        merged.triggerWindow = canonical.triggerWindow;
+      }
+      merged.flagged = normalized.flagged === true || canonical.flagged === true;
+      sanitized.push(merged);
     }
     return sanitized;
   }
@@ -3880,6 +3912,130 @@ class SupervisorDaemon {
       }
     }
     return supported;
+  }
+
+  getBarsForTicker(barsBySymbol, ticker) {
+    if (!ticker) return [];
+    if (barsBySymbol instanceof Map) {
+      return barsBySymbol.get(ticker) || [];
+    }
+    if (barsBySymbol && typeof barsBySymbol === 'object') {
+      return barsBySymbol[ticker] || [];
+    }
+    return [];
+  }
+
+  async filterOrdiQualifiedMarketScannerMovers(entries = [], options = {}) {
+    const candidatesByTicker = new Map();
+    for (const mover of this.sanitizeMarketScannerMovers(entries)) {
+      const ticker = String(mover?.ticker || '').trim().toUpperCase();
+      if (!ticker || candidatesByTicker.has(ticker)) continue;
+      candidatesByTicker.set(ticker, mover);
+    }
+
+    const suppressed = [];
+    const decisions = [];
+    const rolloverCandidates = [];
+    for (const mover of candidatesByTicker.values()) {
+      const ticker = String(mover?.ticker || '').trim().toUpperCase();
+      const volumeUsd24h = toNumber(mover?.volumeUsd24h, 0);
+      const change4hPct = toNumber(mover?.change4hPct, 0);
+      const direction = String(mover?.direction || '').trim().toUpperCase();
+      if (volumeUsd24h < MARKET_SCANNER_ALERT_MIN_VOLUME_USD_24H) {
+        suppressed.push({ ticker, reason: 'insufficient_alert_liquidity', volumeUsd24h });
+        decisions.push({ ticker, accepted: false, reason: 'insufficient_alert_liquidity' });
+        continue;
+      }
+      if (direction !== 'DOWN' && !(change4hPct < 0)) {
+        suppressed.push({ ticker, reason: 'rollover_missing', direction, change4hPct });
+        decisions.push({ ticker, accepted: false, reason: 'rollover_missing' });
+        continue;
+      }
+      rolloverCandidates.push(mover);
+    }
+
+    if (this.marketScannerAlertGate) {
+      const customResult = await this.marketScannerAlertGate({
+        candidates: rolloverCandidates,
+        suppressed,
+        decisions,
+        scannedAt: options.scannedAt,
+        now: options.now,
+      });
+      return {
+        qualifiedMovers: Array.isArray(customResult?.qualifiedMovers) ? customResult.qualifiedMovers : [],
+        suppressedMovers: Array.isArray(customResult?.suppressedMovers) ? customResult.suppressedMovers : suppressed,
+        decisions: Array.isArray(customResult?.decisions) ? customResult.decisions : decisions,
+      };
+    }
+
+    if (rolloverCandidates.length === 0) {
+      return {
+        qualifiedMovers: [],
+        suppressedMovers: suppressed,
+        decisions,
+      };
+    }
+
+    const tickers = rolloverCandidates.map((mover) => mover.ticker);
+    const end = options.scannedAt || options.now || new Date().toISOString();
+    const [bars5m, bars15m, bars1h] = await Promise.all([
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: tickers,
+        timeframe: '5m',
+        limit: 24,
+        end,
+      }).catch(() => new Map()),
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: tickers,
+        timeframe: '15m',
+        limit: 24,
+        end,
+      }).catch(() => new Map()),
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: tickers,
+        timeframe: '1Hour',
+        limit: 96,
+        end,
+      }).catch(() => new Map()),
+    ]);
+
+    const qualifiedMovers = [];
+    for (const mover of rolloverCandidates) {
+      const ticker = String(mover?.ticker || '').trim().toUpperCase();
+      const recent5m = this.getBarsForTicker(bars5m, ticker);
+      const recent15m = this.getBarsForTicker(bars15m, ticker);
+      const recent1h = this.getBarsForTicker(bars1h, ticker);
+      const latest5m = Array.isArray(recent5m) && recent5m.length > 0
+        ? toNumber(recent5m[recent5m.length - 1]?.close, NaN)
+        : NaN;
+      const currentPrice = toNumber(mover?.price, latest5m);
+      const gate = oracleWatchRegime.evaluateOrdiPatternPromotionGate({
+        ticker,
+        desiredDirection: 'SELL',
+        scannerMover: mover,
+        source: { type: 'market_scanner_alert' },
+      }, recent5m, recent15m, recent1h, currentPrice);
+      decisions.push({
+        ticker,
+        accepted: gate?.ok === true,
+        reason: gate?.reason || 'ordi_pattern_gate_failed',
+      });
+      if (gate?.ok === true) {
+        qualifiedMovers.push(mover);
+      } else {
+        suppressed.push({
+          ticker,
+          reason: gate?.reason || 'ordi_pattern_gate_failed',
+        });
+      }
+    }
+
+    return {
+      qualifiedMovers,
+      suppressedMovers: suppressed,
+      decisions,
+    };
   }
 
   promoteMarketScannerMovers(movers = [], now = new Date()) {
@@ -4574,6 +4730,30 @@ class SupervisorDaemon {
     const canonicalAlerts = this.sanitizeMarketScannerMovers(
       Array.isArray(phaseResult.alerts) ? phaseResult.alerts : canonicalFlaggedMovers
     ).slice(0, 10);
+    const rawUrgentSourceMovers = this.getUrgentMarketScannerMovers(
+      Array.isArray(this.marketScannerState.flaggedMovers) && this.marketScannerState.flaggedMovers.length > 0
+        ? this.marketScannerState.flaggedMovers
+        : canonicalFlaggedMovers
+    ).slice(0, 6);
+    const alertGateResult = await this.filterOrdiQualifiedMarketScannerMovers([
+      ...canonicalAlerts,
+      ...rawUrgentSourceMovers,
+    ], {
+      scannedAt: phaseResult.scannedAt,
+    });
+    const qualifiedByTicker = new Map(
+      (Array.isArray(alertGateResult.qualifiedMovers) ? alertGateResult.qualifiedMovers : [])
+        .map((mover) => [String(mover?.ticker || '').trim().toUpperCase(), mover])
+        .filter(([ticker]) => Boolean(ticker))
+    );
+    const gatedAlerts = canonicalAlerts.filter((mover) => qualifiedByTicker.has(String(mover?.ticker || '').trim().toUpperCase()));
+    const gatedUrgentSourceMovers = rawUrgentSourceMovers
+      .map((mover) => qualifiedByTicker.get(String(mover?.ticker || '').trim().toUpperCase()))
+      .filter(Boolean)
+      .slice(0, 6);
+    const urgentPromotedSymbols = gatedUrgentSourceMovers
+      .map((entry) => String(entry?.ticker || '').trim().toUpperCase())
+      .filter(Boolean);
     const summary = {
       ok: true,
       key: phaseKey,
@@ -4582,9 +4762,32 @@ class SupervisorDaemon {
       flaggedCount: Array.isArray(this.marketScannerState.flaggedMovers) ? this.marketScannerState.flaggedMovers.length : 0,
       flaggedMovers: canonicalFlaggedMovers,
       topMovers: canonicalTopMovers,
-      alerts: canonicalAlerts,
+      alerts: gatedAlerts,
+      alertGate: {
+        policy: 'ordi_pattern_source_gate',
+        rawAlertCount: canonicalAlerts.length,
+        rawUrgentCount: rawUrgentSourceMovers.length,
+        qualifiedCount: qualifiedByTicker.size,
+        suppressedCount: Array.isArray(alertGateResult.suppressedMovers) ? alertGateResult.suppressedMovers.length : 0,
+        decisions: Array.isArray(alertGateResult.decisions) ? alertGateResult.decisions.slice(0, 10) : [],
+      },
+      urgentPromotedSymbols,
       notified: false,
     };
+    this.marketScannerState = marketScannerModule.normalizeMarketScannerState({
+      ...this.marketScannerState,
+      lastResult: {
+        scannedAt: summary.scannedAt,
+        assetCount: summary.assetCount,
+        flaggedCount: summary.flaggedCount,
+        flaggedMovers: summary.flaggedMovers,
+        topMovers: summary.topMovers,
+        alerts: summary.alerts,
+        urgentMovers: gatedUrgentSourceMovers,
+        urgentPromotedSymbols,
+        alertGate: summary.alertGate,
+      },
+    });
     try {
       summary.predictionsScored = predictionTrackerModule.scorePredictions(
         this.buildPredictionPriceMap(this.marketScannerState.assets)
@@ -4628,18 +4831,22 @@ class SupervisorDaemon {
       this.notifyArchitectInternal(this.buildMarketScannerArchitectAlert(summary), 'market_scanner');
       summary.notified = true;
     }
-    const urgentSourceMovers = this.getUrgentMarketScannerMovers(
-      Array.isArray(this.marketScannerState.flaggedMovers) && this.marketScannerState.flaggedMovers.length > 0
-        ? this.marketScannerState.flaggedMovers
-        : summary.flaggedMovers
-    ).slice(0, 6);
-    const urgentMovers = (await this.filterExecutableMarketScannerMovers(urgentSourceMovers)).slice(0, 6);
+    const urgentMovers = (await this.filterExecutableMarketScannerMovers(gatedUrgentSourceMovers)).slice(0, 6);
     summary.urgentMovers = urgentMovers;
     if (urgentMovers.length > 0) {
       const urgentPromotionResult = this.promoteMarketScannerMovers(urgentMovers, phaseResult.scannedAt);
-      summary.urgentPromotedSymbols = Array.isArray(urgentPromotionResult?.promotedTickers)
+      const promotedUrgentTickers = Array.isArray(urgentPromotionResult?.promotedTickers)
         ? urgentPromotionResult.promotedTickers
         : [];
+      const refreshedUrgentTickers = Array.isArray(urgentPromotionResult?.refreshedTickers)
+        ? urgentPromotionResult.refreshedTickers
+        : [];
+      summary.urgentPromotedSymbols = Array.from(new Set([
+        ...urgentPromotedSymbols,
+        ...promotedUrgentTickers,
+        ...refreshedUrgentTickers,
+      ]));
+      summary.urgentRefreshedSymbols = refreshedUrgentTickers;
       const triggerDecision = this.shouldTriggerImmediateMarketScannerConsultation(urgentMovers, phaseResult.scannedAt);
       summary.immediateConsultationEligibility = triggerDecision.reason;
       if (triggerDecision.shouldTrigger && !this.marketScannerImmediateConsultationEnabled) {
