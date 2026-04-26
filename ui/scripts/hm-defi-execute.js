@@ -610,18 +610,20 @@ function constrainStopPriceWithinLiquidationBuffer({
   if (!Number.isFinite(normalizedStopPrice) || !Number.isFinite(normalizedLiquidationPx) || normalizedLiquidationPx <= 0) {
     return normalizedStopPrice;
   }
-  assertStopLossBeforeLiquidation({
-    stopPrice: normalizedStopPrice,
+  const assertSafeStop = (candidateStopPrice) => assertStopLossBeforeLiquidation({
+    stopPrice: candidateStopPrice,
     liquidationPx: normalizedLiquidationPx,
     isLong,
     referencePrice,
     szDecimals,
   });
   if (!Number.isFinite(normalizedEntryPrice)) {
+    assertSafeStop(normalizedStopPrice);
     return normalizedStopPrice;
   }
   const liquidationGap = Math.abs(normalizedLiquidationPx - normalizedEntryPrice);
   if (!Number.isFinite(liquidationGap) || liquidationGap <= 0) {
+    assertSafeStop(normalizedStopPrice);
     return normalizedStopPrice;
   }
 
@@ -633,25 +635,31 @@ function constrainStopPriceWithinLiquidationBuffer({
     const floor = normalizedLiquidationPx + minBufferGap;
     const ceiling = normalizedEntryPrice * 0.9995;
     if (floor >= ceiling) {
+      assertSafeStop(normalizedStopPrice);
       return normalizedStopPrice;
     }
-    return roundPrice(
+    const constrainedStopPrice = roundPrice(
       clamp(normalizedStopPrice, floor, ceiling),
       referencePrice,
       szDecimals
     );
+    assertSafeStop(constrainedStopPrice);
+    return constrainedStopPrice;
   }
 
   const floor = normalizedEntryPrice * 1.0005;
   const ceiling = normalizedLiquidationPx - minBufferGap;
   if (ceiling <= floor) {
+    assertSafeStop(normalizedStopPrice);
     return normalizedStopPrice;
   }
-  return roundPrice(
+  const constrainedStopPrice = roundPrice(
     clamp(normalizedStopPrice, floor, ceiling),
     referencePrice,
     szDecimals
   );
+  assertSafeStop(constrainedStopPrice);
+  return constrainedStopPrice;
 }
 
 function roundPrice(value, referencePrice = value, szDecimals = 0) {

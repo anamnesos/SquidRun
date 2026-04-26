@@ -75,10 +75,32 @@ describe('hm-defi-execute', () => {
     expect(hmDefiExecute.formatPrice(0.126936, 0.126936, 0)).toBe('0.12694');
   });
 
-  test('constrainStopPriceWithinLiquidationBuffer rejects stops on the liquidation side', () => {
-    expect(() => hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+  test('constrainStopPriceWithinLiquidationBuffer clamps requested stops on the liquidation side', () => {
+    const shortStop = hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
       stopPrice: 102,
       entryPrice: 90,
+      liquidationPx: 100,
+      isLong: false,
+      referencePrice: 90,
+    });
+    expect(shortStop).toBeGreaterThan(90);
+    expect(shortStop).toBeLessThan(100);
+
+    const longStop = hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 78,
+      entryPrice: 90,
+      liquidationPx: 80,
+      isLong: true,
+      referencePrice: 90,
+    });
+    expect(longStop).toBeGreaterThan(80);
+    expect(longStop).toBeLessThan(90);
+  });
+
+  test('constrainStopPriceWithinLiquidationBuffer rejects unsafe stops when no clamp is possible', () => {
+    expect(() => hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 102,
+      entryPrice: undefined,
       liquidationPx: 100,
       isLong: false,
       referencePrice: 90,
@@ -86,7 +108,7 @@ describe('hm-defi-execute', () => {
 
     expect(() => hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
       stopPrice: 78,
-      entryPrice: 90,
+      entryPrice: undefined,
       liquidationPx: 80,
       isLong: true,
       referencePrice: 90,
