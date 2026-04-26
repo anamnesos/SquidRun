@@ -47,7 +47,6 @@ const polymarketClient = require('./modules/trading/polymarket-client');
 const polymarketScanner = require('./modules/trading/polymarket-scanner');
 const polymarketSignals = require('./modules/trading/polymarket-signals');
 const polymarketSizer = require('./modules/trading/polymarket-sizer');
-const launchRadar = require('./modules/trading/launch-radar');
 const yieldRouterModule = require('./modules/trading/yield-router');
 const marketScannerModule = require('./modules/trading/market-scanner');
 const sparkCapture = require('./modules/trading/spark-capture');
@@ -81,7 +80,6 @@ if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'private-profil
   process.env.SQUIDRUN_LIVE_OPS_MONITOR = '0';
   process.env.SQUIDRUN_SPARK_MONITOR_AUTOMATION = '0';
   process.env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
-  process.env.SQUIDRUN_LAUNCH_RADAR_AUTOMATION = '0';
   process.env.SQUIDRUN_SAYLOR_WATCHER = '0';
   process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = '0';
   process.env.SQUIDRUN_TRADING_AUTOMATION = '0';
@@ -208,7 +206,6 @@ const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
 const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-trading-state.json');
-const DEFAULT_LAUNCH_RADAR_STATE_PATH = resolveRuntimePath('launch-radar-supervisor-state.json');
 const DEFAULT_NEWS_SCAN_STATE_PATH = resolveRuntimePath('news-scan-supervisor-state.json');
 const DEFAULT_PENDING_FOLLOWUP_STATE_PATH = resolveRuntimePath('pending-followup-supervisor-state.json');
 const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
@@ -282,10 +279,6 @@ const POLYMARKET_PHASES = Object.freeze([
 const POLYMARKET_SCHEDULE_PHASES = Object.freeze(
   POLYMARKET_PHASES.filter((phase) => phase.key === 'polymarket_scan' || phase.key === 'polymarket_monitor')
 );
-const LAUNCH_RADAR_PHASES = Object.freeze([
-  { key: 'launch_radar_scan', label: 'Launch radar scan' },
-]);
-const DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES = 15;
 const NEWS_SCAN_PHASES = Object.freeze([
   { key: 'news_scan', label: 'News and market scan' },
 ]);
@@ -993,16 +986,6 @@ function defaultLiveOpsTradingState() {
   };
 }
 
-function defaultLaunchRadarState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    updatedAt: null,
-  };
-}
-
 function defaultYieldRouterState() {
   return {
     lastProcessedAt: null,
@@ -1102,51 +1085,6 @@ function getDateKeyInTimeZone(value = new Date(), timeZone = tradingScheduler.MA
 function startOfUtcDay(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
-}
-
-function buildLaunchRadarDailySchedule(referenceDate = new Date(), options = {}) {
-  const intervalMinutes = Math.max(1, Math.floor(Number(options.intervalMinutes) || DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES));
-  const start = startOfUtcDay(referenceDate);
-  const marketDate = start.toISOString().slice(0, 10);
-  const schedule = [];
-
-  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += intervalMinutes) {
-    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
-    for (const phase of LAUNCH_RADAR_PHASES) {
-      schedule.push({
-        key: phase.key,
-        label: phase.label,
-        marketDate,
-        scheduledAt: scheduledAt.toISOString(),
-        scheduledTimeLocal: scheduledAt.toISOString(),
-        displayTimeZone: 'UTC',
-        windowKey: scheduledAt.toISOString(),
-      });
-    }
-  }
-
-  return {
-    marketDate,
-    intervalMinutes,
-    displayTimeZone: 'UTC',
-    schedule,
-  };
-}
-
-function getNextLaunchRadarEvent(referenceDate = new Date(), options = {}) {
-  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  for (let offset = 0; offset < 3; offset += 1) {
-    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-    const day = buildLaunchRadarDailySchedule(candidateDate, options);
-    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-    if (nextEvent) {
-      return {
-        ...nextEvent,
-        day,
-      };
-    }
-  }
-  return null;
 }
 
 function buildNewsScanDailySchedule(referenceDate = new Date(), options = {}) {
@@ -2122,46 +2060,6 @@ class SupervisorDaemon {
         smartMoneyScanner: this.smartMoneyScanner,
       }))
       : null;
-    const launchRadarAutomationRequested = options.launchRadarEnabled === true
-      || process.env.SQUIDRUN_LAUNCH_RADAR_AUTOMATION === '1';
-    this.launchRadarEnabled = Boolean(launchRadarAutomationRequested);
-    this.launchRadarDryRun = options.launchRadarDryRun === true
-      || process.env.SQUIDRUN_LAUNCH_RADAR_DRY_RUN === '1';
-    this.launchRadarStatePath = options.launchRadarStatePath || DEFAULT_LAUNCH_RADAR_STATE_PATH;
-    this.launchRadarState = {
-      ...defaultLaunchRadarState(),
-      ...(readJsonFile(this.launchRadarStatePath, defaultLaunchRadarState()) || {}),
-    };
-    this.launchRadarPhasePromise = null;
-    this.lastLaunchRadarSummary = this.launchRadarEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.launchRadar = this.launchRadarEnabled && options.launchRadar !== null
-      ? (options.launchRadar || launchRadar.createLaunchRadar({
-        statePath: resolveRuntimePath('launch-radar-state.json'),
-        fetch: options.fetch || global.fetch,
-        env: options.env || process.env,
-      }))
-      : null;
-    this.launchRadarOrchestrator = this.launchRadarEnabled
-      ? (options.launchRadarOrchestrator || tradingOrchestrator.createOrchestrator({
-        journalPath: resolveRuntimePath('trade-journal.db'),
-        dynamicWatchlistStatePath: resolveRuntimePath('dynamic-watchlist-state.json'),
-        launchRadar: this.launchRadar,
-      }))
-      : null;
     this.newsScanEnabled = options.newsScanEnabled !== false
       && process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION !== '0';
     this.newsScanIntervalMinutes = Math.max(
@@ -2451,9 +2349,6 @@ class SupervisorDaemon {
       if (this.polymarketTradingOrchestrator?.options) {
         this.polymarketTradingOrchestrator.options.yieldRouter = this.yieldRouter;
       }
-      if (this.launchRadarOrchestrator?.options) {
-        this.launchRadarOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
       if (this.yieldRouterOrchestrator?.options) {
         this.yieldRouterOrchestrator.options.yieldRouter = this.yieldRouter;
       }
@@ -2680,10 +2575,6 @@ class SupervisorDaemon {
       this.logger.info('Circuit breaker stopped');
     }
     await this.stop[private-live-ops]PositionMonitor();
-    if (this.launchRadar && typeof this.launchRadar.stop === 'function') {
-      this.launchRadar.stop();
-      this.logger.info('Launch radar stopped');
-    }
     if (this.yieldRouter && typeof this.yieldRouter.stop === 'function') {
       this.yieldRouter.stop();
       this.logger.info('Yield router stopped');
@@ -3009,7 +2900,6 @@ class SupervisorDaemon {
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
     const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
-    const launchRadarResult = await this.maybeRunLaunchRadarAutomation(nowMs);
     const newsScanResult = await this.maybeRunNewsScanAutomation(nowMs);
     const pendingFollowupResult = await this.maybeRunPendingFollowupAutomation(nowMs);
     const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
@@ -3036,7 +2926,6 @@ class SupervisorDaemon {
       tradeReconciliationResult,
       cryptoTradingResult,
       polymarketTradingResult,
-      launchRadarResult,
       newsScanResult,
       pendingFollowupResult,
       marketResearchResult,
@@ -3269,11 +3158,6 @@ class SupervisorDaemon {
   persistLiveOpsTradingState() {
     this.polymarketTradingState.updatedAt = new Date().toISOString();
     writeJsonFile(this.polymarketTradingStatePath, this.polymarketTradingState);
-  }
-
-  persistLaunchRadarState() {
-    this.launchRadarState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.launchRadarStatePath, this.launchRadarState);
   }
 
   persistYieldRouterState() {
@@ -6851,93 +6735,6 @@ class SupervisorDaemon {
     }
   }
 
-  async runLaunchRadarPhase(event) {
-    const phaseKey = String(event?.key || '').trim();
-    const scheduledAt = String(event?.scheduledAt || '').trim();
-    const marketDate = String(event?.marketDate || new Date(scheduledAt || Date.now()).toISOString().slice(0, 10)).trim();
-    if (!phaseKey || !scheduledAt || !this.launchRadarEnabled || !this.launchRadar || !this.launchRadarOrchestrator) {
-      return { ok: false, phase: phaseKey || 'unknown', error: 'launch_radar_phase_unavailable' };
-    }
-
-    try {
-      if (phaseKey !== 'launch_radar_scan') {
-        return {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {},
-        };
-      }
-
-      const portfolioSnapshot = await this.launchRadarOrchestrator.getUnifiedPortfolioSnapshot({
-        date: marketDate || scheduledAt,
-        includeLiveOps: true,
-      }).catch(() => null);
-      const killSwitch = tradingRiskEngine.checkKillSwitch(portfolioSnapshot || {}, tradingRiskEngine.DEFAULT_LIMITS);
-      const pollResult = await this.launchRadar.pollNow({ reason: phaseKey });
-      const qualified = Array.isArray(pollResult?.qualified) ? pollResult.qualified : [];
-      const rejected = Array.isArray(pollResult?.rejected) ? pollResult.rejected : [];
-      const syncResult = killSwitch.triggered
-        ? {
-          ok: false,
-          skipped: true,
-          reason: 'kill_switch_triggered',
-          qualifiedTokens: qualified,
-          added: [],
-          refreshed: [],
-        }
-        : await this.launchRadarOrchestrator.syncLaunchRadarWatchlist({
-          reason: 'launch_radar_scan',
-          date: marketDate || scheduledAt,
-          launchRadar: this.launchRadar,
-          launchRadarQualifiedTokens: qualified,
-          launchRadarExpiryDays: 7,
-          persistDynamicWatchlist: this.launchRadarDryRun ? false : undefined,
-        });
-
-      const result = {
-        ok: pollResult?.ok !== false,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        summary: {
-          launches: Array.isArray(pollResult?.launches) ? pollResult.launches.length : 0,
-          qualified: qualified.length,
-          rejected: rejected.length,
-          added: Array.isArray(syncResult?.added) ? syncResult.added.length : 0,
-          refreshed: Array.isArray(syncResult?.refreshed) ? syncResult.refreshed.length : 0,
-          killSwitch: Boolean(killSwitch.triggered),
-          dryRun: this.launchRadarDryRun,
-        },
-      };
-      this.launchRadarState.lastScan = {
-        windowKey: event.windowKey || event.scheduledAt,
-        marketDate,
-        scheduledAt,
-        dryRun: this.launchRadarDryRun,
-        killSwitch,
-        pollResult,
-        syncResult,
-      };
-      this.launchRadarState.lastResult = result;
-      this.persistLaunchRadarState();
-      return result;
-    } catch (err) {
-      this.logger.warn(`Launch radar phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
-      const result = {
-        ok: false,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        error: err.message,
-      };
-      this.launchRadarState.lastResult = result;
-      this.persistLaunchRadarState();
-      return result;
-    }
-  }
-
   async runYieldRebalancePhase(event) {
     const phaseKey = String(event?.key || '').trim();
     const scheduledAt = String(event?.scheduledAt || '').trim();
@@ -7653,86 +7450,6 @@ class SupervisorDaemon {
     });
 
     return this.polymarketTradingPhasePromise;
-  }
-
-  async maybeRunLaunchRadarAutomation(nowMs = Date.now()) {
-    if (!this.launchRadarEnabled || this.stopping || !this.launchRadar || !this.launchRadarOrchestrator) {
-      return { ok: false, skipped: true, reason: 'launch_radar_disabled' };
-    }
-    if (this.launchRadarPhasePromise) {
-      return this.launchRadarPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextLaunchRadarEvent(now, {
-      intervalMinutes: DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES,
-    });
-    const launchRadarDay = buildLaunchRadarDailySchedule(now, {
-      intervalMinutes: DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES,
-    });
-    const lastProcessedAtMs = this.launchRadarState.lastProcessedAt
-      ? new Date(this.launchRadarState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = launchRadarDay.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.launchRadarState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistLaunchRadarState();
-
-    if (dueEvents.length === 0) {
-      this.lastLaunchRadarSummary = {
-        enabled: true,
-        status: 'scheduled',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_launch_radar_phase',
-        nextEvent: this.launchRadarState.nextEvent,
-      };
-    }
-
-    this.launchRadarPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runLaunchRadarPhase(event);
-        executed.push(phaseResult);
-        this.launchRadarState.lastProcessedAt = event.scheduledAt;
-        this.launchRadarState.lastResult = phaseResult;
-        this.persistLaunchRadarState();
-        if (!phaseResult.ok) break;
-      }
-
-      const upcomingEvent = getNextLaunchRadarEvent(new Date(), {
-        intervalMinutes: DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES,
-      });
-      this.launchRadarState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistLaunchRadarState();
-      this.lastLaunchRadarSummary = {
-        enabled: true,
-        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: executed.every((entry) => entry.ok),
-        skipped: false,
-        executed,
-        nextEvent: this.launchRadarState.nextEvent,
-      };
-    })().finally(() => {
-      this.launchRadarPhasePromise = null;
-    });
-
-    return this.launchRadarPhasePromise;
   }
 
   async maybeRunYieldRouterAutomation(nowMs = Date.now()) {
@@ -8590,15 +8307,6 @@ class SupervisorDaemon {
         lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
         nextEvent: this.polymarketTradingState.nextEvent || null,
         lastSummary: this.lastLiveOpsTradingSummary || null,
-      },
-      launchRadarAutomation: {
-        enabled: this.launchRadarEnabled,
-        running: Boolean(this.launchRadarPhasePromise),
-        dryRun: this.launchRadarDryRun,
-        statePath: this.launchRadarStatePath,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent || null,
-        lastSummary: this.lastLaunchRadarSummary || null,
       },
       newsScanAutomation: {
         enabled: this.newsScanEnabled,
