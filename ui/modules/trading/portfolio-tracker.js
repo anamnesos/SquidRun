@@ -6,7 +6,6 @@ const path = require('path');
 const { resolveCoordPath } = require('../../config');
 const ibkrClient = require('./ibkr-client');
 const riskEngine = require('./risk-engine');
-const yieldRouter = require('./yield-router');
 
 const DEFAULT_PORTFOLIO_STATE_PATH = resolveCoordPath(path.join('runtime', 'portfolio-tracker-state.json'), { forWrite: true });
 const MARKET_TIME_ZONE = 'America/Los_Angeles';
@@ -87,7 +86,6 @@ function createEmptySnapshot() {
     totalPnl: 0,
     markets: {
       ibkr_global: createMarketSnapshot('ibkr_global', { label: 'IBKR Global' }),
-      defi_yield: createMarketSnapshot('defi_yield', { label: 'DeFi Yield' }),
       solana_tokens: createMarketSnapshot('solana_tokens', { label: 'Solana Tokens' }),
       cash_reserve: createMarketSnapshot('cash_reserve', { label: 'Cash Reserve' }),
     },
@@ -119,18 +117,6 @@ function normalizeEquityPosition(position = {}, defaults = {}) {
     unrealizedPnl: toNumber(position.unrealizedPnl ?? position.raw?.unrealized_pl, 0),
     side: toText(position.side, 'long'),
     raw: position.raw || position,
-  };
-}
-
-function normalizeYieldDeposit(deposit = {}) {
-  return {
-    venue: toText(deposit.venue || deposit.protocol),
-    amount: toNumber(deposit.amount, 0),
-    currentValue: toNumber(deposit.currentValue ?? deposit.amount, 0),
-    apy: toNumber(deposit.apy, 0),
-    locked: deposit.locked !== false,
-    depositedAt: deposit.depositedAt || null,
-    raw: deposit.raw || deposit,
   };
 }
 
@@ -222,24 +208,6 @@ async function collectIbkrData(options = {}) {
   };
 }
 
-async function collectYieldDeposits(options = {}) {
-  if (Array.isArray(options.defiDeposits)) {
-    return options.defiDeposits;
-  }
-  if (options.includeYieldRouter === false || options.yieldRouter === null) {
-    return [];
-  }
-
-  const router = options.yieldRouter || yieldRouter.createYieldRouter({
-    fetch: options.fetch || global.fetch,
-    env: options.env || process.env,
-  });
-  if (!router || typeof router.getDeposits !== 'function') {
-    return [];
-  }
-  return router.getDeposits(options);
-}
-
 async function getPortfolioSnapshot(options = {}) {
   const snapshot = createEmptySnapshot();
   const includeIbkr = options.includeIbkr === true || options.ibkrAccount || options.ibkrPositions;
@@ -266,25 +234,6 @@ async function getPortfolioSnapshot(options = {}) {
       appendSourceError(snapshot, 'ibkr', err);
       snapshot.markets.ibkr_global.sourceErrors.push(err.message);
     }
-  }
-
-  try {
-    const defiDeposits = (await collectYieldDeposits(options)).map(normalizeYieldDeposit);
-    snapshot.markets.defi_yield.deposits = defiDeposits;
-    snapshot.markets.defi_yield.marketValue = Number(defiDeposits.reduce((sum, deposit) => sum + deposit.currentValue, 0).toFixed(2));
-    snapshot.markets.defi_yield.equity = snapshot.markets.defi_yield.marketValue;
-    snapshot.markets.defi_yield.pnl = Number(defiDeposits.reduce((sum, deposit) => sum + (deposit.currentValue - deposit.amount), 0).toFixed(2));
-    snapshot.markets.defi_yield.lockedCapital = Number(defiDeposits
-      .filter((deposit) => deposit.locked !== false)
-      .reduce((sum, deposit) => sum + deposit.currentValue, 0)
-      .toFixed(2));
-    snapshot.markets.defi_yield.liquidCapital = Number(defiDeposits
-      .filter((deposit) => deposit.locked === false)
-      .reduce((sum, deposit) => sum + deposit.currentValue, 0)
-      .toFixed(2));
-  } catch (err) {
-    appendSourceError(snapshot, 'yield_router', err);
-    snapshot.markets.defi_yield.sourceErrors.push(err.message);
   }
 
   const solanaPositions = Array.isArray(options.solanaPositions) ? options.solanaPositions.map(normalizeSolanaPosition) : [];

@@ -5,25 +5,15 @@ jest.mock('../ibkr-client', () => ({
   getPositions: jest.fn(),
 }));
 
-jest.mock('../yield-router', () => ({
-  createYieldRouter: jest.fn(() => ({
-    getDeposits: jest.fn(() => []),
-  })),
-}));
-
 const ibkrClient = require('../ibkr-client');
-const yieldRouter = require('../yield-router');
 const portfolioTracker = require('../portfolio-tracker');
 
 describe('portfolio-tracker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    yieldRouter.createYieldRouter.mockReturnValue({
-      getDeposits: jest.fn(() => []),
-    });
   });
 
-  test('builds a unified portfolio snapshot across IBKR, DeFi, and Solana tokens', async () => {
+  test('builds a unified portfolio snapshot across IBKR and Solana tokens', async () => {
     ibkrClient.getAccount.mockResolvedValue({
       equity: 10000,
       cash: 6000,
@@ -57,29 +47,21 @@ describe('portfolio-tracker', () => {
         dayStartEquity: null,
         dayStartDate: null,
       },
-      defiDeposits: [
-        { venue: 'Morpho', amount: 50, currentValue: 52, apy: 0.08, locked: true },
-      ],
       solanaPositions: [
         { ticker: 'BONK', marketValue: 25, unrealizedPnl: 5 },
       ],
       now: '2026-03-18T20:00:00.000Z',
     });
 
-    expect(snapshot.totalEquity).toBe(10077);
+    expect(snapshot.totalEquity).toBe(10025);
     expect(snapshot.totalCash).toBe(6000);
     expect(snapshot.liquidCapital).toBe(10025);
-    expect(snapshot.lockedCapital).toBe(52);
+    expect(snapshot.lockedCapital).toBe(0);
     expect(snapshot.markets.ibkr_global).toMatchObject({
       equity: 4000,
       liquidCapital: 4000,
       pnl: 100,
       buyingPower: 12000,
-    });
-    expect(snapshot.markets.defi_yield).toMatchObject({
-      equity: 52,
-      lockedCapital: 52,
-      pnl: 2,
     });
     expect(snapshot.markets.solana_tokens).toMatchObject({
       equity: 25,
@@ -91,9 +73,9 @@ describe('portfolio-tracker', () => {
       dailyLossPct: 0,
       killSwitchTriggered: false,
       liquidCapital: 10025,
-      lockedCapital: 52,
-      peakEquity: 10077,
-      dayStartEquity: 10077,
+      lockedCapital: 0,
+      peakEquity: 10025,
+      dayStartEquity: 10025,
     });
   });
 
@@ -145,40 +127,6 @@ describe('portfolio-tracker', () => {
     expect(snapshot.sourceErrors).toEqual(expect.arrayContaining([
       'ibkr: ibkr unavailable',
     ]));
-  });
-
-  test('loads yield deposits from the yield router into the unified portfolio view', async () => {
-    yieldRouter.createYieldRouter.mockReturnValue({
-      getDeposits: jest.fn(() => [
-        {
-          protocol: 'Morpho',
-          amount: 75,
-          currentValue: 78,
-          apy: 0.09,
-          locked: false,
-          depositedAt: '2026-03-18T20:00:00.000Z',
-        },
-      ]),
-    });
-
-    const snapshot = await portfolioTracker.getPortfolioSnapshot({
-      persist: false,
-    });
-
-    expect(yieldRouter.createYieldRouter).toHaveBeenCalled();
-    expect(snapshot.markets.defi_yield).toMatchObject({
-      equity: 78,
-      liquidCapital: 78,
-      lockedCapital: 0,
-      pnl: 3,
-      deposits: [
-        expect.objectContaining({
-          venue: 'Morpho',
-          currentValue: 78,
-        }),
-      ],
-    });
-    expect(snapshot.totalEquity).toBe(78);
   });
 
   test('keeps broker markets opt-in so crypto consultations do not inherit stock cash', async () => {

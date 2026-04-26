@@ -16,7 +16,7 @@ Autonomous multi-model swing trading system.
 - `executor.js` — Broker-routed order placement (Hyperliquid + IBKR)
 - `broker-adapter.js` — Unified broker interface for Hyperliquid and IBKR
 - `ibkr-client.js` — Interactive Brokers client wrapper for account, positions, orders, and snapshots
-- `portfolio-tracker.js` — Unified capital snapshot across IBKR, DeFi yield, and future token positions
+- `portfolio-tracker.js` — Unified capital snapshot across IBKR and token positions
 - `journal.js` — SQLite trade journal
 - `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto automation cadences
 - `telegram-summary.js` — Daily trading summary via Telegram

@@ -52,7 +52,7 @@ const DEFAULT_RANGE_CONVICTION_MAX_POSITION_PCT = 0.25;
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
-  if (['crypto', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
+  if (['crypto', 'solana_token', 'us_equity'].includes(normalized)) {
     return normalized;
   }
   return fallback;

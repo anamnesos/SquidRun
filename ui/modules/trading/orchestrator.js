@@ -21,7 +21,6 @@ const macroRiskGate = require('./macro-risk-gate');
 const tradingScheduler = require('./scheduler');
 const signalProducer = require('./signal-producer');
 const telegramSummary = require('./telegram-summary');
-const yieldRouterModule = require('./yield-router');
 const cryptoMechBoard = require('./crypto-mech-board');
 const eventVeto = require('./event-veto');
 const consensusSizer = require('./consensus-sizer');
@@ -59,9 +58,6 @@ const DEFAULT_LIVE_EQUITY_LIMITS = Object.freeze({
 	maxPositionPct: DEFAULT_LIVE_MAX_POSITION_PCT,
 });
 const DEFAULT_RECENT_TRADE_SCAN = 250;
-const DEFAULT_ACTIVE_TRADING_RATIO = 0.4;
-const DEFAULT_YIELD_ROUTER_RATIO = yieldRouterModule.DEFAULT_YIELD_TARGET_RATIO || 0.35;
-const DEFAULT_RESERVE_RATIO = yieldRouterModule.DEFAULT_RESERVE_RATIO || 0.2;
 const DEFAULT_DEFI_MONITOR_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_DEFI_MONITOR_TIMEOUT_MS = 30_000;
 const DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE = 0.6;
@@ -434,36 +430,6 @@ function buildDefiTelegramAlertsMessage(alerts = [], checkedAt = new Date().toIS
 	return [header, '', ...lines].join('\n');
 }
 
-function sumSnapshotEquity(snapshot, marketKeys = []) {
-	return roundCurrency(marketKeys.reduce((sum, key) => {
-		return sum + toNumber(snapshot?.markets?.[key]?.equity, 0);
-	}, 0));
-}
-
-function buildCapitalRatios(options = {}) {
-	const activeTrading = Math.max(0, toConfidence(options.activeTradingRatio ?? options.activeRatio ?? DEFAULT_ACTIVE_TRADING_RATIO));
-	const yieldCapital = Math.max(0, toConfidence(options.yieldRatio ?? options.yieldRouterRatio ?? DEFAULT_YIELD_ROUTER_RATIO));
-	const reserve = Math.max(0, toConfidence(options.reserveRatio ?? DEFAULT_RESERVE_RATIO));
-	return {
-		activeTrading,
-		yield: yieldCapital,
-		reserve,
-		total: Number((activeTrading + yieldCapital + reserve).toFixed(6)),
-	};
-}
-
-function estimateTradeCapitalRequirement(trades = []) {
-	return roundCurrency(trades.reduce((sum, trade) => {
-		if (String(trade?.consensus?.decision || '').trim().toUpperCase() !== 'BUY') {
-			return sum;
-		}
-		const shares = toNumber(trade?.riskCheck?.maxShares, 0);
-		const price = toNumber(trade?.referencePrice, 0);
-		if (shares <= 0 || price <= 0) return sum;
-		return sum + (shares * price);
-	}, 0));
-}
-
 function resolveTradeAssetClass(trade = {}) {
 	return resolveAssetClassForTicker(trade.ticker, 'us_equity');
 }
@@ -471,7 +437,6 @@ function resolveTradeAssetClass(trade = {}) {
 function resolveTradeMarketType(assetClass = 'us_equity') {
 	if (assetClass === 'crypto') return 'crypto';
 	if (assetClass === 'solana_token') return 'solana';
-	if (assetClass === 'defi_yield') return 'defi';
 	return 'stocks';
 }
 
@@ -2576,189 +2541,8 @@ class TradingOrchestrator {
 	async getUnifiedPortfolioSnapshot(options = {}) {
 		return portfolioTracker.getPortfolioSnapshot({
 			...this.options.portfolioOptions,
-			yieldRouter: options.yieldRouter ?? this.options.yieldRouter ?? this.options.portfolioOptions?.yieldRouter,
 			...options,
 		});
-	}
-
-	getCapitalAllocation(portfolioSnapshot = {}, options = {}) {
-		const ratios = buildCapitalRatios({
-			activeTradingRatio: options.activeTradingRatio ?? this.options.activeTradingRatio,
-			yieldRouterRatio: options.yieldRouterRatio ?? this.options.yieldRouterRatio,
-			reserveRatio: options.reserveRatio ?? this.options.reserveRatio,
-		});
-		const totalEquity = roundCurrency(portfolioSnapshot?.totalEquity);
-		const targets = {
-			activeTrading: roundCurrency(totalEquity * ratios.activeTrading),
-			yield: roundCurrency(totalEquity * ratios.yield),
-			reserve: roundCurrency(totalEquity * ratios.reserve),
-		};
-		const activeTradingCapital = sumSnapshotEquity(portfolioSnapshot, [
-			'ibkr_global',
-		]);
-		const yieldCapital = roundCurrency(portfolioSnapshot?.markets?.defi_yield?.equity);
-		const reserveCapital = roundCurrency(
-			options.reserveCapital
-			?? portfolioSnapshot?.markets?.cash_reserve?.cash
-			?? portfolioSnapshot?.markets?.cash_reserve?.equity
-		);
-		const deployableTradingCapital = roundCurrency(Math.max(0, reserveCapital - targets.reserve));
-		const effectiveActiveCapital = roundCurrency(activeTradingCapital + deployableTradingCapital);
-		const gaps = {
-			activeTrading: roundCurrency(Math.max(0, targets.activeTrading - effectiveActiveCapital)),
-			yield: roundCurrency(Math.max(0, targets.yield - yieldCapital)),
-			reserve: roundCurrency(Math.max(0, targets.reserve - reserveCapital)),
-		};
-		const excess = {
-			reserveCash: roundCurrency(Math.max(0, reserveCapital - targets.reserve)),
-			idleCapital: roundCurrency(Math.max(0, deployableTradingCapital - gaps.activeTrading)),
-			yield: roundCurrency(Math.max(0, yieldCapital - targets.yield)),
-		};
-
-		return {
-			totalEquity,
-			ratios,
-			targets,
-			actual: {
-				activeTrading: activeTradingCapital,
-				yield: yieldCapital,
-				reserve: reserveCapital,
-			},
-			effective: {
-				activeTrading: effectiveActiveCapital,
-			},
-			deployable: {
-				activeTradingCash: deployableTradingCapital,
-			},
-			gaps,
-			excess,
-			asOf: portfolioSnapshot?.asOf || new Date().toISOString(),
-		};
-	}
-
-	async returnIdleCapital(options = {}) {
-		const router = options.yieldRouter ?? this.options.yieldRouter ?? null;
-		if (!router || typeof router.returnCapital !== 'function' || typeof router.requestCapital !== 'function') {
-			return { ok: false, skipped: true, reason: 'yield_router_unavailable' };
-		}
-
-		const portfolioSnapshot = options.portfolioSnapshot || await this.getUnifiedPortfolioSnapshot(options);
-		const allocation = this.getCapitalAllocation(portfolioSnapshot, options);
-		const killSwitchTriggered = options.killSwitchTriggered === true
-			|| portfolioSnapshot?.risk?.killSwitchTriggered === true;
-		if (options.dryRun === true) {
-			return {
-				ok: true,
-				skipped: true,
-				simulated: true,
-				action: killSwitchTriggered ? 'withdraw_all' : 'return_idle',
-				allocation,
-				amount: killSwitchTriggered
-					? allocation.actual.yield
-					: roundCurrency(Math.min(allocation.excess.idleCapital, allocation.gaps.yield)),
-			};
-		}
-
-		if (killSwitchTriggered) {
-			const withdrawal = await router.requestCapital(0, {
-				...options,
-				portfolioSnapshot,
-				killSwitchTriggered: true,
-			});
-			return {
-				ok: withdrawal.ok,
-				action: 'withdraw_all',
-				allocation,
-				withdrawal,
-			};
-		}
-
-		const amount = roundCurrency(Math.min(
-			toNumber(options.amount, allocation.excess.idleCapital),
-			allocation.excess.idleCapital,
-			allocation.gaps.yield
-		));
-		if (amount < yieldRouterModule.DEFAULT_MIN_DEPOSIT_USD) {
-			return {
-				ok: false,
-				skipped: true,
-				reason: 'no_idle_capital_to_return',
-				allocation,
-				amount,
-			};
-		}
-
-		const deposit = await router.returnCapital(amount, {
-			...options,
-			portfolioSnapshot,
-			totalCapital: allocation.totalEquity,
-			activeTradeCapital: allocation.actual.activeTrading,
-		});
-		return {
-			ok: deposit.ok,
-			action: 'return_idle',
-			amount,
-			allocation,
-			deposit,
-		};
-	}
-
-	async requestTradingCapital(amount, options = {}) {
-		const router = options.yieldRouter ?? this.options.yieldRouter ?? null;
-		if (!router || typeof router.requestCapital !== 'function') {
-			return { ok: false, skipped: true, reason: 'yield_router_unavailable', requested: roundCurrency(amount) };
-		}
-
-		const portfolioSnapshot = options.portfolioSnapshot || await this.getUnifiedPortfolioSnapshot(options);
-		const allocation = this.getCapitalAllocation(portfolioSnapshot, options);
-		const killSwitchTriggered = options.killSwitchTriggered === true
-			|| portfolioSnapshot?.risk?.killSwitchTriggered === true;
-		const requested = roundCurrency(amount);
-		if (requested <= 0) {
-			return { ok: false, skipped: true, reason: 'no_capital_requested', requested, allocation };
-		}
-		if (killSwitchTriggered) {
-			return { ok: false, skipped: true, reason: 'kill_switch_triggered', requested, allocation };
-		}
-
-		const shortfall = roundCurrency(Math.max(0, requested - allocation.deployable.activeTradingCash));
-		const requestAmount = roundCurrency(Math.min(shortfall, allocation.gaps.activeTrading));
-		if (requestAmount <= 0) {
-			return {
-				ok: true,
-				skipped: true,
-				reason: 'active_allocation_sufficient',
-				requested,
-				shortfall,
-				allocation,
-			};
-		}
-		if (options.dryRun === true) {
-			return {
-				ok: true,
-				skipped: true,
-				simulated: true,
-				reason: 'dry_run',
-				requested,
-				shortfall,
-				requestAmount,
-				allocation,
-			};
-		}
-
-		const withdrawal = await router.requestCapital(requestAmount, {
-			...options,
-			portfolioSnapshot,
-			totalCapital: allocation.totalEquity,
-		});
-		return {
-			ok: withdrawal.ok,
-			requested,
-			shortfall,
-			requestAmount,
-			allocation,
-			withdrawal,
-		};
 	}
 
 	async runReconciliation(options = {}) {
@@ -3662,16 +3446,9 @@ class TradingOrchestrator {
 		const consensusPhase = options.consensusPhase || this.state.phases.consensus || await this.runConsensusRound(options);
 		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
 		const executions = [];
-		const requiredTradingCapital = estimateTradeCapitalRequirement(approvedTrades);
 		// Use pre-trade accountState (not simulatedAccountState which already incremented tradesToday
 		// for the same trades we're about to execute, causing double-counting)
 		let simulatedAccountState = cloneAccountState(consensusPhase.accountState || consensusPhase.simulatedAccountState || {});
-		let capitalRequest = {
-			ok: false,
-			skipped: true,
-			reason: 'no_capital_request_needed',
-			requested: 0,
-		};
 
 		// If account state is empty (e.g. lost during serialization), fetch fresh from broker
 		if (!simulatedAccountState.equity || simulatedAccountState.equity <= 0) {
@@ -3679,13 +3456,6 @@ class TradingOrchestrator {
 			if (portfolioSnapshot?.totalEquity > 0) {
 				simulatedAccountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot.positions || [], db, options);
 			}
-		}
-
-		if (requiredTradingCapital > 0) {
-			capitalRequest = await this.requestTradingCapital(requiredTradingCapital, {
-				...options,
-				portfolioSnapshot: consensusPhase.portfolioSnapshot,
-			});
 		}
 
 		for (const trade of approvedTrades) {
@@ -3788,8 +3558,6 @@ class TradingOrchestrator {
 		const phaseResult = {
 			phase: 'market_open',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-			requiredTradingCapital,
-			capitalRequest,
 			executions,
 			syncedPositions,
 			asOf: new Date().toISOString(),
@@ -4067,9 +3835,6 @@ module.exports = {
 	registerSignal: defaultOrchestrator.registerSignal.bind(defaultOrchestrator),
 	getRegisteredSignals: defaultOrchestrator.getRegisteredSignals.bind(defaultOrchestrator),
 	clearSignals: defaultOrchestrator.clearSignals.bind(defaultOrchestrator),
-	getCapitalAllocation: defaultOrchestrator.getCapitalAllocation.bind(defaultOrchestrator),
-	returnIdleCapital: defaultOrchestrator.returnIdleCapital.bind(defaultOrchestrator),
-	requestTradingCapital: defaultOrchestrator.requestTradingCapital.bind(defaultOrchestrator),
 	runReconciliation: defaultOrchestrator.runReconciliation.bind(defaultOrchestrator),
 	runPreMarket: defaultOrchestrator.runPreMarket.bind(defaultOrchestrator),
 	runConsensusRound: defaultOrchestrator.runConsensusRound.bind(defaultOrchestrator),

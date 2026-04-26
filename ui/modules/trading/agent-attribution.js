@@ -49,7 +49,7 @@ function normalizeDirection(value, fallback = 'HOLD') {
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
-  if (['crypto', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
+  if (['crypto', 'solana_token', 'us_equity'].includes(normalized)) {
     return normalized;
   }
   return fallback;
@@ -60,7 +60,6 @@ function normalizeMarketType(value, assetClass = 'us_equity') {
   if (normalized) return normalized;
   if (assetClass === 'crypto') return 'crypto';
   if (assetClass === 'solana_token') return 'solana';
-  if (assetClass === 'defi_yield') return 'defi';
   return 'stocks';
 }
 
