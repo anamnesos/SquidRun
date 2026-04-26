@@ -162,6 +162,46 @@ function createMockLogger() {
   };
 }
 
+function buildOrdiPatternBars() {
+  const bars1h = Array.from({ length: 30 }, (_, index) => ({
+    open: 1 + (index * 0.01),
+    high: 1.08 + (index * 0.012),
+    low: 0.98 + (index * 0.008),
+    close: 1.02 + (index * 0.009),
+  }));
+  bars1h[12] = {
+    open: 1.48,
+    high: 1.5,
+    low: 1.34,
+    close: 1.39,
+  };
+  const bars5m = [
+    { open: 1.34, high: 1.36, low: 1.31, close: 1.32 },
+    { open: 1.32, high: 1.34, low: 1.29, close: 1.29 },
+    { open: 1.29, high: 1.3, low: 1.25, close: 1.26 },
+    { open: 1.26, high: 1.27, low: 1.22, close: 1.23 },
+    { open: 1.23, high: 1.24, low: 1.2, close: 1.21 },
+  ];
+  const bars15m = [
+    { open: 1.38, high: 1.4, low: 1.33, close: 1.35 },
+    { open: 1.35, high: 1.36, low: 1.3, close: 1.31 },
+    { open: 1.31, high: 1.32, low: 1.26, close: 1.27 },
+    { open: 1.27, high: 1.28, low: 1.22, close: 1.23 },
+    { open: 1.23, high: 1.24, low: 1.2, close: 1.21 },
+  ];
+  return { bars1h, bars5m, bars15m };
+}
+
+function mockOrdiPatternBars(ticker = 'ORDI/USD') {
+  const bars = buildOrdiPatternBars();
+  hyperliquidClient.getHistoricalBars.mockImplementation(async ({ timeframe }) => {
+    const selected = timeframe === '5m'
+      ? bars.bars5m
+      : (timeframe === '15m' ? bars.bars15m : bars.bars1h);
+    return new Map([[ticker, selected]]);
+  });
+}
+
 function getWatcherByTarget(pattern) {
   return watcherRecords.find((watcher) => {
     const targets = Array.isArray(watcher.targets) ? watcher.targets : [watcher.targets];
@@ -4287,7 +4327,7 @@ describe('supervisor-daemon integrations', () => {
     }
   });
 
-  test('runs the market scanner loop and alerts Architect on newly flagged movers', async () => {
+  test('runs the market scanner loop and alerts Architect on ORDI-pattern movers', async () => {
     const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
@@ -4308,28 +4348,28 @@ describe('supervisor-daemon integrations', () => {
           scannedAt: '2026-04-05T01:00:00.000Z',
           assetCount: 132,
           flaggedMovers: [{
-            coin: 'AVAX',
-            ticker: 'AVAX/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             direction: 'DOWN',
-            price: 9.0246,
+            price: 1.21,
             change4hPct: -0.073,
-            change24hPct: -0.081,
+            change24hPct: 0.22,
             volumeUsd24h: 185000000,
             fundingRate: -0.00004,
             flagged: true,
           }],
           topMovers: [{
-            coin: 'AVAX',
-            ticker: 'AVAX/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             flagged: true,
           }],
           alerts: [{
-            coin: 'AVAX',
-            ticker: 'AVAX/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             direction: 'DOWN',
-            price: 9.0246,
+            price: 1.21,
             change4hPct: -0.073,
-            change24hPct: -0.081,
+            change24hPct: 0.22,
             volumeUsd24h: 185000000,
             fundingRate: -0.00004,
             flagged: true,
@@ -4339,18 +4379,24 @@ describe('supervisor-daemon integrations', () => {
             lastScanAt: '2026-04-05T01:00:00.000Z',
             assetCount: 132,
             topMovers: [{
-              coin: 'AVAX',
-              ticker: 'AVAX/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
               flagged: true,
             }],
             flaggedMovers: [{
-              coin: 'AVAX',
-              ticker: 'AVAX/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
+              change4hPct: -0.073,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.00004,
               flagged: true,
             }],
             history: {},
             lastAlertFingerprintByCoin: {
-              AVAX: '{"direction":"DOWN"}',
+              ORDI: '{"direction":"DOWN"}',
             },
           },
         }),
@@ -4366,6 +4412,7 @@ describe('supervisor-daemon integrations', () => {
     try {
       const architectSpy = jest.spyOn(scanDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
       jest.spyOn(scanDaemon, 'filterExecutableMarketScannerMovers').mockResolvedValue([]);
+      mockOrdiPatternBars('ORDI/USD');
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
       const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
@@ -4384,7 +4431,7 @@ describe('supervisor-daemon integrations', () => {
       }));
       expect(architectSpy).toHaveBeenCalledTimes(1);
       expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][MARKET]');
-      expect(architectSpy.mock.calls[0][0]).toContain('AVAX');
+      expect(architectSpy.mock.calls[0][0]).toContain('ORDI');
     } finally {
       if (originalScannerAutomation == null) {
         delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
@@ -4395,9 +4442,7 @@ describe('supervisor-daemon integrations', () => {
     }
   }, 30000);
 
-  test('triggers an immediate crypto mini-consultation for 3%+ 4h scanner movers and promotes them into the watchlist first', async () => {
-    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
-    process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
+  test('suppresses market scanner alerts that fail the ORDI source gate', async () => {
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
@@ -4409,8 +4454,6 @@ describe('supervisor-daemon integrations', () => {
       newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
-      marketScannerImmediateConsultationEnabled: true,
-      marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
           scannedAt: '2026-04-05T01:00:00.000Z',
@@ -4446,31 +4489,116 @@ describe('supervisor-daemon integrations', () => {
             updatedAt: '2026-04-05T01:00:00.000Z',
             lastScanAt: '2026-04-05T01:00:00.000Z',
             assetCount: 132,
+            topMovers: [{ coin: 'BOME', ticker: 'BOME/USD', flagged: true }],
+            flaggedMovers: [{ coin: 'BOME', ticker: 'BOME/USD', direction: 'UP', change4hPct: 0.0409, change24hPct: 0.0026, volumeUsd24h: 8984.99, flagged: true }],
+            history: {},
+          },
+        }),
+      },
+      pidPath: path.join(tempRoot, 'scanner-suppress.pid'),
+      statusPath: path.join(tempRoot, 'scanner-suppress-status.json'),
+      logPath: path.join(tempRoot, 'scanner-suppress.log'),
+      taskLogDir: path.join(tempRoot, 'scanner-suppress-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'scanner-suppress-wake.signal'),
+      marketScannerStatePath: path.join(tempRoot, 'market-scanner-suppress-state.json'),
+      oracleWatchRulesPath: path.join(tempRoot, 'scanner-suppress-oracle-rules.json'),
+      oracleWatchStatePath: path.join(tempRoot, 'scanner-suppress-oracle-state.json'),
+      oracleShortRegimeStatePath: path.join(tempRoot, 'scanner-suppress-short-regime.json'),
+    });
+
+    try {
+      const architectSpy = jest.spyOn(scanDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
+      const result = await scanDaemon.runMarketScannerPhase({ key: 'market_scanner' });
+
+      expect(result.alerts).toEqual([]);
+      expect(result.alertGate).toEqual(expect.objectContaining({
+        policy: 'ordi_pattern_source_gate',
+        rawAlertCount: 1,
+        qualifiedCount: 0,
+        suppressedCount: 1,
+      }));
+      expect(architectSpy).not.toHaveBeenCalled();
+    } finally {
+      await scanDaemon.stop('test-cleanup-market-scanner-suppress');
+    }
+  });
+
+  test('triggers an immediate crypto mini-consultation for ORDI-gated scanner movers and promotes them into the watchlist first', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+    process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
+    const scanDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: true,
+      polymarketTradingEnabled: false,
+      newsScanEnabled: false,
+      marketResearchEnabled: false,
+      marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
+      marketScannerIntervalMinutes: 30,
+      marketScanner: {
+        runMarketScan: jest.fn().mockResolvedValue({
+          scannedAt: '2026-04-05T01:00:00.000Z',
+          assetCount: 132,
+          flaggedMovers: [{
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
+            direction: 'DOWN',
+            price: 1.21,
+            change4hPct: -0.0409,
+            change24hPct: 0.22,
+            volumeUsd24h: 185000000,
+            fundingRate: -0.0000125,
+            flagged: true,
+          }],
+          topMovers: [{
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
+            flagged: true,
+          }],
+          alerts: [{
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
+            direction: 'DOWN',
+            price: 1.21,
+            change4hPct: -0.0409,
+            change24hPct: 0.22,
+            volumeUsd24h: 185000000,
+            fundingRate: -0.0000125,
+            flagged: true,
+          }],
+          state: {
+            updatedAt: '2026-04-05T01:00:00.000Z',
+            lastScanAt: '2026-04-05T01:00:00.000Z',
+            assetCount: 132,
             topMovers: [{
-              coin: 'BOME',
-              ticker: 'BOME/USD',
-              direction: 'UP',
-              price: 0.000382,
-              change4hPct: 0.0409,
-              change24hPct: 0.0026,
-              volumeUsd24h: 8984.99,
-              fundingRate: 0.0000125,
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
+              change4hPct: -0.0409,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.0000125,
               flagged: true,
             }],
             flaggedMovers: [{
-              coin: 'BOME',
-              ticker: 'BOME/USD',
-              direction: 'UP',
-              price: 0.000382,
-              change4hPct: 0.0409,
-              change24hPct: 0.0026,
-              volumeUsd24h: 8984.99,
-              fundingRate: 0.0000125,
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
+              change4hPct: -0.0409,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.0000125,
               flagged: true,
             }],
             history: {},
             lastAlertFingerprintByCoin: {
-              BOME: '{"direction":"UP"}',
+              ORDI: '{"direction":"DOWN"}',
             },
           },
         }),
@@ -4493,9 +4621,7 @@ describe('supervisor-daemon integrations', () => {
         ok: true,
         trigger: 'market_scanner',
       });
-      hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-        ['BOME/USD', [{ open: 0.00036, close: 0.000382 }]],
-      ]));
+      mockOrdiPatternBars('ORDI/USD');
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
       const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
@@ -4504,12 +4630,12 @@ describe('supervisor-daemon integrations', () => {
       expect(started).toEqual(expect.objectContaining({ ok: true, skipped: false, started: true }));
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(result.executed?.[0]).toEqual(expect.objectContaining({
-        urgentPromotedSymbols: expect.arrayContaining(['BOME/USD']),
+        urgentPromotedSymbols: expect.arrayContaining(['ORDI/USD']),
       }));
       expect(immediateConsultSpy).toHaveBeenCalledWith(expect.objectContaining({
         key: 'market_scanner_trigger',
         trigger: 'market_scanner',
-        symbols: ['BOME/USD'],
+        symbols: ['ORDI/USD'],
       }), expect.objectContaining({
         trigger: 'market_scanner',
       }));
@@ -4524,7 +4650,7 @@ describe('supervisor-daemon integrations', () => {
     }
   }, 15000);
 
-  test('triggers an immediate crypto mini-consultation from current urgent 4h flagged movers even when no new alerts are emitted', async () => {
+  test('triggers an immediate crypto mini-consultation from current ORDI-gated movers even when no new alerts are emitted', async () => {
     const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
@@ -4545,21 +4671,22 @@ describe('supervisor-daemon integrations', () => {
           scannedAt: '2026-04-05T01:00:00.000Z',
           assetCount: 229,
           flaggedMovers: [{
-            coin: 'ZETA',
-            ticker: 'ZETA/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             direction: 'DOWN',
-            price: 0.05147,
+            price: 1.21,
             change4hPct: -0.08,
-            change24hPct: -0.0693,
-            volumeUsd24h: 842029.43,
+            change24hPct: 0.22,
+            volumeUsd24h: 185000000,
             fundingRate: -0.00112542,
             flagged: true,
           }],
           topMovers: [{
-            coin: 'ZETA',
-            ticker: 'ZETA/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             flagged: true,
             change4hPct: -0.08,
+            change24hPct: 0.22,
           }],
           alerts: [],
           state: {
@@ -4567,16 +4694,22 @@ describe('supervisor-daemon integrations', () => {
             lastScanAt: '2026-04-05T01:00:00.000Z',
             assetCount: 229,
             topMovers: [{
-              coin: 'ZETA',
-              ticker: 'ZETA/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
               flagged: true,
               change4hPct: -0.08,
+              change24hPct: 0.22,
             }],
             flaggedMovers: [{
-              coin: 'ZETA',
-              ticker: 'ZETA/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
               flagged: true,
               change4hPct: -0.08,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.00112542,
             }],
             history: {},
           },
@@ -4599,9 +4732,7 @@ describe('supervisor-daemon integrations', () => {
         ok: true,
         trigger: 'market_scanner',
       });
-      hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-        ['ZETA/USD', [{ open: 0.056, close: 0.05147 }]],
-      ]));
+      mockOrdiPatternBars('ORDI/USD');
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
       const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
@@ -4611,13 +4742,13 @@ describe('supervisor-daemon integrations', () => {
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(result.executed?.[0]).toEqual(expect.objectContaining({
         urgentMovers: expect.arrayContaining([
-          expect.objectContaining({ ticker: 'ZETA/USD' }),
+          expect.objectContaining({ ticker: 'ORDI/USD' }),
         ]),
         immediateConsultation: expect.objectContaining({ ok: true, trigger: 'market_scanner' }),
       }));
       expect(immediateConsultSpy).toHaveBeenCalledWith(expect.objectContaining({
         key: 'market_scanner_trigger',
-        symbols: ['ZETA/USD'],
+        symbols: ['ORDI/USD'],
       }), expect.objectContaining({
         trigger: 'market_scanner',
       }));
@@ -4631,7 +4762,7 @@ describe('supervisor-daemon integrations', () => {
     }
   });
 
-  test('filters non-executable market-scanner movers before triggering immediate consultation', async () => {
+  test('filters non-ORDI market-scanner movers before triggering immediate consultation', async () => {
     const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
@@ -4653,15 +4784,15 @@ describe('supervisor-daemon integrations', () => {
           assetCount: 229,
           flaggedMovers: [
             { coin: 'BOME', ticker: 'BOME/USD', direction: 'UP', price: 0.000382, change4hPct: 0.0409, change24hPct: 0.0026, volumeUsd24h: 8984.99, fundingRate: 0.0000125, flagged: true },
-            { coin: 'AVAX', ticker: 'AVAX/USD', direction: 'DOWN', price: 9.0246, change4hPct: -0.073, change24hPct: -0.081, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
+            { coin: 'ORDI', ticker: 'ORDI/USD', direction: 'DOWN', price: 1.21, change4hPct: -0.073, change24hPct: 0.22, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
           ],
           topMovers: [
             { coin: 'BOME', ticker: 'BOME/USD', flagged: true },
-            { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true },
+            { coin: 'ORDI', ticker: 'ORDI/USD', flagged: true },
           ],
           alerts: [
             { coin: 'BOME', ticker: 'BOME/USD', direction: 'UP', price: 0.000382, change4hPct: 0.0409, change24hPct: 0.0026, volumeUsd24h: 8984.99, fundingRate: 0.0000125, flagged: true },
-            { coin: 'AVAX', ticker: 'AVAX/USD', direction: 'DOWN', price: 9.0246, change4hPct: -0.073, change24hPct: -0.081, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
+            { coin: 'ORDI', ticker: 'ORDI/USD', direction: 'DOWN', price: 1.21, change4hPct: -0.073, change24hPct: 0.22, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
           ],
           state: {
             updatedAt: '2026-04-05T01:00:00.000Z',
@@ -4669,15 +4800,15 @@ describe('supervisor-daemon integrations', () => {
             assetCount: 229,
             assets: [
               { coin: 'BOME', ticker: 'BOME/USD', flagged: true, change4hPct: 0.0409 },
-              { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true, change4hPct: -0.073 },
+              { coin: 'ORDI', ticker: 'ORDI/USD', flagged: true, change4hPct: -0.073, change24hPct: 0.22 },
             ],
             topMovers: [
               { coin: 'BOME', ticker: 'BOME/USD', flagged: true },
-              { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true },
+              { coin: 'ORDI', ticker: 'ORDI/USD', flagged: true },
             ],
             flaggedMovers: [
               { coin: 'BOME', ticker: 'BOME/USD', flagged: true, change4hPct: 0.0409 },
-              { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true, change4hPct: -0.073 },
+              { coin: 'ORDI', ticker: 'ORDI/USD', direction: 'DOWN', price: 1.21, flagged: true, change4hPct: -0.073, change24hPct: 0.22, volumeUsd24h: 185000000, fundingRate: -0.00004 },
             ],
             history: {},
           },
@@ -4698,13 +4829,7 @@ describe('supervisor-daemon integrations', () => {
     try {
       const architectSpy = jest.spyOn(scanDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
       const immediateConsultSpy = jest.spyOn(scanDaemon, 'triggerImmediateCryptoConsensus').mockResolvedValue({ ok: true });
-      jest.spyOn(hyperliquidClient, 'getHistoricalBars').mockImplementation(async ({ symbols }) => {
-        const ticker = Array.isArray(symbols) ? symbols[0] : symbols;
-        if (ticker === 'AVAX/USD') {
-          return new Map([[ticker, [{ open: 9.2, close: 9.0 }]]]);
-        }
-        throw new Error(`code=400, message=invalid symbol: ${ticker}`);
-      });
+      mockOrdiPatternBars('ORDI/USD');
 
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
       await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
@@ -4713,7 +4838,7 @@ describe('supervisor-daemon integrations', () => {
       expect(architectSpy).toHaveBeenCalledTimes(1);
       expect(architectSpy.mock.calls[0][0]).toContain('Tracked pairs: 229');
       expect(immediateConsultSpy).toHaveBeenCalledWith(expect.objectContaining({
-        symbols: ['AVAX/USD'],
+        symbols: ['ORDI/USD'],
       }), expect.any(Object));
     } finally {
       if (originalScannerAutomation == null) {

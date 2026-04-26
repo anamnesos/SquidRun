@@ -32,6 +32,8 @@ const DEFAULT_SPARK_WATCHLIST_PATH = resolveCoordPath(
 const DEFAULT_UPBIT_ANNOUNCEMENTS_URL = 'https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=all';
 const DEFAULT_INITIAL_ALERT_LOOKBACK_MINUTES = 90;
 const DEFAULT_ACTIVE_UPBIT_PLAN_LOOKBACK_HOURS = 72;
+const DEFAULT_TOKEN_UNLOCK_ALERT_WINDOW_HOURS = 24;
+const DEFAULT_TOKEN_UNLOCK_POST_EVENT_GRACE_HOURS = 2;
 
 const UPBIT_LISTING_PATTERNS = [
   /신규\s*거래지원\s*안내/i,
@@ -254,6 +256,16 @@ function isWithinLookbackHours(timestamp, now, lookbackHours) {
   return eventMs >= (nowMs - (safeLookbackHours * 60 * 60 * 1000));
 }
 
+function isWithinForwardEventWindow(timestamp, now, windowHours, postEventGraceHours = 0) {
+  const eventMs = toTimestampMs(timestamp);
+  const nowMs = toTimestampMs(now) || Date.now();
+  const safeWindowHours = Math.max(1, Math.floor(toNumber(windowHours, DEFAULT_TOKEN_UNLOCK_ALERT_WINDOW_HOURS)));
+  const safePostEventGraceHours = Math.max(0, Math.floor(toNumber(postEventGraceHours, DEFAULT_TOKEN_UNLOCK_POST_EVENT_GRACE_HOURS)));
+  if (!Number.isFinite(eventMs)) return false;
+  return eventMs >= (nowMs - (safePostEventGraceHours * 60 * 60 * 1000))
+    && eventMs <= (nowMs + (safeWindowHours * 60 * 60 * 1000));
+}
+
 function parseTickerCandidatesFromTitle(title = '') {
   return Array.from(String(title || '').matchAll(/\(([A-Z0-9]{2,15})\)/g))
     .map((match) => toText(match[1]).toUpperCase())
@@ -394,6 +406,8 @@ function normalizeTokenUnlockEvent(unlock = {}, now = new Date().toISOString()) 
     title: `${token} token unlock scheduled at ${unlockAt}`,
     detectedAt: now,
     publishedAt: unlockAt || now,
+    scheduledAt: unlockAt || null,
+    scheduledBucket: unlockHourBucket || null,
     url: null,
     tickers: ticker ? [ticker] : [],
     raw: unlock,
@@ -438,8 +452,14 @@ async function buildTokenomistEvents(state = defaultSparkState(), options = {}) 
   const allEvents = unlocks
     .map((unlock) => normalizeTokenUnlockEvent(unlock, now))
     .filter((event) => event.tickers.length > 0);
+  const alertWindowEvents = allEvents.filter((event) => isWithinForwardEventWindow(
+    event.scheduledAt || event.publishedAt,
+    now,
+    options.tokenomistAlertWindowHours,
+    options.tokenomistPostEventGraceHours
+  ));
   const initialBaseline = seenKeys.size === 0 && !state?.lastRunAt;
-  const events = allEvents.filter((event) => {
+  const events = alertWindowEvents.filter((event) => {
     if (initialBaseline) {
       return false;
     }
@@ -452,6 +472,7 @@ async function buildTokenomistEvents(state = defaultSparkState(), options = {}) 
     scanResult,
     unlocks,
     allEvents,
+    alertWindowEvents,
     events,
     warnings: sourceStatus.warning ? [sourceStatus.warning] : [],
     warningMessage: sourceStatus.warning?.kind === 'aging_tokenomist_source'
@@ -731,7 +752,9 @@ async function runSparkScan(options = {}) {
     : [];
   const hyperliquidResult = detectHyperliquidListingEvents(universeMarketData, state, { now });
   const tokenomistEvents = Array.isArray(tokenomistResult?.events) ? tokenomistResult.events : [];
-  const currentTokenomistEvents = Array.isArray(tokenomistResult?.allEvents) ? tokenomistResult.allEvents : [];
+  const currentTokenomistEvents = Array.isArray(tokenomistResult?.alertWindowEvents)
+    ? tokenomistResult.alertWindowEvents
+    : (Array.isArray(tokenomistResult?.allEvents) ? tokenomistResult.allEvents : []);
   const warnings = Array.isArray(tokenomistResult?.warnings) ? tokenomistResult.warnings : [];
 
   const candidateEvents = dedupeEvents([
@@ -869,6 +892,8 @@ module.exports = {
   DEFAULT_UPBIT_ANNOUNCEMENTS_URL,
   DEFAULT_INITIAL_ALERT_LOOKBACK_MINUTES,
   DEFAULT_ACTIVE_UPBIT_PLAN_LOOKBACK_HOURS,
+  DEFAULT_TOKEN_UNLOCK_ALERT_WINDOW_HOURS,
+  DEFAULT_TOKEN_UNLOCK_POST_EVENT_GRACE_HOURS,
   TOKENOMIST_SOURCE_STALE_MS,
   TOKENOMIST_SOURCE_WARN_MS,
   buildAlertMessage,

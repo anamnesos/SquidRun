@@ -234,6 +234,78 @@ describe('spark-capture', () => {
     expect(persisted.tokenomist.seenUnlockKeys).toEqual(expect.arrayContaining(['tokenomist:OP:2026-04-23T13']));
   });
 
+  test('runSparkScan only alerts token unlocks inside the 24h event window', async () => {
+    const statePath = path.join(tempRoot, 'spark-state.json');
+    const eventsPath = path.join(tempRoot, 'spark-events.jsonl');
+    const firePlansPath = path.join(tempRoot, 'spark-fireplans.json');
+    const watchlistPath = path.join(tempRoot, 'spark-watchlist.json');
+    const tokenomistSourcePath = path.join(tempRoot, 'tokenomist-current.yml');
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { notices: [] } }),
+    });
+    const unlock = {
+      token: 'OP',
+      ticker: 'OP/USD',
+      unlockAt: '2026-04-25T10:00:00.000Z',
+      countdownText: '2 D 00 H 00 M 00 S',
+      unlockSizeUsd: 513560,
+      unlockSizeText: '$513.56K',
+      unlockPctSupply: 0.22,
+      unlockPctSupplyText: '0.22%',
+      recipientType: 'unknown',
+      hyperliquidVolumeUsd24h: 753000,
+      hyperliquidVolumeUsd24hText: '$753.00K',
+    };
+    fs.writeFileSync(tokenomistSourcePath, 'fresh tokenomist payload\n', 'utf8');
+    fs.writeFileSync(statePath, JSON.stringify({
+      ...sparkCapture.defaultSparkState(),
+      lastRunAt: '2026-04-23T09:00:00.000Z',
+      hyperliquid: {
+        knownUniverseCoins: ['CHIP', 'OP'],
+      },
+    }, null, 2));
+    scanTokenUnlocks.mockResolvedValue({
+      ok: true,
+      unlocks: [unlock],
+    });
+
+    const early = await sparkCapture.runSparkScan({
+      now: '2026-04-23T09:30:00.000Z',
+      statePath,
+      eventsPath,
+      firePlansPath,
+      watchlistPath,
+      tokenomistSourcePath,
+      fetch: fetchMock,
+    });
+    const afterEarly = sparkCapture.readSparkState(statePath);
+
+    const insideWindow = await sparkCapture.runSparkScan({
+      now: '2026-04-24T11:00:00.000Z',
+      statePath,
+      eventsPath,
+      firePlansPath,
+      watchlistPath,
+      tokenomistSourcePath,
+      fetch: fetchMock,
+    });
+    const persisted = sparkCapture.readSparkState(statePath);
+
+    expect(early.newAlertEvents).toEqual([]);
+    expect(early.tokenUnlockCount).toBe(0);
+    expect(early.firePlans.filter((plan) => plan.catalystType === 'token_unlock')).toEqual([]);
+    expect(afterEarly.tokenomist.seenUnlockKeys).not.toContain('tokenomist:OP:2026-04-25T10');
+    expect(insideWindow.newAlertEvents).toEqual([
+      expect.objectContaining({
+        eventKey: 'tokenomist:OP:2026-04-25T10',
+        scheduledAt: '2026-04-25T10:00:00.000Z',
+      }),
+    ]);
+    expect(insideWindow.tokenUnlockCount).toBe(1);
+    expect(persisted.tokenomist.seenUnlockKeys).toEqual(expect.arrayContaining(['tokenomist:OP:2026-04-25T10']));
+  });
+
   test('runSparkScan suppresses token unlock catalysts and fire plans when tokenomist source is stale', async () => {
     const statePath = path.join(tempRoot, 'spark-state.json');
     const eventsPath = path.join(tempRoot, 'spark-events.jsonl');
