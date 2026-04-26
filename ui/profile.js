@@ -86,7 +86,6 @@ function applyProfileEnv(profileName, env = process.env) {
     env.SQUIDRUN_LIVE_OPS_MONITOR = '0';
     env.LIVE_OPS_WALLET_ADDRESS = '';
     env.LIVE_OPS_ADDRESS = '';
-    env.POLYMARKET_FUNDER_ADDRESS = '';
     env.LIVE_OPS_PRIVATE_KEY = '';
   }
   return normalized;

@@ -43,10 +43,6 @@ const {
 const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
 const macroRiskGate = require('./modules/trading/macro-risk-gate');
 const { CircuitBreaker } = require('./modules/trading/circuit-breaker');
-const polymarketClient = require('./modules/trading/polymarket-client');
-const polymarketScanner = require('./modules/trading/polymarket-scanner');
-const polymarketSignals = require('./modules/trading/polymarket-signals');
-const polymarketSizer = require('./modules/trading/polymarket-sizer');
 const yieldRouterModule = require('./modules/trading/yield-router');
 const marketScannerModule = require('./modules/trading/market-scanner');
 const sparkCapture = require('./modules/trading/spark-capture');
@@ -87,7 +83,6 @@ if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'private-profil
   process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = '0';
   process.env.LIVE_OPS_WALLET_ADDRESS = '';
   process.env.LIVE_OPS_ADDRESS = '';
-  process.env.POLYMARKET_FUNDER_ADDRESS = '';
   process.env.LIVE_OPS_PRIVATE_KEY = '';
 }
 
@@ -205,7 +200,6 @@ const DEFAULT_AGENT_TASK_QUEUE_PATH = resolveRuntimePath('agent-task-queue.json'
 const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
-const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-trading-state.json');
 const DEFAULT_NEWS_SCAN_STATE_PATH = resolveRuntimePath('news-scan-supervisor-state.json');
 const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
 const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
@@ -269,15 +263,6 @@ const TRADING_PHASES = Object.freeze([
   { key: 'market_close_review', label: 'Market close review', anchor: 'close', offsetMinutes: 0 },
   { key: 'end_of_day', label: 'End of day', anchor: 'close', offsetMinutes: 30 },
 ]);
-const POLYMARKET_PHASES = Object.freeze([
-  { key: 'polymarket_scan', label: 'LiveOps market scan', offsetMinutes: 0 },
-  { key: 'polymarket_consensus', label: 'LiveOps consensus round', offsetMinutes: 5, internalOnly: true },
-  { key: 'polymarket_execute', label: 'LiveOps order execution', offsetMinutes: 10, internalOnly: true },
-  { key: 'polymarket_monitor', label: 'LiveOps position monitor', kind: 'monitor' },
-]);
-const POLYMARKET_SCHEDULE_PHASES = Object.freeze(
-  POLYMARKET_PHASES.filter((phase) => phase.key === 'polymarket_scan' || phase.key === 'polymarket_monitor')
-);
 const NEWS_SCAN_PHASES = Object.freeze([
   { key: 'news_scan', label: 'News and market scan' },
 ]);
@@ -613,7 +598,6 @@ function resolve[private-live-ops]WalletAddress(env = process.env) {
   return String(
     env?.LIVE_OPS_WALLET_ADDRESS
     || env?.LIVE_OPS_ADDRESS
-    || env?.POLYMARKET_FUNDER_ADDRESS
     || ''
   ).trim();
 }
@@ -663,7 +647,7 @@ function applyMacroRiskSizeCapToApprovedTrades(approvedTrades = [], macroRisk = 
 
 function has[private-live-ops]Credentials(env = process.env) {
   return Boolean(
-    String(env?.POLYMARKET_PRIVATE_KEY || '').trim()
+    String(env?.LIVE_OPS_PRIVATE_KEY || '').trim()
     && resolve[private-live-ops]WalletAddress(env)
   );
 }
@@ -779,7 +763,7 @@ function create[private-live-ops]Executor(options = {}) {
     async getAccountState() {
       const walletAddress = resolve[private-live-ops]WalletAddress(env);
       if (!walletAddress) {
-        throw new Error('[private-live-ops] wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or LIVE_OPS_WALLET_ADDRESS.');
+        throw new Error('[private-live-ops] wallet address is missing. Set LIVE_OPS_WALLET_ADDRESS.');
       }
       const [account, positions] = await Promise.all([
         [private-live-ops]Client.getAccountSnapshot({ walletAddress }),
@@ -962,21 +946,6 @@ function defaultCryptoTradingState() {
     lastResult: null,
     nextEvent: null,
     activeConvictionThesis: null,
-    updatedAt: null,
-  };
-}
-
-function defaultLiveOpsTradingState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    dayStartDate: null,
-    dayStartBankroll: null,
-    lastScan: null,
-    lastConsensus: null,
-    lastExecution: null,
-    lastMonitor: null,
     updatedAt: null,
   };
 }
@@ -1982,46 +1951,6 @@ class SupervisorDaemon {
       }))
       : null;
 
-    const polymarketConfigured = (() => {
-      try {
-        return Boolean(polymarketClient.resolveLiveOpsConfig(process.env)?.configured);
-      } catch {
-        return false;
-      }
-    })();
-    const polymarketAutomationRequested = options.polymarketTradingEnabled === true
-      || process.env.SQUIDRUN_POLYMARKET_AUTOMATION === '1';
-    this.polymarketTradingEnabled = Boolean(polymarketAutomationRequested && polymarketConfigured);
-    this.polymarketTradingStatePath = options.polymarketTradingStatePath || DEFAULT_POLYMARKET_TRADING_STATE_PATH;
-    this.polymarketTradingState = {
-      ...defaultLiveOpsTradingState(),
-      ...(readJsonFile(this.polymarketTradingStatePath, defaultLiveOpsTradingState()) || {}),
-    };
-    this.polymarketTradingPhasePromise = null;
-    this.lastLiveOpsTradingSummary = this.polymarketTradingEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        reason: polymarketConfigured ? 'manual_opt_in_required' : 'credentials_unavailable',
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.polymarketClient = options.polymarketClient || polymarketClient;
-    this.polymarketScanner = options.polymarketScanner || polymarketScanner;
-    this.polymarketSignals = options.polymarketSignals || polymarketSignals;
-    this.polymarketSizer = options.polymarketSizer || polymarketSizer;
-    this.polymarketTradingOrchestrator = this.polymarketTradingEnabled
-      ? (options.polymarketTradingOrchestrator || tradingOrchestrator.createOrchestrator({
-        journalPath: resolveRuntimePath('trade-journal.db'),
-        smartMoneyScanner: this.smartMoneyScanner,
-      }))
-      : null;
     this.newsScanEnabled = options.newsScanEnabled !== false
       && process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION !== '0';
     this.newsScanIntervalMinutes = Math.max(
@@ -2280,9 +2209,6 @@ class SupervisorDaemon {
       }
       if (this.cryptoTradingOrchestrator?.options) {
         this.cryptoTradingOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
-      if (this.polymarketTradingOrchestrator?.options) {
-        this.polymarketTradingOrchestrator.options.yieldRouter = this.yieldRouter;
       }
       if (this.yieldRouterOrchestrator?.options) {
         this.yieldRouterOrchestrator.options.yieldRouter = this.yieldRouter;
@@ -2834,7 +2760,6 @@ class SupervisorDaemon {
     const positionAttributionReconciliationResult = await this.maybeRunPositionAttributionReconciliation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
-    const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
     const newsScanResult = await this.maybeRunNewsScanAutomation(nowMs);
     const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
     const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
@@ -2859,7 +2784,6 @@ class SupervisorDaemon {
       positionAttributionReconciliationResult,
       tradeReconciliationResult,
       cryptoTradingResult,
-      polymarketTradingResult,
       newsScanResult,
       marketResearchResult,
       [private-live-ops]Result,
@@ -2930,7 +2854,6 @@ class SupervisorDaemon {
       && summary.positionAttributionReconciliationResult.skipped !== true;
     const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
-    const polymarketTradingRan = summary?.polymarketTradingResult && summary.polymarketTradingResult.skipped !== true;
     const newsScanRan = summary?.newsScanResult && summary.newsScanResult.skipped !== true;
     const marketResearchRan = summary?.marketResearchResult && summary.marketResearchResult.skipped !== true;
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
@@ -2949,7 +2872,6 @@ class SupervisorDaemon {
       || positionAttributionReconciliationRan
       || tradeReconciliationRan
       || cryptoTradingRan
-      || polymarketTradingRan
       || newsScanRan
       || marketResearchRan
       || saylorWatcherRan
@@ -3084,11 +3006,6 @@ class SupervisorDaemon {
   persistCryptoTradingState() {
     this.cryptoTradingState.updatedAt = new Date().toISOString();
     writeJsonFile(this.cryptoTradingStatePath, this.cryptoTradingState);
-  }
-
-  persistLiveOpsTradingState() {
-    this.polymarketTradingState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.polymarketTradingStatePath, this.polymarketTradingState);
   }
 
   persistYieldRouterState() {
@@ -6256,260 +6173,6 @@ class SupervisorDaemon {
     return result;
   }
 
-  async getLiveOpsBankrollSnapshot(now = new Date()) {
-    const [balance, positions] = await Promise.all([
-      this.polymarketClient.getBalance(),
-      this.polymarketClient.getPositions(),
-    ]);
-    const normalizedPositions = Array.isArray(positions) ? positions : [];
-    const marketValue = normalizedPositions.reduce((sum, position) => {
-      return sum + Math.max(0, Number(position?.marketValue || 0));
-    }, 0);
-    const available = Number(balance?.available ?? balance?.balance ?? 0) || 0;
-    const bankroll = Number((available + marketValue).toFixed(2));
-    const dayKey = getDateKeyInTimeZone(now);
-    if (this.polymarketTradingState.dayStartDate !== dayKey || !Number.isFinite(Number(this.polymarketTradingState.dayStartBankroll))) {
-      this.polymarketTradingState.dayStartDate = dayKey;
-      this.polymarketTradingState.dayStartBankroll = bankroll;
-    }
-    const dayStartBankroll = Number(this.polymarketTradingState.dayStartBankroll || bankroll) || bankroll;
-    const dailyLossPct = dayStartBankroll > 0 ? Math.max(0, (dayStartBankroll - bankroll) / dayStartBankroll) : 0;
-
-    return {
-      balance,
-      positions: normalizedPositions,
-      bankroll,
-      currentExposure: Number(marketValue.toFixed(2)),
-      dayStartBankroll,
-      dailyLossPct: Number(dailyLossPct.toFixed(6)),
-    };
-  }
-
-  async getLiveOpsCandidateMarkets(event, options = {}) {
-    const cached = this.polymarketTradingState.lastScan;
-    if (!options.forceRefresh && cached && cached.windowKey === event.windowKey && Array.isArray(cached.markets) && cached.markets.length > 0) {
-      return cached.markets;
-    }
-
-    const markets = await this.polymarketScanner.scanMarkets({
-      limit: options.limit || 12,
-    });
-    this.polymarketTradingState.lastScan = {
-      windowKey: event.windowKey || event.scheduledAt,
-      marketDate: event.marketDate || '',
-      scheduledAt: event.scheduledAt || '',
-      markets,
-    };
-    this.persistLiveOpsTradingState();
-    return markets;
-  }
-
-  async buildLiveOpsConsensus(event, options = {}) {
-    const cached = this.polymarketTradingState.lastConsensus;
-    if (!options.forceRefresh && cached && cached.windowKey === event.windowKey && Array.isArray(cached.results)) {
-      return cached;
-    }
-
-    const markets = await this.getLiveOpsCandidateMarkets(event, options);
-    const signalsByAgent = this.polymarketSignals.produceSignals(markets, {
-      agentIds: TRADING_AGENT_TARGETS,
-    });
-    const results = markets.map((market) => {
-      const marketSignals = TRADING_AGENT_TARGETS.map((agentId) => {
-        return (signalsByAgent.get(agentId) || []).find((signal) => signal.conditionId === market.conditionId);
-      }).filter(Boolean);
-      if (marketSignals.length !== 3) return null;
-      return {
-        ...this.polymarketSignals.buildConsensus(marketSignals),
-        market,
-      };
-    }).filter(Boolean);
-
-    const payload = {
-      windowKey: event.windowKey || event.scheduledAt,
-      marketDate: event.marketDate || '',
-      scheduledAt: event.scheduledAt || '',
-      results,
-      actionable: results.filter((result) => result.consensus && result.decision !== 'HOLD'),
-      agentSignals: Object.fromEntries(Array.from(signalsByAgent.entries())),
-    };
-    this.polymarketTradingState.lastConsensus = payload;
-    this.persistLiveOpsTradingState();
-    return payload;
-  }
-
-  async runLiveOpsPhase(event) {
-    const phaseKey = String(event?.key || '').trim();
-    const scheduledAt = String(event?.scheduledAt || '').trim();
-    const marketDate = String(event?.marketDate || getDateKeyInTimeZone(scheduledAt || new Date())).trim();
-    if (!phaseKey || !scheduledAt || !this.polymarketTradingEnabled || !this.polymarketTradingOrchestrator) {
-      return { ok: false, phase: phaseKey || 'unknown', error: 'polymarket_phase_unavailable' };
-    }
-
-    try {
-      const phaseOptions = {
-        date: marketDate || scheduledAt,
-        broker: 'polymarket',
-        assetClass: 'prediction_market',
-        includeLiveOps: true,
-      };
-
-      if (phaseKey === 'polymarket_scan' || phaseKey === 'polymarket_consensus') {
-        const consensusPhase = await this.polymarketTradingOrchestrator.runLiveOpsConsensusRound(phaseOptions);
-        this.polymarketTradingState.lastScan = {
-          windowKey: event.windowKey || event.scheduledAt,
-          marketDate,
-          scheduledAt,
-          markets: Array.isArray(consensusPhase?.markets) ? consensusPhase.markets : [],
-        };
-        this.polymarketTradingState.lastConsensus = consensusPhase;
-        let executionPhase = null;
-        if (phaseKey === 'polymarket_scan') {
-          executionPhase = await this.polymarketTradingOrchestrator.runLiveOpsMarketOpen({
-            ...phaseOptions,
-            consensusPhase,
-          });
-          this.polymarketTradingState.lastExecution = executionPhase;
-        }
-        const result = {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {
-            markets: Array.isArray(consensusPhase?.markets) ? consensusPhase.markets.length : 0,
-            actionable: Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades.length : 0,
-            executions: Array.isArray(executionPhase?.executions)
-              ? executionPhase.executions.filter((entry) => entry.execution?.ok !== false).length
-              : 0,
-          },
-        };
-        this.polymarketTradingState.lastResult = result;
-        this.persistLiveOpsTradingState();
-        return result;
-      }
-
-      if (phaseKey === 'polymarket_execute') {
-        const consensusPhase = await this.polymarketTradingOrchestrator.runLiveOpsConsensusRound(phaseOptions);
-        const executionPhase = await this.polymarketTradingOrchestrator.runLiveOpsMarketOpen({
-          ...phaseOptions,
-          consensusPhase,
-        });
-        const result = {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {
-            executions: Array.isArray(executionPhase?.executions) ? executionPhase.executions.length : 0,
-            filled: Array.isArray(executionPhase?.executions)
-              ? executionPhase.executions.filter((entry) => entry.execution?.ok !== false).length
-              : 0,
-          },
-        };
-        this.polymarketTradingState.lastConsensus = consensusPhase;
-        this.polymarketTradingState.lastExecution = executionPhase;
-        this.polymarketTradingState.lastResult = result;
-        this.persistLiveOpsTradingState();
-        return result;
-      }
-
-      if (phaseKey === 'polymarket_monitor') {
-        const portfolioSnapshot = await this.polymarketTradingOrchestrator.getUnifiedPortfolioSnapshot({
-          ...phaseOptions,
-          includeLiveOps: true,
-        });
-        const limits = tradingRiskEngine.DEFAULT_LIMITS;
-        const killSwitch = tradingRiskEngine.checkKillSwitch(portfolioSnapshot, limits);
-        const dailyPause = tradingRiskEngine.checkDailyPause(portfolioSnapshot, limits);
-        const positions = await this.polymarketClient.getPositions();
-        const exits = [];
-        const executor = require('./modules/trading/executor');
-
-        for (const position of Array.isArray(positions) ? positions : []) {
-          const exitCheck = this.polymarketSizer.shouldExit(position, position.currentPrice, {
-            now: scheduledAt,
-          });
-          if (!exitCheck.exit) continue;
-          const order = await executor.submitOrder({
-            ticker: position.market || position.tokenId,
-            conditionId: position.market || position.tokenId,
-            broker: 'polymarket',
-            assetClass: 'prediction_market',
-            direction: 'SELL',
-            shares: position.size,
-            tokenId: position.tokenId,
-            price: position.currentPrice,
-            referencePrice: position.currentPrice,
-            notes: `polymarket-stop:${position.market || position.tokenId}`,
-          }, {
-            broker: 'polymarket',
-          });
-          exits.push({
-            tokenId: position.tokenId,
-            market: position.market,
-            exitCheck,
-            order,
-          });
-        }
-
-        const result = {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {
-            positions: Array.isArray(positions) ? positions.length : 0,
-            exits: exits.length,
-            killSwitch: Boolean(killSwitch?.triggered),
-            dailyPause: Boolean(dailyPause?.paused),
-          },
-        };
-        if (this.yieldRouterEnabled && this.yieldRouterOrchestrator && !this.yieldRouterPhasePromise) {
-          result.yieldRebalance = await this.runYieldRebalancePhase({
-            key: 'yield_rebalance',
-            marketDate,
-            scheduledAt: new Date().toISOString(),
-            windowKey: event.windowKey || event.scheduledAt,
-            triggerSource: phaseKey,
-          });
-        }
-        this.polymarketTradingState.lastMonitor = {
-          windowKey: event.windowKey || event.scheduledAt,
-          marketDate,
-          scheduledAt,
-          exits,
-          killSwitch,
-          dailyPause,
-          yieldRebalance: result.yieldRebalance || null,
-        };
-        this.polymarketTradingState.lastResult = result;
-        this.persistLiveOpsTradingState();
-        return result;
-      }
-
-      return {
-        ok: true,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        summary: {},
-      };
-    } catch (err) {
-      this.logger.warn(`LiveOps trading phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
-      const result = {
-        ok: false,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        error: err.message,
-      };
-      this.polymarketTradingState.lastResult = result;
-      this.persistLiveOpsTradingState();
-      return result;
-    }
-  }
-
   async runYieldRebalancePhase(event) {
     const phaseKey = String(event?.key || '').trim();
     const scheduledAt = String(event?.scheduledAt || '').trim();
@@ -6531,7 +6194,6 @@ class SupervisorDaemon {
 
       const portfolioSnapshot = await this.yieldRouterOrchestrator.getUnifiedPortfolioSnapshot({
         date: marketDate || scheduledAt,
-        includeLiveOps: true,
         yieldRouter: this.yieldRouter,
       });
       const allocation = this.yieldRouterOrchestrator.getCapitalAllocation(portfolioSnapshot, event.allocationOptions || {});
@@ -7141,90 +6803,6 @@ class SupervisorDaemon {
       reason: 'crypto_phase_started',
       nextEvent: this.cryptoTradingState.nextEvent,
     };
-  }
-
-  async maybeRunLiveOpsTradingAutomation(nowMs = Date.now()) {
-    if (!this.polymarketTradingEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'polymarket_trading_disabled' };
-    }
-    if (this.polymarketTradingPhasePromise) {
-      return this.polymarketTradingPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = await tradingScheduler.getNextLiveOpsWakeEvent(now, {
-      projectRoot: this.projectRoot,
-      phases: POLYMARKET_SCHEDULE_PHASES,
-    }).catch((err) => {
-      this.logger.warn(`Next LiveOps event lookup failed: ${err.message}`);
-      return null;
-    });
-
-    const polymarketDay = tradingScheduler.buildLiveOpsDailySchedule(now, {
-      projectRoot: this.projectRoot,
-      phases: POLYMARKET_SCHEDULE_PHASES,
-    });
-    const lastProcessedAtMs = this.polymarketTradingState.lastProcessedAt
-      ? new Date(this.polymarketTradingState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = polymarketDay.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.polymarketTradingState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistLiveOpsTradingState();
-
-    if (dueEvents.length === 0) {
-      this.lastLiveOpsTradingSummary = {
-        enabled: true,
-        status: 'scheduled',
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_polymarket_phase',
-        nextEvent: this.polymarketTradingState.nextEvent,
-      };
-    }
-
-    this.polymarketTradingPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runLiveOpsPhase(event);
-        executed.push(phaseResult);
-        this.polymarketTradingState.lastProcessedAt = event.scheduledAt;
-        this.polymarketTradingState.lastResult = phaseResult;
-        this.persistLiveOpsTradingState();
-        if (!phaseResult.ok) break;
-      }
-
-      const upcomingEvent = await tradingScheduler.getNextLiveOpsWakeEvent(new Date(), {
-        projectRoot: this.projectRoot,
-      }).catch(() => null);
-      this.polymarketTradingState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistLiveOpsTradingState();
-      this.lastLiveOpsTradingSummary = {
-        enabled: true,
-        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: executed.every((entry) => entry.ok),
-        skipped: false,
-        executed,
-        nextEvent: this.polymarketTradingState.nextEvent,
-      };
-    })().finally(() => {
-      this.polymarketTradingPhasePromise = null;
-    });
-
-    return this.polymarketTradingPhasePromise;
   }
 
   async maybeRunYieldRouterAutomation(nowMs = Date.now()) {
@@ -8074,14 +7652,6 @@ class SupervisorDaemon {
         passCount: this.circuitBreaker?.passCount || 0,
         highWaterMarks: this.circuitBreaker ? Object.keys(this.circuitBreaker.highWaterMarks).length : 0,
         recentExits: this.circuitBreaker?.exits?.slice(-5) || [],
-      },
-      polymarketTradingAutomation: {
-        enabled: this.polymarketTradingEnabled,
-        running: Boolean(this.polymarketTradingPhasePromise),
-        statePath: this.polymarketTradingStatePath,
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent || null,
-        lastSummary: this.lastLiveOpsTradingSummary || null,
       },
       newsScanAutomation: {
         enabled: this.newsScanEnabled,
