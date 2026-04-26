@@ -60,5 +60,4 @@ Comms cadence: Builder sends initial ACK + plan, then delta updates only on stat
 Builder manages up to 3 background agents (builder-bg-1..3). Track slot status:
 - Slot, Owner, Objective, Status (running/blocked/done), Blocker reason, Handoff state
 
- -   * * S p a r k   C a p t u r e * * :   V e r i f i e d   s p a r k - c a p t u r e   p i p e l i n e   i s   r u n n i n g   a n d   p u l l i n g   U p b i t / H y p e r l i q u i d / T o k e n o m i s t   e v e n t s .  
- 
+- **Spark Capture**: Verified spark-capture pipeline is running and pulling Upbit/Hyperliquid/Tokenomist events.
