@@ -42,7 +42,6 @@ const {
 } = require('./modules/trading/[private-live-ops]-manual-activity');
 const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
 const macroRiskGate = require('./modules/trading/macro-risk-gate');
-const { CircuitBreaker } = require('./modules/trading/circuit-breaker');
 const yieldRouterModule = require('./modules/trading/yield-router');
 const marketScannerModule = require('./modules/trading/market-scanner');
 const sparkCapture = require('./modules/trading/spark-capture');
@@ -77,7 +76,6 @@ if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'private-profil
   process.env.SQUIDRUN_SPARK_MONITOR_AUTOMATION = '0';
   process.env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
   process.env.SQUIDRUN_SAYLOR_WATCHER = '0';
-  process.env.SQUIDRUN_TRADING_AUTOMATION = '0';
   process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION = '0';
   process.env.LIVE_OPS_WALLET_ADDRESS = '';
   process.env.LIVE_OPS_ADDRESS = '';
@@ -195,7 +193,6 @@ const DEFAULT_LOG_PATH = resolveRuntimePath('supervisor.log');
 const DEFAULT_TASK_LOG_DIR = resolveRuntimePath(path.join('supervisor-tasks'));
 const DEFAULT_WAKE_SIGNAL_PATH = resolveRuntimePath('supervisor-wake.signal');
 const DEFAULT_AGENT_TASK_QUEUE_PATH = resolveRuntimePath('agent-task-queue.json');
-const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
 const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
@@ -250,15 +247,6 @@ const DEFAULT_AGENT_TASK_REENGAGE_IDLE_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_AGENT_TASK_REENGAGE_IDLE_MS || '300000', 10) || 300_000
 );
 const AGENT_TASK_QUEUE_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
-const TRADING_AGENT_TARGETS = Object.freeze(['architect', 'builder', 'oracle']);
-const TRADING_PHASES = Object.freeze([
-  { key: 'premarket_wake', label: 'Pre-market wake', offsetMinutes: -60 },
-  { key: 'pre_open_consensus', label: 'Consensus round', offsetMinutes: -5 },
-  { key: 'market_open_execute', label: 'Market open execute', offsetMinutes: 0 },
-  { key: 'close_wake', label: 'Close wake', anchor: 'close', offsetMinutes: -30 },
-  { key: 'market_close_review', label: 'Market close review', anchor: 'close', offsetMinutes: 0 },
-  { key: 'end_of_day', label: 'End of day', anchor: 'close', offsetMinutes: 30 },
-]);
 const MARKET_SCANNER_PHASES = Object.freeze([
   { key: 'market_scanner', label: '[private-live-ops] market scanner' },
 ]);
@@ -908,16 +896,6 @@ function extractActiveCaseSignals(markdown = '') {
   return signals;
 }
 
-function defaultTradingState() {
-  return {
-    marketDate: null,
-    sleeping: true,
-    phases: {},
-    nextEvent: null,
-    updatedAt: null,
-  };
-}
-
 function defaultCryptoTradingState() {
   return {
     lastProcessedAt: null,
@@ -1459,39 +1437,6 @@ class SupervisorDaemon {
       : true;
     this.[private-live-ops]ScalpModeArmed = options.[private-live-ops]ScalpModeArmed === true
       || this.runtimeEnv.SQUIDRUN_LIVE_OPS_SCALP_MODE === '1';
-    const stockTradingAutomationRequested = options.tradingEnabled === true
-      || this.runtimeEnv.SQUIDRUN_ENABLE_STOCK_TRADING_AUTOMATION === '1';
-    this.tradingEnabled = Boolean(
-      stockTradingAutomationRequested
-      && this.runtimeEnv.SQUIDRUN_TRADING_AUTOMATION !== '0'
-    );
-    this.tradingStatePath = options.tradingStatePath || DEFAULT_TRADING_STATE_PATH;
-    this.tradingState = {
-      ...defaultTradingState(),
-      ...(readJsonFile(this.tradingStatePath, defaultTradingState()) || {}),
-    };
-    this.tradingPhasePromise = null;
-    this.lastTradingSummary = this.tradingEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        marketDate: this.tradingState.marketDate || null,
-        sleeping: this.tradingState.sleeping !== false,
-        nextEvent: this.tradingState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        reason: stockTradingAutomationRequested ? 'manual_opt_out' : 'manual_opt_in_required',
-        marketDate: null,
-        sleeping: true,
-        nextEvent: null,
-      };
-    this.tradingOrchestrator = this.tradingEnabled
-      ? (options.tradingOrchestrator || tradingOrchestrator.createOrchestrator({
-        journalPath: resolveRuntimePath('trade-journal.db'),
-      }))
-      : null;
     this.tradeReconciliationPollMs = Math.max(
       60_000,
       Number.parseInt(
@@ -1502,9 +1447,9 @@ class SupervisorDaemon {
     this.tradeReconciliationPromise = null;
     this.tradeReconciliationState = defaultTradeReconciliationState();
     this.lastTradeReconciliationSummary = {
-      enabled: Boolean(this.tradingOrchestrator),
-      status: this.tradingOrchestrator ? 'idle' : 'disabled',
-      marketDate: this.tradingState.marketDate || null,
+      enabled: false,
+      status: 'disabled',
+      marketDate: null,
       pendingCount: 0,
       lastProcessedAt: null,
       lastResult: null,
@@ -1810,49 +1755,7 @@ class SupervisorDaemon {
       : null;
     this.smartMoneyScannerLastTrigger = null;
 
-    // Circuit breaker — continuous position monitor with stop-loss execution
-    const executor = require('./modules/trading/executor');
-    const dataIngestion = require('./modules/trading/data-ingestion');
-    // Circuit breaker DISABLED — was monitoring stale PaperBroker positions and spamming
-    // the user's Telegram with ghost ETH SHORT alerts for 3+ days. [private-live-ops] has its own
-    // position monitor. — Session 268
-    this.circuitBreaker = false && this.tradingEnabled && options.circuitBreaker !== null
-      ? (options.circuitBreaker || new CircuitBreaker({
-        pollMs: 30_000,
-        hardStopPct: 0.04,   // 4% loss from entry
-        trailingStopPct: 0.04, // 4% drop from high-water mark
-        flashCrashPct: 0.05,  // 5% portfolio drop → sell all
-        minPositionValueUsd: 10,
-        cooldownMs: 5 * 60_000,
-        statePath: resolveRuntimePath('circuit-breaker-state.json'),
-        logger: this.logger,
-        getPositions: async () => executor.getOpenPositions(),
-        getSnapshots: async (symbols) => dataIngestion.getWatchlistSnapshots({ symbols }),
-        executeSell: async (ticker, shares, reason) => {
-          const assetClass = tradingWatchlist.getAssetClassForTicker(ticker, 'us_equity');
-          this.logger.warn(`[circuit-breaker] Executing emergency SELL: ${ticker} x${shares} — ${reason}`);
-          try {
-            const result = await executor.submitOrder({
-              ticker,
-              direction: 'SELL',
-              shares,
-              assetClass,
-              orderType: 'market',
-              ...(assetClass === 'crypto' ? { timeInForce: 'gtc' } : {}),
-            });
-            this.logger.info(`[circuit-breaker] SELL ${ticker} submitted: ${result?.orderId || 'ok'}`);
-            return { ok: true, orderId: result?.orderId };
-          } catch (err) {
-            this.logger.error(`[circuit-breaker] SELL ${ticker} failed: ${err.message}`);
-            return { ok: false, error: err.message };
-          }
-        },
-        getAccountEquity: async () => {
-          const account = await executor.getAccountSnapshot();
-          return Number(account?.equity) || 0;
-        },
-      }))
-      : null;
+    this.circuitBreaker = null;
 
     this.caseOperationsPath = options.caseOperationsPath || path.join(this.projectRoot, 'workspace', 'knowledge', 'case-operations.md');
     this.newsVetoModule = options.newsVetoModule || eventVeto;
@@ -2048,9 +1951,6 @@ class SupervisorDaemon {
       }))
       : null;
     if (this.yieldRouter) {
-      if (this.tradingOrchestrator?.options) {
-        this.tradingOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
       if (this.cryptoTradingOrchestrator?.options) {
         this.cryptoTradingOrchestrator.options.yieldRouter = this.yieldRouter;
       }
@@ -2600,7 +2500,6 @@ class SupervisorDaemon {
       await this.launchTask(claim.task, { leaseOwner });
     }
 
-    const tradingResult = await this.maybeRunTradingAutomation(nowMs);
     const positionAttributionReconciliationResult = await this.maybeRunPositionAttributionReconciliation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
@@ -2622,7 +2521,6 @@ class SupervisorDaemon {
       queueHousekeeping,
       leaseHousekeeping,
       memoryConsistency,
-      tradingResult,
       positionAttributionReconciliationResult,
       tradeReconciliationResult,
       cryptoTradingResult,
@@ -2832,11 +2730,6 @@ class SupervisorDaemon {
       });
 
     return this.sleepCyclePromise;
-  }
-
-  persistTradingState() {
-    this.tradingState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.tradingStatePath, this.tradingState);
   }
 
   persistCryptoTradingState() {
@@ -4179,17 +4072,14 @@ class SupervisorDaemon {
   }
 
   getTradeReconciliationOrchestrator() {
-    return this.tradingOrchestrator || null;
+    return null;
   }
 
   hasActiveTradingPhase() {
-    return Boolean(this.tradingPhasePromise || this.cryptoTradingPhasePromise);
+    return Boolean(this.cryptoTradingPhasePromise);
   }
 
   getTradeReconciliationMarketDate(referenceDate = new Date()) {
-    if (this.tradingState.marketDate) {
-      return this.tradingState.marketDate;
-    }
     return getDateKeyInTimeZone(referenceDate, tradingScheduler.MARKET_TIME_ZONE);
   }
 
@@ -4206,7 +4096,7 @@ class SupervisorDaemon {
       this.lastTradeReconciliationSummary = {
         enabled: false,
         status: 'disabled',
-        marketDate: this.tradingState.marketDate || null,
+        marketDate: null,
         pendingCount: 0,
         lastProcessedAt: this.tradeReconciliationState.lastProcessedAt || null,
         lastResult: this.tradeReconciliationState.lastResult || null,
@@ -4349,161 +4239,6 @@ class SupervisorDaemon {
       displayTimeZone: String(event.displayTimeZone || ''),
       windowKey: String(event.windowKey || ''),
     };
-  }
-
-  resetTradingStateForMarketDate(marketDate) {
-    if (!marketDate || this.tradingState.marketDate === marketDate) return;
-    this.tradingState = {
-      ...defaultTradingState(),
-      marketDate,
-      sleeping: true,
-    };
-    this.persistTradingState();
-  }
-
-  isTradingPhaseComplete(marketDate, phaseKey) {
-    if (this.tradingState.marketDate !== marketDate) return false;
-    const phase = this.tradingState.phases && this.tradingState.phases[phaseKey];
-    if (!phase) return false;
-    return phase.status === 'completed' || phase.status === 'failed';
-  }
-
-  recordTradingPhaseState(marketDate, phaseKey, patch = {}) {
-    if (!marketDate) return;
-    if (this.tradingState.marketDate !== marketDate) {
-      this.resetTradingStateForMarketDate(marketDate);
-    }
-    this.tradingState.phases = this.tradingState.phases || {};
-    this.tradingState.phases[phaseKey] = {
-      ...(this.tradingState.phases[phaseKey] || {}),
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    };
-    this.persistTradingState();
-  }
-
-  summarizeTradingPhaseResult(phaseKey, result) {
-    if (!result || typeof result !== 'object') {
-      return { phase: phaseKey, ok: true };
-    }
-
-    if (phaseKey === 'premarket_wake') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        symbols: Array.isArray(result.symbols) ? result.symbols.length : 0,
-        watchlistSize: Array.isArray(result.watchlist) ? result.watchlist.length : 0,
-      };
-    }
-
-    if (phaseKey === 'pre_open_consensus') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        approvedTrades: Array.isArray(result.approvedTrades) ? result.approvedTrades.length : 0,
-        rejectedTrades: Array.isArray(result.rejectedTrades) ? result.rejectedTrades.length : 0,
-        incompleteSignals: Array.isArray(result.incompleteSignals) ? result.incompleteSignals.length : 0,
-      };
-    }
-
-    if (phaseKey === 'market_open_execute') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        executions: Array.isArray(result.executions) ? result.executions.length : 0,
-      };
-    }
-
-    if (phaseKey === 'close_wake') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        reviews: Array.isArray(result.reviews) ? result.reviews.length : 0,
-        exits: Array.isArray(result.exits) ? result.exits.length : 0,
-      };
-    }
-
-    if (phaseKey === 'market_close_review') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        openPositions: Array.isArray(result.openPositions) ? result.openPositions.length : 0,
-        liquidation: Boolean(result.liquidation),
-        reconciledTrades: Array.isArray(result.reconciliation?.orderUpdates) ? result.reconciliation.orderUpdates.length : 0,
-        outcomesRecorded: Array.isArray(result.reconciliation?.recordedOutcomes) ? result.reconciliation.recordedOutcomes.length : 0,
-      };
-    }
-
-    if (phaseKey === 'end_of_day') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        pnl: Number(result.summary?.pnl || 0),
-        pnlPct: Number(result.summary?.pnlPct || 0),
-        trades: Array.isArray(result.trades) ? result.trades.length : 0,
-      };
-    }
-
-    return {
-      phase: phaseKey,
-      marketDate: result.marketDate || null,
-    };
-  }
-
-  buildTradingAgentMessage(phaseKey, tradingDay) {
-    const marketDate = tradingDay?.marketDate || 'unknown-date';
-    if (phaseKey === 'premarket_wake') {
-      return {
-        architect: `[TRADING] Pre-market wake for ${marketDate}. Coordinate watchlist review and collect signals before 6:25 AM PT consensus.`,
-        builder: `[TRADING] Pre-market wake for ${marketDate}. Review the watchlist and register Builder signals before 6:25 AM PT.`,
-        oracle: `[TRADING] Pre-market wake for ${marketDate}. Scan news and register Oracle signals before 6:25 AM PT.`,
-      };
-    }
-
-    if (phaseKey === 'close_wake') {
-      return {
-        architect: `[TRADING] Close wake for ${marketDate}. Review positions and coordinate any profit-taking decisions before 1:00 PM PT.`,
-        builder: `[TRADING] Close wake for ${marketDate}. Review open positions and prepare any exits before the close.`,
-        oracle: `[TRADING] Close wake for ${marketDate}. Review late-day news or catalysts that could affect open positions.`,
-      };
-    }
-
-    if (phaseKey === 'end_of_day') {
-      return {
-        architect: `[TRADING] End of day complete for ${marketDate}. Stand down until the next market wake.`,
-        builder: `[TRADING] End of day complete for ${marketDate}. Stand down until the next market wake.`,
-        oracle: `[TRADING] End of day complete for ${marketDate}. Stand down until the next market wake.`,
-      };
-    }
-
-    return null;
-  }
-
-  notifyTradingAgents(phaseKey, tradingDay) {
-    const messages = this.buildTradingAgentMessage(phaseKey, tradingDay);
-    if (!messages) return;
-
-    for (const target of TRADING_AGENT_TARGETS) {
-      const message = messages[target];
-      if (!message) continue;
-      try {
-        this.executeHmSendSync([target, message], phaseKey);
-      } catch (err) {
-        this.logger.warn(`Trading notify failed for ${target} during ${phaseKey}: ${err.message}`);
-      }
-    }
-  }
-
-  notifyAllTradingAgents(message, reason = 'monitor') {
-    const text = String(message || '').trim();
-    if (!text) return;
-    for (const target of TRADING_AGENT_TARGETS) {
-      try {
-        this.executeHmSendSync([target, text], reason);
-      } catch (err) {
-        this.logger.warn(`Trading notify failed for ${target} during ${reason}: ${err.message}`);
-      }
-    }
   }
 
   notifyArchitectInternal(message, reason = 'proactive') {
@@ -4790,33 +4525,6 @@ class SupervisorDaemon {
       await Promise.resolve(this.[private-live-ops]MonitorPromise).catch(() => {});
       this.[private-live-ops]MonitorPromise = null;
     }
-  }
-
-  async getTradingDaySchedule(date) {
-    const calendarDay = await tradingScheduler.getCalendarDay(date, { projectRoot: this.projectRoot });
-    if (!calendarDay) return null;
-    return tradingScheduler.buildTradingDaySchedule(calendarDay, {
-      phases: TRADING_PHASES,
-    });
-  }
-
-  async getNextTradingEvent(referenceDate = new Date()) {
-    const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-    for (let offset = 0; offset < 10; offset += 1) {
-      const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-      const tradingDay = await this.getTradingDaySchedule(candidateDate);
-      if (!tradingDay) continue;
-
-      const nextEvent = tradingDay.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-      if (nextEvent) {
-        return {
-          ...nextEvent,
-          tradingDay,
-        };
-      }
-    }
-
-    return null;
   }
 
   async getCurrent[private-live-ops]PositionSymbols() {
@@ -5933,207 +5641,6 @@ class SupervisorDaemon {
     }
   }
 
-  async runTradingPhase(event, tradingDay) {
-    const phaseKey = String(event?.key || '').trim();
-    const marketDate = tradingDay?.marketDate || null;
-    if (!phaseKey || !marketDate || !this.tradingOrchestrator) {
-      return { ok: false, phase: phaseKey || 'unknown', error: 'trading_phase_unavailable' };
-    }
-
-    const startedAt = new Date().toISOString();
-    this.recordTradingPhaseState(marketDate, phaseKey, {
-      status: 'running',
-      startedAt,
-      scheduledAt: event.scheduledAt,
-    });
-
-    try {
-      let result = null;
-      if (phaseKey === 'premarket_wake') {
-        this.tradingState.sleeping = false;
-        this.notifyTradingAgents(phaseKey, tradingDay);
-        result = await this.tradingOrchestrator.runPreMarket({ date: marketDate });
-        this.notifyTelegramTrading(`[TRADING] Pre-market wake for ${marketDate}. Watching ${Array.isArray(result?.symbols) ? result.symbols.length : '?'} stocks. Consensus at 6:25 AM PT, market open at 6:30 AM PT.`);
-      } else if (phaseKey === 'pre_open_consensus') {
-        result = await this.tradingOrchestrator.runConsensusRound({ date: marketDate });
-        const approved = Array.isArray(result?.approvedTrades) ? result.approvedTrades.length : 0;
-        const rejected = Array.isArray(result?.rejectedTrades) ? result.rejectedTrades.length : 0;
-        const tradeList = approved > 0
-          ? result.approvedTrades.map((t) => `${t.consensus?.decision} ${t.ticker}`).join(', ')
-          : 'none';
-        this.notifyTelegramTrading(`[TRADING] Consensus for ${marketDate}: ${approved} approved, ${rejected} rejected. Trades: ${tradeList}.`);
-      } else if (phaseKey === 'market_open_execute') {
-        result = await this.tradingOrchestrator.runMarketOpen({ date: marketDate });
-        const execCount = Array.isArray(result?.executions) ? result.executions.length : 0;
-        if (execCount > 0) {
-          const execList = result.executions.map((e) => `${e.consensus?.decision} ${e.ticker}`).join(', ');
-          this.notifyTelegramTrading(`[TRADING] Market open: ${execCount} orders executed — ${execList}.`);
-        }
-      } else if (phaseKey === 'close_wake') {
-        this.tradingState.sleeping = false;
-        this.notifyTradingAgents(phaseKey, tradingDay);
-        result = await this.tradingOrchestrator.runMidDayCheck({ date: marketDate });
-      } else if (phaseKey === 'market_close_review') {
-        result = await this.tradingOrchestrator.runMarketClose({ date: marketDate });
-        if (this.yieldRouterEnabled && this.yieldRouterOrchestrator && !this.yieldRouterPhasePromise) {
-          result.yieldRebalance = await this.runYieldRebalancePhase({
-            key: 'yield_rebalance',
-            marketDate,
-            scheduledAt: new Date().toISOString(),
-            windowKey: event.windowKey || event.scheduledAt,
-            triggerSource: phaseKey,
-          });
-        }
-      } else if (phaseKey === 'end_of_day') {
-        result = await this.tradingOrchestrator.runEndOfDay({ date: marketDate });
-        this.tradingState.sleeping = true;
-        this.notifyTradingAgents(phaseKey, tradingDay);
-      } else {
-        result = { phase: phaseKey, marketDate };
-      }
-
-      const summary = this.summarizeTradingPhaseResult(phaseKey, result);
-      this.recordTradingPhaseState(marketDate, phaseKey, {
-        status: 'completed',
-        finishedAt: new Date().toISOString(),
-        scheduledAt: event.scheduledAt,
-        summary,
-      });
-      this.logger.info(`Trading phase ${phaseKey} completed for ${marketDate}`);
-      return {
-        ok: true,
-        phase: phaseKey,
-        marketDate,
-        summary,
-      };
-    } catch (err) {
-      this.recordTradingPhaseState(marketDate, phaseKey, {
-        status: 'failed',
-        finishedAt: new Date().toISOString(),
-        scheduledAt: event.scheduledAt,
-        error: err.message,
-      });
-      this.logger.warn(`Trading phase ${phaseKey} failed for ${marketDate}: ${err.message}`);
-      return {
-        ok: false,
-        phase: phaseKey,
-        marketDate,
-        error: err.message,
-      };
-    }
-  }
-
-  async maybeRunTradingAutomation(nowMs = Date.now()) {
-    if (this.manualTradingOnly) {
-      this.lastTradingSummary = {
-        enabled: false,
-        status: 'manual_only',
-        reason: 'manual_only_reset',
-        marketDate: null,
-        sleeping: true,
-        nextEvent: null,
-      };
-      return { ok: false, skipped: true, reason: 'manual_only_reset' };
-    }
-    if (!this.tradingEnabled || this.stopping || !this.tradingOrchestrator) {
-      return { ok: false, skipped: true, reason: 'trading_disabled' };
-    }
-    if (this.tradingPhasePromise) {
-      return this.tradingPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const tradingDay = await this.getTradingDaySchedule(now).catch((err) => {
-      this.logger.warn(`Trading schedule lookup failed: ${err.message}`);
-      return null;
-    });
-    const nextEvent = await this.getNextTradingEvent(now).catch((err) => {
-      this.logger.warn(`Next trading event lookup failed: ${err.message}`);
-      return null;
-    });
-
-    if (!tradingDay) {
-      this.tradingState.nextEvent = this.describeTradingEvent(nextEvent);
-      this.tradingState.sleeping = true;
-      this.persistTradingState();
-      this.lastTradingSummary = {
-        enabled: true,
-        status: 'idle',
-        reason: 'not_trading_day',
-        marketDate: null,
-        sleeping: true,
-        nextEvent: this.describeTradingEvent(nextEvent),
-      };
-      return { ok: false, skipped: true, reason: 'not_trading_day', nextEvent: this.describeTradingEvent(nextEvent) };
-    }
-
-    this.resetTradingStateForMarketDate(tradingDay.marketDate);
-    const dueEvents = tradingDay.schedule.filter((event) => {
-      return new Date(event.scheduledAt).getTime() <= now.getTime()
-        && !this.isTradingPhaseComplete(tradingDay.marketDate, event.key);
-    });
-
-    this.tradingState.nextEvent = this.describeTradingEvent(
-      tradingDay.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime())
-      || nextEvent
-    );
-    this.persistTradingState();
-
-    if (dueEvents.length === 0) {
-      this.lastTradingSummary = {
-        enabled: true,
-        status: 'scheduled',
-        marketDate: tradingDay.marketDate,
-        sleeping: this.tradingState.sleeping !== false,
-        nextEvent: this.tradingState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_trading_phase',
-        marketDate: tradingDay.marketDate,
-        nextEvent: this.tradingState.nextEvent,
-      };
-    }
-
-    this.tradingPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runTradingPhase(event, tradingDay);
-        executed.push(phaseResult);
-        if (!phaseResult.ok) break;
-      }
-
-      const upcomingEvent = tradingDay.schedule.find((event) => {
-        return new Date(event.scheduledAt).getTime() > Date.now()
-          && !this.isTradingPhaseComplete(tradingDay.marketDate, event.key);
-      }) || nextEvent;
-      this.tradingState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistTradingState();
-      this.lastTradingSummary = {
-        enabled: true,
-        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
-        marketDate: tradingDay.marketDate,
-        executedPhases: executed.map((entry) => entry.phase),
-        sleeping: this.tradingState.sleeping !== false,
-        nextEvent: this.tradingState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: executed.every((entry) => entry.ok),
-        skipped: false,
-        marketDate: tradingDay.marketDate,
-        executed,
-        nextEvent: this.tradingState.nextEvent,
-      };
-    })().finally(() => {
-      this.tradingPhasePromise = null;
-    });
-
-    return this.tradingPhasePromise;
-  }
-
   async maybeRunCryptoTradingAutomation(nowMs = Date.now()) {
     if (!this.cryptoTradingEnabled || this.stopping || !this.cryptoTradingOrchestrator) {
       return { ok: false, skipped: true, reason: 'crypto_trading_disabled' };
@@ -7062,17 +6569,6 @@ class SupervisorDaemon {
           issueCount: 0,
         },
       },
-      tradingAutomation: {
-        enabled: this.tradingEnabled,
-        manualOnly: this.manualTradingOnly,
-        running: Boolean(this.tradingPhasePromise),
-        statePath: this.tradingStatePath,
-        marketDate: this.tradingState.marketDate || null,
-        sleeping: this.tradingState.sleeping !== false,
-        phases: this.tradingState.phases || {},
-        nextEvent: this.tradingState.nextEvent || null,
-        lastSummary: this.lastTradingSummary || null,
-      },
       tradeReconciliationAutomation: {
         enabled: Boolean(this.getTradeReconciliationOrchestrator()),
         running: Boolean(this.tradeReconciliationPromise),
@@ -7124,15 +6620,6 @@ class SupervisorDaemon {
           recentTransfers: this.smartMoneyScanner.state?.recentTransfers?.length || 0,
           convergenceSignals: this.smartMoneyScanner.state?.convergenceSignals?.length || 0,
         } : null,
-      },
-      circuitBreaker: {
-        enabled: Boolean(this.circuitBreaker),
-        manualOnly: true,
-        running: Boolean(this.circuitBreaker?.running),
-        pollMs: this.circuitBreaker?.pollMs || null,
-        passCount: this.circuitBreaker?.passCount || 0,
-        highWaterMarks: this.circuitBreaker ? Object.keys(this.circuitBreaker.highWaterMarks).length : 0,
-        recentExits: this.circuitBreaker?.exits?.slice(-5) || [],
       },
       [private-live-ops]Automation: {
         enabled: this.[private-live-ops]Enabled,

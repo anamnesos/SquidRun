@@ -431,7 +431,6 @@ function buildTimeAwareness(input = {}) {
   const consultationMs = selectLatestTimestamp(
     override.lastConsultationAtMs,
     supervisorStatus?.cryptoTradingAutomation?.lastProcessedAt,
-    supervisorStatus?.tradingAutomation?.lastProcessedAt,
     consultationFromComms?.timestampMs
   );
   raw.lastConsultationAtMs = consultationMs;
