@@ -261,7 +261,6 @@ describe('supervisor-daemon integrations', () => {
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
       tradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
@@ -363,7 +362,6 @@ describe('supervisor-daemon integrations', () => {
       return { ok: true, skipped: true };
     });
     daemon.maybeRunTradeReconciliation = skippedLane;
-    daemon.maybeRunNewsScanAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
     daemon.maybeRunTokenomistAutomation = skippedLane;
     daemon.maybeRunSparkAutomation = skippedLane;
@@ -421,7 +419,6 @@ describe('supervisor-daemon integrations', () => {
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
       tradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
@@ -490,7 +487,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-heartbeat.pid'),
@@ -551,7 +547,6 @@ describe('supervisor-daemon integrations', () => {
       tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
-      newsScanResult: { skipped: true },
       marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
@@ -603,7 +598,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-relaunch.pid'),
@@ -699,7 +693,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-crash-restart.pid'),
@@ -730,7 +723,6 @@ describe('supervisor-daemon integrations', () => {
       tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
-      newsScanResult: { skipped: true },
       marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
@@ -830,7 +822,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-backoff-expired-restart.pid'),
@@ -1680,7 +1671,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunPositionAttributionReconciliation = skippedLane;
     daemon.maybeRunCryptoTradingAutomation = skippedLane;
     daemon.maybeRunTradeReconciliation = skippedLane;
-    daemon.maybeRunNewsScanAutomation = skippedLane;
     daemon.maybeRunMarketResearchAutomation = skippedLane;
     daemon.maybeRunTokenomistAutomation = skippedLane;
     daemon.maybeRunSparkAutomation = skippedLane;
@@ -1960,7 +1950,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: true,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       tradingOrchestrator,
@@ -1978,7 +1967,6 @@ describe('supervisor-daemon integrations', () => {
     tradingDaemon.maybeRunTradingAutomation = skippedLane;
     tradingDaemon.maybeRunPositionAttributionReconciliation = skippedLane;
     tradingDaemon.maybeRunCryptoTradingAutomation = skippedLane;
-    tradingDaemon.maybeRunNewsScanAutomation = skippedLane;
     tradingDaemon.maybeRunMarketResearchAutomation = skippedLane;
     tradingDaemon.maybeRunTokenomistAutomation = skippedLane;
     tradingDaemon.maybeRunSparkAutomation = skippedLane;
@@ -3180,136 +3168,6 @@ describe('supervisor-daemon integrations', () => {
     await stockDaemon.stop('test-cleanup-stock-default-off');
   });
 
-  test('runs a proactive news scan loop and stores level-0 results without Telegram spam', async () => {
-    const originalNewsAutomation = process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
-    process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = '1';
-    const newsDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      newsScanEnabled: true,
-      newsScanIntervalMinutes: 120,
-      newsVetoModule: {
-        fetchTier1News: jest.fn().mockResolvedValue([{
-          headline: 'CoinDesk: BTC ETF inflows stabilize after volatile week',
-          source: 'CoinDesk',
-          url: 'https://example.com/btc',
-          createdAt: '2026-04-03T03:58:00.000Z',
-        }]),
-        buildEventVeto: jest.fn().mockResolvedValue({
-          decision: 'CLEAR',
-          sourceTier: 'feeds_checked',
-          matchedEvents: [],
-        }),
-      },
-      newsScanOpenPositionProvider: jest.fn().mockResolvedValue([]),
-      pidPath: path.join(tempRoot, 'news.pid'),
-      statusPath: path.join(tempRoot, 'news-status.json'),
-      logPath: path.join(tempRoot, 'news.log'),
-      taskLogDir: path.join(tempRoot, 'news-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'news-wake.signal'),
-      newsScanStatePath: path.join(tempRoot, 'news-state.json'),
-    });
-
-    try {
-      jest.spyOn(newsDaemon, 'getCryptoSymbols').mockReturnValue(['BTC/USD', 'ETH/USD']);
-      const architectSpy = jest.spyOn(newsDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(newsDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      newsDaemon.newsScanState.lastProcessedAt = '2026-04-03T02:00:00.000Z';
-
-      const result = await newsDaemon.maybeRunNewsScanAutomation(Date.parse('2026-04-03T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(newsDaemon.lastNewsScanSummary).toEqual(expect.objectContaining({
-        status: 'alert_sent',
-        lastProcessedAt: '2026-04-03T04:00:00.000Z',
-      }));
-      expect(newsDaemon.newsScanState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_0',
-        headlineCount: 1,
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][NEWS]');
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      if (originalNewsAutomation == null) {
-        delete process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
-      } else {
-        process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = originalNewsAutomation;
-      }
-      await newsDaemon.stop('test-cleanup-news-scan');
-    }
-  });
-
-  test('routes a level-2 news scan alert to Architect only when it hits a live position', async () => {
-    const originalNewsAutomation = process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
-    process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = '1';
-    const newsDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      newsScanEnabled: true,
-      newsScanIntervalMinutes: 120,
-      newsVetoModule: {
-        fetchTier1News: jest.fn().mockResolvedValue([{
-          headline: 'Reuters Best: Exchange outage halts BTC withdrawals',
-          source: 'Reuters Best',
-          url: 'https://example.com/outage',
-          createdAt: '2026-04-03T03:55:00.000Z',
-        }]),
-        buildEventVeto: jest.fn().mockResolvedValue({
-          decision: 'VETO',
-          sourceTier: 'tier1',
-          matchedEvents: [{
-            headline: 'Reuters Best: Exchange outage halts BTC withdrawals',
-            source: 'Reuters Best',
-            severity: 'VETO',
-          }],
-        }),
-      },
-      newsScanOpenPositionProvider: jest.fn().mockResolvedValue([{
-        coin: 'BTC',
-        side: 'long',
-        size: 0.01,
-      }]),
-      pidPath: path.join(tempRoot, 'news-alert.pid'),
-      statusPath: path.join(tempRoot, 'news-alert-status.json'),
-      logPath: path.join(tempRoot, 'news-alert.log'),
-      taskLogDir: path.join(tempRoot, 'news-alert-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'news-alert-wake.signal'),
-      newsScanStatePath: path.join(tempRoot, 'news-alert-state.json'),
-    });
-
-    try {
-      jest.spyOn(newsDaemon, 'getCryptoSymbols').mockReturnValue(['BTC/USD', 'ETH/USD']);
-      const architectSpy = jest.spyOn(newsDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(newsDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      newsDaemon.newsScanState.lastProcessedAt = '2026-04-03T02:00:00.000Z';
-
-      await newsDaemon.maybeRunNewsScanAutomation(Date.parse('2026-04-03T04:05:00.000Z'));
-
-      expect(newsDaemon.newsScanState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_2',
-        reason: 'live_position_event_risk',
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      if (originalNewsAutomation == null) {
-        delete process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION;
-      } else {
-        process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = originalNewsAutomation;
-      }
-      await newsDaemon.stop('test-cleanup-news-scan-alert');
-    }
-  });
-
   test('runs market research automation and stores a macro-plus-news summary without Telegram spam by default', async () => {
     const originalResearchAutomation = process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION;
     process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = '1';
@@ -3328,7 +3186,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: true,
       marketResearchIntervalMinutes: 240,
       newsVetoModule: {
@@ -3404,7 +3261,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       eunbyeolCheckInEnabled: true,
       eunbyeolCheckInIntervalMinutes: 240,
       eunbyeolCheckInSilenceMs: 24 * 60 * 60 * 1000,
@@ -3472,7 +3328,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       tokenomistEnabled: true,
       tokenomistIntervalMinutes: 360,
@@ -3528,7 +3383,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       tokenomistEnabled: false,
       sparkMonitorEnabled: true,
@@ -3588,7 +3442,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: false,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -3700,7 +3553,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
       marketScanner: {
@@ -3782,7 +3634,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -3908,7 +3759,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -4019,7 +3869,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
       marketScannerImmediateConsultationEnabled: true,
@@ -4104,7 +3953,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: true,
       marketScanner: {
@@ -4174,7 +4022,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: false,
       cryptoTradingOrchestrator: {
@@ -4248,7 +4095,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       eunbyeolCheckInEnabled: false,
       hyperliquidExecutionEnabled: true,
@@ -4297,7 +4143,6 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       tradingEnabled: false,
       cryptoTradingEnabled: true,
-      newsScanEnabled: false,
       marketResearchEnabled: false,
       marketScannerEnabled: false,
       cryptoTradingOrchestrator: {

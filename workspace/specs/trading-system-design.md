@@ -38,7 +38,7 @@ Market Data (Alpaca) → Data Ingestion Layer
 ### Agent Roles (Trading Mode)
 
 **Oracle (Pane 3 / Gemini):**
-- Pre-market news scanning (earnings, SEC filings, macro events)
+- Pre-market market context review (earnings, SEC filings, macro events)
 - Sentiment analysis on watchlist stocks
 - Technical indicator calculation
 - Produces structured signal: {ticker, direction, confidence, reasoning}

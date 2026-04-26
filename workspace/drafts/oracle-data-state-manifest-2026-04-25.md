@@ -85,7 +85,6 @@ Update/remove candidates:
 | `cognitive-memory.db ✅` as active memory | `memory_recall_items` rowid `372` says cognitive-memory DB exists as SQLite but empty. | File is still 0 bytes. | Mark as dead/rebuild-target, not active memory. |
 | `telegram-routing.json` | `memory_recall_items` rowid `109` says check whether `telegram-routing.json` is loaded. | Runtime files exist, but this is no longer safe as a standalone routing authority after the profile-aware routing fixes. | Update to current routing source (`hm-telegram-routing.js` / profile route logic) or remove as startup instruction. |
 | `hm-capa...` / capability command | `memory_recall_items` rowid `560` references `node ui/scripts/hm-capa...`. | Actual script is `ui/scripts/hm-capabilities.js`; no `hm-capa` command found. | Update command reference. |
-| `news-scan-supervisor-state.json` | `memory_recall_items` rowid `303` references persisted news-scan supervisor state. | Runtime JSON files exist but are old (`2026-04-17` last write at inspection); not proof of currently running automation. | Mark as stale/current-state-unsafe unless live supervisor status confirms it. |
 | `../../scripts/hm-telegram-routing` packaged require warning | `memory_recall_items` rowid `519`. | Source file exists as `ui/scripts/hm-telegram-routing.js`; old packaged-path warning may no longer reflect current runtime after Builder fixes. | Keep as historical incident only, not current instruction. |
 
 References that looked missing but are normalized-path false positives:
@@ -101,7 +100,6 @@ Approved annotation status:
 - `cognitive-memory.db`: annotated 36 `memory_recall_items` rows, including rowid `372`, with `oracleCleanupAnnotations[].key = cognitive-memory-active-claim`.
 - `telegram-routing.json`: annotated rowid `109` with `oracleCleanupAnnotations[].key = telegram-routing-json`.
 - `hm-capa...`: annotated rowid `560` with `oracleCleanupAnnotations[].key = hm-capa-command`.
-- `news-scan-supervisor-state.json`: annotated rowid `303` with `oracleCleanupAnnotations[].key = news-scan-supervisor-state`.
 - `inject-evidence-images.js`: no team-memory row matched; no row was created or deleted.
 
 ## 5. Comms Journal Historical/Superseded Annotations

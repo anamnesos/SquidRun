@@ -50,7 +50,7 @@ Severity: High for trading trust and live-risk context.
 Paper trading is the only confirmed exact fake-removal pattern with an explicit "removed per James directive" comment. Other lanes share the stale-disabled-status shape:
 
 - `tradingAutomation` / Alpaca stocks: disabled/manual-only, but status still carries stale market phase data from `2026-03-19`; docs still describe Alpaca-driven stock supervisor operations.
-- `newsScanAutomation`, `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled, but status still carries stale run metadata.
+- `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled, but status still carries stale run metadata.
 - `oracleWatch`: enabled and heartbeating, but supervisor status can read `running: false` because it is not inside an active tick at that instant. This can be misread as "watch loop dead."
 - `cryptoTradingAutomation` and `marketScannerAutomation`: not fake removals, but they remain broad automated consult/scanner lanes while the strategy directive has shifted to ORDI-pattern gating. They need clearer gating/status language so startup context does not imply generic broad-trade readiness.
 
@@ -183,7 +183,7 @@ Severity: High. This is exactly the pattern James called out.
 These are not confirmed fake-removals, but they have the same user-facing trust risk if surfaced as startup truth:
 
 - `tradingAutomation`: disabled/manual-only with stale March market-phase state.
-- `newsScanAutomation`, `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled but still present in supervisor status with old timestamps or events.
+- `marketResearchAutomation`, `eunbyeolCheckInAutomation`, `yieldRouterAutomation`: disabled but still present in supervisor status with old timestamps or events.
 - `paperCompetition`: still present as a status concept even when empty.
 
 Severity: Medium. If they are intentionally dormant, status should either omit them from startup summaries or mark them explicitly as archived/dormant with no live schedule semantics.

@@ -77,7 +77,6 @@ if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'eunbyeol') {
   process.env.SQUIDRUN_SPARK_MONITOR_AUTOMATION = '0';
   process.env.SQUIDRUN_TOKENOMIST_AUTOMATION = '0';
   process.env.SQUIDRUN_SAYLOR_WATCHER = '0';
-  process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION = '0';
   process.env.SQUIDRUN_TRADING_AUTOMATION = '0';
   process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION = '0';
   process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION = '0';
@@ -200,7 +199,6 @@ const DEFAULT_AGENT_TASK_QUEUE_PATH = resolveRuntimePath('agent-task-queue.json'
 const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
-const DEFAULT_NEWS_SCAN_STATE_PATH = resolveRuntimePath('news-scan-supervisor-state.json');
 const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
 const DEFAULT_TOKENOMIST_STATE_PATH = resolveRuntimePath('tokenomist-supervisor-state.json');
 const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-supervisor-state.json');
@@ -263,10 +261,6 @@ const TRADING_PHASES = Object.freeze([
   { key: 'market_close_review', label: 'Market close review', anchor: 'close', offsetMinutes: 0 },
   { key: 'end_of_day', label: 'End of day', anchor: 'close', offsetMinutes: 30 },
 ]);
-const NEWS_SCAN_PHASES = Object.freeze([
-  { key: 'news_scan', label: 'News and market scan' },
-]);
-const DEFAULT_NEWS_SCAN_INTERVAL_MINUTES = 2 * 60;
 const MARKET_RESEARCH_PHASES = Object.freeze([
   { key: 'market_research', label: 'Market research scan' },
 ]);
@@ -960,17 +954,6 @@ function defaultYieldRouterState() {
   };
 }
 
-function defaultNewsScanState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    lastAlertFingerprint: null,
-    updatedAt: null,
-  };
-}
-
 function defaultMarketResearchState() {
   return {
     lastProcessedAt: null,
@@ -1038,51 +1021,6 @@ function getDateKeyInTimeZone(value = new Date(), timeZone = tradingScheduler.MA
 function startOfUtcDay(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
-}
-
-function buildNewsScanDailySchedule(referenceDate = new Date(), options = {}) {
-  const intervalMinutes = Math.max(1, Math.floor(Number(options.intervalMinutes) || DEFAULT_NEWS_SCAN_INTERVAL_MINUTES));
-  const start = startOfUtcDay(referenceDate);
-  const marketDate = start.toISOString().slice(0, 10);
-  const schedule = [];
-
-  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += intervalMinutes) {
-    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
-    for (const phase of NEWS_SCAN_PHASES) {
-      schedule.push({
-        key: phase.key,
-        label: phase.label,
-        marketDate,
-        scheduledAt: scheduledAt.toISOString(),
-        scheduledTimeLocal: scheduledAt.toISOString(),
-        displayTimeZone: 'UTC',
-        windowKey: scheduledAt.toISOString(),
-      });
-    }
-  }
-
-  return {
-    marketDate,
-    intervalMinutes,
-    displayTimeZone: 'UTC',
-    schedule,
-  };
-}
-
-function getNextNewsScanEvent(referenceDate = new Date(), options = {}) {
-  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  for (let offset = 0; offset < 3; offset += 1) {
-    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-    const day = buildNewsScanDailySchedule(candidateDate, options);
-    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-    if (nextEvent) {
-      return {
-        ...nextEvent,
-        day,
-      };
-    }
-  }
-  return null;
 }
 
 function buildTokenomistDailySchedule(referenceDate = new Date(), options = {}) {
@@ -1951,39 +1889,8 @@ class SupervisorDaemon {
       }))
       : null;
 
-    this.newsScanEnabled = options.newsScanEnabled !== false
-      && process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION !== '0';
-    this.newsScanIntervalMinutes = Math.max(
-      15,
-      Math.floor(Number(options.newsScanIntervalMinutes) || DEFAULT_NEWS_SCAN_INTERVAL_MINUTES)
-    );
     this.caseOperationsPath = options.caseOperationsPath || path.join(this.projectRoot, 'workspace', 'knowledge', 'case-operations.md');
-    this.newsScanStatePath = options.newsScanStatePath || DEFAULT_NEWS_SCAN_STATE_PATH;
-    this.newsScanState = {
-      ...defaultNewsScanState(),
-      ...(readJsonFile(this.newsScanStatePath, defaultNewsScanState()) || {}),
-    };
-    this.newsScanPhasePromise = null;
-    this.lastNewsScanSummary = this.newsScanEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
     this.newsVetoModule = options.newsVetoModule || eventVeto;
-    this.newsScanOpenPositionProvider = options.newsScanOpenPositionProvider || (async () => {
-      const state = await this.hyperliquidExecutor?.getAccountState?.().catch(() => null);
-      return Array.isArray(state?.positions) ? state.positions : [];
-    });
     this.marketResearchEnabled = options.marketResearchEnabled !== false
       && process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION !== '0';
     this.marketResearchIntervalMinutes = Math.max(
@@ -2163,7 +2070,10 @@ class SupervisorDaemon {
       order: 'desc',
       limit: 200,
     }));
-    this.marketResearchOpenPositionProvider = options.marketResearchOpenPositionProvider || this.newsScanOpenPositionProvider;
+    this.marketResearchOpenPositionProvider = options.marketResearchOpenPositionProvider || (async () => {
+      const state = await this.hyperliquidExecutor?.getAccountState?.().catch(() => null);
+      return Array.isArray(state?.positions) ? state.positions : [];
+    });
     const yieldRouterAutomationRequested = options.yieldRouterEnabled === true
       || process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION === '1';
     this.yieldRouterEnabled = Boolean(yieldRouterAutomationRequested);
@@ -2760,7 +2670,6 @@ class SupervisorDaemon {
     const positionAttributionReconciliationResult = await this.maybeRunPositionAttributionReconciliation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
-    const newsScanResult = await this.maybeRunNewsScanAutomation(nowMs);
     const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
     const tokenomistResult = await this.maybeRunTokenomistAutomation(nowMs);
     const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
@@ -2784,7 +2693,6 @@ class SupervisorDaemon {
       positionAttributionReconciliationResult,
       tradeReconciliationResult,
       cryptoTradingResult,
-      newsScanResult,
       marketResearchResult,
       tokenomistResult,
       sparkMonitorResult,
@@ -2854,7 +2762,6 @@ class SupervisorDaemon {
       && summary.positionAttributionReconciliationResult.skipped !== true;
     const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
-    const newsScanRan = summary?.newsScanResult && summary.newsScanResult.skipped !== true;
     const marketResearchRan = summary?.marketResearchResult && summary.marketResearchResult.skipped !== true;
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
     const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
@@ -2872,7 +2779,6 @@ class SupervisorDaemon {
       || positionAttributionReconciliationRan
       || tradeReconciliationRan
       || cryptoTradingRan
-      || newsScanRan
       || marketResearchRan
       || saylorWatcherRan
       || oracleWatchRan
@@ -3013,11 +2919,6 @@ class SupervisorDaemon {
     writeJsonFile(this.yieldRouterStatePath, this.yieldRouterState);
   }
 
-  persistNewsScanState() {
-    this.newsScanState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.newsScanStatePath, this.newsScanState);
-  }
-
   persistMarketResearchState() {
     this.marketResearchState.updatedAt = new Date().toISOString();
     writeJsonFile(this.marketResearchStatePath, this.marketResearchState);
@@ -3083,39 +2984,6 @@ class SupervisorDaemon {
       '',
       '오늘/내일 진행 상황이나 필요한 자료 있으면 보내주세요. 제가 이어서 바로 정리해둘게요.',
     ].filter((line) => line !== null).join('\n');
-  }
-
-  buildNewsScanTelegramAlert(summary = {}) {
-    const findings = Array.isArray(summary.findings) ? summary.findings : [];
-    const top = findings[0] || {};
-    const headline = String(top.headline || top.summary || summary.reason || 'significant news detected').trim();
-    const subjects = Array.isArray(summary.livePositionSymbols) && summary.livePositionSymbols.length > 0
-      ? `live positions ${summary.livePositionSymbols.join(', ')}`
-      : (summary.caseMatches?.map((entry) => entry.label).join(', ') || 'active cases');
-    return [
-      '[PROACTIVE] News scan found a significant headline.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `Scope: ${subjects}`,
-      `Reason: ${summary.reason || 'headline matched active scope'}`,
-      `Headline: ${headline}`,
-    ].join('\n');
-  }
-
-  buildNewsScanArchitectAlert(summary = {}) {
-    const findings = Array.isArray(summary.findings) ? summary.findings : [];
-    const top = findings[0] || {};
-    const headline = String(top.headline || top.summary || summary.reason || 'no significant headline').trim();
-    const scope = Array.isArray(summary.livePositionSymbols) && summary.livePositionSymbols.length > 0
-      ? `live positions ${summary.livePositionSymbols.join(', ')}`
-      : (Array.isArray(summary.scanSymbols) ? summary.scanSymbols.join(', ') : 'watchlist');
-    return [
-      '[PROACTIVE][NEWS] News scan complete.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `Decision: ${summary.decision || 'DEGRADED'} (${summary.sourceTier || 'none'})`,
-      `Scope: ${scope}`,
-      `Reason: ${summary.reason || 'stored_for_review'}`,
-      `Headline: ${headline}`,
-    ].join('\n');
   }
 
   buildMarketResearchArchitectAlert(summary = {}) {
@@ -3764,173 +3632,6 @@ class SupervisorDaemon {
       summary.topItems?.length ? `Top items: ${summary.topItems.join(' | ')}` : null,
       summary.draft ? `Draft:\n${summary.draft}` : null,
     ].filter(Boolean).join('\n');
-  }
-
-  async runNewsScanPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const watchlistSymbols = await this.getCryptoSymbols();
-    const openPositions = await Promise.resolve(this.newsScanOpenPositionProvider()).catch(() => []);
-    const livePositionSymbols = Array.from(new Set(
-      (Array.isArray(openPositions) ? openPositions : [])
-        .map((position) => normalizeNewsTicker(position?.coin || position?.asset || position?.ticker || ''))
-        .filter(Boolean)
-    ));
-    const scanSymbols = Array.from(new Set([...livePositionSymbols, ...watchlistSymbols]));
-    const caseSignals = this.readActiveCaseSignals();
-    const newsItems = await this.newsVetoModule.fetchTier1News({
-      symbols: scanSymbols,
-      timeoutMs: 8_000,
-      limit: 25,
-    }).catch(() => []);
-    const veto = await this.newsVetoModule.buildEventVeto({
-      symbols: scanSymbols,
-      now: scannedAt,
-      newsItems,
-    }).catch(() => ({
-      decision: 'DEGRADED',
-      matchedEvents: [],
-      eventSummary: 'news_scan_failed',
-      sourceTier: 'none',
-    }));
-
-    const lowerCaseSignals = caseSignals.map((entry) => ({
-      label: entry.label,
-      keywords: entry.keywords.map((keyword) => String(keyword || '').toLowerCase()),
-    }));
-    const caseMatches = (Array.isArray(newsItems) ? newsItems : []).flatMap((item) => {
-      const haystack = `${item?.headline || ''} ${item?.summary || ''}`.toLowerCase();
-      return lowerCaseSignals
-        .filter((signal) => signal.keywords.some((keyword) => keyword && haystack.includes(keyword)))
-        .map((signal) => ({
-          label: signal.label,
-          headline: String(item?.headline || '').trim(),
-          source: String(item?.source || '').trim(),
-          url: String(item?.url || '').trim(),
-        }));
-    });
-
-    let alertLevel = 'level_0';
-    let reason = 'stored_for_review';
-    if (livePositionSymbols.length > 0 && ['CAUTION', 'VETO'].includes(String(veto?.decision || '').toUpperCase())) {
-      alertLevel = 'level_2';
-      reason = 'live_position_event_risk';
-    } else if (caseMatches.length > 0) {
-      alertLevel = 'level_2';
-      reason = 'active_case_headline_match';
-    }
-
-    const findings = Array.isArray(veto?.matchedEvents) && veto.matchedEvents.length > 0
-      ? veto.matchedEvents
-      : (Array.isArray(newsItems) ? newsItems.slice(0, 5) : []);
-    const alertFingerprint = buildNewsFingerprint({
-      level: alertLevel,
-      reason,
-      headlines: findings.map((item) => item?.headline || item?.summary || ''),
-    });
-    const shouldNotifyArchitect = Boolean(alertFingerprint)
-      && alertFingerprint !== this.newsScanState.lastAlertFingerprint;
-    const summary = {
-      ok: true,
-      key: event?.key || 'news_scan',
-      scannedAt,
-      scanSymbols,
-      livePositionSymbols,
-      watchlistSize: watchlistSymbols.length,
-      headlineCount: Array.isArray(newsItems) ? newsItems.length : 0,
-      decision: veto?.decision || 'DEGRADED',
-      sourceTier: veto?.sourceTier || 'none',
-      alertLevel,
-      reason,
-      caseMatches: caseMatches.slice(0, 5),
-      findings: findings.slice(0, 5),
-      notified: shouldNotifyArchitect,
-    };
-
-    if (shouldNotifyArchitect) {
-      this.notifyArchitectInternal(this.buildNewsScanArchitectAlert(summary), 'news_scan');
-      this.newsScanState.lastAlertFingerprint = alertFingerprint;
-    }
-    return summary;
-  }
-
-  async maybeRunNewsScanAutomation(nowMs = Date.now()) {
-    if (!this.newsScanEnabled || this.stopping || !this.newsVetoModule) {
-      return { ok: false, skipped: true, reason: 'news_scan_disabled' };
-    }
-    if (this.newsScanPhasePromise) {
-      return this.newsScanPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextNewsScanEvent(now, {
-      intervalMinutes: this.newsScanIntervalMinutes,
-    });
-    const newsScanDay = buildNewsScanDailySchedule(now, {
-      intervalMinutes: this.newsScanIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.newsScanState.lastProcessedAt
-      ? new Date(this.newsScanState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = newsScanDay.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.newsScanState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistNewsScanState();
-
-    if (dueEvents.length === 0) {
-      this.lastNewsScanSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_news_scan',
-        nextEvent: this.newsScanState.nextEvent,
-      };
-    }
-
-    this.newsScanPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runNewsScanPhase(event);
-        executed.push(phaseResult);
-        this.newsScanState.lastProcessedAt = event.scheduledAt;
-        this.newsScanState.lastResult = phaseResult;
-        this.newsScanState.lastScan = phaseResult;
-        this.persistNewsScanState();
-      }
-
-      const upcomingEvent = getNextNewsScanEvent(new Date(), {
-        intervalMinutes: this.newsScanIntervalMinutes,
-      });
-      this.newsScanState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistNewsScanState();
-      this.lastNewsScanSummary = {
-        enabled: true,
-        status: executed.some((entry) => entry.notified) ? 'alert_sent' : 'scan_complete',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: true,
-        skipped: false,
-        executed,
-        nextEvent: this.newsScanState.nextEvent,
-      };
-    })().finally(() => {
-      this.newsScanPhasePromise = null;
-    });
-
-    return this.newsScanPhasePromise;
   }
 
   async runMarketResearchPhase(event) {
@@ -7652,15 +7353,6 @@ class SupervisorDaemon {
         passCount: this.circuitBreaker?.passCount || 0,
         highWaterMarks: this.circuitBreaker ? Object.keys(this.circuitBreaker.highWaterMarks).length : 0,
         recentExits: this.circuitBreaker?.exits?.slice(-5) || [],
-      },
-      newsScanAutomation: {
-        enabled: this.newsScanEnabled,
-        running: Boolean(this.newsScanPhasePromise),
-        intervalMinutes: this.newsScanIntervalMinutes,
-        statePath: this.newsScanStatePath,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent || null,
-        lastSummary: this.lastNewsScanSummary || null,
       },
       marketResearchAutomation: {
         enabled: this.marketResearchEnabled,

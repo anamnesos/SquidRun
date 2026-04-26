@@ -455,19 +455,6 @@ function buildTimeAwareness(input = {}) {
     lines.push(`Last Hyperliquid check: ${describeElapsedSince(hyperliquidCheckMs, { nowMs })}`);
   }
 
-  const newsScanMs = selectLatestTimestamp(
-    override.lastNewsScanAtMs,
-    getNestedValue(supervisorStatus, 'newsScanAutomation.lastProcessedAt'),
-    getNestedValue(supervisorStatus, 'eventNewsAutomation.lastProcessedAt'),
-    getNestedValue(supervisorStatus, 'marketNewsAutomation.lastProcessedAt')
-  );
-  raw.lastNewsScanAtMs = newsScanMs;
-  lines.push(
-    Number.isFinite(newsScanMs)
-      ? `Last news scan: ${describeElapsedSince(newsScanMs, { nowMs })}`
-      : 'Last news scan: never (not automated)'
-  );
-
   if (shouldBoostKoreanCase(input, input.message || input.text || input.query || '')) {
     const eunbyeolFromComms = findLatestCommsTimestamp(commsRows, (row) => {
       const metadata = asObject(row.metadata);
