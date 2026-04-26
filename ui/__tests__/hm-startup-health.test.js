@@ -3,7 +3,9 @@ const os = require('os');
 const path = require('path');
 
 const {
+  REQUIRED_ACTIVE_LANES,
   SCHEDULED_PHASE_STALE_GRACE_MS,
+  collectDisabledRequiredLanes,
   inspectLaneFreshness,
 } = require('../scripts/hm-startup-health');
 
@@ -103,5 +105,17 @@ describe('hm-startup-health lane freshness', () => {
       staleAfterMinutes: 45,
     }));
     expect(lane.reason).toBeUndefined();
+  });
+
+  test('warns only for required active lanes disabled in supervisor status', () => {
+    const lanesOff = collectDisabledRequiredLanes({
+      oracleWatch: { enabled: false },
+      cryptoTradingAutomation: { enabled: true },
+      marketScannerAutomation: { enabled: true },
+      optionalDormantLane: { enabled: false },
+    });
+
+    expect(lanesOff).toEqual(['oracleWatch']);
+    expect(REQUIRED_ACTIVE_LANES.has('optionalDormantLane')).toBe(false);
   });
 });

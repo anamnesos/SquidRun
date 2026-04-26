@@ -112,6 +112,21 @@ const TRADING_STATUS_LANE_KEYS = new Set([
   'cryptoTradingAutomation',
   'marketScannerAutomation',
 ]);
+const REQUIRED_ACTIVE_LANES = new Set([
+  'oracleWatch',
+  'cryptoTradingAutomation',
+  'marketScannerAutomation',
+]);
+
+function collectDisabledRequiredLanes(status = {}) {
+  const lanesOff = [];
+  for (const lane of REQUIRED_ACTIVE_LANES) {
+    if (status?.[lane]?.enabled === false) {
+      lanesOff.push(lane);
+    }
+  }
+  return lanesOff;
+}
 
 function stripTradingFromReport(report) {
   if (report.defi) delete report.defi;
@@ -306,10 +321,7 @@ function run({ autoFix = true } = {}) {
   }
 
   if (status) {
-    const lanesOff = [];
-    for (const k of ['oracleWatch', 'cryptoTradingAutomation', 'marketScannerAutomation']) {
-      if (status[k] && status[k].enabled === false) lanesOff.push(k);
-    }
+    const lanesOff = collectDisabledRequiredLanes(status);
     if (lanesOff.length > 0) {
       report.warnings.push({ kind: 'lanes_still_disabled_in_status', lanes: lanesOff, note: 'may need supervisor restart to pick up env/settings' });
     }
@@ -512,6 +524,8 @@ if (require.main === module) {
 
 module.exports = {
   SCHEDULED_PHASE_STALE_GRACE_MS,
+  REQUIRED_ACTIVE_LANES,
+  collectDisabledRequiredLanes,
   inspectLaneFreshness,
   run,
 };
