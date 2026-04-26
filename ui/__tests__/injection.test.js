@@ -44,6 +44,8 @@ describe('Terminal Injection', () => {
     CLAUDE_CHUNK_THRESHOLD_BYTES: 1024,
     CLAUDE_CHUNK_YIELD_MS: 0,
     HM_SEND_FAST_CHUNK_THRESHOLD_BYTES: 256,
+    HM_SEND_FAST_CHUNK_SIZE_BYTES: 256,
+    HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS: 1,
     HM_SEND_FAST_ENTER_DELAY_MS: 500,
   };
 
@@ -1177,7 +1179,7 @@ describe('Terminal Injection', () => {
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
         expect.stringMatching(timestampedPayloadRegex(`${'L'.repeat(1050)}\nline-two`)),
-        expect.objectContaining({ waitForWriteAck: true }),
+        expect.objectContaining({ chunkSize: 256, yieldEveryChunks: 1, waitForWriteAck: true }),
         expect.any(Object)
       );
       expect(mockPty.write).not.toHaveBeenCalledWith('1', '\r');
@@ -1256,7 +1258,7 @@ describe('Terminal Injection', () => {
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
         expect.stringMatching(timestampedPayloadRegex('M'.repeat(300))),
-        expect.objectContaining({ waitForWriteAck: true }),
+        expect.objectContaining({ chunkSize: 256, yieldEveryChunks: 1, waitForWriteAck: true }),
         expect.any(Object)
       );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
