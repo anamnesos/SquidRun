@@ -3345,19 +3345,16 @@ class SquidRunApp {
     }
 
     this.startSmsPoller();
-    // Telegram bot getUpdates is single-consumer. With two SquidRun windows
-    // (main + private-profile) running off the same TELEGRAM_BOT_TOKEN, both pollers
-    // race on the same long-poll connection and Telegram returns HTTP 409
-    // "terminated by other getUpdates request", silently losing inbound from
-    // 은별's chat 8754356993. The private-profile window owns case comms and is the
-    // only window that needs inbound routing for that chat, so it gets the
-    // sole poller. The main/trading window now skips polling entirely; the user's
-    // chat inbound goes via SMS/terminal while at PC.
-    if (String(this.activeProfileName || '').toLowerCase() === 'private-profile') {
-      this.startTelegramPoller();
-    } else {
-      log.info('Telegram', `Polling disabled for profile=${this.activeProfileName || 'main'} (single-consumer constraint; private-profile window owns the bot)`);
-    }
+    // Both windows poll Telegram. Profile-scoped chat filter (de033db) ensures
+    // each window keeps only its own chats — private-profile window keeps private-profile-listed
+    // chats, main window rejects them. The two pollers will race on getUpdates
+    // and one will 409, but Telegram's offset semantics mean batches arrive at
+    // whichever window wins each round; both windows still see all messages over
+    // time and filter to keep what's theirs. The previous "private-profile-only poller"
+    // experiment (5c83159) made the user's chat inbound silently 100% lossy and is
+    // reverted. Proper fix: forward non-window-owned chats to a shared inbox or
+    // give 은별 her own bot (separate token, no shared poller).
+    this.startTelegramPoller();
     this.startBridgeClient();
     this.startAutoHandoffMaterializer();
 
