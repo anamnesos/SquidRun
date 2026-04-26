@@ -121,10 +121,6 @@ jest.mock('../modules/trading/prediction-tracker', () => ({
   PREDICTIONS_FILE: '/tmp/prediction-log.json',
 }));
 
-jest.mock('../modules/main/comms-journal', () => ({
-  queryCommsJournalEntries: jest.fn(() => []),
-}));
-
 const chokidar = require('chokidar');
 const fs = require('fs');
 const os = require('os');
@@ -137,7 +133,6 @@ const tradingWatchlist = require('../modules/trading/watchlist');
 const dynamicWatchlist = require('../modules/trading/dynamic-watchlist');
 const hyperliquidNativeLayer = require('../modules/trading/hyperliquid-native-layer');
 const predictionTracker = require('../modules/trading/prediction-tracker');
-const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const { SupervisorDaemon, resolveProjectUiScriptPath } = require('../supervisor-daemon');
 
 function createMockStore() {
@@ -220,8 +215,6 @@ describe('supervisor-daemon integrations', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     watcherRecords.length = 0;
-    queryCommsJournalEntries.mockReset();
-    queryCommsJournalEntries.mockReturnValue([]);
     hyperliquidClient.getOpenPositions.mockReset();
     hyperliquidClient.getOpenPositions.mockResolvedValue([]);
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-supervisor-test-'));
@@ -260,7 +253,6 @@ describe('supervisor-daemon integrations', () => {
       sleepConsolidator: mockSleepConsolidator,
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
       statusPath: path.join(tempRoot, 'supervisor-status.json'),
       logPath: path.join(tempRoot, 'supervisor.log'),
@@ -365,7 +357,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunSaylorWatcher = skippedLane;
     daemon.maybeRunOracleWatchEngine = skippedLane;
     daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
-    daemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
     daemon.maybeRunYieldRouterAutomation = skippedLane;
     daemon.maybeRunSleepCycle = skippedLane;
 
@@ -414,7 +405,6 @@ describe('supervisor-daemon integrations', () => {
       sleepConsolidator: mockSleepConsolidator,
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
       statusPath: path.join(tempRoot, 'supervisor-status.json'),
       logPath: path.join(tempRoot, 'supervisor.log'),
@@ -480,7 +470,6 @@ describe('supervisor-daemon integrations', () => {
       memoryIndexEnabled: false,
       sleepEnabled: false,
       cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-heartbeat.pid'),
       statusPath: path.join(tempRoot, 'oracle-watch-heartbeat-status.json'),
       logPath: path.join(tempRoot, 'oracle-watch-heartbeat.log'),
@@ -536,13 +525,11 @@ describe('supervisor-daemon integrations', () => {
     const delayMs = daemon.computeNextTickDelay({
       claimedCount: 0,
       activeWorkerCount: 0,
-      tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
       hyperliquidSqueezeDetectorResult: { skipped: true },
-      eunbyeolCheckInResult: { skipped: true },
       sleepResult: { skipped: true },
       memoryConsistency: { skipped: true },
       agentTaskQueue: { dispatched: 0, completed: 0 },
@@ -588,7 +575,6 @@ describe('supervisor-daemon integrations', () => {
       memoryIndexEnabled: false,
       sleepEnabled: false,
       cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-relaunch.pid'),
       statusPath: path.join(tempRoot, 'oracle-watch-relaunch-status.json'),
       logPath: path.join(tempRoot, 'oracle-watch-relaunch.log'),
@@ -681,7 +667,6 @@ describe('supervisor-daemon integrations', () => {
       memoryIndexEnabled: false,
       sleepEnabled: false,
       cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-crash-restart.pid'),
       statusPath: path.join(tempRoot, 'oracle-watch-crash-restart-status.json'),
       logPath: path.join(tempRoot, 'oracle-watch-crash-restart.log'),
@@ -707,13 +692,11 @@ describe('supervisor-daemon integrations', () => {
     const restartDelayMs = daemon.computeNextTickDelay({
       claimedCount: 0,
       activeWorkerCount: 0,
-      tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
       hyperliquidSqueezeDetectorResult: { skipped: true },
-      eunbyeolCheckInResult: { skipped: true },
       sleepResult: { skipped: true },
       memoryConsistency: { skipped: true },
       agentTaskQueue: { dispatched: 0, completed: 0 },
@@ -807,7 +790,6 @@ describe('supervisor-daemon integrations', () => {
       memoryIndexEnabled: false,
       sleepEnabled: false,
       cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-backoff-expired-restart.pid'),
       statusPath: path.join(tempRoot, 'oracle-watch-backoff-expired-status.json'),
       logPath: path.join(tempRoot, 'oracle-watch-backoff-expired.log'),
@@ -1652,7 +1634,6 @@ describe('supervisor-daemon integrations', () => {
     daemon.maybeRunSaylorWatcher = skippedLane;
     daemon.maybeRunOracleWatchEngine = skippedLane;
     daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
-    daemon.maybeRunEunbyeolCheckInAutomation = skippedLane;
     daemon.maybeRunYieldRouterAutomation = skippedLane;
     daemon.maybeRunSleepCycle = skippedLane;
 
@@ -2937,73 +2918,6 @@ describe('supervisor-daemon integrations', () => {
     await yieldDaemon.stop('test-cleanup-yield-router-trigger');
   });
 
-  test('drafts an Eunbyeol check-in after 24 hours of silence without auto-sending it', async () => {
-    const originalCheckInAutomation = process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION;
-    process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION = '1';
-    const caseOperationsPath = path.join(tempRoot, 'eunbyeol-case-operations.md');
-    fs.writeFileSync(caseOperationsPath, [
-      '## ACTIVE PENDING ITEMS',
-      '### Case 1: Jeon Myeongsam (전명삼) — Investment Fraud',
-      '| # | Item | Blocked on | Status |',
-      '|---|------|-----------|--------|',
-      '| 1 | 은별 real name/address/ID/phone in complaint | 은별 input | ⚠️ WAITING |',
-      '| 2 | USB 증거 관세청 제출 | 은별 action | ⏳ 내일 대구에서 직접 or 등기 |',
-    ].join('\n'));
-
-    const checkInDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      cryptoTradingEnabled: false,
-      eunbyeolCheckInEnabled: true,
-      eunbyeolCheckInIntervalMinutes: 240,
-      eunbyeolCheckInSilenceMs: 24 * 60 * 60 * 1000,
-      caseOperationsPath,
-      proactiveCommsProvider: jest.fn(() => [{
-        rawBody: '은별 sent updates yesterday',
-        sentAtMs: Date.parse('2026-04-02T00:00:00.000Z'),
-        metadata: {
-          chatId: '8754356993',
-          from: 'Eunbyeol',
-        },
-      }]),
-      pidPath: path.join(tempRoot, 'eunbyeol.pid'),
-      statusPath: path.join(tempRoot, 'eunbyeol-status.json'),
-      logPath: path.join(tempRoot, 'eunbyeol.log'),
-      taskLogDir: path.join(tempRoot, 'eunbyeol-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'eunbyeol-wake.signal'),
-      eunbyeolCheckInStatePath: path.join(tempRoot, 'eunbyeol-state.json'),
-    });
-
-    try {
-      const architectSpy = jest.spyOn(checkInDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(checkInDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      checkInDaemon.eunbyeolCheckInState.lastProcessedAt = '2026-04-03T00:00:00.000Z';
-
-      const result = await checkInDaemon.maybeRunEunbyeolCheckInAutomation(Date.parse('2026-04-03T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(checkInDaemon.eunbyeolCheckInState.lastResult).toEqual(expect.objectContaining({
-        drafted: true,
-        pendingCount: 2,
-      }));
-      expect(checkInDaemon.eunbyeolCheckInState.lastDraft).toEqual(expect.objectContaining({
-        message: expect.stringContaining('은별님, 진행 중인 항목들 확인차 체크인드립니다.'),
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][EUNBYEOL]');
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      if (originalCheckInAutomation == null) {
-        delete process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION;
-      } else {
-        process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION = originalCheckInAutomation;
-      }
-      await checkInDaemon.stop('test-cleanup-eunbyeol-checkin');
-    }
-  });
-
   test('runs the Tokenomist unlock scan every 6 hours and stores the parsed result', async () => {
     const tokenomistScriptPath = path.join(tempRoot, 'hm-tokenomist-unlocks.js');
     fs.writeFileSync(tokenomistScriptPath, [
@@ -3771,7 +3685,6 @@ describe('supervisor-daemon integrations', () => {
       memoryIndexEnabled: false,
       sleepEnabled: false,
       cryptoTradingEnabled: true,
-      eunbyeolCheckInEnabled: false,
       hyperliquidExecutionEnabled: true,
       hyperliquidExecutor: {
         getAccountState: jest.fn().mockResolvedValue({

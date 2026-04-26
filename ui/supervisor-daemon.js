@@ -48,7 +48,6 @@ const sparkCapture = require('./modules/trading/spark-capture');
 const predictionTrackerModule = require('./modules/trading/prediction-tracker');
 const eventVeto = require('./modules/trading/event-veto');
 const tradeJournal = require('./modules/trading/journal');
-const { queryCommsJournalEntries } = require('./modules/main/comms-journal');
 const RUNNING_SUPERVISOR_MAIN = require.main === module;
 
 const CONSULTATION_FUNDING_DIVERGENCE_STRONG_BPS = 50;
@@ -200,7 +199,6 @@ const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-super
 const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-state.json');
 const DEFAULT_ORACLE_WATCH_RULES_PATH = resolveRuntimePath('oracle-watch-rules.json');
 const DEFAULT_ORACLE_WATCH_STATE_PATH = resolveRuntimePath('oracle-watch-state.json');
-const DEFAULT_EUNBYEOL_CHECKIN_STATE_PATH = resolveRuntimePath('eunbyeol-checkin-supervisor-state.json');
 const DEFAULT_YIELD_ROUTER_STATE_PATH = resolveRuntimePath('yield-router-supervisor-state.json');
 const DEFAULT_TELEGRAM_CHAT_ID = '5613428850';
 const DEFAULT_SAYLOR_WATCHER_INTERVAL_MS = Math.max(
@@ -250,15 +248,10 @@ const AGENT_TASK_QUEUE_ROLES = Object.freeze(['architect', 'builder', 'oracle'])
 const MARKET_SCANNER_PHASES = Object.freeze([
   { key: 'market_scanner', label: 'Hyperliquid market scanner' },
 ]);
-const EUNBYEOL_CHECKIN_PHASES = Object.freeze([
-  { key: 'eunbyeol_checkin', label: 'Eunbyeol check-in review' },
-]);
 const DEFAULT_TOKENOMIST_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
 const DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES = 30;
 const MARKET_SCANNER_ALERT_MIN_VOLUME_USD_24H = 1_000_000;
-const DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES = 4 * 60;
-const DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT = Math.max(
   1,
   Number.parseInt(process.env.SQUIDRUN_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT || '2', 10) || 2
@@ -869,33 +862,6 @@ function normalizeUsdTicker(value = '') {
   return raw.includes('/') ? raw : `${raw}/USD`;
 }
 
-function tokenizeCaseKeywords(text = '') {
-  return Array.from(new Set(
-    String(text || '')
-      .split(/[(),/|·:\-\u2014]+/)
-      .map((entry) => String(entry || '').trim())
-      .filter((entry) => entry.length >= 2)
-  ));
-}
-
-function extractActiveCaseSignals(markdown = '') {
-  const source = String(markdown || '');
-  if (!source.trim()) return [];
-  const headings = Array.from(source.matchAll(/^###\s+Case\s+\d+:\s+(.+)$/gm)).map((match) => String(match[1] || '').trim());
-  const signals = headings.map((heading) => {
-    const label = heading.replace(/\s+[-—].*$/, '').trim();
-    return {
-      label,
-      keywords: Array.from(new Set([
-        ...tokenizeCaseKeywords(label),
-        '은별',
-        'Eunbyeol',
-      ])),
-    };
-  }).filter((entry) => entry.keywords.length > 0);
-  return signals;
-}
-
 function defaultCryptoTradingState() {
   return {
     lastProcessedAt: null,
@@ -938,17 +904,6 @@ function defaultSparkMonitorState() {
 
 function defaultMarketScannerState() {
   return marketScannerModule.defaultMarketScannerState();
-}
-
-function defaultEunbyeolCheckInState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastDraft: null,
-    lastDraftFingerprint: null,
-    updatedAt: null,
-  };
 }
 
 function defaultTradeReconciliationState() {
@@ -1059,89 +1014,12 @@ function getNextUtcIntervalEvent(referenceDate = new Date(), phases = [], interv
   return null;
 }
 
-function parseCaseOperationsDashboard(markdown = '') {
-  const lines = String(markdown || '').split(/\r?\n/);
-  const pendingItems = [];
-  let currentCaseLabel = null;
-  let currentSection = null;
-  let scheduleDate = null;
-  const scheduleItems = [];
-
-  for (const rawLine of lines) {
-    const line = String(rawLine || '').trim();
-    if (!line) continue;
-    const caseMatch = line.match(/^###\s+Case\s+\d+:\s+(.+)$/i);
-    if (caseMatch) {
-      currentCaseLabel = String(caseMatch[1] || '').trim();
-      currentSection = 'case';
-      continue;
-    }
-    const scheduleMatch = line.match(/^##\s+은별\s+내일\s+일정\s+\((\d{4}-\d{2}-\d{2})\)/);
-    if (scheduleMatch) {
-      scheduleDate = scheduleMatch[1];
-      currentSection = 'schedule';
-      continue;
-    }
-    if (/^##\s+/.test(line)) {
-      currentSection = null;
-      continue;
-    }
-    if (currentSection === 'schedule' && /^\d+\.\s+/.test(line)) {
-      scheduleItems.push(line.replace(/^\d+\.\s+/, '').trim());
-      continue;
-    }
-    if (!line.startsWith('|') || /^\|\s*-+/.test(line) || /^\|\s*#\s*\|/.test(line)) {
-      continue;
-    }
-    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
-    if (cells.length < 4 || !/^\d+$/.test(cells[0])) continue;
-    pendingItems.push({
-      id: cells[0],
-      item: cells[1],
-      blockedOn: cells[2],
-      status: cells[3],
-      caseLabel: currentCaseLabel,
-    });
-  }
-
-  return {
-    pendingItems,
-    scheduleDate,
-    scheduleItems,
-  };
-}
-
-function getLatestEunbyeolMessageTimestamp(rows = []) {
-  for (const row of Array.isArray(rows) ? rows : []) {
-    const metadata = row && typeof row.metadata === 'object' ? row.metadata : {};
-    const rawBody = String(row?.rawBody || row?.body || '');
-    const sender = String(metadata.from || row?.sender || '');
-    const chatId = String(metadata.chatId || metadata.telegramChatId || row?.chatId || '');
-    if (
-      chatId === '8754356993'
-      || /은별|eunbyeol/i.test(sender)
-      || /은별|eunbyeol|8754356993/i.test(rawBody)
-    ) {
-      return Number(row?.sentAtMs || row?.brokeredAtMs || row?.createdAtMs || 0) || 0;
-    }
-  }
-  return 0;
-}
-
 function buildMarketScannerDailySchedule(referenceDate = new Date(), options = {}) {
   return buildUtcIntervalSchedule(referenceDate, MARKET_SCANNER_PHASES, options.intervalMinutes || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES);
 }
 
 function getNextMarketScannerEvent(referenceDate = new Date(), options = {}) {
   return getNextUtcIntervalEvent(referenceDate, MARKET_SCANNER_PHASES, options.intervalMinutes || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES);
-}
-
-function buildEunbyeolCheckInDailySchedule(referenceDate = new Date(), options = {}) {
-  return buildUtcIntervalSchedule(referenceDate, EUNBYEOL_CHECKIN_PHASES, options.intervalMinutes || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES);
-}
-
-function getNextEunbyeolCheckInEvent(referenceDate = new Date(), options = {}) {
-  return getNextUtcIntervalEvent(referenceDate, EUNBYEOL_CHECKIN_PHASES, options.intervalMinutes || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES);
 }
 
 function buildYieldRouterDailySchedule(referenceDate = new Date(), options = {}) {
@@ -1757,7 +1635,6 @@ class SupervisorDaemon {
 
     this.circuitBreaker = null;
 
-    this.caseOperationsPath = options.caseOperationsPath || path.join(this.projectRoot, 'workspace', 'knowledge', 'case-operations.md');
     this.newsVetoModule = options.newsVetoModule || eventVeto;
     this.tokenomistEnabled = options.tokenomistEnabled === true
       || (
@@ -1876,41 +1753,6 @@ class SupervisorDaemon {
       symbolsConsulted: [],
       symbolsExecutable: [],
     };
-    this.eunbyeolCheckInEnabled = options.eunbyeolCheckInEnabled !== false
-      && process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION !== '0';
-    this.eunbyeolCheckInIntervalMinutes = Math.max(
-      30,
-      Math.floor(Number(options.eunbyeolCheckInIntervalMinutes) || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES)
-    );
-    this.eunbyeolCheckInSilenceMs = Math.max(
-      60_000,
-      Number.parseInt(options.eunbyeolCheckInSilenceMs || `${DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS}`, 10) || DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS
-    );
-    this.eunbyeolCheckInStatePath = options.eunbyeolCheckInStatePath || DEFAULT_EUNBYEOL_CHECKIN_STATE_PATH;
-    this.eunbyeolCheckInState = {
-      ...defaultEunbyeolCheckInState(),
-      ...(readJsonFile(this.eunbyeolCheckInStatePath, defaultEunbyeolCheckInState()) || {}),
-    };
-    this.eunbyeolCheckInPhasePromise = null;
-    this.lastEunbyeolCheckInSummary = this.eunbyeolCheckInEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-        lastProcessedAt: this.eunbyeolCheckInState.lastProcessedAt || null,
-        nextEvent: this.eunbyeolCheckInState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.proactiveCommsProvider = options.proactiveCommsProvider || (() => queryCommsJournalEntries({
-      order: 'desc',
-      limit: 200,
-    }));
     const yieldRouterAutomationRequested = options.yieldRouterEnabled === true
       || process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION === '1';
     this.yieldRouterEnabled = Boolean(yieldRouterAutomationRequested);
@@ -2509,7 +2351,6 @@ class SupervisorDaemon {
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
     const hyperliquidSqueezeDetectorResult = await this.maybeRunHyperliquidSqueezeDetector(nowMs);
-    const eunbyeolCheckInResult = await this.maybeRunEunbyeolCheckInAutomation(nowMs);
     const yieldRouterResult = await this.maybeRunYieldRouterAutomation(nowMs);
     const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
@@ -2530,7 +2371,6 @@ class SupervisorDaemon {
       saylorWatcherResult,
       oracleWatchResult,
       hyperliquidSqueezeDetectorResult,
-      eunbyeolCheckInResult,
       yieldRouterResult,
       sleepResult,
     };
@@ -2587,7 +2427,6 @@ class SupervisorDaemon {
     const queueRequeued = Number(summary?.queueHousekeeping?.requeueResult?.requeued || 0);
     const pendingPruned = Number(summary?.queueHousekeeping?.pruneResult?.pruned || 0);
     const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
-    const tradingRan = summary?.tradingResult && summary.tradingResult.skipped !== true;
     const positionAttributionReconciliationRan = summary?.positionAttributionReconciliationResult
       && summary.positionAttributionReconciliationResult.skipped !== true;
     const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
@@ -2595,7 +2434,6 @@ class SupervisorDaemon {
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
     const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
     const hyperliquidSqueezeDetectorRan = summary?.hyperliquidSqueezeDetectorResult && summary.hyperliquidSqueezeDetectorResult.skipped !== true;
-    const eunbyeolCheckInRan = summary?.eunbyeolCheckInResult && summary.eunbyeolCheckInResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
     const memoryChecked = summary?.memoryConsistency && summary.memoryConsistency.skipped !== true;
     const performedWork = claimedCount > 0
@@ -2604,14 +2442,12 @@ class SupervisorDaemon {
       || queueRequeued > 0
       || pendingPruned > 0
       || leasePruned > 0
-      || tradingRan
       || positionAttributionReconciliationRan
       || tradeReconciliationRan
       || cryptoTradingRan
       || saylorWatcherRan
       || oracleWatchRan
       || hyperliquidSqueezeDetectorRan
-      || eunbyeolCheckInRan
       || sleepRan
       || memoryChecked;
 
@@ -2758,50 +2594,6 @@ class SupervisorDaemon {
       updatedAt: new Date().toISOString(),
     });
     writeJsonFile(this.marketScannerStatePath, this.marketScannerState);
-  }
-
-  persistEunbyeolCheckInState() {
-    this.eunbyeolCheckInState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.eunbyeolCheckInStatePath, this.eunbyeolCheckInState);
-  }
-
-  readCaseOperationsDashboard() {
-    try {
-      const markdown = fs.existsSync(this.caseOperationsPath)
-        ? fs.readFileSync(this.caseOperationsPath, 'utf8')
-        : '';
-      return parseCaseOperationsDashboard(markdown);
-    } catch {
-      return {
-        pendingItems: [],
-        scheduleDate: null,
-        scheduleItems: [],
-      };
-    }
-  }
-
-  readActiveCaseSignals() {
-    try {
-      const markdown = fs.existsSync(this.caseOperationsPath)
-        ? fs.readFileSync(this.caseOperationsPath, 'utf8')
-        : '';
-      return extractActiveCaseSignals(markdown);
-    } catch {
-      return [];
-    }
-  }
-
-  buildEunbyeolCheckInDraft(summary = {}) {
-    const topItems = Array.isArray(summary.topItems) ? summary.topItems.slice(0, 3) : [];
-    const bullets = topItems.map((item) => `- ${item}`).join('\n');
-    return [
-      '은별님, 진행 중인 항목들 확인차 체크인드립니다.',
-      '',
-      topItems.length > 0 ? '현재 계속 열려 있는 항목:' : null,
-      topItems.length > 0 ? bullets : null,
-      '',
-      '오늘/내일 진행 상황이나 필요한 자료 있으면 보내주세요. 제가 이어서 바로 정리해둘게요.',
-    ].filter((line) => line !== null).join('\n');
   }
 
   buildMarketScannerArchitectAlert(summary = {}) {
@@ -3426,18 +3218,6 @@ class SupervisorDaemon {
     });
   }
 
-  buildEunbyeolCheckInArchitectAlert(summary = {}) {
-    return [
-      '[PROACTIVE][EUNBYEOL] Check-in review complete.',
-      `Pending Eunbyeol items: ${Number(summary.pendingCount || 0)}`,
-      `Last message at: ${summary.lastMessageAt || 'never'}`,
-      `Silence hours: ${summary.silenceHours ?? 'n/a'}`,
-      `Drafted: ${summary.drafted ? 'yes' : 'no'}`,
-      summary.topItems?.length ? `Top items: ${summary.topItems.join(' | ')}` : null,
-      summary.draft ? `Draft:\n${summary.draft}` : null,
-    ].filter(Boolean).join('\n');
-  }
-
   async runTokenomistPhase(event) {
     const executedAt = new Date().toISOString();
     const result = await executeNodeScript(this.hmTokenomistUnlocksScriptPath, ['--json', '--hours', '48'], {
@@ -3960,115 +3740,6 @@ class SupervisorDaemon {
       reason: 'market_scanner_started',
       nextEvent: this.marketScannerState.nextEvent,
     };
-  }
-
-  async runEunbyeolCheckInPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const dashboard = this.readCaseOperationsDashboard();
-    const pendingItems = Array.isArray(dashboard.pendingItems) ? dashboard.pendingItems : [];
-    const eunbyeolItems = pendingItems.filter((item) => /은별 input|은별 action|은별/i.test(String(item.blockedOn || '')));
-    const commsRows = await Promise.resolve(this.proactiveCommsProvider()).catch(() => []);
-    const lastMessageAtMs = getLatestEunbyeolMessageTimestamp(commsRows);
-    const silenceMs = lastMessageAtMs > 0 ? Math.max(0, Date.parse(scannedAt) - lastMessageAtMs) : Number.POSITIVE_INFINITY;
-    const shouldDraft = eunbyeolItems.length > 0 && silenceMs >= this.eunbyeolCheckInSilenceMs;
-    const topItems = eunbyeolItems.slice(0, 4).map((item) => item.item);
-    const draft = shouldDraft
-      ? this.buildEunbyeolCheckInDraft({ topItems })
-      : null;
-    const fingerprint = draft ? JSON.stringify({ topItems, lastMessageAtMs }) : null;
-    const summary = {
-      ok: true,
-      key: event?.key || 'eunbyeol_checkin',
-      scannedAt,
-      pendingCount: eunbyeolItems.length,
-      lastMessageAt: lastMessageAtMs > 0 ? new Date(lastMessageAtMs).toISOString() : null,
-      silenceHours: Number.isFinite(silenceMs) ? Number((silenceMs / (60 * 60 * 1000)).toFixed(2)) : null,
-      drafted: Boolean(draft),
-      topItems,
-      draft,
-      alertLevel: 'level_0',
-      notified: false,
-    };
-    if (fingerprint) {
-      this.eunbyeolCheckInState.lastDraftFingerprint = fingerprint;
-      this.eunbyeolCheckInState.lastDraft = {
-        createdAt: scannedAt,
-        message: draft,
-        topItems,
-      };
-      this.notifyArchitectInternal(this.buildEunbyeolCheckInArchitectAlert(summary), 'eunbyeol_checkin');
-      summary.notified = true;
-    }
-    return summary;
-  }
-
-  async maybeRunEunbyeolCheckInAutomation(nowMs = Date.now()) {
-    if (!this.eunbyeolCheckInEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'eunbyeol_checkin_disabled' };
-    }
-    if (this.eunbyeolCheckInPhasePromise) {
-      return this.eunbyeolCheckInPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextEunbyeolCheckInEvent(now, {
-      intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-    });
-    const day = buildEunbyeolCheckInDailySchedule(now, {
-      intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.eunbyeolCheckInState.lastProcessedAt
-      ? new Date(this.eunbyeolCheckInState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = day.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.eunbyeolCheckInState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistEunbyeolCheckInState();
-
-    if (dueEvents.length === 0) {
-      this.lastEunbyeolCheckInSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-        lastProcessedAt: this.eunbyeolCheckInState.lastProcessedAt || null,
-        nextEvent: this.eunbyeolCheckInState.nextEvent,
-      };
-      return { ok: false, skipped: true, reason: 'no_due_eunbyeol_checkin', nextEvent: this.eunbyeolCheckInState.nextEvent };
-    }
-
-    this.eunbyeolCheckInPhasePromise = (async () => {
-      const executed = [];
-      for (const dueEvent of dueEvents) {
-        const phaseResult = await this.runEunbyeolCheckInPhase(dueEvent);
-        executed.push(phaseResult);
-        this.eunbyeolCheckInState.lastProcessedAt = dueEvent.scheduledAt;
-        this.eunbyeolCheckInState.lastResult = phaseResult;
-        this.persistEunbyeolCheckInState();
-      }
-
-      const upcomingEvent = getNextEunbyeolCheckInEvent(new Date(), {
-        intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-      });
-      this.eunbyeolCheckInState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistEunbyeolCheckInState();
-      this.lastEunbyeolCheckInSummary = {
-        enabled: true,
-        status: executed.some((entry) => entry.drafted) ? 'draft_ready' : 'scan_complete',
-        intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-        lastProcessedAt: this.eunbyeolCheckInState.lastProcessedAt || null,
-        nextEvent: this.eunbyeolCheckInState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return { ok: true, skipped: false, executed, nextEvent: this.eunbyeolCheckInState.nextEvent };
-    })().finally(() => {
-      this.eunbyeolCheckInPhasePromise = null;
-    });
-
-    return this.eunbyeolCheckInPhasePromise;
   }
 
   getTradeReconciliationOrchestrator() {
@@ -6683,16 +6354,6 @@ class SupervisorDaemon {
         scriptPath: this.hmHyperliquidSqueezeDetectorScriptPath,
         lastRunAt: this.lastHyperliquidSqueezeDetectorSummary?.lastRunAt || null,
         lastSummary: this.lastHyperliquidSqueezeDetectorSummary || null,
-      },
-      eunbyeolCheckInAutomation: {
-        enabled: this.eunbyeolCheckInEnabled,
-        running: Boolean(this.eunbyeolCheckInPhasePromise),
-        intervalMinutes: this.eunbyeolCheckInIntervalMinutes,
-        silenceMs: this.eunbyeolCheckInSilenceMs,
-        statePath: this.eunbyeolCheckInStatePath,
-        lastProcessedAt: this.eunbyeolCheckInState.lastProcessedAt || null,
-        nextEvent: this.eunbyeolCheckInState.nextEvent || null,
-        lastSummary: this.lastEunbyeolCheckInSummary || null,
       },
       yieldRouterAutomation: {
         enabled: this.yieldRouterEnabled,
