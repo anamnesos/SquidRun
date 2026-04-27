@@ -104,6 +104,67 @@ describe('hm-restart-execute', () => {
     ]));
   });
 
+  test('discovers the parent Electron process from tasklist output', () => {
+    const tasklistOutput = [
+      '"Image Name","PID","Session Name","Session#","Mem Usage","Status","User Name","CPU Time","Window Title"',
+      '"electron.exe","29364","Console","1","150,000 K","Running","JAMES\\James","0:01:00","SquidRun"',
+      '"powershell.exe","41000","Console","1","80,000 K","Running","JAMES\\James","0:00:05","Terminal"',
+    ].join('\r\n');
+
+    const processes = restartExecute.listElectronProcesses('D:\\projects\\squidrun', {
+      tasklistOutput,
+    });
+
+    expect(processes).toEqual([
+      expect.objectContaining({
+        pid: 29364,
+        name: 'electron.exe',
+        windowTitle: 'SquidRun',
+        matchReason: 'direct_project_match',
+      }),
+    ]);
+  });
+
+  test('selects only the top-level main SquidRun Electron parent from process rows', () => {
+    const processes = restartExecute.selectSquidRunElectronProcesses('D:\\projects\\squidrun', [
+      {
+        ProcessId: 29364,
+        ParentProcessId: 11588,
+        Name: 'electron.exe',
+        ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+        CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+      },
+      {
+        ProcessId: 44792,
+        ParentProcessId: 29364,
+        Name: 'electron.exe',
+        ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+        CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --app-path="D:\\projects\\squidrun\\ui"',
+      },
+      {
+        ProcessId: 34056,
+        ParentProcessId: 29364,
+        Name: 'electron.exe',
+        ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+        CommandLine: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\team-memory\\worker.js',
+      },
+      {
+        ProcessId: 31184,
+        ParentProcessId: 36520,
+        Name: 'electron.exe',
+        ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+        CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" "D:\\projects\\squidrun\\ui" --profile=eunbyeol --window=eunbyeol --standalone-window',
+      },
+    ]);
+
+    expect(processes).toEqual([
+      expect.objectContaining({
+        pid: 29364,
+        matchReason: 'direct_project_match',
+      }),
+    ]);
+  });
+
   test('exits cleanly on a simulated shutdown and relaunch', async () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
@@ -233,7 +294,9 @@ describe('hm-restart-execute', () => {
         pid: null,
         mtimeMs: 1,
       })),
-      listElectronProcesses: jest.fn(() => []),
+      listElectronProcesses: jest.fn(() => [{ pid: 111, name: 'electron.exe' }]),
+      processExists: jest.fn(() => false),
+      killProcess: jest.fn(),
       spawn: jest.fn(() => {
         throw spawnError;
       }),
@@ -249,6 +312,49 @@ describe('hm-restart-execute', () => {
     expect(runNodeScript).toHaveBeenCalledTimes(1);
     expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
       'type=restart_execute_failure',
+      'src=hm-restart-execute',
+      'sev=high',
+      '--json',
+    ]));
+  });
+
+  test('refuses to relaunch and logs no_target_found when shutdown finds no Electron process', async () => {
+    writeRegistry(tempRoot);
+    appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
+      type: 'restart_preflight',
+      instance: 'james-main',
+      status: 'green',
+      timestampUtc: '2026-04-27T00:04:30.000Z',
+    });
+    const runNodeScript = jest.fn(() => ({ status: 0 }));
+    const spawn = jest.fn();
+
+    const result = await restartExecute.executeRestart({
+      projectRoot: tempRoot,
+      instance: 'james-main',
+      reason: 'no target test',
+      nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      captureAppStatus: jest.fn(() => ({
+        exists: true,
+        timestampMs: Date.parse('2026-04-27T00:00:00.000Z'),
+        session: '301',
+        pid: null,
+        mtimeMs: 1,
+      })),
+      listElectronProcesses: jest.fn(() => []),
+      spawn,
+      runNodeScript,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      stage: 'shutdown',
+      reason: 'no_target_found',
+    }));
+    expect(spawn).not.toHaveBeenCalled();
+    expect(runNodeScript).toHaveBeenCalledTimes(1);
+    expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      'type=restart_execute_no_target_found',
       'src=hm-restart-execute',
       'sev=high',
       '--json',
@@ -280,7 +386,9 @@ describe('hm-restart-execute', () => {
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       launchStartedMs: Date.parse('2026-04-27T00:05:00.000Z'),
       captureAppStatus: jest.fn(() => staleSnapshot),
-      listElectronProcesses: jest.fn(() => []),
+      listElectronProcesses: jest.fn(() => [{ pid: 111, name: 'electron.exe' }]),
+      processExists: jest.fn(() => false),
+      killProcess: jest.fn(),
       spawn: jest.fn(() => ({ pid: 222, unref: jest.fn() })),
       sleep: jest.fn(() => Promise.resolve()),
       now: jest.fn(() => {
