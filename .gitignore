@@ -55,6 +55,8 @@ workspace/triggers/*.txt
 .squidrun/coord/*
 !.squidrun/coord/drift-checklist.json
 !.squidrun/coord/inbox-protocol.md
+!.squidrun/coord/gpt-store-specs/
+!.squidrun/coord/gpt-store-specs/*.md
 
 # Playwright MCP browser-automation artifacts (screenshots, downloads, recordings)
 # History contains a 204MB video at 8f8d2ee that blocks pushes to GitHub.
