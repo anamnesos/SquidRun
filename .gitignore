@@ -49,7 +49,12 @@ workspace/state.json
 workspace/console.log
 workspace/triggers/*.txt
 .hivemind/
-.squidrun/
+.squidrun/*
+!.squidrun/operator-registry.template.json
+!.squidrun/coord/
+.squidrun/coord/*
+!.squidrun/coord/drift-checklist.json
+!.squidrun/coord/inbox-protocol.md
 
 # Jest perf snapshots (large, regenerated)
 workspace/perf-jest.json
