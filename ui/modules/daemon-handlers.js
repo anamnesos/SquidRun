@@ -20,12 +20,17 @@ const { getProfileInstructionFilename } = require('../profile');
 const log = require('./logger');
 const bus = require('./event-bus');
 const diagnosticLog = require('./diagnostic-log');
+const { stripAnsi } = require('./ansi');
 const { showToast } = require('./notifications');
 const uiView = require('./ui-view');
 const {
   DEFAULT_INJECT_IPC_REASSEMBLY_TTL_MS,
   getUtf8ByteLength,
 } = require('./inject-message-ipc');
+const {
+  appendBusTraceEvent,
+  createPayloadFingerprint,
+} = require('./bus-reliability-trace');
 
 // Terminal module for health handlers (lazy loaded)
 let terminal = null;
@@ -171,14 +176,40 @@ function prepareInjectedPayloadForPane(paneId, rawPayload = {}) {
   const actualBytes = getUtf8ByteLength(message);
   const expectedBytes = Number.isFinite(Number(payload.messageBytes)) ? Number(payload.messageBytes) : null;
   const chunkMeta = payload.ipcChunk && typeof payload.ipcChunk === 'object' ? payload.ipcChunk : null;
+  const traceContext = payload.traceContext || payload.traceCtx || null;
+  const messageId = toNonEmptyString(traceContext?.messageId)
+    || toNonEmptyString(traceContext?.traceId)
+    || toNonEmptyString(traceContext?.correlationId)
+    || toNonEmptyString(payload.deliveryId);
 
   if (expectedBytes !== null && expectedBytes !== actualBytes) {
     log.warn('InjectIPC', `IPC byte mismatch for pane ${paneId}: expected ${expectedBytes}, received ${actualBytes}`);
     diagnosticLog.write('InjectIPC', `Pane ${paneId} byte mismatch expected=${expectedBytes} actual=${actualBytes}`);
+    appendBusTraceEvent({
+      eventType: 'renderer_ipc_byte_mismatch',
+      messageId: messageId || null,
+      deliveryId: payload.deliveryId || null,
+      paneId: String(paneId),
+      expectedBytes,
+      actualBytes,
+      payloadFingerprint: createPayloadFingerprint(message),
+    });
   }
 
   if (!chunkMeta) {
     diagnosticLog.write('InjectIPC', `Pane ${paneId} receive bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+    appendBusTraceEvent({
+      eventType: 'renderer_ipc_received',
+      messageId: messageId || null,
+      deliveryId: payload.deliveryId || null,
+      paneId: String(paneId),
+      payloadBytes: actualBytes,
+      expectedBytes,
+      byteMismatch: expectedBytes !== null && expectedBytes !== actualBytes,
+      chunkIndex: 0,
+      chunkCount: 1,
+      payloadFingerprint: createPayloadFingerprint(message),
+    });
     return {
       ready: true,
       payload: {
@@ -198,6 +229,15 @@ function prepareInjectedPayloadForPane(paneId, rawPayload = {}) {
   const totalBytes = Number.isFinite(Number(chunkMeta.totalBytes)) ? Number(chunkMeta.totalBytes) : null;
   if (!groupId || !Number.isFinite(chunkIndex) || !Number.isFinite(chunkCount) || chunkIndex < 0 || chunkCount <= 0) {
     log.warn('InjectIPC', `Invalid IPC chunk metadata for pane ${paneId}; delivering chunk directly`);
+    appendBusTraceEvent({
+      eventType: 'renderer_ipc_invalid_chunk',
+      messageId: messageId || null,
+      deliveryId: payload.deliveryId || null,
+      paneId: String(paneId),
+      payloadBytes: actualBytes,
+      expectedBytes,
+      payloadFingerprint: createPayloadFingerprint(message),
+    });
     return {
       ready: true,
       payload: {
@@ -228,6 +268,20 @@ function prepareInjectedPayloadForPane(paneId, rawPayload = {}) {
   entry.payload = payload;
   ipcChunkAssemblies.set(key, entry);
   diagnosticLog.write('InjectIPC', `Pane ${paneId} chunk ${chunkIndex + 1}/${chunkCount} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+  appendBusTraceEvent({
+    eventType: 'renderer_ipc_chunk_received',
+    messageId: messageId || null,
+    deliveryId: payload.deliveryId || null,
+    paneId: String(paneId),
+    groupId,
+    chunkIndex,
+    chunkCount,
+    payloadBytes: actualBytes,
+    expectedBytes,
+    totalBytes,
+    byteMismatch: expectedBytes !== null && expectedBytes !== actualBytes,
+    payloadFingerprint: createPayloadFingerprint(message),
+  });
 
   if (entry.received < chunkCount) {
     return { ready: false, waitingFor: chunkCount - entry.received };
@@ -242,6 +296,18 @@ function prepareInjectedPayloadForPane(paneId, rawPayload = {}) {
   } else {
     diagnosticLog.write('InjectIPC', `Pane ${paneId} reassembled ${chunkCount} chunk(s) totalBytes=${reassembledBytes}`);
   }
+  appendBusTraceEvent({
+    eventType: 'renderer_ipc_reassembled',
+    messageId: messageId || null,
+    deliveryId: payload.deliveryId || null,
+    paneId: String(paneId),
+    groupId,
+    chunkCount,
+    payloadBytes: reassembledBytes,
+    expectedBytes: entry.totalBytes,
+    byteMismatch: entry.totalBytes !== null && entry.totalBytes !== reassembledBytes,
+    payloadFingerprint: createPayloadFingerprint(fullMessage),
+  });
 
   return {
     ready: true,
@@ -352,12 +418,6 @@ const SHELL_PROMPT_REGEXES = [
   /(^|\n)[A-Z]:\\[^\n>]*>\s/m, // cmd.exe prompt
   /(^|\n)[^\n]*[$%#]\s*$/m,   // Unix shell prompt (bash/zsh)
 ];
-
-function stripAnsi(value) {
-  return String(value || '')
-    .replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
-    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
-}
 
 function stripInternalRoutingWrappers(value) {
   if (typeof value !== 'string') return value;
@@ -785,6 +845,11 @@ function teardownDaemonListeners() {
   syncIndicatorSetup = false;
   throttleQueues.clear();
   throttlingPanes.clear();
+  sessionStartTimes.clear();
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
 }
 
 function setupRefreshButtons(sendToPaneFn) {
@@ -936,6 +1001,11 @@ function processThrottleQueue(paneId) {
   const routedMessage = stripInternalRoutingWrappers(message);
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
   const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
+  const traceMessageId = toNonEmptyString(traceContext?.messageId)
+    || toNonEmptyString(traceContext?.traceId)
+    || toNonEmptyString(traceContext?.correlationId)
+    || deliveryId
+    || null;
   const injectMeta = item && typeof item === 'object' && item.meta && typeof item.meta === 'object'
     ? { ...item.meta }
     : null;
@@ -978,6 +1048,16 @@ function processThrottleQueue(paneId) {
     causationId,
     source: 'daemon-handlers.js',
   });
+  appendBusTraceEvent({
+    eventType: 'renderer_pty_write_scheduled',
+    messageId: traceMessageId,
+    deliveryId: deliveryId || null,
+    paneId: String(paneId),
+    payloadBytes: getUtf8ByteLength(routedMessage),
+    payloadFingerprint: createPayloadFingerprint(routedMessage),
+    hmSendTrace: hmSendFastEnter,
+    startupInjection: isStartupInjection,
+  });
 
   let queueFinalized = false;
   const finalizeQueueProcessing = () => {
@@ -1000,53 +1080,66 @@ function processThrottleQueue(paneId) {
       hmSendFastEnter,
       startupInjection: isStartupInjection,
       onComplete: (result) => {
-      const status = typeof result?.status === 'string' ? result.status : '';
-      const reason = typeof result?.reason === 'string' ? result.reason : '';
-      const statusLower = status.toLowerCase();
-      const reasonLower = reason.toLowerCase();
-      const submitUnverified = (
-        reasonLower === 'submit_not_accepted'
-        || statusLower === 'submit_not_accepted'
-        || statusLower.includes('unverified')
-        || (result?.verified === false && result?.success !== false)
-      );
-      const accepted = submitUnverified || !result || result.success !== false;
-      if (!accepted) {
-        log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
-        uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
-        if (deliveryId) {
-          sendBridge('trigger-delivery-outcome', {
-            deliveryId,
-            paneId,
-            accepted: false,
-            verified: false,
-            status: result?.status || result?.reason || 'delivery_failed',
-            reason: result?.reason || null,
-          });
-        }
-      } else {
-        // Message was typed + Enter pressed = delivered.
-        // Verification is best-effort; unverified does NOT mean undelivered.
-        const verified = submitUnverified ? false : (result?.verified !== false);
-        if (!verified) {
-          log.info('Daemon', `Trigger delivery sent for pane ${paneId} (verification skipped: ${result?.reason || 'agent busy'})`);
-        }
-        uiView.showDeliveryIndicator(paneId, 'delivered');
-        if (deliveryId) {
-          if (!verified) {
+        appendBusTraceEvent({
+          eventType: 'renderer_pty_write_completed',
+          messageId: traceMessageId,
+          deliveryId: deliveryId || null,
+          paneId: String(paneId),
+          payloadBytes: getUtf8ByteLength(routedMessage),
+          payloadFingerprint: createPayloadFingerprint(routedMessage),
+          success: result?.success !== false,
+          verified: result?.verified !== false,
+          status: result?.status || result?.reason || null,
+        });
+        const status = typeof result?.status === 'string' ? result.status : '';
+        const reason = typeof result?.reason === 'string' ? result.reason : '';
+        const statusLower = status.toLowerCase();
+        const reasonLower = reason.toLowerCase();
+        const submitUnverified = (
+          reasonLower === 'submit_not_accepted'
+          || statusLower === 'submit_not_accepted'
+          || statusLower.includes('unverified')
+          || (result?.verified === false && result?.success !== false)
+        );
+        const accepted = submitUnverified || !result || result.success !== false;
+        if (!accepted) {
+          log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
+          uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
+          if (deliveryId) {
             sendBridge('trigger-delivery-outcome', {
               deliveryId,
+              messageId: traceMessageId,
               paneId,
-              accepted: true,
+              accepted: false,
               verified: false,
-              status: 'accepted.unverified',
-              reason: result?.reason || (result?.status || 'delivery_unverified'),
+              status: result?.status || result?.reason || 'delivery_failed',
+              reason: result?.reason || null,
             });
-          } else {
-            sendBridge('trigger-delivery-ack', { deliveryId, paneId });
+          }
+        } else {
+          // Message was typed + Enter pressed = delivered.
+          // Verification is best-effort; unverified does NOT mean undelivered.
+          const verified = submitUnverified ? false : (result?.verified !== false);
+          if (!verified) {
+            log.info('Daemon', `Trigger delivery sent for pane ${paneId} (verification skipped: ${result?.reason || 'agent busy'})`);
+          }
+          uiView.showDeliveryIndicator(paneId, 'delivered');
+          if (deliveryId) {
+            if (!verified) {
+              sendBridge('trigger-delivery-outcome', {
+                deliveryId,
+                messageId: traceMessageId,
+                paneId,
+                accepted: true,
+                verified: false,
+                status: 'accepted.unverified',
+                reason: result?.reason || (result?.status || 'delivery_unverified'),
+              });
+            } else {
+              sendBridge('trigger-delivery-ack', { deliveryId, messageId: traceMessageId, paneId });
+            }
           }
         }
-      }
 
         finalizeQueueProcessing();
       }

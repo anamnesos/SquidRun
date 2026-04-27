@@ -27,28 +27,26 @@ const tradingOrchestrator = require('./modules/trading/orchestrator');
 const tradingScheduler = require('./modules/trading/scheduler');
 const tradingWatchlist = require('./modules/trading/watchlist');
 const dynamicWatchlist = require('./modules/trading/dynamic-watchlist');
+const oracleWatchRegime = require('./modules/trading/oracle-watch-regime');
 const tradingRiskEngine = require('./modules/trading/risk-engine');
 const consensusSizer = require('./modules/trading/consensus-sizer');
 const convictionEngine = require('./modules/trading/conviction-engine');
 const rangeStructure = require('./modules/trading/range-structure');
 const [private-live-ops]Client = require('./modules/trading/[private-live-ops]-client');
 const [private-live-ops]NativeLayer = require('./modules/trading/[private-live-ops]-native-layer');
+const agentPositionAttribution = require('./modules/trading/agent-position-attribution');
+const {
+  DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH,
+  readManual[private-live-ops]Activity,
+  isManual[private-live-ops]ActivityActive,
+} = require('./modules/trading/[private-live-ops]-manual-activity');
 const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
 const macroRiskGate = require('./modules/trading/macro-risk-gate');
-const { CircuitBreaker } = require('./modules/trading/circuit-breaker');
-const polymarketClient = require('./modules/trading/polymarket-client');
-const polymarketScanner = require('./modules/trading/polymarket-scanner');
-const polymarketSignals = require('./modules/trading/polymarket-signals');
-const polymarketSizer = require('./modules/trading/polymarket-sizer');
-const launchRadar = require('./modules/trading/launch-radar');
-const yieldRouterModule = require('./modules/trading/yield-router');
 const marketScannerModule = require('./modules/trading/market-scanner');
-const paperTradingAutomation = require('./modules/trading/paper-trading-automation');
+const sparkCapture = require('./modules/trading/spark-capture');
 const predictionTrackerModule = require('./modules/trading/prediction-tracker');
 const eventVeto = require('./modules/trading/event-veto');
 const tradeJournal = require('./modules/trading/journal');
-const { queryCommsJournalEntries } = require('./modules/main/comms-journal');
-const { buildAudit: buildPaperCompetitionAudit } = require('./scripts/hm-paper-competition-audit');
 const RUNNING_SUPERVISOR_MAIN = require.main === module;
 
 const CONSULTATION_FUNDING_DIVERGENCE_STRONG_BPS = 50;
@@ -60,6 +58,26 @@ const CONSULTATION_NATIVE_FUNDING_MAX_AGE_MS = 15 * 60 * 1000;
 try {
   require('dotenv').config({ path: path.join(getProjectRoot(), '.env'), quiet: true, override: true });
 } catch {}
+
+// [private-profile] profile MUST NOT spawn wallet-touching trading lanes. The dotenv.config
+// call above uses override:true and would clobber any pre-set process.env values
+// that ui/profile.js applyProfileEnv tried to inject. So we re-apply the private-profile
+// disable AFTER the .env load. Belt + suspenders: kill all SQUIDRUN_* trading flags
+// AND blank the HL credentials so even if a lane slipped through, has[private-live-ops]Credentials returns false.
+if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'private-profile') {
+  process.env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
+  process.env.SQUIDRUN_ORACLE_WATCH = '0';
+  process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION = '0';
+  process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
+  process.env.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR = '0';
+  process.env.SQUIDRUN_LIVE_OPS_MONITOR = '0';
+  process.env.SQUIDRUN_SPARK_MONITOR_AUTOMATION = '0';
+  process.env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
+  process.env.SQUIDRUN_SAYLOR_WATCHER = '0';
+  process.env.LIVE_OPS_WALLET_ADDRESS = '';
+  process.env.LIVE_OPS_ADDRESS = '';
+  process.env.LIVE_OPS_PRIVATE_KEY = '';
+}
 
 function hardenStandardStream(stream, { silence = false } = {}) {
   if (!stream || typeof stream.write !== 'function') {
@@ -128,6 +146,9 @@ const DEFAULT_PENDING_TASK_TTL_MS = parseOptionalDurationMs(
 const DEFAULT_STDIO_TAIL_BYTES = Math.max(2048, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STDIO_TAIL_BYTES || '16384', 10) || 16384);
 const DEFAULT_MEMORY_INDEX_DEBOUNCE_MS = Math.max(500, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_DEBOUNCE_MS || '2000', 10) || 2000);
 const DEFAULT_MEMORY_CONSISTENCY_POLL_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_CONSISTENCY_POLL_MS || '300000', 10) || 300000);
+const DEFAULT_SUPERVISOR_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_REPEAT_LOG_MS || '900000', 10) || 900000);
+const DEFAULT_MEMORY_INDEX_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_REPEAT_LOG_MS || '900000', 10) || 900000);
+const DEFAULT_MEMORY_CONSISTENCY_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_CONSISTENCY_REPEAT_LOG_MS || '1800000', 10) || 1800000);
 const DEFAULT_MAX_IDLE_BACKOFF_MS = Math.max(
   DEFAULT_POLL_MS,
   Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_MAX_IDLE_BACKOFF_MS || String(DEFAULT_POLL_MS * 8), 10)
@@ -142,7 +163,20 @@ function resolveRuntimePath(relPath) {
 
 function resolveProjectUiScriptPath(scriptName, projectRoot = getProjectRoot()) {
   const root = path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
-  return path.join(root, 'ui', 'scripts', scriptName);
+  const candidates = [
+    path.join(root, 'ui', 'scripts', scriptName),
+    path.join(root, 'scripts', scriptName),
+    path.join(root, '.squidrun', 'bin', 'runtime', 'ui', 'scripts', scriptName),
+    path.join(__dirname, 'scripts', scriptName),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const packagedCandidate = candidates.find((candidate) => {
+    const normalized = String(candidate || '').replace(/\\/g, '/').toLowerCase();
+    return normalized.includes('/app.asar/') || normalized.includes('/app.asar.unpacked/');
+  });
+  return packagedCandidate || candidates[0];
 }
 
 function resolveProjectUiSettingsPath(projectRoot = getProjectRoot()) {
@@ -156,21 +190,13 @@ const DEFAULT_LOG_PATH = resolveRuntimePath('supervisor.log');
 const DEFAULT_TASK_LOG_DIR = resolveRuntimePath(path.join('supervisor-tasks'));
 const DEFAULT_WAKE_SIGNAL_PATH = resolveRuntimePath('supervisor-wake.signal');
 const DEFAULT_AGENT_TASK_QUEUE_PATH = resolveRuntimePath('agent-task-queue.json');
-const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
-const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-trading-state.json');
-const DEFAULT_LAUNCH_RADAR_STATE_PATH = resolveRuntimePath('launch-radar-supervisor-state.json');
-const DEFAULT_NEWS_SCAN_STATE_PATH = resolveRuntimePath('news-scan-supervisor-state.json');
-const DEFAULT_PENDING_FOLLOWUP_STATE_PATH = resolveRuntimePath('pending-followup-supervisor-state.json');
-const DEFAULT_MARKET_RESEARCH_STATE_PATH = resolveRuntimePath('market-research-supervisor-state.json');
 const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
+const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-supervisor-state.json');
 const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-state.json');
 const DEFAULT_ORACLE_WATCH_RULES_PATH = resolveRuntimePath('oracle-watch-rules.json');
 const DEFAULT_ORACLE_WATCH_STATE_PATH = resolveRuntimePath('oracle-watch-state.json');
-const DEFAULT_EUNBYEOL_CHECKIN_STATE_PATH = resolveRuntimePath('private-profile-checkin-supervisor-state.json');
-const DEFAULT_PAPER_TRADING_AUTOMATION_STATE_PATH = resolveRuntimePath('paper-trading-automation-state.json');
-const DEFAULT_YIELD_ROUTER_STATE_PATH = resolveRuntimePath('yield-router-supervisor-state.json');
 const DEFAULT_TELEGRAM_CHAT_ID = '5613428850';
 const DEFAULT_SAYLOR_WATCHER_INTERVAL_MS = Math.max(
   60_000,
@@ -180,6 +206,7 @@ const DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS = Math.max(
   30_000,
   Number.parseInt(process.env.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS || '60000', 10) || 60_000
 );
+const DEFAULT_COORD_HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_ORACLE_WATCH_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_INTERVAL_MS || '10000', 10) || 10_000
@@ -188,6 +215,7 @@ const DEFAULT_ORACLE_WATCH_MACRO_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_MACRO_INTERVAL_MS || '5000', 10) || 5_000
 );
+const DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS = 5 * 60 * 1000;
 const ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS = 60_000;
 const DEFAULT_LIVE_OPS_MONITOR_POLL_MS = Math.max(
   60_000,
@@ -215,54 +243,13 @@ const DEFAULT_AGENT_TASK_REENGAGE_IDLE_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_AGENT_TASK_REENGAGE_IDLE_MS || '300000', 10) || 300_000
 );
 const AGENT_TASK_QUEUE_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
-const TRADING_AGENT_TARGETS = Object.freeze(['architect', 'builder', 'oracle']);
-const TRADING_PHASES = Object.freeze([
-  { key: 'premarket_wake', label: 'Pre-market wake', offsetMinutes: -60 },
-  { key: 'pre_open_consensus', label: 'Consensus round', offsetMinutes: -5 },
-  { key: 'market_open_execute', label: 'Market open execute', offsetMinutes: 0 },
-  { key: 'close_wake', label: 'Close wake', anchor: 'close', offsetMinutes: -30 },
-  { key: 'market_close_review', label: 'Market close review', anchor: 'close', offsetMinutes: 0 },
-  { key: 'end_of_day', label: 'End of day', anchor: 'close', offsetMinutes: 30 },
-]);
-const POLYMARKET_PHASES = Object.freeze([
-  { key: 'polymarket_scan', label: 'LiveOps market scan', offsetMinutes: 0 },
-  { key: 'polymarket_consensus', label: 'LiveOps consensus round', offsetMinutes: 5, internalOnly: true },
-  { key: 'polymarket_execute', label: 'LiveOps order execution', offsetMinutes: 10, internalOnly: true },
-  { key: 'polymarket_monitor', label: 'LiveOps position monitor', kind: 'monitor' },
-]);
-const POLYMARKET_SCHEDULE_PHASES = Object.freeze(
-  POLYMARKET_PHASES.filter((phase) => phase.key === 'polymarket_scan' || phase.key === 'polymarket_monitor')
-);
-const LAUNCH_RADAR_PHASES = Object.freeze([
-  { key: 'launch_radar_scan', label: 'Launch radar scan' },
-]);
-const DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES = 15;
-const NEWS_SCAN_PHASES = Object.freeze([
-  { key: 'news_scan', label: 'News and market scan' },
-]);
-const DEFAULT_NEWS_SCAN_INTERVAL_MINUTES = 2 * 60;
-const PENDING_FOLLOWUP_PHASES = Object.freeze([
-  { key: 'pending_followups', label: 'Pending follow-up scan' },
-]);
-const MARKET_RESEARCH_PHASES = Object.freeze([
-  { key: 'market_research', label: 'Market research scan' },
-]);
 const MARKET_SCANNER_PHASES = Object.freeze([
   { key: 'market_scanner', label: '[private-live-ops] market scanner' },
 ]);
-const EUNBYEOL_CHECKIN_PHASES = Object.freeze([
-  { key: 'private-profile_checkin', label: '[private-profile] check-in review' },
-]);
-const DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES = 4 * 60;
-const DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES = 4 * 60;
 const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
+const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
 const DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES = 30;
-const DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES = 4 * 60;
-const DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS = Math.max(
-  15_000,
-  Number.parseInt(process.env.SQUIDRUN_PAPER_TRADING_RESPONSE_TIMEOUT_MS || '90000', 10) || 90_000
-);
-const DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS = 24 * 60 * 60 * 1000;
+const MARKET_SCANNER_ALERT_MIN_VOLUME_USD_24H = 1_000_000;
 const DEFAULT_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT = Math.max(
   1,
   Number.parseInt(process.env.SQUIDRUN_MARKET_SCANNER_CONSULTATION_SYMBOL_LIMIT || '2', 10) || 2
@@ -272,10 +259,6 @@ const DEFAULT_CRYPTO_CONSULTATION_SYMBOL_MAX = Math.max(
   Number.parseInt(process.env.SQUIDRUN_CRYPTO_CONSULTATION_SYMBOL_MAX || '5', 10) || 5
 );
 const CORE_CRYPTO_CONSULTATION_SYMBOLS = Object.freeze(['BTC/USD', 'ETH/USD', 'SOL/USD']);
-const YIELD_ROUTER_PHASES = Object.freeze([
-  { key: 'yield_rebalance', label: 'Yield router rebalance' },
-]);
-const DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_TRADE_RECONCILIATION_POLL_MS = Math.max(
   60_000,
   Number.parseInt(process.env.SQUIDRUN_TRADE_RECONCILIATION_POLL_MS || '300000', 10) || 300_000
@@ -353,6 +336,17 @@ function buildOracleWatchHeartbeat(summary = {}, state = {}) {
   };
 }
 
+function resolveOracleWatchBackoffUntilMs(state = {}, nowMs = Date.now()) {
+  const heartbeatBackoffMs = new Date(state?.heartbeat?.backoffUntil || '').getTime();
+  const rateLimitBackoffMs = new Date(state?.rateLimit?.backoffUntil || '').getTime();
+  const backoffUntilMs = Math.max(
+    Number.isFinite(heartbeatBackoffMs) ? heartbeatBackoffMs : 0,
+    Number.isFinite(rateLimitBackoffMs) ? rateLimitBackoffMs : 0
+  );
+  if (!Number.isFinite(backoffUntilMs) || backoffUntilMs <= nowMs) return null;
+  return backoffUntilMs;
+}
+
 function getTodayRealizedTargetProgress(journalPath, now = new Date()) {
   const targetUsd = 200;
   const perHourTargetUsd = targetUsd / 24;
@@ -409,56 +403,6 @@ function getTodayRealizedTargetProgress(journalPath, now = new Date()) {
   }
 }
 
-function buildPaperCompetitionStatus(projectRoot = getProjectRoot(), now = new Date()) {
-  const tradingDir = path.join(projectRoot, 'workspace', 'agent-trading');
-  const closedDateKey = toLocalDateKey(now);
-  const summary = {
-    path: tradingDir,
-    filesChecked: 0,
-    missingSameDayRootCauseReviews: 0,
-    agents: [],
-    compliant: true,
-  };
-  try {
-    if (!fs.existsSync(tradingDir)) {
-      return { ...summary, compliant: false, error: 'missing_agent_trading_dir' };
-    }
-    const files = fs.readdirSync(tradingDir)
-      .filter((name) => name.endsWith('-portfolio.json'));
-    summary.filesChecked = files.length;
-    summary.agents = files.map((fileName) => {
-      const filePath = path.join(tradingDir, fileName);
-      const data = readJsonFile(filePath, {}) || {};
-      const closedTrades = Array.isArray(data.closedTrades) ? data.closedTrades : [];
-      const missing = closedTrades.filter((trade) => {
-        const closedAt = String(trade?.closedAt || '').trim();
-        if (!closedAt || !closedAt.startsWith(closedDateKey)) return false;
-        const review = trade?.rootCauseReview || null;
-        const reviewedAt = String(review?.reviewedAt || '').trim();
-        const summaryText = String(review?.plainEnglishSummary || review?.whatWentWrong || '').trim();
-        return !review || !reviewedAt.startsWith(closedDateKey) || !summaryText;
-      });
-      summary.missingSameDayRootCauseReviews += missing.length;
-      return {
-        agentId: String(data.agentId || data.agent || path.basename(fileName, '.json')).trim(),
-        filePath,
-        totalPnl: Number(data.totalPnl ?? ((Number(data.equity || data.currentEquity || 0) || 0) - (Number(data.startingBalance || 0) || 0))) || 0,
-        openPositionCount: Array.isArray(data.openPositions) ? data.openPositions.length : 0,
-        closedTradeCount: closedTrades.length,
-        missingSameDayRootCauseReviews: missing.length,
-      };
-    });
-    summary.compliant = summary.missingSameDayRootCauseReviews === 0;
-    return summary;
-  } catch (error) {
-    return {
-      ...summary,
-      compliant: false,
-      error: error?.message || String(error),
-    };
-  }
-}
-
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -484,6 +428,18 @@ function trimOptionalText(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function containsHangulSyllables(value = '') {
+  return /[\uAC00-\uD7AF]/.test(String(value || ''));
+}
+
+function shouldSuppressMainTelegramForHangul(message = '', env = process.env) {
+  const profile = String(env?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main')
+    .trim()
+    .toLowerCase();
+  const isMainProfile = !profile || profile === 'main';
+  return isMainProfile && containsHangulSyllables(message);
 }
 
 function tailText(value, maxChars = 4000) {
@@ -617,7 +573,6 @@ function resolve[private-live-ops]WalletAddress(env = process.env) {
   return String(
     env?.LIVE_OPS_WALLET_ADDRESS
     || env?.LIVE_OPS_ADDRESS
-    || env?.POLYMARKET_FUNDER_ADDRESS
     || ''
   ).trim();
 }
@@ -667,7 +622,7 @@ function applyMacroRiskSizeCapToApprovedTrades(approvedTrades = [], macroRisk = 
 
 function has[private-live-ops]Credentials(env = process.env) {
   return Boolean(
-    String(env?.POLYMARKET_PRIVATE_KEY || '').trim()
+    String(env?.LIVE_OPS_PRIVATE_KEY || '').trim()
     && resolve[private-live-ops]WalletAddress(env)
   );
 }
@@ -770,6 +725,10 @@ function create[private-live-ops]Executor(options = {}) {
   const dryRun = options.dryRun === true;
   const defiExecuteScriptPath = options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', cwd);
   const defiCloseScriptPath = options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', cwd);
+  const supervisorEnv = {
+    ...env,
+    SQUIDRUN_LIVE_OPS_CALLER: 'supervisor',
+  };
 
   function normalizeAsset(asset = 'ETH') {
     return String(asset || 'ETH').trim().toUpperCase();
@@ -779,7 +738,7 @@ function create[private-live-ops]Executor(options = {}) {
     async getAccountState() {
       const walletAddress = resolve[private-live-ops]WalletAddress(env);
       if (!walletAddress) {
-        throw new Error('[private-live-ops] wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or LIVE_OPS_WALLET_ADDRESS.');
+        throw new Error('[private-live-ops] wallet address is missing. Set LIVE_OPS_WALLET_ADDRESS.');
       }
       const [account, positions] = await Promise.all([
         [private-live-ops]Client.getAccountSnapshot({ walletAddress }),
@@ -806,7 +765,7 @@ function create[private-live-ops]Executor(options = {}) {
       }
       return executeNodeScript(defiExecuteScriptPath, args, {
         cwd,
-        env,
+        env: supervisorEnv,
       });
     },
 
@@ -816,7 +775,7 @@ function create[private-live-ops]Executor(options = {}) {
         : ['--asset', normalizeAsset(asset)];
       return executeNodeScript(defiCloseScriptPath, args, {
         cwd,
-        env,
+        env: supervisorEnv,
       });
     },
 
@@ -878,6 +837,12 @@ function createLogger(logPath) {
   };
 }
 
+function appendSuppressedRepeatCount(message, suppressedCount = 0) {
+  const count = Number(suppressedCount || 0);
+  if (!Number.isFinite(count) || count <= 0) return String(message || '');
+  return `${message} (suppressed ${count} repeat${count === 1 ? '' : 's'})`;
+}
+
 function processExists(pid) {
   const numeric = Number(pid);
   if (!Number.isFinite(numeric) || numeric <= 0) return false;
@@ -897,57 +862,10 @@ function parseOptionalDurationMs(value, fallback) {
   return Math.max(1000, numeric);
 }
 
-function normalizeNewsTicker(value = '') {
+function normalizeUsdTicker(value = '') {
   const raw = String(value || '').trim().toUpperCase();
   if (!raw) return '';
   return raw.includes('/') ? raw : `${raw}/USD`;
-}
-
-function buildNewsFingerprint(payload = {}) {
-  const headlines = Array.isArray(payload.headlines) ? payload.headlines : [];
-  const reason = String(payload.reason || '').trim();
-  return JSON.stringify({
-    level: String(payload.level || '').trim(),
-    reason,
-    headlines: headlines.slice(0, 5).map((headline) => String(headline || '').trim().toLowerCase()),
-  });
-}
-
-function tokenizeCaseKeywords(text = '') {
-  return Array.from(new Set(
-    String(text || '')
-      .split(/[(),/|·:\-\u2014]+/)
-      .map((entry) => String(entry || '').trim())
-      .filter((entry) => entry.length >= 2)
-  ));
-}
-
-function extractActiveCaseSignals(markdown = '') {
-  const source = String(markdown || '');
-  if (!source.trim()) return [];
-  const headings = Array.from(source.matchAll(/^###\s+Case\s+\d+:\s+(.+)$/gm)).map((match) => String(match[1] || '').trim());
-  const signals = headings.map((heading) => {
-    const label = heading.replace(/\s+[-—].*$/, '').trim();
-    return {
-      label,
-      keywords: Array.from(new Set([
-        ...tokenizeCaseKeywords(label),
-        '은별',
-        '[private-profile]',
-      ])),
-    };
-  }).filter((entry) => entry.keywords.length > 0);
-  return signals;
-}
-
-function defaultTradingState() {
-  return {
-    marketDate: null,
-    sleeping: true,
-    phases: {},
-    nextEvent: null,
-    updatedAt: null,
-  };
 }
 
 function defaultCryptoTradingState() {
@@ -956,74 +874,6 @@ function defaultCryptoTradingState() {
     lastResult: null,
     nextEvent: null,
     activeConvictionThesis: null,
-    updatedAt: null,
-  };
-}
-
-function defaultLiveOpsTradingState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    dayStartDate: null,
-    dayStartBankroll: null,
-    lastScan: null,
-    lastConsensus: null,
-    lastExecution: null,
-    lastMonitor: null,
-    updatedAt: null,
-  };
-}
-
-function defaultLaunchRadarState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    updatedAt: null,
-  };
-}
-
-function defaultYieldRouterState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastRebalance: null,
-    updatedAt: null,
-  };
-}
-
-function defaultNewsScanState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    lastAlertFingerprint: null,
-    updatedAt: null,
-  };
-}
-
-function defaultPendingFollowupState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    lastAlertFingerprint: null,
-    updatedAt: null,
-  };
-}
-
-function defaultMarketResearchState() {
-  return {
-    lastProcessedAt: null,
-    lastResult: null,
-    nextEvent: null,
-    lastScan: null,
-    lastAlertFingerprint: null,
     updatedAt: null,
   };
 }
@@ -1038,19 +888,18 @@ function default[private-live-ops]State() {
   };
 }
 
-function defaultMarketScannerState() {
-  return marketScannerModule.defaultMarketScannerState();
-}
-
-function default[private-profile]CheckInState() {
+function defaultSparkMonitorState() {
   return {
     lastProcessedAt: null,
     lastResult: null,
     nextEvent: null,
-    lastDraft: null,
-    lastDraftFingerprint: null,
+    lastScan: null,
     updatedAt: null,
   };
+}
+
+function defaultMarketScannerState() {
+  return marketScannerModule.defaultMarketScannerState();
 }
 
 function defaultTradeReconciliationState() {
@@ -1059,31 +908,6 @@ function defaultTradeReconciliationState() {
     lastPendingCount: 0,
     lastResult: null,
     lastError: null,
-  };
-}
-
-function defaultPaperTradingAutomationState() {
-  return {
-    updatedAt: null,
-    lastProcessedAt: null,
-    lastSummary: null,
-    agents: Object.fromEntries(
-      paperTradingAutomation.AGENT_IDS.map((agentId) => [agentId, {
-        agentId,
-        lastDispatchAt: null,
-        lastDispatchAtMs: 0,
-        nextTimerWakeAt: null,
-        nextTimerWakeAtMs: 0,
-        pendingRequestId: null,
-        pendingRequestCreatedAt: null,
-        pendingRequestCreatedAtMs: 0,
-        lastResponseAt: null,
-        lastResponseAtMs: 0,
-        lastWakeReason: null,
-        lastActionType: null,
-        lastError: null,
-      }])
-    ),
   };
 }
 
@@ -1101,96 +925,6 @@ function startOfUtcDay(value = new Date()) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
 }
 
-function buildLaunchRadarDailySchedule(referenceDate = new Date(), options = {}) {
-  const intervalMinutes = Math.max(1, Math.floor(Number(options.intervalMinutes) || DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES));
-  const start = startOfUtcDay(referenceDate);
-  const marketDate = start.toISOString().slice(0, 10);
-  const schedule = [];
-
-  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += intervalMinutes) {
-    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
-    for (const phase of LAUNCH_RADAR_PHASES) {
-      schedule.push({
-        key: phase.key,
-        label: phase.label,
-        marketDate,
-        scheduledAt: scheduledAt.toISOString(),
-        scheduledTimeLocal: scheduledAt.toISOString(),
-        displayTimeZone: 'UTC',
-        windowKey: scheduledAt.toISOString(),
-      });
-    }
-  }
-
-  return {
-    marketDate,
-    intervalMinutes,
-    displayTimeZone: 'UTC',
-    schedule,
-  };
-}
-
-function getNextLaunchRadarEvent(referenceDate = new Date(), options = {}) {
-  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  for (let offset = 0; offset < 3; offset += 1) {
-    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-    const day = buildLaunchRadarDailySchedule(candidateDate, options);
-    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-    if (nextEvent) {
-      return {
-        ...nextEvent,
-        day,
-      };
-    }
-  }
-  return null;
-}
-
-function buildNewsScanDailySchedule(referenceDate = new Date(), options = {}) {
-  const intervalMinutes = Math.max(1, Math.floor(Number(options.intervalMinutes) || DEFAULT_NEWS_SCAN_INTERVAL_MINUTES));
-  const start = startOfUtcDay(referenceDate);
-  const marketDate = start.toISOString().slice(0, 10);
-  const schedule = [];
-
-  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += intervalMinutes) {
-    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
-    for (const phase of NEWS_SCAN_PHASES) {
-      schedule.push({
-        key: phase.key,
-        label: phase.label,
-        marketDate,
-        scheduledAt: scheduledAt.toISOString(),
-        scheduledTimeLocal: scheduledAt.toISOString(),
-        displayTimeZone: 'UTC',
-        windowKey: scheduledAt.toISOString(),
-      });
-    }
-  }
-
-  return {
-    marketDate,
-    intervalMinutes,
-    displayTimeZone: 'UTC',
-    schedule,
-  };
-}
-
-function getNextNewsScanEvent(referenceDate = new Date(), options = {}) {
-  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  for (let offset = 0; offset < 3; offset += 1) {
-    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-    const day = buildNewsScanDailySchedule(candidateDate, options);
-    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-    if (nextEvent) {
-      return {
-        ...nextEvent,
-        day,
-      };
-    }
-  }
-  return null;
-}
-
 function build[private-live-ops]DailySchedule(referenceDate = new Date(), options = {}) {
   return buildUtcIntervalSchedule(referenceDate, [{ key: '[private-live-ops]_scan', label: 'Token unlock scan' }], options.intervalMinutes || DEFAULT_LIVE_OPS_INTERVAL_MINUTES);
 }
@@ -1200,6 +934,26 @@ function getNext[private-live-ops]Event(referenceDate = new Date(), options = {}
   for (let offset = 0; offset < 3; offset += 1) {
     const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
     const day = build[private-live-ops]DailySchedule(candidateDate, options);
+    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
+    if (nextEvent) {
+      return {
+        ...nextEvent,
+        day,
+      };
+    }
+  }
+  return null;
+}
+
+function buildSparkMonitorDailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, [{ key: 'spark_monitor', label: 'Spark monitor scan' }], options.intervalMinutes || DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES);
+}
+
+function getNextSparkMonitorEvent(referenceDate = new Date(), options = {}) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
+    const day = buildSparkMonitorDailySchedule(candidateDate, options);
     const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
     if (nextEvent) {
       return {
@@ -1256,164 +1010,12 @@ function getNextUtcIntervalEvent(referenceDate = new Date(), phases = [], interv
   return null;
 }
 
-function parseCaseOperationsDashboard(markdown = '') {
-  const lines = String(markdown || '').split(/\r?\n/);
-  const pendingItems = [];
-  let currentCaseLabel = null;
-  let currentSection = null;
-  let scheduleDate = null;
-  const scheduleItems = [];
-
-  for (const rawLine of lines) {
-    const line = String(rawLine || '').trim();
-    if (!line) continue;
-    const caseMatch = line.match(/^###\s+Case\s+\d+:\s+(.+)$/i);
-    if (caseMatch) {
-      currentCaseLabel = String(caseMatch[1] || '').trim();
-      currentSection = 'case';
-      continue;
-    }
-    const scheduleMatch = line.match(/^##\s+은별\s+내일\s+일정\s+\((\d{4}-\d{2}-\d{2})\)/);
-    if (scheduleMatch) {
-      scheduleDate = scheduleMatch[1];
-      currentSection = 'schedule';
-      continue;
-    }
-    if (/^##\s+/.test(line)) {
-      currentSection = null;
-      continue;
-    }
-    if (currentSection === 'schedule' && /^\d+\.\s+/.test(line)) {
-      scheduleItems.push(line.replace(/^\d+\.\s+/, '').trim());
-      continue;
-    }
-    if (!line.startsWith('|') || /^\|\s*-+/.test(line) || /^\|\s*#\s*\|/.test(line)) {
-      continue;
-    }
-    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
-    if (cells.length < 4 || !/^\d+$/.test(cells[0])) continue;
-    pendingItems.push({
-      id: cells[0],
-      item: cells[1],
-      blockedOn: cells[2],
-      status: cells[3],
-      caseLabel: currentCaseLabel,
-    });
-  }
-
-  return {
-    pendingItems,
-    scheduleDate,
-    scheduleItems,
-  };
-}
-
-function getLatest[private-profile]MessageTimestamp(rows = []) {
-  for (const row of Array.isArray(rows) ? rows : []) {
-    const metadata = row && typeof row.metadata === 'object' ? row.metadata : {};
-    const rawBody = String(row?.rawBody || row?.body || '');
-    const sender = String(metadata.from || row?.sender || '');
-    const chatId = String(metadata.chatId || metadata.telegramChatId || row?.chatId || '');
-    if (
-      chatId === '8754356993'
-      || /은별|private-profile/i.test(sender)
-      || /은별|private-profile|8754356993/i.test(rawBody)
-    ) {
-      return Number(row?.sentAtMs || row?.brokeredAtMs || row?.createdAtMs || 0) || 0;
-    }
-  }
-  return 0;
-}
-
-function is[private-profile]OwnedPendingItem(item = {}) {
-  const blockedOn = String(item?.blockedOn || '');
-  const label = `${item?.item || ''} ${item?.caseLabel || ''} ${item?.status || ''}`;
-  return /은별 input|은별 action|은별|private-profile/i.test(blockedOn)
-    || /은별|private-profile/i.test(label);
-}
-
-function isthe userOwnedPendingItem(item = {}) {
-  const blockedOn = String(item?.blockedOn || '');
-  const label = `${item?.item || ''} ${item?.caseLabel || ''} ${item?.status || ''}`;
-  return /james\b|james action|builder|architect|oracle/i.test(blockedOn)
-    || /\bthe user\b|미국 filings|US filings|test buy/i.test(label);
-}
-
-function buildPendingFollowupDailySchedule(referenceDate = new Date(), options = {}) {
-  return buildUtcIntervalSchedule(referenceDate, PENDING_FOLLOWUP_PHASES, options.intervalMinutes || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES);
-}
-
-function getNextPendingFollowupEvent(referenceDate = new Date(), options = {}) {
-  return getNextUtcIntervalEvent(referenceDate, PENDING_FOLLOWUP_PHASES, options.intervalMinutes || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES);
-}
-
-function buildMarketResearchDailySchedule(referenceDate = new Date(), options = {}) {
-  return buildUtcIntervalSchedule(referenceDate, MARKET_RESEARCH_PHASES, options.intervalMinutes || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES);
-}
-
-function getNextMarketResearchEvent(referenceDate = new Date(), options = {}) {
-  return getNextUtcIntervalEvent(referenceDate, MARKET_RESEARCH_PHASES, options.intervalMinutes || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES);
-}
-
 function buildMarketScannerDailySchedule(referenceDate = new Date(), options = {}) {
   return buildUtcIntervalSchedule(referenceDate, MARKET_SCANNER_PHASES, options.intervalMinutes || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES);
 }
 
 function getNextMarketScannerEvent(referenceDate = new Date(), options = {}) {
   return getNextUtcIntervalEvent(referenceDate, MARKET_SCANNER_PHASES, options.intervalMinutes || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES);
-}
-
-function build[private-profile]CheckInDailySchedule(referenceDate = new Date(), options = {}) {
-  return buildUtcIntervalSchedule(referenceDate, EUNBYEOL_CHECKIN_PHASES, options.intervalMinutes || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES);
-}
-
-function getNext[private-profile]CheckInEvent(referenceDate = new Date(), options = {}) {
-  return getNextUtcIntervalEvent(referenceDate, EUNBYEOL_CHECKIN_PHASES, options.intervalMinutes || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES);
-}
-
-function buildYieldRouterDailySchedule(referenceDate = new Date(), options = {}) {
-  const intervalMinutes = Math.max(1, Math.floor(Number(options.intervalMinutes) || DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES));
-  const start = startOfUtcDay(referenceDate);
-  const marketDate = start.toISOString().slice(0, 10);
-  const schedule = [];
-
-  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += intervalMinutes) {
-    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
-    for (const phase of YIELD_ROUTER_PHASES) {
-      schedule.push({
-        key: phase.key,
-        label: phase.label,
-        marketDate,
-        scheduledAt: scheduledAt.toISOString(),
-        scheduledTimeLocal: scheduledAt.toISOString(),
-        displayTimeZone: 'UTC',
-        windowKey: scheduledAt.toISOString(),
-      });
-    }
-  }
-
-  return {
-    marketDate,
-    intervalMinutes,
-    displayTimeZone: 'UTC',
-    schedule,
-  };
-}
-
-function getNextYieldRouterEvent(referenceDate = new Date(), options = {}) {
-  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  for (let offset = 0; offset < 3; offset += 1) {
-    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-    const day = buildYieldRouterDailySchedule(candidateDate, options);
-    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-    if (nextEvent) {
-      return {
-        ...nextEvent,
-        day,
-      };
-    }
-  }
-  return null;
 }
 
 function parseArgs(argv) {
@@ -1513,7 +1115,10 @@ class MemoryLeaseJanitor {
 class SupervisorDaemon {
   constructor(options = {}) {
     this.projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+    this.[private-live-ops]ManualActivityPath = options.[private-live-ops]ManualActivityPath || DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH;
     this.hmSendScriptPath = path.resolve(String(options.hmSendScriptPath || resolveProjectUiScriptPath('hm-send.js', this.projectRoot)));
+    this.hmSendExternalDisabled = options.hmSendExternalDisabled === true
+      || (Boolean(process.env.JEST_WORKER_ID) && !options.hmSendScriptPath);
     this.hmDefiStatusScriptPath = path.resolve(String(options.defiStatusScriptPath || resolveProjectUiScriptPath('hm-defi-status.js', this.projectRoot)));
     this.hmDefiExecuteScriptPath = path.resolve(String(options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', this.projectRoot)));
     this.hmDefiCloseScriptPath = path.resolve(String(options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', this.projectRoot)));
@@ -1521,6 +1126,8 @@ class SupervisorDaemon {
     this.hm[private-live-ops]SqueezeDetectorScriptPath = path.resolve(String(options.[private-live-ops]SqueezeDetectorScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-squeeze-detector.js', this.projectRoot)));
     this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolveProjectUiScriptPath('hm-oracle-watch-engine.js', this.projectRoot)));
     this.hm[private-live-ops]UnlocksScriptPath = path.resolve(String(options.[private-live-ops]UnlocksScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-unlocks.js', this.projectRoot)));
+    this.hmCoordHeartbeatScriptPath = path.resolve(String(options.coordHeartbeatScriptPath || resolveProjectUiScriptPath('hm-heartbeat.js', this.projectRoot)));
+    this.hmAnomalyScriptPath = path.resolve(String(options.anomalyScriptPath || resolveProjectUiScriptPath('hm-anomaly.js', this.projectRoot)));
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
     this.pollMs = Math.max(1000, Number.parseInt(options.pollMs || DEFAULT_POLL_MS, 10) || DEFAULT_POLL_MS);
     this.heartbeatMs = Math.max(1000, Number.parseInt(options.heartbeatMs || DEFAULT_HEARTBEAT_MS, 10) || DEFAULT_HEARTBEAT_MS);
@@ -1578,6 +1185,22 @@ class SupervisorDaemon {
       };
     this.workerLeaseOwnerPrefix = String(options.workerLeaseOwnerPrefix || 'supervisor');
     this.logger = options.logger || createLogger(this.logPath);
+    this.rateLimitedLogState = new Map();
+    this.supervisorRepeatLogMs = Math.max(
+      60_000,
+      Number.parseInt(options.supervisorRepeatLogMs || DEFAULT_SUPERVISOR_REPEAT_LOG_MS, 10)
+      || DEFAULT_SUPERVISOR_REPEAT_LOG_MS
+    );
+    this.memoryIndexRepeatLogMs = Math.max(
+      60_000,
+      Number.parseInt(options.memoryIndexRepeatLogMs || DEFAULT_MEMORY_INDEX_REPEAT_LOG_MS, 10)
+      || DEFAULT_MEMORY_INDEX_REPEAT_LOG_MS
+    );
+    this.memoryConsistencyRepeatLogMs = Math.max(
+      60_000,
+      Number.parseInt(options.memoryConsistencyRepeatLogMs || DEFAULT_MEMORY_CONSISTENCY_REPEAT_LOG_MS, 10)
+      || DEFAULT_MEMORY_CONSISTENCY_REPEAT_LOG_MS
+    );
     this.activeWorkers = new Map();
     this.runtimeEnv = options.env || process.env;
     this.loopEvents = new EventEmitter();
@@ -1635,42 +1258,16 @@ class SupervisorDaemon {
     this.sleepCyclePromise = null;
     this.lastSleepCycleSummary = null;
     this.wakeSignalPath = options.wakeSignalPath || DEFAULT_WAKE_SIGNAL_PATH;
-    this.manualTradingOnly = true;
+    // Previously hardcoded to true → produced manualOnly=true, [private-live-ops]Execution.enabled=false,
+    // approvedTrades=0, convictionSelection=null cascade because consensus + execution phases
+    // all gate on !manualTradingOnly. Now env-gated: set SQUIDRUN_MANUAL_TRADING=0 to allow
+    // the automation phases to run. Default stays true for safety.
+    this.manualTradingOnly = options.manualTradingOnly === false
+      || String(this.runtimeEnv.SQUIDRUN_MANUAL_TRADING || '').trim() === '0'
+      ? false
+      : true;
     this.[private-live-ops]ScalpModeArmed = options.[private-live-ops]ScalpModeArmed === true
       || this.runtimeEnv.SQUIDRUN_LIVE_OPS_SCALP_MODE === '1';
-    const stockTradingAutomationRequested = options.tradingEnabled === true
-      || this.runtimeEnv.SQUIDRUN_ENABLE_STOCK_TRADING_AUTOMATION === '1';
-    this.tradingEnabled = Boolean(
-      stockTradingAutomationRequested
-      && this.runtimeEnv.SQUIDRUN_TRADING_AUTOMATION !== '0'
-    );
-    this.tradingStatePath = options.tradingStatePath || DEFAULT_TRADING_STATE_PATH;
-    this.tradingState = {
-      ...defaultTradingState(),
-      ...(readJsonFile(this.tradingStatePath, defaultTradingState()) || {}),
-    };
-    this.tradingPhasePromise = null;
-    this.lastTradingSummary = this.tradingEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        marketDate: this.tradingState.marketDate || null,
-        sleeping: this.tradingState.sleeping !== false,
-        nextEvent: this.tradingState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        reason: stockTradingAutomationRequested ? 'manual_opt_out' : 'manual_opt_in_required',
-        marketDate: null,
-        sleeping: true,
-        nextEvent: null,
-      };
-    this.tradingOrchestrator = this.tradingEnabled
-      ? (options.tradingOrchestrator || tradingOrchestrator.createOrchestrator({
-        journalPath: resolveRuntimePath('trade-journal.db'),
-      }))
-      : null;
     this.tradeReconciliationPollMs = Math.max(
       60_000,
       Number.parseInt(
@@ -1681,9 +1278,9 @@ class SupervisorDaemon {
     this.tradeReconciliationPromise = null;
     this.tradeReconciliationState = defaultTradeReconciliationState();
     this.lastTradeReconciliationSummary = {
-      enabled: Boolean(this.tradingOrchestrator),
-      status: this.tradingOrchestrator ? 'idle' : 'disabled',
-      marketDate: this.tradingState.marketDate || null,
+      enabled: false,
+      status: 'disabled',
+      marketDate: null,
       pendingCount: 0,
       lastProcessedAt: null,
       lastResult: null,
@@ -1741,11 +1338,20 @@ class SupervisorDaemon {
       };
     this.oracleWatchRulesPath = path.resolve(String(options.oracleWatchRulesPath || DEFAULT_ORACLE_WATCH_RULES_PATH));
     this.oracleWatchStatePath = path.resolve(String(options.oracleWatchStatePath || DEFAULT_ORACLE_WATCH_STATE_PATH));
+    this.oracleShortRegimeStatePath = path.resolve(String(
+      options.oracleShortRegimeStatePath || oracleWatchRegime.DEFAULT_SHARED_SHORT_REGIME_STATE_PATH
+    ));
     this.oracleWatchEnabled = options.oracleWatchEnabled !== false
       && readProjectWatcherEnabled(this.projectRoot, true)
       && this.runtimeEnv.SQUIDRUN_ORACLE_WATCH !== '0';
     this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath);
     this.lastOracleWatchRunAtMs = 0;
+    this.lastOracleWatchRelaunchAtMs = 0;
+    this.oracleWatchRelaunchCooldownMs = Math.max(
+      DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS,
+      Number.parseInt(options.oracleWatchRelaunchCooldownMs || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS, 10)
+      || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS
+    );
     this.oracleWatchPromise = null;
     this.oracleWatchStaleAlertActive = false;
     this.lastOracleWatchSummary = this.oracleWatchEnabled
@@ -1767,36 +1373,25 @@ class SupervisorDaemon {
         lastRunAt: null,
         lastSummary: null,
       };
-    this.paperTradingAutomationEnabled = options.paperTradingAutomationEnabled !== false
-      && this.runtimeEnv.SQUIDRUN_PAPER_TRADING_AUTOMATION !== '0';
-    this.paperTradingAutomationStatePath = options.paperTradingAutomationStatePath || DEFAULT_PAPER_TRADING_AUTOMATION_STATE_PATH;
-    this.paperTradingResponseTimeoutMs = Math.max(
-      15_000,
-      Number.parseInt(
-        options.paperTradingResponseTimeoutMs || this.runtimeEnv.SQUIDRUN_PAPER_TRADING_RESPONSE_TIMEOUT_MS || DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS,
-        10
-      ) || DEFAULT_PAPER_TRADING_RESPONSE_TIMEOUT_MS
-    );
-    this.paperTradingAutomationState = {
-      ...defaultPaperTradingAutomationState(),
-      ...(readJsonFile(this.paperTradingAutomationStatePath, defaultPaperTradingAutomationState()) || {}),
-    };
-    this.paperTradingAutomationPromise = null;
-    this.lastPaperTradingAutomationSummary = this.paperTradingAutomationEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        statePath: this.paperTradingAutomationStatePath,
-        lastProcessedAt: this.paperTradingAutomationState.lastProcessedAt || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        statePath: this.paperTradingAutomationStatePath,
-        lastProcessedAt: null,
-      };
     this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
       && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
+    this.coordHeartbeatEnabled = options.coordHeartbeatEnabled === true
+      || (options.coordHeartbeatEnabled !== false && RUNNING_SUPERVISOR_MAIN);
+    this.coordHeartbeatIntervalMs = Math.max(
+      60_000,
+      Number.parseInt(options.coordHeartbeatIntervalMs || DEFAULT_COORD_HEARTBEAT_INTERVAL_MS, 10)
+      || DEFAULT_COORD_HEARTBEAT_INTERVAL_MS
+    );
+    this.coordHeartbeatPromise = null;
+    this.lastCoordHeartbeatRunAtMs = 0;
+    this.lastCoordHeartbeatSummary = {
+      enabled: this.isCoordHeartbeatActive(),
+      status: this.isCoordHeartbeatActive() ? 'idle' : 'disabled',
+      intervalMs: this.coordHeartbeatIntervalMs,
+      scriptPath: this.hmCoordHeartbeatScriptPath,
+      lastRunAt: null,
+      lastSummary: null,
+    };
     this.cryptoMonitorOnly = options.cryptoMonitorOnly === true
       || this.runtimeEnv.SQUIDRUN_CRYPTO_MONITOR_ONLY === '1';
     this.cryptoTradingStatePath = options.cryptoTradingStatePath || DEFAULT_CRYPTO_TRADING_STATE_PATH;
@@ -1867,6 +1462,36 @@ class SupervisorDaemon {
         checkedAt: null,
         warnings: [],
         telegramAlerts: [],
+      };
+    this.positionAttributionStatePath = options.positionAttributionStatePath
+      || agentPositionAttribution.DEFAULT_POSITION_ATTRIBUTION_STATE_PATH;
+    this.positionAttributionSnapshotProvider = typeof options.positionAttributionSnapshotProvider === 'function'
+      ? options.positionAttributionSnapshotProvider
+      : null;
+    const positionAttributionReconciliationRequested = options.positionAttributionReconciliationEnabled === true
+      || (options.positionAttributionReconciliationEnabled !== false && !process.env.JEST_WORKER_ID);
+    this.positionAttributionReconciliationEnabled = positionAttributionReconciliationRequested
+      && (Boolean(resolve[private-live-ops]WalletAddress(this.runtimeEnv)) || Boolean(this.positionAttributionSnapshotProvider));
+    this.lastPositionAttributionReconciliationSummary = this.positionAttributionReconciliationEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        statePath: this.positionAttributionStatePath,
+        checkedAt: null,
+        liveCount: 0,
+        updatedCount: 0,
+        createdCount: 0,
+        quarantinedCount: 0,
+      }
+      : {
+        enabled: false,
+        status: resolve[private-live-ops]WalletAddress(this.runtimeEnv) ? 'manual_opt_out' : 'wallet_unavailable',
+        statePath: this.positionAttributionStatePath,
+        checkedAt: null,
+        liveCount: 0,
+        updatedCount: 0,
+        createdCount: 0,
+        quarantinedCount: 0,
       };
     const [private-live-ops]AutomationRequested = options.[private-live-ops]ExecutionEnabled !== false
       && this.runtimeEnv.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0';
@@ -1978,217 +1603,9 @@ class SupervisorDaemon {
       : null;
     this.smartMoneyScannerLastTrigger = null;
 
-    // Circuit breaker — continuous position monitor with stop-loss execution
-    const executor = require('./modules/trading/executor');
-    const dataIngestion = require('./modules/trading/data-ingestion');
-    // Circuit breaker DISABLED — was monitoring stale PaperBroker paper positions and spamming
-    // the user's Telegram with ghost ETH SHORT alerts for 3+ days. [private-live-ops] has its own
-    // position monitor. — Session 268
-    this.circuitBreaker = false && this.tradingEnabled && options.circuitBreaker !== null
-      ? (options.circuitBreaker || new CircuitBreaker({
-        pollMs: 30_000,
-        hardStopPct: 0.04,   // 4% loss from entry
-        trailingStopPct: 0.04, // 4% drop from high-water mark
-        flashCrashPct: 0.05,  // 5% portfolio drop → sell all
-        minPositionValueUsd: 10,
-        cooldownMs: 5 * 60_000,
-        statePath: resolveRuntimePath('circuit-breaker-state.json'),
-        logger: this.logger,
-        getPositions: async () => executor.getOpenPositions(),
-        getSnapshots: async (symbols) => dataIngestion.getWatchlistSnapshots({ symbols }),
-        executeSell: async (ticker, shares, reason) => {
-          const assetClass = tradingWatchlist.getAssetClassForTicker(ticker, 'us_equity');
-          this.logger.warn(`[circuit-breaker] Executing emergency SELL: ${ticker} x${shares} — ${reason}`);
-          try {
-            const result = await executor.submitOrder({
-              ticker,
-              direction: 'SELL',
-              shares,
-              assetClass,
-              orderType: 'market',
-              ...(assetClass === 'crypto' ? { timeInForce: 'gtc' } : {}),
-            });
-            this.logger.info(`[circuit-breaker] SELL ${ticker} submitted: ${result?.orderId || 'ok'}`);
-            return { ok: true, orderId: result?.orderId };
-          } catch (err) {
-            this.logger.error(`[circuit-breaker] SELL ${ticker} failed: ${err.message}`);
-            return { ok: false, error: err.message };
-          }
-        },
-        getAccountEquity: async () => {
-          const account = await executor.getAccountSnapshot();
-          return Number(account?.equity) || 0;
-        },
-      }))
-      : null;
+    this.circuitBreaker = null;
 
-    const polymarketConfigured = (() => {
-      try {
-        return Boolean(polymarketClient.resolveLiveOpsConfig(process.env)?.configured);
-      } catch {
-        return false;
-      }
-    })();
-    const polymarketAutomationRequested = options.polymarketTradingEnabled === true
-      || process.env.SQUIDRUN_POLYMARKET_AUTOMATION === '1';
-    this.polymarketTradingEnabled = Boolean(polymarketAutomationRequested && polymarketConfigured);
-    this.polymarketTradingStatePath = options.polymarketTradingStatePath || DEFAULT_POLYMARKET_TRADING_STATE_PATH;
-    this.polymarketTradingState = {
-      ...defaultLiveOpsTradingState(),
-      ...(readJsonFile(this.polymarketTradingStatePath, defaultLiveOpsTradingState()) || {}),
-    };
-    this.polymarketTradingPhasePromise = null;
-    this.lastLiveOpsTradingSummary = this.polymarketTradingEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        reason: polymarketConfigured ? 'manual_opt_in_required' : 'credentials_unavailable',
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.polymarketClient = options.polymarketClient || polymarketClient;
-    this.polymarketScanner = options.polymarketScanner || polymarketScanner;
-    this.polymarketSignals = options.polymarketSignals || polymarketSignals;
-    this.polymarketSizer = options.polymarketSizer || polymarketSizer;
-    this.polymarketTradingOrchestrator = this.polymarketTradingEnabled
-      ? (options.polymarketTradingOrchestrator || tradingOrchestrator.createOrchestrator({
-        journalPath: resolveRuntimePath('trade-journal.db'),
-        smartMoneyScanner: this.smartMoneyScanner,
-      }))
-      : null;
-    const launchRadarAutomationRequested = options.launchRadarEnabled === true
-      || process.env.SQUIDRUN_LAUNCH_RADAR_AUTOMATION === '1';
-    this.launchRadarEnabled = Boolean(launchRadarAutomationRequested);
-    this.launchRadarDryRun = options.launchRadarDryRun === true
-      || process.env.SQUIDRUN_LAUNCH_RADAR_DRY_RUN === '1';
-    this.launchRadarStatePath = options.launchRadarStatePath || DEFAULT_LAUNCH_RADAR_STATE_PATH;
-    this.launchRadarState = {
-      ...defaultLaunchRadarState(),
-      ...(readJsonFile(this.launchRadarStatePath, defaultLaunchRadarState()) || {}),
-    };
-    this.launchRadarPhasePromise = null;
-    this.lastLaunchRadarSummary = this.launchRadarEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.launchRadar = this.launchRadarEnabled && options.launchRadar !== null
-      ? (options.launchRadar || launchRadar.createLaunchRadar({
-        statePath: resolveRuntimePath('launch-radar-state.json'),
-        fetch: options.fetch || global.fetch,
-        env: options.env || process.env,
-      }))
-      : null;
-    this.launchRadarOrchestrator = this.launchRadarEnabled
-      ? (options.launchRadarOrchestrator || tradingOrchestrator.createOrchestrator({
-        journalPath: resolveRuntimePath('trade-journal.db'),
-        dynamicWatchlistStatePath: resolveRuntimePath('dynamic-watchlist-state.json'),
-        launchRadar: this.launchRadar,
-      }))
-      : null;
-    this.newsScanEnabled = options.newsScanEnabled !== false
-      && process.env.SQUIDRUN_NEWS_SCAN_AUTOMATION !== '0';
-    this.newsScanIntervalMinutes = Math.max(
-      15,
-      Math.floor(Number(options.newsScanIntervalMinutes) || DEFAULT_NEWS_SCAN_INTERVAL_MINUTES)
-    );
-    this.caseOperationsPath = options.caseOperationsPath || path.join(this.projectRoot, 'workspace', 'knowledge', 'case-operations.md');
-    this.newsScanStatePath = options.newsScanStatePath || DEFAULT_NEWS_SCAN_STATE_PATH;
-    this.newsScanState = {
-      ...defaultNewsScanState(),
-      ...(readJsonFile(this.newsScanStatePath, defaultNewsScanState()) || {}),
-    };
-    this.newsScanPhasePromise = null;
-    this.lastNewsScanSummary = this.newsScanEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
     this.newsVetoModule = options.newsVetoModule || eventVeto;
-    this.newsScanOpenPositionProvider = options.newsScanOpenPositionProvider || (async () => {
-      const state = await this.[private-live-ops]Executor?.getAccountState?.().catch(() => null);
-      return Array.isArray(state?.positions) ? state.positions : [];
-    });
-    this.pendingFollowupEnabled = options.pendingFollowupEnabled !== false
-      && process.env.SQUIDRUN_PENDING_FOLLOWUP_AUTOMATION !== '0';
-    this.pendingFollowupIntervalMinutes = Math.max(
-      30,
-      Math.floor(Number(options.pendingFollowupIntervalMinutes) || DEFAULT_PENDING_FOLLOWUP_INTERVAL_MINUTES)
-    );
-    this.pendingFollowupStatePath = options.pendingFollowupStatePath || DEFAULT_PENDING_FOLLOWUP_STATE_PATH;
-    this.pendingFollowupState = {
-      ...defaultPendingFollowupState(),
-      ...(readJsonFile(this.pendingFollowupStatePath, defaultPendingFollowupState()) || {}),
-    };
-    this.pendingFollowupPhasePromise = null;
-    this.lastPendingFollowupSummary = this.pendingFollowupEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.marketResearchEnabled = options.marketResearchEnabled !== false
-      && process.env.SQUIDRUN_MARKET_RESEARCH_AUTOMATION !== '0';
-    this.marketResearchIntervalMinutes = Math.max(
-      30,
-      Math.floor(Number(options.marketResearchIntervalMinutes) || DEFAULT_MARKET_RESEARCH_INTERVAL_MINUTES)
-    );
-    this.marketResearchStatePath = options.marketResearchStatePath || DEFAULT_MARKET_RESEARCH_STATE_PATH;
-    this.marketResearchState = {
-      ...defaultMarketResearchState(),
-      ...(readJsonFile(this.marketResearchStatePath, defaultMarketResearchState()) || {}),
-    };
-    this.marketResearchPhasePromise = null;
-    this.lastMarketResearchSummary = this.marketResearchEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
     this.[private-live-ops]Enabled = options.[private-live-ops]Enabled === true
       || (
         options.[private-live-ops]Enabled !== false
@@ -2220,8 +1637,45 @@ class SupervisorDaemon {
         lastProcessedAt: null,
         nextEvent: null,
       };
+    this.sparkMonitorEnabled = options.sparkMonitorEnabled === true
+      || (
+        options.sparkMonitorEnabled !== false
+        && RUNNING_SUPERVISOR_MAIN
+        && process.env.SQUIDRUN_SPARK_MONITOR_AUTOMATION !== '0'
+      );
+    this.sparkMonitorIntervalMinutes = Math.max(
+      1,
+      Math.floor(Number(options.sparkMonitorIntervalMinutes) || DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES)
+    );
+    this.sparkMonitorStatePath = options.sparkMonitorStatePath || DEFAULT_SPARK_MONITOR_STATE_PATH;
+    this.sparkMonitorState = {
+      ...defaultSparkMonitorState(),
+      ...(readJsonFile(this.sparkMonitorStatePath, defaultSparkMonitorState()) || {}),
+    };
+    this.sparkMonitorDataStatePath = options.sparkMonitorDataStatePath || sparkCapture.DEFAULT_SPARK_STATE_PATH;
+    this.sparkMonitorEventsPath = options.sparkMonitorEventsPath || sparkCapture.DEFAULT_SPARK_EVENTS_PATH;
+    this.sparkMonitorFirePlansPath = options.sparkMonitorFirePlansPath || sparkCapture.DEFAULT_SPARK_FIREPLANS_PATH;
+    this.sparkMonitorWatchlistPath = options.sparkMonitorWatchlistPath || sparkCapture.DEFAULT_SPARK_WATCHLIST_PATH;
+    this.sparkMonitorPhasePromise = null;
+    this.lastSparkMonitorSummary = this.sparkMonitorEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
     this.marketScannerEnabled = options.marketScannerEnabled !== false
       && process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION !== '0';
+    this.marketScannerImmediateConsultationEnabled = options.marketScannerImmediateConsultationEnabled === true
+      || process.env.SQUIDRUN_MARKET_SCANNER_IMMEDIATE_CONSULTATION === '1';
     this.marketScannerIntervalMinutes = Math.max(
       30,
       Math.floor(Number(options.marketScannerIntervalMinutes) || DEFAULT_MARKET_SCANNER_INTERVAL_MINUTES)
@@ -2240,6 +1694,9 @@ class SupervisorDaemon {
       ...(readJsonFile(this.marketScannerStatePath, defaultMarketScannerState()) || {}),
     });
     this.marketScanner = options.marketScanner || marketScannerModule;
+    this.marketScannerAlertGate = typeof options.marketScannerAlertGate === 'function'
+      ? options.marketScannerAlertGate
+      : null;
     this.marketScannerPhasePromise = null;
     this.marketScannerLastTrigger = null;
     this.lastMarketScannerSummary = this.marketScannerEnabled
@@ -2266,98 +1723,6 @@ class SupervisorDaemon {
       symbolsConsulted: [],
       symbolsExecutable: [],
     };
-    this.private-profileCheckInEnabled = options.private-profileCheckInEnabled !== false
-      && process.env.SQUIDRUN_EUNBYEOL_CHECKIN_AUTOMATION !== '0';
-    this.private-profileCheckInIntervalMinutes = Math.max(
-      30,
-      Math.floor(Number(options.private-profileCheckInIntervalMinutes) || DEFAULT_EUNBYEOL_CHECKIN_INTERVAL_MINUTES)
-    );
-    this.private-profileCheckInSilenceMs = Math.max(
-      60_000,
-      Number.parseInt(options.private-profileCheckInSilenceMs || `${DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS}`, 10) || DEFAULT_EUNBYEOL_CHECKIN_SILENCE_MS
-    );
-    this.private-profileCheckInStatePath = options.private-profileCheckInStatePath || DEFAULT_EUNBYEOL_CHECKIN_STATE_PATH;
-    this.private-profileCheckInState = {
-      ...default[private-profile]CheckInState(),
-      ...(readJsonFile(this.private-profileCheckInStatePath, default[private-profile]CheckInState()) || {}),
-    };
-    this.private-profileCheckInPhasePromise = null;
-    this.last[private-profile]CheckInSummary = this.private-profileCheckInEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        intervalMinutes: this.private-profileCheckInIntervalMinutes,
-        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
-        nextEvent: this.private-profileCheckInState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        intervalMinutes: this.private-profileCheckInIntervalMinutes,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.proactiveCommsProvider = options.proactiveCommsProvider || (() => queryCommsJournalEntries({
-      order: 'desc',
-      limit: 200,
-    }));
-    this.marketResearchOpenPositionProvider = options.marketResearchOpenPositionProvider || this.newsScanOpenPositionProvider;
-    const yieldRouterAutomationRequested = options.yieldRouterEnabled === true
-      || process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION === '1';
-    this.yieldRouterEnabled = Boolean(yieldRouterAutomationRequested);
-    this.yieldRouterDryRun = options.yieldRouterDryRun === true
-      || process.env.SQUIDRUN_YIELD_ROUTER_DRY_RUN === '1';
-    this.yieldRouterStatePath = options.yieldRouterStatePath || DEFAULT_YIELD_ROUTER_STATE_PATH;
-    this.yieldRouterState = {
-      ...defaultYieldRouterState(),
-      ...(readJsonFile(this.yieldRouterStatePath, defaultYieldRouterState()) || {}),
-    };
-    this.yieldRouterPhasePromise = null;
-    this.lastYieldRouterSummary = this.yieldRouterEnabled
-      ? {
-        enabled: true,
-        status: 'idle',
-        dryRun: this.yieldRouterDryRun,
-        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
-        nextEvent: this.yieldRouterState.nextEvent || null,
-      }
-      : {
-        enabled: false,
-        status: 'disabled',
-        dryRun: this.yieldRouterDryRun,
-        lastProcessedAt: null,
-        nextEvent: null,
-      };
-    this.yieldRouter = this.yieldRouterEnabled && options.yieldRouter !== null
-      ? (options.yieldRouter || yieldRouterModule.createYieldRouter({
-        statePath: resolveRuntimePath('yield-router-state.json'),
-        fetch: options.fetch || global.fetch,
-        env: options.env || process.env,
-      }))
-      : null;
-    this.yieldRouterOrchestrator = this.yieldRouterEnabled
-      ? (options.yieldRouterOrchestrator || tradingOrchestrator.createOrchestrator({
-        journalPath: resolveRuntimePath('trade-journal.db'),
-        yieldRouter: this.yieldRouter,
-      }))
-      : null;
-    if (this.yieldRouter) {
-      if (this.tradingOrchestrator?.options) {
-        this.tradingOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
-      if (this.cryptoTradingOrchestrator?.options) {
-        this.cryptoTradingOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
-      if (this.polymarketTradingOrchestrator?.options) {
-        this.polymarketTradingOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
-      if (this.launchRadarOrchestrator?.options) {
-        this.launchRadarOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
-      if (this.yieldRouterOrchestrator?.options) {
-        this.yieldRouterOrchestrator.options.yieldRouter = this.yieldRouter;
-      }
-    }
     this.sleepConsolidator = this.sleepEnabled
       ? (options.sleepConsolidator || new SleepConsolidator({
         logger: this.logger,
@@ -2374,6 +1739,102 @@ class SupervisorDaemon {
     this.loopEvents.on('wake', (reason) => {
       this.handleWake(reason);
     });
+  }
+
+  emitRateLimitedLog({
+    key,
+    level = 'warn',
+    message,
+    state = '',
+    intervalMs = this.supervisorRepeatLogMs,
+    nowMs = Date.now(),
+  } = {}) {
+    const resolvedKey = String(key || message || '').trim();
+    const resolvedMessage = String(message || '').trim();
+    if (!resolvedKey || !resolvedMessage) return false;
+    const resolvedLevel = ['info', 'warn', 'error'].includes(level) ? level : 'warn';
+    const resolvedState = String(state || resolvedMessage);
+    const resolvedIntervalMs = Math.max(60_000, Number(intervalMs || this.supervisorRepeatLogMs) || this.supervisorRepeatLogMs);
+    const previous = this.rateLimitedLogState.get(resolvedKey);
+    const stateChanged = !previous || previous.state !== resolvedState;
+    const intervalElapsed = previous && (Number(nowMs || Date.now()) - Number(previous.lastEmittedAtMs || 0)) >= resolvedIntervalMs;
+    if (stateChanged || intervalElapsed) {
+      const suppressedCount = previous && !stateChanged ? Number(previous.suppressed || 0) : 0;
+      this.logger[resolvedLevel](appendSuppressedRepeatCount(resolvedMessage, suppressedCount));
+      this.rateLimitedLogState.set(resolvedKey, {
+        state: resolvedState,
+        lastEmittedAtMs: Number(nowMs || Date.now()),
+        suppressed: 0,
+      });
+      return true;
+    }
+    previous.suppressed = Number(previous.suppressed || 0) + 1;
+    this.rateLimitedLogState.set(resolvedKey, previous);
+    return false;
+  }
+
+  emitMemoryConsistencyLog(reason, message, synced, nowMs = Date.now()) {
+    const normalizedReason = String(reason || '').trim().toLowerCase();
+    const level = synced ? 'info' : 'warn';
+    if (normalizedReason === 'startup') {
+      this.logger[level](message);
+      return true;
+    }
+    const summary = this.lastMemoryConsistencySummary || {};
+    const counts = summary.summary || {};
+    const state = [
+      summary.status || 'unknown',
+      counts.knowledgeEntryCount || 0,
+      counts.knowledgeNodeCount || 0,
+      counts.missingInCognitiveCount || 0,
+      counts.orphanedNodeCount || 0,
+      counts.duplicateKnowledgeHashCount || 0,
+    ].join(':');
+    return this.emitRateLimitedLog({
+      key: 'memory-consistency',
+      level,
+      message,
+      state,
+      intervalMs: this.memoryConsistencyRepeatLogMs,
+      nowMs,
+    });
+  }
+
+  emitMemoryIndexRefreshLog(reason, result, nowMs = Date.now()) {
+    const indexedGroups = Number(result?.indexedGroups || 0);
+    const skippedGroups = Number(result?.skippedGroups || 0);
+    const documentCount = Number(result?.status?.document_count || 0);
+    const message = `Memory index refresh (${reason}) complete: `
+      + `groups=${indexedGroups} skipped=${skippedGroups} docs=${documentCount}`;
+    const state = `${indexedGroups}:${skippedGroups}:${documentCount}`;
+    return this.emitRateLimitedLog({
+      key: 'memory-index-refresh',
+      level: 'info',
+      message,
+      state,
+      intervalMs: this.memoryIndexRepeatLogMs,
+      nowMs,
+    });
+  }
+
+  executeHmSendSync(args = [], reason = 'hm_send', options = {}) {
+    if (this.hmSendExternalDisabled) {
+      this.emitRateLimitedLog({
+        key: 'hm-send-external-disabled',
+        level: 'info',
+        message: `hm-send suppressed during ${reason}: ${Array.isArray(args) ? args[0] || 'unknown' : 'unknown'}`,
+        state: String(reason || 'hm_send'),
+      });
+      return { ok: false, skipped: true, reason: 'hm_send_external_disabled' };
+    }
+    execFileSync(process.execPath, [this.hmSendScriptPath, ...args], {
+      cwd: options.cwd || this.projectRoot,
+      env: options.env || this.runtimeEnv,
+      timeout: options.timeout || 15000,
+      stdio: options.stdio || 'ignore',
+      windowsHide: true,
+    });
+    return { ok: true };
   }
 
   refreshSleepExtractionCommand() {
@@ -2440,7 +1901,8 @@ class SupervisorDaemon {
       return initResult;
     }
 
-    this.logger.info(`Supervisor daemon started (pid=${process.pid}, db=${this.store.dbPath})`);
+    const bootedProfile = String(process.env.SQUIDRUN_PROFILE || 'unset').toLowerCase() || 'unset';
+    this.logger.info(`Supervisor daemon started (pid=${process.pid}, profile=${bootedProfile}, db=${this.store.dbPath})`);
     this.startMemoryIndexWatcher();
     this.startWakeSignalWatcher();
     if (this.smartMoneyScanner) {
@@ -2483,15 +1945,6 @@ class SupervisorDaemon {
       this.logger.info('Circuit breaker stopped');
     }
     await this.stop[private-live-ops]PositionMonitor();
-    if (this.launchRadar && typeof this.launchRadar.stop === 'function') {
-      this.launchRadar.stop();
-      this.logger.info('Launch radar stopped');
-    }
-    if (this.yieldRouter && typeof this.yieldRouter.stop === 'function') {
-      this.yieldRouter.stop();
-      this.logger.info('Yield router stopped');
-    }
-
     if (this.sleepConsolidator) {
       try { this.sleepConsolidator.close(); } catch {}
     }
@@ -2665,6 +2118,9 @@ class SupervisorDaemon {
     ensureDirectory(this.taskLogDir);
     const messagePath = path.join(this.taskLogDir, `hm-msg-${target}-${task.taskId || createAgentTaskId(target)}.txt`);
     fs.writeFileSync(messagePath, `${message}\n`, 'utf8');
+    if (this.hmSendExternalDisabled) {
+      return { ok: false, skipped: true, reason: 'hm_send_external_disabled', messagePath };
+    }
     return executeNodeScript(this.hmSendScriptPath, [target, '--file', messagePath], {
       cwd: this.projectRoot,
       timeoutMs: 20_000,
@@ -2804,22 +2260,16 @@ class SupervisorDaemon {
       await this.launchTask(claim.task, { leaseOwner });
     }
 
-    const tradingResult = await this.maybeRunTradingAutomation(nowMs);
+    const positionAttributionReconciliationResult = await this.maybeRunPositionAttributionReconciliation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
-    const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
-    const launchRadarResult = await this.maybeRunLaunchRadarAutomation(nowMs);
-    const newsScanResult = await this.maybeRunNewsScanAutomation(nowMs);
-    const pendingFollowupResult = await this.maybeRunPendingFollowupAutomation(nowMs);
-    const marketResearchResult = await this.maybeRunMarketResearchAutomation(nowMs);
     const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
+    const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
+    const coordHeartbeatResult = await this.maybeRunCoordHeartbeat(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
-    const paperTradingAutomationResult = await this.maybeRunPaperTradingAutomation(nowMs);
     const [private-live-ops]SqueezeDetectorResult = await this.maybeRun[private-live-ops]SqueezeDetector(nowMs);
-    const private-profileCheckInResult = await this.maybeRun[private-profile]CheckInAutomation(nowMs);
-    const yieldRouterResult = await this.maybeRunYieldRouterAutomation(nowMs);
     const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
     return {
@@ -2830,22 +2280,16 @@ class SupervisorDaemon {
       queueHousekeeping,
       leaseHousekeeping,
       memoryConsistency,
-      tradingResult,
+      positionAttributionReconciliationResult,
       tradeReconciliationResult,
       cryptoTradingResult,
-      polymarketTradingResult,
-      launchRadarResult,
-      newsScanResult,
-      pendingFollowupResult,
-      marketResearchResult,
       [private-live-ops]Result,
+      sparkMonitorResult,
       marketScannerResult,
+      coordHeartbeatResult,
       saylorWatcherResult,
       oracleWatchResult,
-      paperTradingAutomationResult,
       [private-live-ops]SqueezeDetectorResult,
-      private-profileCheckInResult,
-      yieldRouterResult,
       sleepResult,
     };
   }
@@ -2880,7 +2324,12 @@ class SupervisorDaemon {
       this.tickTimer = null;
       this.nextTickAtMs = 0;
       this.runScheduledTick(reason).catch((err) => {
-        this.logger.error(`Supervisor tick failed: ${err.message}`);
+        this.emitRateLimitedLog({
+          key: 'supervisor-tick-failed',
+          level: 'error',
+          message: `Supervisor tick failed: ${err.message}`,
+          state: err.message,
+        });
       });
     }, safeDelayMs);
     if (typeof this.tickTimer.unref === 'function') {
@@ -2896,18 +2345,13 @@ class SupervisorDaemon {
     const queueRequeued = Number(summary?.queueHousekeeping?.requeueResult?.requeued || 0);
     const pendingPruned = Number(summary?.queueHousekeeping?.pruneResult?.pruned || 0);
     const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
-    const tradingRan = summary?.tradingResult && summary.tradingResult.skipped !== true;
+    const positionAttributionReconciliationRan = summary?.positionAttributionReconciliationResult
+      && summary.positionAttributionReconciliationResult.skipped !== true;
     const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
-    const polymarketTradingRan = summary?.polymarketTradingResult && summary.polymarketTradingResult.skipped !== true;
-    const newsScanRan = summary?.newsScanResult && summary.newsScanResult.skipped !== true;
-    const pendingFollowupRan = summary?.pendingFollowupResult && summary.pendingFollowupResult.skipped !== true;
-    const marketResearchRan = summary?.marketResearchResult && summary.marketResearchResult.skipped !== true;
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
     const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
-    const paperTradingAutomationRan = summary?.paperTradingAutomationResult && summary.paperTradingAutomationResult.skipped !== true;
     const [private-live-ops]SqueezeDetectorRan = summary?.[private-live-ops]SqueezeDetectorResult && summary.[private-live-ops]SqueezeDetectorResult.skipped !== true;
-    const private-profileCheckInRan = summary?.private-profileCheckInResult && summary.private-profileCheckInResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
     const memoryChecked = summary?.memoryConsistency && summary.memoryConsistency.skipped !== true;
     const performedWork = claimedCount > 0
@@ -2916,18 +2360,12 @@ class SupervisorDaemon {
       || queueRequeued > 0
       || pendingPruned > 0
       || leasePruned > 0
-      || tradingRan
+      || positionAttributionReconciliationRan
       || tradeReconciliationRan
       || cryptoTradingRan
-      || polymarketTradingRan
-      || newsScanRan
-      || pendingFollowupRan
-      || marketResearchRan
       || saylorWatcherRan
       || oracleWatchRan
-      || paperTradingAutomationRan
       || [private-live-ops]SqueezeDetectorRan
-      || private-profileCheckInRan
       || sleepRan
       || memoryChecked;
 
@@ -2956,16 +2394,6 @@ class SupervisorDaemon {
           - Date.now()
         );
         nextDelayMs = Math.min(nextDelayMs, nextOracleWatchDueMs);
-      }
-    }
-
-    if (this.paperTradingAutomationEnabled && !this.paperTradingAutomationPromise) {
-      const nextWakeAtMs = paperTradingAutomation.AGENT_IDS
-        .map((agentId) => Number(this.paperTradingAutomationState?.agents?.[agentId]?.nextTimerWakeAtMs || 0) || 0)
-        .filter((value) => value > 0)
-        .map((value) => Math.max(0, value - Date.now()));
-      if (nextWakeAtMs.length > 0) {
-        nextDelayMs = Math.min(nextDelayMs, ...nextWakeAtMs);
       }
     }
 
@@ -3058,49 +2486,19 @@ class SupervisorDaemon {
     return this.sleepCyclePromise;
   }
 
-  persistTradingState() {
-    this.tradingState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.tradingStatePath, this.tradingState);
-  }
-
   persistCryptoTradingState() {
     this.cryptoTradingState.updatedAt = new Date().toISOString();
     writeJsonFile(this.cryptoTradingStatePath, this.cryptoTradingState);
   }
 
-  persistLiveOpsTradingState() {
-    this.polymarketTradingState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.polymarketTradingStatePath, this.polymarketTradingState);
-  }
-
-  persistLaunchRadarState() {
-    this.launchRadarState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.launchRadarStatePath, this.launchRadarState);
-  }
-
-  persistYieldRouterState() {
-    this.yieldRouterState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.yieldRouterStatePath, this.yieldRouterState);
-  }
-
-  persistNewsScanState() {
-    this.newsScanState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.newsScanStatePath, this.newsScanState);
-  }
-
-  persistPendingFollowupState() {
-    this.pendingFollowupState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.pendingFollowupStatePath, this.pendingFollowupState);
-  }
-
-  persistMarketResearchState() {
-    this.marketResearchState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.marketResearchStatePath, this.marketResearchState);
-  }
-
   persist[private-live-ops]State() {
     this.[private-live-ops]State.updatedAt = new Date().toISOString();
     writeJsonFile(this.[private-live-ops]StatePath, this.[private-live-ops]State);
+  }
+
+  persistSparkMonitorState() {
+    this.sparkMonitorState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.sparkMonitorStatePath, this.sparkMonitorState);
   }
 
   persistMarketScannerState() {
@@ -3109,121 +2507,6 @@ class SupervisorDaemon {
       updatedAt: new Date().toISOString(),
     });
     writeJsonFile(this.marketScannerStatePath, this.marketScannerState);
-  }
-
-  persist[private-profile]CheckInState() {
-    this.private-profileCheckInState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.private-profileCheckInStatePath, this.private-profileCheckInState);
-  }
-
-  persistPaperTradingAutomationState() {
-    this.paperTradingAutomationState.updatedAt = new Date().toISOString();
-    writeJsonFile(this.paperTradingAutomationStatePath, this.paperTradingAutomationState);
-  }
-
-  readCaseOperationsDashboard() {
-    try {
-      const markdown = fs.existsSync(this.caseOperationsPath)
-        ? fs.readFileSync(this.caseOperationsPath, 'utf8')
-        : '';
-      return parseCaseOperationsDashboard(markdown);
-    } catch {
-      return {
-        pendingItems: [],
-        scheduleDate: null,
-        scheduleItems: [],
-      };
-    }
-  }
-
-  readActiveCaseSignals() {
-    try {
-      const markdown = fs.existsSync(this.caseOperationsPath)
-        ? fs.readFileSync(this.caseOperationsPath, 'utf8')
-        : '';
-      return extractActiveCaseSignals(markdown);
-    } catch {
-      return [];
-    }
-  }
-
-  buildPendingFollowupTelegramAlert(summary = {}) {
-    return [
-      '[PROACTIVE] Pending follow-up scan found items needing your action.',
-      `the user-actionable items: ${Number(summary.jamesActionCount || 0)}`,
-      summary.jamesTopItems?.length ? `Your items: ${summary.jamesTopItems.join(' | ')}` : null,
-    ].filter(Boolean).join('\n');
-  }
-
-  buildPendingFollowupArchitectAlert(summary = {}) {
-    return [
-      '[PROACTIVE][FOLLOWUPS] Pending follow-up scan complete.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `the user-actionable items: ${Number(summary.jamesActionCount || 0)}`,
-      `Internal-only items: ${Number(summary.internalOnlyCount || 0)}`,
-      summary.jamesTopItems?.length ? `the user items: ${summary.jamesTopItems.join(' | ')}` : null,
-      summary.private-profileTopItems?.length ? `Internal items: ${summary.private-profileTopItems.join(' | ')}` : null,
-    ].filter(Boolean).join('\n');
-  }
-
-  build[private-profile]CheckInDraft(summary = {}) {
-    const topItems = Array.isArray(summary.topItems) ? summary.topItems.slice(0, 3) : [];
-    const bullets = topItems.map((item) => `- ${item}`).join('\n');
-    return [
-      '은별님, 진행 중인 항목들 확인차 체크인드립니다.',
-      '',
-      topItems.length > 0 ? '현재 계속 열려 있는 항목:' : null,
-      topItems.length > 0 ? bullets : null,
-      '',
-      '오늘/내일 진행 상황이나 필요한 자료 있으면 보내주세요. 제가 이어서 바로 정리해둘게요.',
-    ].filter((line) => line !== null).join('\n');
-  }
-
-  buildNewsScanTelegramAlert(summary = {}) {
-    const findings = Array.isArray(summary.findings) ? summary.findings : [];
-    const top = findings[0] || {};
-    const headline = String(top.headline || top.summary || summary.reason || 'significant news detected').trim();
-    const subjects = Array.isArray(summary.livePositionSymbols) && summary.livePositionSymbols.length > 0
-      ? `live positions ${summary.livePositionSymbols.join(', ')}`
-      : (summary.caseMatches?.map((entry) => entry.label).join(', ') || 'active cases');
-    return [
-      '[PROACTIVE] News scan found a significant headline.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `Scope: ${subjects}`,
-      `Reason: ${summary.reason || 'headline matched active scope'}`,
-      `Headline: ${headline}`,
-    ].join('\n');
-  }
-
-  buildNewsScanArchitectAlert(summary = {}) {
-    const findings = Array.isArray(summary.findings) ? summary.findings : [];
-    const top = findings[0] || {};
-    const headline = String(top.headline || top.summary || summary.reason || 'no significant headline').trim();
-    const scope = Array.isArray(summary.livePositionSymbols) && summary.livePositionSymbols.length > 0
-      ? `live positions ${summary.livePositionSymbols.join(', ')}`
-      : (Array.isArray(summary.scanSymbols) ? summary.scanSymbols.join(', ') : 'watchlist');
-    return [
-      '[PROACTIVE][NEWS] News scan complete.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `Decision: ${summary.decision || 'DEGRADED'} (${summary.sourceTier || 'none'})`,
-      `Scope: ${scope}`,
-      `Reason: ${summary.reason || 'stored_for_review'}`,
-      `Headline: ${headline}`,
-    ].join('\n');
-  }
-
-  buildMarketResearchArchitectAlert(summary = {}) {
-    const findings = Array.isArray(summary.findings) ? summary.findings : [];
-    const top = findings[0] || {};
-    const headline = String(top.headline || top.summary || 'none').trim();
-    return [
-      '[PROACTIVE][RESEARCH] Market research scan complete.',
-      `Level: ${summary.alertLevel || 'level_0'}`,
-      `Macro: ${summary.macroRisk?.regime || 'unknown'} (${summary.macroRisk?.score ?? 'n/a'})`,
-      `Event decision: ${summary.eventDecision || 'DEGRADED'} (${summary.sourceTier || 'none'})`,
-      `Headline count: ${Number(summary.headlineCount || 0)}`,
-      headline ? `Top headline: ${headline}` : null,
-    ].filter(Boolean).join('\n');
   }
 
   buildMarketScannerArchitectAlert(summary = {}) {
@@ -3332,427 +2615,97 @@ class SupervisorDaemon {
     }
   }
 
-  async buildPaperTradingLiveContext(portfolios = []) {
-    const trackedTickers = new Set(paperTradingAutomation.CORE_TICKERS);
-    for (const portfolio of Array.isArray(portfolios) ? portfolios : []) {
-      for (const position of Array.isArray(portfolio?.openPositions) ? portfolio.openPositions : []) {
-        const ticker = String(position?.ticker || '').trim().toUpperCase();
-        if (ticker) trackedTickers.add(ticker);
+  isCoordHeartbeatActive() {
+    const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
+    return Boolean(this.coordHeartbeatEnabled && this.cryptoTradingEnabled && profile !== 'private-profile');
+  }
+
+  async recordCoordHeartbeatFailure(result = {}, summary = {}) {
+    const details = {
+      scriptPath: this.hmCoordHeartbeatScriptPath,
+      exitCode: result?.exitCode ?? null,
+      signal: result?.signal || null,
+      timedOut: result?.timedOut === true,
+      error: summary?.error || result?.error || null,
+      stderr: trimTail(String(result?.stderr || ''), 2048),
+      stdout: trimTail(String(result?.stdout || ''), 2048),
+    };
+    const anomalyResult = await executeNodeScript(
+      this.hmAnomalyScriptPath,
+      [
+        'type=heartbeat_lane_failure',
+        'src=supervisor',
+        'sev=medium',
+        `details=${JSON.stringify(details)}`,
+        '--json',
+      ],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 15_000,
       }
-    }
-    const symbols = Array.from(trackedTickers);
-    const [marketData, bars5mMap] = await Promise.all([
-      [private-live-ops]Client.getUniverseMarketData({ requestPoolTtlMs: 10_000 }),
-      [private-live-ops]Client.getHistoricalBars({
-        symbols,
-        timeframe: '5m',
-        limit: 3,
-        requestPoolTtlMs: 10_000,
-      }).catch(() => new Map()),
-    ]);
-    const marketByTicker = new Map(
-      (Array.isArray(marketData) ? marketData : [])
-        .map((entry) => [String(entry?.ticker || '').trim().toUpperCase(), entry])
-        .filter(([ticker]) => ticker)
     );
-    const livePrices = symbols.map((ticker) => {
-      const market = marketByTicker.get(ticker) || {};
+    if (!anomalyResult.ok) {
+      this.logger.warn(`Coord heartbeat anomaly logging failed: ${anomalyResult.error || anomalyResult.stderr || 'unknown'}`);
+    }
+    return anomalyResult;
+  }
+
+  async maybeRunCoordHeartbeat(nowMs = Date.now()) {
+    const active = this.isCoordHeartbeatActive();
+    if (!active || this.stopping) {
+      this.lastCoordHeartbeatSummary = {
+        ...(this.lastCoordHeartbeatSummary || {}),
+        enabled: active,
+        status: active ? 'stopping' : 'disabled',
+        intervalMs: this.coordHeartbeatIntervalMs,
+        scriptPath: this.hmCoordHeartbeatScriptPath,
+      };
+      return { ok: false, skipped: true, reason: active ? 'stopping' : 'coord_heartbeat_disabled' };
+    }
+    if (this.coordHeartbeatPromise) {
+      return this.coordHeartbeatPromise;
+    }
+    if ((nowMs - this.lastCoordHeartbeatRunAtMs) < this.coordHeartbeatIntervalMs) {
       return {
-        ticker,
-        price: Number(market?.price || 0) || 0,
-        change24hPct: Number(market?.change24hPct || 0) || 0,
-        openInterest: Number(market?.openInterest || 0) || 0,
-        fundingRate: Number(market?.fundingRate || 0) || 0,
-      };
-    });
-    const structureSummary = paperTradingAutomation.CORE_TICKERS.map((ticker) => {
-      const market = marketByTicker.get(ticker) || {};
-      const bars5m = bars5mMap instanceof Map ? (bars5mMap.get(ticker) || []) : [];
-      return paperTradingAutomation.summarizeStructure({
-        ticker,
-        price: market?.price || 0,
-        bars5m,
-      });
-    });
-    const livePriceMap = Object.fromEntries(
-      livePrices
-        .filter((entry) => Number.isFinite(Number(entry?.price)) && Number(entry.price) > 0)
-        .map((entry) => [entry.ticker, Number(entry.price)])
-    );
-    return {
-      symbols,
-      livePrices,
-      livePriceMap,
-      structureSummary,
-    };
-  }
-
-  collectPaperTradingAgentResponse(agentId, requestId, sinceMs) {
-    const entries = queryCommsJournalEntries({
-      channel: 'ws',
-      direction: 'outbound',
-      senderRole: agentId,
-      targetRole: 'builder',
-      sinceMs,
-      order: 'desc',
-      limit: 100,
-    });
-    for (const entry of entries) {
-      const rawBody = entry?.rawBody || entry?.body || '';
-      const parsed = paperTradingAutomation.parsePaperTradingResponseBody(rawBody);
-      if (!parsed) continue;
-      if (parsed.requestId !== requestId) continue;
-      if (parsed.agentId !== agentId) continue;
-      return {
-        entry,
-        parsed,
+        ok: false,
+        skipped: true,
+        reason: 'coord_heartbeat_cooldown',
+        nextEligibleAtMs: this.lastCoordHeartbeatRunAtMs + this.coordHeartbeatIntervalMs,
       };
     }
-    return null;
-  }
 
-  async sendPaperTradingAgentMessage(agentId, message, requestId = null) {
-    return this.dispatchAgentQueuedTask(agentId, {
-      taskId: requestId ? `paper-${requestId}` : `paper-${agentId}-${Date.now()}`,
-      message,
-    });
-  }
-
-  async runPaperTradingAutomationPhase(nowMs = Date.now()) {
-    const nowIso = new Date(nowMs).toISOString();
-    const previousState = this.paperTradingAutomationState || defaultPaperTradingAutomationState();
-    const nextState = {
-      ...defaultPaperTradingAutomationState(),
-      ...previousState,
-      agents: {
-        ...defaultPaperTradingAutomationState().agents,
-        ...(previousState.agents || {}),
-      },
-    };
-    const portfoliosByAgent = Object.fromEntries(
-      paperTradingAutomation.AGENT_IDS.map((agentId) => {
-        const portfolioResult = paperTradingAutomation.readPortfolio(this.projectRoot, agentId);
-        return [agentId, portfolioResult];
-      })
-    );
-    const normalizedPortfolios = paperTradingAutomation.AGENT_IDS.map((agentId) => portfoliosByAgent[agentId].normalized);
-    const liveContext = await this.buildPaperTradingLiveContext(normalizedPortfolios);
-    const summary = {
-      enabled: true,
-      status: 'ok',
-      processedAt: nowIso,
-      dispatched: 0,
-      responded: 0,
-      rejected: 0,
-      timedOut: 0,
-      agents: {},
-    };
-
-    for (const agentId of paperTradingAutomation.AGENT_IDS) {
-      const agentState = {
-        ...defaultPaperTradingAutomationState().agents[agentId],
-        ...(nextState.agents?.[agentId] || {}),
-      };
-      if (agentState.pendingRequestId) {
-        const response = this.collectPaperTradingAgentResponse(
-          agentId,
-          agentState.pendingRequestId,
-          Number(agentState.pendingRequestCreatedAtMs || 0) || 0
-        );
-        if (response?.parsed) {
-          const validation = paperTradingAutomation.validatePaperTradingResponse(response.parsed);
-          if (!validation.ok) {
-            const errorMessage = paperTradingAutomation.buildAgentErrorMessage(
-              { requestId: agentState.pendingRequestId },
-              validation.error
-            );
-            await this.sendPaperTradingAgentMessage(agentId, errorMessage, agentState.pendingRequestId);
-            paperTradingAutomation.writeResponse(this.projectRoot, {
-              requestId: agentState.pendingRequestId,
-              agentId,
-              ok: false,
-              error: validation.error,
-              receivedAt: nowIso,
-            });
-            paperTradingAutomation.appendJsonLine(
-              paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
-              {
-                kind: 'paper_trading_response_rejected',
-                requestId: agentState.pendingRequestId,
-                agentId,
-                receivedAt: nowIso,
-                error: validation.error,
-                raw: response.parsed.raw || null,
-              }
-            );
-            nextState.agents[agentId] = {
-              ...agentState,
-              pendingRequestId: null,
-              pendingRequestCreatedAt: null,
-              pendingRequestCreatedAtMs: 0,
-              lastResponseAt: nowIso,
-              lastResponseAtMs: nowMs,
-              lastError: validation.error,
-            };
-            summary.rejected += 1;
-          } else {
-            const previousRaw = portfoliosByAgent[agentId].raw;
-            const applied = paperTradingAutomation.applyPaperTradingResponse({
-              agentId,
-              portfolio: portfoliosByAgent[agentId].normalized,
-              response: response.parsed,
-              livePriceMap: liveContext.livePriceMap,
-              now: nowIso,
-              wakeReason: agentState.lastWakeReason || 'timer_cycle',
-            });
-            const nextRaw = paperTradingAutomation.serializePortfolio(applied.portfolio, previousRaw);
-            const auditPortfolios = paperTradingAutomation.AGENT_IDS.map((trackedAgentId) => (
-              trackedAgentId === agentId
-                ? nextRaw
-                : portfoliosByAgent[trackedAgentId].raw
-            ));
-            const auditResult = buildPaperCompetitionAudit(this.projectRoot, new Date(nowMs), auditPortfolios);
-            const commitResult = paperTradingAutomation.commitPortfolioMutation(
-              this.projectRoot,
-              {
-                agentId,
-                portfolio: applied.portfolio,
-                previousRaw,
-                now: nowIso,
-                pendingAudit: {
-                  requestId: agentState.pendingRequestId,
-                  agentId,
-                  wakeReason: agentState.lastWakeReason || 'timer_cycle',
-                  action: response.parsed.action,
-                  rationale: response.parsed.rationale,
-                  stopDeclaration: response.parsed.stopDeclaration || null,
-                  noStopDeclaration: response.parsed.noStopDeclaration || null,
-                  timeStop: response.parsed.timeStop || null,
-                  mutation: applied.mutation,
-                },
-                committedAudit: {
-                  kind: 'paper_trading_response_applied',
-                  requestId: agentState.pendingRequestId,
-                  agentId,
-                  receivedAt: nowIso,
-                  wakeReason: agentState.lastWakeReason || 'timer_cycle',
-                  action: response.parsed.action,
-                  rationale: response.parsed.rationale,
-                  stopDeclaration: response.parsed.stopDeclaration || null,
-                  noStopDeclaration: response.parsed.noStopDeclaration || null,
-                  timeStop: response.parsed.timeStop || null,
-                  mutation: applied.mutation,
-                  audit: auditResult,
-                },
-                abortAudit: {
-                  requestId: agentState.pendingRequestId,
-                  agentId,
-                },
-              }
-            );
-            portfoliosByAgent[agentId] = {
-              ...portfoliosByAgent[agentId],
-              raw: nextRaw,
-              normalized: applied.portfolio,
-            };
-            try {
-              paperTradingAutomation.writeResponse(this.projectRoot, {
-                requestId: agentState.pendingRequestId,
-                agentId,
-                ok: true,
-                receivedAt: nowIso,
-                action: response.parsed.action,
-                rationale: response.parsed.rationale,
-                mutation: applied.mutation,
-                audit: auditResult,
-                transactionId: commitResult.transactionId,
-                committedAuditOk: commitResult.committedAuditOk,
-              });
-            } catch (responseWriteError) {
-              summary.status = 'degraded';
-              summary.agents[agentId] = {
-                ...(summary.agents[agentId] || {}),
-                responseWriteError: responseWriteError?.message || String(responseWriteError),
-              };
-            }
-            if (!commitResult.committedAuditOk) {
-              summary.status = 'degraded';
-              summary.agents[agentId] = {
-                ...(summary.agents[agentId] || {}),
-                auditWarning: commitResult.committedAuditError?.message || 'pending_audit_only',
-              };
-            }
-            nextState.agents[agentId] = {
-              ...agentState,
-              pendingRequestId: null,
-              pendingRequestCreatedAt: null,
-              pendingRequestCreatedAtMs: 0,
-              lastResponseAt: nowIso,
-              lastResponseAtMs: nowMs,
-              lastActionType: response.parsed.action?.type || null,
-              lastError: null,
-            };
-            summary.responded += 1;
-          }
-        } else if (
-          Number(agentState.pendingRequestCreatedAtMs || 0) > 0
-          && (nowMs - Number(agentState.pendingRequestCreatedAtMs)) >= this.paperTradingResponseTimeoutMs
-        ) {
-          nextState.agents[agentId] = {
-            ...agentState,
-            pendingRequestId: null,
-            pendingRequestCreatedAt: null,
-            pendingRequestCreatedAtMs: 0,
-            lastError: 'response_timeout',
-          };
-          paperTradingAutomation.appendJsonLine(
-            paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
-            {
-              kind: 'paper_trading_response_timeout',
-              requestId: agentState.pendingRequestId,
-              agentId,
-              timedOutAt: nowIso,
-            }
-          );
-          summary.timedOut += 1;
-        } else {
-          nextState.agents[agentId] = agentState;
-        }
-      } else {
-        nextState.agents[agentId] = agentState;
+    this.coordHeartbeatPromise = executeNodeScript(
+      this.hmCoordHeartbeatScriptPath,
+      ['--json'],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 90_000,
       }
-    }
-
-    const refreshedPortfolios = paperTradingAutomation.AGENT_IDS.map((agentId) => portfoliosByAgent[agentId].normalized);
-    const competitionSnapshot = paperTradingAutomation.buildPaperCompetitionSnapshot(refreshedPortfolios);
-    for (const agentId of paperTradingAutomation.AGENT_IDS) {
-      const agentState = {
-        ...defaultPaperTradingAutomationState().agents[agentId],
-        ...(nextState.agents?.[agentId] || {}),
+    ).then(async (result) => {
+      const summary = this.parseWatcherScriptSummary(result, 'coord_heartbeat');
+      this.lastCoordHeartbeatRunAtMs = Date.now();
+      this.lastCoordHeartbeatSummary = {
+        enabled: true,
+        status: summary?.ok ? 'ok' : 'failed',
+        intervalMs: this.coordHeartbeatIntervalMs,
+        scriptPath: this.hmCoordHeartbeatScriptPath,
+        lastRunAt: new Date(this.lastCoordHeartbeatRunAtMs).toISOString(),
+        lastSummary: summary,
       };
-      const triggerConfig = paperTradingAutomation.loadTriggerConfig(this.projectRoot, agentId, { writeDefaults: true }).normalized;
-      const wake = paperTradingAutomation.evaluateWakeCondition(triggerConfig, agentState, nowMs);
-      if (agentState.pendingRequestId || !wake.shouldWake) {
-        nextState.agents[agentId] = {
-          ...agentState,
-          nextTimerWakeAtMs: wake.nextTimerWakeAtMs || agentState.nextTimerWakeAtMs || 0,
-          nextTimerWakeAt: wake.nextTimerWakeAtMs ? new Date(wake.nextTimerWakeAtMs).toISOString() : (agentState.nextTimerWakeAt || null),
-        };
-        summary.agents[agentId] = {
-          wakeReason: wake.wakeReason,
-          dispatched: false,
-          pendingRequestId: agentState.pendingRequestId || null,
-        };
-        continue;
+      if (!result.ok) {
+        await this.recordCoordHeartbeatFailure(result, summary);
       }
-      const request = paperTradingAutomation.buildRequestPayload(agentId, {
-        requestId: `paper-cycle-${Date.now()}-${agentId}`,
-        portfolio: portfoliosByAgent[agentId].normalized,
-        livePrices: liveContext.livePrices.filter((entry) => paperTradingAutomation.CORE_TICKERS.includes(entry.ticker)),
-        structureSummary: liveContext.structureSummary,
-        competitionSnapshot,
-        wakeReason: wake.wakeReason,
-        createdAt: nowIso,
-        deadline: new Date(nowMs + this.paperTradingResponseTimeoutMs).toISOString(),
-      });
-      const requestPath = paperTradingAutomation.writeRequest(this.projectRoot, request);
-      const prompt = paperTradingAutomation.buildPaperTradingPrompt(request, requestPath);
-      const dispatchResult = await this.sendPaperTradingAgentMessage(agentId, prompt, request.requestId);
-      if (dispatchResult?.ok) {
-        const nextWakeAtMs = paperTradingAutomation.computeNextTimerWakeMs(nowMs, triggerConfig.timer.intervalMinutes);
-        nextState.agents[agentId] = {
-          ...agentState,
-          lastDispatchAt: nowIso,
-          lastDispatchAtMs: nowMs,
-          nextTimerWakeAt: new Date(nextWakeAtMs).toISOString(),
-          nextTimerWakeAtMs: nextWakeAtMs,
-          pendingRequestId: request.requestId,
-          pendingRequestCreatedAt: nowIso,
-          pendingRequestCreatedAtMs: nowMs,
-          lastWakeReason: wake.wakeReason,
-          lastError: null,
-        };
-        paperTradingAutomation.appendJsonLine(
-          paperTradingAutomation.getPortfolioPaths(this.projectRoot, agentId).auditLogPath,
-          {
-            kind: 'paper_trading_request_dispatched',
-            requestId: request.requestId,
-            agentId,
-            dispatchedAt: nowIso,
-            wakeReason: wake.wakeReason,
-            triggerConfig,
-          }
-        );
-        summary.dispatched += 1;
-        summary.agents[agentId] = {
-          wakeReason: wake.wakeReason,
-          dispatched: true,
-          requestId: request.requestId,
-        };
-      } else {
-        nextState.agents[agentId] = {
-          ...agentState,
-          lastError: dispatchResult?.error || dispatchResult?.stderr || 'dispatch_failed',
-        };
-        summary.status = 'degraded';
-        summary.agents[agentId] = {
-          wakeReason: wake.wakeReason,
-          dispatched: false,
-          error: nextState.agents[agentId].lastError,
-        };
+      if (summary?.ok !== true) {
+        this.logger.warn(`Coord heartbeat failed: ${summary?.error || 'unknown'}`);
       }
-    }
-
-    nextState.lastProcessedAt = nowIso;
-    nextState.lastSummary = summary;
-    this.paperTradingAutomationState = nextState;
-    this.persistPaperTradingAutomationState();
-    this.lastPaperTradingAutomationSummary = {
-      enabled: true,
-      status: summary.status,
-      statePath: this.paperTradingAutomationStatePath,
-      lastProcessedAt: nowIso,
-      lastSummary: summary,
-    };
-    return summary;
-  }
-
-  async maybeRunPaperTradingAutomation(nowMs = Date.now()) {
-    if (!this.paperTradingAutomationEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'paper_trading_automation_disabled' };
-    }
-    if (this.paperTradingAutomationPromise) {
-      return this.paperTradingAutomationPromise;
-    }
-    const currentState = this.paperTradingAutomationState || defaultPaperTradingAutomationState();
-    const agentStates = currentState.agents || {};
-    const hasPendingRequest = paperTradingAutomation.AGENT_IDS.some(
-      (agentId) => Boolean(agentStates?.[agentId]?.pendingRequestId)
-    );
-    const hasDueTimer = paperTradingAutomation.AGENT_IDS.some((agentId) => {
-      const triggerConfig = paperTradingAutomation.loadTriggerConfig(this.projectRoot, agentId, { writeDefaults: true }).normalized;
-      const wake = paperTradingAutomation.evaluateWakeCondition(triggerConfig, agentStates?.[agentId] || { agentId }, nowMs);
-      return wake.shouldWake === true;
+      return summary;
+    }).finally(() => {
+      this.coordHeartbeatPromise = null;
     });
-    if (!hasPendingRequest && !hasDueTimer) {
-      return { ok: false, skipped: true, reason: 'paper_trading_automation_idle' };
-    }
-    this.paperTradingAutomationPromise = Promise.resolve(this.runPaperTradingAutomationPhase(nowMs))
-      .catch((error) => {
-        const summary = {
-          enabled: true,
-          status: 'failed',
-          error: error?.message || String(error),
-          lastProcessedAt: new Date().toISOString(),
-        };
-        this.lastPaperTradingAutomationSummary = summary;
-        this.logger.warn(`Paper trading automation failed: ${summary.error}`);
-        return { ok: false, error: summary.error };
-      })
-      .finally(() => {
-        this.paperTradingAutomationPromise = null;
-      });
-    return this.paperTradingAutomationPromise;
+
+    return this.coordHeartbeatPromise;
   }
 
   async maybeRunSaylorWatcher(nowMs = Date.now()) {
@@ -3806,6 +2759,22 @@ class SupervisorDaemon {
     if (!this.[private-live-ops]SqueezeDetectorEnabled || this.stopping) {
       return { ok: false, skipped: true, reason: '[private-live-ops]_squeeze_detector_disabled' };
     }
+    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    if (manualActivity) {
+      this.last[private-live-ops]SqueezeDetectorSummary = {
+        enabled: true,
+        status: 'paused_for_manual_activity',
+        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        lastRunAt: this.last[private-live-ops]SqueezeDetectorSummary?.lastRunAt || null,
+        manualActivity,
+      };
+      return {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        manualActivity,
+      };
+    }
     if (this.[private-live-ops]SqueezeDetectorPromise) {
       return this.[private-live-ops]SqueezeDetectorPromise;
     }
@@ -3853,17 +2822,51 @@ class SupervisorDaemon {
     if (!this.oracleWatchEnabled || this.stopping) {
       return { ok: false, skipped: true, reason: 'oracle_watch_disabled' };
     }
+    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    if (manualActivity) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        manualActivity,
+      };
+    }
     if (this.oracleWatchPromise) {
       return this.oracleWatchPromise;
     }
     this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath, this.oracleWatchIntervalMs);
     const oracleWatchState = readJsonFile(this.oracleWatchStatePath, {}) || {};
+    this.lastOracleShortRegimeSummary = readJsonFile(this.oracleShortRegimeStatePath, null) || null;
     const heartbeat = buildOracleWatchHeartbeat(this.lastOracleWatchSummary, oracleWatchState);
+    const backoffUntilMs = resolveOracleWatchBackoffUntilMs(oracleWatchState, nowMs);
     const forceRelaunch = Boolean(
       heartbeat?.stale === true
       && Number.isFinite(Number(heartbeat?.ageMs))
       && Number(heartbeat.ageMs) >= this.oracleWatchIntervalMs
     );
+    if (forceRelaunch && Number.isFinite(backoffUntilMs)) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'oracle_watch_backoff_active',
+        backoffUntil: Number.isFinite(backoffUntilMs) ? new Date(backoffUntilMs).toISOString() : null,
+        nextEligibleAtMs: Number.isFinite(backoffUntilMs)
+          ? backoffUntilMs
+          : (Number(this.lastOracleWatchRunAtMs || 0) + Number(this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS)),
+      };
+    }
+    const relaunchCooldownMs = Math.max(
+      Number(this.oracleWatchRelaunchCooldownMs || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS) || DEFAULT_ORACLE_WATCH_RELAUNCH_COOLDOWN_MS,
+      Number(this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS) || DEFAULT_ORACLE_WATCH_INTERVAL_MS
+    );
+    if (forceRelaunch && (nowMs - this.lastOracleWatchRelaunchAtMs) < relaunchCooldownMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'oracle_watch_relaunch_cooldown',
+        nextEligibleAtMs: this.lastOracleWatchRelaunchAtMs + relaunchCooldownMs,
+      };
+    }
     if (!forceRelaunch && (nowMs - this.lastOracleWatchRunAtMs) < this.oracleWatchIntervalMs) {
       return {
         ok: false,
@@ -3873,10 +2876,17 @@ class SupervisorDaemon {
       };
     }
     if (forceRelaunch) {
-      this.logger.warn(
-        `[ORACLE WATCH][INPROC_RELAUNCH] Oracle watch heartbeat is stale with no running lane; forcing relaunch ` +
-        `(lastTickAt=${heartbeat?.lastTickAt || 'unknown'}, ageMs=${Number(heartbeat?.ageMs || 0) || 0}).`
-      );
+      this.lastOracleWatchRelaunchAtMs = nowMs;
+      const lastTickAt = heartbeat?.lastTickAt || 'unknown';
+      this.emitRateLimitedLog({
+        key: 'oracle-watch-inproc-relaunch',
+        level: 'warn',
+        message: `[ORACLE WATCH][INPROC_RELAUNCH] Oracle watch heartbeat is stale with no running lane; forcing relaunch `
+          + `(lastTickAt=${lastTickAt}, ageMs=${Number(heartbeat?.ageMs || 0) || 0}).`,
+        state: lastTickAt,
+        intervalMs: this.supervisorRepeatLogMs,
+        nowMs,
+      });
     }
 
     this.oracleWatchPromise = executeNodeScript(
@@ -3901,9 +2911,21 @@ class SupervisorDaemon {
         lastSummary: summary,
       };
       if (summary?.ok !== true) {
-        this.logger.warn(`Oracle watch engine failed: ${summary?.error || 'unknown'}`);
+        const errorMessage = summary?.error || 'unknown';
+        this.emitRateLimitedLog({
+          key: 'oracle-watch-engine-failed',
+          level: 'warn',
+          message: `Oracle watch engine failed: ${errorMessage}`,
+          state: errorMessage,
+        });
       } else if (Number(summary?.alertCount || 0) > 0) {
-        this.logger.warn(`Oracle watch engine sent ${summary.alertCount} alert(s).`);
+        this.emitRateLimitedLog({
+          key: 'oracle-watch-engine-alerts',
+          level: 'warn',
+          message: `Oracle watch engine sent ${summary.alertCount} alert(s).`,
+          state: `${summary.alertCount}:${Array.isArray(summary.tickers) ? summary.tickers.join(',') : ''}`,
+          intervalMs: this.supervisorRepeatLogMs,
+        });
       }
       return summary;
     }).finally(() => {
@@ -3991,15 +3013,43 @@ class SupervisorDaemon {
 
   sanitizeMarketScannerMovers(entries = []) {
     const canonicalMovers = marketScannerModule.buildMoverMap([
-      ...(Array.isArray(this.marketScannerState?.flaggedMovers) ? this.marketScannerState.flaggedMovers : []),
-      ...(Array.isArray(this.marketScannerState?.topMovers) ? this.marketScannerState.topMovers : []),
       ...(Array.isArray(this.marketScannerState?.assets) ? this.marketScannerState.assets : []),
+      ...(Array.isArray(this.marketScannerState?.topMovers) ? this.marketScannerState.topMovers : []),
+      ...(Array.isArray(this.marketScannerState?.flaggedMovers) ? this.marketScannerState.flaggedMovers : []),
     ]);
     const sanitized = [];
+    const isMissing = (value) => value == null || value === '' || (typeof value === 'number' && Number.isNaN(value));
     for (const entry of Array.isArray(entries) ? entries : []) {
       const normalized = marketScannerModule.normalizeMover(entry);
       if (!normalized.coin) continue;
-      sanitized.push(canonicalMovers.get(normalized.coin) || normalized);
+      const canonical = canonicalMovers.get(normalized.coin);
+      if (!canonical) {
+        sanitized.push(normalized);
+        continue;
+      }
+      const merged = { ...canonical, ...normalized };
+      for (const key of [
+        'price',
+        'change4hPct',
+        'change24hPct',
+        'volumeUsd24h',
+        'fundingRate',
+        'openInterest',
+        'openInterestChange24hPct',
+        'score',
+      ]) {
+        if (isMissing(normalized[key]) && !isMissing(canonical[key])) {
+          merged[key] = canonical[key];
+        }
+      }
+      if ((normalized.direction === 'FLAT' || !normalized.direction) && canonical.direction && canonical.direction !== 'FLAT') {
+        merged.direction = canonical.direction;
+      }
+      if (!normalized.triggerWindow && canonical.triggerWindow) {
+        merged.triggerWindow = canonical.triggerWindow;
+      }
+      merged.flagged = normalized.flagged === true || canonical.flagged === true;
+      sanitized.push(merged);
     }
     return sanitized;
   }
@@ -4022,13 +3072,148 @@ class SupervisorDaemon {
         if (Array.isArray(bars) && bars.length > 0) {
           supported.push(mover);
         } else {
-          this.logger.warn(`Skipping market-scanner mover without executable historical support: ${ticker}`);
+          this.emitRateLimitedLog({
+            key: `market-scanner-missing-history:${ticker}`,
+            level: 'warn',
+            message: `Skipping market-scanner mover without executable historical support: ${ticker}`,
+            state: ticker,
+          });
         }
       } catch (error) {
-        this.logger.warn(`Skipping market-scanner mover ${ticker}: ${error?.message || String(error)}`);
+        const errorMessage = error?.message || String(error);
+        this.emitRateLimitedLog({
+          key: `market-scanner-history-error:${ticker}`,
+          level: 'warn',
+          message: `Skipping market-scanner mover ${ticker}: ${errorMessage}`,
+          state: errorMessage,
+        });
       }
     }
     return supported;
+  }
+
+  getBarsForTicker(barsBySymbol, ticker) {
+    if (!ticker) return [];
+    if (barsBySymbol instanceof Map) {
+      return barsBySymbol.get(ticker) || [];
+    }
+    if (barsBySymbol && typeof barsBySymbol === 'object') {
+      return barsBySymbol[ticker] || [];
+    }
+    return [];
+  }
+
+  async filterOrdiQualifiedMarketScannerMovers(entries = [], options = {}) {
+    const candidatesByTicker = new Map();
+    for (const mover of this.sanitizeMarketScannerMovers(entries)) {
+      const ticker = String(mover?.ticker || '').trim().toUpperCase();
+      if (!ticker || candidatesByTicker.has(ticker)) continue;
+      candidatesByTicker.set(ticker, mover);
+    }
+
+    const suppressed = [];
+    const decisions = [];
+    const rolloverCandidates = [];
+    for (const mover of candidatesByTicker.values()) {
+      const ticker = String(mover?.ticker || '').trim().toUpperCase();
+      const volumeUsd24h = toNumber(mover?.volumeUsd24h, 0);
+      const change4hPct = toNumber(mover?.change4hPct, 0);
+      const direction = String(mover?.direction || '').trim().toUpperCase();
+      if (volumeUsd24h < MARKET_SCANNER_ALERT_MIN_VOLUME_USD_24H) {
+        suppressed.push({ ticker, reason: 'insufficient_alert_liquidity', volumeUsd24h });
+        decisions.push({ ticker, accepted: false, reason: 'insufficient_alert_liquidity' });
+        continue;
+      }
+      if (direction !== 'DOWN' && !(change4hPct < 0)) {
+        suppressed.push({ ticker, reason: 'rollover_missing', direction, change4hPct });
+        decisions.push({ ticker, accepted: false, reason: 'rollover_missing' });
+        continue;
+      }
+      rolloverCandidates.push(mover);
+    }
+
+    if (this.marketScannerAlertGate) {
+      const customResult = await this.marketScannerAlertGate({
+        candidates: rolloverCandidates,
+        suppressed,
+        decisions,
+        scannedAt: options.scannedAt,
+        now: options.now,
+      });
+      return {
+        qualifiedMovers: Array.isArray(customResult?.qualifiedMovers) ? customResult.qualifiedMovers : [],
+        suppressedMovers: Array.isArray(customResult?.suppressedMovers) ? customResult.suppressedMovers : suppressed,
+        decisions: Array.isArray(customResult?.decisions) ? customResult.decisions : decisions,
+      };
+    }
+
+    if (rolloverCandidates.length === 0) {
+      return {
+        qualifiedMovers: [],
+        suppressedMovers: suppressed,
+        decisions,
+      };
+    }
+
+    const tickers = rolloverCandidates.map((mover) => mover.ticker);
+    const end = options.scannedAt || options.now || new Date().toISOString();
+    const [bars5m, bars15m, bars1h] = await Promise.all([
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: tickers,
+        timeframe: '5m',
+        limit: 24,
+        end,
+      }).catch(() => new Map()),
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: tickers,
+        timeframe: '15m',
+        limit: 24,
+        end,
+      }).catch(() => new Map()),
+      [private-live-ops]Client.getHistoricalBars({
+        symbols: tickers,
+        timeframe: '1Hour',
+        limit: 96,
+        end,
+      }).catch(() => new Map()),
+    ]);
+
+    const qualifiedMovers = [];
+    for (const mover of rolloverCandidates) {
+      const ticker = String(mover?.ticker || '').trim().toUpperCase();
+      const recent5m = this.getBarsForTicker(bars5m, ticker);
+      const recent15m = this.getBarsForTicker(bars15m, ticker);
+      const recent1h = this.getBarsForTicker(bars1h, ticker);
+      const latest5m = Array.isArray(recent5m) && recent5m.length > 0
+        ? toNumber(recent5m[recent5m.length - 1]?.close, NaN)
+        : NaN;
+      const currentPrice = toNumber(mover?.price, latest5m);
+      const gate = oracleWatchRegime.evaluateOrdiPatternPromotionGate({
+        ticker,
+        desiredDirection: 'SELL',
+        scannerMover: mover,
+        source: { type: 'market_scanner_alert' },
+      }, recent5m, recent15m, recent1h, currentPrice);
+      decisions.push({
+        ticker,
+        accepted: gate?.ok === true,
+        reason: gate?.reason || 'ordi_pattern_gate_failed',
+      });
+      if (gate?.ok === true) {
+        qualifiedMovers.push(mover);
+      } else {
+        suppressed.push({
+          ticker,
+          reason: gate?.reason || 'ordi_pattern_gate_failed',
+        });
+      }
+    }
+
+    return {
+      qualifiedMovers,
+      suppressedMovers: suppressed,
+      decisions,
+    };
   }
 
   promoteMarketScannerMovers(movers = [], now = new Date()) {
@@ -4037,448 +3222,6 @@ class SupervisorDaemon {
       now,
       ttlHours: 4,
     });
-  }
-
-  build[private-profile]CheckInArchitectAlert(summary = {}) {
-    return [
-      '[PROACTIVE][EUNBYEOL] Check-in review complete.',
-      `Pending [private-profile] items: ${Number(summary.pendingCount || 0)}`,
-      `Last message at: ${summary.lastMessageAt || 'never'}`,
-      `Silence hours: ${summary.silenceHours ?? 'n/a'}`,
-      `Drafted: ${summary.drafted ? 'yes' : 'no'}`,
-      summary.topItems?.length ? `Top items: ${summary.topItems.join(' | ')}` : null,
-      summary.draft ? `Draft:\n${summary.draft}` : null,
-    ].filter(Boolean).join('\n');
-  }
-
-  async runNewsScanPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const watchlistSymbols = await this.getCryptoSymbols();
-    const openPositions = await Promise.resolve(this.newsScanOpenPositionProvider()).catch(() => []);
-    const livePositionSymbols = Array.from(new Set(
-      (Array.isArray(openPositions) ? openPositions : [])
-        .map((position) => normalizeNewsTicker(position?.coin || position?.asset || position?.ticker || ''))
-        .filter(Boolean)
-    ));
-    const scanSymbols = Array.from(new Set([...livePositionSymbols, ...watchlistSymbols]));
-    const caseSignals = this.readActiveCaseSignals();
-    const newsItems = await this.newsVetoModule.fetchTier1News({
-      symbols: scanSymbols,
-      timeoutMs: 8_000,
-      limit: 25,
-    }).catch(() => []);
-    const veto = await this.newsVetoModule.buildEventVeto({
-      symbols: scanSymbols,
-      now: scannedAt,
-      newsItems,
-    }).catch(() => ({
-      decision: 'DEGRADED',
-      matchedEvents: [],
-      eventSummary: 'news_scan_failed',
-      sourceTier: 'none',
-    }));
-
-    const lowerCaseSignals = caseSignals.map((entry) => ({
-      label: entry.label,
-      keywords: entry.keywords.map((keyword) => String(keyword || '').toLowerCase()),
-    }));
-    const caseMatches = (Array.isArray(newsItems) ? newsItems : []).flatMap((item) => {
-      const haystack = `${item?.headline || ''} ${item?.summary || ''}`.toLowerCase();
-      return lowerCaseSignals
-        .filter((signal) => signal.keywords.some((keyword) => keyword && haystack.includes(keyword)))
-        .map((signal) => ({
-          label: signal.label,
-          headline: String(item?.headline || '').trim(),
-          source: String(item?.source || '').trim(),
-          url: String(item?.url || '').trim(),
-        }));
-    });
-
-    let alertLevel = 'level_0';
-    let reason = 'stored_for_review';
-    if (livePositionSymbols.length > 0 && ['CAUTION', 'VETO'].includes(String(veto?.decision || '').toUpperCase())) {
-      alertLevel = 'level_2';
-      reason = 'live_position_event_risk';
-    } else if (caseMatches.length > 0) {
-      alertLevel = 'level_2';
-      reason = 'active_case_headline_match';
-    }
-
-    const findings = Array.isArray(veto?.matchedEvents) && veto.matchedEvents.length > 0
-      ? veto.matchedEvents
-      : (Array.isArray(newsItems) ? newsItems.slice(0, 5) : []);
-    const alertFingerprint = buildNewsFingerprint({
-      level: alertLevel,
-      reason,
-      headlines: findings.map((item) => item?.headline || item?.summary || ''),
-    });
-    const shouldNotifyArchitect = Boolean(alertFingerprint)
-      && alertFingerprint !== this.newsScanState.lastAlertFingerprint;
-    const summary = {
-      ok: true,
-      key: event?.key || 'news_scan',
-      scannedAt,
-      scanSymbols,
-      livePositionSymbols,
-      watchlistSize: watchlistSymbols.length,
-      headlineCount: Array.isArray(newsItems) ? newsItems.length : 0,
-      decision: veto?.decision || 'DEGRADED',
-      sourceTier: veto?.sourceTier || 'none',
-      alertLevel,
-      reason,
-      caseMatches: caseMatches.slice(0, 5),
-      findings: findings.slice(0, 5),
-      notified: shouldNotifyArchitect,
-    };
-
-    if (shouldNotifyArchitect) {
-      this.notifyArchitectInternal(this.buildNewsScanArchitectAlert(summary), 'news_scan');
-      this.newsScanState.lastAlertFingerprint = alertFingerprint;
-    }
-    return summary;
-  }
-
-  async maybeRunNewsScanAutomation(nowMs = Date.now()) {
-    if (!this.newsScanEnabled || this.stopping || !this.newsVetoModule) {
-      return { ok: false, skipped: true, reason: 'news_scan_disabled' };
-    }
-    if (this.newsScanPhasePromise) {
-      return this.newsScanPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextNewsScanEvent(now, {
-      intervalMinutes: this.newsScanIntervalMinutes,
-    });
-    const newsScanDay = buildNewsScanDailySchedule(now, {
-      intervalMinutes: this.newsScanIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.newsScanState.lastProcessedAt
-      ? new Date(this.newsScanState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = newsScanDay.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.newsScanState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistNewsScanState();
-
-    if (dueEvents.length === 0) {
-      this.lastNewsScanSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_news_scan',
-        nextEvent: this.newsScanState.nextEvent,
-      };
-    }
-
-    this.newsScanPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runNewsScanPhase(event);
-        executed.push(phaseResult);
-        this.newsScanState.lastProcessedAt = event.scheduledAt;
-        this.newsScanState.lastResult = phaseResult;
-        this.newsScanState.lastScan = phaseResult;
-        this.persistNewsScanState();
-      }
-
-      const upcomingEvent = getNextNewsScanEvent(new Date(), {
-        intervalMinutes: this.newsScanIntervalMinutes,
-      });
-      this.newsScanState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistNewsScanState();
-      this.lastNewsScanSummary = {
-        enabled: true,
-        status: executed.some((entry) => entry.notified) ? 'alert_sent' : 'scan_complete',
-        intervalMinutes: this.newsScanIntervalMinutes,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: true,
-        skipped: false,
-        executed,
-        nextEvent: this.newsScanState.nextEvent,
-      };
-    })().finally(() => {
-      this.newsScanPhasePromise = null;
-    });
-
-    return this.newsScanPhasePromise;
-  }
-
-  async runPendingFollowupPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const dashboard = this.readCaseOperationsDashboard();
-    const pendingItems = Array.isArray(dashboard.pendingItems) ? dashboard.pendingItems : [];
-    const waitingItems = pendingItems.filter((item) => /waiting|대기|⚠️/i.test(String(item.status || '')));
-    const blockedItems = pendingItems.filter((item) => /blocked|⛔/i.test(String(item.status || '')));
-    const laterItems = pendingItems.filter((item) => /later|다음|내일|예정|📝|⏳/i.test(String(item.status || '')));
-    const private-profileOwnedItems = pendingItems.filter((item) => is[private-profile]OwnedPendingItem(item));
-    const jamesOwnedItems = pendingItems.filter((item) => isthe userOwnedPendingItem(item));
-    const internalOnlyItems = pendingItems.filter((item) => !isthe userOwnedPendingItem(item));
-    const jamesActionableItems = Array.from(new Set([
-      ...jamesOwnedItems,
-      ...blockedItems.filter((item) => isthe userOwnedPendingItem(item)),
-      ...waitingItems.filter((item) => isthe userOwnedPendingItem(item)),
-    ]));
-    const overdue[private-profile]Schedule = Boolean(dashboard.scheduleDate && (dashboard.scheduleItems || []).length > 0);
-    const topItems = [
-      ...waitingItems.slice(0, 2).map((item) => `[WAITING] ${item.item}`),
-      ...blockedItems.slice(0, 2).map((item) => `[BLOCKED] ${item.item}`),
-      ...(overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).slice(0, 2).map((item) => `[EUNBYEOL] ${item}`) : []),
-    ].slice(0, 4);
-    const jamesTopItems = jamesActionableItems
-      .slice(0, 4)
-      .map((item) => `[ACTION] ${item.item}`);
-    const private-profileTopItems = [
-      ...private-profileOwnedItems.slice(0, 3).map((item) => item.item),
-      ...(overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).slice(0, 2) : []),
-    ].slice(0, 4);
-    const alertLevel = jamesActionableItems.length > 0 ? 'level_2' : 'level_0';
-    const fingerprint = JSON.stringify({
-      alertLevel,
-      jamesTopItems,
-      private-profileTopItems,
-    });
-    const shouldNotifyArchitect = fingerprint !== this.pendingFollowupState.lastAlertFingerprint;
-    const summary = {
-      ok: true,
-      key: event?.key || 'pending_followups',
-      scannedAt,
-      waitingCount: waitingItems.length,
-      blockedCount: blockedItems.length,
-      laterCount: laterItems.length,
-      overdueSchedule: false,
-      overdue[private-profile]Schedule,
-      scheduleDate: dashboard.scheduleDate || null,
-      topItems,
-      jamesActionCount: jamesActionableItems.length,
-      jamesTopItems,
-      private-profileActionCount: private-profileOwnedItems.length + (overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).length : 0),
-      private-profileTopItems,
-      internalOnlyCount: internalOnlyItems.length + (overdue[private-profile]Schedule ? (dashboard.scheduleItems || []).length : 0),
-      alertLevel,
-      notified: shouldNotifyArchitect,
-    };
-
-    if (shouldNotifyArchitect) {
-      this.notifyArchitectInternal(this.buildPendingFollowupArchitectAlert(summary), 'pending_followups');
-      this.pendingFollowupState.lastAlertFingerprint = fingerprint;
-    }
-    return summary;
-  }
-
-  async maybeRunPendingFollowupAutomation(nowMs = Date.now()) {
-    if (!this.pendingFollowupEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'pending_followup_disabled' };
-    }
-    if (this.pendingFollowupPhasePromise) {
-      return this.pendingFollowupPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextPendingFollowupEvent(now, {
-      intervalMinutes: this.pendingFollowupIntervalMinutes,
-    });
-    const day = buildPendingFollowupDailySchedule(now, {
-      intervalMinutes: this.pendingFollowupIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.pendingFollowupState.lastProcessedAt
-      ? new Date(this.pendingFollowupState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = day.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.pendingFollowupState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistPendingFollowupState();
-
-    if (dueEvents.length === 0) {
-      this.lastPendingFollowupSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent,
-      };
-      return { ok: false, skipped: true, reason: 'no_due_pending_followup', nextEvent: this.pendingFollowupState.nextEvent };
-    }
-
-    this.pendingFollowupPhasePromise = (async () => {
-      const executed = [];
-      for (const dueEvent of dueEvents) {
-        const phaseResult = await this.runPendingFollowupPhase(dueEvent);
-        executed.push(phaseResult);
-        this.pendingFollowupState.lastProcessedAt = dueEvent.scheduledAt;
-        this.pendingFollowupState.lastResult = phaseResult;
-        this.pendingFollowupState.lastScan = phaseResult;
-        this.persistPendingFollowupState();
-      }
-
-      const upcomingEvent = getNextPendingFollowupEvent(new Date(), {
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-      });
-      this.pendingFollowupState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistPendingFollowupState();
-      this.lastPendingFollowupSummary = {
-        enabled: true,
-        status: executed.some((entry) => entry.notified) ? 'alert_sent' : 'scan_complete',
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return { ok: true, skipped: false, executed, nextEvent: this.pendingFollowupState.nextEvent };
-    })().finally(() => {
-      this.pendingFollowupPhasePromise = null;
-    });
-
-    return this.pendingFollowupPhasePromise;
-  }
-
-  async runMarketResearchPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const watchlistSymbols = await this.getCryptoSymbols();
-    const openPositions = await Promise.resolve(this.marketResearchOpenPositionProvider()).catch(() => []);
-    const livePositionSymbols = Array.from(new Set(
-      (Array.isArray(openPositions) ? openPositions : [])
-        .map((position) => normalizeNewsTicker(position?.coin || position?.asset || position?.ticker || ''))
-        .filter(Boolean)
-    ));
-    const scanSymbols = Array.from(new Set([...livePositionSymbols, ...watchlistSymbols]));
-    const [macroRisk, newsItems, veto] = await Promise.all([
-      macroRiskGate.assessMacroRisk().catch(() => null),
-      this.newsVetoModule.fetchTier1News({
-        symbols: scanSymbols,
-        timeoutMs: 8_000,
-        limit: 12,
-      }).catch(() => []),
-      this.newsVetoModule.buildEventVeto({
-        symbols: scanSymbols,
-        now: scannedAt,
-      }).catch(() => ({
-        decision: 'DEGRADED',
-        matchedEvents: [],
-        sourceTier: 'none',
-      })),
-    ]);
-    const summary = {
-      ok: true,
-      key: event?.key || 'market_research',
-      scannedAt,
-      scanSymbols,
-      livePositionSymbols,
-      macroRisk: macroRisk ? {
-        regime: macroRisk.regime,
-        score: macroRisk.score,
-        reason: macroRisk.reason,
-      } : null,
-      eventDecision: veto?.decision || 'DEGRADED',
-      sourceTier: veto?.sourceTier || 'none',
-      headlineCount: Array.isArray(newsItems) ? newsItems.length : 0,
-      findings: Array.isArray(veto?.matchedEvents) && veto.matchedEvents.length > 0
-        ? veto.matchedEvents.slice(0, 5)
-        : (Array.isArray(newsItems) ? newsItems.slice(0, 5) : []),
-      alertLevel: 'level_0',
-      notified: false,
-    };
-    const fingerprint = buildNewsFingerprint({
-      level: summary.alertLevel,
-      reason: `${summary.macroRisk?.regime || 'unknown'}:${summary.eventDecision || 'DEGRADED'}`,
-      headlines: summary.findings.map((item) => item?.headline || item?.summary || ''),
-    });
-    const shouldNotifyArchitect = Boolean(fingerprint)
-      && fingerprint !== this.marketResearchState.lastAlertFingerprint;
-    if (shouldNotifyArchitect) {
-      this.notifyArchitectInternal(this.buildMarketResearchArchitectAlert(summary), 'market_research');
-      this.marketResearchState.lastAlertFingerprint = fingerprint;
-      summary.notified = true;
-    }
-    return summary;
-  }
-
-  async maybeRunMarketResearchAutomation(nowMs = Date.now()) {
-    if (!this.marketResearchEnabled || this.stopping || !this.newsVetoModule) {
-      return { ok: false, skipped: true, reason: 'market_research_disabled' };
-    }
-    if (this.marketResearchPhasePromise) {
-      return this.marketResearchPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextMarketResearchEvent(now, {
-      intervalMinutes: this.marketResearchIntervalMinutes,
-    });
-    const day = buildMarketResearchDailySchedule(now, {
-      intervalMinutes: this.marketResearchIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.marketResearchState.lastProcessedAt
-      ? new Date(this.marketResearchState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = day.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.marketResearchState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistMarketResearchState();
-
-    if (dueEvents.length === 0) {
-      this.lastMarketResearchSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent,
-      };
-      return { ok: false, skipped: true, reason: 'no_due_market_research', nextEvent: this.marketResearchState.nextEvent };
-    }
-
-    this.marketResearchPhasePromise = (async () => {
-      const executed = [];
-      for (const dueEvent of dueEvents) {
-        const phaseResult = await this.runMarketResearchPhase(dueEvent);
-        executed.push(phaseResult);
-        this.marketResearchState.lastProcessedAt = dueEvent.scheduledAt;
-        this.marketResearchState.lastResult = phaseResult;
-        this.marketResearchState.lastScan = phaseResult;
-        this.persistMarketResearchState();
-      }
-
-      const upcomingEvent = getNextMarketResearchEvent(new Date(), {
-        intervalMinutes: this.marketResearchIntervalMinutes,
-      });
-      this.marketResearchState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistMarketResearchState();
-      this.lastMarketResearchSummary = {
-        enabled: true,
-        status: 'scan_complete',
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return { ok: true, skipped: false, executed, nextEvent: this.marketResearchState.nextEvent };
-    })().finally(() => {
-      this.marketResearchPhasePromise = null;
-    });
-
-    return this.marketResearchPhasePromise;
   }
 
   async run[private-live-ops]Phase(event) {
@@ -4591,6 +3334,98 @@ class SupervisorDaemon {
     return this.[private-live-ops]PhasePromise;
   }
 
+  async maybeRunSparkAutomation(nowMs = Date.now()) {
+    if (!this.sparkMonitorEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'spark_monitor_disabled' };
+    }
+    if (this.sparkMonitorPhasePromise) {
+      return this.sparkMonitorPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNextSparkMonitorEvent(now, {
+      intervalMinutes: this.sparkMonitorIntervalMinutes,
+    });
+    const day = buildSparkMonitorDailySchedule(now, {
+      intervalMinutes: this.sparkMonitorIntervalMinutes,
+    });
+    const lastProcessedAtMs = this.sparkMonitorState.lastProcessedAt
+      ? new Date(this.sparkMonitorState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = day.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.sparkMonitorState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistSparkMonitorState();
+
+    if (dueEvents.length === 0) {
+      this.lastSparkMonitorSummary = {
+        enabled: true,
+        status: 'scheduled',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_due_spark_phase', nextEvent: this.sparkMonitorState.nextEvent };
+    }
+
+    this.sparkMonitorPhasePromise = (async () => {
+      const dueEvent = dueEvents[dueEvents.length - 1];
+      const phaseResult = await sparkCapture.runSparkScan({
+        now: dueEvent.scheduledAt,
+        statePath: this.sparkMonitorDataStatePath,
+        eventsPath: this.sparkMonitorEventsPath,
+        firePlansPath: this.sparkMonitorFirePlansPath,
+        watchlistPath: this.sparkMonitorWatchlistPath,
+        fetch: this.fetch || global.fetch,
+      });
+
+      this.sparkMonitorState.lastProcessedAt = dueEvent.scheduledAt;
+      this.sparkMonitorState.lastResult = phaseResult;
+      this.sparkMonitorState.lastScan = phaseResult;
+
+      const upcomingEvent = getNextSparkMonitorEvent(new Date(), {
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+      });
+      this.sparkMonitorState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistSparkMonitorState();
+
+      const alertCount = Array.isArray(phaseResult?.newAlertEvents) ? phaseResult.newAlertEvents.length : 0;
+      const summary = {
+        enabled: true,
+        status: phaseResult?.ok === true ? 'scan_complete' : 'scan_failed',
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent,
+        alertCount,
+        upbitListingCount: Number(phaseResult?.upbitListingCount || 0),
+        [private-live-ops]ListingCount: Number(phaseResult?.[private-live-ops]ListingCount || 0),
+        tokenUnlockCount: Number(phaseResult?.tokenUnlockCount || 0),
+        lastResult: phaseResult || null,
+      };
+      this.lastSparkMonitorSummary = summary;
+
+      if (alertCount > 0 && phaseResult?.alertMessage) {
+        const notification = phaseResult.alertMessage;
+        this.notifyArchitectInternal(notification, 'spark_monitor');
+        this.notifyTelegramTrading(notification);
+      }
+
+      return {
+        ok: phaseResult?.ok !== false,
+        skipped: false,
+        nextEvent: this.sparkMonitorState.nextEvent,
+        result: phaseResult,
+      };
+    })().finally(() => {
+      this.sparkMonitorPhasePromise = null;
+    });
+
+    return this.sparkMonitorPhasePromise;
+  }
+
   async runMarketScannerPhase(event) {
     const phaseKey = event?.key || 'market_scanner';
     this.logTradingEventHeader(phaseKey);
@@ -4631,6 +3466,30 @@ class SupervisorDaemon {
     const canonicalAlerts = this.sanitizeMarketScannerMovers(
       Array.isArray(phaseResult.alerts) ? phaseResult.alerts : canonicalFlaggedMovers
     ).slice(0, 10);
+    const rawUrgentSourceMovers = this.getUrgentMarketScannerMovers(
+      Array.isArray(this.marketScannerState.flaggedMovers) && this.marketScannerState.flaggedMovers.length > 0
+        ? this.marketScannerState.flaggedMovers
+        : canonicalFlaggedMovers
+    ).slice(0, 6);
+    const alertGateResult = await this.filterOrdiQualifiedMarketScannerMovers([
+      ...canonicalAlerts,
+      ...rawUrgentSourceMovers,
+    ], {
+      scannedAt: phaseResult.scannedAt,
+    });
+    const qualifiedByTicker = new Map(
+      (Array.isArray(alertGateResult.qualifiedMovers) ? alertGateResult.qualifiedMovers : [])
+        .map((mover) => [String(mover?.ticker || '').trim().toUpperCase(), mover])
+        .filter(([ticker]) => Boolean(ticker))
+    );
+    const gatedAlerts = canonicalAlerts.filter((mover) => qualifiedByTicker.has(String(mover?.ticker || '').trim().toUpperCase()));
+    const gatedUrgentSourceMovers = rawUrgentSourceMovers
+      .map((mover) => qualifiedByTicker.get(String(mover?.ticker || '').trim().toUpperCase()))
+      .filter(Boolean)
+      .slice(0, 6);
+    const urgentPromotedSymbols = gatedUrgentSourceMovers
+      .map((entry) => String(entry?.ticker || '').trim().toUpperCase())
+      .filter(Boolean);
     const summary = {
       ok: true,
       key: phaseKey,
@@ -4639,9 +3498,32 @@ class SupervisorDaemon {
       flaggedCount: Array.isArray(this.marketScannerState.flaggedMovers) ? this.marketScannerState.flaggedMovers.length : 0,
       flaggedMovers: canonicalFlaggedMovers,
       topMovers: canonicalTopMovers,
-      alerts: canonicalAlerts,
+      alerts: gatedAlerts,
+      alertGate: {
+        policy: 'ordi_pattern_source_gate',
+        rawAlertCount: canonicalAlerts.length,
+        rawUrgentCount: rawUrgentSourceMovers.length,
+        qualifiedCount: qualifiedByTicker.size,
+        suppressedCount: Array.isArray(alertGateResult.suppressedMovers) ? alertGateResult.suppressedMovers.length : 0,
+        decisions: Array.isArray(alertGateResult.decisions) ? alertGateResult.decisions.slice(0, 10) : [],
+      },
+      urgentPromotedSymbols,
       notified: false,
     };
+    this.marketScannerState = marketScannerModule.normalizeMarketScannerState({
+      ...this.marketScannerState,
+      lastResult: {
+        scannedAt: summary.scannedAt,
+        assetCount: summary.assetCount,
+        flaggedCount: summary.flaggedCount,
+        flaggedMovers: summary.flaggedMovers,
+        topMovers: summary.topMovers,
+        alerts: summary.alerts,
+        urgentMovers: gatedUrgentSourceMovers,
+        urgentPromotedSymbols,
+        alertGate: summary.alertGate,
+      },
+    });
     try {
       summary.predictionsScored = predictionTrackerModule.scorePredictions(
         this.buildPredictionPriceMap(this.marketScannerState.assets)
@@ -4656,25 +3538,60 @@ class SupervisorDaemon {
     const promotionResult = this.promoteMarketScannerMovers(summary.topMovers, phaseResult.scannedAt);
     summary.promotedSymbols = Array.isArray(promotionResult?.promotedTickers) ? promotionResult.promotedTickers : [];
     summary.refreshedSymbols = Array.isArray(promotionResult?.refreshedTickers) ? promotionResult.refreshedTickers : [];
+    try {
+      const regimeResult = await oracleWatchRegime.applySharedShortRegime({
+        marketScannerState: this.marketScannerState,
+        movers: canonicalFlaggedMovers.length > 0 ? canonicalFlaggedMovers : canonicalTopMovers,
+        rulesPath: this.oracleWatchRulesPath,
+        watchStatePath: this.oracleWatchStatePath,
+        statePath: this.oracleShortRegimeStatePath,
+      });
+      this.lastOracleShortRegimeSummary = regimeResult;
+      summary.sharedShortRegime = {
+        active: regimeResult?.active === true,
+        candidateCount: Number(regimeResult?.candidateCount || 0),
+        promotedTickers: Array.isArray(regimeResult?.promotedTickers) ? regimeResult.promotedTickers : [],
+        promotedRuleIds: Array.isArray(regimeResult?.promotedRuleIds) ? regimeResult.promotedRuleIds : [],
+        retiredRuleIds: Array.isArray(regimeResult?.retiredRuleIds) ? regimeResult.retiredRuleIds : [],
+        statePath: this.oracleShortRegimeStatePath,
+      };
+    } catch (error) {
+      summary.sharedShortRegime = {
+        active: false,
+        error: error?.message || String(error),
+        statePath: this.oracleShortRegimeStatePath,
+      };
+      this.logger.warn(`Oracle shared short regime update failed: ${error?.message || String(error)}`);
+    }
     if (summary.alerts.length > 0) {
       this.notifyArchitectInternal(this.buildMarketScannerArchitectAlert(summary), 'market_scanner');
       summary.notified = true;
     }
-    const urgentSourceMovers = this.getUrgentMarketScannerMovers(
-      Array.isArray(this.marketScannerState.flaggedMovers) && this.marketScannerState.flaggedMovers.length > 0
-        ? this.marketScannerState.flaggedMovers
-        : summary.flaggedMovers
-    ).slice(0, 6);
-    const urgentMovers = (await this.filterExecutableMarketScannerMovers(urgentSourceMovers)).slice(0, 6);
+    const urgentMovers = (await this.filterExecutableMarketScannerMovers(gatedUrgentSourceMovers)).slice(0, 6);
     summary.urgentMovers = urgentMovers;
     if (urgentMovers.length > 0) {
       const urgentPromotionResult = this.promoteMarketScannerMovers(urgentMovers, phaseResult.scannedAt);
-      summary.urgentPromotedSymbols = Array.isArray(urgentPromotionResult?.promotedTickers)
+      const promotedUrgentTickers = Array.isArray(urgentPromotionResult?.promotedTickers)
         ? urgentPromotionResult.promotedTickers
         : [];
+      const refreshedUrgentTickers = Array.isArray(urgentPromotionResult?.refreshedTickers)
+        ? urgentPromotionResult.refreshedTickers
+        : [];
+      summary.urgentPromotedSymbols = Array.from(new Set([
+        ...urgentPromotedSymbols,
+        ...promotedUrgentTickers,
+        ...refreshedUrgentTickers,
+      ]));
+      summary.urgentRefreshedSymbols = refreshedUrgentTickers;
       const triggerDecision = this.shouldTriggerImmediateMarketScannerConsultation(urgentMovers, phaseResult.scannedAt);
       summary.immediateConsultationEligibility = triggerDecision.reason;
-      if (triggerDecision.shouldTrigger) {
+      if (triggerDecision.shouldTrigger && !this.marketScannerImmediateConsultationEnabled) {
+        summary.immediateConsultation = {
+          ok: false,
+          skipped: true,
+          reason: 'market_scanner_immediate_consultation_disabled',
+        };
+      } else if (triggerDecision.shouldTrigger) {
         const nowIso = new Date().toISOString();
         const urgentSymbols = urgentMovers.map((entry) => entry.ticker).filter(Boolean);
         this.marketScannerLastTrigger = {
@@ -4708,6 +3625,23 @@ class SupervisorDaemon {
   async maybeRunMarketScannerAutomation(nowMs = Date.now()) {
     if (!this.marketScannerEnabled || this.stopping || !this.marketScanner || typeof this.marketScanner.runMarketScan !== 'function') {
       return { ok: false, skipped: true, reason: 'market_scanner_disabled' };
+    }
+    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    if (manualActivity) {
+      this.lastMarketScannerSummary = {
+        enabled: true,
+        status: 'paused_for_manual_activity',
+        intervalMinutes: this.marketScannerIntervalMinutes,
+        lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
+        nextEvent: this.marketScannerState.nextEvent || null,
+        manualActivity,
+      };
+      return {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        manualActivity,
+      };
     }
     if (this.marketScannerPhasePromise) {
       this.lastMarketScannerSummary = {
@@ -4814,127 +3748,15 @@ class SupervisorDaemon {
     };
   }
 
-  async run[private-profile]CheckInPhase(event) {
-    const scannedAt = new Date().toISOString();
-    const dashboard = this.readCaseOperationsDashboard();
-    const pendingItems = Array.isArray(dashboard.pendingItems) ? dashboard.pendingItems : [];
-    const private-profileItems = pendingItems.filter((item) => /은별 input|은별 action|은별/i.test(String(item.blockedOn || '')));
-    const commsRows = await Promise.resolve(this.proactiveCommsProvider()).catch(() => []);
-    const lastMessageAtMs = getLatest[private-profile]MessageTimestamp(commsRows);
-    const silenceMs = lastMessageAtMs > 0 ? Math.max(0, Date.parse(scannedAt) - lastMessageAtMs) : Number.POSITIVE_INFINITY;
-    const shouldDraft = private-profileItems.length > 0 && silenceMs >= this.private-profileCheckInSilenceMs;
-    const topItems = private-profileItems.slice(0, 4).map((item) => item.item);
-    const draft = shouldDraft
-      ? this.build[private-profile]CheckInDraft({ topItems })
-      : null;
-    const fingerprint = draft ? JSON.stringify({ topItems, lastMessageAtMs }) : null;
-    const summary = {
-      ok: true,
-      key: event?.key || 'private-profile_checkin',
-      scannedAt,
-      pendingCount: private-profileItems.length,
-      lastMessageAt: lastMessageAtMs > 0 ? new Date(lastMessageAtMs).toISOString() : null,
-      silenceHours: Number.isFinite(silenceMs) ? Number((silenceMs / (60 * 60 * 1000)).toFixed(2)) : null,
-      drafted: Boolean(draft),
-      topItems,
-      draft,
-      alertLevel: 'level_0',
-      notified: false,
-    };
-    if (fingerprint) {
-      this.private-profileCheckInState.lastDraftFingerprint = fingerprint;
-      this.private-profileCheckInState.lastDraft = {
-        createdAt: scannedAt,
-        message: draft,
-        topItems,
-      };
-      this.notifyArchitectInternal(this.build[private-profile]CheckInArchitectAlert(summary), 'private-profile_checkin');
-      summary.notified = true;
-    }
-    return summary;
-  }
-
-  async maybeRun[private-profile]CheckInAutomation(nowMs = Date.now()) {
-    if (!this.private-profileCheckInEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'private-profile_checkin_disabled' };
-    }
-    if (this.private-profileCheckInPhasePromise) {
-      return this.private-profileCheckInPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNext[private-profile]CheckInEvent(now, {
-      intervalMinutes: this.private-profileCheckInIntervalMinutes,
-    });
-    const day = build[private-profile]CheckInDailySchedule(now, {
-      intervalMinutes: this.private-profileCheckInIntervalMinutes,
-    });
-    const lastProcessedAtMs = this.private-profileCheckInState.lastProcessedAt
-      ? new Date(this.private-profileCheckInState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = day.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.private-profileCheckInState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persist[private-profile]CheckInState();
-
-    if (dueEvents.length === 0) {
-      this.last[private-profile]CheckInSummary = {
-        enabled: true,
-        status: 'scheduled',
-        intervalMinutes: this.private-profileCheckInIntervalMinutes,
-        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
-        nextEvent: this.private-profileCheckInState.nextEvent,
-      };
-      return { ok: false, skipped: true, reason: 'no_due_private-profile_checkin', nextEvent: this.private-profileCheckInState.nextEvent };
-    }
-
-    this.private-profileCheckInPhasePromise = (async () => {
-      const executed = [];
-      for (const dueEvent of dueEvents) {
-        const phaseResult = await this.run[private-profile]CheckInPhase(dueEvent);
-        executed.push(phaseResult);
-        this.private-profileCheckInState.lastProcessedAt = dueEvent.scheduledAt;
-        this.private-profileCheckInState.lastResult = phaseResult;
-        this.persist[private-profile]CheckInState();
-      }
-
-      const upcomingEvent = getNext[private-profile]CheckInEvent(new Date(), {
-        intervalMinutes: this.private-profileCheckInIntervalMinutes,
-      });
-      this.private-profileCheckInState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persist[private-profile]CheckInState();
-      this.last[private-profile]CheckInSummary = {
-        enabled: true,
-        status: executed.some((entry) => entry.drafted) ? 'draft_ready' : 'scan_complete',
-        intervalMinutes: this.private-profileCheckInIntervalMinutes,
-        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
-        nextEvent: this.private-profileCheckInState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return { ok: true, skipped: false, executed, nextEvent: this.private-profileCheckInState.nextEvent };
-    })().finally(() => {
-      this.private-profileCheckInPhasePromise = null;
-    });
-
-    return this.private-profileCheckInPhasePromise;
-  }
-
   getTradeReconciliationOrchestrator() {
-    return this.tradingOrchestrator || null;
+    return null;
   }
 
   hasActiveTradingPhase() {
-    return Boolean(this.tradingPhasePromise || this.cryptoTradingPhasePromise);
+    return Boolean(this.cryptoTradingPhasePromise);
   }
 
   getTradeReconciliationMarketDate(referenceDate = new Date()) {
-    if (this.tradingState.marketDate) {
-      return this.tradingState.marketDate;
-    }
     return getDateKeyInTimeZone(referenceDate, tradingScheduler.MARKET_TIME_ZONE);
   }
 
@@ -4951,7 +3773,7 @@ class SupervisorDaemon {
       this.lastTradeReconciliationSummary = {
         enabled: false,
         status: 'disabled',
-        marketDate: this.tradingState.marketDate || null,
+        marketDate: null,
         pendingCount: 0,
         lastProcessedAt: this.tradeReconciliationState.lastProcessedAt || null,
         lastResult: this.tradeReconciliationState.lastResult || null,
@@ -5096,181 +3918,11 @@ class SupervisorDaemon {
     };
   }
 
-  resetTradingStateForMarketDate(marketDate) {
-    if (!marketDate || this.tradingState.marketDate === marketDate) return;
-    this.tradingState = {
-      ...defaultTradingState(),
-      marketDate,
-      sleeping: true,
-    };
-    this.persistTradingState();
-  }
-
-  isTradingPhaseComplete(marketDate, phaseKey) {
-    if (this.tradingState.marketDate !== marketDate) return false;
-    const phase = this.tradingState.phases && this.tradingState.phases[phaseKey];
-    if (!phase) return false;
-    return phase.status === 'completed' || phase.status === 'failed';
-  }
-
-  recordTradingPhaseState(marketDate, phaseKey, patch = {}) {
-    if (!marketDate) return;
-    if (this.tradingState.marketDate !== marketDate) {
-      this.resetTradingStateForMarketDate(marketDate);
-    }
-    this.tradingState.phases = this.tradingState.phases || {};
-    this.tradingState.phases[phaseKey] = {
-      ...(this.tradingState.phases[phaseKey] || {}),
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    };
-    this.persistTradingState();
-  }
-
-  summarizeTradingPhaseResult(phaseKey, result) {
-    if (!result || typeof result !== 'object') {
-      return { phase: phaseKey, ok: true };
-    }
-
-    if (phaseKey === 'premarket_wake') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        symbols: Array.isArray(result.symbols) ? result.symbols.length : 0,
-        watchlistSize: Array.isArray(result.watchlist) ? result.watchlist.length : 0,
-      };
-    }
-
-    if (phaseKey === 'pre_open_consensus') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        approvedTrades: Array.isArray(result.approvedTrades) ? result.approvedTrades.length : 0,
-        rejectedTrades: Array.isArray(result.rejectedTrades) ? result.rejectedTrades.length : 0,
-        incompleteSignals: Array.isArray(result.incompleteSignals) ? result.incompleteSignals.length : 0,
-      };
-    }
-
-    if (phaseKey === 'market_open_execute') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        executions: Array.isArray(result.executions) ? result.executions.length : 0,
-      };
-    }
-
-    if (phaseKey === 'close_wake') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        reviews: Array.isArray(result.reviews) ? result.reviews.length : 0,
-        exits: Array.isArray(result.exits) ? result.exits.length : 0,
-      };
-    }
-
-    if (phaseKey === 'market_close_review') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        openPositions: Array.isArray(result.openPositions) ? result.openPositions.length : 0,
-        liquidation: Boolean(result.liquidation),
-        reconciledTrades: Array.isArray(result.reconciliation?.orderUpdates) ? result.reconciliation.orderUpdates.length : 0,
-        outcomesRecorded: Array.isArray(result.reconciliation?.recordedOutcomes) ? result.reconciliation.recordedOutcomes.length : 0,
-      };
-    }
-
-    if (phaseKey === 'end_of_day') {
-      return {
-        phase: phaseKey,
-        marketDate: result.marketDate || null,
-        pnl: Number(result.summary?.pnl || 0),
-        pnlPct: Number(result.summary?.pnlPct || 0),
-        trades: Array.isArray(result.trades) ? result.trades.length : 0,
-      };
-    }
-
-    return {
-      phase: phaseKey,
-      marketDate: result.marketDate || null,
-    };
-  }
-
-  buildTradingAgentMessage(phaseKey, tradingDay) {
-    const marketDate = tradingDay?.marketDate || 'unknown-date';
-    if (phaseKey === 'premarket_wake') {
-      return {
-        architect: `[TRADING] Pre-market wake for ${marketDate}. Coordinate watchlist review and collect signals before 6:25 AM PT consensus.`,
-        builder: `[TRADING] Pre-market wake for ${marketDate}. Review the watchlist and register Builder signals before 6:25 AM PT.`,
-        oracle: `[TRADING] Pre-market wake for ${marketDate}. Scan news and register Oracle signals before 6:25 AM PT.`,
-      };
-    }
-
-    if (phaseKey === 'close_wake') {
-      return {
-        architect: `[TRADING] Close wake for ${marketDate}. Review positions and coordinate any profit-taking decisions before 1:00 PM PT.`,
-        builder: `[TRADING] Close wake for ${marketDate}. Review open positions and prepare any exits before the close.`,
-        oracle: `[TRADING] Close wake for ${marketDate}. Review late-day news or catalysts that could affect open positions.`,
-      };
-    }
-
-    if (phaseKey === 'end_of_day') {
-      return {
-        architect: `[TRADING] End of day complete for ${marketDate}. Stand down until the next market wake.`,
-        builder: `[TRADING] End of day complete for ${marketDate}. Stand down until the next market wake.`,
-        oracle: `[TRADING] End of day complete for ${marketDate}. Stand down until the next market wake.`,
-      };
-    }
-
-    return null;
-  }
-
-  notifyTradingAgents(phaseKey, tradingDay) {
-    const messages = this.buildTradingAgentMessage(phaseKey, tradingDay);
-    if (!messages) return;
-
-    for (const target of TRADING_AGENT_TARGETS) {
-      const message = messages[target];
-      if (!message) continue;
-      try {
-        execFileSync(process.execPath, [this.hmSendScriptPath, target, message], {
-          cwd: this.projectRoot,
-          env: this.runtimeEnv,
-          timeout: 15000,
-          stdio: 'ignore',
-        });
-      } catch (err) {
-        this.logger.warn(`Trading notify failed for ${target} during ${phaseKey}: ${err.message}`);
-      }
-    }
-  }
-
-  notifyAllTradingAgents(message, reason = 'monitor') {
-    const text = String(message || '').trim();
-    if (!text) return;
-    for (const target of TRADING_AGENT_TARGETS) {
-      try {
-        execFileSync(process.execPath, [this.hmSendScriptPath, target, text], {
-          cwd: this.projectRoot,
-          env: this.runtimeEnv,
-          timeout: 15000,
-          stdio: 'ignore',
-        });
-      } catch (err) {
-        this.logger.warn(`Trading notify failed for ${target} during ${reason}: ${err.message}`);
-      }
-    }
-  }
-
   notifyArchitectInternal(message, reason = 'proactive') {
     const text = String(message || '').trim();
     if (!text) return;
     try {
-      execFileSync(process.execPath, [this.hmSendScriptPath, 'architect', text], {
-        cwd: this.projectRoot,
-        env: this.runtimeEnv,
-        timeout: 15000,
-        stdio: 'ignore',
-      });
+      this.executeHmSendSync(['architect', text], reason);
     } catch (err) {
       this.logger.warn(`Architect internal notify failed during ${reason}: ${err.message}`);
     }
@@ -5281,12 +3933,7 @@ class SupervisorDaemon {
     if (!text) return;
     for (const target of ['architect', 'oracle']) {
       try {
-        execFileSync(process.execPath, [this.hmSendScriptPath, target, text], {
-          cwd: this.projectRoot,
-          env: this.runtimeEnv,
-          timeout: 15000,
-          stdio: 'ignore',
-        });
+        this.executeHmSendSync([target, text], reason);
       } catch (err) {
         this.logger.warn(`Oracle watch notify failed for ${target} during ${reason}: ${err.message}`);
       }
@@ -5299,11 +3946,12 @@ class SupervisorDaemon {
       5_000,
       Number(heartbeat?.intervalMs || this.oracleWatchIntervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS) || DEFAULT_ORACLE_WATCH_INTERVAL_MS
     );
+    const staleThresholdMs = Math.max(ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS, intervalMs * 2);
     const isStale = Boolean(
       this.oracleWatchEnabled
       && heartbeat?.stale === true
       && Number.isFinite(ageMs)
-      && ageMs >= ORACLE_WATCH_STALE_ALERT_THRESHOLD_MS
+      && ageMs >= staleThresholdMs
     );
 
     if (isStale && !this.oracleWatchStaleAlertActive) {
@@ -5334,18 +3982,17 @@ class SupervisorDaemon {
       this.logger.info(`Trading alert suppressed (manual mode): ${message.slice(0, 80)}...`);
       return;
     }
+    if (shouldSuppressMainTelegramForHangul(message, this.runtimeEnv)) {
+      this.logger.warn('Trading Telegram notify suppressed: Hangul detected in main-profile alert. Raw alert retained in internal logs.');
+      return;
+    }
     const chatId = String(this.runtimeEnv?.TELEGRAM_CHAT_ID || '').trim();
     if (!chatId) {
       this.logger.warn('Trading Telegram notify suppressed: TELEGRAM_CHAT_ID is not configured.');
       return;
     }
     try {
-      execFileSync(process.execPath, [this.hmSendScriptPath, 'telegram', message, '--chat-id', chatId], {
-        cwd: this.projectRoot,
-        env: this.runtimeEnv,
-        timeout: 15000,
-        stdio: 'ignore',
-      });
+      this.executeHmSendSync(['telegram', message, '--chat-id', chatId], 'telegram_trading');
     } catch (err) {
       this.logger.warn(`Trading Telegram notify failed: ${err.message}`);
     }
@@ -5361,6 +4008,37 @@ class SupervisorDaemon {
         warnings: [],
         telegramAlerts: [],
       };
+    }
+    const checkedAt = new Date().toISOString();
+    const manualActivity = this.getActive[private-live-ops]ManualActivity();
+    if (manualActivity) {
+      const pausedResult = {
+        ok: true,
+        skipped: true,
+        reason: 'manual_[private-live-ops]_activity',
+        trigger,
+        checkedAt,
+        positions: [],
+        warnings: [],
+        telegramAlerts: [],
+        manualActivity,
+      };
+      this.last[private-live-ops]MonitorSummary = {
+        enabled: true,
+        status: 'paused_for_manual_activity',
+        trigger,
+        pollMs: this.[private-live-ops]MonitorPollMs,
+        checkedAt,
+        warnings: [],
+        telegramAlerts: [],
+        positions: [],
+        peakStatePath: this.defiPeakPnlPath,
+        riskExit: { attempted: false, reason: 'manual_activity_pause', executions: [] },
+        manualActivity,
+        error: null,
+      };
+      this.writeStatus();
+      return pausedResult;
     }
 
     const result = await this.[private-live-ops]MonitorOrchestrator.runDefiMonitorCycle({
@@ -5398,6 +4076,22 @@ class SupervisorDaemon {
 
     this.writeStatus();
     return result;
+  }
+
+  getActive[private-live-ops]ManualActivity(nowMs = Date.now()) {
+    const activity = readManual[private-live-ops]Activity(this.[private-live-ops]ManualActivityPath);
+    if (!isManual[private-live-ops]ActivityActive(activity, { nowMs })) {
+      return null;
+    }
+    return {
+      command: String(activity.command || '[private-live-ops]_manual'),
+      caller: String(activity.caller || 'manual'),
+      pid: Number(activity.pid) || null,
+      startedAt: activity.startedAt || null,
+      lastHeartbeatAt: activity.lastHeartbeatAt || null,
+      expiresAt: activity.expiresAt || null,
+      metadata: activity.metadata && typeof activity.metadata === 'object' ? activity.metadata : {},
+    };
   }
 
   async sync[private-live-ops]PeakStateFromAccountState(accountState = {}, options = {}) {
@@ -5514,33 +4208,6 @@ class SupervisorDaemon {
     }
   }
 
-  async getTradingDaySchedule(date) {
-    const calendarDay = await tradingScheduler.getCalendarDay(date, { projectRoot: this.projectRoot });
-    if (!calendarDay) return null;
-    return tradingScheduler.buildTradingDaySchedule(calendarDay, {
-      phases: TRADING_PHASES,
-    });
-  }
-
-  async getNextTradingEvent(referenceDate = new Date()) {
-    const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-    for (let offset = 0; offset < 10; offset += 1) {
-      const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-      const tradingDay = await this.getTradingDaySchedule(candidateDate);
-      if (!tradingDay) continue;
-
-      const nextEvent = tradingDay.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-      if (nextEvent) {
-        return {
-          ...nextEvent,
-          tradingDay,
-        };
-      }
-    }
-
-    return null;
-  }
-
   async getCurrent[private-live-ops]PositionSymbols() {
     const sources = [];
     const liveAccountState = await Promise.resolve(
@@ -5558,9 +4225,70 @@ class SupervisorDaemon {
     }
     return Array.from(new Set(
       sources
-        .map((position) => normalizeNewsTicker(position?.ticker || position?.coin || ''))
+        .map((position) => normalizeUsdTicker(position?.ticker || position?.coin || ''))
         .filter((ticker) => /\/USD$/i.test(ticker))
     ));
+  }
+
+  async maybeRunPositionAttributionReconciliation(nowMs = Date.now()) {
+    const checkedAt = new Date(nowMs).toISOString();
+    if (!this.positionAttributionReconciliationEnabled) {
+      return {
+        ok: false,
+        skipped: true,
+        enabled: false,
+        reason: this.lastPositionAttributionReconciliationSummary?.status || 'position_attribution_reconciliation_disabled',
+        checkedAt,
+        statePath: this.positionAttributionStatePath,
+      };
+    }
+
+    const walletAddress = resolve[private-live-ops]WalletAddress(this.runtimeEnv);
+    try {
+      const livePositions = this.positionAttributionSnapshotProvider
+        ? await Promise.resolve(this.positionAttributionSnapshotProvider({ walletAddress, env: this.runtimeEnv, nowMs }))
+        : await [private-live-ops]Client.getOpenPositions({ walletAddress, env: this.runtimeEnv });
+      const reconcileSummary = agentPositionAttribution.reconcilePositionAttributionWithLivePositions(
+        Array.isArray(livePositions) ? livePositions : [],
+        {
+          statePath: this.positionAttributionStatePath,
+          walletAddress,
+          nowIso: checkedAt,
+        }
+      );
+      const summary = {
+        enabled: true,
+        status: 'ok',
+        ...reconcileSummary,
+        checkedAt,
+        statePath: reconcileSummary.path || this.positionAttributionStatePath,
+      };
+      this.lastPositionAttributionReconciliationSummary = summary;
+      if (summary.createdCount > 0 || summary.quarantinedCount > 0) {
+        this.logger.info(
+          `Position attribution reconciled: live=${summary.liveCount}, created=${summary.createdCount}, quarantined=${summary.quarantinedCount}`
+        );
+      }
+      return summary;
+    } catch (error) {
+      const message = error?.message || String(error);
+      const summary = {
+        ok: false,
+        enabled: true,
+        status: 'error',
+        checkedAt,
+        statePath: this.positionAttributionStatePath,
+        error: message,
+      };
+      this.lastPositionAttributionReconciliationSummary = summary;
+      this.emitRateLimitedLog({
+        key: 'position-attribution-reconciliation-failed',
+        level: 'warn',
+        message: `Position attribution reconciliation failed: ${message}`,
+        state: message,
+      });
+      return summary;
+    }
   }
 
   async getCryptoSymbolCandidates(options = {}) {
@@ -5763,7 +4491,13 @@ class SupervisorDaemon {
         symbols: normalized.map((entry) => entry.ticker),
       });
     } catch (error) {
-      this.logger?.warn?.(`[market-scanner-rank] native funding boost unavailable: ${error?.message || String(error)}`);
+      const errorMessage = error?.message || String(error);
+      this.emitRateLimitedLog({
+        key: 'market-scanner-native-funding-unavailable',
+        level: 'warn',
+        message: `[market-scanner-rank] native funding boost unavailable: ${errorMessage}`,
+        state: errorMessage,
+      });
     }
 
     const nativeAsOfMs = Date.parse(nativeBundle?.asOf || '');
@@ -6064,7 +4798,8 @@ class SupervisorDaemon {
 
   build[private-live-ops]GivebackAlert(position) {
     const drawdownPct = Number(position?.drawdownFromPeakPct || 0);
-    const stopLossText = Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
+    const stopLossText = position?.stopLossVerifiedAt
+      && Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
       ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
       : '';
     return `[TRADING] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} has given back ${(drawdownPct * 100).toFixed(0)}% of peak PnL. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} peak=$${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText}`;
@@ -6072,7 +4807,8 @@ class SupervisorDaemon {
 
   build[private-live-ops]ManualActionAlert(position = {}, reasons = []) {
     const reasonText = Array.isArray(reasons) && reasons.length > 0 ? reasons.join('+') : 'risk_exit_signal';
-    const stopLossText = Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
+    const stopLossText = position?.stopLossVerifiedAt
+      && Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
       ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
       : '';
     return `[ACTION REQUIRED] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} hit ${reasonText}. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} entry=$${toNumber(position?.entryPx, 0).toFixed(4)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText} Manual-only reset is active, so the supervisor did not close it.`;
@@ -6082,7 +4818,7 @@ class SupervisorDaemon {
     const stopLossPrice = Number(position?.stopLossPrice);
     const markPrice = Number(position?.markPrice);
     const side = String(position?.side || '').trim().toLowerCase();
-    if (!Number.isFinite(stopLossPrice) || stopLossPrice <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
+    if (!position?.stopLossVerifiedAt || !Number.isFinite(stopLossPrice) || stopLossPrice <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
       return false;
     }
     if (side === 'short') {
@@ -6307,427 +5043,6 @@ class SupervisorDaemon {
     return result;
   }
 
-  async getLiveOpsBankrollSnapshot(now = new Date()) {
-    const [balance, positions] = await Promise.all([
-      this.polymarketClient.getBalance(),
-      this.polymarketClient.getPositions(),
-    ]);
-    const normalizedPositions = Array.isArray(positions) ? positions : [];
-    const marketValue = normalizedPositions.reduce((sum, position) => {
-      return sum + Math.max(0, Number(position?.marketValue || 0));
-    }, 0);
-    const available = Number(balance?.available ?? balance?.balance ?? 0) || 0;
-    const bankroll = Number((available + marketValue).toFixed(2));
-    const dayKey = getDateKeyInTimeZone(now);
-    if (this.polymarketTradingState.dayStartDate !== dayKey || !Number.isFinite(Number(this.polymarketTradingState.dayStartBankroll))) {
-      this.polymarketTradingState.dayStartDate = dayKey;
-      this.polymarketTradingState.dayStartBankroll = bankroll;
-    }
-    const dayStartBankroll = Number(this.polymarketTradingState.dayStartBankroll || bankroll) || bankroll;
-    const dailyLossPct = dayStartBankroll > 0 ? Math.max(0, (dayStartBankroll - bankroll) / dayStartBankroll) : 0;
-
-    return {
-      balance,
-      positions: normalizedPositions,
-      bankroll,
-      currentExposure: Number(marketValue.toFixed(2)),
-      dayStartBankroll,
-      dailyLossPct: Number(dailyLossPct.toFixed(6)),
-    };
-  }
-
-  async getLiveOpsCandidateMarkets(event, options = {}) {
-    const cached = this.polymarketTradingState.lastScan;
-    if (!options.forceRefresh && cached && cached.windowKey === event.windowKey && Array.isArray(cached.markets) && cached.markets.length > 0) {
-      return cached.markets;
-    }
-
-    const markets = await this.polymarketScanner.scanMarkets({
-      limit: options.limit || 12,
-    });
-    this.polymarketTradingState.lastScan = {
-      windowKey: event.windowKey || event.scheduledAt,
-      marketDate: event.marketDate || '',
-      scheduledAt: event.scheduledAt || '',
-      markets,
-    };
-    this.persistLiveOpsTradingState();
-    return markets;
-  }
-
-  async buildLiveOpsConsensus(event, options = {}) {
-    const cached = this.polymarketTradingState.lastConsensus;
-    if (!options.forceRefresh && cached && cached.windowKey === event.windowKey && Array.isArray(cached.results)) {
-      return cached;
-    }
-
-    const markets = await this.getLiveOpsCandidateMarkets(event, options);
-    const signalsByAgent = this.polymarketSignals.produceSignals(markets, {
-      agentIds: TRADING_AGENT_TARGETS,
-    });
-    const results = markets.map((market) => {
-      const marketSignals = TRADING_AGENT_TARGETS.map((agentId) => {
-        return (signalsByAgent.get(agentId) || []).find((signal) => signal.conditionId === market.conditionId);
-      }).filter(Boolean);
-      if (marketSignals.length !== 3) return null;
-      return {
-        ...this.polymarketSignals.buildConsensus(marketSignals),
-        market,
-      };
-    }).filter(Boolean);
-
-    const payload = {
-      windowKey: event.windowKey || event.scheduledAt,
-      marketDate: event.marketDate || '',
-      scheduledAt: event.scheduledAt || '',
-      results,
-      actionable: results.filter((result) => result.consensus && result.decision !== 'HOLD'),
-      agentSignals: Object.fromEntries(Array.from(signalsByAgent.entries())),
-    };
-    this.polymarketTradingState.lastConsensus = payload;
-    this.persistLiveOpsTradingState();
-    return payload;
-  }
-
-  async runLiveOpsPhase(event) {
-    const phaseKey = String(event?.key || '').trim();
-    const scheduledAt = String(event?.scheduledAt || '').trim();
-    const marketDate = String(event?.marketDate || getDateKeyInTimeZone(scheduledAt || new Date())).trim();
-    if (!phaseKey || !scheduledAt || !this.polymarketTradingEnabled || !this.polymarketTradingOrchestrator) {
-      return { ok: false, phase: phaseKey || 'unknown', error: 'polymarket_phase_unavailable' };
-    }
-
-    try {
-      const phaseOptions = {
-        date: marketDate || scheduledAt,
-        broker: 'polymarket',
-        assetClass: 'prediction_market',
-        includeLiveOps: true,
-      };
-
-      if (phaseKey === 'polymarket_scan' || phaseKey === 'polymarket_consensus') {
-        const consensusPhase = await this.polymarketTradingOrchestrator.runLiveOpsConsensusRound(phaseOptions);
-        this.polymarketTradingState.lastScan = {
-          windowKey: event.windowKey || event.scheduledAt,
-          marketDate,
-          scheduledAt,
-          markets: Array.isArray(consensusPhase?.markets) ? consensusPhase.markets : [],
-        };
-        this.polymarketTradingState.lastConsensus = consensusPhase;
-        let executionPhase = null;
-        if (phaseKey === 'polymarket_scan') {
-          executionPhase = await this.polymarketTradingOrchestrator.runLiveOpsMarketOpen({
-            ...phaseOptions,
-            consensusPhase,
-          });
-          this.polymarketTradingState.lastExecution = executionPhase;
-        }
-        const result = {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {
-            markets: Array.isArray(consensusPhase?.markets) ? consensusPhase.markets.length : 0,
-            actionable: Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades.length : 0,
-            executions: Array.isArray(executionPhase?.executions)
-              ? executionPhase.executions.filter((entry) => entry.execution?.ok !== false).length
-              : 0,
-          },
-        };
-        this.polymarketTradingState.lastResult = result;
-        this.persistLiveOpsTradingState();
-        return result;
-      }
-
-      if (phaseKey === 'polymarket_execute') {
-        const consensusPhase = await this.polymarketTradingOrchestrator.runLiveOpsConsensusRound(phaseOptions);
-        const executionPhase = await this.polymarketTradingOrchestrator.runLiveOpsMarketOpen({
-          ...phaseOptions,
-          consensusPhase,
-        });
-        const result = {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {
-            executions: Array.isArray(executionPhase?.executions) ? executionPhase.executions.length : 0,
-            filled: Array.isArray(executionPhase?.executions)
-              ? executionPhase.executions.filter((entry) => entry.execution?.ok !== false).length
-              : 0,
-          },
-        };
-        this.polymarketTradingState.lastConsensus = consensusPhase;
-        this.polymarketTradingState.lastExecution = executionPhase;
-        this.polymarketTradingState.lastResult = result;
-        this.persistLiveOpsTradingState();
-        return result;
-      }
-
-      if (phaseKey === 'polymarket_monitor') {
-        const portfolioSnapshot = await this.polymarketTradingOrchestrator.getUnifiedPortfolioSnapshot({
-          ...phaseOptions,
-          includeLiveOps: true,
-        });
-        const limits = tradingRiskEngine.DEFAULT_LIMITS;
-        const killSwitch = tradingRiskEngine.checkKillSwitch(portfolioSnapshot, limits);
-        const dailyPause = tradingRiskEngine.checkDailyPause(portfolioSnapshot, limits);
-        const positions = await this.polymarketClient.getPositions();
-        const exits = [];
-        const executor = require('./modules/trading/executor');
-
-        for (const position of Array.isArray(positions) ? positions : []) {
-          const exitCheck = this.polymarketSizer.shouldExit(position, position.currentPrice, {
-            now: scheduledAt,
-          });
-          if (!exitCheck.exit) continue;
-          const order = await executor.submitOrder({
-            ticker: position.market || position.tokenId,
-            conditionId: position.market || position.tokenId,
-            broker: 'polymarket',
-            assetClass: 'prediction_market',
-            direction: 'SELL',
-            shares: position.size,
-            tokenId: position.tokenId,
-            price: position.currentPrice,
-            referencePrice: position.currentPrice,
-            notes: `polymarket-stop:${position.market || position.tokenId}`,
-          }, {
-            broker: 'polymarket',
-          });
-          exits.push({
-            tokenId: position.tokenId,
-            market: position.market,
-            exitCheck,
-            order,
-          });
-        }
-
-        const result = {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {
-            positions: Array.isArray(positions) ? positions.length : 0,
-            exits: exits.length,
-            killSwitch: Boolean(killSwitch?.triggered),
-            dailyPause: Boolean(dailyPause?.paused),
-          },
-        };
-        if (this.yieldRouterEnabled && this.yieldRouterOrchestrator && !this.yieldRouterPhasePromise) {
-          result.yieldRebalance = await this.runYieldRebalancePhase({
-            key: 'yield_rebalance',
-            marketDate,
-            scheduledAt: new Date().toISOString(),
-            windowKey: event.windowKey || event.scheduledAt,
-            triggerSource: phaseKey,
-          });
-        }
-        this.polymarketTradingState.lastMonitor = {
-          windowKey: event.windowKey || event.scheduledAt,
-          marketDate,
-          scheduledAt,
-          exits,
-          killSwitch,
-          dailyPause,
-          yieldRebalance: result.yieldRebalance || null,
-        };
-        this.polymarketTradingState.lastResult = result;
-        this.persistLiveOpsTradingState();
-        return result;
-      }
-
-      return {
-        ok: true,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        summary: {},
-      };
-    } catch (err) {
-      this.logger.warn(`LiveOps trading phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
-      const result = {
-        ok: false,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        error: err.message,
-      };
-      this.polymarketTradingState.lastResult = result;
-      this.persistLiveOpsTradingState();
-      return result;
-    }
-  }
-
-  async runLaunchRadarPhase(event) {
-    const phaseKey = String(event?.key || '').trim();
-    const scheduledAt = String(event?.scheduledAt || '').trim();
-    const marketDate = String(event?.marketDate || new Date(scheduledAt || Date.now()).toISOString().slice(0, 10)).trim();
-    if (!phaseKey || !scheduledAt || !this.launchRadarEnabled || !this.launchRadar || !this.launchRadarOrchestrator) {
-      return { ok: false, phase: phaseKey || 'unknown', error: 'launch_radar_phase_unavailable' };
-    }
-
-    try {
-      if (phaseKey !== 'launch_radar_scan') {
-        return {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {},
-        };
-      }
-
-      const portfolioSnapshot = await this.launchRadarOrchestrator.getUnifiedPortfolioSnapshot({
-        date: marketDate || scheduledAt,
-        includeLiveOps: true,
-      }).catch(() => null);
-      const killSwitch = tradingRiskEngine.checkKillSwitch(portfolioSnapshot || {}, tradingRiskEngine.DEFAULT_LIMITS);
-      const pollResult = await this.launchRadar.pollNow({ reason: phaseKey });
-      const qualified = Array.isArray(pollResult?.qualified) ? pollResult.qualified : [];
-      const rejected = Array.isArray(pollResult?.rejected) ? pollResult.rejected : [];
-      const syncResult = killSwitch.triggered
-        ? {
-          ok: false,
-          skipped: true,
-          reason: 'kill_switch_triggered',
-          qualifiedTokens: qualified,
-          added: [],
-          refreshed: [],
-        }
-        : await this.launchRadarOrchestrator.syncLaunchRadarWatchlist({
-          reason: 'launch_radar_scan',
-          date: marketDate || scheduledAt,
-          launchRadar: this.launchRadar,
-          launchRadarQualifiedTokens: qualified,
-          launchRadarExpiryDays: 7,
-          persistDynamicWatchlist: this.launchRadarDryRun ? false : undefined,
-        });
-
-      const result = {
-        ok: pollResult?.ok !== false,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        summary: {
-          launches: Array.isArray(pollResult?.launches) ? pollResult.launches.length : 0,
-          qualified: qualified.length,
-          rejected: rejected.length,
-          added: Array.isArray(syncResult?.added) ? syncResult.added.length : 0,
-          refreshed: Array.isArray(syncResult?.refreshed) ? syncResult.refreshed.length : 0,
-          killSwitch: Boolean(killSwitch.triggered),
-          dryRun: this.launchRadarDryRun,
-        },
-      };
-      this.launchRadarState.lastScan = {
-        windowKey: event.windowKey || event.scheduledAt,
-        marketDate,
-        scheduledAt,
-        dryRun: this.launchRadarDryRun,
-        killSwitch,
-        pollResult,
-        syncResult,
-      };
-      this.launchRadarState.lastResult = result;
-      this.persistLaunchRadarState();
-      return result;
-    } catch (err) {
-      this.logger.warn(`Launch radar phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
-      const result = {
-        ok: false,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        error: err.message,
-      };
-      this.launchRadarState.lastResult = result;
-      this.persistLaunchRadarState();
-      return result;
-    }
-  }
-
-  async runYieldRebalancePhase(event) {
-    const phaseKey = String(event?.key || '').trim();
-    const scheduledAt = String(event?.scheduledAt || '').trim();
-    const marketDate = String(event?.marketDate || new Date(scheduledAt || Date.now()).toISOString().slice(0, 10)).trim();
-    if (!phaseKey || !scheduledAt || !this.yieldRouterEnabled || !this.yieldRouter || !this.yieldRouterOrchestrator) {
-      return { ok: false, phase: phaseKey || 'unknown', error: 'yield_router_phase_unavailable' };
-    }
-
-    try {
-      if (phaseKey !== 'yield_rebalance') {
-        return {
-          ok: true,
-          phase: phaseKey,
-          marketDate,
-          scheduledAt,
-          summary: {},
-        };
-      }
-
-      const portfolioSnapshot = await this.yieldRouterOrchestrator.getUnifiedPortfolioSnapshot({
-        date: marketDate || scheduledAt,
-        includeLiveOps: true,
-        yieldRouter: this.yieldRouter,
-      });
-      const allocation = this.yieldRouterOrchestrator.getCapitalAllocation(portfolioSnapshot, event.allocationOptions || {});
-      const rebalanceResult = await this.yieldRouterOrchestrator.returnIdleCapital({
-        date: marketDate || scheduledAt,
-        portfolioSnapshot,
-        yieldRouter: this.yieldRouter,
-        dryRun: this.yieldRouterDryRun,
-        killSwitchTriggered: portfolioSnapshot?.risk?.killSwitchTriggered === true,
-        ...event.rebalanceOptions,
-      });
-      const result = {
-        ok: rebalanceResult.ok !== false || rebalanceResult.skipped === true,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        summary: {
-          action: rebalanceResult.action || 'none',
-          deposited: Number(rebalanceResult.deposit?.deposited || 0),
-          withdrawn: Number(rebalanceResult.withdrawal?.withdrawn || 0),
-          idleCapital: Number(allocation?.excess?.idleCapital || 0),
-          yieldGap: Number(allocation?.gaps?.yield || 0),
-          activeGap: Number(allocation?.gaps?.activeTrading || 0),
-          killSwitch: Boolean(portfolioSnapshot?.risk?.killSwitchTriggered),
-          dryRun: this.yieldRouterDryRun,
-          triggerSource: event.triggerSource || null,
-        },
-      };
-      this.yieldRouterState.lastProcessedAt = scheduledAt;
-      this.yieldRouterState.lastRebalance = {
-        windowKey: event.windowKey || event.scheduledAt,
-        marketDate,
-        scheduledAt,
-        triggerSource: event.triggerSource || null,
-        dryRun: this.yieldRouterDryRun,
-        portfolioSnapshot,
-        allocation,
-        rebalanceResult,
-      };
-      this.yieldRouterState.lastResult = result;
-      this.persistYieldRouterState();
-      return result;
-    } catch (err) {
-      this.logger.warn(`Yield router phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
-      const result = {
-        ok: false,
-        phase: phaseKey,
-        marketDate,
-        scheduledAt,
-        error: err.message,
-      };
-      this.yieldRouterState.lastProcessedAt = scheduledAt;
-      this.yieldRouterState.lastResult = result;
-      this.persistYieldRouterState();
-      return result;
-    }
-  }
-
   async runCryptoConsensusPhase(event) {
     const phaseKey = String(event?.key || '').trim();
     const scheduledAt = String(event?.scheduledAt || '').trim();
@@ -6928,207 +5243,6 @@ class SupervisorDaemon {
     }
   }
 
-  async runTradingPhase(event, tradingDay) {
-    const phaseKey = String(event?.key || '').trim();
-    const marketDate = tradingDay?.marketDate || null;
-    if (!phaseKey || !marketDate || !this.tradingOrchestrator) {
-      return { ok: false, phase: phaseKey || 'unknown', error: 'trading_phase_unavailable' };
-    }
-
-    const startedAt = new Date().toISOString();
-    this.recordTradingPhaseState(marketDate, phaseKey, {
-      status: 'running',
-      startedAt,
-      scheduledAt: event.scheduledAt,
-    });
-
-    try {
-      let result = null;
-      if (phaseKey === 'premarket_wake') {
-        this.tradingState.sleeping = false;
-        this.notifyTradingAgents(phaseKey, tradingDay);
-        result = await this.tradingOrchestrator.runPreMarket({ date: marketDate });
-        this.notifyTelegramTrading(`[TRADING] Pre-market wake for ${marketDate}. Watching ${Array.isArray(result?.symbols) ? result.symbols.length : '?'} stocks. Consensus at 6:25 AM PT, market open at 6:30 AM PT.`);
-      } else if (phaseKey === 'pre_open_consensus') {
-        result = await this.tradingOrchestrator.runConsensusRound({ date: marketDate });
-        const approved = Array.isArray(result?.approvedTrades) ? result.approvedTrades.length : 0;
-        const rejected = Array.isArray(result?.rejectedTrades) ? result.rejectedTrades.length : 0;
-        const tradeList = approved > 0
-          ? result.approvedTrades.map((t) => `${t.consensus?.decision} ${t.ticker}`).join(', ')
-          : 'none';
-        this.notifyTelegramTrading(`[TRADING] Consensus for ${marketDate}: ${approved} approved, ${rejected} rejected. Trades: ${tradeList}.`);
-      } else if (phaseKey === 'market_open_execute') {
-        result = await this.tradingOrchestrator.runMarketOpen({ date: marketDate });
-        const execCount = Array.isArray(result?.executions) ? result.executions.length : 0;
-        if (execCount > 0) {
-          const execList = result.executions.map((e) => `${e.consensus?.decision} ${e.ticker}`).join(', ');
-          this.notifyTelegramTrading(`[TRADING] Market open: ${execCount} orders executed — ${execList}.`);
-        }
-      } else if (phaseKey === 'close_wake') {
-        this.tradingState.sleeping = false;
-        this.notifyTradingAgents(phaseKey, tradingDay);
-        result = await this.tradingOrchestrator.runMidDayCheck({ date: marketDate });
-      } else if (phaseKey === 'market_close_review') {
-        result = await this.tradingOrchestrator.runMarketClose({ date: marketDate });
-        if (this.yieldRouterEnabled && this.yieldRouterOrchestrator && !this.yieldRouterPhasePromise) {
-          result.yieldRebalance = await this.runYieldRebalancePhase({
-            key: 'yield_rebalance',
-            marketDate,
-            scheduledAt: new Date().toISOString(),
-            windowKey: event.windowKey || event.scheduledAt,
-            triggerSource: phaseKey,
-          });
-        }
-      } else if (phaseKey === 'end_of_day') {
-        result = await this.tradingOrchestrator.runEndOfDay({ date: marketDate });
-        this.tradingState.sleeping = true;
-        this.notifyTradingAgents(phaseKey, tradingDay);
-      } else {
-        result = { phase: phaseKey, marketDate };
-      }
-
-      const summary = this.summarizeTradingPhaseResult(phaseKey, result);
-      this.recordTradingPhaseState(marketDate, phaseKey, {
-        status: 'completed',
-        finishedAt: new Date().toISOString(),
-        scheduledAt: event.scheduledAt,
-        summary,
-      });
-      this.logger.info(`Trading phase ${phaseKey} completed for ${marketDate}`);
-      return {
-        ok: true,
-        phase: phaseKey,
-        marketDate,
-        summary,
-      };
-    } catch (err) {
-      this.recordTradingPhaseState(marketDate, phaseKey, {
-        status: 'failed',
-        finishedAt: new Date().toISOString(),
-        scheduledAt: event.scheduledAt,
-        error: err.message,
-      });
-      this.logger.warn(`Trading phase ${phaseKey} failed for ${marketDate}: ${err.message}`);
-      return {
-        ok: false,
-        phase: phaseKey,
-        marketDate,
-        error: err.message,
-      };
-    }
-  }
-
-  async maybeRunTradingAutomation(nowMs = Date.now()) {
-    if (this.manualTradingOnly) {
-      this.lastTradingSummary = {
-        enabled: false,
-        status: 'manual_only',
-        reason: 'manual_only_reset',
-        marketDate: null,
-        sleeping: true,
-        nextEvent: null,
-      };
-      return { ok: false, skipped: true, reason: 'manual_only_reset' };
-    }
-    if (!this.tradingEnabled || this.stopping || !this.tradingOrchestrator) {
-      return { ok: false, skipped: true, reason: 'trading_disabled' };
-    }
-    if (this.tradingPhasePromise) {
-      return this.tradingPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const tradingDay = await this.getTradingDaySchedule(now).catch((err) => {
-      this.logger.warn(`Trading schedule lookup failed: ${err.message}`);
-      return null;
-    });
-    const nextEvent = await this.getNextTradingEvent(now).catch((err) => {
-      this.logger.warn(`Next trading event lookup failed: ${err.message}`);
-      return null;
-    });
-
-    if (!tradingDay) {
-      this.tradingState.nextEvent = this.describeTradingEvent(nextEvent);
-      this.tradingState.sleeping = true;
-      this.persistTradingState();
-      this.lastTradingSummary = {
-        enabled: true,
-        status: 'idle',
-        reason: 'not_trading_day',
-        marketDate: null,
-        sleeping: true,
-        nextEvent: this.describeTradingEvent(nextEvent),
-      };
-      return { ok: false, skipped: true, reason: 'not_trading_day', nextEvent: this.describeTradingEvent(nextEvent) };
-    }
-
-    this.resetTradingStateForMarketDate(tradingDay.marketDate);
-    const dueEvents = tradingDay.schedule.filter((event) => {
-      return new Date(event.scheduledAt).getTime() <= now.getTime()
-        && !this.isTradingPhaseComplete(tradingDay.marketDate, event.key);
-    });
-
-    this.tradingState.nextEvent = this.describeTradingEvent(
-      tradingDay.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime())
-      || nextEvent
-    );
-    this.persistTradingState();
-
-    if (dueEvents.length === 0) {
-      this.lastTradingSummary = {
-        enabled: true,
-        status: 'scheduled',
-        marketDate: tradingDay.marketDate,
-        sleeping: this.tradingState.sleeping !== false,
-        nextEvent: this.tradingState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_trading_phase',
-        marketDate: tradingDay.marketDate,
-        nextEvent: this.tradingState.nextEvent,
-      };
-    }
-
-    this.tradingPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runTradingPhase(event, tradingDay);
-        executed.push(phaseResult);
-        if (!phaseResult.ok) break;
-      }
-
-      const upcomingEvent = tradingDay.schedule.find((event) => {
-        return new Date(event.scheduledAt).getTime() > Date.now()
-          && !this.isTradingPhaseComplete(tradingDay.marketDate, event.key);
-      }) || nextEvent;
-      this.tradingState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistTradingState();
-      this.lastTradingSummary = {
-        enabled: true,
-        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
-        marketDate: tradingDay.marketDate,
-        executedPhases: executed.map((entry) => entry.phase),
-        sleeping: this.tradingState.sleeping !== false,
-        nextEvent: this.tradingState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: executed.every((entry) => entry.ok),
-        skipped: false,
-        marketDate: tradingDay.marketDate,
-        executed,
-        nextEvent: this.tradingState.nextEvent,
-      };
-    })().finally(() => {
-      this.tradingPhasePromise = null;
-    });
-
-    return this.tradingPhasePromise;
-  }
-
   async maybeRunCryptoTradingAutomation(nowMs = Date.now()) {
     if (!this.cryptoTradingEnabled || this.stopping || !this.cryptoTradingOrchestrator) {
       return { ok: false, skipped: true, reason: 'crypto_trading_disabled' };
@@ -7281,249 +5395,6 @@ class SupervisorDaemon {
     };
   }
 
-  async maybeRunLiveOpsTradingAutomation(nowMs = Date.now()) {
-    if (!this.polymarketTradingEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'polymarket_trading_disabled' };
-    }
-    if (this.polymarketTradingPhasePromise) {
-      return this.polymarketTradingPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = await tradingScheduler.getNextLiveOpsWakeEvent(now, {
-      projectRoot: this.projectRoot,
-      phases: POLYMARKET_SCHEDULE_PHASES,
-    }).catch((err) => {
-      this.logger.warn(`Next LiveOps event lookup failed: ${err.message}`);
-      return null;
-    });
-
-    const polymarketDay = tradingScheduler.buildLiveOpsDailySchedule(now, {
-      projectRoot: this.projectRoot,
-      phases: POLYMARKET_SCHEDULE_PHASES,
-    });
-    const lastProcessedAtMs = this.polymarketTradingState.lastProcessedAt
-      ? new Date(this.polymarketTradingState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = polymarketDay.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.polymarketTradingState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistLiveOpsTradingState();
-
-    if (dueEvents.length === 0) {
-      this.lastLiveOpsTradingSummary = {
-        enabled: true,
-        status: 'scheduled',
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_polymarket_phase',
-        nextEvent: this.polymarketTradingState.nextEvent,
-      };
-    }
-
-    this.polymarketTradingPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runLiveOpsPhase(event);
-        executed.push(phaseResult);
-        this.polymarketTradingState.lastProcessedAt = event.scheduledAt;
-        this.polymarketTradingState.lastResult = phaseResult;
-        this.persistLiveOpsTradingState();
-        if (!phaseResult.ok) break;
-      }
-
-      const upcomingEvent = await tradingScheduler.getNextLiveOpsWakeEvent(new Date(), {
-        projectRoot: this.projectRoot,
-      }).catch(() => null);
-      this.polymarketTradingState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistLiveOpsTradingState();
-      this.lastLiveOpsTradingSummary = {
-        enabled: true,
-        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: executed.every((entry) => entry.ok),
-        skipped: false,
-        executed,
-        nextEvent: this.polymarketTradingState.nextEvent,
-      };
-    })().finally(() => {
-      this.polymarketTradingPhasePromise = null;
-    });
-
-    return this.polymarketTradingPhasePromise;
-  }
-
-  async maybeRunLaunchRadarAutomation(nowMs = Date.now()) {
-    if (!this.launchRadarEnabled || this.stopping || !this.launchRadar || !this.launchRadarOrchestrator) {
-      return { ok: false, skipped: true, reason: 'launch_radar_disabled' };
-    }
-    if (this.launchRadarPhasePromise) {
-      return this.launchRadarPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextLaunchRadarEvent(now, {
-      intervalMinutes: DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES,
-    });
-    const launchRadarDay = buildLaunchRadarDailySchedule(now, {
-      intervalMinutes: DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES,
-    });
-    const lastProcessedAtMs = this.launchRadarState.lastProcessedAt
-      ? new Date(this.launchRadarState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = launchRadarDay.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.launchRadarState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistLaunchRadarState();
-
-    if (dueEvents.length === 0) {
-      this.lastLaunchRadarSummary = {
-        enabled: true,
-        status: 'scheduled',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_launch_radar_phase',
-        nextEvent: this.launchRadarState.nextEvent,
-      };
-    }
-
-    this.launchRadarPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runLaunchRadarPhase(event);
-        executed.push(phaseResult);
-        this.launchRadarState.lastProcessedAt = event.scheduledAt;
-        this.launchRadarState.lastResult = phaseResult;
-        this.persistLaunchRadarState();
-        if (!phaseResult.ok) break;
-      }
-
-      const upcomingEvent = getNextLaunchRadarEvent(new Date(), {
-        intervalMinutes: DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES,
-      });
-      this.launchRadarState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistLaunchRadarState();
-      this.lastLaunchRadarSummary = {
-        enabled: true,
-        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
-        dryRun: this.launchRadarDryRun,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: executed.every((entry) => entry.ok),
-        skipped: false,
-        executed,
-        nextEvent: this.launchRadarState.nextEvent,
-      };
-    })().finally(() => {
-      this.launchRadarPhasePromise = null;
-    });
-
-    return this.launchRadarPhasePromise;
-  }
-
-  async maybeRunYieldRouterAutomation(nowMs = Date.now()) {
-    if (!this.yieldRouterEnabled || this.stopping || !this.yieldRouter || !this.yieldRouterOrchestrator) {
-      return { ok: false, skipped: true, reason: 'yield_router_disabled' };
-    }
-    if (this.yieldRouterPhasePromise) {
-      return this.yieldRouterPhasePromise;
-    }
-
-    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNextYieldRouterEvent(now, {
-      intervalMinutes: DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES,
-    });
-    const yieldRouterDay = buildYieldRouterDailySchedule(now, {
-      intervalMinutes: DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES,
-    });
-    const lastProcessedAtMs = this.yieldRouterState.lastProcessedAt
-      ? new Date(this.yieldRouterState.lastProcessedAt).getTime()
-      : 0;
-    const dueEvents = yieldRouterDay.schedule.filter((event) => {
-      const scheduledAtMs = new Date(event.scheduledAt).getTime();
-      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
-    });
-
-    this.yieldRouterState.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persistYieldRouterState();
-
-    if (dueEvents.length === 0) {
-      this.lastYieldRouterSummary = {
-        enabled: true,
-        status: 'scheduled',
-        dryRun: this.yieldRouterDryRun,
-        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
-        nextEvent: this.yieldRouterState.nextEvent,
-      };
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'no_due_yield_router_phase',
-        nextEvent: this.yieldRouterState.nextEvent,
-      };
-    }
-
-    this.yieldRouterPhasePromise = (async () => {
-      const executed = [];
-      for (const event of dueEvents) {
-        const phaseResult = await this.runYieldRebalancePhase(event);
-        executed.push(phaseResult);
-        this.yieldRouterState.lastResult = phaseResult;
-        this.persistYieldRouterState();
-        if (!phaseResult.ok) break;
-      }
-
-      const upcomingEvent = getNextYieldRouterEvent(new Date(), {
-        intervalMinutes: DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES,
-      });
-      this.yieldRouterState.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persistYieldRouterState();
-      this.lastYieldRouterSummary = {
-        enabled: true,
-        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
-        dryRun: this.yieldRouterDryRun,
-        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
-        nextEvent: this.yieldRouterState.nextEvent,
-        lastResult: executed[executed.length - 1] || null,
-      };
-
-      return {
-        ok: executed.every((entry) => entry.ok),
-        skipped: false,
-        executed,
-        nextEvent: this.yieldRouterState.nextEvent,
-      };
-    })().finally(() => {
-      this.yieldRouterPhasePromise = null;
-    });
-
-    return this.yieldRouterPhasePromise;
-  }
-
   runMemoryLeaseHousekeeping(nowMs = Date.now(), phase = 'tick') {
     if (!this.leaseJanitor || typeof this.leaseJanitor.pruneExpiredLeases !== 'function') {
       return { ok: false, skipped: true, reason: 'lease_janitor_unavailable' };
@@ -7583,11 +5454,12 @@ class SupervisorDaemon {
         + ` missing=${counts.missingInCognitiveCount}`
         + ` orphans=${counts.orphanedNodeCount}`
         + ` duplicates=${counts.duplicateKnowledgeHashCount}`;
-      if (this.lastMemoryConsistencySummary.synced) {
-        this.logger.info(message);
-      } else {
-        this.logger.warn(message);
-      }
+      this.emitMemoryConsistencyLog(
+        reason,
+        message,
+        this.lastMemoryConsistencySummary.synced,
+        nowMs
+      );
       return this.lastMemoryConsistencySummary;
     } catch (err) {
       this.lastMemoryConsistencySummary = this.buildMemoryConsistencySummary({
@@ -7598,7 +5470,14 @@ class SupervisorDaemon {
         summary: {},
       });
       this.lastMemoryConsistencyCheckAtMs = nowMs;
-      this.logger.warn(`Memory consistency (${reason}) failed: ${err.message}`);
+      this.emitRateLimitedLog({
+        key: 'memory-consistency-failed',
+        level: 'warn',
+        message: `Memory consistency (${reason}) failed: ${err.message}`,
+        state: err.message,
+        intervalMs: this.memoryConsistencyRepeatLogMs,
+        nowMs,
+      });
       return this.lastMemoryConsistencySummary;
     }
   }
@@ -7830,7 +5709,13 @@ class SupervisorDaemon {
       const nextReason = this.pendingMemoryIndexReason || 'manual';
       this.pendingMemoryIndexReason = null;
       this.runMemoryIndexRefresh(nextReason).catch((err) => {
-        this.logger.warn(`Memory index refresh failed: ${err.message}`);
+        this.emitRateLimitedLog({
+          key: 'memory-index-refresh-failed',
+          level: 'warn',
+          message: `Memory index refresh failed: ${err.message}`,
+          state: err.message,
+          intervalMs: this.memoryIndexRepeatLogMs,
+        });
       });
     }, this.memoryIndexDebounceMs);
     this.requestTick(`memory-index:${this.pendingMemoryIndexReason}`);
@@ -7850,15 +5735,17 @@ class SupervisorDaemon {
 
     this.memoryIndexRefreshPromise = this.memorySearchIndex.indexAll()
       .then((result) => {
-        this.logger.info(
-          `Memory index refresh (${reason}) complete: `
-          + `groups=${result.indexedGroups} skipped=${result.skippedGroups} `
-          + `docs=${result.status.document_count}`
-        );
+        this.emitMemoryIndexRefreshLog(reason, result);
         return result;
       })
       .catch((err) => {
-        this.logger.warn(`Memory index refresh (${reason}) failed: ${err.message}`);
+        this.emitRateLimitedLog({
+          key: 'memory-index-refresh-failed',
+          level: 'warn',
+          message: `Memory index refresh (${reason}) failed: ${err.message}`,
+          state: err.message,
+          intervalMs: this.memoryIndexRepeatLogMs,
+        });
         throw err;
       })
       .finally(() => {
@@ -7891,7 +5778,9 @@ class SupervisorDaemon {
 
     this.memoryIndexWatcher.on('all', (eventName, changedPath) => {
       const relPath = String(changedPath || '');
-      this.logger.info(`Memory index watcher event ${eventName}: ${relPath}`);
+      // Per-file event logs were noisy in the pane when a burst of memory
+      // files saved. The aggregate "Memory index refresh complete: ..." line
+      // still fires once per debounced batch and is the useful signal.
       this.scheduleMemoryIndexRefresh(`${eventName}:${path.basename(relPath)}`);
     });
 
@@ -8083,7 +5972,6 @@ class SupervisorDaemon {
     const oracleWatchHeartbeat = buildOracleWatchHeartbeat(this.lastOracleWatchSummary, oracleWatchState);
     this.maybeAlertOracleWatchHeartbeat(oracleWatchHeartbeat);
     const dailyTargetProgress = getTodayRealizedTargetProgress(resolveRuntimePath('trade-journal.db'));
-    const paperCompetition = buildPaperCompetitionStatus(this.projectRoot);
     const pairsScanned = Number(
       this.marketScannerState?.assetCount
       || this.lastMarketScannerSummary?.lastResult?.assetCount
@@ -8161,7 +6049,6 @@ class SupervisorDaemon {
       cryptoConsultationPolicy,
       cryptoRiskPolicy,
       dailyTargetProgress,
-      paperCompetition,
       agentTaskQueue: {
         enabled: this.agentTaskQueueEnabled,
         path: this.agentTaskQueuePath,
@@ -8182,7 +6069,6 @@ class SupervisorDaemon {
       },
       localModels: this.lastSystemCapabilities?.localModels || {
         enabled: false,
-        provider: 'ollama',
         sleepExtraction: {
           enabled: false,
           available: false,
@@ -8206,23 +6092,17 @@ class SupervisorDaemon {
           issueCount: 0,
         },
       },
-      tradingAutomation: {
-        enabled: this.tradingEnabled,
-        manualOnly: this.manualTradingOnly,
-        running: Boolean(this.tradingPhasePromise),
-        statePath: this.tradingStatePath,
-        marketDate: this.tradingState.marketDate || null,
-        sleeping: this.tradingState.sleeping !== false,
-        phases: this.tradingState.phases || {},
-        nextEvent: this.tradingState.nextEvent || null,
-        lastSummary: this.lastTradingSummary || null,
-      },
       tradeReconciliationAutomation: {
         enabled: Boolean(this.getTradeReconciliationOrchestrator()),
         running: Boolean(this.tradeReconciliationPromise),
         pollMs: this.tradeReconciliationPollMs,
         state: this.tradeReconciliationState || defaultTradeReconciliationState(),
         lastSummary: this.lastTradeReconciliationSummary || null,
+      },
+      positionAttributionReconciliation: {
+        enabled: this.positionAttributionReconciliationEnabled,
+        statePath: this.positionAttributionStatePath,
+        lastSummary: this.lastPositionAttributionReconciliationSummary || null,
       },
       cryptoTradingAutomation: {
         enabled: this.cryptoTradingEnabled,
@@ -8264,59 +6144,6 @@ class SupervisorDaemon {
           convergenceSignals: this.smartMoneyScanner.state?.convergenceSignals?.length || 0,
         } : null,
       },
-      circuitBreaker: {
-        enabled: Boolean(this.circuitBreaker),
-        manualOnly: true,
-        running: Boolean(this.circuitBreaker?.running),
-        pollMs: this.circuitBreaker?.pollMs || null,
-        passCount: this.circuitBreaker?.passCount || 0,
-        highWaterMarks: this.circuitBreaker ? Object.keys(this.circuitBreaker.highWaterMarks).length : 0,
-        recentExits: this.circuitBreaker?.exits?.slice(-5) || [],
-      },
-      polymarketTradingAutomation: {
-        enabled: this.polymarketTradingEnabled,
-        running: Boolean(this.polymarketTradingPhasePromise),
-        statePath: this.polymarketTradingStatePath,
-        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
-        nextEvent: this.polymarketTradingState.nextEvent || null,
-        lastSummary: this.lastLiveOpsTradingSummary || null,
-      },
-      launchRadarAutomation: {
-        enabled: this.launchRadarEnabled,
-        running: Boolean(this.launchRadarPhasePromise),
-        dryRun: this.launchRadarDryRun,
-        statePath: this.launchRadarStatePath,
-        lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
-        nextEvent: this.launchRadarState.nextEvent || null,
-        lastSummary: this.lastLaunchRadarSummary || null,
-      },
-      newsScanAutomation: {
-        enabled: this.newsScanEnabled,
-        running: Boolean(this.newsScanPhasePromise),
-        intervalMinutes: this.newsScanIntervalMinutes,
-        statePath: this.newsScanStatePath,
-        lastProcessedAt: this.newsScanState.lastProcessedAt || null,
-        nextEvent: this.newsScanState.nextEvent || null,
-        lastSummary: this.lastNewsScanSummary || null,
-      },
-      pendingFollowupAutomation: {
-        enabled: this.pendingFollowupEnabled,
-        running: Boolean(this.pendingFollowupPhasePromise),
-        intervalMinutes: this.pendingFollowupIntervalMinutes,
-        statePath: this.pendingFollowupStatePath,
-        lastProcessedAt: this.pendingFollowupState.lastProcessedAt || null,
-        nextEvent: this.pendingFollowupState.nextEvent || null,
-        lastSummary: this.lastPendingFollowupSummary || null,
-      },
-      marketResearchAutomation: {
-        enabled: this.marketResearchEnabled,
-        running: Boolean(this.marketResearchPhasePromise),
-        intervalMinutes: this.marketResearchIntervalMinutes,
-        statePath: this.marketResearchStatePath,
-        lastProcessedAt: this.marketResearchState.lastProcessedAt || null,
-        nextEvent: this.marketResearchState.nextEvent || null,
-        lastSummary: this.lastMarketResearchSummary || null,
-      },
       [private-live-ops]Automation: {
         enabled: this.[private-live-ops]Enabled,
         running: Boolean(this.[private-live-ops]PhasePromise),
@@ -8325,6 +6152,19 @@ class SupervisorDaemon {
         lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
         nextEvent: this.[private-live-ops]State.nextEvent || null,
         lastSummary: this.last[private-live-ops]Summary || null,
+      },
+      sparkMonitorAutomation: {
+        enabled: this.sparkMonitorEnabled,
+        running: Boolean(this.sparkMonitorPhasePromise),
+        intervalMinutes: this.sparkMonitorIntervalMinutes,
+        statePath: this.sparkMonitorStatePath,
+        dataStatePath: this.sparkMonitorDataStatePath,
+        eventsPath: this.sparkMonitorEventsPath,
+        firePlansPath: this.sparkMonitorFirePlansPath,
+        watchlistPath: this.sparkMonitorWatchlistPath,
+        lastProcessedAt: this.sparkMonitorState.lastProcessedAt || null,
+        nextEvent: this.sparkMonitorState.nextEvent || null,
+        lastSummary: this.lastSparkMonitorSummary || null,
       },
       marketScannerAutomation: {
         enabled: this.marketScannerEnabled,
@@ -8336,6 +6176,17 @@ class SupervisorDaemon {
         lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
         nextEvent: this.marketScannerState.nextEvent || null,
         lastSummary: this.lastMarketScannerSummary || null,
+      },
+      coordHeartbeat: {
+        enabled: this.isCoordHeartbeatActive(),
+        running: Boolean(this.coordHeartbeatPromise),
+        intervalMs: this.coordHeartbeatIntervalMs,
+        scriptPath: this.hmCoordHeartbeatScriptPath,
+        lastRunAt: this.lastCoordHeartbeatSummary?.lastRunAt || null,
+        nextEligibleAtMs: this.lastCoordHeartbeatRunAtMs
+          ? this.lastCoordHeartbeatRunAtMs + this.coordHeartbeatIntervalMs
+          : null,
+        lastSummary: this.lastCoordHeartbeatSummary || null,
       },
       saylorWatcher: {
         enabled: this.saylorWatcherEnabled,
@@ -8352,20 +6203,13 @@ class SupervisorDaemon {
         scriptPath: this.hmOracleWatchEngineScriptPath,
         rulesPath: this.oracleWatchRulesPath,
         statePath: this.oracleWatchStatePath,
+        sharedShortRegimeStatePath: this.oracleShortRegimeStatePath,
         heartbeat: oracleWatchHeartbeat,
         counters: oracleWatchState?.counters || null,
         lastRunAt: this.lastOracleWatchSummary?.lastRunAt || null,
         lastSummary: this.lastOracleWatchSummary || null,
       },
-      paperTradingAutomation: {
-        enabled: this.paperTradingAutomationEnabled,
-        running: Boolean(this.paperTradingAutomationPromise),
-        statePath: this.paperTradingAutomationStatePath,
-        responseTimeoutMs: this.paperTradingResponseTimeoutMs,
-        lastProcessedAt: this.paperTradingAutomationState?.lastProcessedAt || null,
-        agents: this.paperTradingAutomationState?.agents || null,
-        lastSummary: this.lastPaperTradingAutomationSummary || null,
-      },
+      oracleShortRegime: readJsonFile(this.oracleShortRegimeStatePath, null) || this.lastOracleShortRegimeSummary || null,
       [private-live-ops]SqueezeDetector: {
         enabled: this.[private-live-ops]SqueezeDetectorEnabled,
         running: Boolean(this.[private-live-ops]SqueezeDetectorPromise),
@@ -8373,25 +6217,6 @@ class SupervisorDaemon {
         scriptPath: this.hm[private-live-ops]SqueezeDetectorScriptPath,
         lastRunAt: this.last[private-live-ops]SqueezeDetectorSummary?.lastRunAt || null,
         lastSummary: this.last[private-live-ops]SqueezeDetectorSummary || null,
-      },
-      private-profileCheckInAutomation: {
-        enabled: this.private-profileCheckInEnabled,
-        running: Boolean(this.private-profileCheckInPhasePromise),
-        intervalMinutes: this.private-profileCheckInIntervalMinutes,
-        silenceMs: this.private-profileCheckInSilenceMs,
-        statePath: this.private-profileCheckInStatePath,
-        lastProcessedAt: this.private-profileCheckInState.lastProcessedAt || null,
-        nextEvent: this.private-profileCheckInState.nextEvent || null,
-        lastSummary: this.last[private-profile]CheckInSummary || null,
-      },
-      yieldRouterAutomation: {
-        enabled: this.yieldRouterEnabled,
-        running: Boolean(this.yieldRouterPhasePromise),
-        dryRun: this.yieldRouterDryRun,
-        statePath: this.yieldRouterStatePath,
-        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
-        nextEvent: this.yieldRouterState.nextEvent || null,
-        lastSummary: this.lastYieldRouterSummary || null,
       },
       ...extra,
     };
@@ -8466,4 +6291,7 @@ module.exports = {
   DEFAULT_MAX_WORKERS,
   DEFAULT_SLEEP_IDLE_MS,
   DEFAULT_SLEEP_MIN_INTERVAL_MS,
+  resolveProjectUiScriptPath,
+  containsHangulSyllables,
+  shouldSuppressMainTelegramForHangul,
 };

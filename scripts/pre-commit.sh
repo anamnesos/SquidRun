@@ -176,15 +176,12 @@ echo "Gate 5: Jest unit tests..."
 
 # Check if Jest is available in ui/node_modules
 if [ -f "ui/node_modules/.bin/jest" ] || [ -f "ui/node_modules/.bin/jest.cmd" ]; then
-    cd ui
-    # Run Jest with minimal output, fail on any test failure
-    npm test -- --passWithNoTests --silent 2>&1
+    node ui/scripts/jest-staged.js
     JEST_EXIT=$?
-    cd ..
 
     if [ $JEST_EXIT -ne 0 ]; then
         echo "❌ Jest tests failed"
-        echo "   Run: cd ui && npm test"
+        echo "   Run: node ui/scripts/jest-staged.js"
         FAILED=1
     else
         echo "✅ Jest tests passed"

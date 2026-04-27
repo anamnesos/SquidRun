@@ -49,7 +49,16 @@ workspace/state.json
 workspace/console.log
 workspace/triggers/*.txt
 .hivemind/
-.squidrun/
+.squidrun/*
+!.squidrun/operator-registry.template.json
+!.squidrun/coord/
+.squidrun/coord/*
+!.squidrun/coord/drift-checklist.json
+!.squidrun/coord/inbox-protocol.md
+
+# Playwright MCP browser-automation artifacts (screenshots, downloads, recordings)
+# History contains a 204MB video at 8f8d2ee that blocks pushes to GitHub.
+.playwright-mcp/
 
 # Jest perf snapshots (large, regenerated)
 workspace/perf-jest.json
@@ -91,6 +100,17 @@ ui/coverage/
 ui/coverage-output.txt
 
 # Temp scripts and debug artifacts
+workspace/temp-private-profile-*
+workspace/temp-oracle-review-private-profile*
+workspace/은별_*
+workspace/tmp-session*
+temp-oracle-consultation-*.json
+.tmp_*.png
+captcha.png
+full-jest*.log
+.claude/*.lock
+[private-live-ops]_info.json
+workspace/tmp-*.js
 workspace/scripts/*.ps1
 workspace/inspect_dbs*.js
 workspace/inspect_claims.js

@@ -177,6 +177,9 @@ function armSafeModeExit() {
   safeModeTimer = setTimeout(() => {
     exitSafeMode();
   }, SAFE_MODE_COOLDOWN_MS);
+  if (safeModeTimer && typeof safeModeTimer.unref === 'function') {
+    safeModeTimer.unref();
+  }
 }
 
 function exitSafeMode() {

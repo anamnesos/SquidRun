@@ -50,6 +50,21 @@ describe('hm-telegram-routing', () => {
     }));
   });
 
+  it('defaults no-chat [private-profile] profile sends to the [private-profile] route', () => {
+    const routing = require('../scripts/hm-telegram-routing');
+
+    const defaultRoute = routing.resolveTelegramRoute({
+      env: {
+        SQUIDRUN_PROFILE: 'private-profile',
+      },
+    });
+
+    expect(defaultRoute.route).toEqual(expect.objectContaining({
+      method: 'send-long-telegram',
+      language: 'ko',
+    }));
+  });
+
   it('chunks long routed messages for [private-profile]', async () => {
     const { sendTelegram } = require('../scripts/hm-telegram');
     const routing = require('../scripts/hm-telegram-routing');

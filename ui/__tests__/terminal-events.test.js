@@ -3,6 +3,8 @@
  * Verifies focus, typing, and resize events are emitted correctly.
  */
 
+const REAL_PLATFORM = process.platform;
+
 // Mock logger
 jest.mock('../modules/logger', () => ({
   debug: jest.fn(),
@@ -79,6 +81,8 @@ jest.mock('../config', () => ({
   PANE_IDS: ['1', '2', '3'],
   PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
   WORKSPACE_PATH: '/tmp/workspace',
+  getProjectRoot: () => '/tmp/workspace',
+  setProjectRoot: jest.fn(),
   resolveCoordPath: (relPath) => `/tmp/workspace/${String(relPath || '').replace(/^[/\\]+/, '').replace(/[/\\]+/g, '/')}`,
 }));
 
@@ -106,9 +110,14 @@ jest.mock('fs', () => ({
 }));
 
 // Mock path
-jest.mock('path', () => ({
-  join: (...args) => args.join('/'),
-}));
+jest.mock('path', () => {
+  const actualPath = jest.requireActual('path');
+  return {
+    ...actualPath,
+    join: (...args) => args.join('/'),
+    resolve: (...args) => actualPath.resolve(...args),
+  };
+});
 
 // Mock xterm and addons
 jest.mock('@xterm/xterm', () => ({
@@ -201,7 +210,11 @@ describe('Terminal Events', () => {
       },
     };
 
-    global.process = { cwd: jest.fn().mockReturnValue('/tmp') };
+    global.process = {
+      cwd: jest.fn().mockReturnValue('/tmp'),
+      env: {},
+      platform: REAL_PLATFORM,
+    };
     global.navigator = { clipboard: { writeText: jest.fn(), readText: jest.fn() } };
     global.ResizeObserver = jest.fn().mockImplementation(() => ({
       observe: jest.fn(),

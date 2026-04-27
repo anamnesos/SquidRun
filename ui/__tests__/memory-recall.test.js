@@ -146,7 +146,7 @@ describe('memory recall broker', () => {
     expect(stripRecallBlocks(delivery.message)).toBe('Original human message');
   });
 
-  test('extends recall with existing time-awareness context for session, consultation, monitor, and news scan', async () => {
+  test('extends recall with existing time-awareness context for session, consultation, and monitor', async () => {
     const nowMs = Date.parse('2026-04-03T23:40:00.000Z');
     const result = await recall({
       query: 'check runtime freshness',
@@ -185,7 +185,6 @@ describe('memory recall broker', () => {
     expect(block).toContain('Session duration:');
     expect(block).toContain('Last consultation: 40m 0s ago');
     expect(block).toContain('Last [private-live-ops] check: 8m 16s ago');
-    expect(block).toContain('Last news scan: never (not automated)');
   });
 
   test('can render a compact injection block with time awareness and only 3 short recall items', () => {
@@ -240,7 +239,6 @@ describe('memory recall broker', () => {
       supervisorStatus: {},
     });
 
-    expect(timeAwareness.lines).toContain('Last news scan: never (not automated)');
     expect(timeAwareness.lines.join('\n')).toContain('Last 은별 message: 7h 11m ago (KST 01:29)');
   });
 
