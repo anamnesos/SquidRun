@@ -289,13 +289,11 @@ function processText(row = {}) {
 function isElectronProcess(row = {}) {
   const name = normalizeForProcessMatch(row.name);
   const executablePath = normalizeForProcessMatch(row.executablePath);
-  const commandLine = normalizeForProcessMatch(row.commandLine);
   return (
     name.includes('electron')
     || name.includes('squidrun')
     || executablePath.includes('electron')
     || executablePath.includes('squidrun')
-    || commandLine.includes('electron')
   );
 }
 
@@ -370,6 +368,55 @@ function listElectronProcesses(projectRoot, options = {}) {
   return selectSquidRunElectronProcesses(projectRoot, queryWindowsProcessRows(projectRoot, options));
 }
 
+function collectProcessDescendants(rootPid, rawRows = []) {
+  const rows = rawRows.map(asProcessRow).filter((row) => row.pid);
+  const childrenByParent = new Map();
+  for (const row of rows) {
+    if (!row.parentPid) continue;
+    if (!childrenByParent.has(row.parentPid)) childrenByParent.set(row.parentPid, []);
+    childrenByParent.get(row.parentPid).push(row);
+  }
+  const descendants = [];
+  const stack = (childrenByParent.get(Number(rootPid)) || [])
+    .map((row) => ({ row, depth: 1 }));
+  const seen = new Set([Number(rootPid)]);
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (!item?.row?.pid || seen.has(item.row.pid)) continue;
+    seen.add(item.row.pid);
+    descendants.push({
+      ...item.row,
+      depth: item.depth,
+    });
+    for (const child of childrenByParent.get(item.row.pid) || []) {
+      stack.push({ row: child, depth: item.depth + 1 });
+    }
+  }
+  return descendants.sort((left, right) => right.depth - left.depth || right.pid - left.pid);
+}
+
+function buildShutdownKillOrder(targets = [], rawRows = []) {
+  const killOrder = [];
+  const seen = new Set();
+  const add = (proc, role) => {
+    if (!proc?.pid || seen.has(proc.pid)) return;
+    seen.add(proc.pid);
+    killOrder.push({
+      ...proc,
+      role,
+    });
+  };
+  for (const target of targets) {
+    for (const descendant of collectProcessDescendants(target.pid, rawRows)) {
+      add(descendant, 'descendant');
+    }
+  }
+  for (const target of targets) {
+    add(target, 'target');
+  }
+  return killOrder;
+}
+
 function processExists(pid) {
   try {
     process.kill(pid, 0);
@@ -385,9 +432,14 @@ async function sleep(ms) {
 
 async function shutdownElectronProcesses(projectRoot, options = {}) {
   const listProcesses = options.listElectronProcesses || ((root) => listElectronProcesses(root, options));
+  const shouldQueryRows = !options.listElectronProcesses
+    || Array.isArray(options.processRows)
+    || typeof options.tasklistOutput === 'string';
+  const processRows = shouldQueryRows ? queryWindowsProcessRows(projectRoot, options) : [];
   const exists = options.processExists || processExists;
   const killProcess = options.killProcess || ((pid) => process.kill(pid, 'SIGTERM'));
   const sleepFn = options.sleep || sleep;
+  const nowFn = options.now || Date.now;
   const timeoutMs = Math.max(1000, Number(options.shutdownTimeoutMs || DEFAULT_SHUTDOWN_TIMEOUT_MS));
   const processes = listProcesses(projectRoot);
   const killed = [];
@@ -399,7 +451,8 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
       killed,
     };
   }
-  for (const proc of processes) {
+  const killOrder = buildShutdownKillOrder(processes, processRows);
+  for (const proc of killOrder) {
     try {
       killProcess(proc.pid, proc);
       killed.push(proc);
@@ -409,24 +462,39 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
         reason: 'kill_failed',
         error: error?.message || String(error),
         processes,
+        killOrder,
         killed,
       };
     }
   }
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
+  const deadline = nowFn() + timeoutMs;
+  while (nowFn() <= deadline) {
     const stillAlive = killed.filter((proc) => exists(proc.pid));
     if (stillAlive.length === 0) {
-      return { ok: true, processes, killed };
+      return { ok: true, processes, killOrder, killed };
     }
-    await sleepFn(Math.min(250, Math.max(0, deadline - Date.now())));
+    await sleepFn(Math.min(250, Math.max(0, deadline - nowFn())));
+  }
+  const stillAlive = killed.filter((proc) => exists(proc.pid));
+  const orphanDescendants = stillAlive.filter((proc) => proc.role === 'descendant');
+  if (orphanDescendants.length > 0) {
+    return {
+      ok: false,
+      reason: 'orphan_descendants',
+      processes,
+      killOrder,
+      killed,
+      orphanDescendants,
+      stillAlive,
+    };
   }
   return {
     ok: false,
     reason: 'shutdown_timeout',
     processes,
+    killOrder,
     killed,
-    stillAlive: killed.filter((proc) => exists(proc.pid)),
+    stillAlive,
   };
 }
 
@@ -595,6 +663,12 @@ function recordFailureAnomaly(projectRoot, details = {}, options = {}, type = 'r
   ]);
 }
 
+function shutdownAnomalyType(reason = '') {
+  if (reason === 'no_target_found') return 'restart_execute_no_target_found';
+  if (reason === 'orphan_descendants') return 'restart_execute_orphan_descendants';
+  return 'restart_execute_failure';
+}
+
 async function executeRestart(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || getProjectRoot());
   const instanceId = options.instance || DEFAULT_INSTANCE_ID;
@@ -622,10 +696,7 @@ async function executeRestart(options = {}) {
   logStep(instanceConfig, 'shutdown_complete', shutdown);
   if (!shutdown.ok) {
     const failure = { ok: false, stage: 'shutdown', reason: shutdown.reason || 'shutdown_failed', shutdown };
-    const anomalyType = shutdown.reason === 'no_target_found'
-      ? 'restart_execute_no_target_found'
-      : 'restart_execute_failure';
-    recordFailureAnomaly(projectRoot, failure, options, anomalyType);
+    recordFailureAnomaly(projectRoot, failure, options, shutdownAnomalyType(shutdown.reason));
     return failure;
   }
 
@@ -699,12 +770,15 @@ module.exports = {
   defaultLaunchCommand,
   parseTasklistCsv,
   selectSquidRunElectronProcesses,
+  collectProcessDescendants,
+  buildShutdownKillOrder,
   listElectronProcesses,
   shutdownElectronProcesses,
   captureAppStatus,
   isFreshAppStatus,
   waitForFreshAppStatus,
   relaunchSquidRun,
+  shutdownAnomalyType,
   executeRestart,
   main,
 };

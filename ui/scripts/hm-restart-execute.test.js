@@ -61,6 +61,39 @@ function writeRegistry(projectRoot, liveInstance = {}, templateInstance = {}) {
   });
 }
 
+function processRowsWithDescendants() {
+  return [
+    {
+      ProcessId: 111,
+      ParentProcessId: 99,
+      Name: 'electron.exe',
+      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+    },
+    {
+      ProcessId: 201,
+      ParentProcessId: 111,
+      Name: 'claude.exe',
+      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      CommandLine: 'claude --dangerously-skip-permissions',
+    },
+    {
+      ProcessId: 202,
+      ParentProcessId: 111,
+      Name: 'claude.exe',
+      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      CommandLine: 'claude --dangerously-skip-permissions',
+    },
+    {
+      ProcessId: 203,
+      ParentProcessId: 202,
+      Name: 'claude.exe',
+      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      CommandLine: 'claude --dangerously-skip-permissions',
+    },
+  ];
+}
+
 describe('hm-restart-execute', () => {
   let tempRoot;
 
@@ -163,6 +196,45 @@ describe('hm-restart-execute', () => {
         matchReason: 'direct_project_match',
       }),
     ]);
+  });
+
+  test('shutdown kills Electron descendants deepest first before the parent', async () => {
+    const killed = [];
+
+    const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
+      processRows: processRowsWithDescendants(),
+      killProcess: (pid, proc) => killed.push({ pid, role: proc.role }),
+      processExists: jest.fn(() => false),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(killed).toEqual([
+      { pid: 203, role: 'descendant' },
+      { pid: 202, role: 'descendant' },
+      { pid: 201, role: 'descendant' },
+      { pid: 111, role: 'target' },
+    ]);
+  });
+
+  test('shutdown kills only Electron when no descendants exist', async () => {
+    const killed = [];
+
+    const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
+      processRows: [
+        {
+          ProcessId: 111,
+          ParentProcessId: 99,
+          Name: 'electron.exe',
+          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+        },
+      ],
+      killProcess: (pid, proc) => killed.push({ pid, role: proc.role }),
+      processExists: jest.fn(() => false),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(killed).toEqual([{ pid: 111, role: 'target' }]);
   });
 
   test('exits cleanly on a simulated shutdown and relaunch', async () => {
@@ -355,6 +427,61 @@ describe('hm-restart-execute', () => {
     expect(runNodeScript).toHaveBeenCalledTimes(1);
     expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
       'type=restart_execute_no_target_found',
+      'src=hm-restart-execute',
+      'sev=high',
+      '--json',
+    ]));
+  });
+
+  test('logs orphan_descendants when a pre-shutdown child process survives', async () => {
+    writeRegistry(tempRoot);
+    appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
+      type: 'restart_preflight',
+      instance: 'james-main',
+      status: 'green',
+      timestampUtc: '2026-04-27T00:04:30.000Z',
+    });
+    const runNodeScript = jest.fn(() => ({ status: 0 }));
+    let clockMs = Date.parse('2026-04-27T00:05:00.000Z');
+
+    const result = await restartExecute.executeRestart({
+      projectRoot: tempRoot,
+      instance: 'james-main',
+      reason: 'orphan descendant test',
+      nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      captureAppStatus: jest.fn(() => ({
+        exists: true,
+        timestampMs: Date.parse('2026-04-27T00:00:00.000Z'),
+        session: '301',
+        pid: null,
+        mtimeMs: 1,
+      })),
+      processRows: processRowsWithDescendants(),
+      killProcess: jest.fn(),
+      processExists: jest.fn((pid) => pid === 203),
+      sleep: jest.fn(() => Promise.resolve()),
+      now: jest.fn(() => {
+        clockMs += 300;
+        return clockMs;
+      }),
+      shutdownTimeoutMs: 1000,
+      runNodeScript,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      stage: 'shutdown',
+      reason: 'orphan_descendants',
+    }));
+    expect(result.shutdown.orphanDescendants).toEqual([
+      expect.objectContaining({
+        pid: 203,
+        role: 'descendant',
+      }),
+    ]);
+    expect(runNodeScript).toHaveBeenCalledTimes(1);
+    expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      'type=restart_execute_orphan_descendants',
       'src=hm-restart-execute',
       'sev=high',
       '--json',
