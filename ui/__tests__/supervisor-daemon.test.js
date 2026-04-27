@@ -2679,6 +2679,115 @@ describe('supervisor-daemon integrations', () => {
     await tradingDaemon.stop('test-cleanup-hyperliquid-close');
   });
 
+  test('runs coord heartbeat immediately and then respects the 15 minute cadence', async () => {
+    const heartbeatScriptPath = path.join(tempRoot, 'hm-heartbeat-ok.js');
+    fs.writeFileSync(heartbeatScriptPath, [
+      "console.log(JSON.stringify({",
+      "  ok: true,",
+      "  path: 'coord/heartbeat.json',",
+      "  heartbeat: { ts: new Date().toISOString(), headCommit: 'abc123' }",
+      "}));",
+    ].join('\n'));
+    const heartbeatDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      smartMoneyScanner: null,
+      cryptoTradingEnabled: true,
+      cryptoTradingOrchestrator: {},
+      coordHeartbeatEnabled: true,
+      coordHeartbeatScriptPath: heartbeatScriptPath,
+      coordHeartbeatIntervalMs: 15 * 60 * 1000,
+      pidPath: path.join(tempRoot, 'coord-heartbeat.pid'),
+      statusPath: path.join(tempRoot, 'coord-heartbeat-status.json'),
+      logPath: path.join(tempRoot, 'coord-heartbeat.log'),
+      taskLogDir: path.join(tempRoot, 'coord-heartbeat-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'coord-heartbeat-wake.signal'),
+    });
+
+    const nowMs = Date.now();
+    const first = await heartbeatDaemon.maybeRunCoordHeartbeat(nowMs);
+    const cooldown = await heartbeatDaemon.maybeRunCoordHeartbeat(nowMs + (5 * 60 * 1000));
+    const second = await heartbeatDaemon.maybeRunCoordHeartbeat(nowMs + (15 * 60 * 1000) + 1);
+
+    expect(first).toEqual(expect.objectContaining({
+      ok: true,
+      path: 'coord/heartbeat.json',
+    }));
+    expect(cooldown).toEqual(expect.objectContaining({
+      skipped: true,
+      reason: 'coord_heartbeat_cooldown',
+    }));
+    expect(second).toEqual(expect.objectContaining({ ok: true }));
+    expect(heartbeatDaemon.lastCoordHeartbeatSummary).toEqual(expect.objectContaining({
+      enabled: true,
+      status: 'ok',
+      intervalMs: 15 * 60 * 1000,
+      scriptPath: heartbeatScriptPath,
+    }));
+
+    await heartbeatDaemon.stop('test-cleanup-coord-heartbeat');
+  });
+
+  test('records an anomaly when the coord heartbeat process fails', async () => {
+    const heartbeatScriptPath = path.join(tempRoot, 'hm-heartbeat-fail.js');
+    const anomalyScriptPath = path.join(tempRoot, 'hm-anomaly-recorder.js');
+    const anomalyArgsPath = path.join(tempRoot, 'heartbeat-anomaly-args.json');
+    fs.writeFileSync(heartbeatScriptPath, [
+      "console.error('heartbeat failed');",
+      'process.exit(3);',
+    ].join('\n'));
+    fs.writeFileSync(anomalyScriptPath, [
+      "const fs = require('fs');",
+      "fs.writeFileSync(process.env.ANOMALY_ARGS_PATH, JSON.stringify(process.argv.slice(2), null, 2));",
+      "console.log(JSON.stringify({ ok: true }));",
+    ].join('\n'));
+    const heartbeatDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      smartMoneyScanner: null,
+      cryptoTradingEnabled: true,
+      cryptoTradingOrchestrator: {},
+      coordHeartbeatEnabled: true,
+      coordHeartbeatScriptPath: heartbeatScriptPath,
+      anomalyScriptPath,
+      env: {
+        ...process.env,
+        ANOMALY_ARGS_PATH: anomalyArgsPath,
+      },
+      pidPath: path.join(tempRoot, 'coord-heartbeat-fail.pid'),
+      statusPath: path.join(tempRoot, 'coord-heartbeat-fail-status.json'),
+      logPath: path.join(tempRoot, 'coord-heartbeat-fail.log'),
+      taskLogDir: path.join(tempRoot, 'coord-heartbeat-fail-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'coord-heartbeat-fail-wake.signal'),
+    });
+
+    const result = await heartbeatDaemon.maybeRunCoordHeartbeat(Date.now());
+    const anomalyArgs = JSON.parse(fs.readFileSync(anomalyArgsPath, 'utf8'));
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'failed',
+      exitCode: 3,
+    }));
+    expect(heartbeatDaemon.lastCoordHeartbeatSummary).toEqual(expect.objectContaining({
+      enabled: true,
+      status: 'failed',
+    }));
+    expect(anomalyArgs).toEqual(expect.arrayContaining([
+      'type=heartbeat_lane_failure',
+      'src=supervisor',
+      'sev=medium',
+      '--json',
+    ]));
+    expect(anomalyArgs.some((arg) => String(arg).startsWith('details='))).toBe(true);
+
+    await heartbeatDaemon.stop('test-cleanup-coord-heartbeat-fail');
+  });
+
   test('runs the Tokenomist unlock scan every 6 hours and stores the parsed result', async () => {
     const tokenomistScriptPath = path.join(tempRoot, 'hm-tokenomist-unlocks.js');
     fs.writeFileSync(tokenomistScriptPath, [
@@ -3697,6 +3806,16 @@ describe('supervisor-daemon integrations', () => {
       lastProcessedAt: '2026-04-05T19:30:00.000Z',
       nextEvent: { key: 'crypto_consensus' },
     };
+    daemon.coordHeartbeatEnabled = true;
+    daemon.lastCoordHeartbeatRunAtMs = Date.parse('2026-04-05T19:15:00.000Z');
+    daemon.lastCoordHeartbeatSummary = {
+      enabled: true,
+      status: 'ok',
+      intervalMs: 15 * 60 * 1000,
+      scriptPath: 'hm-heartbeat.js',
+      lastRunAt: '2026-04-05T19:15:00.000Z',
+      lastSummary: { ok: true },
+    };
     daemon.lastCryptoCoverage = {
       symbolsConsulted: ['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD'],
       symbolsExecutable: ['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD'],
@@ -3736,6 +3855,12 @@ describe('supervisor-daemon integrations', () => {
       configuredStopLossPct: 0.04,
       confidenceRiskFloorPct: 0.005,
       confidenceRiskCeilingPct: 0.02,
+    }));
+    expect(payload.coordHeartbeat).toEqual(expect.objectContaining({
+      enabled: true,
+      running: false,
+      intervalMs: 15 * 60 * 1000,
+      lastRunAt: '2026-04-05T19:15:00.000Z',
     }));
 
     writeSpy.mockRestore();
