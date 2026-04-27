@@ -2793,6 +2793,64 @@ describe('supervisor-daemon integrations', () => {
     await heartbeatDaemon.stop('test-cleanup-coord-heartbeat-fail');
   });
 
+  test('runs opt-in rules engine ticks on the five minute cadence', async () => {
+    const tradingTickScriptPath = path.join(tempRoot, 'hm-trading-tick-ok.js');
+    fs.writeFileSync(tradingTickScriptPath, [
+      'console.log(JSON.stringify({',
+      '  ok: true,',
+      '  checked: 3,',
+      '  fired: 0,',
+      '  dryRun: false',
+      '}));',
+    ].join('\n'));
+    const rulesDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      smartMoneyScanner: null,
+      cryptoTradingEnabled: true,
+      cryptoTradingOrchestrator: {},
+      rulesEngineTickEnabled: true,
+      tradingTickScriptPath,
+      rulesEngineTickIntervalMs: 5 * 60 * 1000,
+      env: {
+        ...process.env,
+        SQUIDRUN_PROFILE: 'main',
+        SQUIDRUN_RULES_ENGINE_AUTOMATION: '1',
+      },
+      pidPath: path.join(tempRoot, 'rules-engine-tick.pid'),
+      statusPath: path.join(tempRoot, 'rules-engine-tick-status.json'),
+      logPath: path.join(tempRoot, 'rules-engine-tick.log'),
+      taskLogDir: path.join(tempRoot, 'rules-engine-tick-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'rules-engine-tick-wake.signal'),
+    });
+
+    const nowMs = Date.now();
+    const first = await rulesDaemon.maybeRunRulesEngineTick(nowMs);
+    const cooldown = await rulesDaemon.maybeRunRulesEngineTick(nowMs + (60 * 1000));
+    const second = await rulesDaemon.maybeRunRulesEngineTick(nowMs + (5 * 60 * 1000) + 1);
+
+    expect(first).toEqual(expect.objectContaining({
+      ok: true,
+      checked: 3,
+      fired: 0,
+    }));
+    expect(cooldown).toEqual(expect.objectContaining({
+      skipped: true,
+      reason: 'rules_engine_tick_cooldown',
+    }));
+    expect(second).toEqual(expect.objectContaining({ ok: true }));
+    expect(rulesDaemon.lastRulesEngineTickSummary).toEqual(expect.objectContaining({
+      enabled: true,
+      status: 'ok',
+      intervalMs: 5 * 60 * 1000,
+      scriptPath: tradingTickScriptPath,
+    }));
+
+    await rulesDaemon.stop('test-cleanup-rules-engine-tick');
+  });
+
   test('runs the Tokenomist unlock scan every 6 hours and stores the parsed result', async () => {
     const tokenomistScriptPath = path.join(tempRoot, 'hm-tokenomist-unlocks.js');
     fs.writeFileSync(tokenomistScriptPath, [

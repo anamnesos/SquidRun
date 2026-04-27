@@ -207,6 +207,7 @@ const DEFAULT_HYPERLIQUID_SQUEEZE_DETECTOR_INTERVAL_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_SQUEEZE_DETECTOR_INTERVAL_MS || '60000', 10) || 60_000
 );
 const DEFAULT_COORD_HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
+const DEFAULT_RULES_ENGINE_TICK_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_ORACLE_WATCH_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_INTERVAL_MS || '10000', 10) || 10_000
@@ -1127,6 +1128,7 @@ class SupervisorDaemon {
     this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolveProjectUiScriptPath('hm-oracle-watch-engine.js', this.projectRoot)));
     this.hmTokenomistUnlocksScriptPath = path.resolve(String(options.tokenomistUnlocksScriptPath || resolveProjectUiScriptPath('hm-tokenomist-unlocks.js', this.projectRoot)));
     this.hmCoordHeartbeatScriptPath = path.resolve(String(options.coordHeartbeatScriptPath || resolveProjectUiScriptPath('hm-heartbeat.js', this.projectRoot)));
+    this.hmTradingTickScriptPath = path.resolve(String(options.tradingTickScriptPath || resolveProjectUiScriptPath('hm-trading-tick.js', this.projectRoot)));
     this.hmAnomalyScriptPath = path.resolve(String(options.anomalyScriptPath || resolveProjectUiScriptPath('hm-anomaly.js', this.projectRoot)));
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
     this.pollMs = Math.max(1000, Number.parseInt(options.pollMs || DEFAULT_POLL_MS, 10) || DEFAULT_POLL_MS);
@@ -1389,6 +1391,23 @@ class SupervisorDaemon {
       status: this.isCoordHeartbeatActive() ? 'idle' : 'disabled',
       intervalMs: this.coordHeartbeatIntervalMs,
       scriptPath: this.hmCoordHeartbeatScriptPath,
+      lastRunAt: null,
+      lastSummary: null,
+    };
+    this.rulesEngineTickEnabled = options.rulesEngineTickEnabled === true
+      || (options.rulesEngineTickEnabled !== false && this.runtimeEnv.SQUIDRUN_RULES_ENGINE_AUTOMATION === '1');
+    this.rulesEngineTickIntervalMs = Math.max(
+      60_000,
+      Number.parseInt(options.rulesEngineTickIntervalMs || DEFAULT_RULES_ENGINE_TICK_INTERVAL_MS, 10)
+      || DEFAULT_RULES_ENGINE_TICK_INTERVAL_MS
+    );
+    this.rulesEngineTickPromise = null;
+    this.lastRulesEngineTickRunAtMs = 0;
+    this.lastRulesEngineTickSummary = {
+      enabled: this.isRulesEngineTickActive(),
+      status: this.isRulesEngineTickActive() ? 'idle' : 'disabled',
+      intervalMs: this.rulesEngineTickIntervalMs,
+      scriptPath: this.hmTradingTickScriptPath,
       lastRunAt: null,
       lastSummary: null,
     };
@@ -2267,6 +2286,7 @@ class SupervisorDaemon {
     const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
     const coordHeartbeatResult = await this.maybeRunCoordHeartbeat(nowMs);
+    const rulesEngineTickResult = await this.maybeRunRulesEngineTick(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
     const hyperliquidSqueezeDetectorResult = await this.maybeRunHyperliquidSqueezeDetector(nowMs);
@@ -2287,6 +2307,7 @@ class SupervisorDaemon {
       sparkMonitorResult,
       marketScannerResult,
       coordHeartbeatResult,
+      rulesEngineTickResult,
       saylorWatcherResult,
       oracleWatchResult,
       hyperliquidSqueezeDetectorResult,
@@ -2618,6 +2639,97 @@ class SupervisorDaemon {
   isCoordHeartbeatActive() {
     const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
     return Boolean(this.coordHeartbeatEnabled && this.cryptoTradingEnabled && profile !== 'eunbyeol');
+  }
+
+  isRulesEngineTickActive() {
+    const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
+    return Boolean(this.rulesEngineTickEnabled && this.cryptoTradingEnabled && profile !== 'eunbyeol');
+  }
+
+  async recordRulesEngineTickFailure(result = {}, summary = {}) {
+    const details = {
+      scriptPath: this.hmTradingTickScriptPath,
+      exitCode: result?.exitCode ?? null,
+      signal: result?.signal || null,
+      timedOut: result?.timedOut === true,
+      error: summary?.error || result?.error || null,
+      stderr: trimTail(String(result?.stderr || ''), 2048),
+      stdout: trimTail(String(result?.stdout || ''), 2048),
+    };
+    const anomalyResult = await executeNodeScript(
+      this.hmAnomalyScriptPath,
+      [
+        'type=rules_engine_tick_failure',
+        'src=supervisor',
+        'sev=high',
+        `details=${JSON.stringify(details)}`,
+        '--json',
+      ],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 15_000,
+      }
+    );
+    if (!anomalyResult.ok) {
+      this.logger.warn(`Rules engine tick anomaly logging failed: ${anomalyResult.error || anomalyResult.stderr || 'unknown'}`);
+    }
+    return anomalyResult;
+  }
+
+  async maybeRunRulesEngineTick(nowMs = Date.now()) {
+    const active = this.isRulesEngineTickActive();
+    if (!active || this.stopping) {
+      this.lastRulesEngineTickSummary = {
+        ...(this.lastRulesEngineTickSummary || {}),
+        enabled: active,
+        status: active ? 'stopping' : 'disabled',
+        intervalMs: this.rulesEngineTickIntervalMs,
+        scriptPath: this.hmTradingTickScriptPath,
+      };
+      return { ok: false, skipped: true, reason: active ? 'stopping' : 'rules_engine_tick_disabled' };
+    }
+    if (this.rulesEngineTickPromise) {
+      return this.rulesEngineTickPromise;
+    }
+    if ((nowMs - this.lastRulesEngineTickRunAtMs) < this.rulesEngineTickIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'rules_engine_tick_cooldown',
+        nextEligibleAtMs: this.lastRulesEngineTickRunAtMs + this.rulesEngineTickIntervalMs,
+      };
+    }
+
+    this.rulesEngineTickPromise = executeNodeScript(
+      this.hmTradingTickScriptPath,
+      ['--json'],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 240_000,
+      }
+    ).then(async (result) => {
+      const summary = this.parseWatcherScriptSummary(result, 'rules_engine_tick');
+      this.lastRulesEngineTickRunAtMs = Date.now();
+      this.lastRulesEngineTickSummary = {
+        enabled: true,
+        status: summary?.ok ? 'ok' : 'failed',
+        intervalMs: this.rulesEngineTickIntervalMs,
+        scriptPath: this.hmTradingTickScriptPath,
+        lastRunAt: new Date(this.lastRulesEngineTickRunAtMs).toISOString(),
+        lastSummary: summary,
+      };
+      if (!result.ok || summary?.ok !== true) {
+        await this.recordRulesEngineTickFailure(result, summary);
+        this.logger.warn(`Rules engine tick failed: ${summary?.error || result?.error || 'unknown'}`);
+      }
+      return summary;
+    }).finally(() => {
+      this.rulesEngineTickPromise = null;
+    });
+
+    return this.rulesEngineTickPromise;
   }
 
   async recordCoordHeartbeatFailure(result = {}, summary = {}) {
@@ -6187,6 +6299,17 @@ class SupervisorDaemon {
           ? this.lastCoordHeartbeatRunAtMs + this.coordHeartbeatIntervalMs
           : null,
         lastSummary: this.lastCoordHeartbeatSummary || null,
+      },
+      rulesEngineTick: {
+        enabled: this.isRulesEngineTickActive(),
+        running: Boolean(this.rulesEngineTickPromise),
+        intervalMs: this.rulesEngineTickIntervalMs,
+        scriptPath: this.hmTradingTickScriptPath,
+        lastRunAt: this.lastRulesEngineTickSummary?.lastRunAt || null,
+        nextEligibleAtMs: this.lastRulesEngineTickRunAtMs
+          ? this.lastRulesEngineTickRunAtMs + this.rulesEngineTickIntervalMs
+          : null,
+        lastSummary: this.lastRulesEngineTickSummary || null,
       },
       saylorWatcher: {
         enabled: this.saylorWatcherEnabled,
