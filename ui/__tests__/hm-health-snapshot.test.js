@@ -69,7 +69,7 @@ describe('hm-health-snapshot', () => {
     `);
     evidenceDb.close();
 
-    const cognitiveDb = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    const cognitiveDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
     cognitiveDb.exec(`
       CREATE TABLE nodes (
         node_id TEXT PRIMARY KEY,
@@ -236,10 +236,6 @@ describe('hm-health-snapshot', () => {
       systemCapabilities: {
         localModels: {
           enabled: true,
-          ollama: {
-            running: true,
-            selectedModel: 'llama3:8b',
-          },
           sleepExtraction: {
             enabled: true,
             available: true,
@@ -266,8 +262,9 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('Runtime: mode=connecting, enabled=yes, configured=yes');
     expect(markdown).toContain('LOCAL MODELS');
     expect(markdown).toContain('Feature Enabled: yes');
-    expect(markdown).toContain('Selected Model: llama3:8b');
     expect(markdown).toContain('Sleep Extraction: path=anthropic-api, enabled=yes, available=yes, model=claude-opus-4-6');
+    expect(markdown).not.toContain('Selected Model');
+    expect(markdown).not.toContain('Ollama:');
   });
 
   test('degrades startup health when bridge is enabled but not connected', () => {

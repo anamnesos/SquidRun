@@ -44,6 +44,8 @@ describe('Terminal Injection', () => {
     CLAUDE_CHUNK_THRESHOLD_BYTES: 1024,
     CLAUDE_CHUNK_YIELD_MS: 0,
     HM_SEND_FAST_CHUNK_THRESHOLD_BYTES: 256,
+    HM_SEND_FAST_CHUNK_SIZE_BYTES: 256,
+    HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS: 1,
     HM_SEND_FAST_ENTER_DELAY_MS: 500,
   };
 
@@ -76,6 +78,7 @@ describe('Terminal Injection', () => {
       sendTrustedEnter: jest.fn().mockResolvedValue(undefined),
       write: jest.fn().mockResolvedValue(undefined),
       writeChunked: jest.fn().mockResolvedValue({ success: true, chunks: 1, chunkSize: 2048 }),
+      clipboardPasteText: jest.fn().mockResolvedValue({ success: true, method: 'insertText', insertedLength: 0 }),
       codexExec: jest.fn().mockResolvedValue(undefined),
     };
     global.window = {
@@ -1176,7 +1179,7 @@ describe('Terminal Injection', () => {
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
         expect.stringMatching(timestampedPayloadRegex(`${'L'.repeat(1050)}\nline-two`)),
-        expect.objectContaining({ waitForWriteAck: true }),
+        expect.objectContaining({ chunkSize: 256, yieldEveryChunks: 1, waitForWriteAck: true }),
         expect.any(Object)
       );
       expect(mockPty.write).not.toHaveBeenCalledWith('1', '\r');
@@ -1255,7 +1258,7 @@ describe('Terminal Injection', () => {
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
         expect.stringMatching(timestampedPayloadRegex('M'.repeat(300))),
-        expect.objectContaining({ waitForWriteAck: true }),
+        expect.objectContaining({ chunkSize: 256, yieldEveryChunks: 1, waitForWriteAck: true }),
         expect.any(Object)
       );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
@@ -1472,7 +1475,11 @@ describe('Terminal Injection', () => {
         expect.stringMatching(timestampedPayloadRegex(`${'C'.repeat(1030)}\nnext-line`)),
         expect.any(Object)
       );
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      if (IS_DARWIN) {
+        expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      } else {
+        expect(mockPty.write).toHaveBeenCalledWith('1', '\u001b[201~', expect.any(Object));
+      }
     });
 
     test('preserves multiline content for long Gemini injections', async () => {
@@ -1492,7 +1499,7 @@ describe('Terminal Injection', () => {
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
     });
 
-    test('handles Codex pane with PTY Enter', async () => {
+    test('handles Codex pane with runtime-appropriate submit path', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
@@ -1509,8 +1516,11 @@ describe('Terminal Injection', () => {
         expect.stringMatching(timestampedPayloadRegex('test command')),
         expect.any(Object)
       );
-      // Enter via PTY \r (not sendTrustedEnter)
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      if (IS_DARWIN) {
+        expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      } else {
+        expect(mockPty.write).toHaveBeenCalledWith('1', '\u001b[201~', expect.any(Object));
+      }
       expect(mockPty.codexExec).not.toHaveBeenCalled();
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       if (IS_DARWIN) {
@@ -1563,7 +1573,15 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(500);
       await promise;
 
-      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'enter_failed' });
+      if (IS_DARWIN) {
+        expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'enter_failed' });
+      } else {
+        expect(onComplete).toHaveBeenCalledWith({
+          success: true,
+          verified: true,
+          signal: 'prompt_probe_unavailable',
+        });
+      }
     });
 
     // Gemini PTY path: sanitize text, then send Enter via PTY \r
@@ -1634,6 +1652,52 @@ describe('Terminal Injection', () => {
       expect(mockPty.writeChunked).not.toHaveBeenCalled();
     });
 
+    test('uses clipboard paste for long flagged payloads before submit', async () => {
+      document.activeElement = mockTextarea;
+      const onComplete = jest.fn();
+      const longText = `${'P'.repeat(1500)}\r`;
+
+      const promise = controller.doSendToPane('1', longText, onComplete, null, {
+        preferClipboardPasteForLongMessage: true,
+        clipboardPasteThresholdBytes: 1024,
+      });
+      await jest.advanceTimersByTimeAsync(1000);
+      await promise;
+
+      expect(mockPty.clipboardPasteText).toHaveBeenCalledWith(
+        expect.stringMatching(timestampedPayloadRegex('P'.repeat(1500)))
+      );
+      const textWrites = mockPty.write.mock.calls.filter((call) => call[1] !== '\r' && call[1] !== '\u001b[201~');
+      expect(textWrites).toEqual([]);
+      expect(mockPty.writeChunked).not.toHaveBeenCalled();
+    });
+
+    test('falls back to PTY write when clipboard paste path fails', async () => {
+      document.activeElement = mockTextarea;
+      mockPty.clipboardPasteText.mockResolvedValueOnce({ success: false, error: 'clipboard unavailable' });
+      const onComplete = jest.fn();
+      const longText = `${'Q'.repeat(1500)}\r`;
+
+      const promise = controller.doSendToPane('1', longText, onComplete, null, {
+        preferClipboardPasteForLongMessage: true,
+        clipboardPasteThresholdBytes: 1024,
+      });
+      await jest.advanceTimersByTimeAsync(1000);
+      await promise;
+
+      expect(mockPty.clipboardPasteText).toHaveBeenCalled();
+      // Long payload (1500 bytes >= longMessageBytes=1024) skips the \x1b[H
+      // prefix because cursor-home overwrites the visible buffer in Claude
+      // Code CLI's input area, swallowing the head of the message. See the
+      // matching unconditional disable in pane-host-renderer.js:588-593.
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '1',
+        expect.stringMatching(timestampedPayloadRegex('Q'.repeat(1500))),
+        { chunkSize: 2048, yieldEveryChunks: 0 },
+        expect.any(Object)
+      );
+    });
+
     test('handles PTY write failure', async () => {
       mockPty.write.mockRejectedValueOnce(new Error('Write failed')); // Message write fails
       const onComplete = jest.fn();
@@ -1667,35 +1731,79 @@ describe('Terminal Injection', () => {
       mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 5, chunkSize: 2048 });
       await controller.doSendToPane('1', longText, jest.fn());
 
-      // Home reset is now prepended to payload in the writeChunked call (no separate write)
+      // Long-payload home-reset suppression: \x1b[H is NOT prepended for
+      // payloads >= longMessageBytes because cursor-home overwrites the
+      // visible buffer in Claude Code CLI and the head of the message gets
+      // swallowed (see pane-host-renderer.js:588-593 for the same fix on
+      // the parallel path).
       const ptyWrites = mockPty.write.mock.calls.map(call => call[1]);
-      expect(ptyWrites).toEqual([]); // No separate writes — Home reset merged into chunked payload
+      expect(ptyWrites).toEqual([]);
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        expect.stringMatching(timestampedPayloadRegex('A'.repeat(9000), { prefix: '\x1b[H' })),
+        expect.stringMatching(timestampedPayloadRegex('A'.repeat(9000))),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
 
       expect(mockLog.info).toHaveBeenCalledWith(
         expect.stringContaining('doSendToPane'),
-        expect.stringContaining('pre-PTY fingerprint textLen=9014')
+        expect.stringContaining('pre-PTY fingerprint branch=chunked-or-forced textLen=9014')
       );
+    });
+
+    test('REGRESSION: long payload PRESERVES head bytes (no \\x1b[H prefix)', async () => {
+      // Repro for the multi-session truncation bug. Source-of-truth:
+      //   sent: 1892 bytes (e.g. Architect message)
+      //   received: ~877 bytes (TAIL only, head swallowed by \x1b[H buffer overwrite)
+      // Fix asserts the long payload is delivered WITHOUT a leading cursor-home
+      // escape so the head reaches Claude Code CLI intact.
+      const headMarker = 'HEAD-SENTINEL-MUST-SURVIVE';
+      const tailMarker = 'TAIL-SENTINEL';
+      // 1500 bytes total > longMessageBytes (1024 default)
+      const longText = `${headMarker} ${'X'.repeat(1400)} ${tailMarker}\r`;
+      mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 1, chunkSize: 2048 });
+
+      await controller.doSendToPane('1', longText, jest.fn());
+
+      const writeChunkedArgs = mockPty.writeChunked.mock.calls[0];
+      expect(writeChunkedArgs).toBeDefined();
+      const writeText = writeChunkedArgs[1];
+      expect(writeText).not.toMatch(/^\x1b\[H/); // home-reset must NOT prefix
+      expect(writeText).toContain(headMarker);   // head bytes intact
+      expect(writeText).toContain(tailMarker);   // tail bytes intact
+    });
+
+    test('short Claude payload uses non-chunked PTY write with NO Home prefix', async () => {
+      // SYSTEM INVARIANT: no payload — short or long — gets a Home prefix.
+      // Short messages still bypass chunking (under chunkThreshold), but the
+      // bytes written are exactly the payload, never \x1b[H + payload.
+      const shortText = 'short message\r';
+      mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 1, chunkSize: 2048 });
+
+      await controller.doSendToPane('1', shortText, jest.fn());
+
+      expect(mockPty.writeChunked).not.toHaveBeenCalled();
+      const writeCalls = mockPty.write.mock.calls.filter(([, payload]) => typeof payload === 'string');
+      for (const [, payload] of writeCalls) {
+        expect(payload).not.toMatch(/^\x1b\[H/);
+      }
     });
 
     test('chunks normal long [MSG from] payloads at the 1KB Claude threshold', async () => {
       const text = `[MSG from architect]: ${'B'.repeat(3000)}\r`;
       await controller.doSendToPane('1', text, jest.fn());
 
+      // Long payload (~3022 bytes >= longMessageBytes=1024) skips the
+      // \x1b[H prefix; see the head-bytes-preserved regression test below.
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        expect.stringMatching(timestampedPayloadRegex(text.slice(0, -1), { prefix: '\x1b[H' })),
+        expect.stringMatching(timestampedPayloadRegex(text.slice(0, -1))),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
     });
 
-    test('chunks exact-threshold Claude payloads before Enter dispatch', async () => {
+    test('chunks exact-threshold Claude payloads before Enter dispatch with NO Home prefix', async () => {
       const text = `${'C'.repeat(1024)}\r`;
       const onComplete = jest.fn();
 
@@ -1703,12 +1811,16 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(100);
       await promise;
 
+      // SYSTEM INVARIANT: chunked write delivers the raw payload, no \x1b[H
+      // prepended. The historic gate at the threshold has been removed.
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        expect.stringMatching(timestampedPayloadRegex('C'.repeat(1024), { prefix: '\x1b[H' })),
+        expect.stringMatching(timestampedPayloadRegex('C'.repeat(1024))),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );
+      const [, chunkPayload] = mockPty.writeChunked.mock.calls[0];
+      expect(chunkPayload).not.toMatch(/^\x1b\[H/);
     });
 
     test('defers before programmatic write when pane is actively outputting', async () => {

@@ -24,13 +24,13 @@ describe('launch-intent', () => {
 
   test('parses standalone [private-profile] launch flags', () => {
     expect(parseLaunchIntent(['--window=private-profile', '--solo-window'])).toEqual({
-      profileName: 'main',
+      profileName: 'private-profile',
       windowKey: 'private-profile',
       includeMainWindow: false,
       focusWindowKey: 'private-profile',
     });
     expect(parseLaunchIntent(['--private-profile'])).toEqual({
-      profileName: 'main',
+      profileName: 'private-profile',
       windowKey: 'private-profile',
       includeMainWindow: false,
       focusWindowKey: 'private-profile',
@@ -39,7 +39,7 @@ describe('launch-intent', () => {
 
   test('keeps the main window included when explicitly requested', () => {
     expect(parseLaunchIntent(['--window', 'private-profile', '--with-main-window'])).toEqual({
-      profileName: 'main',
+      profileName: 'private-profile',
       windowKey: 'private-profile',
       includeMainWindow: true,
       focusWindowKey: 'private-profile',
@@ -58,12 +58,30 @@ describe('launch-intent', () => {
     });
   });
 
-  test('parses profile launches independently of the window key', () => {
+  test('routes profile-only [private-profile] launches to the standalone [private-profile] window', () => {
     expect(parseLaunchIntent(['--profile=private-profile'])).toEqual({
       profileName: 'private-profile',
-      windowKey: 'main',
+      windowKey: 'private-profile',
+      includeMainWindow: false,
+      focusWindowKey: 'private-profile',
+    });
+  });
+
+  test('lets profile-only [private-profile] launches include main when explicitly requested', () => {
+    expect(parseLaunchIntent(['--profile=private-profile', '--with-main-window'])).toEqual({
+      profileName: 'private-profile',
+      windowKey: 'private-profile',
       includeMainWindow: true,
-      focusWindowKey: 'main',
+      focusWindowKey: 'private-profile',
+    });
+  });
+
+  test('allows an explicit profile to override an [private-profile] window launch', () => {
+    expect(parseLaunchIntent(['--profile=main', '--window=private-profile', '--solo-window'])).toEqual({
+      profileName: 'main',
+      windowKey: 'private-profile',
+      includeMainWindow: false,
+      focusWindowKey: 'private-profile',
     });
   });
 });

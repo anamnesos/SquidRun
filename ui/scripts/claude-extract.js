@@ -8,7 +8,7 @@ const {
   buildExtractionPrompt,
   dedupeFacts,
   validateExtractionArray,
-} = require('./ollama-extract');
+} = require('./extraction-helpers');
 
 const DEFAULT_MODEL = String(process.env.SQUIDRUN_SLEEP_EXTRACTION_MODEL || 'claude-opus-4-6').trim();
 const DEFAULT_BASE_URL = String(process.env.SQUIDRUN_ANTHROPIC_BASE_URL || 'https://api.anthropic.com').trim();

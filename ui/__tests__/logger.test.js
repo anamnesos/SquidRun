@@ -15,6 +15,8 @@ const originalConsole = {
 describe('logger', () => {
   let logger;
   let fsMock;
+  let stdoutWriteSpy;
+  let stderrWriteSpy;
 
   beforeEach(() => {
     // Reset module cache
@@ -32,6 +34,22 @@ describe('logger', () => {
     console.log = jest.fn();
     console.warn = jest.fn();
     console.error = jest.fn();
+    stdoutWriteSpy = jest.spyOn(process.stdout, 'write').mockImplementation((chunk, encoding, callback) => {
+      if (typeof encoding === 'function') {
+        encoding();
+      } else if (typeof callback === 'function') {
+        callback();
+      }
+      return true;
+    });
+    stderrWriteSpy = jest.spyOn(process.stderr, 'write').mockImplementation((chunk, encoding, callback) => {
+      if (typeof encoding === 'function') {
+        encoding();
+      } else if (typeof callback === 'function') {
+        callback();
+      }
+      return true;
+    });
 
     // Mock dependencies before requiring logger
     jest.doMock('fs', () => fsMock);
@@ -48,34 +66,36 @@ describe('logger', () => {
     console.log = originalConsole.log;
     console.warn = originalConsole.warn;
     console.error = originalConsole.error;
+    stdoutWriteSpy.mockRestore();
+    stderrWriteSpy.mockRestore();
     jest.resetModules();
   });
 
   describe('log levels', () => {
     test('info logs to console.log by default', () => {
       logger.info('Test', 'info message');
-      expect(console.log).toHaveBeenCalledTimes(1);
+      expect(process.stdout.write).toHaveBeenCalledTimes(1);
     });
 
     test('warn logs to console.warn by default', () => {
       logger.warn('Test', 'warn message');
-      expect(console.warn).toHaveBeenCalledTimes(1);
+      expect(process.stderr.write).toHaveBeenCalledTimes(1);
     });
 
     test('error logs to console.error by default', () => {
       logger.error('Test', 'error message');
-      expect(console.error).toHaveBeenCalledTimes(1);
+      expect(process.stderr.write).toHaveBeenCalledTimes(1);
     });
 
     test('debug is suppressed by default', () => {
       logger.debug('Test', 'debug message');
-      expect(console.log).not.toHaveBeenCalled();
+      expect(process.stdout.write).not.toHaveBeenCalled();
     });
 
     test('debug logs when level set to debug', () => {
       logger.setLevel('debug');
       logger.debug('Test', 'debug message');
-      expect(console.log).toHaveBeenCalledTimes(1);
+      expect(process.stdout.write).toHaveBeenCalledTimes(1);
     });
 
     test('setLevel filters messages below threshold', () => {
@@ -84,51 +104,50 @@ describe('logger', () => {
       logger.warn('Test', 'should not appear');
       logger.error('Test', 'should appear');
 
-      expect(console.log).not.toHaveBeenCalled();
-      expect(console.warn).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalledTimes(1);
+      expect(process.stdout.write).not.toHaveBeenCalled();
+      expect(process.stderr.write).toHaveBeenCalledTimes(1);
     });
 
     test('setLevel ignores invalid level names', () => {
       logger.setLevel('invalid');
       logger.info('Test', 'still works');
-      expect(console.log).toHaveBeenCalledTimes(1);
+      expect(process.stdout.write).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('message formatting', () => {
     test('includes timestamp in HH:mm:ss.SSS format', () => {
       logger.info('Test', 'message');
-      const prefix = console.log.mock.calls[0][0];
+      const prefix = process.stdout.write.mock.calls[0][0];
       expect(prefix).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3}/);
     });
 
     test('includes level in uppercase brackets', () => {
       logger.info('Test', 'message');
-      const prefix = console.log.mock.calls[0][0];
+      const prefix = process.stdout.write.mock.calls[0][0];
       expect(prefix).toContain('[INFO]');
     });
 
     test('includes subsystem in brackets', () => {
       logger.info('MySubsystem', 'message');
-      const prefix = console.log.mock.calls[0][0];
+      const prefix = process.stdout.write.mock.calls[0][0];
       expect(prefix).toContain('[MySubsystem]');
     });
 
     test('message is second argument', () => {
       logger.info('Test', 'my message');
-      expect(console.log.mock.calls[0][1]).toBe('my message');
+      expect(process.stdout.write.mock.calls[0][0]).toContain('my message');
     });
 
     test('extra data passed as third argument', () => {
       const extra = { key: 'value' };
       logger.info('Test', 'message', extra);
-      expect(console.log.mock.calls[0][2]).toEqual(extra);
+      expect(process.stdout.write.mock.calls[0][0]).toContain('"key":"value"');
     });
 
     test('no third argument when extra not provided', () => {
       logger.info('Test', 'message');
-      expect(console.log.mock.calls[0].length).toBe(2);
+      expect(process.stdout.write.mock.calls[0].length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -172,7 +191,7 @@ describe('logger', () => {
 
       expect(() => logger.info('Test', 'message')).not.toThrow();
       await logger._flushForTesting();
-      expect(console.log).toHaveBeenCalled();
+      expect(process.stdout.write).toHaveBeenCalled();
     });
 
     test('continues if mkdir fails', () => {
@@ -196,7 +215,7 @@ describe('logger', () => {
     test('uses subsystem in all messages', () => {
       const scoped = logger.scope('ScopedSub');
       scoped.info('message');
-      const prefix = console.log.mock.calls[0][0];
+      const prefix = process.stdout.write.mock.calls[0][0];
       expect(prefix).toContain('[ScopedSub]');
     });
 
@@ -207,30 +226,30 @@ describe('logger', () => {
       scoped.info('should not appear');
       scoped.warn('should appear');
 
-      expect(console.log).not.toHaveBeenCalled();
-      expect(console.warn).toHaveBeenCalledTimes(1);
+      expect(process.stdout.write).not.toHaveBeenCalled();
+      expect(process.stderr.write).toHaveBeenCalledTimes(1);
     });
 
     test('passes extra data correctly', () => {
       const scoped = logger.scope('Test');
       const extra = { data: 123 };
       scoped.info('message', extra);
-      expect(console.log.mock.calls[0][2]).toEqual(extra);
+      expect(process.stdout.write.mock.calls[0][0]).toContain('"data":123');
     });
 
     test('routes error to console.error', () => {
       const scoped = logger.scope('Test');
       scoped.error('error message');
-      expect(console.error).toHaveBeenCalledTimes(1);
-      expect(console.log).not.toHaveBeenCalled();
+      expect(process.stderr.write).toHaveBeenCalledTimes(1);
+      expect(process.stdout.write).not.toHaveBeenCalled();
     });
 
     test('scoped debug logs when level set to debug', () => {
       logger.setLevel('debug');
       const scoped = logger.scope('ScopedDebug');
       scoped.debug('debug message');
-      expect(console.log).toHaveBeenCalledTimes(1);
-      expect(console.log.mock.calls[0][0]).toContain('[ScopedDebug]');
+      expect(process.stdout.write).toHaveBeenCalledTimes(1);
+      expect(process.stdout.write.mock.calls[0][0]).toContain('[ScopedDebug]');
     });
   });
 

@@ -15,10 +15,24 @@ const {
   resolveCoordPath,
 } = require('../config');
 const {
+  getActiveProfileName,
+  namespaceCoordRelPath,
+} = require('../profile');
+const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
 const { sendTelegram, sendTelegramPhoto, normalizeChatId } = require('./hm-telegram');
+const {
+  detectPermissionAskViolation,
+  appendPermissionAskViolation,
+  appendPermissionAskBypass,
+} = require('./hm-send-permission-guard');
+const {
+  detectContextLeakViolation,
+  appendContextLeakViolation,
+  appendContextLeakBypass,
+} = require('./hm-send-context-leak-guard');
 const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
@@ -26,6 +40,11 @@ const {
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
+const {
+  appendBusTraceEvent,
+  createPayloadFingerprint,
+  getUtf8ByteLength,
+} = require('../modules/bus-reliability-trace');
 const { createBridgeClient } = require('../modules/bridge-client');
 let parseCrossDeviceTarget = () => null;
 let isCrossDeviceEnabled = () => false;
@@ -41,7 +60,16 @@ try {
   }
 }
 
-const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+function resolveDefaultPort() {
+  if (process.env.HM_SEND_PORT) return process.env.HM_SEND_PORT;
+  try {
+    const { getProfileWebSocketPort } = require('../profile');
+    const profilePort = getProfileWebSocketPort(process.env.SQUIDRUN_PROFILE || 'main');
+    if (Number.isFinite(profilePort)) return String(profilePort);
+  } catch {}
+  return '9900';
+}
+const parsedPort = Number.parseInt(resolveDefaultPort(), 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 500;
@@ -101,6 +129,7 @@ if (!listDevicesMode && args.length < 2) {
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
   console.log('  --retries: retry count after first send (default: 3)');
   console.log('  --no-fallback: disable trigger file fallback');
+  console.log('  --bypass-guard: bypass outbound guardrails and log any would-block match');
   process.exit(1);
 }
 
@@ -117,12 +146,13 @@ let cleanupMessageFilePathOnSuccess = null;
 let useStdin = false;
 let telegramPhotoPath = null;
 let telegramChatIdOverride = null;
+let bypassGuard = String(process.env.HM_SEND_BYPASS_GUARD || '').trim() === '1';
 
 // Known flags that signal end of inline message content.
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id',
+  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--bypass-guard',
 ]);
 
 function shouldCleanupMessageFile(filePath) {
@@ -210,6 +240,10 @@ for (; i < args.length; i++) {
   }
   if (token === '--no-fallback') {
     enableFallback = false;
+    continue;
+  }
+  if (token === '--bypass-guard') {
+    bypassGuard = true;
     continue;
   }
   if (token === '--list-devices') {
@@ -427,15 +461,115 @@ function getLocalCoordRoot(context = localProjectContext) {
 function resolveLocalCoordPath(relativePath, options = {}) {
   const relPath = String(relativePath || '').trim();
   if (!relPath) return getLocalCoordRoot();
+  const scopedRelPath = namespaceCoordRelPath(relPath, getActiveProfileName());
   const localCoordRoot = getLocalCoordRoot();
   const preferLocal = options.preferLocal !== false;
   if (preferLocal && localCoordRoot) {
-    return path.join(localCoordRoot, relPath);
+    return path.join(localCoordRoot, scopedRelPath);
   }
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath(relPath, options);
   }
-  return path.join(localCoordRoot, relPath);
+  return path.join(localCoordRoot, scopedRelPath);
+}
+
+function resolveGuardLogPath(fileName) {
+  return resolveLocalCoordPath(path.join('runtime', fileName), { forWrite: true });
+}
+
+function writeGuardBlock(messageLines = []) {
+  const lines = Array.isArray(messageLines) ? messageLines : [String(messageLines || '')];
+  console.error('');
+  for (const line of lines) {
+    if (line) console.error(line);
+  }
+  console.error('');
+}
+
+function runOutputGuards({ messageId, targetRole } = {}) {
+  const guardInput = {
+    content: message,
+    messageId,
+    senderRole: role || 'cli',
+    targetRole,
+    targetRaw: target,
+    profile: getActiveProfileName(process.env),
+  };
+
+  if (bypassGuard) {
+    const permissionBypass = detectPermissionAskViolation({
+      ...guardInput,
+      bypass: '0',
+    });
+    if (permissionBypass) {
+      appendPermissionAskBypass(
+        {
+          ...permissionBypass,
+          messageId,
+          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+        },
+        { logPath: resolveGuardLogPath('permission-ask-bypasses.jsonl') }
+      );
+    }
+
+    const contextBypass = detectContextLeakViolation({
+      ...guardInput,
+      bypass: '0',
+    });
+    if (contextBypass) {
+      appendContextLeakBypass(
+        {
+          ...contextBypass,
+          messageId,
+          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+        },
+        { logPath: resolveGuardLogPath('context-leak-bypasses.jsonl') }
+      );
+    }
+
+    return { ok: true, bypassed: true };
+  }
+
+  const permissionViolation = detectPermissionAskViolation({
+    ...guardInput,
+    bypass: '0',
+  });
+  if (permissionViolation) {
+    const logResult = appendPermissionAskViolation(
+      {
+        ...permissionViolation,
+        messageId,
+      },
+      { logPath: resolveGuardLogPath('permission-ask-violations.jsonl') }
+    );
+    writeGuardBlock([
+      `BLOCKED: permission-ask phrase detected '${permissionViolation.phrase}'. Rewrite as a decision.`,
+      `Log: ${logResult.path}`,
+    ]);
+    return { ok: false, type: 'permission_ask', violation: permissionViolation };
+  }
+
+  const contextViolation = detectContextLeakViolation({
+    ...guardInput,
+    bypass: '0',
+  });
+  if (contextViolation) {
+    const logResult = appendContextLeakViolation(
+      {
+        ...contextViolation,
+        messageId,
+      },
+      { logPath: resolveGuardLogPath('context-leak-violations.jsonl') }
+    );
+    writeGuardBlock([
+      'BLOCKED: [private-profile]/case context in main pane. This belongs in the [private-profile] window.',
+      `Phrase: '${contextViolation.phrase}'`,
+      `Log: ${logResult.path}`,
+    ]);
+    return { ok: false, type: 'context_leak', violation: contextViolation };
+  }
+
+  return { ok: true };
 }
 
 function normalizeSessionId(value) {
@@ -1317,6 +1451,30 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   const skipHealthCheck = opts.skipHealthCheck === true;
   const socketUrl = `ws://127.0.0.1:${PORT}`;
   const ws = new WebSocket(socketUrl);
+  const sendStartedAtMs = Date.now();
+  const payloadBytes = getUtf8ByteLength(envelope?.content || '');
+  const payloadFingerprint = createPayloadFingerprint(envelope?.content || '');
+  const traceBase = {
+    messageId: envelope.message_id,
+    recipient: target,
+    senderRole: role,
+    payloadBytes,
+    payloadFingerprint,
+    priority,
+    sendStartedAtMs,
+  };
+  const traceComplete = (details = {}) => {
+    const ackReceivedAtMs = Number.isFinite(Number(details.ackReceivedAtMs))
+      ? Number(details.ackReceivedAtMs)
+      : null;
+    appendBusTraceEvent({
+      eventType: 'hm_send_complete',
+      ...traceBase,
+      ...details,
+      ackReceivedAtMs,
+      ackLatencyMs: ackReceivedAtMs === null ? null : ackReceivedAtMs - sendStartedAtMs,
+    });
+  };
 
   await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
 
@@ -1327,6 +1485,12 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
     const health = await queryTargetHealthBestEffort(ws);
     if (isTargetHealthBlocking(health, target)) {
       await closeSocket(ws);
+      traceComplete({
+        success: false,
+        status: 'skipped_by_health',
+        attemptsUsed: 0,
+        healthStatus: health?.status || null,
+      });
       return {
         ok: false,
         skippedByHealth: true,
@@ -1349,6 +1513,14 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
       attempt,
       maxAttempts: attempts,
     });
+    dispatchMessage.traceContext = {
+      ...(dispatchMessage.traceContext && typeof dispatchMessage.traceContext === 'object'
+        ? dispatchMessage.traceContext
+        : {}),
+      traceId: envelope.message_id,
+      correlationId: envelope.message_id,
+      messageId: envelope.message_id,
+    };
     const resolvedTelegramChatId = normalizeChatId(telegramChatIdOverride);
     if (resolvedTelegramChatId && isSpecialTarget(target)) {
       dispatchMessage.metadata = {
@@ -1359,7 +1531,17 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
         },
       };
     }
-    ws.send(JSON.stringify(dispatchMessage));
+    const serializedDispatch = JSON.stringify(dispatchMessage);
+    const attemptStartedAtMs = Date.now();
+    appendBusTraceEvent({
+      eventType: 'hm_send_attempt',
+      ...traceBase,
+      attempt,
+      maxAttempts: attempts,
+      attemptStartedAtMs,
+      dispatchBytes: getUtf8ByteLength(serializedDispatch),
+    });
+    ws.send(serializedDispatch);
 
     try {
       const ack = await waitForMatch(
@@ -1369,9 +1551,29 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
         `ACK timeout after ${ackTimeoutMs}ms`
       );
       lastAck = ack;
+      const ackReceivedAtMs = Date.now();
+      appendBusTraceEvent({
+        eventType: 'hm_send_ack',
+        ...traceBase,
+        attempt,
+        maxAttempts: attempts,
+        ackReceivedAtMs,
+        ackLatencyMs: ackReceivedAtMs - attemptStartedAtMs,
+        success: Boolean(ack.ok),
+        accepted: ack.accepted === true,
+        status: ack.status || null,
+      });
 
       if (ack.ok) {
         await closeSocket(ws);
+        traceComplete({
+          success: true,
+          delivered: true,
+          accepted: true,
+          status: ack.status || 'delivered',
+          ackReceivedAtMs,
+          attemptsUsed: attempt,
+        });
         return {
           ok: true,
           delivered: true,
@@ -1384,6 +1586,14 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
 
       if (ack.accepted === true) {
         await closeSocket(ws);
+        traceComplete({
+          success: true,
+          delivered: false,
+          accepted: true,
+          status: ack.status || 'accepted_unverified',
+          ackReceivedAtMs,
+          attemptsUsed: attempt,
+        });
         return {
           ok: true,
           delivered: false,
@@ -1402,6 +1612,15 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
       await sleep(backoffDelay);
     } catch (err) {
       lastError = err;
+      appendBusTraceEvent({
+        eventType: 'hm_send_attempt_error',
+        ...traceBase,
+        attempt,
+        maxAttempts: attempts,
+        success: false,
+        status: 'ack_timeout_or_error',
+        error: err.message,
+      });
       if (attempt >= attempts) {
         break;
       }
@@ -1418,6 +1637,14 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   );
   if (deliveryCheck?.known && (deliveryCheck?.ack?.ok || deliveryCheck?.ack?.accepted === true)) {
     await closeSocket(ws);
+    traceComplete({
+      success: true,
+      delivered: Boolean(deliveryCheck?.ack?.ok),
+      accepted: true,
+      status: 'delivery_check_confirmed',
+      attemptsUsed: attempts,
+      deliveryCheckStatus: deliveryCheck.status || null,
+    });
     return {
       ok: true,
       delivered: Boolean(deliveryCheck?.ack?.ok),
@@ -1430,6 +1657,15 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   }
 
   await closeSocket(ws);
+  traceComplete({
+    success: false,
+    delivered: false,
+    accepted: false,
+    status: lastAck?.status || deliveryCheck?.status || 'failed',
+    attemptsUsed: attempts,
+    error: lastError ? lastError.message : null,
+    deliveryCheckStatus: deliveryCheck?.status || null,
+  });
   return {
     ok: false,
     messageId: envelope.message_id,
@@ -1457,6 +1693,11 @@ async function main() {
   const targetRole = normalizeRole(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
+  const guardResult = runOutputGuards({ messageId, targetRole });
+  if (guardResult?.ok !== true) {
+    closeCommsJournalStores();
+    process.exit(1);
+  }
   const envelope = buildOutboundMessageEnvelope({
     message_id: messageId,
     session_id: projectMetadata?.session_id || null,

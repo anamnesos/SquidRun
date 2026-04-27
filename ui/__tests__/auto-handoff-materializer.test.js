@@ -303,10 +303,14 @@ describe('auto-handoff-materializer', () => {
     expect(result.ok).toBe(true);
     expect(result.written).toBe(true);
     expect(result.usedFallbackSession).toBe(true);
-    expect(result.sourceSessionId).toBe('app-session-256');
-    expect(fs.readFileSync(outputPath, 'utf8')).toContain('TASK: Fix session continuity capture');
-    expect(fs.readFileSync(outputPath, 'utf8')).toContain('## Prior Session Summaries');
-    expect(fs.readFileSync(outputPath, 'utf8')).toContain('Session-end snapshot captured.');
+    expect(result.sourceSessionId).toBe('app-session-257');
+    expect(result.fallbackSourceSessionId).toBe('app-session-256');
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(handoff).toContain('- session_id: app-session-257');
+    expect(handoff).toContain('## Prior Context (session 256, age 1 session)');
+    expect(handoff).toContain('TASK: Fix session continuity capture');
+    expect(handoff).toContain('## Prior Session Summaries');
+    expect(handoff).toContain('Session-end snapshot captured.');
     expect(fs.readFileSync(backupPath, 'utf8')).toContain('Previous content.');
   });
 
