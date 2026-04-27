@@ -10,6 +10,8 @@ const { getProjectRoot } = require('../config');
 const DEFAULT_INSTANCE_ID = 'james-main';
 const PREFLIGHT_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
+const DEFAULT_RELAUNCH_VERIFY_TIMEOUT_MS = 60_000;
+const DEFAULT_RELAUNCH_VERIFY_POLL_MS = 500;
 
 function parseArgs(argv = process.argv.slice(2)) {
   const args = {
@@ -31,6 +33,10 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (token === '--json') {
       args.json = true;
+    }
+    if (token === '--verify-timeout-ms' && argv[index + 1]) {
+      args.relaunchVerifyTimeoutMs = Number(argv[index + 1]);
+      index += 1;
     }
   }
   if (!args.reason) {
@@ -270,6 +276,120 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
   };
 }
 
+function statusTimestampMs(status = {}) {
+  const candidates = [
+    status.lastUpdated,
+    status.started,
+    status.timestampUtc,
+    status.ts,
+  ];
+  for (const value of candidates) {
+    const parsed = Date.parse(String(value || ''));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function statusSessionValue(status = {}) {
+  const value = status.session_id ?? status.sessionId ?? status.session ?? status.sessionNumber;
+  if (value === null || value === undefined || value === '') return null;
+  return String(value);
+}
+
+function statusPidValue(status = {}) {
+  const value = status.pid ?? status.processId ?? status.mainPid ?? status.electronPid;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function captureAppStatus(instanceConfig) {
+  const statusPath = instanceConfig.appStatusPath;
+  const status = readJson(statusPath, null);
+  let mtimeMs = null;
+  try {
+    mtimeMs = fs.statSync(statusPath).mtimeMs;
+  } catch {
+    mtimeMs = null;
+  }
+  return {
+    exists: Boolean(status && typeof status === 'object'),
+    path: statusPath,
+    status,
+    mtimeMs,
+    timestampMs: statusTimestampMs(status || {}),
+    session: statusSessionValue(status || {}),
+    pid: statusPidValue(status || {}),
+  };
+}
+
+function isFreshAppStatus(previous = {}, current = {}, launchStartedMs = Date.now()) {
+  if (!current.exists) return false;
+  const floorMs = launchStartedMs - 1000;
+  if (!previous.exists && current.timestampMs && current.timestampMs >= floorMs) return true;
+  if (
+    current.session
+    && previous.session
+    && current.session !== previous.session
+    && (!current.timestampMs || current.timestampMs >= floorMs)
+  ) {
+    return true;
+  }
+  if (
+    current.pid
+    && previous.pid
+    && current.pid !== previous.pid
+    && (!current.timestampMs || current.timestampMs >= floorMs)
+  ) {
+    return true;
+  }
+  if (
+    Number.isFinite(current.timestampMs)
+    && Number.isFinite(previous.timestampMs)
+    && current.timestampMs !== previous.timestampMs
+    && current.timestampMs >= floorMs
+  ) {
+    return true;
+  }
+  return Boolean(
+    Number.isFinite(current.mtimeMs)
+    && Number.isFinite(previous.mtimeMs)
+    && current.mtimeMs > previous.mtimeMs
+    && current.timestampMs
+    && current.timestampMs >= floorMs
+  );
+}
+
+async function waitForFreshAppStatus(instanceConfig, previousSnapshot, options = {}) {
+  const capture = options.captureAppStatus || captureAppStatus;
+  const sleepFn = options.sleep || sleep;
+  const nowFn = options.now || Date.now;
+  const timeoutMs = Math.max(1000, Number(options.relaunchVerifyTimeoutMs || DEFAULT_RELAUNCH_VERIFY_TIMEOUT_MS));
+  const pollMs = Math.max(25, Number(options.relaunchVerifyPollMs || DEFAULT_RELAUNCH_VERIFY_POLL_MS));
+  const launchStartedMs = Number(options.launchStartedMs || nowFn());
+  const deadline = launchStartedMs + timeoutMs;
+  let latest = null;
+  while (nowFn() <= deadline) {
+    latest = capture(instanceConfig);
+    if (isFreshAppStatus(previousSnapshot, latest, launchStartedMs)) {
+      return {
+        ok: true,
+        appStatus: latest,
+        previous: previousSnapshot,
+        launchStartedMs,
+      };
+    }
+    await sleepFn(Math.min(pollMs, Math.max(0, deadline - nowFn())));
+  }
+  return {
+    ok: false,
+    reason: 'relaunch_unverified',
+    appStatus: latest,
+    previous: previousSnapshot,
+    launchStartedMs,
+    timeoutMs,
+  };
+}
+
 function relaunchSquidRun(projectRoot, instanceConfig, options = {}) {
   const launch = options.launchCommand || defaultLaunchCommand(projectRoot, instanceConfig);
   const spawnFn = options.spawn || spawn;
@@ -281,6 +401,7 @@ function relaunchSquidRun(projectRoot, instanceConfig, options = {}) {
       ...(launch.env || {}),
     },
     detached: true,
+    shell: launch.shell ?? (process.platform === 'win32'),
     windowsHide: true,
     stdio: 'ignore',
   });
@@ -303,7 +424,7 @@ function logStep(instanceConfig, step, details = {}) {
   return payload;
 }
 
-function recordFailureAnomaly(projectRoot, details = {}, options = {}) {
+function recordFailureAnomaly(projectRoot, details = {}, options = {}, type = 'restart_execute_failure') {
   const scriptPath = path.join(projectRoot, 'ui', 'scripts', 'hm-anomaly.js');
   const run = options.runNodeScript || ((script, args) => spawnSync(process.execPath, [script, ...args], {
     cwd: projectRoot,
@@ -312,7 +433,7 @@ function recordFailureAnomaly(projectRoot, details = {}, options = {}) {
     timeout: 30_000,
   }));
   return run(scriptPath, [
-    'type=restart_execute_failure',
+    `type=${type}`,
     'src=hm-restart-execute',
     'sev=high',
     `details=${JSON.stringify(details)}`,
@@ -327,6 +448,8 @@ async function executeRestart(options = {}) {
   if (!reason) throw new Error('Missing restart reason');
   const nowMs = Number(options.nowMs || Date.now());
   const instanceConfig = loadInstanceConfig(projectRoot, instanceId);
+  const capture = options.captureAppStatus || captureAppStatus;
+  const previousAppStatus = capture(instanceConfig);
   const preflight = findLatestGreenPreflight(instanceConfig, instanceId, nowMs);
   logStep(instanceConfig, 'preflight_check', { ok: preflight.ok, reason: preflight.reason || null, preflight });
   if (!preflight.ok) {
@@ -350,8 +473,25 @@ async function executeRestart(options = {}) {
   }
 
   try {
+    const launchStartedMs = Number(options.launchStartedMs || Date.now());
     const relaunch = relaunchSquidRun(projectRoot, instanceConfig, options);
-    logStep(instanceConfig, 'relaunch_complete', relaunch);
+    logStep(instanceConfig, 'relaunch_started', relaunch);
+    const verification = await waitForFreshAppStatus(instanceConfig, previousAppStatus, {
+      ...options,
+      launchStartedMs,
+    });
+    logStep(instanceConfig, 'relaunch_verification_complete', verification);
+    if (!verification.ok) {
+      const failure = {
+        ok: false,
+        stage: 'relaunch_verification',
+        reason: verification.reason || 'relaunch_unverified',
+        relaunch,
+        verification,
+      };
+      recordFailureAnomaly(projectRoot, failure, options, 'restart_execute_relaunch_unverified');
+      return failure;
+    }
     return {
       ok: true,
       instance: instanceId,
@@ -359,6 +499,7 @@ async function executeRestart(options = {}) {
       preflight,
       shutdown,
       relaunch,
+      verification,
     };
   } catch (error) {
     const failure = {
@@ -391,6 +532,7 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_INSTANCE_ID,
   PREFLIGHT_MAX_AGE_MS,
+  DEFAULT_RELAUNCH_VERIFY_TIMEOUT_MS,
   parseArgs,
   readJson,
   readJsonLines,
@@ -400,6 +542,9 @@ module.exports = {
   defaultLaunchCommand,
   listElectronProcesses,
   shutdownElectronProcesses,
+  captureAppStatus,
+  isFreshAppStatus,
+  waitForFreshAppStatus,
   relaunchSquidRun,
   executeRestart,
   main,

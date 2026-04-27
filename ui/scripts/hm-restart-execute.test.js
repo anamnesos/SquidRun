@@ -115,12 +115,31 @@ describe('hm-restart-execute', () => {
     const unref = jest.fn();
     const killProcess = jest.fn();
     const spawn = jest.fn(() => ({ pid: 222, unref }));
+    const launchStartedMs = Date.parse('2026-04-27T00:05:00.000Z');
+    const captureAppStatus = jest.fn()
+      .mockReturnValueOnce({
+        exists: true,
+        timestampMs: Date.parse('2026-04-27T00:00:00.000Z'),
+        session: '301',
+        pid: null,
+        mtimeMs: 1,
+      })
+      .mockReturnValueOnce({
+        exists: true,
+        timestampMs: Date.parse('2026-04-27T00:05:02.000Z'),
+        session: '302',
+        pid: null,
+        mtimeMs: 2,
+      });
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
       instance: 'james-main',
       reason: 'green preflight test',
-      nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      nowMs: launchStartedMs,
+      launchStartedMs,
+      now: jest.fn(() => launchStartedMs),
+      captureAppStatus,
       listElectronProcesses: jest.fn(() => [{ pid: 111, name: 'electron.exe' }]),
       processExists: jest.fn(() => false),
       killProcess,
@@ -133,14 +152,22 @@ describe('hm-restart-execute', () => {
     expect(spawn).toHaveBeenCalledWith('node', ['fake-launch.js'], expect.objectContaining({
       cwd: tempRoot,
       detached: true,
+      shell: process.platform === 'win32',
       windowsHide: true,
       stdio: 'ignore',
     }));
     expect(unref).toHaveBeenCalled();
     expect(result.relaunch.pid).toBe(222);
+    expect(result.verification.ok).toBe(true);
     const steps = readJsonLines(path.join(tempRoot, '.squidrun', 'coord', 'restart-execute-log.jsonl'))
       .map((entry) => entry.step);
-    expect(steps).toEqual(['preflight_check', 'shutdown_start', 'shutdown_complete', 'relaunch_complete']);
+    expect(steps).toEqual([
+      'preflight_check',
+      'shutdown_start',
+      'shutdown_complete',
+      'relaunch_started',
+      'relaunch_verification_complete',
+    ]);
   });
 
   test('logs an anomaly when simulated shutdown fails', async () => {
@@ -179,5 +206,103 @@ describe('hm-restart-execute', () => {
       '--json',
     ]));
     expect(runNodeScript.mock.calls[0][1].some((arg) => String(arg).includes('simulated kill failure'))).toBe(true);
+  });
+
+  test('logs an anomaly when Windows launcher spawn throws EINVAL', async () => {
+    writeRegistry(tempRoot);
+    appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
+      type: 'restart_preflight',
+      instance: 'james-main',
+      status: 'green',
+      timestampUtc: '2026-04-27T00:04:30.000Z',
+    });
+    const runNodeScript = jest.fn(() => ({ status: 0 }));
+    const spawnError = new Error('spawn EINVAL');
+    spawnError.code = 'EINVAL';
+
+    const result = await restartExecute.executeRestart({
+      projectRoot: tempRoot,
+      instance: 'james-main',
+      reason: 'spawn failure test',
+      nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      launchStartedMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      captureAppStatus: jest.fn(() => ({
+        exists: true,
+        timestampMs: Date.parse('2026-04-27T00:00:00.000Z'),
+        session: '301',
+        pid: null,
+        mtimeMs: 1,
+      })),
+      listElectronProcesses: jest.fn(() => []),
+      spawn: jest.fn(() => {
+        throw spawnError;
+      }),
+      runNodeScript,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      stage: 'relaunch',
+      reason: 'relaunch_failed',
+      error: 'spawn EINVAL',
+    }));
+    expect(runNodeScript).toHaveBeenCalledTimes(1);
+    expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      'type=restart_execute_failure',
+      'src=hm-restart-execute',
+      'sev=high',
+      '--json',
+    ]));
+  });
+
+  test('logs relaunch_unverified when app-status does not refresh after launcher success', async () => {
+    writeRegistry(tempRoot);
+    appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
+      type: 'audit_grade',
+      instance: 'james-main',
+      grade: 'green',
+      timestampUtc: '2026-04-27T00:04:30.000Z',
+    });
+    const runNodeScript = jest.fn(() => ({ status: 0 }));
+    const staleSnapshot = {
+      exists: true,
+      timestampMs: Date.parse('2026-04-27T00:00:00.000Z'),
+      session: '301',
+      pid: null,
+      mtimeMs: 1,
+    };
+    let clockMs = Date.parse('2026-04-27T00:05:00.000Z');
+
+    const result = await restartExecute.executeRestart({
+      projectRoot: tempRoot,
+      instance: 'james-main',
+      reason: 'unverified relaunch test',
+      nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      launchStartedMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      captureAppStatus: jest.fn(() => staleSnapshot),
+      listElectronProcesses: jest.fn(() => []),
+      spawn: jest.fn(() => ({ pid: 222, unref: jest.fn() })),
+      sleep: jest.fn(() => Promise.resolve()),
+      now: jest.fn(() => {
+        clockMs += 300;
+        return clockMs;
+      }),
+      relaunchVerifyTimeoutMs: 1000,
+      relaunchVerifyPollMs: 25,
+      runNodeScript,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      stage: 'relaunch_verification',
+      reason: 'relaunch_unverified',
+    }));
+    expect(runNodeScript).toHaveBeenCalledTimes(1);
+    expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      'type=restart_execute_relaunch_unverified',
+      'src=hm-restart-execute',
+      'sev=high',
+      '--json',
+    ]));
   });
 });
