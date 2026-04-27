@@ -34,6 +34,9 @@ function parseArgs(argv = process.argv.slice(2)) {
     if (token === '--json') {
       args.json = true;
     }
+    if (token === '--sweep-orphans') {
+      args.sweepOrphans = true;
+    }
     if (token === '--verify-timeout-ms' && argv[index + 1]) {
       args.relaunchVerifyTimeoutMs = Number(argv[index + 1]);
       index += 1;
@@ -417,6 +420,119 @@ function buildShutdownKillOrder(targets = [], rawRows = []) {
   return killOrder;
 }
 
+function processRowMap(rawRows = []) {
+  return new Map(rawRows.map(asProcessRow).filter((row) => row.pid).map((row) => [row.pid, row]));
+}
+
+function ancestorRows(row = {}, rowsByPid = new Map()) {
+  const ancestors = [];
+  const seen = new Set([row.pid]);
+  let parent = rowsByPid.get(row.parentPid);
+  while (parent && parent.pid && !seen.has(parent.pid)) {
+    ancestors.push(parent);
+    seen.add(parent.pid);
+    parent = rowsByPid.get(parent.parentPid);
+  }
+  return ancestors;
+}
+
+function directOrphanCandidate(row = {}) {
+  const name = normalizeForProcessMatch(row.name);
+  const commandLine = normalizeForProcessMatch(row.commandLine);
+  const executablePath = normalizeForProcessMatch(row.executablePath);
+  return Boolean(
+    name.includes('claude')
+    || executablePath.includes('claude')
+    || commandLine.includes('claude')
+    || commandLine.includes('terminal-daemon.js')
+    || commandLine.includes('node-pty')
+  );
+}
+
+function processTreeDepth(row = {}, rowsByPid = new Map()) {
+  return ancestorRows(row, rowsByPid).length;
+}
+
+function staleOrphanCandidates(projectRoot, rawRows = [], excludePids = new Set()) {
+  const rows = rawRows.map(asProcessRow).filter((row) => row.pid);
+  const rowsByPid = processRowMap(rows);
+  return rows
+    .filter((row) => !excludePids.has(row.pid))
+    .filter((row) => {
+      const ancestors = ancestorRows(row, rowsByPid);
+      const related = isProjectRelatedProcess(row, projectRoot)
+        || ancestors.some((ancestor) => isProjectRelatedProcess(ancestor, projectRoot));
+      if (!related) return false;
+      return directOrphanCandidate(row);
+    })
+    .map((row) => ({
+      ...row,
+      role: 'orphan',
+      depth: processTreeDepth(row, rowsByPid),
+    }))
+    .sort((left, right) => right.depth - left.depth || right.pid - left.pid);
+}
+
+function shouldSweepOrphans(options = {}) {
+  if (options.sweepOrphans === true) return true;
+  const raw = process.env.SQUIDRUN_RESTART_SWEEP_ORPHANS;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw || '').trim().toLowerCase());
+}
+
+async function sweepOrphanProcesses(projectRoot, options = {}) {
+  const rows = Array.isArray(options.orphanSweepProcessRows)
+    ? options.orphanSweepProcessRows
+    : queryWindowsProcessRows(projectRoot, {
+        tasklistOutput: options.orphanSweepTasklistOutput,
+      });
+  const targets = selectSquidRunElectronProcesses(projectRoot, rows);
+  const excludePids = new Set();
+  for (const target of targets) {
+    excludePids.add(target.pid);
+    for (const descendant of collectProcessDescendants(target.pid, rows)) {
+      excludePids.add(descendant.pid);
+    }
+  }
+  const candidates = staleOrphanCandidates(projectRoot, rows, excludePids);
+  const killProcess = options.killProcess || ((pid) => process.kill(pid, 'SIGTERM'));
+  const exists = options.processExists || processExists;
+  const sleepFn = options.sleep || sleep;
+  const nowFn = options.now || Date.now;
+  const timeoutMs = Math.max(1000, Number(options.orphanSweepTimeoutMs || 5000));
+  const killed = [];
+  for (const proc of candidates) {
+    try {
+      killProcess(proc.pid, proc);
+      killed.push(proc);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'orphan_sweep_kill_failed',
+        error: error?.message || String(error),
+        targets,
+        candidates,
+        killed,
+      };
+    }
+  }
+  const deadline = nowFn() + timeoutMs;
+  while (nowFn() <= deadline) {
+    const stillAlive = killed.filter((proc) => exists(proc.pid));
+    if (stillAlive.length === 0) {
+      return { ok: true, targets, candidates, killed };
+    }
+    await sleepFn(Math.min(250, Math.max(0, deadline - nowFn())));
+  }
+  return {
+    ok: false,
+    reason: 'orphan_sweep_survivors',
+    targets,
+    candidates,
+    killed,
+    stillAlive: killed.filter((proc) => exists(proc.pid)),
+  };
+}
+
 function processExists(pid) {
   try {
     process.kill(pid, 0);
@@ -720,6 +836,19 @@ async function executeRestart(options = {}) {
       recordFailureAnomaly(projectRoot, failure, options, 'restart_execute_relaunch_unverified');
       return failure;
     }
+    let orphanSweep = null;
+    if (shouldSweepOrphans(options)) {
+      orphanSweep = await sweepOrphanProcesses(projectRoot, options);
+      logStep(instanceConfig, 'orphan_sweep_complete', orphanSweep);
+      if (!orphanSweep.ok) {
+        recordFailureAnomaly(projectRoot, {
+          ok: false,
+          stage: 'orphan_sweep',
+          reason: orphanSweep.reason || 'orphan_sweep_failed',
+          orphanSweep,
+        }, options, 'restart_execute_orphan_sweep_failed');
+      }
+    }
     return {
       ok: true,
       instance: instanceId,
@@ -728,6 +857,7 @@ async function executeRestart(options = {}) {
       shutdown,
       relaunch,
       verification,
+      orphanSweep,
     };
   } catch (error) {
     const failure = {
@@ -772,6 +902,9 @@ module.exports = {
   selectSquidRunElectronProcesses,
   collectProcessDescendants,
   buildShutdownKillOrder,
+  staleOrphanCandidates,
+  shouldSweepOrphans,
+  sweepOrphanProcesses,
   listElectronProcesses,
   shutdownElectronProcesses,
   captureAppStatus,
