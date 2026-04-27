@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "checklistVersion": "2026-04-26-v1",
+  "checklistVersion": "2026-04-27-v2",
   "profile": "main",
   "description": "Deterministic startup drift checks for the main SquidRun trading pane. Hard failures pause restart clearance.",
   "items": [
@@ -15,7 +15,7 @@
     {
       "id": "git_branch_current",
       "severity": "hard",
-      "expectedAnswer": "architect/session-283-trading-inject-cherrypicks",
+      "expectedAnswer": "feat/operator-hub-and-curator-cleanup",
       "match": "exact",
       "verifyCommand": "git rev-parse --abbrev-ref HEAD",
       "rationale": "Restart handoff must know the current working branch."
