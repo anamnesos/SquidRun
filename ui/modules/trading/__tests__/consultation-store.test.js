@@ -51,6 +51,15 @@ describe('consultation-store', () => {
           },
         },
       },
+      microData: {
+        asOf: '2026-03-29T02:00:10.000Z',
+        symbols: {
+          'BTC/USD': {
+            extensionRead: { extended: true, score: 0.82 },
+            bookSnapshot: { spreadBps: 5.1 },
+          },
+        },
+      },
       defiStatus: {
         positions: [
           { coin: 'ETH', side: 'short', unrealizedPnl: 57, peakUnrealizedPnl: 150, warningLevel: 'urgent', timeOpenMs: 300000 },
@@ -117,6 +126,15 @@ describe('consultation-store', () => {
           },
         },
       },
+      microData: {
+        asOf: '2026-03-29T02:00:10.000Z',
+        symbols: {
+          'BTC/USD': {
+            extensionRead: { extended: true, score: 0.82 },
+            bookSnapshot: { spreadBps: 5.1 },
+          },
+        },
+      },
       defiStatus: {
         positions: [
           { coin: 'ETH', side: 'short', unrealizedPnl: 57, peakUnrealizedPnl: 150, warningLevel: 'urgent', timeOpenMs: 300000 },
@@ -150,6 +168,14 @@ describe('consultation-store', () => {
           },
         },
       },
+      microData: {
+        symbols: {
+          'ETH/USD': {
+            extensionRead: { extended: true, score: 0.91 },
+            bookSnapshot: { spreadBps: 4.2 },
+          },
+        },
+      },
       eventVeto: {
         decision: 'CAUTION',
         eventSummary: 'options_or_expiry_event: BTC options expiry approaches',
@@ -164,6 +190,8 @@ describe('consultation-store', () => {
     expect(prompt).toContain('Primary live-trading venue is Hyperliquid.');
     expect(prompt).toContain('Live Hyperliquid positions are included');
     expect(prompt).toContain('cryptoMechBoard');
+    expect(prompt).toContain('Live micro data');
+    expect(prompt).toContain('microData');
     expect(prompt).toContain('eventVeto');
     expect(prompt).toContain('WARNING: ETH SHORT unrealized P&L is now $57.00 vs peak $150.00');
   });

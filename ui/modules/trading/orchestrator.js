@@ -29,6 +29,7 @@ const bracketManager = require('./bracket-manager');
 const signalValidationRecorder = require('./signal-validation-recorder');
 const hyperliquidClient = require('./hyperliquid-client');
 const hyperliquidNativeLayer = require('./hyperliquid-native-layer');
+const symbolMicrodata = require('./symbol-microdata');
 const multiTimeframeConfirmation = require('./multi-timeframe-confirmation');
 const {
 	STRATEGY_MODES,
@@ -2355,6 +2356,19 @@ class TradingOrchestrator {
 				|| consultationStore.DEFAULT_CONSULTATION_TIMEOUT_MS
 			)
 		) || consultationStore.DEFAULT_CONSULTATION_TIMEOUT_MS;
+		let microData = context.microData || options.microData || null;
+		if (!microData && primaryDataSource === 'hyperliquid' && options.symbolMicroDataEnabled !== false && this.options.symbolMicroDataEnabled !== false) {
+			const microDataOptions = {
+				...(this.options.symbolMicroDataOptions || {}),
+				...(options.symbolMicroDataOptions || {}),
+			};
+			microData = await symbolMicrodata.getMicroDataForSymbols(symbols, microDataOptions).catch((error) => ({
+				ok: false,
+				asOf: new Date().toISOString(),
+				error: error?.message || String(error),
+				symbols: {},
+			}));
+		}
 		const request = consultationStore.writeConsultationRequest({
 			requestId: options.consultationRequestId || null,
 			timeoutMs,
@@ -2369,6 +2383,7 @@ class TradingOrchestrator {
 			brokerCapabilities: context.brokerCapabilities || options.brokerCapabilities || null,
 			whaleData: context.whaleData || options.whaleData || null,
 			cryptoMechBoard: context.cryptoMechBoard || options.cryptoMechBoard || null,
+			microData,
 			nativeSignals: context.nativeSignals || options.nativeSignals || null,
 			eventVeto: context.eventVeto || options.eventVeto || null,
 			defiStatus,

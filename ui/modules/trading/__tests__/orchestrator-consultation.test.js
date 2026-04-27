@@ -281,6 +281,20 @@ jest.mock('../event-veto', () => ({
   }),
 }));
 
+jest.mock('../symbol-microdata', () => ({
+  getMicroDataForSymbols: jest.fn().mockResolvedValue({
+    ok: true,
+    asOf: '2026-03-29T03:59:30.000Z',
+    symbols: {
+      'BTC/USD': {
+        ticker: 'BTC/USD',
+        extensionRead: { ok: true, extended: true, score: 0.84 },
+        bookSnapshot: { ok: true, spreadBps: 4.2 },
+      },
+    },
+  }),
+}));
+
 jest.mock('../consensus-sizer', () => ({
   sizeConsensusTrade: jest.fn(() => ({
     bucket: 'normal',
@@ -333,6 +347,7 @@ const signalProducer = require('../signal-producer');
 const consultationStore = require('../consultation-store');
 const cryptoMechBoard = require('../crypto-mech-board');
 const eventVeto = require('../event-veto');
+const symbolMicrodata = require('../symbol-microdata');
 const consensusSizer = require('../consensus-sizer');
 const portfolioTracker = require('../portfolio-tracker');
 const riskEngine = require('../risk-engine');
@@ -803,6 +818,7 @@ describe('orchestrator real consultation flow', () => {
     expect(eventVeto.buildEventVeto).toHaveBeenCalledWith(expect.objectContaining({
       symbols: ['BTC/USD'],
     }));
+    expect(symbolMicrodata.getMicroDataForSymbols).toHaveBeenCalledWith(['BTC/USD'], {});
     expect(consultationStore.writeConsultationRequest).toHaveBeenCalledWith(expect.objectContaining({
       cryptoMechBoard: expect.objectContaining({
         symbols: expect.objectContaining({
@@ -818,6 +834,18 @@ describe('orchestrator real consultation flow', () => {
               regime: 'full_bear_alignment',
               status: null,
               tapeStatus: 'confirm',
+            }),
+          }),
+        }),
+      }),
+      microData: expect.objectContaining({
+        symbols: expect.objectContaining({
+          'BTC/USD': expect.objectContaining({
+            extensionRead: expect.objectContaining({
+              extended: true,
+            }),
+            bookSnapshot: expect.objectContaining({
+              spreadBps: 4.2,
             }),
           }),
         }),

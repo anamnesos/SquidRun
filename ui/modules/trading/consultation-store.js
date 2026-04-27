@@ -141,6 +141,7 @@ function createConsultationRequest(payload = {}) {
   const serializedWarnings = serializeMap(payload.consultationWarnings || []);
   const serializedWhaleData = serializeMap(payload.whaleData || null);
   const serializedCryptoMechBoard = serializeMap(payload.cryptoMechBoard || null);
+  const serializedMicroData = serializeMap(payload.microData || null);
   const serializedEventVeto = serializeMap(payload.eventVeto || null);
   const serializedPositionManagementContext = serializeMap(payload.positionManagementContext || null);
   const primaryDataSource = derivePrimaryDataSource(payload);
@@ -163,6 +164,7 @@ function createConsultationRequest(payload = {}) {
     brokerCapabilities: serializeMap(payload.brokerCapabilities || null),
     whaleData: serializedWhaleData,
     cryptoMechBoard: serializedCryptoMechBoard,
+    microData: serializedMicroData,
     eventVeto: serializedEventVeto,
     positionManagementContext: serializedPositionManagementContext,
     defiStatus: serializedDefiStatus,
@@ -280,6 +282,7 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
   const primaryDataSource = derivePrimaryDataSource(request);
   const liveTradingContext = request?.liveTradingContext || null;
   const cryptoMechBoard = request?.cryptoMechBoard || null;
+  const microData = request?.microData || null;
   const eventVeto = request?.eventVeto || null;
   const positionManagementContext = request?.positionManagementContext || null;
   const primaryVenueInstruction = primaryDataSource === 'hyperliquid'
@@ -295,6 +298,11 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
     && cryptoMechBoard?.symbols
     && Object.keys(cryptoMechBoard.symbols).length > 0
     ? 'A per-symbol mechanical crypto scorecard is included in the request JSON under cryptoMechBoard (funding, open interest, whale flow, squeeze risk, overcrowding, cascade risk, and trade/watch/no-trade flag).'
+    : '';
+  const microDataInstruction = primaryDataSource === 'hyperliquid'
+    && microData?.symbols
+    && Object.keys(microData.symbols).length > 0
+    ? 'Live micro data: request JSON includes microData by symbol (4h candles, open interest history, funding deltas, book depth, impact spread, and extension read).'
     : '';
   const eventVetoInstruction = eventVeto?.decision
     ? `A compact event veto is included in eventVeto with ${toText(eventVeto.decision).toUpperCase()} / source tier / staleness / affected assets. Treat it as a brake, not a narrative engine.`
@@ -322,6 +330,7 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
       defiInstruction,
       liveAccountInstruction,
       mechanicalInstruction,
+      microDataInstruction,
       eventVetoInstruction,
       warningInstruction,
       macroInstruction,
@@ -341,6 +350,7 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
     defiInstruction,
     liveAccountInstruction,
     mechanicalInstruction,
+    microDataInstruction,
     eventVetoInstruction,
     positionManagementInstruction,
     warningInstruction,
