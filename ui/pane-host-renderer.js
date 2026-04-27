@@ -385,9 +385,9 @@ if (typeof window !== 'undefined') {
     });
   }
 
-  function reportDeliveryAck(paneId, deliveryId) {
+  function reportDeliveryAck(paneId, deliveryId, extra = {}) {
     if (!deliveryId) return;
-    sendPaneHostAction('delivery-ack', paneId, { deliveryId }).catch((err) => {
+    sendPaneHostAction('delivery-ack', paneId, { deliveryId, ...(extra || {}) }).catch((err) => {
       console.error(`[PaneHost] Failed to report delivery ack for pane ${paneId}:`, err?.message || err);
     });
   }
@@ -556,6 +556,11 @@ if (typeof window !== 'undefined') {
     const baseText = stripInternalRoutingWrappers(String(payload.message || ''));
     const deliveryId = payload.deliveryId || null;
     const traceContext = payload.traceContext || null;
+    const messageId = toNonEmptyString(traceContext?.messageId)
+      || toNonEmptyString(traceContext?.traceId)
+      || toNonEmptyString(traceContext?.correlationId)
+      || deliveryId
+      || null;
     const hmSendTrace = isHmSendTraceContext(traceContext);
     const promptKind = hmSendTrace ? getCurrentPromptKind(runtime.terminal) : 'unknown';
     const text = hmSendTrace ? formatHmSendForPrompt(baseText, promptKind) : baseText;
@@ -662,10 +667,11 @@ if (typeof window !== 'undefined') {
 
       if (deliveryId) {
         if (deliveryResult.ack) {
-          reportDeliveryAck(runtime.paneId, deliveryId);
+          reportDeliveryAck(runtime.paneId, deliveryId, { messageId });
         } else {
           reportDeliveryOutcome(runtime.paneId, {
             deliveryId,
+            messageId,
             paneId: runtime.paneId,
             ...deliveryResult.outcome,
           });
@@ -692,6 +698,7 @@ if (typeof window !== 'undefined') {
       if (deliveryId) {
         reportDeliveryOutcome(runtime.paneId, {
           deliveryId,
+          messageId,
           paneId: runtime.paneId,
           accepted: false,
           verified: false,

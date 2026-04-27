@@ -1,12 +1,10 @@
 const crypto = require('crypto');
 
-const DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES = Math.max(
-  1024,
-  Number.parseInt(process.env.SQUIDRUN_INJECT_IPC_CHUNK_THRESHOLD_BYTES || '1024', 10) || 1024
+const DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES = (
+  Number.parseInt(process.env.SQUIDRUN_INJECT_IPC_CHUNK_THRESHOLD_BYTES || '256', 10) || 256
 );
-const DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES = Math.max(
-  1024,
-  Number.parseInt(process.env.SQUIDRUN_INJECT_IPC_CHUNK_SIZE_BYTES || '4096', 10) || 4096
+const DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES = (
+  Number.parseInt(process.env.SQUIDRUN_INJECT_IPC_CHUNK_SIZE_BYTES || '256', 10) || 256
 );
 const DEFAULT_INJECT_IPC_REASSEMBLY_TTL_MS = Math.max(
   5000,

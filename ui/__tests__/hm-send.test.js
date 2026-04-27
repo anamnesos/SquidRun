@@ -201,6 +201,64 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('writes delivery trace events with payload bytes and ACK timing', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const tracePath = path.join(tempProject, '.squidrun', 'coord', 'bus-reliability-trace.jsonl');
+
+    try {
+      const message = '(TEST #9): trace sentinel head middle tail';
+      const result = await runHmSend(
+        ['architect', message, '--timeout', '120', '--retries', '0', '--no-fallback'],
+        {
+          HM_SEND_PORT: String(port),
+          SQUIDRUN_BUS_TRACE_PATH: tracePath,
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].traceContext).toEqual(expect.objectContaining({
+        messageId: expect.stringMatching(/^hm-/),
+        traceId: expect.stringMatching(/^hm-/),
+      }));
+      expect(fs.existsSync(tracePath)).toBe(true);
+      const entries = fs.readFileSync(tracePath, 'utf8')
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line));
+      const attempt = entries.find((entry) => entry.eventType === 'hm_send_attempt');
+      const ack = entries.find((entry) => entry.eventType === 'hm_send_ack');
+      const complete = entries.find((entry) => entry.eventType === 'hm_send_complete');
+
+      expect(attempt).toEqual(expect.objectContaining({
+        recipient: 'architect',
+        payloadBytes: Buffer.byteLength(message, 'utf8'),
+        dispatchBytes: expect.any(Number),
+      }));
+      expect(ack).toEqual(expect.objectContaining({
+        recipient: 'architect',
+        success: true,
+        ackLatencyMs: expect.any(Number),
+      }));
+      expect(complete).toEqual(expect.objectContaining({
+        recipient: 'architect',
+        success: true,
+        delivered: true,
+        payloadFingerprint: expect.objectContaining({
+          sha256: expect.any(String),
+          head: expect.stringContaining('(TEST #9)'),
+          tail: expect.stringContaining('tail'),
+        }),
+      }));
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('blocks case context in the main profile and logs the violation', async () => {
     const tempProject = createLinkedProject();
     const logPath = path.join(tempProject, '.squidrun', 'runtime', 'context-leak-violations.jsonl');
