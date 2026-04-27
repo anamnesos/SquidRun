@@ -56,6 +56,10 @@ workspace/triggers/*.txt
 !.squidrun/coord/drift-checklist.json
 !.squidrun/coord/inbox-protocol.md
 
+# Playwright MCP browser-automation artifacts (screenshots, downloads, recordings)
+# History contains a 204MB video at 8f8d2ee that blocks pushes to GitHub.
+.playwright-mcp/
+
 # Jest perf snapshots (large, regenerated)
 workspace/perf-jest.json
 ui/usage-stats.json
