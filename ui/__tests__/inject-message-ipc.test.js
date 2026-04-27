@@ -3,6 +3,7 @@ const {
   splitUtf8TextByBytes,
   getUtf8ByteLength,
   DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
 } = require('../modules/inject-message-ipc');
 
 describe('inject-message-ipc', () => {
@@ -81,4 +82,52 @@ describe('inject-message-ipc', () => {
       ipcOriginalBytes: DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
     }));
   });
+
+  test('default IPC packet size stays within the PTY-safe write budget', () => {
+    expect(DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES).toBeLessThanOrEqual(256);
+    expect(DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES).toBeLessThanOrEqual(256);
+
+    const message = 'head-marker '.repeat(80);
+    const packets = buildInjectMessageIpcPackets({
+      panes: ['3'],
+      message,
+    });
+
+    expect(packets.length).toBeGreaterThan(1);
+    expect(packets.map((packet) => packet.message).join('')).toBe(message);
+    for (const packet of packets) {
+      expect(packet.messageBytes).toBeLessThanOrEqual(256);
+    }
+  });
+
+  test.each([3900, 4096, 4100, 7500])(
+    'preserves head/middle/tail sentinels across %i byte payloads',
+    (targetBytes) => {
+      const head = `HEAD-${targetBytes}-`;
+      const middle = `-MIDDLE-${targetBytes}-`;
+      const tail = `-TAIL-${targetBytes}`;
+      const fillerBytes = targetBytes
+        - Buffer.byteLength(head, 'utf8')
+        - Buffer.byteLength(middle, 'utf8')
+        - Buffer.byteLength(tail, 'utf8');
+      const left = 'A'.repeat(Math.floor(fillerBytes / 2));
+      const right = 'B'.repeat(Math.max(0, fillerBytes - left.length));
+      const message = `${head}${left}${middle}${right}${tail}`;
+      const packets = buildInjectMessageIpcPackets({
+        panes: ['1'],
+        message,
+      });
+      const reassembled = packets.map((packet) => packet.message).join('');
+
+      expect(getUtf8ByteLength(message)).toBe(targetBytes);
+      expect(reassembled).toBe(message);
+      expect(reassembled.indexOf(head)).toBe(0);
+      expect(reassembled.indexOf(middle)).toBeGreaterThan(0);
+      expect(reassembled.endsWith(tail)).toBe(true);
+      expect(packets.length).toBeGreaterThan(1);
+      for (const packet of packets) {
+        expect(packet.messageBytes).toBeLessThanOrEqual(256);
+      }
+    }
+  );
 });

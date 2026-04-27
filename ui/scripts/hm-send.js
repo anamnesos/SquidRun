@@ -40,6 +40,11 @@ const {
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
+const {
+  appendBusTraceEvent,
+  createPayloadFingerprint,
+  getUtf8ByteLength,
+} = require('../modules/bus-reliability-trace');
 const { createBridgeClient } = require('../modules/bridge-client');
 let parseCrossDeviceTarget = () => null;
 let isCrossDeviceEnabled = () => false;
@@ -1446,6 +1451,30 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   const skipHealthCheck = opts.skipHealthCheck === true;
   const socketUrl = `ws://127.0.0.1:${PORT}`;
   const ws = new WebSocket(socketUrl);
+  const sendStartedAtMs = Date.now();
+  const payloadBytes = getUtf8ByteLength(envelope?.content || '');
+  const payloadFingerprint = createPayloadFingerprint(envelope?.content || '');
+  const traceBase = {
+    messageId: envelope.message_id,
+    recipient: target,
+    senderRole: role,
+    payloadBytes,
+    payloadFingerprint,
+    priority,
+    sendStartedAtMs,
+  };
+  const traceComplete = (details = {}) => {
+    const ackReceivedAtMs = Number.isFinite(Number(details.ackReceivedAtMs))
+      ? Number(details.ackReceivedAtMs)
+      : null;
+    appendBusTraceEvent({
+      eventType: 'hm_send_complete',
+      ...traceBase,
+      ...details,
+      ackReceivedAtMs,
+      ackLatencyMs: ackReceivedAtMs === null ? null : ackReceivedAtMs - sendStartedAtMs,
+    });
+  };
 
   await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
 
@@ -1456,6 +1485,12 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
     const health = await queryTargetHealthBestEffort(ws);
     if (isTargetHealthBlocking(health, target)) {
       await closeSocket(ws);
+      traceComplete({
+        success: false,
+        status: 'skipped_by_health',
+        attemptsUsed: 0,
+        healthStatus: health?.status || null,
+      });
       return {
         ok: false,
         skippedByHealth: true,
@@ -1478,6 +1513,14 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
       attempt,
       maxAttempts: attempts,
     });
+    dispatchMessage.traceContext = {
+      ...(dispatchMessage.traceContext && typeof dispatchMessage.traceContext === 'object'
+        ? dispatchMessage.traceContext
+        : {}),
+      traceId: envelope.message_id,
+      correlationId: envelope.message_id,
+      messageId: envelope.message_id,
+    };
     const resolvedTelegramChatId = normalizeChatId(telegramChatIdOverride);
     if (resolvedTelegramChatId && isSpecialTarget(target)) {
       dispatchMessage.metadata = {
@@ -1488,7 +1531,17 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
         },
       };
     }
-    ws.send(JSON.stringify(dispatchMessage));
+    const serializedDispatch = JSON.stringify(dispatchMessage);
+    const attemptStartedAtMs = Date.now();
+    appendBusTraceEvent({
+      eventType: 'hm_send_attempt',
+      ...traceBase,
+      attempt,
+      maxAttempts: attempts,
+      attemptStartedAtMs,
+      dispatchBytes: getUtf8ByteLength(serializedDispatch),
+    });
+    ws.send(serializedDispatch);
 
     try {
       const ack = await waitForMatch(
@@ -1498,9 +1551,29 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
         `ACK timeout after ${ackTimeoutMs}ms`
       );
       lastAck = ack;
+      const ackReceivedAtMs = Date.now();
+      appendBusTraceEvent({
+        eventType: 'hm_send_ack',
+        ...traceBase,
+        attempt,
+        maxAttempts: attempts,
+        ackReceivedAtMs,
+        ackLatencyMs: ackReceivedAtMs - attemptStartedAtMs,
+        success: Boolean(ack.ok),
+        accepted: ack.accepted === true,
+        status: ack.status || null,
+      });
 
       if (ack.ok) {
         await closeSocket(ws);
+        traceComplete({
+          success: true,
+          delivered: true,
+          accepted: true,
+          status: ack.status || 'delivered',
+          ackReceivedAtMs,
+          attemptsUsed: attempt,
+        });
         return {
           ok: true,
           delivered: true,
@@ -1513,6 +1586,14 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
 
       if (ack.accepted === true) {
         await closeSocket(ws);
+        traceComplete({
+          success: true,
+          delivered: false,
+          accepted: true,
+          status: ack.status || 'accepted_unverified',
+          ackReceivedAtMs,
+          attemptsUsed: attempt,
+        });
         return {
           ok: true,
           delivered: false,
@@ -1531,6 +1612,15 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
       await sleep(backoffDelay);
     } catch (err) {
       lastError = err;
+      appendBusTraceEvent({
+        eventType: 'hm_send_attempt_error',
+        ...traceBase,
+        attempt,
+        maxAttempts: attempts,
+        success: false,
+        status: 'ack_timeout_or_error',
+        error: err.message,
+      });
       if (attempt >= attempts) {
         break;
       }
@@ -1547,6 +1637,14 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   );
   if (deliveryCheck?.known && (deliveryCheck?.ack?.ok || deliveryCheck?.ack?.accepted === true)) {
     await closeSocket(ws);
+    traceComplete({
+      success: true,
+      delivered: Boolean(deliveryCheck?.ack?.ok),
+      accepted: true,
+      status: 'delivery_check_confirmed',
+      attemptsUsed: attempts,
+      deliveryCheckStatus: deliveryCheck.status || null,
+    });
     return {
       ok: true,
       delivered: Boolean(deliveryCheck?.ack?.ok),
@@ -1559,6 +1657,15 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   }
 
   await closeSocket(ws);
+  traceComplete({
+    success: false,
+    delivered: false,
+    accepted: false,
+    status: lastAck?.status || deliveryCheck?.status || 'failed',
+    attemptsUsed: attempts,
+    error: lastError ? lastError.message : null,
+    deliveryCheckStatus: deliveryCheck?.status || null,
+  });
   return {
     ok: false,
     messageId: envelope.message_id,
