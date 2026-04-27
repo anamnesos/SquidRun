@@ -430,6 +430,18 @@ function trimOptionalText(value) {
   return trimmed ? trimmed : null;
 }
 
+function containsHangulSyllables(value = '') {
+  return /[\uAC00-\uD7AF]/.test(String(value || ''));
+}
+
+function shouldSuppressMainTelegramForHangul(message = '', env = process.env) {
+  const profile = String(env?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main')
+    .trim()
+    .toLowerCase();
+  const isMainProfile = !profile || profile === 'main';
+  return isMainProfile && containsHangulSyllables(message);
+}
+
 function tailText(value, maxChars = 4000) {
   const text = typeof value === 'string' ? value : String(value || '');
   if (!text) return '';
@@ -3970,6 +3982,10 @@ class SupervisorDaemon {
       this.logger.info(`Trading alert suppressed (manual mode): ${message.slice(0, 80)}...`);
       return;
     }
+    if (shouldSuppressMainTelegramForHangul(message, this.runtimeEnv)) {
+      this.logger.warn('Trading Telegram notify suppressed: Hangul detected in main-profile alert. Raw alert retained in internal logs.');
+      return;
+    }
     const chatId = String(this.runtimeEnv?.TELEGRAM_CHAT_ID || '').trim();
     if (!chatId) {
       this.logger.warn('Trading Telegram notify suppressed: TELEGRAM_CHAT_ID is not configured.');
@@ -6276,4 +6292,6 @@ module.exports = {
   DEFAULT_SLEEP_IDLE_MS,
   DEFAULT_SLEEP_MIN_INTERVAL_MS,
   resolveProjectUiScriptPath,
+  containsHangulSyllables,
+  shouldSuppressMainTelegramForHangul,
 };
