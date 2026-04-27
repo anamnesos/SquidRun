@@ -139,6 +139,10 @@ const {
   buildInjectMessageIpcPackets,
   getUtf8ByteLength,
 } = require('../inject-message-ipc');
+const {
+  appendBusTraceEvent,
+  createPayloadFingerprint,
+} = require('../bus-reliability-trace');
 const { createPtyOutputFilter } = require('./pty-output-filter');
 const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
@@ -2044,10 +2048,31 @@ class SquidRunApp {
 
   handleTriggerDeliveryAck(data = {}) {
     if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
+    appendBusTraceEvent({
+      eventType: 'pane_delivery_ack',
+      messageId: data?.messageId || data?.deliveryId || null,
+      deliveryId: data?.deliveryId || null,
+      paneId: data?.paneId || null,
+      success: true,
+      status: 'pane_delivery_ack',
+      modelReceiptVerified: false,
+    });
   }
 
   handleTriggerDeliveryOutcome(data = {}) {
     if (data?.deliveryId) triggers.handleDeliveryOutcome(data.deliveryId, data.paneId, data);
+    appendBusTraceEvent({
+      eventType: 'pane_delivery_outcome',
+      messageId: data?.messageId || data?.deliveryId || null,
+      deliveryId: data?.deliveryId || null,
+      paneId: data?.paneId || null,
+      success: data?.accepted !== false,
+      accepted: data?.accepted === true,
+      verified: data?.verified === true,
+      status: data?.status || null,
+      reason: data?.reason || null,
+      modelReceiptVerified: false,
+    });
     const statusLower = String(data?.status || '').toLowerCase();
     const isUnverified = (
       data?.verified === false
@@ -2205,6 +2230,21 @@ class SquidRunApp {
       chunkSizeBytes: DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
     });
     if (packets.length === 0) return false;
+    const messageId = toNonEmptyString(payload?.traceContext?.messageId)
+      || toNonEmptyString(payload?.traceContext?.traceId)
+      || toNonEmptyString(payload?.traceContext?.correlationId)
+      || toNonEmptyString(payload?.deliveryId);
+    const originalMessage = String(payload?.message || '');
+    appendBusTraceEvent({
+      eventType: 'pane_ipc_packetized',
+      messageId: messageId || null,
+      deliveryId: payload?.deliveryId || null,
+      paneCount: panes.length,
+      packetCount: packets.length,
+      payloadBytes: getUtf8ByteLength(originalMessage),
+      payloadFingerprint: createPayloadFingerprint(originalMessage),
+      startupInjection,
+    });
 
     let routed = false;
     for (const packet of packets) {
@@ -2214,6 +2254,21 @@ class SquidRunApp {
       if (!paneId) continue;
       const packetBytes = Number(packet.messageBytes || getUtf8ByteLength(packet.message || ''));
       const totalBytes = Number(packet?.ipcChunk?.totalBytes || packet?.meta?.ipcOriginalBytes || packetBytes);
+      const expectedPacketBytes = Number.isFinite(Number(packet.messageBytes)) ? Number(packet.messageBytes) : null;
+      appendBusTraceEvent({
+        eventType: 'pane_ipc_packet_routed',
+        messageId: messageId || null,
+        deliveryId: packet.deliveryId || null,
+        paneId,
+        packetBytes,
+        expectedPacketBytes,
+        totalBytes,
+        byteMismatch: expectedPacketBytes !== null && expectedPacketBytes !== packetBytes,
+        chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+        chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+        payloadFingerprint: createPayloadFingerprint(packet.message || ''),
+        startupInjection,
+      });
       if (!packet.ipcChunk || packet.ipcChunk.index === 0) {
         log.info('InjectIPC', `Pre-IPC route pane ${paneId}: ${totalBytes} bytes -> ${packet.ipcChunk?.count || 1} packet(s) (startup=${startupInjection})`);
       }
@@ -2223,6 +2278,17 @@ class SquidRunApp {
           startupInjection,
         }, {
           windowKey: packet?.windowKey || packet?.meta?.windowKey || 'main',
+        });
+        appendBusTraceEvent({
+          eventType: 'pane_ipc_handoff',
+          messageId: messageId || null,
+          deliveryId: packet.deliveryId || null,
+          paneId,
+          deliveryPath: 'visible_window',
+          success: Boolean(delivered),
+          packetBytes,
+          chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+          chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
         });
         if (delivered) routed = true;
         continue;
@@ -2252,6 +2318,17 @@ class SquidRunApp {
           meta: packet.meta || null,
         });
         if (routedToHost) {
+          appendBusTraceEvent({
+            eventType: 'pane_ipc_handoff',
+            messageId: messageId || null,
+            deliveryId: packet.deliveryId || null,
+            paneId,
+            deliveryPath: 'hidden_pane_host',
+            success: true,
+            packetBytes,
+            chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+            chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          });
           routed = true;
           this.clearPaneHostDegraded(paneId);
           continue;
@@ -2272,6 +2349,20 @@ class SquidRunApp {
         meta: fallbackMeta,
       }, {
         windowKey: packet?.windowKey || fallbackMeta?.windowKey || 'main',
+      });
+      appendBusTraceEvent({
+        eventType: 'pane_ipc_handoff',
+        messageId: messageId || null,
+        deliveryId: packet.deliveryId || null,
+        paneId,
+        deliveryPath: 'visible_fallback',
+        success: Boolean(routedToVisible),
+        packetBytes,
+        chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+        chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+        hiddenHostReady: hostReady,
+        hiddenHostWindowPresent: hostWindowPresent,
+        hiddenHostLoading: hostLoading,
       });
 
       if (routedToVisible) {
@@ -2816,7 +2907,15 @@ class SquidRunApp {
             const attempt = Number(data.message.attempt || 1);
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
-            const traceContext = data.traceContext || data.message.traceContext || null;
+            const rawTraceContext = data.traceContext || data.message.traceContext || null;
+            const traceContext = {
+              ...(rawTraceContext && typeof rawTraceContext === 'object' ? rawTraceContext : {}),
+              ...(messageId ? {
+                messageId,
+                traceId: rawTraceContext?.traceId || rawTraceContext?.correlationId || messageId,
+                correlationId: rawTraceContext?.correlationId || rawTraceContext?.traceId || messageId,
+              } : {}),
+            };
             const nowMs = Date.now();
             const sentAtMs = Number(data.message.sentAtMs || data.message.timestamp || nowMs);
             const targetPaneIdForJournal = this.resolveTargetToPane(target);
@@ -2848,6 +2947,20 @@ class SquidRunApp {
             const senderRoleForJournal = String(canonicalEnvelope.sender?.role || data.role || 'unknown').trim().toLowerCase();
             const canonicalMetadata = buildCanonicalEnvelopeMetadata(canonicalEnvelope);
             const contentWithProjectContext = withProjectContext(canonicalEnvelope.content, canonicalMetadata);
+            appendBusTraceEvent({
+              eventType: 'ws_broker_received',
+              messageId: canonicalEnvelope.message_id,
+              senderRole: canonicalEnvelope.sender?.role || data.role || 'unknown',
+              recipient: canonicalEnvelope.target?.raw || target || null,
+              targetPaneId: targetPaneIdForJournal || null,
+              payloadBytes: getUtf8ByteLength(canonicalEnvelope.content),
+              injectedPayloadBytes: getUtf8ByteLength(contentWithProjectContext),
+              payloadFingerprint: createPayloadFingerprint(canonicalEnvelope.content),
+              injectedPayloadFingerprint: createPayloadFingerprint(contentWithProjectContext),
+              attempt,
+              maxAttempts,
+              traceId: traceContext?.traceId || traceContext?.correlationId || null,
+            });
             const bridgeStructured = bridgeTarget
               ? (
                 normalizeBridgeMetadata(
