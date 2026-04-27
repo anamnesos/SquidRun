@@ -1,8 +1,8 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { HttpTransport, InfoClient } = require('@nktkas/hyperliquid');
 const { resolveCoordPath } = require('../../config');
 
 const DEFAULT_REQUEST_POOL_TTL_MS = Math.max(
@@ -17,14 +17,68 @@ const DEFAULT_ACCOUNT_REQUEST_POOL_TTL_MS = Math.max(
   1000,
   Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_ACCOUNT_REQUEST_POOL_TTL_MS || '15000', 10) || 15000
 );
-const DEFAULT_REQUEST_POOL_PATH = resolveCoordPath(
-  path.join('runtime', 'hyperliquid-request-pool.json'),
-  { forWrite: true }
+const DEFAULT_REQUEST_POOL_PENDING_TTL_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_REQUEST_POOL_PENDING_TTL_MS || '15000', 10) || 15000
 );
+const DEFAULT_REQUEST_POOL_LOCK_TIMEOUT_MS = Math.max(
+  250,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_REQUEST_POOL_LOCK_TIMEOUT_MS || '5000', 10) || 5000
+);
+const DEFAULT_REQUEST_POOL_LOCK_STALE_MS = Math.max(
+  250,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_REQUEST_POOL_LOCK_STALE_MS || '10000', 10) || 10000
+);
+const DEFAULT_REQUEST_POOL_WAIT_POLL_MS = Math.max(
+  25,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_REQUEST_POOL_WAIT_POLL_MS || '100', 10) || 100
+);
+const DEFAULT_RATE_LIMIT_BACKOFF_BASE_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BACKOFF_BASE_MS || '60000', 10) || 60000
+);
+const DEFAULT_RATE_LIMIT_BACKOFF_MAX_MS = Math.max(
+  DEFAULT_RATE_LIMIT_BACKOFF_BASE_MS,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BACKOFF_MAX_MS || '900000', 10) || 900000
+);
+const DEFAULT_RATE_LIMIT_BUCKET_CAPACITY = Math.max(
+  1,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY || '20', 10) || 20
+);
+const DEFAULT_RATE_LIMIT_BUCKET_REFILL_PER_SEC = Math.max(
+  1,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC || '4', 10) || 4
+);
+const DEFAULT_RATE_LIMIT_QUEUE_TIMEOUT_MS = Math.max(
+  100,
+  Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_QUEUE_TIMEOUT_MS || '5000', 10) || 5000
+);
+function resolveSharedRuntimePath(fileName) {
+  if (process.env.JEST_WORKER_ID) {
+    return path.join(os.tmpdir(), `squidrun-hyperliquid-client-jest-${process.pid}`, fileName);
+  }
+  return resolveCoordPath(path.join('runtime', fileName), { forWrite: true });
+}
+
+const DEFAULT_RATE_LIMIT_STATE_PATH = resolveSharedRuntimePath('hyperliquid-rate-limit-state.json');
+const DEFAULT_REQUEST_POOL_PATH = resolveSharedRuntimePath('hyperliquid-request-pool.json');
+const DEFAULT_REQUEST_POOL_LOCK_PATH = resolveSharedRuntimePath('hyperliquid-request-pool.lock');
 const REQUEST_POOL_STATE = {
   memory: new Map(),
   inflight: new Map(),
 };
+const RATE_LIMIT_STATE = {
+  memory: null,
+};
+const RATE_LIMIT_BUCKET = {
+  tokens: DEFAULT_RATE_LIMIT_BUCKET_CAPACITY,
+  capacity: DEFAULT_RATE_LIMIT_BUCKET_CAPACITY,
+  refillPerSec: DEFAULT_RATE_LIMIT_BUCKET_REFILL_PER_SEC,
+  lastRefillMs: Date.now(),
+  waiters: [],
+  tickTimer: null,
+};
+let HYPERLIQUID_SDK_PROMISE = null;
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -41,6 +95,10 @@ function toIsoTimestamp(value, fallback = null) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return fallback;
   return date.toISOString();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
 function normalizeSymbols(symbols = []) {
@@ -74,8 +132,16 @@ function normalizeCoinSymbol(ticker) {
   return normalizeCoinKey(ticker);
 }
 
-function createInfoClient(options = {}) {
+async function loadHyperliquidSdk() {
+  if (!HYPERLIQUID_SDK_PROMISE) {
+    HYPERLIQUID_SDK_PROMISE = import('@nktkas/hyperliquid');
+  }
+  return HYPERLIQUID_SDK_PROMISE;
+}
+
+async function createInfoClient(options = {}) {
   if (options.infoClient) return options.infoClient;
+  const { HttpTransport, InfoClient } = await loadHyperliquidSdk();
   const transport = options.transport || new HttpTransport();
   return new InfoClient({ transport });
 }
@@ -91,6 +157,9 @@ function resolveRequestPoolTtlMs(options = {}, cacheKey = '') {
   if (String(cacheKey).startsWith('info:clearinghouseState:')) {
     return DEFAULT_ACCOUNT_REQUEST_POOL_TTL_MS;
   }
+  if (String(cacheKey).startsWith('info:openOrders:')) {
+    return DEFAULT_ACCOUNT_REQUEST_POOL_TTL_MS;
+  }
   if (cacheKey === 'info:perpDexs') {
     return DEFAULT_ACCOUNT_REQUEST_POOL_TTL_MS;
   }
@@ -99,6 +168,67 @@ function resolveRequestPoolTtlMs(options = {}, cacheKey = '') {
 
 function resolveRequestPoolPath(options = {}) {
   return toText(options.requestPoolPath, DEFAULT_REQUEST_POOL_PATH);
+}
+
+function resolveRequestPoolLockPath(options = {}) {
+  return toText(options.requestPoolLockPath, DEFAULT_REQUEST_POOL_LOCK_PATH);
+}
+
+function resolveRequestPoolPendingTtlMs(options = {}) {
+  const ttlMs = Number.parseInt(options.requestPoolPendingTtlMs, 10);
+  if (Number.isFinite(ttlMs)) {
+    return Math.max(1000, ttlMs);
+  }
+  return DEFAULT_REQUEST_POOL_PENDING_TTL_MS;
+}
+
+function resolveRequestPoolLockTimeoutMs(options = {}) {
+  const timeoutMs = Number.parseInt(options.requestPoolLockTimeoutMs, 10);
+  if (Number.isFinite(timeoutMs)) {
+    return Math.max(250, timeoutMs);
+  }
+  return DEFAULT_REQUEST_POOL_LOCK_TIMEOUT_MS;
+}
+
+function resolveRequestPoolLockStaleMs(options = {}) {
+  const staleMs = Number.parseInt(options.requestPoolLockStaleMs, 10);
+  if (Number.isFinite(staleMs)) {
+    return Math.max(250, staleMs);
+  }
+  return DEFAULT_REQUEST_POOL_LOCK_STALE_MS;
+}
+
+function resolveRequestPoolWaitPollMs(options = {}) {
+  const pollMs = Number.parseInt(options.requestPoolWaitPollMs, 10);
+  if (Number.isFinite(pollMs)) {
+    return Math.max(25, pollMs);
+  }
+  return DEFAULT_REQUEST_POOL_WAIT_POLL_MS;
+}
+
+function resolveRateLimitStatePath(options = {}) {
+  return toText(options.rateLimitStatePath, DEFAULT_RATE_LIMIT_STATE_PATH);
+}
+
+function resolveRateLimitBackoffBaseMs(options = {}) {
+  const backoffMs = Number.parseInt(options.rateLimitBackoffBaseMs, 10);
+  if (Number.isFinite(backoffMs)) {
+    return Math.max(1000, backoffMs);
+  }
+  return DEFAULT_RATE_LIMIT_BACKOFF_BASE_MS;
+}
+
+function resolveRateLimitBackoffMaxMs(options = {}) {
+  const maxMs = Number.parseInt(options.rateLimitBackoffMaxMs, 10);
+  if (Number.isFinite(maxMs)) {
+    return Math.max(resolveRateLimitBackoffBaseMs(options), maxMs);
+  }
+  return DEFAULT_RATE_LIMIT_BACKOFF_MAX_MS;
+}
+
+function ensureDirectoryForFile(filePath) {
+  if (!filePath) return;
+  fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true });
 }
 
 function clonePooledValue(value) {
@@ -122,20 +252,335 @@ function readRequestPoolFile(filePath) {
   }
 }
 
+function normalizeRateLimitState(state = {}) {
+  const normalized = state && typeof state === 'object' ? state : {};
+  return {
+    consecutive429s: Math.max(0, toNumber(normalized.consecutive429s, 0)),
+    backoffUntil: toIsoTimestamp(normalized.backoffUntil, null),
+    last429At: toIsoTimestamp(normalized.last429At, null),
+    lastBackoffMs: Math.max(0, toNumber(normalized.lastBackoffMs, 0)),
+    lastError: toText(normalized.lastError, null),
+    lastSuccessAt: toIsoTimestamp(normalized.lastSuccessAt, null),
+    updatedAt: toIsoTimestamp(normalized.updatedAt, null),
+  };
+}
+
+function readRateLimitStateFile(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return normalizeRateLimitState({});
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.trim()) {
+      return normalizeRateLimitState({});
+    }
+    return normalizeRateLimitState(JSON.parse(raw));
+  } catch {
+    return normalizeRateLimitState({});
+  }
+}
+
+function getLatestRequestPoolCacheMs(options = {}) {
+  const filePath = resolveRequestPoolPath(options);
+  const payload = readRequestPoolFile(filePath);
+  let latestCachedAtMs = NaN;
+  for (const entry of Object.values(payload || {})) {
+    const cachedAtMs = Number(entry?.cachedAt);
+    if (Number.isFinite(cachedAtMs) && (!Number.isFinite(latestCachedAtMs) || cachedAtMs > latestCachedAtMs)) {
+      latestCachedAtMs = cachedAtMs;
+    }
+  }
+  return latestCachedAtMs;
+}
+
+function writeRateLimitStateFile(filePath, payload = {}) {
+  if (!filePath) return;
+  try {
+    ensureDirectoryForFile(filePath);
+    fs.writeFileSync(filePath, JSON.stringify(normalizeRateLimitState(payload), null, 2), 'utf8');
+  } catch {
+    // Ignore shared governor persistence failures and keep using memory state.
+  }
+}
+
+function reconcileRateLimitStateWithFreshPool(state = {}, options = {}) {
+  const normalized = normalizeRateLimitState(state);
+  if (!hasActiveRateLimitBackoff(normalized)) {
+    return normalized;
+  }
+  const latestCachedAtMs = getLatestRequestPoolCacheMs(options);
+  if (!Number.isFinite(latestCachedAtMs)) {
+    return normalized;
+  }
+  const last429AtMs = Date.parse(toText(normalized.last429At, ''));
+  if (Number.isFinite(last429AtMs) && latestCachedAtMs <= last429AtMs) {
+    return normalized;
+  }
+  return clearRateLimitBackoffState(normalized, latestCachedAtMs);
+}
+
+function readSharedRateLimitState(options = {}) {
+  const filePath = resolveRateLimitStatePath(options);
+  const sourceState = RATE_LIMIT_STATE.memory
+    ? normalizeRateLimitState(RATE_LIMIT_STATE.memory)
+    : readRateLimitStateFile(filePath);
+  const reconciledState = reconcileRateLimitStateWithFreshPool(sourceState, options);
+  RATE_LIMIT_STATE.memory = reconciledState;
+  if (JSON.stringify(reconciledState) !== JSON.stringify(sourceState)) {
+    writeRateLimitStateFile(filePath, reconciledState);
+  }
+  return normalizeRateLimitState(reconciledState);
+}
+
+function writeSharedRateLimitState(nextState = {}, options = {}) {
+  const normalized = normalizeRateLimitState({
+    ...nextState,
+    updatedAt: new Date().toISOString(),
+  });
+  RATE_LIMIT_STATE.memory = normalized;
+  writeRateLimitStateFile(resolveRateLimitStatePath(options), normalized);
+  return normalized;
+}
+
+function hasActiveRateLimitBackoff(state = {}, nowMs = Date.now()) {
+  const backoffUntilMs = Date.parse(toText(state?.backoffUntil, ''));
+  return Number.isFinite(backoffUntilMs) && backoffUntilMs > nowMs;
+}
+
+function isRateLimitError(error) {
+  const message = String(error?.stack || error?.message || error || '').toLowerCase();
+  return (
+    message.includes('429')
+    || message.includes('too many requests')
+    || message.includes('too many connections')
+    || message.includes('rate limit')
+    || message.includes('rate-limited')
+  );
+}
+
+function buildRateLimitBackoffState(previousState = {}, options = {}, error = null, nowMs = Date.now()) {
+  const consecutive429s = Math.max(0, toNumber(previousState?.consecutive429s, 0)) + 1;
+  const baseBackoffMs = resolveRateLimitBackoffBaseMs(options);
+  const maxBackoffMs = resolveRateLimitBackoffMaxMs(options);
+  const nextBackoffMs = Math.min(
+    maxBackoffMs,
+    baseBackoffMs * (2 ** Math.max(0, consecutive429s - 1))
+  );
+  return {
+    consecutive429s,
+    backoffUntil: new Date(nowMs + nextBackoffMs).toISOString(),
+    last429At: new Date(nowMs).toISOString(),
+    lastBackoffMs: nextBackoffMs,
+    lastError: toText(error?.message || error, '429'),
+    lastSuccessAt: previousState?.lastSuccessAt || null,
+  };
+}
+
+function clearRateLimitBackoffState(previousState = {}, nowMs = Date.now()) {
+  return {
+    ...normalizeRateLimitState(previousState),
+    consecutive429s: 0,
+    backoffUntil: null,
+    lastBackoffMs: 0,
+    lastError: null,
+    lastSuccessAt: new Date(nowMs).toISOString(),
+    updatedAt: new Date(nowMs).toISOString(),
+  };
+}
+
+function buildActiveBackoffError(state = {}) {
+  const backoffUntil = toText(state?.backoffUntil, '');
+  const error = new Error(
+    backoffUntil
+      ? `Hyperliquid shared rate-limit backoff active until ${backoffUntil}`
+      : 'Hyperliquid shared rate-limit backoff active'
+  );
+  error.code = 'HL_RATE_LIMIT_BACKOFF';
+  error.rateLimitState = normalizeRateLimitState(state);
+  return error;
+}
+
+function refillRateLimitBucket(now = Date.now()) {
+  const elapsedMs = now - RATE_LIMIT_BUCKET.lastRefillMs;
+  if (elapsedMs <= 0) return;
+  const added = (elapsedMs / 1000) * RATE_LIMIT_BUCKET.refillPerSec;
+  RATE_LIMIT_BUCKET.tokens = Math.min(
+    RATE_LIMIT_BUCKET.capacity,
+    RATE_LIMIT_BUCKET.tokens + added
+  );
+  RATE_LIMIT_BUCKET.lastRefillMs = now;
+  while (RATE_LIMIT_BUCKET.waiters.length > 0 && RATE_LIMIT_BUCKET.tokens >= 1) {
+    const waiter = RATE_LIMIT_BUCKET.waiters.shift();
+    RATE_LIMIT_BUCKET.tokens -= 1;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    waiter.resolve();
+  }
+}
+
+function scheduleRateLimitBucketTick() {
+  if (RATE_LIMIT_BUCKET.tickTimer) return;
+  const tickMs = Math.max(50, Math.ceil(1000 / Math.max(1, RATE_LIMIT_BUCKET.refillPerSec)));
+  RATE_LIMIT_BUCKET.tickTimer = setTimeout(() => {
+    RATE_LIMIT_BUCKET.tickTimer = null;
+    refillRateLimitBucket();
+    if (RATE_LIMIT_BUCKET.waiters.length > 0) {
+      scheduleRateLimitBucketTick();
+    }
+  }, tickMs);
+  if (RATE_LIMIT_BUCKET.tickTimer && typeof RATE_LIMIT_BUCKET.tickTimer.unref === 'function') {
+    RATE_LIMIT_BUCKET.tickTimer.unref();
+  }
+}
+
+function acquireRateLimitToken(options = {}) {
+  if (options.bypassRateLimitBucket === true) return Promise.resolve();
+  if (options.disableRateLimitGovernor === true) return Promise.resolve();
+  refillRateLimitBucket();
+  if (RATE_LIMIT_BUCKET.tokens >= 1 && RATE_LIMIT_BUCKET.waiters.length === 0) {
+    RATE_LIMIT_BUCKET.tokens -= 1;
+    return Promise.resolve();
+  }
+  const timeoutMs = Number.isFinite(Number(options.rateLimitQueueTimeoutMs))
+    ? Number(options.rateLimitQueueTimeoutMs)
+    : DEFAULT_RATE_LIMIT_QUEUE_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, reject, timer: null };
+    waiter.timer = setTimeout(() => {
+      const idx = RATE_LIMIT_BUCKET.waiters.indexOf(waiter);
+      if (idx >= 0) RATE_LIMIT_BUCKET.waiters.splice(idx, 1);
+      const err = new Error(`Hyperliquid rate-limit queue timeout after ${timeoutMs}ms`);
+      err.code = 'rate_limit_queue_timeout';
+      reject(err);
+    }, timeoutMs);
+    RATE_LIMIT_BUCKET.waiters.push(waiter);
+    scheduleRateLimitBucketTick();
+  });
+}
+
+function resetRateLimitBucket() {
+  while (RATE_LIMIT_BUCKET.waiters.length > 0) {
+    const waiter = RATE_LIMIT_BUCKET.waiters.shift();
+    if (waiter.timer) clearTimeout(waiter.timer);
+    waiter.reject(new Error('rate_limit_bucket_reset'));
+  }
+  if (RATE_LIMIT_BUCKET.tickTimer) {
+    clearTimeout(RATE_LIMIT_BUCKET.tickTimer);
+    RATE_LIMIT_BUCKET.tickTimer = null;
+  }
+  RATE_LIMIT_BUCKET.tokens = RATE_LIMIT_BUCKET.capacity;
+  RATE_LIMIT_BUCKET.lastRefillMs = Date.now();
+}
+
+async function executeSharedRateLimitedRequest(label, requestFactory, options = {}) {
+  if (typeof requestFactory !== 'function') {
+    throw new Error(`Hyperliquid request "${label}" is missing a request factory.`);
+  }
+  if (options.disableRateLimitGovernor !== true) {
+    const currentState = readSharedRateLimitState(options);
+    if (hasActiveRateLimitBackoff(currentState)) {
+      throw buildActiveBackoffError(currentState);
+    }
+  }
+  await acquireRateLimitToken(options);
+  try {
+    const payload = await requestFactory();
+    if (options.disableRateLimitGovernor !== true) {
+      writeSharedRateLimitState(clearRateLimitBackoffState(readSharedRateLimitState(options)), options);
+    }
+    return payload;
+  } catch (error) {
+    if (options.disableRateLimitGovernor !== true && isRateLimitError(error)) {
+      const nextState = writeSharedRateLimitState(
+        buildRateLimitBackoffState(readSharedRateLimitState(options), options, error),
+        options
+      );
+      error.rateLimitState = nextState;
+    }
+    throw error;
+  }
+}
+
 function writeRequestPoolFile(filePath, payload = {}) {
   if (!filePath) return;
   try {
-    const directory = path.dirname(filePath);
-    fs.mkdirSync(directory, { recursive: true });
+    ensureDirectoryForFile(filePath);
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
   } catch {
     // Ignore pooling write failures and fall back to memory-only dedupe.
   }
 }
 
+async function withRequestPoolLock(options = {}, callback = async () => undefined) {
+  const lockPath = resolveRequestPoolLockPath(options);
+  const timeoutMs = resolveRequestPoolLockTimeoutMs(options);
+  const staleMs = resolveRequestPoolLockStaleMs(options);
+  const startedAt = Date.now();
+  const retryDelayMs = resolveRequestPoolWaitPollMs(options);
+  ensureDirectoryForFile(lockPath);
+
+  while ((Date.now() - startedAt) <= timeoutMs) {
+    let fd = null;
+    try {
+      fd = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(fd, String(process.pid), 'utf8');
+      try {
+        return await callback();
+      } finally {
+        try {
+          if (fd != null) fs.closeSync(fd);
+        } catch {}
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {}
+      }
+    } catch (error) {
+      try {
+        if (fd != null) fs.closeSync(fd);
+      } catch {}
+      if (error?.code !== 'EEXIST') {
+        throw error;
+      }
+      try {
+        const stats = fs.statSync(lockPath);
+        if ((Date.now() - stats.mtimeMs) > staleMs) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {}
+      await sleep(retryDelayMs);
+    }
+  }
+
+  throw new Error(`Hyperliquid request pool lock timeout after ${timeoutMs}ms`);
+}
+
 function isFreshRequestPoolEntry(entry, ttlMs, now = Date.now()) {
   const cachedAt = Number(entry?.cachedAt);
   return Number.isFinite(cachedAt) && ttlMs > 0 && (now - cachedAt) <= ttlMs;
+}
+
+function isPendingRequestPoolEntry(entry, now = Date.now()) {
+  const pendingUntil = Number(entry?.pendingUntilMs);
+  return Number.isFinite(pendingUntil) && pendingUntil > now;
+}
+
+function buildPendingRequestPoolEntry(existingEntry = {}, options = {}) {
+  const now = Date.now();
+  return {
+    ...((existingEntry && typeof existingEntry === 'object') ? existingEntry : {}),
+    pendingAtMs: now,
+    pendingUntilMs: now + resolveRequestPoolPendingTtlMs(options),
+    pendingBy: process.pid,
+  };
+}
+
+function clearPendingRequestPoolEntry(entry = {}) {
+  if (!entry || typeof entry !== 'object') return entry;
+  const next = { ...entry };
+  delete next.pendingAtMs;
+  delete next.pendingUntilMs;
+  delete next.pendingBy;
+  return next;
 }
 
 function readFreshRequestPoolEntry(cacheKey, options = {}) {
@@ -154,7 +599,7 @@ function readFreshRequestPoolEntry(cacheKey, options = {}) {
     REQUEST_POOL_STATE.memory.set(cacheKey, fileEntry);
     return clonePooledValue(fileEntry.value);
   }
-  if (fileEntry) {
+  if (fileEntry && !isPendingRequestPoolEntry(fileEntry, now)) {
     delete payload[cacheKey];
     writeRequestPoolFile(filePath, payload);
   }
@@ -163,15 +608,24 @@ function readFreshRequestPoolEntry(cacheKey, options = {}) {
 
 function readAnyRequestPoolEntry(cacheKey, options = {}) {
   const memoryEntry = REQUEST_POOL_STATE.memory.get(cacheKey);
+  const maxStaleMs = Number.isFinite(Number(options.maxStaleMs)) ? Number(options.maxStaleMs) : 5 * 60 * 1000;
+  const now = Date.now();
+
   if (memoryEntry && Object.prototype.hasOwnProperty.call(memoryEntry, 'value')) {
-    return clonePooledValue(memoryEntry.value);
+    const cachedAt = Number(memoryEntry.cachedAt);
+    if (Number.isFinite(cachedAt) && (now - cachedAt) <= maxStaleMs) {
+      return clonePooledValue(memoryEntry.value);
+    }
   }
   const filePath = resolveRequestPoolPath(options);
   const payload = readRequestPoolFile(filePath);
   const fileEntry = payload?.[cacheKey];
   if (fileEntry && Object.prototype.hasOwnProperty.call(fileEntry, 'value')) {
-    REQUEST_POOL_STATE.memory.set(cacheKey, fileEntry);
-    return clonePooledValue(fileEntry.value);
+    const cachedAt = Number(fileEntry.cachedAt);
+    if (Number.isFinite(cachedAt) && (now - cachedAt) <= maxStaleMs) {
+      REQUEST_POOL_STATE.memory.set(cacheKey, fileEntry);
+      return clonePooledValue(fileEntry.value);
+    }
   }
   return null;
 }
@@ -179,15 +633,91 @@ function readAnyRequestPoolEntry(cacheKey, options = {}) {
 function writeRequestPoolEntry(cacheKey, value, options = {}) {
   const ttlMs = resolveRequestPoolTtlMs(options, cacheKey);
   if (ttlMs <= 0) return;
-  const entry = {
+  const entry = clearPendingRequestPoolEntry({
     cachedAt: Date.now(),
     value: clonePooledValue(value),
-  };
+  });
   REQUEST_POOL_STATE.memory.set(cacheKey, entry);
   const filePath = resolveRequestPoolPath(options);
   const payload = readRequestPoolFile(filePath);
   payload[cacheKey] = entry;
   writeRequestPoolFile(filePath, payload);
+  if (options.disableRateLimitGovernor !== true) {
+    const currentRateLimitState = readSharedRateLimitState(options);
+    if (hasActiveRateLimitBackoff(currentRateLimitState)) {
+      writeSharedRateLimitState(clearRateLimitBackoffState(currentRateLimitState, entry.cachedAt), options);
+    }
+  }
+}
+
+async function reserveCrossProcessRequestPoolSlot(cacheKey, options = {}) {
+  const filePath = resolveRequestPoolPath(options);
+  const staleFallback = readAnyRequestPoolEntry(cacheKey, options);
+  return withRequestPoolLock(options, async () => {
+    const payload = readRequestPoolFile(filePath);
+    const fileEntry = payload?.[cacheKey];
+    const freshEntry = isFreshRequestPoolEntry(fileEntry, resolveRequestPoolTtlMs(options, cacheKey))
+      ? fileEntry
+      : null;
+    if (freshEntry) {
+      REQUEST_POOL_STATE.memory.set(cacheKey, freshEntry);
+      return {
+        action: 'cached',
+        cachedValue: clonePooledValue(freshEntry.value),
+      };
+    }
+    if (isPendingRequestPoolEntry(fileEntry)) {
+      return {
+        action: 'wait',
+        staleFallback,
+      };
+    }
+    payload[cacheKey] = buildPendingRequestPoolEntry(fileEntry, options);
+    writeRequestPoolFile(filePath, payload);
+    return {
+      action: 'produce',
+      staleFallback,
+    };
+  });
+}
+
+async function waitForCrossProcessRequestPoolResolution(cacheKey, options = {}, staleFallback = null) {
+  const deadlineMs = Date.now() + resolveRequestPoolPendingTtlMs(options);
+  const pollMs = resolveRequestPoolWaitPollMs(options);
+  while (Date.now() <= deadlineMs) {
+    const cached = readFreshRequestPoolEntry(cacheKey, options);
+    if (cached != null) {
+      return cached;
+    }
+    const filePath = resolveRequestPoolPath(options);
+    const payload = readRequestPoolFile(filePath);
+    const fileEntry = payload?.[cacheKey];
+    if (!isPendingRequestPoolEntry(fileEntry)) {
+      break;
+    }
+    await sleep(pollMs);
+  }
+  if (staleFallback != null) {
+    return staleFallback;
+  }
+  return null;
+}
+
+async function clearCrossProcessPendingRequest(cacheKey, options = {}) {
+  const filePath = resolveRequestPoolPath(options);
+  await withRequestPoolLock(options, async () => {
+    const payload = readRequestPoolFile(filePath);
+    const fileEntry = payload?.[cacheKey];
+    if (!fileEntry) {
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(fileEntry, 'value')) {
+      payload[cacheKey] = clearPendingRequestPoolEntry(fileEntry);
+    } else {
+      delete payload[cacheKey];
+    }
+    writeRequestPoolFile(filePath, payload);
+  }).catch(() => {});
 }
 
 async function getPooledRequest(cacheKey, producer, options = {}) {
@@ -195,6 +725,15 @@ async function getPooledRequest(cacheKey, producer, options = {}) {
     return producer();
   }
   const staleFallback = readAnyRequestPoolEntry(cacheKey, options);
+  if (options.disableRateLimitGovernor !== true) {
+    const rateLimitState = readSharedRateLimitState(options);
+    if (hasActiveRateLimitBackoff(rateLimitState)) {
+      if (staleFallback != null && options.allowStaleOnRateLimit !== false) {
+        return staleFallback;
+      }
+      throw buildActiveBackoffError(rateLimitState);
+    }
+  }
   const cached = readFreshRequestPoolEntry(cacheKey, options);
   if (cached != null) {
     return cached;
@@ -203,9 +742,34 @@ async function getPooledRequest(cacheKey, producer, options = {}) {
     return REQUEST_POOL_STATE.inflight.get(cacheKey);
   }
   const pending = Promise.resolve()
-    .then(producer)
+    .then(async () => {
+      const slot = await reserveCrossProcessRequestPoolSlot(cacheKey, options);
+      if (slot?.action === 'cached') {
+        return slot.cachedValue;
+      }
+      if (slot?.action === 'wait') {
+        const resolvedValue = await waitForCrossProcessRequestPoolResolution(
+          cacheKey,
+          options,
+          slot.staleFallback
+        );
+        if (resolvedValue != null) {
+          return resolvedValue;
+        }
+      }
+      try {
+        const value = await producer();
+        writeRequestPoolEntry(cacheKey, value, options);
+        return clonePooledValue(value);
+      } catch (error) {
+        await clearCrossProcessPendingRequest(cacheKey, options);
+        if (slot?.staleFallback != null) {
+          return slot.staleFallback;
+        }
+        throw error;
+      }
+    })
     .then((value) => {
-      writeRequestPoolEntry(cacheKey, value, options);
       return clonePooledValue(value);
     })
     .catch((error) => {
@@ -271,21 +835,27 @@ async function postInfoRequest(payload = {}, options = {}) {
   if (typeof fetchImpl !== 'function') {
     throw new Error('Fetch implementation is unavailable for Hyperliquid info requests.');
   }
-  const response = await fetchImpl(options.infoEndpoint || 'https://api.hyperliquid.xyz/info', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
+  return executeSharedRateLimitedRequest(
+    `info:${toText(payload?.type, 'unknown')}`,
+    async () => {
+      const response = await fetchImpl(options.infoEndpoint || 'https://api.hyperliquid.xyz/info', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(`Hyperliquid info request failed with status ${response.status}`);
+      }
+      return response.json();
     },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(`Hyperliquid info request failed with status ${response.status}`);
-  }
-  return response.json();
+    options
+  );
 }
 
 async function getAllMids(options = {}) {
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.allMids === 'function') {
     return getPooledRequest('info:allMids', async () => {
       const payload = await client.allMids();
@@ -305,7 +875,7 @@ async function getAllMids(options = {}) {
 }
 
 async function getMetaAndAssetCtxs(options = {}) {
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.metaAndAssetCtxs === 'function') {
     return getPooledRequest('info:metaAndAssetCtxs', async () => {
       const payload = await client.metaAndAssetCtxs();
@@ -334,11 +904,15 @@ async function getUserFees(options = {}) {
     toText(options.walletAddress, resolveWalletAddress(options.env || process.env))
   );
   if (!user) {
-    throw new Error('Hyperliquid user address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
+    throw new Error('Hyperliquid user address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
   }
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.userFees === 'function') {
-    return client.userFees({ user });
+    return executeSharedRateLimitedRequest(
+      `info:userFees:${user.toLowerCase()}`,
+      () => client.userFees({ user }),
+      options
+    );
   }
   return postInfoRequest({ type: 'userFees', user }, options);
 }
@@ -352,9 +926,13 @@ async function getPerpDexs(options = {}) {
   if (options.perpDexs) {
     return Array.isArray(options.perpDexs) ? options.perpDexs : [];
   }
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   if (client && typeof client.perpDexs === 'function') {
-    return getPooledRequest('info:perpDexs', () => client.perpDexs(), options);
+    return getPooledRequest(
+      'info:perpDexs',
+      () => executeSharedRateLimitedRequest('info:perpDexs', () => client.perpDexs(), options),
+      options
+    );
   }
   return getPooledRequest('info:perpDexs', () => postInfoRequest({ type: 'perpDexs' }, options), options);
 }
@@ -584,7 +1162,7 @@ function normalizeUserVaultEquitiesPayload(user, payload = [], asOf = new Date()
 
 async function getSnapshots(options = {}) {
   const entries = resolveWatchlistEntries(options);
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const mids = await getAllMids(options);
   const metaAndAssetCtxs = await getMetaAndAssetCtxs(options).catch(() => null);
   const checkedAt = new Date().toISOString();
@@ -594,19 +1172,23 @@ async function getSnapshots(options = {}) {
     const coin = await resolveCanonicalCoinSymbol(ticker, { ...options, metaAndAssetCtxs });
     const coinKey = normalizeCoinKey(coin);
     if (!coin) return [ticker, buildSnapshotFromMarketData(ticker, null, [], checkedAt)];
-    const candles = await client.candleSnapshot({
-      coin,
-      interval: '1d',
-      startTime,
-      endTime: Date.now(),
-    }).catch(() => []);
+    const candles = await executeSharedRateLimitedRequest(
+      `info:candleSnapshot:${coin}:1d`,
+      () => client.candleSnapshot({
+        coin,
+        interval: '1d',
+        startTime,
+        endTime: Date.now(),
+      }),
+      options
+    ).catch(() => []);
     return [ticker, buildSnapshotFromMarketData(ticker, mids?.[coin] || mids?.[coinKey] || null, candles, checkedAt)];
   }));
   return new Map(snapshots);
 }
 
 async function getHistoricalBars(options = {}) {
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const entries = resolveWatchlistEntries(options);
   const metaAndAssetCtxs = await getMetaAndAssetCtxs(options).catch(() => null);
   const interval = resolveCandleInterval(options.timeframe || '1Day');
@@ -620,12 +1202,16 @@ async function getHistoricalBars(options = {}) {
     const ticker = toText(entry?.ticker);
     const coin = await resolveCanonicalCoinSymbol(ticker, { ...options, metaAndAssetCtxs });
     if (!coin) return [ticker, []];
-    const candles = await client.candleSnapshot({
-      coin,
-      interval,
-      startTime,
-      endTime,
-    }).catch(() => []);
+    const candles = await executeSharedRateLimitedRequest(
+      `info:candleSnapshot:${coin}:${interval}`,
+      () => client.candleSnapshot({
+        coin,
+        interval,
+        startTime,
+        endTime,
+      }),
+      options
+    ).catch(() => []);
     const bars = Array.isArray(candles)
       ? candles.slice(-limit).map((candle) => normalizeBar(ticker, candle))
       : [];
@@ -646,7 +1232,7 @@ async function getLatestBars(options = {}) {
   return latest;
 }
 
-function normalizeUniverseAsset(asset = {}, ctx = {}, mids = {}) {
+function normalizeUniverseAsset(asset = {}, ctx = {}, mids = {}, index = null) {
   const coin = toText(asset?.name || asset?.coin || asset);
   if (!coin) return null;
   const ticker = `${coin}/USD`;
@@ -660,7 +1246,7 @@ function normalizeUniverseAsset(asset = {}, ctx = {}, mids = {}) {
     ticker,
     coinKey,
     tickerKey: `${coinKey}/USD`,
-    assetIndex: Number.isFinite(Number(asset?.szDecimals)) ? Number(asset?.szDecimals) : null,
+    assetIndex: Number.isFinite(Number(index)) && Number(index) >= 0 ? Number(index) : null,
     sizeDecimals: Number.isFinite(Number(asset?.szDecimals)) ? Number(asset?.szDecimals) : null,
     price: tradePrice || null,
     midPx: midPx || null,
@@ -691,16 +1277,20 @@ async function getUniverseMarketData(options = {}) {
   const universe = Array.isArray(meta?.universe) ? meta.universe : [];
   const contexts = Array.isArray(assetCtxs) ? assetCtxs : [];
   return universe
-    .map((asset, index) => normalizeUniverseAsset(asset, contexts[index] || {}, mids || {}))
+    .map((asset, index) => normalizeUniverseAsset(asset, contexts[index] || {}, mids || {}, index))
     .filter(Boolean);
 }
 
 async function getPredictedFundings(options = {}) {
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const payload = options.predictedFundings
     || (client && typeof client.predictedFundings === 'function'
-      ? await getPooledRequest('info:predictedFundings', () => client.predictedFundings(), options).catch(() => null)
+      ? await getPooledRequest(
+        'info:predictedFundings',
+        () => executeSharedRateLimitedRequest('info:predictedFundings', () => client.predictedFundings(), options),
+        options
+      ).catch(() => null)
       : null)
     || await getPooledRequest(
       'info:predictedFundings',
@@ -717,7 +1307,7 @@ async function getL2Book(options = {}) {
     throw new Error('Hyperliquid l2Book request requires coin or ticker.');
   }
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const params = {
     coin,
     ...(options.nSigFigs != null ? { nSigFigs: Number(options.nSigFigs) } : {}),
@@ -725,7 +1315,11 @@ async function getL2Book(options = {}) {
   };
   const payload = options.l2Book
     || (client && typeof client.l2Book === 'function'
-      ? await client.l2Book(params).catch(() => null)
+      ? await executeSharedRateLimitedRequest(
+        `info:l2Book:${coin}`,
+        () => client.l2Book(params),
+        options
+      ).catch(() => null)
       : null)
     || await postInfoRequest({ type: 'l2Book', ...params }, options);
   return normalizeL2BookPayload(coin, payload, asOf);
@@ -737,14 +1331,18 @@ async function getVaultDetails(options = {}) {
     throw new Error('Hyperliquid vaultDetails request requires vaultAddress.');
   }
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const params = {
     vaultAddress,
     ...(toText(options.user) ? { user: toText(options.user) } : {}),
   };
   const payload = options.vaultDetails
     || (client && typeof client.vaultDetails === 'function'
-      ? await client.vaultDetails(params).catch(() => null)
+      ? await executeSharedRateLimitedRequest(
+        `info:vaultDetails:${vaultAddress.toLowerCase()}`,
+        () => client.vaultDetails(params),
+        options
+      ).catch(() => null)
       : null)
     || await postInfoRequest({ type: 'vaultDetails', ...params }, options);
   return normalizeVaultDetailsPayload(vaultAddress, payload, asOf);
@@ -756,11 +1354,15 @@ async function getUserVaultEquities(options = {}) {
     throw new Error('Hyperliquid userVaultEquities request requires user or walletAddress.');
   }
   const asOf = new Date().toISOString();
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const params = { user };
   const payload = options.userVaultEquities
     || (client && typeof client.userVaultEquities === 'function'
-      ? await client.userVaultEquities(params).catch(() => null)
+      ? await executeSharedRateLimitedRequest(
+        `info:userVaultEquities:${user.toLowerCase()}`,
+        () => client.userVaultEquities(params),
+        options
+      ).catch(() => null)
       : null)
     || await postInfoRequest({ type: 'userVaultEquities', ...params }, options);
   return normalizeUserVaultEquitiesPayload(user, payload, asOf);
@@ -770,7 +1372,6 @@ function resolveWalletAddress(env = process.env) {
   return toText(
     env.HYPERLIQUID_WALLET_ADDRESS
     || env.HYPERLIQUID_ADDRESS
-    || env.POLYMARKET_FUNDER_ADDRESS
   );
 }
 
@@ -780,16 +1381,44 @@ async function getClearinghouseState(options = {}) {
   }
   const walletAddress = toText(options.walletAddress, resolveWalletAddress(options.env || process.env));
   if (!walletAddress) {
-    throw new Error('Hyperliquid wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
+    throw new Error('Hyperliquid wallet address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
   }
-  const client = createInfoClient(options);
+  const client = await createInfoClient(options);
   const dex = normalizeDexName(options.dex, '');
   return getPooledRequest(
     `info:clearinghouseState:${walletAddress.toLowerCase()}:${dex || 'main'}`,
-    () => client.clearinghouseState({
-      user: walletAddress,
-      ...(dex ? { dex } : {}),
-    }),
+    () => executeSharedRateLimitedRequest(
+      `info:clearinghouseState:${walletAddress.toLowerCase()}:${dex || 'main'}`,
+      () => client.clearinghouseState({
+        user: walletAddress,
+        ...(dex ? { dex } : {}),
+      }),
+      options
+    ),
+    options
+  );
+}
+
+async function getOpenOrders(options = {}) {
+  if (options.openOrders) {
+    return Array.isArray(options.openOrders) ? options.openOrders : [];
+  }
+  const walletAddress = toText(options.walletAddress, resolveWalletAddress(options.env || process.env));
+  if (!walletAddress) {
+    throw new Error('Hyperliquid wallet address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
+  }
+  const client = await createInfoClient(options);
+  const dex = normalizeDexName(options.dex, '');
+  return getPooledRequest(
+    `info:openOrders:${walletAddress.toLowerCase()}:${dex || 'main'}`,
+    () => executeSharedRateLimitedRequest(
+      `info:openOrders:${walletAddress.toLowerCase()}:${dex || 'main'}`,
+      () => client.openOrders({
+        user: walletAddress,
+        ...(dex ? { dex } : {}),
+      }),
+      options
+    ),
     options
   );
 }
@@ -797,7 +1426,7 @@ async function getClearinghouseState(options = {}) {
 async function getAllClearinghouseStates(options = {}) {
   const walletAddress = toText(options.walletAddress, resolveWalletAddress(options.env || process.env));
   if (!walletAddress) {
-    throw new Error('Hyperliquid wallet address is missing. Set POLYMARKET_FUNDER_ADDRESS or HYPERLIQUID_WALLET_ADDRESS.');
+    throw new Error('Hyperliquid wallet address is missing. Set HYPERLIQUID_WALLET_ADDRESS.');
   }
   const perpDexs = options.includePerpDexs === false && !options.dex && !Array.isArray(options.dexNames)
     ? []
@@ -893,19 +1522,35 @@ async function getOpenPositions(options = {}) {
 function resetRequestPoolState() {
   REQUEST_POOL_STATE.memory.clear();
   REQUEST_POOL_STATE.inflight.clear();
+  RATE_LIMIT_STATE.memory = null;
+  HYPERLIQUID_SDK_PROMISE = null;
+  resetRateLimitBucket();
+  for (const filePath of [DEFAULT_RATE_LIMIT_STATE_PATH, DEFAULT_REQUEST_POOL_PATH, DEFAULT_REQUEST_POOL_LOCK_PATH]) {
+    try {
+      if (filePath && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch {}
+  }
 }
 
 module.exports = {
   __resetRequestPoolState: resetRequestPoolState,
+  __resetRateLimitBucket: resetRateLimitBucket,
+  __readSharedRateLimitState: readSharedRateLimitState,
+  __writeSharedRateLimitState: writeSharedRateLimitState,
+  acquireRateLimitToken,
   createInfoClient,
   getAllMids,
   getMetaAndAssetCtxs,
   getUserFees,
   getPredictedFundings,
   getL2Book,
+  getOpenOrders,
   getVaultDetails,
   getUserVaultEquities,
   getPerpDexs,
+  getClearinghouseState,
   getAllClearinghouseStates,
   getUniverseMarketData,
   getSnapshots,
@@ -921,6 +1566,7 @@ module.exports = {
   normalizeUserVaultEquitiesPayload,
   normalizeCoinKey,
   normalizeCoinSymbol,
+  isRateLimitError,
   postInfoRequest,
   resolveCanonicalCoinSymbol,
   resolveWalletAddress,

@@ -16,25 +16,22 @@ const consultationStore = require('./consultation-store');
 const riskEngine = require('./risk-engine');
 const executor = require('./executor');
 const journal = require('./journal');
-const polymarketScanner = require('./polymarket-scanner');
-const polymarketSignals = require('./polymarket-signals');
-const polymarketSizer = require('./polymarket-sizer');
 const portfolioTracker = require('./portfolio-tracker');
 const macroRiskGate = require('./macro-risk-gate');
 const tradingScheduler = require('./scheduler');
 const signalProducer = require('./signal-producer');
 const telegramSummary = require('./telegram-summary');
-const yieldRouterModule = require('./yield-router');
 const cryptoMechBoard = require('./crypto-mech-board');
 const eventVeto = require('./event-veto');
 const consensusSizer = require('./consensus-sizer');
 const positionManagement = require('./position-management');
+const bracketManager = require('./bracket-manager');
 const signalValidationRecorder = require('./signal-validation-recorder');
+const hyperliquidClient = require('./hyperliquid-client');
 const hyperliquidNativeLayer = require('./hyperliquid-native-layer');
 const multiTimeframeConfirmation = require('./multi-timeframe-confirmation');
 const {
 	STRATEGY_MODES,
-	buildBrokerCapabilityPayload,
 	deriveCrisisRiskLimits,
 	estimateCrisisBookExposure,
 	getCrisisUniverse,
@@ -61,16 +58,14 @@ const DEFAULT_LIVE_EQUITY_LIMITS = Object.freeze({
 	maxPositionPct: DEFAULT_LIVE_MAX_POSITION_PCT,
 });
 const DEFAULT_RECENT_TRADE_SCAN = 250;
-const DEFAULT_ACTIVE_TRADING_RATIO = 0.4;
-const DEFAULT_YIELD_ROUTER_RATIO = yieldRouterModule.DEFAULT_YIELD_TARGET_RATIO || 0.35;
-const DEFAULT_RESERVE_RATIO = yieldRouterModule.DEFAULT_RESERVE_RATIO || 0.2;
-const DEFAULT_LAUNCH_RADAR_RATIO = yieldRouterModule.DEFAULT_LAUNCH_RADAR_ALLOCATION_RATIO || 0.05;
 const DEFAULT_DEFI_MONITOR_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_DEFI_MONITOR_TIMEOUT_MS = 30_000;
 const DEFAULT_AUTO_EXECUTE_MIN_CONFIDENCE = 0.6;
 const DEFAULT_HYPERLIQUID_AUTO_LEVERAGE = 5;
 const DEFAULT_HYPERLIQUID_SCALP_LEVERAGE = 20;
 const DEFAULT_HYPERLIQUID_AUTO_OPEN_ENABLED = false;
+const DEFAULT_SMALL_WALLET_SINGLE_NAME_MAX_EQUITY = 1000;
+const AUTONOMOUS_MAJOR_CRYPTO_TICKERS = Object.freeze(['BTC/USD', 'ETH/USD', 'SOL/USD']);
 const DEFAULT_HYPERLIQUID_EXECUTION_RETRIES = Math.max(
 	0,
 	Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_EXECUTION_RETRIES || '2', 10) || 2
@@ -199,9 +194,6 @@ function toPositiveQuantity(value, assetClass = 'us_equity') {
 	if (normalizedAssetClass === 'crypto') {
 		return Number(numeric.toFixed(6));
 	}
-	if (normalizedAssetClass === 'prediction_market') {
-		return Number(numeric.toFixed(4));
-	}
 	return toPositiveInteger(numeric);
 }
 
@@ -209,16 +201,24 @@ function resolveAssetClassForTicker(ticker, fallback = 'us_equity') {
 	return watchlist.getAssetClassForTicker(ticker, fallback);
 }
 
-function isPolymarketMode(options = {}) {
-	const explicit = String(options.broker || options.marketType || options.market_type || '').trim().toLowerCase();
-	if (explicit === 'polymarket') return true;
-	return String(options.assetClass || options.asset_class || '').trim().toLowerCase() === 'prediction_market';
+function ensureSignalTickerTracked(ticker) {
+	const normalizedTicker = toTicker(ticker);
+	if (!normalizedTicker) return false;
+	if (watchlist.isWatched(normalizedTicker)) return true;
+	if (!/\/USD$/i.test(normalizedTicker)) return false;
+	if (resolveAssetClassForTicker(normalizedTicker, 'us_equity') !== 'crypto') return false;
+	return watchlist.addToWatchlist(
+		normalizedTicker,
+		normalizedTicker,
+		'Crypto',
+		'CRYPTO',
+		'hyperliquid',
+		'crypto'
+	);
 }
 
 function toJournalDecision(value) {
 	const normalized = String(value || '').trim().toUpperCase();
-	if (normalized === 'BUY_YES') return 'BUY';
-	if (normalized === 'BUY_NO') return 'SELL';
 	return toDirection(normalized);
 }
 
@@ -235,24 +235,6 @@ function buildSmartMoneyReason(signal = {}) {
 	const totalUsdValue = Math.round(toNumber(signal.totalUsdValue, 0));
 	const chain = String(signal.chain || 'unknown').trim().toUpperCase();
 	return `Wallet convergence: ${wallets} wallets on ${chain}, ~$${totalUsdValue.toLocaleString('en-US')} total flow`;
-}
-
-function resolveLaunchRadarExchange(token = {}) {
-	const chain = String(token.chain || 'solana').trim().toLowerCase();
-	return chain === 'base' ? 'BASE' : 'SOLANA';
-}
-
-function buildLaunchRadarReason(token = {}) {
-	const chain = String(token.chain || 'unknown').trim().toUpperCase();
-	const liquidityUsd = Math.round(toNumber(token.liquidityUsd, 0));
-	const holders = toPositiveInteger(token.holders || token.holderCount || 0);
-	const recommendation = String(token.audit?.recommendation || 'proceed').trim().toLowerCase();
-	return `Launch radar: ${chain} token with ~$${liquidityUsd.toLocaleString('en-US')} liquidity, ${holders} holders, audit=${recommendation}`;
-}
-
-function resolveLaunchRadarExpiryDays(value) {
-	const numeric = toPositiveInteger(value);
-	return numeric > 0 ? numeric : 7;
 }
 
 function roundCurrency(value) {
@@ -387,6 +369,8 @@ function normalizeDefiPosition(position = {}) {
 	};
 	if (position?.stopLossPrice != null) result.stopLossPrice = toNumber(position.stopLossPrice, 0) || null;
 	if (position?.takeProfitPrice != null) result.takeProfitPrice = toNumber(position.takeProfitPrice, 0) || null;
+	if (position?.stopLossVerifiedAt) result.stopLossVerifiedAt = toIsoTimestamp(position.stopLossVerifiedAt, null);
+	if (position?.takeProfitVerifiedAt) result.takeProfitVerifiedAt = toIsoTimestamp(position.takeProfitVerifiedAt, null);
 	return result;
 }
 
@@ -446,100 +430,14 @@ function buildDefiTelegramAlertsMessage(alerts = [], checkedAt = new Date().toIS
 	return [header, '', ...lines].join('\n');
 }
 
-function sumSnapshotEquity(snapshot, marketKeys = []) {
-	return roundCurrency(marketKeys.reduce((sum, key) => {
-		return sum + toNumber(snapshot?.markets?.[key]?.equity, 0);
-	}, 0));
-}
-
-function buildCapitalRatios(options = {}) {
-	const activeTrading = Math.max(0, toConfidence(options.activeTradingRatio ?? options.activeRatio ?? DEFAULT_ACTIVE_TRADING_RATIO));
-	const yieldCapital = Math.max(0, toConfidence(options.yieldRatio ?? options.yieldRouterRatio ?? DEFAULT_YIELD_ROUTER_RATIO));
-	const reserve = Math.max(0, toConfidence(options.reserveRatio ?? DEFAULT_RESERVE_RATIO));
-	const launchRadar = Math.max(0, toConfidence(options.launchRadarRatio ?? DEFAULT_LAUNCH_RADAR_RATIO));
-	return {
-		activeTrading,
-		yield: yieldCapital,
-		reserve,
-		launchRadar,
-		total: Number((activeTrading + yieldCapital + reserve + launchRadar).toFixed(6)),
-	};
-}
-
-function estimateTradeCapitalRequirement(trades = []) {
-	return roundCurrency(trades.reduce((sum, trade) => {
-		if (String(trade?.consensus?.decision || '').trim().toUpperCase() !== 'BUY') {
-			return sum;
-		}
-		const shares = toNumber(trade?.riskCheck?.maxShares, 0);
-		const price = toNumber(trade?.referencePrice, 0);
-		if (shares <= 0 || price <= 0) return sum;
-		return sum + (shares * price);
-	}, 0));
-}
-
-function normalizeBrokerOrderStatus(value) {
-	const normalized = String(value || '').trim().toLowerCase();
-	if (!normalized) return 'PENDING_NEW';
-	if (['accepted', 'pending_new', 'pending', 'new', 'accepted_for_bidding', 'held', 'calculated'].includes(normalized)) {
-		return 'PENDING_NEW';
-	}
-	if (normalized === 'partially_filled') {
-		return 'PARTIALLY_FILLED';
-	}
-	if (normalized === 'filled') {
-		return 'FILLED';
-	}
-	if (['canceled', 'cancelled', 'done_for_day', 'expired', 'stopped', 'suspended'].includes(normalized)) {
-		return 'CANCELLED';
-	}
-	if (['replaced', 'rejected'].includes(normalized)) {
-		return 'REJECTED';
-	}
-	return String(value || '').trim().toUpperCase();
-}
-
 function resolveTradeAssetClass(trade = {}) {
 	return resolveAssetClassForTicker(trade.ticker, 'us_equity');
 }
 
 function resolveTradeMarketType(assetClass = 'us_equity') {
-	if (assetClass === 'prediction_market') return 'polymarket';
 	if (assetClass === 'crypto') return 'crypto';
 	if (assetClass === 'solana_token') return 'solana';
-	if (assetClass === 'defi_yield') return 'defi';
 	return 'stocks';
-}
-
-function getOrderFilledQuantity(order = {}) {
-	return toNumber(
-		order.filledQty
-		?? order.filled_qty
-		?? order.qty
-		?? order.raw?.filled_qty,
-		0
-	);
-}
-
-function getOrderFilledPrice(order = {}) {
-	return toNumber(
-		order.filledAvgPrice
-		?? order.filled_avg_price
-		?? order.raw?.filled_avg_price
-		?? order.raw?.average_fill_price,
-		0
-	);
-}
-
-function getOrderFilledTimestamp(order = {}, fallback = new Date().toISOString()) {
-	const filledAt = order.raw?.filled_at
-		|| order.raw?.updated_at
-		|| order.raw?.timestamp
-		|| order.updated_at
-		|| order.timestamp
-		|| fallback;
-	const normalized = new Date(filledAt);
-	return Number.isNaN(normalized.getTime()) ? fallback : normalized.toISOString();
 }
 
 function buildOpenPositionTickerSet(positions = []) {
@@ -671,10 +569,7 @@ function pickReferencePrice(snapshot) {
 }
 
 function getReconcilablePendingTrades(db) {
-	return journal.getPendingTrades(db).filter((trade) => {
-		return watchlist.getBrokerForTicker(trade.ticker, 'alpaca') === 'alpaca'
-			&& String(trade.alpaca_order_id || '').trim().length > 0;
-	});
+	return [];
 }
 
 function normalizeSymbols(symbols, options = {}) {
@@ -774,6 +669,11 @@ function selectTopTradeIdeas(candidates = [], options = {}, orchestratorOptions 
 	const sorted = candidates.slice().sort((left, right) => {
 		const leftConfidence = toNumber(left?.averageAgreeConfidence, averageConfidence(left?.consensus?.agreeing || []));
 		const rightConfidence = toNumber(right?.averageAgreeConfidence, averageConfidence(right?.consensus?.agreeing || []));
+		const leftRankScore = toNumber(left?.autoExecutionRankScore, leftConfidence);
+		const rightRankScore = toNumber(right?.autoExecutionRankScore, rightConfidence);
+		if (rightRankScore !== leftRankScore) {
+			return rightRankScore - leftRankScore;
+		}
 		return rightConfidence - leftConfidence;
 	});
 	if (capped <= 0) {
@@ -786,6 +686,97 @@ function selectTopTradeIdeas(candidates = [], options = {}, orchestratorOptions 
 		selected: sorted.slice(0, capped),
 		excluded: sorted.slice(capped),
 	};
+}
+
+function isAutonomousMajorCryptoTicker(ticker = '') {
+	return AUTONOMOUS_MAJOR_CRYPTO_TICKERS.includes(toTicker(ticker));
+}
+
+function hasActionableOracleSignal(signalLookup = {}, ticker = '') {
+	const oracleSignal = signalLookup?.oracle || null;
+	if (!oracleSignal) return false;
+	if (ticker && toTicker(oracleSignal.ticker || ticker) !== toTicker(ticker)) {
+		return false;
+	}
+	const direction = String(oracleSignal.direction || '').trim().toUpperCase();
+	return direction !== '' && direction !== 'HOLD';
+}
+
+function narrowEventVetoForTicker(eventVetoValue = null, ticker = '') {
+	if (!eventVetoValue || typeof eventVetoValue !== 'object') {
+		return null;
+	}
+	const normalizedTicker = toTicker(ticker);
+	const affectedAssets = Array.isArray(eventVetoValue.affectedAssets)
+		? eventVetoValue.affectedAssets.map(toTicker).filter(Boolean)
+		: [];
+	if (affectedAssets.length > 0 && normalizedTicker && !affectedAssets.includes(normalizedTicker)) {
+		return {
+			...eventVetoValue,
+			decision: 'CLEAR',
+			sizeMultiplier: 1,
+			affectedAssets: [],
+			narrowedForTicker: normalizedTicker,
+			narrowedFromDecision: String(eventVetoValue.decision || '').trim().toUpperCase() || 'CLEAR',
+		};
+	}
+	return eventVetoValue;
+}
+
+function resolveHyperliquidWalletEquity(defiStatus = {}) {
+	return toNumber(
+		defiStatus?.accountValue
+		?? defiStatus?.withdrawable
+		?? defiStatus?.account?.equity
+		?? defiStatus?.account?.cash,
+		0
+	);
+}
+
+function buildCryptoAutoExecutionPolicy(defiStatus = {}, macroRisk = null, options = {}, orchestratorOptions = {}) {
+	const livePositions = Array.isArray(defiStatus?.positions) ? defiStatus.positions : [];
+	const walletEquity = resolveHyperliquidWalletEquity(defiStatus);
+	const subSmallWalletCap = toNumber(
+		options.smallWalletSingleNameMaxEquity
+		?? orchestratorOptions.smallWalletSingleNameMaxEquity,
+		DEFAULT_SMALL_WALLET_SINGLE_NAME_MAX_EQUITY
+	);
+	const subSmallWallet = walletEquity > 0 && walletEquity < subSmallWalletCap;
+	const flatWallet = livePositions.length === 0;
+	const regime = String(macroRisk?.regime || '').trim().toLowerCase();
+	const macroEligible = regime !== 'red' && regime !== 'stay_cash';
+	const singleBestNameMode = subSmallWallet && flatWallet && macroEligible;
+	return {
+		walletEquity,
+		subSmallWallet,
+		flatWallet,
+		macroEligible,
+		singleBestNameMode,
+		maxIdeasPerRound: singleBestNameMode
+			? 1
+			: resolveMaxIdeasPerRound(options, orchestratorOptions),
+	};
+}
+
+function scoreTradeIdeaForAutoExecution(trade = {}) {
+	const confidence = toNumber(
+		trade?.averageAgreeConfidence,
+		averageConfidence(trade?.consensus?.agreeing || [])
+	);
+	let score = confidence;
+	if (hasActionableOracleSignal(trade?.signalLookup || {}, trade?.ticker)) {
+		score += 0.2;
+	}
+	if (isAutonomousMajorCryptoTicker(trade?.ticker)) {
+		score += 0.05;
+	}
+	if (String(trade?.sizeGuide?.bucket || 'normal').trim().toLowerCase() === 'normal') {
+		score += 0.03;
+	}
+	if (String(trade?.mechanicalEntry?.tradeFlag || '').trim().toLowerCase() === 'trade') {
+		score += 0.02;
+	}
+	return Number(score.toFixed(4));
 }
 
 function selectConvictionSignalMetadata(consensusResult = {}) {
@@ -916,36 +907,7 @@ function resolveLiveRiskLimits(options = {}, orchestratorOptions = {}, macroRisk
 }
 
 async function fetchBrokerCapabilities(symbols = [], options = {}) {
-	const uniqueSymbols = Array.from(new Set((Array.isArray(symbols) ? symbols : []).map(toTicker).filter(Boolean)));
-	if (uniqueSymbols.length === 0) return null;
-
-	try {
-		const client = options.alpacaClient
-			|| options.client
-			|| dataIngestion.createAlpacaClient(options);
-		if (!client || typeof client.getAsset !== 'function' || typeof client.getAccount !== 'function') {
-			return null;
-		}
-
-		const [account, assets] = await Promise.all([
-			client.getAccount(),
-			Promise.all(uniqueSymbols.map(async (ticker) => {
-				try {
-					return [ticker, await client.getAsset(ticker)];
-				} catch {
-					return [ticker, null];
-				}
-			})),
-		]);
-
-		return buildBrokerCapabilityPayload({
-			account,
-			assets: new Map(assets),
-			phase: 'phase1',
-		});
-	} catch {
-		return null;
-	}
+	return null;
 }
 
 function normalizeSignal(agentId, ticker, signal = {}) {
@@ -1213,6 +1175,10 @@ class TradingOrchestrator {
 		) || DEFAULT_DEFI_MONITOR_TIMEOUT_MS;
 		const { stdout } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
 			cwd: getProjectRoot(),
+			env: {
+				...process.env,
+				SQUIDRUN_HYPERLIQUID_CALLER: 'supervisor',
+			},
 			windowsHide: true,
 			timeout,
 		});
@@ -1224,17 +1190,15 @@ class TradingOrchestrator {
 			return [];
 		}
 		try {
-			const { HttpTransport, InfoClient } = await import('@nktkas/hyperliquid');
-			const transport = new HttpTransport();
-			const info = new InfoClient({ transport });
 			const walletAddress = String(
 				process.env.HYPERLIQUID_WALLET_ADDRESS
 				|| process.env.HYPERLIQUID_ADDRESS
-				|| process.env.POLYMARKET_FUNDER_ADDRESS
 				|| ''
 			).trim();
 			if (!walletAddress) return [];
-			return await info.openOrders({ user: walletAddress });
+			return await hyperliquidClient.getOpenOrders({
+				walletAddress,
+			});
 		} catch (_err) {
 			return [];
 		}
@@ -1336,7 +1300,9 @@ class TradingOrchestrator {
 				? 0.5
 				: (drawdownFromPeakPct >= 0.3 ? 0.3 : 0);
 			const previousGivebackAlertThreshold = toNumber(previous.givebackAlertThreshold, 0);
-			const stopLossPrice = toNumber(position.stopLossPrice ?? previous.stopLossPrice, 0) || null;
+			const stopLossPrice = position.stopLossVerifiedAt
+				? (toNumber(position.stopLossPrice, 0) || null)
+				: null;
 			let warningLevel = null;
 			if (liquidationDistancePct != null && liquidationDistancePct <= DEFI_CRITICAL_LIQUIDATION_BUFFER_PCT) {
 				warningLevel = 'critical';
@@ -1361,6 +1327,11 @@ class TradingOrchestrator {
 				givebackAlertThreshold,
 				previousGivebackAlertThreshold,
 				stopLossPrice,
+				stopLossVerifiedAt: position.stopLossVerifiedAt || null,
+				takeProfitPrice: position.takeProfitVerifiedAt
+					? (toNumber(position.takeProfitPrice, 0) || null)
+					: null,
+				takeProfitVerifiedAt: position.takeProfitVerifiedAt || null,
 				warningLevel,
 			};
 			enrichedPositions.push(enrichedPosition);
@@ -1400,6 +1371,11 @@ class TradingOrchestrator {
 				drawdownFromPeakPct,
 				givebackAlertThreshold,
 				stopLossPrice,
+				stopLossVerifiedAt: position.stopLossVerifiedAt || null,
+				takeProfitPrice: position.takeProfitVerifiedAt
+					? (toNumber(position.takeProfitPrice, 0) || null)
+					: null,
+				takeProfitVerifiedAt: position.takeProfitVerifiedAt || null,
 				lastAlertLevel: warningLevel,
 				lastAlertSentAt: warningLevel && previous.lastAlertLevel !== warningLevel ? checkedAt : (previous.lastAlertSentAt || null),
 				updatedAt: checkedAt,
@@ -1469,31 +1445,14 @@ class TradingOrchestrator {
 				for (const position of liveStatus.positions) {
 					const coin = position.coin || position.asset;
 					if (!coin) continue;
-					const side = (position.side || (toNumber(position.size || position.szi, 0) >= 0 ? 'long' : 'short'));
 					const reduceOnlyOrders = openOrders.filter(
 						(o) => o.coin === coin && o.reduceOnly === true
 					);
-					if (reduceOnlyOrders.length > 0) {
-						// For a long position, reduce-only sells below entry are stops, above entry are TPs
-						// For a short position, reduce-only buys above entry are stops, below entry are TPs
-						const entryPx = toNumber(position.entryPx, 0);
-						for (const order of reduceOnlyOrders) {
-							const orderPx = toNumber(order.triggerPx, 0) || toNumber(order.limitPx, 0);
-							if (!orderPx) continue;
-							const isStopCandidate = side === 'long'
-								? orderPx < entryPx
-								: orderPx > entryPx;
-							if (isStopCandidate && !position.stopLossPrice) {
-								position.stopLossPrice = orderPx;
-							}
-							const isTpCandidate = side === 'long'
-								? orderPx > entryPx
-								: orderPx < entryPx;
-							if (isTpCandidate && !position.takeProfitPrice) {
-								position.takeProfitPrice = orderPx;
-							}
-						}
-					}
+					const protection = bracketManager.deriveExchangeProtection(position, reduceOnlyOrders);
+					position.stopLossPrice = protection.activeStopPrice;
+					position.takeProfitPrice = protection.activeTakeProfitPrice;
+					position.stopLossVerifiedAt = protection.verified ? checkedAt : null;
+					position.takeProfitVerifiedAt = protection.verified ? checkedAt : null;
 				}
 			}
 		} catch (_err) {
@@ -1657,6 +1616,20 @@ class TradingOrchestrator {
 		const approvedByTicker = new Map(
 			(Array.isArray(approvedTrades) ? approvedTrades : []).map((trade) => [toTicker(trade?.ticker), trade])
 		);
+		const autoExecutionPolicy = options.autoExecutionPolicy && typeof options.autoExecutionPolicy === 'object'
+			? options.autoExecutionPolicy
+			: buildCryptoAutoExecutionPolicy(defiStatus, options.macroRisk || null, options, this.options);
+		const rankedApprovedTrades = (Array.isArray(approvedTrades) ? approvedTrades : [])
+			.slice()
+			.sort((left, right) => {
+				const leftScore = toNumber(left?.autoExecutionRankScore, scoreTradeIdeaForAutoExecution(left));
+				const rightScore = toNumber(right?.autoExecutionRankScore, scoreTradeIdeaForAutoExecution(right));
+				return rightScore - leftScore;
+			});
+		const topSingleBestTrade = autoExecutionPolicy.singleBestNameMode
+			? rankedApprovedTrades.find((trade) => hasActionableOracleSignal(trade?.signalLookup || {}, trade?.ticker))
+			: null;
+		const singleBestTicker = toTicker(topSingleBestTrade?.ticker);
 		const executions = [];
 		const skipped = [];
 		const positionManagementPlan = options.positionManagementPlan && typeof options.positionManagementPlan === 'object'
@@ -1820,12 +1793,24 @@ class TradingOrchestrator {
 
 			const decision = toDirection(result?.decision || 'HOLD');
 			const asset = extractHyperliquidAssetFromTicker(ticker);
+			const narrowedEventVeto = narrowEventVetoForTicker(options.eventVeto || null, ticker);
+			const narrowedEventDecision = String(narrowedEventVeto?.decision || 'CLEAR').trim().toUpperCase();
 			if (positionManagedAssets.has(asset) || executionManagedAssets.has(asset)) {
 				skipped.push({ ticker, asset, reason: 'managed_by_position_management', confidence });
 				continue;
 			}
 			const openPosition = positionsByAsset.get(asset) || null;
 			const approvedTrade = approvedByTicker.get(ticker) || null;
+			if (autoExecutionPolicy.singleBestNameMode && singleBestTicker) {
+				if (ticker !== singleBestTicker && !openPosition) {
+					skipped.push({ ticker, asset, reason: 'single_best_name_cap', confidence });
+					continue;
+				}
+				if (!openPosition && narrowedEventDecision !== 'CLEAR') {
+					skipped.push({ ticker, asset, reason: 'event_veto_active', confidence, eventDecision: narrowedEventDecision });
+					continue;
+				}
+			}
 			let action = null;
 			let args = [];
 			let side = null;
@@ -2157,7 +2142,7 @@ class TradingOrchestrator {
 
 	registerSignal(agentId, ticker, signal = {}) {
 		const normalized = normalizeSignal(agentId, ticker, signal);
-		if (!watchlist.isWatched(normalized.ticker)) {
+		if (!watchlist.isWatched(normalized.ticker) && !ensureSignalTickerTracked(normalized.ticker)) {
 			throw new Error(`Ticker ${normalized.ticker} is not on the watchlist`);
 		}
 
@@ -2320,9 +2305,6 @@ class TradingOrchestrator {
 	}
 
 	async consultMissingSignals(symbols, context = {}, options = {}) {
-		for (const symbol of Array.isArray(symbols) ? symbols : []) {
-			this.clearSignals(symbol);
-		}
 		if (String(options.strategyMode || '').trim().toLowerCase() === 'range_conviction') {
 			return {
 				requestId: null,
@@ -2335,8 +2317,21 @@ class TradingOrchestrator {
 				reason: 'range_conviction_local_only',
 			};
 		}
+		if (!this.isRealConsultationEnabled(options)) {
+			return {
+				requestId: null,
+				requestPath: null,
+				requestedAgents: [],
+				deliveries: [],
+				responses: [],
+				missingAgents: [],
+			};
+		}
+		for (const symbol of Array.isArray(symbols) ? symbols : []) {
+			this.clearSignals(symbol);
+		}
 		const missingByAgent = this.buildMissingSignalMap(symbols);
-		if (missingByAgent.length === 0 || !this.isRealConsultationEnabled(options)) {
+		if (missingByAgent.length === 0) {
 			return {
 				requestId: null,
 				requestPath: null,
@@ -2351,7 +2346,7 @@ class TradingOrchestrator {
 		const defiStatus = context.defiStatus || options.defiStatus || null;
 		const primaryDataSource = Array.isArray(defiStatus?.positions) && defiStatus.positions.length > 0
 			? 'hyperliquid'
-			: (symbols.some((ticker) => /\/USD$/i.test(String(ticker || '').trim())) ? 'hyperliquid' : 'alpaca_paper');
+			: (symbols.some((ticker) => /\/USD$/i.test(String(ticker || '').trim())) ? 'hyperliquid' : 'ibkr');
 		const timeoutMs = Math.max(
 			1_000,
 			toPositiveInteger(
@@ -2435,38 +2430,20 @@ class TradingOrchestrator {
 			return [];
 		}
 
-		const alpacaClient = options.alpacaClient
-			|| options.client
-			|| this.options.alpacaClient
-			|| this.options.client
-			|| null;
 		const generated = [];
 
 		for (const [agentId, missingTickers] of missingByAgent) {
-			const signalOptions = alpacaClient
-				? {
-					client: alpacaClient,
-					emptyPortfolio: Boolean(options.emptyPortfolio),
-					symbols: missingTickers,
-					macroRisk: options.macroRisk || null,
-					strategyMode: options.strategyMode || null,
-					snapshots: options.snapshots || null,
-					bars: options.bars || null,
-					news: options.news || null,
-					defiStatus: options.defiStatus || null,
-					rangeStructures: options.rangeStructures || null,
-				}
-				: {
-					emptyPortfolio: Boolean(options.emptyPortfolio),
-					symbols: missingTickers,
-					macroRisk: options.macroRisk || null,
-					strategyMode: options.strategyMode || null,
-					snapshots: options.snapshots || null,
-					bars: options.bars || null,
-					news: options.news || null,
-					defiStatus: options.defiStatus || null,
-					rangeStructures: options.rangeStructures || null,
-				};
+			const signalOptions = {
+				emptyPortfolio: Boolean(options.emptyPortfolio),
+				symbols: missingTickers,
+				macroRisk: options.macroRisk || null,
+				strategyMode: options.strategyMode || null,
+				snapshots: options.snapshots || null,
+				bars: options.bars || null,
+				news: options.news || null,
+				defiStatus: options.defiStatus || null,
+				rangeStructures: options.rangeStructures || null,
+			};
 			const producedSignals = await signalProducer.produceSignals(agentId, signalOptions);
 			const gatedSignals = producedSignals.map((signal) => buildCapabilityGateSignal(
 				signal,
@@ -2501,7 +2478,7 @@ class TradingOrchestrator {
 		}
 
 		const producedSignals = await signalProducer.produceSignals('builder', {
-			client: options.alpacaClient || options.client || this.options.alpacaClient || this.options.client || null,
+			client: options.client || this.options.client || null,
 			emptyPortfolio: Boolean(options.emptyPortfolio),
 			symbols: targetSymbols,
 			macroRisk: options.macroRisk || null,
@@ -2564,252 +2541,15 @@ class TradingOrchestrator {
 	async getUnifiedPortfolioSnapshot(options = {}) {
 		return portfolioTracker.getPortfolioSnapshot({
 			...this.options.portfolioOptions,
-			yieldRouter: options.yieldRouter ?? this.options.yieldRouter ?? this.options.portfolioOptions?.yieldRouter,
 			...options,
 		});
-	}
-
-	getCapitalAllocation(portfolioSnapshot = {}, options = {}) {
-		const ratios = buildCapitalRatios({
-			activeTradingRatio: options.activeTradingRatio ?? this.options.activeTradingRatio,
-			yieldRouterRatio: options.yieldRouterRatio ?? this.options.yieldRouterRatio,
-			reserveRatio: options.reserveRatio ?? this.options.reserveRatio,
-			launchRadarRatio: options.launchRadarRatio ?? this.options.launchRadarRatio,
-		});
-		const totalEquity = roundCurrency(portfolioSnapshot?.totalEquity);
-		const targets = {
-			activeTrading: roundCurrency(totalEquity * ratios.activeTrading),
-			yield: roundCurrency(totalEquity * ratios.yield),
-			reserve: roundCurrency(totalEquity * ratios.reserve),
-			launchRadar: roundCurrency(totalEquity * ratios.launchRadar),
-		};
-		const activeTradingCapital = sumSnapshotEquity(portfolioSnapshot, [
-			'alpaca_stocks',
-			'alpaca_crypto',
-			'ibkr_global',
-			'polymarket',
-		]);
-		const yieldCapital = roundCurrency(portfolioSnapshot?.markets?.defi_yield?.equity);
-		const reserveCapital = roundCurrency(
-			options.reserveCapital
-			?? portfolioSnapshot?.markets?.cash_reserve?.cash
-			?? portfolioSnapshot?.markets?.cash_reserve?.equity
-		);
-		const launchRadarCapital = roundCurrency(
-			options.launchRadarCapital
-			?? portfolioSnapshot?.markets?.solana_tokens?.equity
-		);
-		const launchRadarGap = roundCurrency(Math.max(0, targets.launchRadar - launchRadarCapital));
-		const deployableTradingCapital = roundCurrency(Math.max(0, reserveCapital - targets.reserve - launchRadarGap));
-		const effectiveActiveCapital = roundCurrency(activeTradingCapital + deployableTradingCapital);
-		const gaps = {
-			activeTrading: roundCurrency(Math.max(0, targets.activeTrading - effectiveActiveCapital)),
-			yield: roundCurrency(Math.max(0, targets.yield - yieldCapital)),
-			reserve: roundCurrency(Math.max(0, targets.reserve - reserveCapital)),
-			launchRadar: launchRadarGap,
-		};
-		const excess = {
-			reserveCash: roundCurrency(Math.max(0, reserveCapital - targets.reserve)),
-			idleCapital: roundCurrency(Math.max(0, deployableTradingCapital - gaps.activeTrading)),
-			yield: roundCurrency(Math.max(0, yieldCapital - targets.yield)),
-		};
-
-		return {
-			totalEquity,
-			ratios,
-			targets,
-			actual: {
-				activeTrading: activeTradingCapital,
-				yield: yieldCapital,
-				reserve: reserveCapital,
-				launchRadar: launchRadarCapital,
-			},
-			effective: {
-				activeTrading: effectiveActiveCapital,
-			},
-			deployable: {
-				activeTradingCash: deployableTradingCapital,
-			},
-			gaps,
-			excess,
-			asOf: portfolioSnapshot?.asOf || new Date().toISOString(),
-		};
-	}
-
-	async returnIdleCapital(options = {}) {
-		const router = options.yieldRouter ?? this.options.yieldRouter ?? null;
-		if (!router || typeof router.returnCapital !== 'function' || typeof router.requestCapital !== 'function') {
-			return { ok: false, skipped: true, reason: 'yield_router_unavailable' };
-		}
-
-		const portfolioSnapshot = options.portfolioSnapshot || await this.getUnifiedPortfolioSnapshot(options);
-		const allocation = this.getCapitalAllocation(portfolioSnapshot, options);
-		const killSwitchTriggered = options.killSwitchTriggered === true
-			|| portfolioSnapshot?.risk?.killSwitchTriggered === true;
-		if (options.dryRun === true) {
-			return {
-				ok: true,
-				skipped: true,
-				simulated: true,
-				action: killSwitchTriggered ? 'withdraw_all' : 'return_idle',
-				allocation,
-				amount: killSwitchTriggered
-					? allocation.actual.yield
-					: roundCurrency(Math.min(allocation.excess.idleCapital, allocation.gaps.yield)),
-			};
-		}
-
-		if (killSwitchTriggered) {
-			const withdrawal = await router.requestCapital(0, {
-				...options,
-				portfolioSnapshot,
-				killSwitchTriggered: true,
-			});
-			return {
-				ok: withdrawal.ok,
-				action: 'withdraw_all',
-				allocation,
-				withdrawal,
-			};
-		}
-
-		const amount = roundCurrency(Math.min(
-			toNumber(options.amount, allocation.excess.idleCapital),
-			allocation.excess.idleCapital,
-			allocation.gaps.yield
-		));
-		if (amount < yieldRouterModule.DEFAULT_MIN_DEPOSIT_USD) {
-			return {
-				ok: false,
-				skipped: true,
-				reason: 'no_idle_capital_to_return',
-				allocation,
-				amount,
-			};
-		}
-
-		const deposit = await router.returnCapital(amount, {
-			...options,
-			portfolioSnapshot,
-			totalCapital: allocation.totalEquity,
-			activeTradeCapital: allocation.actual.activeTrading,
-		});
-		return {
-			ok: deposit.ok,
-			action: 'return_idle',
-			amount,
-			allocation,
-			deposit,
-		};
-	}
-
-	async requestTradingCapital(amount, options = {}) {
-		const router = options.yieldRouter ?? this.options.yieldRouter ?? null;
-		if (!router || typeof router.requestCapital !== 'function') {
-			return { ok: false, skipped: true, reason: 'yield_router_unavailable', requested: roundCurrency(amount) };
-		}
-
-		const portfolioSnapshot = options.portfolioSnapshot || await this.getUnifiedPortfolioSnapshot(options);
-		const allocation = this.getCapitalAllocation(portfolioSnapshot, options);
-		const killSwitchTriggered = options.killSwitchTriggered === true
-			|| portfolioSnapshot?.risk?.killSwitchTriggered === true;
-		const requested = roundCurrency(amount);
-		if (requested <= 0) {
-			return { ok: false, skipped: true, reason: 'no_capital_requested', requested, allocation };
-		}
-		if (killSwitchTriggered) {
-			return { ok: false, skipped: true, reason: 'kill_switch_triggered', requested, allocation };
-		}
-
-		const shortfall = roundCurrency(Math.max(0, requested - allocation.deployable.activeTradingCash));
-		const requestAmount = roundCurrency(Math.min(shortfall, allocation.gaps.activeTrading));
-		if (requestAmount <= 0) {
-			return {
-				ok: true,
-				skipped: true,
-				reason: 'active_allocation_sufficient',
-				requested,
-				shortfall,
-				allocation,
-			};
-		}
-		if (options.dryRun === true) {
-			return {
-				ok: true,
-				skipped: true,
-				simulated: true,
-				reason: 'dry_run',
-				requested,
-				shortfall,
-				requestAmount,
-				allocation,
-			};
-		}
-
-		const withdrawal = await router.requestCapital(requestAmount, {
-			...options,
-			portfolioSnapshot,
-			totalCapital: allocation.totalEquity,
-		});
-		return {
-			ok: withdrawal.ok,
-			requested,
-			shortfall,
-			requestAmount,
-			allocation,
-			withdrawal,
-		};
 	}
 
 	async runReconciliation(options = {}) {
 		const db = this.getJournalDb(options);
 		const marketDate = this.state.meta.marketDate || toDateKey(options.date || new Date());
 		const pendingTrades = this.getPendingReconciliationTrades({ ...options, journalDb: db });
-		const alpacaClient = pendingTrades.length > 0
-			? (options.alpacaClient || this.options.alpacaClient || this.options.client || dataIngestion.createAlpacaClient(options))
-			: null;
 		const orderUpdates = [];
-
-		for (const trade of pendingTrades) {
-			try {
-				let rawOrder = null;
-				if (typeof alpacaClient?.getOrder === 'function') {
-					rawOrder = await alpacaClient.getOrder(String(trade.alpaca_order_id));
-				} else if (typeof alpacaClient?.getOrderByClientOrderId === 'function') {
-					rawOrder = await alpacaClient.getOrderByClientOrderId(String(trade.alpaca_order_id));
-				} else {
-					throw new Error('alpaca_get_order_unavailable');
-				}
-				const order = executor.normalizeOrder(rawOrder || {});
-				const status = normalizeBrokerOrderStatus(order.status);
-				const filledQty = getOrderFilledQuantity(order);
-				const filledPrice = getOrderFilledPrice(order);
-				const update = journal.updateTrade(db, trade.id, {
-					status,
-					shares: filledQty > 0 ? filledQty : undefined,
-					price: filledPrice > 0 ? filledPrice : undefined,
-					filledAt: status === 'FILLED' ? getOrderFilledTimestamp(order) : undefined,
-					reconciledAt: new Date().toISOString(),
-				});
-				orderUpdates.push({
-					tradeId: trade.id,
-					ticker: trade.ticker,
-					orderId: trade.alpaca_order_id,
-					status,
-					filledQty,
-					filledPrice,
-					trade: update,
-				});
-			} catch (err) {
-				orderUpdates.push({
-					tradeId: trade.id,
-					ticker: trade.ticker,
-					orderId: trade.alpaca_order_id,
-					ok: false,
-					error: err.message,
-				});
-			}
-		}
 
 		const syncedPositions = await executor.syncJournalPositions({
 			...options,
@@ -2917,9 +2657,7 @@ class TradingOrchestrator {
 				phase: 'reconciliation',
 				ticker: outcome.ticker,
 				direction: updatedTrade?.direction || outcome.trade.direction || null,
-				broker: assetClass === 'prediction_market'
-					? 'polymarket'
-					: (assetClass === 'crypto' ? 'hyperliquid' : 'alpaca'),
+				broker: assetClass === 'crypto' ? 'hyperliquid' : 'ibkr',
 				assetClass,
 				status: updatedTrade?.status || outcome.trade.status || null,
 				ok: true,
@@ -2990,7 +2728,7 @@ class TradingOrchestrator {
 				source: 'smart_money',
 				reason: buildSmartMoneyReason(signal),
 				exchange: resolveSmartMoneyExchange(signal),
-				broker: 'alpaca',
+				broker: 'hyperliquid',
 				assetClass: resolveSmartMoneyAssetClass(signal),
 				expiry: options.smartMoneyExpiry || null,
 			});
@@ -3006,294 +2744,8 @@ class TradingOrchestrator {
 		};
 	}
 
-	async syncLaunchRadarWatchlist(options = {}) {
-		const radar = options.launchRadar || this.options.launchRadar || null;
-		let pollResult = null;
-		let qualifiedTokens = Array.isArray(options.launchRadarQualifiedTokens) ? options.launchRadarQualifiedTokens : [];
-		if (qualifiedTokens.length === 0 && radar && typeof radar.pollNow === 'function') {
-			pollResult = await radar.pollNow({ reason: options.reason || 'orchestrator' });
-			if (pollResult?.ok && Array.isArray(pollResult.qualified)) {
-				qualifiedTokens = pollResult.qualified;
-			}
-		}
-
-		const statePath = options.dynamicWatchlistStatePath || this.options.dynamicWatchlistStatePath;
-		const expiryDays = resolveLaunchRadarExpiryDays(options.launchRadarExpiryDays || this.options.launchRadarExpiryDays);
-		const now = options.now instanceof Date ? options.now : (options.now ? new Date(options.now) : new Date());
-		const expiry = new Date(now.getTime() + (expiryDays * 24 * 60 * 60 * 1000)).toISOString();
-		const added = [];
-		const refreshed = [];
-		for (const token of qualifiedTokens) {
-			const ticker = toTicker(token.symbol || token.ticker || token.address);
-			if (!ticker) continue;
-			const existed = dynamicWatchlist.getEntry(ticker, { statePath });
-			dynamicWatchlist.addTicker(ticker, {
-				statePath,
-				persist: options.persistDynamicWatchlist,
-				name: token.name || ticker,
-				sector: 'Launch Radar',
-				source: 'launch_radar',
-				reason: buildLaunchRadarReason(token),
-				exchange: resolveLaunchRadarExchange(token),
-				broker: 'alpaca',
-				assetClass: 'solana_token',
-				expiry,
-			});
-			(existed ? refreshed : added).push(ticker);
-		}
-
-		return {
-			ok: pollResult?.ok !== false,
-			qualifiedTokens,
-			added,
-			refreshed,
-			pollResult,
-		};
-	}
-
-	async runPolymarketConsensusRound(options = {}) {
-		const db = this.getJournalDb(options);
-		const [smartMoneyWatchlist, portfolioSnapshot, markets] = await Promise.all([
-			this.syncSmartMoneyWatchlist({ ...options, reason: 'polymarket_consensus' }),
-			this.getUnifiedPortfolioSnapshot({ ...options, includePolymarket: true }),
-			Array.isArray(options.polymarketMarkets) && options.polymarketMarkets.length > 0
-				? Promise.resolve(options.polymarketMarkets)
-				: polymarketScanner.scanMarkets(options),
-		]);
-		const accountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || [], db, options);
-		const limits = options.limits || this.options.limits || riskEngine.DEFAULT_LIMITS;
-		const killSwitch = riskEngine.checkKillSwitch(portfolioSnapshot, limits);
-		const dailyPause = riskEngine.checkDailyPause(portfolioSnapshot, limits);
-		const polymarketMarket = portfolioSnapshot?.markets?.polymarket || {};
-		const bankroll = toNumber(polymarketMarket.equity ?? polymarketMarket.liquidCapital ?? portfolioSnapshot?.totalEquity, 0);
-		let currentExposure = toNumber(polymarketMarket.marketValue, 0);
-		const openPositions = Array.isArray(polymarketMarket.positions)
-			? polymarketMarket.positions.map((position) => ({ ...position }))
-			: [];
-		const signalsByAgent = polymarketSignals.produceSignals(markets, {
-			...options,
-			agentIds: REQUIRED_AGENTS,
-		});
-		const results = [];
-		const approvedTrades = [];
-		const rejectedTrades = [];
-
-		for (const market of markets) {
-			const marketSignals = REQUIRED_AGENTS.map((agentId) => {
-				return (signalsByAgent.get(agentId) || []).find((signal) => signal.conditionId === market.conditionId);
-			}).filter(Boolean);
-			if (marketSignals.length !== REQUIRED_AGENTS.length) continue;
-
-			const result = {
-				...polymarketSignals.buildConsensus(marketSignals, options),
-				ticker: market.conditionId,
-				market,
-			};
-			results.push(result);
-			const signalLookup = this.lookupSignalsByAgent(marketSignals);
-			let actedOn = false;
-			let sizing = null;
-			let rejectionReason = null;
-
-			for (const signal of marketSignals) {
-				try {
-					agentAttribution.recordPrediction(
-						signal.agent,
-						market.conditionId,
-						signal.direction,
-						signal.confidence,
-						Date.now(),
-						{
-							assetClass: 'prediction_market',
-							marketType: 'polymarket',
-							reasoning: signal.reasoning,
-							source: 'polymarket_consensus',
-							statePath: options.agentAttributionStatePath,
-						}
-					);
-				} catch (_) {
-					// Attribution should never block consensus evaluation.
-				}
-			}
-
-			if (result.consensus && result.decision !== 'HOLD' && !killSwitch.triggered && !dailyPause.paused) {
-				const buyYes = result.decision === 'BUY_YES';
-				const tokenId = buyYes ? market.tokens?.yes : market.tokens?.no;
-				const referencePrice = buyYes
-					? toNumber(market.currentPrices?.yes, 0)
-					: toNumber(market.currentPrices?.no, 0);
-				const probability = buyYes
-					? toNumber(result.probability, 0)
-					: Number((1 - toNumber(result.probability, 0)).toFixed(4));
-				const alreadyOpen = openPositions.some((position) => {
-					return String(position.market || '').trim() === String(market.conditionId || '').trim()
-						|| String(position.tokenId || '').trim() === String(tokenId || '').trim();
-				});
-				if (alreadyOpen) {
-					rejectionReason = 'market_already_open';
-				} else if (!tokenId || referencePrice <= 0) {
-					rejectionReason = 'missing_polymarket_execution_context';
-				} else {
-					sizing = polymarketSizer.positionSize(bankroll, probability, referencePrice, {
-						...options,
-						openPositions,
-						currentExposure,
-						dailyLossPct: dailyPause.dayLossPct,
-					});
-					actedOn = Boolean(sizing.executable);
-					if (sizing.executable) {
-						approvedTrades.push({
-							ticker: market.conditionId,
-							consensus: result,
-							market,
-							tokenId,
-							referencePrice,
-							probability,
-							sizing,
-							limits,
-						});
-						currentExposure = Number((currentExposure + sizing.stake).toFixed(2));
-						openPositions.push({
-							market: market.conditionId,
-							tokenId,
-							marketValue: sizing.stake,
-							costBasis: sizing.stake,
-						});
-					} else {
-						rejectionReason = sizing.reasons.join('; ') || 'not_executable';
-					}
-				}
-			}
-
-			if (!actedOn && result.consensus && result.decision !== 'HOLD') {
-				rejectedTrades.push({
-					ticker: market.conditionId,
-					consensus: result,
-					market,
-					sizing,
-					reason: rejectionReason,
-				});
-			}
-
-			journal.recordConsensus(db, {
-				ticker: market.conditionId,
-				decision: toJournalDecision(result.decision),
-				consensusReached: result.consensus,
-				agreementCount: result.agreementCount,
-				architectSignal: signalLookup.architect || null,
-				builderSignal: signalLookup.builder || null,
-				oracleSignal: signalLookup.oracle || null,
-				dissentReasoning: result.summary || rejectionReason || null,
-				actedOn,
-			});
-		}
-
-		const phaseResult = {
-			phase: 'polymarket_consensus',
-			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-			smartMoneyWatchlist,
-			portfolioSnapshot,
-			accountState,
-			killSwitch,
-			dailyPause,
-			markets,
-			agentSignals: Object.fromEntries(Array.from(signalsByAgent.entries())),
-			results,
-			approvedTrades,
-			rejectedTrades,
-			asOf: new Date().toISOString(),
-		};
-
-		this.state.phases.polymarketConsensus = phaseResult;
-		this.state.phases.consensus = phaseResult;
-		return phaseResult;
-	}
-
-	async runPolymarketMarketOpen(options = {}) {
-		const db = this.getJournalDb(options);
-		const consensusPhase = options.consensusPhase
-			|| this.state.phases.polymarketConsensus
-			|| this.state.phases.consensus
-			|| await this.runPolymarketConsensusRound(options);
-		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
-		const portfolioSnapshot = await this.getUnifiedPortfolioSnapshot({ ...options, includePolymarket: true });
-		const executions = [];
-
-		for (const trade of approvedTrades) {
-			let execution;
-			try {
-				execution = await executor.executeConsensusTrade({
-					consensus: trade.consensus,
-					ticker: trade.ticker,
-					conditionId: trade.market?.conditionId || trade.ticker,
-					tokenId: trade.tokenId,
-					yesTokenId: trade.market?.tokens?.yes,
-					noTokenId: trade.market?.tokens?.no,
-					currentPrices: trade.market?.currentPrices,
-					price: trade.referencePrice,
-					referencePrice: trade.referencePrice,
-					broker: 'polymarket',
-					assetClass: 'prediction_market',
-					account: portfolioSnapshot,
-					limits: trade.limits,
-					requestedShares: trade.sizing?.shares,
-					notes: `polymarket-open:${trade.ticker}`,
-				}, {
-					...options,
-					broker: 'polymarket',
-					journalDb: db,
-					journalPath: this.resolveJournalPath(options),
-				});
-			} catch (execErr) {
-				execution = { ok: false, status: 'error', error: execErr.message };
-			}
-
-			executions.push({
-				ticker: trade.ticker,
-				consensus: trade.consensus,
-				referencePrice: trade.referencePrice,
-				sizing: trade.sizing,
-				execution,
-			});
-			this.recordExecutionReport({
-				timestamp: new Date().toISOString(),
-				marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-				phase: 'polymarket_execute',
-				ticker: trade.ticker,
-				direction: trade.consensus?.decision || null,
-				broker: 'polymarket',
-				assetClass: 'prediction_market',
-				status: execution?.status || null,
-				ok: execution?.ok === true,
-				tradeId: execution?.tradeId ?? null,
-				reportType: 'polymarket_execution',
-				execution,
-				consensus: trade.consensus,
-				referencePrice: trade.referencePrice,
-				sizing: trade.sizing || null,
-				market: trade.market || null,
-			}, options);
-		}
-
-		const syncedPositions = await executor.getOpenPositions({ ...options, broker: 'polymarket' }).catch(() => []);
-		const phaseResult = {
-			phase: 'polymarket_execute',
-			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-			executions,
-			syncedPositions,
-			asOf: new Date().toISOString(),
-		};
-
-		this.state.phases.polymarketExecute = phaseResult;
-		this.state.phases.marketOpen = phaseResult;
-		return phaseResult;
-	}
-
 	async runPreMarket(options = {}) {
-		const [smartMoneyWatchlist, launchRadarWatchlist] = await Promise.all([
-			this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' }),
-			this.syncLaunchRadarWatchlist({ ...options, reason: 'premarket' }),
-		]);
+		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' });
 		const symbols = resolveDefaultSymbols(options.symbols, options);
 		const marketDate = this.resetForMarketDate(options.date || new Date());
 		const isCrypto = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity') === 'crypto';
@@ -3315,7 +2767,6 @@ class TradingOrchestrator {
 			phase: 'premarket',
 			marketDate: schedule?.marketDate || marketDate,
 			smartMoneyWatchlist,
-			launchRadarWatchlist,
 			watchlist: symbols.map((ticker) => watchlist.getEntry(ticker)).filter(Boolean),
 			symbols,
 			schedule,
@@ -3338,15 +2789,8 @@ class TradingOrchestrator {
 	}
 
 	async runConsensusRound(options = {}) {
-		if (isPolymarketMode(options)) {
-			return this.runPolymarketConsensusRound(options);
-		}
-
 		const db = this.getJournalDb(options);
-		const [smartMoneyWatchlist, launchRadarWatchlist] = await Promise.all([
-			this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' }),
-			this.syncLaunchRadarWatchlist({ ...options, reason: 'consensus_round' }),
-		]);
+		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' });
 		const macroRisk = options.macroRisk || await macroRiskGate.assessMacroRisk().catch(() => null);
 		const strategyMode = resolveTradingStrategyMode(options, macroRisk);
 		const crisisUniverse = getCrisisUniverse(macroRisk);
@@ -3359,7 +2803,6 @@ class TradingOrchestrator {
 		);
 		const brokerCapabilities = strategyMode === STRATEGY_MODES.CRISIS
 			? await fetchBrokerCapabilities(symbols, {
-				alpacaClient: options.alpacaClient || this.options.alpacaClient || null,
 				client: options.client || this.options.client || null,
 				...options,
 			})
@@ -3531,6 +2974,7 @@ class TradingOrchestrator {
 		const candidateTrades = [];
 		const consensusRecords = [];
 		let simulatedAccountState = cloneAccountState(accountState);
+		const autoExecutionPolicy = buildCryptoAutoExecutionPolicy(defiStatus, macroRisk, options, this.options);
 
 		for (const result of results) {
 			const signals = signalBuckets.get(result.ticker) || [];
@@ -3590,12 +3034,13 @@ class TradingOrchestrator {
 						},
 					});
 				} else {
+					const narrowedEventVeto = narrowEventVetoForTicker(compactEventVeto, result.ticker);
 					const sizeGuide = consensusSizer.sizeConsensusTrade({
 						ticker: result.ticker,
 						consensus: result,
 						mechanicalBoard,
 						nativeSignals: nativeEntry,
-						eventVeto: compactEventVeto,
+						eventVeto: narrowedEventVeto,
 					});
 					if (sizeGuide.bucket === 'block') {
 						rejectedTrades.push({
@@ -3623,6 +3068,16 @@ class TradingOrchestrator {
 						mechanicalEntry,
 						nativeEntry,
 						sizeGuide,
+						eventVeto: narrowedEventVeto,
+						oracleActionable: hasActionableOracleSignal(signalLookup, result.ticker),
+						autoExecutionRankScore: scoreTradeIdeaForAutoExecution({
+							ticker: result.ticker,
+							averageAgreeConfidence: entryDecision.averageAgreeConfidence,
+							consensus: result,
+							signalLookup,
+							mechanicalEntry,
+							sizeGuide,
+						}),
 					});
 				}
 			}
@@ -3634,7 +3089,30 @@ class TradingOrchestrator {
 			});
 		}
 
-		const { selected: selectedTrades, excluded: excludedTrades } = selectTopTradeIdeas(candidateTrades, options, this.options);
+		const singleBestEligibleTrades = autoExecutionPolicy.singleBestNameMode
+			? candidateTrades.filter((trade) => {
+				const vetoDecision = String(trade?.eventVeto?.decision || 'CLEAR').trim().toUpperCase();
+				return trade.oracleActionable === true && vetoDecision === 'CLEAR';
+			})
+			: [];
+		const rankedSingleBestTrades = singleBestEligibleTrades.length > 0
+			? selectTopTradeIdeas(singleBestEligibleTrades, {
+				...options,
+				maxIdeasPerRound: 1,
+			}, this.options)
+			: null;
+		const tradeSelection = rankedSingleBestTrades && rankedSingleBestTrades.selected.length > 0
+			? {
+				selected: rankedSingleBestTrades.selected,
+				excluded: candidateTrades.filter((trade) => {
+					return !rankedSingleBestTrades.selected.some((selectedTrade) => toTicker(selectedTrade?.ticker) === toTicker(trade?.ticker));
+				}),
+			}
+			: selectTopTradeIdeas(candidateTrades, {
+				...options,
+				maxIdeasPerRound: autoExecutionPolicy.maxIdeasPerRound,
+			}, this.options);
+		const { selected: selectedTrades, excluded: excludedTrades } = tradeSelection;
 		for (const trade of excludedTrades) {
 			rejectedTrades.push({
 				ticker: trade.ticker,
@@ -3642,7 +3120,7 @@ class TradingOrchestrator {
 				referencePrice: trade.referencePrice,
 				riskCheck: {
 					approved: false,
-					violations: [`ENTRY_CAP: only top ${resolveMaxIdeasPerRound(options, this.options)} ideas per round are executable`],
+					violations: [`ENTRY_CAP: only top ${autoExecutionPolicy.maxIdeasPerRound} ideas per round are executable`],
 				},
 			});
 		}
@@ -3774,6 +3252,9 @@ class TradingOrchestrator {
 		);
 		const autoExecution = await this.maybeAutoExecuteLiveConsensus(results, approvedTrades, defiStatus, {
 			...options,
+			macroRisk,
+			eventVeto: compactEventVeto,
+			autoExecutionPolicy,
 			positionManagementPlan,
 			killSwitchTriggered: killSwitch.triggered,
 			hyperliquidKillSwitchAction: resolveHyperliquidKillSwitchAction(options, this.options),
@@ -3932,7 +3413,6 @@ class TradingOrchestrator {
 			phase: 'consensus',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
 			smartMoneyWatchlist,
-			launchRadarWatchlist,
 			consultation,
 			eventVeto: compactEventVeto,
 			cryptoMechBoard: mechanicalBoard,
@@ -3947,6 +3427,7 @@ class TradingOrchestrator {
 			killSwitch,
 			dailyPause,
 			autoExecution,
+			autoExecutionPolicy,
 			candidateFeatureLog,
 			validationSettlement,
 			incompleteSignals: incomplete,
@@ -3961,24 +3442,13 @@ class TradingOrchestrator {
 	}
 
 	async runMarketOpen(options = {}) {
-		if (isPolymarketMode(options)) {
-			return this.runPolymarketMarketOpen(options);
-		}
-
 		const db = this.getJournalDb(options);
 		const consensusPhase = options.consensusPhase || this.state.phases.consensus || await this.runConsensusRound(options);
 		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
 		const executions = [];
-		const requiredTradingCapital = estimateTradeCapitalRequirement(approvedTrades);
 		// Use pre-trade accountState (not simulatedAccountState which already incremented tradesToday
 		// for the same trades we're about to execute, causing double-counting)
 		let simulatedAccountState = cloneAccountState(consensusPhase.accountState || consensusPhase.simulatedAccountState || {});
-		let capitalRequest = {
-			ok: false,
-			skipped: true,
-			reason: 'no_capital_request_needed',
-			requested: 0,
-		};
 
 		// If account state is empty (e.g. lost during serialization), fetch fresh from broker
 		if (!simulatedAccountState.equity || simulatedAccountState.equity <= 0) {
@@ -3986,13 +3456,6 @@ class TradingOrchestrator {
 			if (portfolioSnapshot?.totalEquity > 0) {
 				simulatedAccountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot.positions || [], db, options);
 			}
-		}
-
-		if (requiredTradingCapital > 0) {
-			capitalRequest = await this.requestTradingCapital(requiredTradingCapital, {
-				...options,
-				portfolioSnapshot: consensusPhase.portfolioSnapshot,
-			});
 		}
 
 		for (const trade of approvedTrades) {
@@ -4058,7 +3521,7 @@ class TradingOrchestrator {
 				ticker: trade.ticker,
 				direction: trade.consensus?.decision || null,
 				broker: watchlist.getEntry(trade.ticker)?.broker
-					|| (resolveAssetClassForTicker(trade.ticker) === 'crypto' ? 'hyperliquid' : 'alpaca'),
+					|| (resolveAssetClassForTicker(trade.ticker) === 'crypto' ? 'hyperliquid' : 'ibkr'),
 				assetClass: resolveAssetClassForTicker(trade.ticker),
 				status: execution?.status || null,
 				ok: execution?.ok === true,
@@ -4095,8 +3558,6 @@ class TradingOrchestrator {
 		const phaseResult = {
 			phase: 'market_open',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
-			requiredTradingCapital,
-			capitalRequest,
 			executions,
 			syncedPositions,
 			asOf: new Date().toISOString(),
@@ -4348,19 +3809,6 @@ class TradingOrchestrator {
 	}
 
 	async runFullDay(options = {}) {
-		if (isPolymarketMode(options)) {
-			const consensusPhase = await this.runPolymarketConsensusRound(options);
-			const marketOpen = await this.runPolymarketMarketOpen({ ...options, consensusPhase });
-			return {
-				preMarket: null,
-				consensus: consensusPhase,
-				marketOpen,
-				midDayCheck: null,
-				marketClose: null,
-				endOfDay: null,
-			};
-		}
-
 		const preMarket = await this.runPreMarket(options);
 		const consensusPhase = await this.runConsensusRound({ ...options, symbols: preMarket.symbols });
 		const marketOpen = await this.runMarketOpen({ ...options, consensusPhase });
@@ -4387,9 +3835,6 @@ module.exports = {
 	registerSignal: defaultOrchestrator.registerSignal.bind(defaultOrchestrator),
 	getRegisteredSignals: defaultOrchestrator.getRegisteredSignals.bind(defaultOrchestrator),
 	clearSignals: defaultOrchestrator.clearSignals.bind(defaultOrchestrator),
-	getCapitalAllocation: defaultOrchestrator.getCapitalAllocation.bind(defaultOrchestrator),
-	returnIdleCapital: defaultOrchestrator.returnIdleCapital.bind(defaultOrchestrator),
-	requestTradingCapital: defaultOrchestrator.requestTradingCapital.bind(defaultOrchestrator),
 	runReconciliation: defaultOrchestrator.runReconciliation.bind(defaultOrchestrator),
 	runPreMarket: defaultOrchestrator.runPreMarket.bind(defaultOrchestrator),
 	runConsensusRound: defaultOrchestrator.runConsensusRound.bind(defaultOrchestrator),

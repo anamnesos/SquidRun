@@ -2,6 +2,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { StringDecoder } = require('string_decoder');
 
 jest.mock('https', () => ({
   request: jest.fn(),
@@ -22,11 +23,22 @@ function mockTelegramUpdates(updates, statusCode = 200) {
   https.request.mockImplementation((options, onResponse) => {
     const response = new EventEmitter();
     response.statusCode = statusCode;
+    let decoder = null;
+    response.setEncoding = jest.fn((encoding) => {
+      decoder = new StringDecoder(encoding);
+    });
 
     const request = new EventEmitter();
     request.end = jest.fn(() => {
       onResponse(response);
-      response.emit('data', JSON.stringify({ ok: true, result: updates }));
+      const payload = Buffer.from(JSON.stringify({ ok: true, result: updates }), 'utf8');
+      if (decoder) {
+        response.emit('data', decoder.write(payload));
+        const remainder = decoder.end();
+        if (remainder) response.emit('data', remainder);
+      } else {
+        response.emit('data', payload);
+      }
       response.emit('end');
     });
     return request;
@@ -43,12 +55,30 @@ function mockTelegramRequestSequence(handlers = {}) {
 
     const response = new EventEmitter();
     response.statusCode = handler.statusCode ?? 200;
+    let decoder = null;
+    response.setEncoding = jest.fn((encoding) => {
+      decoder = new StringDecoder(encoding);
+    });
 
     const request = new EventEmitter();
     request.end = jest.fn(() => {
       onResponse(response);
-      if (handler.body !== undefined) {
-        response.emit('data', handler.body);
+      const chunks = Array.isArray(handler.bodyChunks)
+        ? handler.bodyChunks
+        : (handler.body !== undefined ? [handler.body] : []);
+      for (const chunk of chunks) {
+        if (decoder && Buffer.isBuffer(chunk)) {
+          const decoded = decoder.write(chunk);
+          if (decoded) response.emit('data', decoded);
+        } else {
+          response.emit('data', chunk);
+        }
+      }
+      if (decoder) {
+        const remainder = decoder.end();
+        if (remainder) {
+          response.emit('data', remainder);
+        }
       }
       response.emit('end');
     });
@@ -124,6 +154,45 @@ describe('telegram-poller', () => {
         messageId: null,
       })
     );
+  });
+
+  test('requestTelegram preserves UTF-8 characters split across response chunks', async () => {
+    const smile = '🙂';
+    const bodyText = JSON.stringify({
+      ok: true,
+      result: [
+        {
+          update_id: 10,
+          message: {
+            chat: { id: 123456 },
+            text: `split ${smile} utf8`,
+          },
+        },
+      ],
+    });
+    const bodyBuffer = Buffer.from(bodyText, 'utf8');
+    const smileBuffer = Buffer.from(smile, 'utf8');
+    const smileIndex = bodyBuffer.indexOf(smileBuffer);
+
+    expect(smileIndex).toBeGreaterThan(0);
+
+    mockTelegramRequestSequence({
+      '/bot123456789:fake_telegram_bot_token_do_not_use/getUpdates?offset=0&timeout=0': {
+        bodyChunks: [
+          bodyBuffer.subarray(0, smileIndex + 2),
+          bodyBuffer.subarray(smileIndex + 2),
+        ],
+      },
+    });
+
+    const result = await telegramPoller._internals.requestTelegram(
+      'GET',
+      '/bot123456789:fake_telegram_bot_token_do_not_use/getUpdates?offset=0&timeout=0'
+    );
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toContain(`split ${smile} utf8`);
+    expect(() => JSON.parse(result.body)).not.toThrow();
   });
 
   test('pollNow rejects unauthorized chat ids', async () => {
@@ -296,5 +365,63 @@ describe('telegram-poller', () => {
     expect(telegramPoller._internals.buildInboundDisplayText({
       photo: [{ file_id: 'photo-1' }],
     })).toBe('[Photo received]');
+  });
+
+  describe('profile-scoped chat routing', () => {
+    const JAMES_CHAT_ID = 111111111;
+    const EUNBYEOL_CHAT_ID = 8754356993;
+    const STRAY_CHAT_ID = 222222222;
+
+    function buildConfig(envOverrides) {
+      return telegramPoller._internals.getTelegramConfig({
+        TELEGRAM_BOT_TOKEN: 'test-token',
+        TELEGRAM_CHAT_ID: String(JAMES_CHAT_ID),
+        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${EUNBYEOL_CHAT_ID}`,
+        TELEGRAM_EUNBYEOL_CHAT_IDS: String(EUNBYEOL_CHAT_ID),
+        ...envOverrides,
+      });
+    }
+
+    function msg(chatId) {
+      return { chat: { id: chatId } };
+    }
+
+    test('main profile rejects Eunbyeol chat so case messages do not leak', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: '' });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(false);
+    });
+
+    test('main profile accepts James chat', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: '' });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);
+    });
+
+    test('eunbyeol profile accepts Eunbyeol chat', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'eunbyeol' });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(true);
+    });
+
+    test('eunbyeol profile rejects James chat so trading talk does not leak in', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'eunbyeol' });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(false);
+    });
+
+    test('eunbyeol profile rejects any chat not in the eunbyeol allowlist', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'eunbyeol' });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(STRAY_CHAT_ID), config)).toBe(false);
+    });
+
+    test('fail-safe: empty TELEGRAM_EUNBYEOL_CHAT_IDS preserves legacy main-profile behavior', () => {
+      const config = telegramPoller._internals.getTelegramConfig({
+        TELEGRAM_BOT_TOKEN: 'test-token',
+        TELEGRAM_CHAT_ID: String(JAMES_CHAT_ID),
+        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${EUNBYEOL_CHAT_ID}`,
+        // No TELEGRAM_EUNBYEOL_CHAT_IDS set
+        SQUIDRUN_PROFILE: '',
+      });
+      // Both IDs should be accepted when no eunbyeol scope is declared — matches pre-patch behavior.
+      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(true);
+    });
   });
 });

@@ -1,8 +1,0 @@
-(ARCHITECT #32): First intelligence layer to build: insider selling + unlock calendar scanner.
-
-Research task — don't build yet, just find the data sources:
-1. SEC EDGAR API for Form 4 filings — is there a free endpoint we can poll?
-2. Token unlock calendar APIs (tokenterminal, defillama, unlocks.app, etc.)
-3. Any free short interest data feeds
-
-Find the APIs, confirm they're free or we have access, and report back. Then we design the scanner together.

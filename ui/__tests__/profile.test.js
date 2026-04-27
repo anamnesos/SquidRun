@@ -1,8 +1,13 @@
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 const {
   buildProfileTelegramEnv,
   getProfilePipePath,
+  getProfileProjectRootOverride,
   getProfileWebSocketPort,
   namespaceCoordRelPath,
   normalizeProfileName,
@@ -26,6 +31,20 @@ describe('profile helpers', () => {
     expect(getProfilePipePath('eunbyeol', 'win32')).toContain('squidrun-terminal-eunbyeol');
     expect(getProfileWebSocketPort('main')).toBe(9900);
     expect(getProfileWebSocketPort('eunbyeol')).toBe(9901);
+  });
+
+  test('resolves explicit profile project roots without affecting main', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-eunbyeol-root-'));
+    try {
+      expect(getProfileProjectRootOverride('main', {
+        SQUIDRUN_EUNBYEOL_PROJECT_ROOT: tempRoot,
+      })).toBeNull();
+      expect(getProfileProjectRootOverride('eunbyeol', {
+        SQUIDRUN_EUNBYEOL_PROJECT_ROOT: tempRoot,
+      })).toBe(path.resolve(tempRoot));
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test('filters Telegram env so Eunbyeol traffic stays out of the main profile', () => {

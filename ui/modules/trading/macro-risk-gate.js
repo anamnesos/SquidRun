@@ -431,6 +431,7 @@ async function fetchLiveOilPrice(options = {}) {
   const data = await fetchJson(LIVE_OIL_CHART_URL);
   const result = data?.chart?.result?.[0];
   const meta = result?.meta || {};
+  const regularSession = meta?.currentTradingPeriod?.regular || {};
   const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
   const quote = result?.indicators?.quote?.[0] || {};
   const closes = Array.isArray(quote?.close) ? quote.close : [];
@@ -455,16 +456,35 @@ async function fetchLiveOilPrice(options = {}) {
     previousCloseEntry?.value,
     liveValue,
   ], liveValue);
-  const observedAt = toIsoTimestamp(
+  const candidateObservedAt = toIsoTimestamp(
     firstFiniteValue([meta.regularMarketTime, latestClose?.timestamp], null),
     null
   );
+  const regularSessionStartMs = Number(regularSession?.start) * 1000;
+  const regularSessionEndMs = Number(regularSession?.end) * 1000;
+  const fetchedAtMs = Date.parse(fetchedAt);
+  const candidateObservedAtMs = Date.parse(candidateObservedAt || '');
+  const sessionSnapshotFallbackActive = Number.isFinite(fetchedAtMs)
+    && Number.isFinite(regularSessionStartMs)
+    && Number.isFinite(regularSessionEndMs)
+    && regularSessionStartMs > 0
+    && regularSessionEndMs >= regularSessionStartMs
+    && fetchedAtMs >= regularSessionStartMs
+    && fetchedAtMs <= regularSessionEndMs
+    && (
+      !Number.isFinite(candidateObservedAtMs)
+      || (fetchedAtMs - candidateObservedAtMs) > INDICATOR_STALE_AFTER_MS.liveOil
+    );
+  const observedAt = sessionSnapshotFallbackActive ? fetchedAt : candidateObservedAt;
+  const source = sessionSnapshotFallbackActive
+    ? 'yahoo_finance:CL=F:session_snapshot'
+    : 'yahoo_finance:CL=F';
 
   return buildIndicatorPayload({
     value: liveValue,
     previousValue,
     deltaPct: computeDeltaPct(liveValue, previousValue),
-    source: 'yahoo_finance:CL=F',
+    source,
     observedAt,
     fetchedAt,
     staleAfterMs: INDICATOR_STALE_AFTER_MS.liveOil,

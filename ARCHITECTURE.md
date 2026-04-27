@@ -57,6 +57,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/feature-capabilities.js: Exports getFeatureCapabilities, hasKey.
 - ui/modules/formatters.js: Exports formatDuration, formatTimeSince, formatShort, formatCompound, ....
 - ui/modules/image-gen.js: Exports generateImage, removeHistoryEntryByPath, resolveProvider, detectImageExt, ....
+- ui/modules/input-shadow-log.js: Local forensic JSONL writer for user-input bytes crossing renderer IPC and terminal-daemon PTY write surfaces.
 - ui/modules/ipc-handlers.js: Exports init, setDaemonClient, setExternalNotifier, setupIPCHandlers, ....
 - ui/modules/ipc/agent-claims-handlers.js: Registers IPC channels (claim-agent, release-agent, get-claims, ...).
 - ui/modules/ipc/agent-metrics-handlers.js: Registers IPC channels (record-completion, record-error, record-response-time, ...).
@@ -215,19 +216,17 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
 - ui/modules/transcript-index.js: Claude transcript indexing/search module that parses `~/.claude/projects/<project>/*.jsonl` into cited runtime records for startup recovery and transcript-backed memory retrieval.
 - ui/modules/trading/agent-attribution.js: Persistent prediction-attribution tracker that records per-agent calls and later outcomes, then computes asset-class-specific stats and leaderboards for future consensus vote weighting.
-- ui/modules/trading/broker-adapter.js: Unified trading-broker factory that presents the common account/positions/orders/snapshots/news interface used by the trading stack and dispatches requests to Alpaca or IBKR implementations.
+- ui/modules/trading/broker-adapter.js: Unified trading-broker factory that presents the common account/positions/orders/snapshots/news interface used by the trading stack and dispatches requests to IBKR or Hyperliquid implementations.
 - ui/modules/trading/consultation-store.js: Disk-backed consultation request/response layer that writes full market context to runtime files, dispatches lightweight hm-send prompts to the live pane agents, and correlates JSON replies from the comms journal by requestId for real multi-model trading debate.
-- ui/modules/trading/data-ingestion.js: Trading data access layer for market clock/calendar, watchlist snapshots, bars, news, SEC filings, and Yahoo fallbacks; now broker-routes watchlist snapshot/news fetches so Alpaca and IBKR symbols can coexist in the same run.
+- ui/modules/trading/data-ingestion.js: Trading data access layer for watchlist snapshots, bars, news, SEC filings, and Yahoo fallbacks; broker-routes watchlist snapshot/news fetches across the surviving IBKR and Hyperliquid broker surfaces.
 - ui/modules/trading/bracket-manager.js: Pure Hyperliquid bracket-state planner that splits entry size into TP1/runner legs, classifies reduce-only stop/TP orders, and decides when the remainder stop must move to breakeven after a partial take-profit fill.
-- ui/modules/trading/dynamic-watchlist.js: Persistent static-plus-dynamic watchlist manager that lets future smart-money and launch-radar modules add sourced tickers with expiry while preserving a unified active watchlist for the trading stack.
-- ui/modules/trading/executor.js: Broker-routed order execution and account/position access layer that preserves the Alpaca flow while delegating IBKR orders and liquidation/account reads through the shared broker adapter.
+- ui/modules/trading/dynamic-watchlist.js: Persistent static-plus-dynamic watchlist manager that lets smart-money sources add sourced tickers with expiry while preserving a unified active watchlist for the trading stack.
+- ui/modules/trading/executor.js: Broker-routed order execution and account/position access layer for Hyperliquid and IBKR orders, liquidation, and account reads through the shared broker adapter.
 - ui/modules/trading/ibkr-client.js: Interactive Brokers client wrapper built on `@stoqey/ib`; handles env-based connection config, account summary reads, positions, stock order submission, market-data snapshots, and a unified IBKR broker surface for Asian-market routing.
+- ui/modules/trading/manual-stop-overrides.js: Runtime persistence + guard evaluation for manual wick-clearance stop widens so automated trailing logic can honor explicit stop ownership until break-even-or-better or bracket takeover.
 - ui/modules/trading/orchestrator.js: Phase coordinator for the autonomous trading workflow; stores per-ticker agent signals, auto-backfills missing Architect/Builder/Oracle signals from the live signal producer during premarket/consensus, runs consensus/risk gating, executes market-open and midday actions, journals end-of-day summaries, and chains the full trading-day loop.
-- ui/modules/trading/portfolio-tracker.js: Unified cross-market portfolio snapshot builder that aggregates Alpaca, optional IBKR, Polymarket, DeFi deposits, and future Solana-token exposure into one capital and risk view with persisted day-start / peak-equity state.
-- ui/modules/trading/polymarket-client.js: Polymarket CLOB wrapper for Rabby/EOA authentication, L2 API-key derivation, market discovery pagination, order-book and price reads, dry-run-first GTC order placement, and wallet balance/open-position access over Polygon USDC.e.
-- ui/modules/trading/polymarket-scanner.js: Polymarket market scanner that filters binary markets by liquidity, spread, category, and 1-90 day resolution horizon, then ranks candidates by consensus-vs-market edge for downstream signal and sizing modules.
-- ui/modules/trading/polymarket-signals.js: Polymarket probability-signal layer that produces deterministic per-agent yes/no estimates from scanner context and aggregates them with a 2-of-3, confidence-weighted edge consensus.
-- ui/modules/trading/polymarket-sizer.js: Polymarket bankroll manager that applies raw Kelly sizing with half-Kelly, per-market and total-exposure caps, concurrent-position limits, minimum bet checks, and stop-loss/near-resolution exit rules.
+- ui/modules/trading/portfolio-tracker.js: Unified cross-market portfolio snapshot builder that aggregates optional IBKR and Solana-token exposure into one capital and risk view with persisted day-start / peak-equity state.
+- ui/modules/trading/spark-capture.js: Spark-catalyst monitor core that polls Upbit listing notices, diffs Hyperliquid universe additions, routes Tokenomist unlocks into a deduped event stream, and writes manual-only fire plans plus persisted spark state under `.squidrun/runtime/`.
 - ui/modules/trading/signal-producer.js: Live market-data signal generator for trading agents; fetches broker-routed watchlist snapshots, 5-day bars, and routed news, scores momentum/news/volume with agent-specific weighting, and returns/registers BUY/SELL/HOLD signals for the orchestrator.
 - ui/modules/trading/smart-money-scanner.js: Event-driven smart-money poller that buffers large-wallet transfers, detects same-token convergence, persists scanner state, and emits immediate trigger events so supervisor/orchestrator wiring can wake consensus outside the normal cron cadence.
 - ui/modules/trading/wallet-tracker.js: Smart-money wallet registry that tracks named Solana/Ethereum wallets, supports mock/stub move ingestion before live API keys exist, and surfaces multi-wallet convergence signals for later dynamic-watchlist and scorer integration.
@@ -257,7 +256,10 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-compat-count.js: Utility script for compatibility/counting diagnostics used in release and audit workflows.
 - ui/scripts/hm-defi-close.js: Hyperliquid position-close CLI that cancels open TP/SL orders, submits a reduce-only IOC close order, and verifies the position is flat.
 - ui/scripts/hm-defi-execute.js: DeFi execution pipeline CLI that bridges funds, swaps collateral, deposits to Hyperliquid, and opens the configured leveraged perp trade.
+- ui/scripts/hm-spark-monitor.js: Manual/automation entrypoint for spark-capture scans; emits JSON summaries for dry runs and is wired into the supervisor spark-monitor lane.
+- ui/scripts/arch-ordi-stop-move.js: Manual ORDI stop-widen helper that resolves/cancels the exact live stop `oid`, places the replacement stop, and records a runtime manual-stop override for downstream management guards.
 - ui/scripts/hm-hyperliquid-bracket-manager.js: Hyperliquid bracket-management CLI that inspects the live position plus reduce-only orders, detects TP1 fills, cancels stale stops, and moves the remainder stop to breakeven on the normal bracket path.
+- ui/scripts/hm-trailing-stop.js: Trailing-stop CLI that tightens exchange-native stops from live price while honoring runtime manual-stop override guards before cancel/replace.
 - ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
 - ui/scripts/hm-experiment.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-github.js: CLI utility that sends/queries runtime actions via WebSocket.
@@ -284,7 +286,9 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-screenshot-window.ps1: PowerShell helper script (window/screenshot automation).
 - ui/scripts/hm-screenshot.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-search.js: Safe `rg` wrapper for Windows/PowerShell with optional glob filters and escaped-pattern default behavior.
-- ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket; hot-loads outbound guardrails before journaling or websocket dispatch.
+- ui/scripts/hm-send-context-leak-guard.js: Outbound hm-send guard that blocks Eunbyeol/case-context leakage from the main profile and records violations/bypasses as JSONL runtime audit rows.
+- ui/scripts/hm-send-permission-guard.js: Outbound hm-send guard that detects permission-ask phrases, records violations/bypasses as JSONL runtime audit rows, and supports summary reporting.
 - ui/scripts/hm-sms.js: Exports parseMessage, getTwilioConfig, getMissingConfigKeys, buildAuthHeader, ....
 - ui/scripts/hm-surface-audit.js: UI/documentation surface audit helper used to check exposed commands and runtime-facing features.
 - ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, .... Outbound sends reuse caller-provided journal `messageId` when present so live comms events and evidence-ledger rows stay correlated.
@@ -333,7 +337,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - Retrieval access is tiered: exploratory reads update `last_accessed_at` / `access_count`, while repeated or explicit use reactivates recency. This prevents casual lookups from fully refreshing stale memories.
 - `transactive_meta` is consulted during `retrieve()`. When expertise rows exist, the API returns additive transactive guidance (`matches`, `recommendedAgentId`) alongside normal content results.
 - Patch writes stay in sync with search: `cognitive-memory-api.patch()` updates linked `memory-document:<id>` entries in `search-index.db`, including the FTS and vector-backed rows managed by `ui/modules/memory-search.js`.
-- Supervisor-backed maintenance is live: `ui/supervisor-daemon.js` initializes the sleep consolidator and lease janitor during startup, reruns housekeeping on each supervisor tick, and now tracks stock, crypto, and Polymarket automation state under `.squidrun/runtime/`.
+- Supervisor-backed maintenance is live: `ui/supervisor-daemon.js` initializes the sleep consolidator and lease janitor during startup, reruns housekeeping on each supervisor tick, and tracks runtime automation state under `.squidrun/runtime/`.
 - Startup health scoring contract is explicit in `ui/scripts/hm-health-snapshot.js`: score starts at 100, penalties subtract from named findings, thresholds map score bands to `OK`/`WARN`/`DEGRADED`/`CRITICAL`, and new probes are expected to register a stable warning code plus a documented penalty instead of open-coded score math. Current operational probes are bridge connectivity (`bridge_enabled_unconfigured`, `bridge_enabled_not_connected`) and memory consistency (`memory_consistency_drift`, generic unsynced fallback).
 - Sleep consolidation is wired through the supervisor, but it is intentionally gated by idle/activity thresholds. Its tables initialize at supervisor startup; full clustering/extraction runs only when the session is idle enough.
 - Memory expiration is enforced in active delivery paths: `ui/modules/memory-ingest/delivery.js` excludes expired rows from proactive injection, and `ui/modules/memory-ingest/lifecycle.js` advances expired memories to `status='expired'`.
@@ -345,7 +349,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 1. User types in pane 1 broadcast input (`ui/index.html#broadcastInput`, `ui/renderer.js`).
 2. Renderer forwards through IPC (`send-broadcast-message` / task-parser handlers) into main process routing.
 3. Architect delegates via `hm-send.js` to target role/pane.
-4. `hm-send.js` sends a canonical envelope over WebSocket and records outbound comms metadata.
+4. `hm-send.js` runs hot-loadable outbound guardrails, then sends a canonical envelope over WebSocket and records outbound comms metadata.
 5. WebSocket runtime dispatch in `squidrun-app.js` calls `triggers.sendDirectMessage()` / `broadcastToAllAgents()`.
 6. If direct WS verification fails, `hm-send.js` writes trigger fallback file under `.squidrun/triggers/`.
 7. Watcher picks trigger/message changes, parses target/sequence, and routes to injection.
@@ -385,4 +389,4 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
   - Shared IPC harness helpers in `ui/__tests__/helpers/ipc-harness.js`.
   - Config mocking helpers in `ui/__tests__/helpers/mock-config.js` and `ui/__tests__/helpers/real-config.js`.
   - Frequent fake-timer tests for watcher/terminal/runtime behavior.
-- Current suite scale: 193 suites / 3494 tests in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.
+- Current suite scale: 298 suites / 4325 tests discovered in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.

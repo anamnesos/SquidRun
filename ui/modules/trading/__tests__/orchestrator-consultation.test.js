@@ -6,9 +6,6 @@ const path = require('path');
 
 const mockJournalDb = { mocked: true };
 let mockTrades = [];
-let mockAlpacaClient = {
-  getOrder: jest.fn(),
-};
 let mockRecordedDailySummaries = [];
 const mockExecFile = jest.fn();
 
@@ -36,7 +33,6 @@ jest.mock('../data-ingestion', () => ({
     ]],
   ])),
   getNews: jest.fn().mockResolvedValue([]),
-  createAlpacaClient: jest.fn(() => mockAlpacaClient),
 }));
 
 jest.mock('../executor', () => ({
@@ -76,7 +72,7 @@ jest.mock('../journal', () => ({
       ...(patch.shares !== undefined ? { shares: patch.shares } : {}),
       ...(patch.price !== undefined ? { price: patch.price } : {}),
       ...(patch.status !== undefined ? { status: String(patch.status).toUpperCase() } : {}),
-      ...(patch.alpacaOrderId !== undefined ? { alpaca_order_id: patch.alpacaOrderId } : {}),
+      ...(patch.brokerOrderId !== undefined ? { alpaca_order_id: patch.brokerOrderId } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
       ...(patch.filledAt !== undefined ? { filled_at: patch.filledAt } : {}),
       ...(patch.reconciledAt !== undefined ? { reconciled_at: patch.reconciledAt } : {}),
@@ -306,14 +302,7 @@ jest.mock('../portfolio-tracker', () => ({
   getPortfolioSnapshot: jest.fn().mockResolvedValue({
     totalEquity: 12000,
     positions: [],
-    markets: {
-      polymarket: {
-        equity: 162,
-        cash: 162,
-        marketValue: 0,
-        positions: [],
-      },
-    },
+    markets: {},
     risk: {
       peakEquity: 12000,
       dayStartEquity: 12000,
@@ -326,53 +315,16 @@ jest.mock('../portfolio-tracker', () => ({
 jest.mock('../dynamic-watchlist', () => ({
   cloneEntry: jest.fn((entry) => ({ ...entry })),
   getActiveEntries: jest.fn(() => [
-    { ticker: 'AAPL', broker: 'alpaca', assetClass: 'us_equity', exchange: 'SMART' },
+    { ticker: 'AAPL', broker: 'ibkr', assetClass: 'us_equity', exchange: 'SMART' },
   ]),
   getEntry: jest.fn(() => null),
   addTicker: jest.fn(() => true),
   isWatched: jest.fn(() => true),
-  normalizeBroker: jest.fn((value, fallback = 'alpaca') => value || fallback),
+  normalizeBroker: jest.fn((value, fallback = 'ibkr') => value || fallback),
   normalizeExchange: jest.fn((value, fallback = 'SMART') => value || fallback),
   normalizeAssetClass: jest.fn((value, fallback = 'us_equity') => value || fallback),
   DEFAULT_WATCHLIST: [],
   DEFAULT_CRYPTO_WATCHLIST: [],
-}));
-
-jest.mock('../polymarket-scanner', () => ({
-  scanMarkets: jest.fn().mockResolvedValue([
-    {
-      conditionId: 'market-1',
-      question: 'Will BTC close above $120k by June 30?',
-      tokens: { yes: 'yes-token', no: 'no-token' },
-      currentPrices: { yes: 0.61, no: 0.39 },
-    },
-  ]),
-}));
-
-jest.mock('../polymarket-signals', () => ({
-  produceSignals: jest.fn(() => new Map([
-    ['architect', [{ agent: 'architect', conditionId: 'market-1', probability: 0.74, confidence: 0.84, direction: 'BUY_YES', reasoning: 'architect poly' }]],
-    ['builder', [{ agent: 'builder', conditionId: 'market-1', probability: 0.76, confidence: 0.86, direction: 'BUY_YES', reasoning: 'builder poly' }]],
-    ['oracle', [{ agent: 'oracle', conditionId: 'market-1', probability: 0.58, confidence: 0.70, direction: 'BUY_NO', reasoning: 'oracle poly' }]],
-  ])),
-  buildConsensus: jest.fn(() => ({
-    conditionId: 'market-1',
-    decision: 'BUY_YES',
-    consensus: true,
-    agreementCount: 2,
-    probability: 0.72,
-    edge: 0.11,
-    summary: 'BUY YES edge',
-  })),
-}));
-
-jest.mock('../polymarket-sizer', () => ({
-  positionSize: jest.fn(() => ({
-    executable: true,
-    stake: 24.3,
-    shares: 39.836,
-    reasons: [],
-  })),
 }));
 
 const executor = require('../executor');
@@ -385,12 +337,8 @@ const consensusSizer = require('../consensus-sizer');
 const portfolioTracker = require('../portfolio-tracker');
 const riskEngine = require('../risk-engine');
 const dynamicWatchlist = require('../dynamic-watchlist');
-const dataIngestion = require('../data-ingestion');
 const telegramSummary = require('../telegram-summary');
 const agentAttribution = require('../agent-attribution');
-const polymarketScanner = require('../polymarket-scanner');
-const polymarketSignals = require('../polymarket-signals');
-const polymarketSizer = require('../polymarket-sizer');
 const macroRiskGate = require('../macro-risk-gate');
 const signalValidationRecorder = require('../signal-validation-recorder');
 const hyperliquidNativeLayer = require('../hyperliquid-native-layer');
@@ -404,20 +352,10 @@ describe('orchestrator real consultation flow', () => {
     mockTrades = [];
     mockRecordedDailySummaries = [];
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-defi-monitor-'));
-    mockAlpacaClient = {
-      getOrder: jest.fn(),
-    };
     portfolioTracker.getPortfolioSnapshot.mockResolvedValue({
       totalEquity: 12000,
       positions: [],
-      markets: {
-        polymarket: {
-          equity: 162,
-          cash: 162,
-          marketValue: 0,
-          positions: [],
-        },
-      },
+      markets: {},
       risk: {
         peakEquity: 12000,
         dayStartEquity: 12000,
@@ -1495,6 +1433,83 @@ describe('orchestrator real consultation flow', () => {
     ]));
   });
 
+  test('caps flat sub-1k Hyperliquid auto-execution to the single best oracle-backed name', async () => {
+    mockExecFile.mockImplementation((_command, _args, _options, callback) => {
+      callback(null, { stdout: 'ok', stderr: '' });
+    });
+    const orchestrator = createOrchestrator();
+
+    const autoExecution = await orchestrator.maybeAutoExecuteLiveConsensus([
+      {
+        ticker: 'ETH/USD',
+        consensus: true,
+        decision: 'SHORT',
+        confidence: 0.81,
+      },
+      {
+        ticker: 'BTC/USD',
+        consensus: true,
+        decision: 'BUY',
+        confidence: 0.87,
+      },
+    ], [
+      {
+        ticker: 'ETH/USD',
+        consensus: { ticker: 'ETH/USD', decision: 'SHORT', agreeing: [{ confidence: 0.81 }, { confidence: 0.78 }] },
+        referencePrice: 2100,
+        riskCheck: { maxShares: 0.25, margin: 105, stopLossPrice: 2140.5, leverage: 5 },
+        signalLookup: {
+          oracle: { ticker: 'ETH/USD', direction: 'SHORT', confidence: 0.81 },
+        },
+      },
+      {
+        ticker: 'BTC/USD',
+        consensus: { ticker: 'BTC/USD', decision: 'BUY', agreeing: [{ confidence: 0.87 }, { confidence: 0.82 }] },
+        referencePrice: 76000,
+        riskCheck: { maxShares: 0.003, margin: 95, stopLossPrice: 74800, leverage: 5 },
+        signalLookup: {
+          oracle: { ticker: 'BTC/USD', direction: 'BUY', confidence: 0.87 },
+        },
+      },
+    ], {
+      accountValue: 689,
+      withdrawable: 689,
+      positions: [],
+    }, {
+      autoExecuteLiveConsensus: true,
+      allowHyperliquidAutoOpen: true,
+      hyperliquidExecutionDryRun: true,
+      eventVeto: { decision: 'CLEAR', affectedAssets: [] },
+      macroRisk: { regime: 'yellow' },
+      hyperliquidExecuteScriptPath: path.join(tempDir, 'hm-defi-execute.js'),
+      hyperliquidCloseScriptPath: path.join(tempDir, 'hm-defi-close.js'),
+    });
+
+    expect(autoExecution.executions).toEqual([
+      expect.objectContaining({
+        ticker: 'BTC/USD',
+        action: 'open',
+        ok: true,
+      }),
+    ]);
+    expect(autoExecution.skipped).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ticker: 'ETH/USD',
+        reason: 'single_best_name_cap',
+      }),
+    ]));
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+    expect(mockExecFile.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      path.join(tempDir, 'hm-defi-execute.js'),
+      '--dry-run',
+      'trade',
+      '--asset',
+      'BTC',
+      '--direction',
+      'BUY',
+    ]));
+  });
+
   test('rejects an exact-threshold 0.60 average confidence instead of passing a blind spot downstream', async () => {
     const orchestrator = createOrchestrator({
       consultationEnabled: false,
@@ -1520,7 +1535,6 @@ describe('orchestrator real consultation flow', () => {
     const result = await orchestrator.runConsensusRound({
       symbols: ['AAPL'],
     });
-
     expect(result.approvedTrades).toEqual([]);
     expect(result.rejectedTrades).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1570,14 +1584,14 @@ describe('orchestrator real consultation flow', () => {
       hyperliquidExecuteScriptPath: path.join(tempDir, 'hm-defi-execute.js'),
       hyperliquidCloseScriptPath: path.join(tempDir, 'hm-defi-close.js'),
     });
-
-    expect(autoExecution.executions).toEqual([
+    expect(autoExecution.executions).toEqual([]);
+    expect(autoExecution.skipped).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ticker: 'LINK/USD',
-        action: 'close',
-        ok: true,
+        asset: 'LINK',
+        reason: 'auto_close_disabled_agent_managed',
       }),
-    ]);
+    ]));
     expect(autoExecution.skipped).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ticker: 'ETH/USD',
@@ -1585,13 +1599,7 @@ describe('orchestrator real consultation flow', () => {
         reason: 'auto_open_disabled_stop_ship',
       }),
     ]));
-    expect(mockExecFile).toHaveBeenCalledTimes(1);
-    expect(mockExecFile).toHaveBeenCalledWith(
-      process.execPath,
-      [path.join(tempDir, 'hm-defi-close.js'), '--dry-run', '--asset', 'LINK'],
-      expect.objectContaining({ cwd: expect.any(String), windowsHide: true }),
-      expect.any(Function)
-    );
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
   test('flattens live Hyperliquid positions when kill switch action is flatten_positions', async () => {
@@ -1801,7 +1809,6 @@ describe('orchestrator real consultation flow', () => {
     const result = await orchestrator.runConsensusRound({
       symbols: ['AAPL'],
     });
-
     expect(result.approvedTrades).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ticker: 'AAPL',
@@ -1812,69 +1819,6 @@ describe('orchestrator real consultation flow', () => {
       ticker: 'AAPL',
       actedOn: true,
     }));
-  });
-
-  test('runs the polymarket branch end-to-end and auto-adds smart money convergence tickers', async () => {
-    const orchestrator = createOrchestrator();
-
-    const consensusPhase = await orchestrator.runConsensusRound({
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      smartMoneySignals: [
-        {
-          symbol: 'UNI',
-          chain: 'ethereum',
-          walletCount: 2,
-          totalUsdValue: 165000,
-        },
-      ],
-    });
-
-    expect(dynamicWatchlist.addTicker).toHaveBeenCalledWith('UNI', expect.objectContaining({
-      source: 'smart_money',
-      assetClass: 'crypto',
-    }));
-    expect(polymarketScanner.scanMarkets).toHaveBeenCalled();
-    expect(polymarketSignals.produceSignals).toHaveBeenCalled();
-    expect(polymarketSizer.positionSize).toHaveBeenCalledWith(
-      162,
-      0.72,
-      0.61,
-      expect.objectContaining({
-        dailyLossPct: 0,
-      })
-    );
-    expect(consensusPhase.approvedTrades).toEqual([
-      expect.objectContaining({
-        ticker: 'market-1',
-        tokenId: 'yes-token',
-        referencePrice: 0.61,
-      }),
-    ]);
-
-    const executionPhase = await orchestrator.runMarketOpen({
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      consensusPhase,
-    });
-
-    expect(executor.executeConsensusTrade).toHaveBeenCalledWith(expect.objectContaining({
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      tokenId: 'yes-token',
-      requestedShares: 39.836,
-      account: expect.objectContaining({
-        totalEquity: 12000,
-      }),
-    }), expect.objectContaining({
-      broker: 'polymarket',
-    }));
-    expect(executionPhase.executions).toEqual([
-      expect.objectContaining({
-        ticker: 'market-1',
-        execution: expect.objectContaining({ ok: true, status: 'dry_run' }),
-      }),
-    ]);
   });
 
   test('macro red normalizes consultation and fallback BUY signals into HOLD before consensus', async () => {
@@ -1926,250 +1870,7 @@ describe('orchestrator real consultation flow', () => {
     expect(result.approvedTrades).toEqual([]);
   });
 
-  test('syncs qualified launch radar tokens into the dynamic watchlist', async () => {
-    const launchRadarMock = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        qualified: [
-          {
-            chain: 'solana',
-            symbol: 'SQD',
-            name: 'Squid Launch',
-            address: 'SoLaunch11111111111111111111111111111111111',
-            liquidityUsd: 12500,
-            holders: 44,
-            audit: { recommendation: 'proceed' },
-          },
-        ],
-      }),
-    };
-    const orchestrator = createOrchestrator({
-      launchRadar: launchRadarMock,
-      dynamicWatchlistStatePath: '/tmp/dynamic-watchlist.json',
-    });
-
-    const result = await orchestrator.syncLaunchRadarWatchlist({
-      reason: 'test_launch_radar',
-      now: '2026-03-19T21:00:00.000Z',
-    });
-
-    expect(launchRadarMock.pollNow).toHaveBeenCalledWith({ reason: 'test_launch_radar' });
-    expect(dynamicWatchlist.addTicker).toHaveBeenCalledWith('SQD', expect.objectContaining({
-      statePath: '/tmp/dynamic-watchlist.json',
-      source: 'launch_radar',
-      assetClass: 'solana_token',
-      exchange: 'SOLANA',
-      expiry: '2026-03-26T21:00:00.000Z',
-    }));
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      qualifiedTokens: [
-        expect.objectContaining({
-          symbol: 'SQD',
-        }),
-      ],
-      added: ['SQD'],
-    }));
-  });
-
-  test('runs launch radar sync during both premarket and consensus rounds', async () => {
-    const orchestrator = createOrchestrator();
-    const syncLaunchRadarSpy = jest.spyOn(orchestrator, 'syncLaunchRadarWatchlist').mockResolvedValue({
-      ok: true,
-      qualifiedTokens: [],
-      added: [],
-      refreshed: [],
-      pollResult: null,
-    });
-
-    await orchestrator.runPreMarket({
-      symbols: ['AAPL'],
-      date: '2026-03-19',
-    });
-    await orchestrator.runConsensusRound({
-      symbols: ['AAPL'],
-      date: '2026-03-19',
-      consultationTimeoutMs: 50,
-    });
-
-    expect(syncLaunchRadarSpy).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      reason: 'premarket',
-    }));
-    expect(syncLaunchRadarSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      reason: 'consensus_round',
-    }));
-  });
-
-  test('computes capital allocation and parks excess idle cash in yield', async () => {
-    const yieldRouter = {
-      returnCapital: jest.fn().mockResolvedValue({
-        ok: true,
-        deposited: 250,
-        venue: 'Morpho',
-      }),
-      requestCapital: jest.fn(),
-    };
-    const orchestrator = createOrchestrator({ yieldRouter });
-    const portfolioSnapshot = {
-      totalEquity: 1000,
-      markets: {
-        alpaca_stocks: { equity: 250 },
-        alpaca_crypto: { equity: 150 },
-        ibkr_global: { equity: 0 },
-        polymarket: { equity: 0 },
-        defi_yield: { equity: 100 },
-        solana_tokens: { equity: 0 },
-        cash_reserve: { cash: 500, equity: 500 },
-      },
-    };
-
-    const allocation = orchestrator.getCapitalAllocation(portfolioSnapshot);
-    const result = await orchestrator.returnIdleCapital({
-      portfolioSnapshot,
-    });
-
-    expect(allocation).toEqual(expect.objectContaining({
-      targets: expect.objectContaining({
-        activeTrading: 400,
-        yield: 350,
-        reserve: 200,
-        launchRadar: 50,
-      }),
-      excess: expect.objectContaining({
-        idleCapital: 250,
-      }),
-      gaps: expect.objectContaining({
-        yield: 250,
-      }),
-    }));
-    expect(yieldRouter.returnCapital).toHaveBeenCalledWith(250, expect.objectContaining({
-      portfolioSnapshot,
-      totalCapital: 1000,
-      activeTradeCapital: 400,
-    }));
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      action: 'return_idle',
-      amount: 250,
-      deposit: expect.objectContaining({
-        deposited: 250,
-      }),
-    }));
-  });
-
-  test('requests trading capital from yield when active allocation is short', async () => {
-    const yieldRouter = {
-      returnCapital: jest.fn(),
-      requestCapital: jest.fn().mockResolvedValue({
-        ok: true,
-        withdrawn: 50,
-        sources: [
-          { venue: { protocol: 'Aave' }, amount: 50 },
-        ],
-      }),
-    };
-    const orchestrator = createOrchestrator({ yieldRouter });
-    const portfolioSnapshot = {
-      totalEquity: 1000,
-      markets: {
-        alpaca_stocks: { equity: 100 },
-        alpaca_crypto: { equity: 0 },
-        ibkr_global: { equity: 0 },
-        polymarket: { equity: 0 },
-        defi_yield: { equity: 250 },
-        solana_tokens: { equity: 0 },
-        cash_reserve: { cash: 300, equity: 300 },
-      },
-      risk: {
-        killSwitchTriggered: false,
-      },
-    };
-
-    const result = await orchestrator.requestTradingCapital(100, {
-      portfolioSnapshot,
-    });
-
-    expect(yieldRouter.requestCapital).toHaveBeenCalledWith(50, expect.objectContaining({
-      portfolioSnapshot,
-      totalCapital: 1000,
-    }));
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      requested: 100,
-      shortfall: 50,
-      requestAmount: 50,
-      withdrawal: expect.objectContaining({
-        withdrawn: 50,
-      }),
-    }));
-  });
-
-  test('requests trading capital before executing approved BUY trades', async () => {
-    const yieldRouter = {
-      returnCapital: jest.fn(),
-      requestCapital: jest.fn().mockResolvedValue({
-        ok: true,
-        withdrawn: 200,
-        sources: [],
-      }),
-    };
-    const orchestrator = createOrchestrator({ yieldRouter });
-    const consensusPhase = {
-      accountState: {
-        equity: 1000,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        tradesToday: 0,
-        openPositions: [],
-      },
-      portfolioSnapshot: {
-        totalEquity: 1000,
-        markets: {
-          alpaca_stocks: { equity: 100 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
-          defi_yield: { equity: 250 },
-          solana_tokens: { equity: 0 },
-          cash_reserve: { cash: 400, equity: 400 },
-        },
-        risk: {
-          killSwitchTriggered: false,
-        },
-      },
-      approvedTrades: [
-        {
-          ticker: 'AAPL',
-          consensus: { decision: 'BUY' },
-          referencePrice: 100,
-          riskCheck: { maxShares: 2 },
-          limits: {},
-        },
-      ],
-    };
-
-    const result = await orchestrator.runMarketOpen({
-      consensusPhase,
-    });
-
-    expect(yieldRouter.requestCapital).toHaveBeenCalledWith(50, expect.objectContaining({
-      portfolioSnapshot: consensusPhase.portfolioSnapshot,
-    }));
-    expect(executor.executeConsensusTrade).toHaveBeenCalled();
-    expect(journal.recordExecutionReport).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      phase: 'market_open',
-      reportType: 'market_open_execution',
-      ticker: 'AAPL',
-    }));
-    expect(result).toEqual(expect.objectContaining({
-      requiredTradingCapital: 200,
-      capitalRequest: expect.objectContaining({
-        requestAmount: 50,
-      }),
-    }));
-  });
-
-  test('reconciles pending fills, records closed-position outcomes, and builds daily trade stats', async () => {
+  test('records closed-position outcomes and builds daily trade stats', async () => {
     mockTrades = [
       {
         id: 1,
@@ -2179,8 +1880,7 @@ describe('orchestrator real consultation flow', () => {
         shares: 2,
         price: 100,
         total_value: 200,
-        status: 'PENDING_NEW',
-        alpaca_order_id: 'alpaca-buy-1',
+        status: 'FILLED',
       },
       {
         id: 2,
@@ -2191,18 +1891,8 @@ describe('orchestrator real consultation flow', () => {
         price: 110,
         total_value: 220,
         status: 'FILLED',
-        alpaca_order_id: 'alpaca-sell-1',
       },
     ];
-    mockAlpacaClient.getOrder.mockResolvedValue({
-      id: 'alpaca-buy-1',
-      symbol: 'AAPL',
-      status: 'filled',
-      qty: 2,
-      filled_qty: 2,
-      filled_avg_price: 101,
-      filled_at: '2026-03-19T14:31:00.000Z',
-    });
 
     const orchestrator = createOrchestrator();
     const result = await orchestrator.runReconciliation({
@@ -2210,17 +1900,10 @@ describe('orchestrator real consultation flow', () => {
       agentAttributionStatePath: '/tmp/agent-attribution.json',
     });
 
-    expect(dataIngestion.createAlpacaClient).toHaveBeenCalled();
-    expect(mockAlpacaClient.getOrder).toHaveBeenCalledWith('alpaca-buy-1');
-    expect(journal.updateTrade).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({
-      status: 'FILLED',
-      shares: 2,
-      price: 101,
-    }));
     expect(agentAttribution.recordOutcome).toHaveBeenCalledWith(
       'AAPL',
       'BUY',
-      expect.closeTo(18 / 202, 6),
+      expect.closeTo(20 / 200, 6),
       '2026-03-19T19:30:00.000Z',
       expect.objectContaining({
         assetClass: 'us_equity',
@@ -2233,33 +1916,26 @@ describe('orchestrator real consultation flow', () => {
       reportType: 'trade_outcome',
       tradeId: 2,
       ticker: 'AAPL',
-      realizedPnl: 18,
+      realizedPnl: 20,
     }));
     expect(result).toEqual(expect.objectContaining({
       phase: 'reconciliation',
       marketDate: '2026-03-19',
-      orderUpdates: [
-        expect.objectContaining({
-          tradeId: 1,
-          status: 'FILLED',
-          filledQty: 2,
-          filledPrice: 101,
-        }),
-      ],
+      orderUpdates: [],
       recordedOutcomes: [
         expect.objectContaining({
           tradeId: 2,
           ticker: 'AAPL',
-          realizedPnl: 18,
+          realizedPnl: 20,
         }),
       ],
       dailySummary: expect.objectContaining({
         totalTrades: 2,
         wins: 1,
         losses: 0,
-        netPnl: 18,
-        bestTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 18 }),
-        worstTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 18 }),
+        netPnl: 20,
+        bestTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 20 }),
+        worstTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 20 }),
       }),
     }));
   });
@@ -2382,7 +2058,6 @@ describe('orchestrator real consultation flow', () => {
     ]);
 
     const result = await orchestrator.runDefiMonitorCycle({ trigger: 'interval' });
-
     expect(result.positions[0]).toEqual(expect.objectContaining({
       coin: 'ETH',
       stopLossPrice: 2352,
@@ -2411,7 +2086,6 @@ describe('orchestrator real consultation flow', () => {
     ]);
 
     const result = await orchestrator.runDefiMonitorCycle({ trigger: 'interval' });
-
     // triggerPx (88.0) should be used, not limitPx (89.0)
     expect(result.positions[0]).toEqual(expect.objectContaining({
       coin: 'SOL',

@@ -1,3 +1,0 @@
-Yeah that's the cleaner path — second window in the SAME app, not a second install. Routes 은별's Telegram to her window, she gets her own Architect/Builder/Oracle with her own memory thread, our agents can message in and out. No single-instance lock problem because it's the same process.
-
-Sending to Builder now for real sizing. He'll tell me if it's hours or days.

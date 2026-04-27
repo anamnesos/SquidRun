@@ -4,15 +4,13 @@ const fs = require('fs');
 const hmDefiExecute = require('../../../scripts/hm-defi-execute');
 
 describe('hm-defi-execute', () => {
-  test('resolveWalletAddress prefers Hyperliquid env vars over the Polymarket funder address', () => {
+  test('resolveWalletAddress prefers explicit Hyperliquid wallet env vars', () => {
     expect(hmDefiExecute.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_WALLET_ADDRESS: '0xhyper',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xhyper');
 
     expect(hmDefiExecute.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xlegacy');
   });
@@ -73,6 +71,46 @@ describe('hm-defi-execute', () => {
 
     expect(hmDefiExecute.resolvePerpPriceDecimals(0.126936, 0)).toBe(5);
     expect(hmDefiExecute.formatPrice(0.126936, 0.126936, 0)).toBe('0.12694');
+  });
+
+  test('constrainStopPriceWithinLiquidationBuffer clamps requested stops on the liquidation side', () => {
+    const shortStop = hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 102,
+      entryPrice: 90,
+      liquidationPx: 100,
+      isLong: false,
+      referencePrice: 90,
+    });
+    expect(shortStop).toBeGreaterThan(90);
+    expect(shortStop).toBeLessThan(100);
+
+    const longStop = hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 78,
+      entryPrice: 90,
+      liquidationPx: 80,
+      isLong: true,
+      referencePrice: 90,
+    });
+    expect(longStop).toBeGreaterThan(80);
+    expect(longStop).toBeLessThan(90);
+  });
+
+  test('constrainStopPriceWithinLiquidationBuffer rejects unsafe stops when no clamp is possible', () => {
+    expect(() => hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 102,
+      entryPrice: undefined,
+      liquidationPx: 100,
+      isLong: false,
+      referencePrice: 90,
+    })).toThrow(/short stop loss 102 is at or above liquidation 100/);
+
+    expect(() => hmDefiExecute.constrainStopPriceWithinLiquidationBuffer({
+      stopPrice: 78,
+      entryPrice: undefined,
+      liquidationPx: 80,
+      isLong: true,
+      referencePrice: 90,
+    })).toThrow(/long stop loss 78 is at or below liquidation 80/);
   });
 
   test('resolveAssetMaxLeverage reads the venue cap from Hyperliquid meta', () => {
@@ -294,6 +332,29 @@ describe('hm-defi-execute', () => {
     }
   });
 
+  test('executeHyperliquidInfoCall retries once after a 429-style rate-limit error', async () => {
+    jest.useFakeTimers();
+    try {
+      const factory = jest.fn()
+        .mockRejectedValueOnce(new Error('429 Too many requests'))
+        .mockResolvedValueOnce({ ok: true });
+
+      const promise = hmDefiExecute.executeHyperliquidInfoCall(factory, {
+        retryDelayMs: 50,
+        jitterMs: 0,
+        maxRetries: 1,
+      });
+
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(50);
+
+      await expect(promise).resolves.toEqual({ ok: true });
+      expect(factory).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('executeHyperliquidOrder writes attempt and result audit entries', async () => {
     const appendSpy = jest.spyOn(fs, 'appendFileSync').mockImplementation(() => {});
     const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
@@ -407,6 +468,58 @@ describe('hm-defi-execute', () => {
         },
       },
     })).toBe(998877);
+  });
+
+  test('findLatestActiveHyperliquidTriggerOrderFromAudit returns the latest non-canceled stop oid', () => {
+    expect(hmDefiExecute.findLatestActiveHyperliquidTriggerOrderFromAudit({
+      entries: [
+        {
+          type: 'hyperliquid_order_result',
+          label: 'placeStopLoss',
+          payload: {
+            orders: [{ a: 76, t: { trigger: { tpsl: 'sl' } } }],
+          },
+          result: {
+            status: 'ok',
+            response: {
+              data: {
+                statuses: [{ resting: { oid: 393943072354 } }],
+              },
+            },
+          },
+        },
+        {
+          type: 'hyperliquid_cancel_result',
+          payload: {
+            cancels: [{ a: 76, o: 393943072354 }],
+          },
+          result: {
+            status: 'ok',
+            response: { type: 'cancel', data: { statuses: ['success'] } },
+          },
+        },
+        {
+          type: 'hyperliquid_order_result',
+          label: 'arch-ordi-widen-place',
+          payload: {
+            orders: [{ a: 76, t: { trigger: { tpsl: 'sl' } } }],
+          },
+          result: {
+            status: 'ok',
+            response: {
+              data: {
+                statuses: [{ resting: { oid: 393948579664 } }],
+              },
+            },
+          },
+        },
+      ],
+      assetIndex: 76,
+      tpsl: 'sl',
+    })).toEqual(expect.objectContaining({
+      oid: 393948579664,
+      label: 'arch-ordi-widen-place',
+    }));
   });
 
   test('openHyperliquidPosition verifies filled size before placing stop/TP and returns warnings on partial protection failure', async () => {
@@ -812,6 +925,75 @@ describe('hm-defi-execute', () => {
     expect(result).toBeNull();
   });
 
+  test('openHyperliquidPosition auto-closes undersized dust fills instead of keeping them as live positions', async () => {
+    const info = {
+      clearinghouseState: jest.fn()
+        .mockResolvedValueOnce({
+          marginSummary: { accountValue: '500' },
+          assetPositions: [],
+        })
+        .mockResolvedValueOnce({
+          marginSummary: { accountValue: '500' },
+          assetPositions: [],
+        }),
+      meta: jest.fn().mockResolvedValue({
+        universe: [{ name: 'CHIP', szDecimals: 0, maxLeverage: 3 }],
+      }),
+      allMids: jest.fn().mockResolvedValue({ CHIP: '0.091832' }),
+    };
+    const exchange = {
+      updateLeverage: jest.fn().mockResolvedValue({ ok: true }),
+      order: jest.fn()
+        .mockResolvedValueOnce({
+          status: 'ok',
+          response: {
+            type: 'order',
+            data: {
+              statuses: [{ filled: { totalSz: '1.0', avgPx: '0.091704', oid: 123 } }],
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 'ok',
+          response: {
+            type: 'order',
+            data: {
+              statuses: [{ filled: { totalSz: '1.0', avgPx: '0.091900', oid: 124 } }],
+            },
+          },
+        }),
+    };
+
+    const result = await hmDefiExecute.openHyperliquidPosition({
+      asset: 'CHIP',
+      direction: 'SELL',
+      leverage: 3,
+      margin: 100,
+      stopLossPrice: 0.094092,
+      signalConfidence: 0.62,
+      dryRun: false,
+      credentials: {
+        privateKey: '0xabc',
+        walletAddress: '0xwallet',
+      },
+      hyperliquidRuntime: {
+        walletAddress: '0xwallet',
+        info,
+        exchange,
+      },
+    });
+
+    expect(result).toBeNull();
+    expect(exchange.order).toHaveBeenCalledTimes(2);
+    expect(exchange.order).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      orders: [expect.objectContaining({
+        b: true,
+        r: true,
+        s: '1',
+      })],
+    }));
+  });
+
   test('openHyperliquidPosition blocks duplicate broadcasts when the same cloid already exists on Hyperliquid', async () => {
     const info = {
       clearinghouseState: jest.fn()
@@ -919,5 +1101,314 @@ describe('hm-defi-execute', () => {
     expect(exchange.updateLeverage).toHaveBeenCalled();
     expect(exchange.order).not.toHaveBeenCalled();
     expect(result).toBeNull();
+  });
+
+  test('openHyperliquidPosition reuses market snapshot data but refetches untimestamped clearinghouse state', async () => {
+    const info = {
+      clearinghouseState: jest.fn().mockResolvedValue({
+        marginSummary: { accountValue: '500' },
+        assetPositions: [],
+      }),
+      meta: jest.fn(),
+      allMids: jest.fn(),
+      orderStatus: jest.fn(),
+    };
+    const exchange = {
+      updateLeverage: jest.fn().mockResolvedValue({ ok: true }),
+      order: jest.fn()
+        .mockResolvedValueOnce({
+          status: 'ok',
+          response: {
+            data: {
+              statuses: [
+                {
+                  filled: {
+                    totalSz: '0.21',
+                    avgPx: '2105.2',
+                    oid: 123456,
+                  },
+                },
+              ],
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 'ok',
+          response: { data: { statuses: [{ resting: { oid: 222 } }] } },
+        })
+        .mockResolvedValueOnce({
+          status: 'ok',
+          response: { data: { statuses: [{ resting: { oid: 333 } }] } },
+        }),
+    };
+
+    const result = await hmDefiExecute.openHyperliquidPosition({
+      asset: 'ETH',
+      direction: 'SELL',
+      leverage: 5,
+      margin: 125,
+      stopLossPrice: 2168.8,
+      dryRun: false,
+      clientOrderId: 'snapshot-path-eth-short',
+      credentials: {
+        privateKey: '0xabc',
+        walletAddress: '0xwallet',
+      },
+      hyperliquidRuntime: {
+        walletAddress: '0xwallet',
+        info,
+        exchange,
+      },
+      executionSnapshot: {
+        clearinghouseState: {
+          marginSummary: { accountValue: '500' },
+          assetPositions: [],
+        },
+        meta: {
+          universe: [{ name: 'ETH', szDecimals: 3, maxLeverage: 10 }],
+        },
+        allMids: { ETH: '2100' },
+        resolvedAsset: {
+          asset: { name: 'ETH', szDecimals: 3, maxLeverage: 10 },
+          assetIndex: 0,
+        },
+      },
+      historicalBars: [
+        { open: 2090, high: 2105, low: 2088, close: 2100 },
+        { open: 2100, high: 2110, low: 2098, close: 2104 },
+      ],
+      skipDuplicateCheck: true,
+    });
+
+    expect(info.clearinghouseState).toHaveBeenCalledTimes(1);
+    expect(info.meta).not.toHaveBeenCalled();
+    expect(info.allMids).not.toHaveBeenCalled();
+    expect(info.orderStatus).not.toHaveBeenCalled();
+    expect(exchange.updateLeverage).toHaveBeenCalledTimes(1);
+    expect(exchange.order).toHaveBeenCalledTimes(3);
+    expect(result).toEqual(expect.objectContaining({
+      asset: 'ETH',
+      direction: 'SELL',
+      size: 0.21,
+      price: 2105.2,
+      stopLossConfigured: true,
+      takeProfitConfigured: true,
+    }));
+  });
+
+  test('openHyperliquidPosition rejects stale execution snapshot clearinghouse state before sizing', async () => {
+    const info = {
+      clearinghouseState: jest.fn().mockResolvedValue({
+        marginSummary: { accountValue: '500' },
+        assetPositions: [],
+      }),
+      meta: jest.fn(),
+      allMids: jest.fn(),
+    };
+
+    const result = await hmDefiExecute.openHyperliquidPosition({
+      asset: 'ETH',
+      direction: 'SELL',
+      leverage: 5,
+      margin: 125,
+      stopLossPrice: 2168.8,
+      dryRun: true,
+      nowMs: Date.parse('2026-04-25T10:00:20.000Z'),
+      freshClearinghouseMaxAgeMs: 10 * 1000,
+      credentials: {
+        privateKey: '0xabc',
+        walletAddress: '0xwallet',
+      },
+      hyperliquidRuntime: {
+        walletAddress: '0xwallet',
+        info,
+        exchange: {},
+      },
+      executionSnapshot: {
+        cachedAt: '2026-04-25T10:00:00.000Z',
+        clearinghouseState: {
+          marginSummary: { accountValue: '500' },
+          assetPositions: [
+            { position: { coin: 'ETH', szi: '0.21', entryPx: '2105.2' } },
+          ],
+        },
+        meta: {
+          universe: [{ name: 'ETH', szDecimals: 3, maxLeverage: 10 }],
+        },
+        allMids: { ETH: '2100' },
+        resolvedAsset: {
+          asset: { name: 'ETH', szDecimals: 3, maxLeverage: 10 },
+          assetIndex: 0,
+        },
+      },
+      historicalBars: [
+        { open: 2090, high: 2105, low: 2088, close: 2100 },
+        { open: 2100, high: 2110, low: 2098, close: 2104 },
+      ],
+    });
+
+    expect(info.clearinghouseState).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({
+      asset: 'ETH',
+      direction: 'SELL',
+      collateral: 125,
+    }));
+  });
+
+  test('openHyperliquidPosition fetches fresh clearinghouse state when execution snapshot is missing', async () => {
+    const info = {
+      clearinghouseState: jest.fn().mockResolvedValue({
+        marginSummary: { accountValue: '500' },
+        assetPositions: [],
+      }),
+      meta: jest.fn(),
+      allMids: jest.fn(),
+    };
+
+    const result = await hmDefiExecute.openHyperliquidPosition({
+      asset: 'ETH',
+      direction: 'SELL',
+      leverage: 5,
+      margin: 125,
+      stopLossPrice: 2168.8,
+      dryRun: true,
+      credentials: {
+        privateKey: '0xabc',
+        walletAddress: '0xwallet',
+      },
+      hyperliquidRuntime: {
+        walletAddress: '0xwallet',
+        info,
+        exchange: {},
+      },
+      executionSnapshot: {
+        meta: {
+          universe: [{ name: 'ETH', szDecimals: 3, maxLeverage: 10 }],
+        },
+        allMids: { ETH: '2100' },
+        resolvedAsset: {
+          asset: { name: 'ETH', szDecimals: 3, maxLeverage: 10 },
+          assetIndex: 0,
+        },
+      },
+      historicalBars: [
+        { open: 2090, high: 2105, low: 2088, close: 2100 },
+        { open: 2100, high: 2110, low: 2098, close: 2104 },
+      ],
+    });
+
+    expect(info.clearinghouseState).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({
+      asset: 'ETH',
+      direction: 'SELL',
+      collateral: 125,
+    }));
+  });
+
+  test('openHyperliquidPosition aborts instead of using stale clearinghouse state when fresh fetch fails', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const info = {
+        clearinghouseState: jest.fn().mockRejectedValue(new Error('network down')),
+        meta: jest.fn(),
+        allMids: jest.fn(),
+      };
+      const exchange = {
+        updateLeverage: jest.fn(),
+        order: jest.fn(),
+      };
+
+      const result = await hmDefiExecute.openHyperliquidPosition({
+        asset: 'ETH',
+        direction: 'SELL',
+        leverage: 5,
+        margin: 125,
+        stopLossPrice: 2168.8,
+        dryRun: false,
+        nowMs: Date.parse('2026-04-25T10:00:20.000Z'),
+        credentials: {
+          privateKey: '0xabc',
+          walletAddress: '0xwallet',
+        },
+        hyperliquidRuntime: {
+          walletAddress: '0xwallet',
+          info,
+          exchange,
+        },
+        executionSnapshot: {
+          cachedAt: '2026-04-25T10:00:00.000Z',
+          clearinghouseState: {
+            marginSummary: { accountValue: '500' },
+            assetPositions: [],
+          },
+          meta: {
+            universe: [{ name: 'ETH', szDecimals: 3, maxLeverage: 10 }],
+          },
+          allMids: { ETH: '2100' },
+        },
+      });
+
+      expect(result).toBeNull();
+      expect(info.clearinghouseState).toHaveBeenCalledTimes(1);
+      expect(exchange.updateLeverage).not.toHaveBeenCalled();
+      expect(exchange.order).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Fresh clearinghouseState required before Hyperliquid order placement: network down'));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test('openHyperliquidPosition retries a preflight info 429 before giving up on the trade', async () => {
+    jest.useFakeTimers();
+    try {
+      const info = {
+        clearinghouseState: jest.fn()
+          .mockRejectedValueOnce(new Error('429 Too many connections'))
+          .mockResolvedValueOnce({
+            marginSummary: { accountValue: '500' },
+            assetPositions: [],
+          }),
+        meta: jest.fn().mockResolvedValue({
+          universe: [{ name: 'ETH', szDecimals: 3 }],
+        }),
+        allMids: jest.fn().mockResolvedValue({ ETH: '2100' }),
+      };
+
+      const promise = hmDefiExecute.openHyperliquidPosition({
+        asset: 'ETH',
+        direction: 'SELL',
+        leverage: 5,
+        margin: 125,
+        stopLossPrice: 2168.8,
+        historicalBars: [],
+        infoRetryDelayMs: 50,
+        infoJitterMs: 0,
+        infoMaxRetries: 1,
+        dryRun: true,
+        credentials: {
+          privateKey: '0xabc',
+          walletAddress: '0xwallet',
+        },
+        hyperliquidRuntime: {
+          walletAddress: '0xwallet',
+          info,
+          exchange: {},
+        },
+      });
+
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(50);
+
+      await expect(promise).resolves.toEqual(expect.objectContaining({
+        asset: 'ETH',
+        direction: 'SELL',
+        collateral: 125,
+      }));
+      expect(info.clearinghouseState).toHaveBeenCalledTimes(2);
+      expect(info.meta).toHaveBeenCalledTimes(1);
+      expect(info.allMids).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

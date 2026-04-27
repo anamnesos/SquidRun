@@ -6,21 +6,9 @@ jest.mock('child_process', () => ({
   execFile: (...args) => mockExecFile(...args),
 }));
 
-jest.mock('../data-ingestion', () => ({
-  createAlpacaClient: jest.fn(),
-}));
-
 jest.mock('../journal', () => ({
   getDb: jest.fn(() => ({})),
   recordTrade: jest.fn(() => ({ lastInsertRowid: 1 })),
-}));
-
-jest.mock('../polymarket-client', () => ({
-  createOrder: jest.fn(),
-  getBalance: jest.fn(),
-  getPositions: jest.fn(),
-  connect: jest.fn(),
-  disconnect: jest.fn(),
 }));
 
 jest.mock('../hyperliquid-client', () => ({

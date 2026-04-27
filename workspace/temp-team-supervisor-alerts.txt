@@ -1,9 +1,0 @@
-Team — James is getting constant stale/incorrect trading alerts on Telegram from the supervisor daemon. It's auto-spawned by the Electron app on launch (squidrun-app.js line 2291).
-
-Questions:
-1. What is the supervisor daemon's position monitor actually supposed to do?
-2. Why is it sending alerts about trades that aren't happening (ETH shorts getting closed, AVAX giveback alerts)?
-3. Is it monitoring positions that no longer exist?
-4. Should we disable the trading alerts from supervisor while James is manually trading, or fix the data source?
-
-James wants us to make sense of this together. What's going on?

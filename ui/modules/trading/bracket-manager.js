@@ -218,11 +218,43 @@ function deriveBracketState(input = {}) {
   };
 }
 
+function deriveExchangeProtection(position = {}, openOrders = []) {
+  const normalizedPosition = normalizePosition(position);
+  if (!normalizedPosition.coin || normalizedPosition.entryPx <= 0) {
+    return {
+      stopOrders: [],
+      takeProfitOrders: [],
+      activeStopOrder: null,
+      activeTakeProfitOrder: null,
+      activeStopPrice: null,
+      activeTakeProfitPrice: null,
+      verified: false,
+    };
+  }
+  const { stopOrders, takeProfitOrders } = splitReduceOnlyOrders(normalizedPosition, openOrders);
+  const activeStopOrder = normalizedPosition.isLong
+    ? (stopOrders[stopOrders.length - 1] || null)
+    : (stopOrders[0] || null);
+  const activeTakeProfitOrder = normalizedPosition.isLong
+    ? (takeProfitOrders[0] || null)
+    : (takeProfitOrders[takeProfitOrders.length - 1] || null);
+  return {
+    stopOrders,
+    takeProfitOrders,
+    activeStopOrder,
+    activeTakeProfitOrder,
+    activeStopPrice: activeStopOrder?.price || null,
+    activeTakeProfitPrice: activeTakeProfitOrder?.price || null,
+    verified: true,
+  };
+}
+
 module.exports = {
   DEFAULT_FIRST_TP_RATIO,
   buildBracketPlan,
   splitReduceOnlyOrders,
   deriveBracketState,
+  deriveExchangeProtection,
   normalizePosition,
   normalizeOpenOrder,
   normalizeDirection,

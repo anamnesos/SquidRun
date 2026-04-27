@@ -20,6 +20,7 @@ describe('cognitive-memory immunity', () => {
       workspaceDir: path.join(tempDir, 'workspace'),
       dbPath: path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'),
       pendingPrPath: path.join(tempDir, '.squidrun', 'memory', 'pending-pr.json'),
+      allowUnscopedDbPath: true,
     });
   });
 

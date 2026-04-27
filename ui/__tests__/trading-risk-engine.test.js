@@ -68,8 +68,9 @@ describe('Risk Engine', () => {
       );
       expect(result.approved).toBe(true);
       expect(result.violations).toHaveLength(0);
-      expect(result.maxShares).toBeCloseTo(0.0075, 6);
+      expect(result.maxShares).toBeCloseTo(0.066406, 6);
       expect(result.stopLossPrice).toBeCloseTo(2080);
+      expect(result.positionNotional).toBeCloseTo(132.81, 2);
     });
 
     test('rejects when max trades per day reached', () => {

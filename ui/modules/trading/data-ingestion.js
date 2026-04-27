@@ -1,10 +1,5 @@
 'use strict';
 
-const path = require('path');
-const dotenv = require('dotenv');
-
-const { getProjectRoot } = require('../../config');
-const log = require('../logger');
 const watchlist = require('./watchlist');
 
 const SEC_TICKER_MAP_URL = 'https://www.sec.gov/files/company_tickers.json';
@@ -14,30 +9,11 @@ const DEFAULT_SEC_USER_AGENT = 'SquidRun trading module (contact: trading@squidr
 const DEFAULT_NEWS_LIMIT = 25;
 const DEFAULT_FILINGS_LIMIT = 10;
 
-let envLoaded = false;
 let secTickerMapCache = null;
-
-function ensureEnvLoaded() {
-  if (envLoaded) return;
-  try {
-    dotenv.config({ path: path.join(getProjectRoot(), '.env') });
-  } catch (_err) {
-    // Best effort only. The app may already have process.env hydrated.
-  }
-  envLoaded = true;
-}
 
 function toNonEmptyString(value, fallback = '') {
   const normalized = String(value || '').trim();
   return normalized || fallback;
-}
-
-function toBoolean(value, fallback = false) {
-  if (value === undefined || value === null || value === '') return fallback;
-  const normalized = String(value).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  return fallback;
 }
 
 function normalizeSymbols(symbols = []) {
@@ -53,80 +29,6 @@ function normalizeSymbols(symbols = []) {
 
 function resolveAssetClass(value, fallback = 'us_equity') {
   return watchlist.normalizeAssetClass(value, fallback);
-}
-
-function formatDateParam(value) {
-  if (!value) return null;
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  const asDate = new Date(value);
-  if (Number.isNaN(asDate.getTime())) return null;
-  return asDate.toISOString().slice(0, 10);
-}
-
-function formatIsoParam(value) {
-  if (!value) return null;
-  if (value instanceof Date) return value.toISOString();
-  const asDate = new Date(value);
-  if (Number.isNaN(asDate.getTime())) return null;
-  return asDate.toISOString();
-}
-
-function resolveAlpacaCredentials(env = process.env) {
-  ensureEnvLoaded();
-  const keyId = toNonEmptyString(env.ALPACA_API_KEY || env.APCA_API_KEY_ID);
-  const secretKey = toNonEmptyString(env.ALPACA_API_SECRET || env.APCA_API_SECRET_KEY);
-  const paper = toBoolean(env.ALPACA_PAPER, true);
-  const feed = toNonEmptyString(env.ALPACA_FEED || '', '');
-  const baseUrl = toNonEmptyString(env.APCA_API_BASE_URL || '', '');
-
-  return {
-    keyId,
-    secretKey,
-    paper,
-    feed,
-    baseUrl,
-    configured: Boolean(keyId && secretKey),
-  };
-}
-
-function requireAlpacaSdk() {
-  try {
-    return require('@alpacahq/alpaca-trade-api');
-  } catch (err) {
-    const wrapped = new Error(
-      'Alpaca SDK not installed in node_modules yet. Restart the app and run npm install to activate @alpacahq/alpaca-trade-api.'
-    );
-    wrapped.code = 'ALPACA_SDK_UNAVAILABLE';
-    wrapped.cause = err;
-    throw wrapped;
-  }
-}
-
-function createAlpacaClient(options = {}) {
-  if (options.client) return options.client;
-
-  const credentials = {
-    ...resolveAlpacaCredentials(options.env || process.env),
-    ...(options.keyId ? { keyId: String(options.keyId).trim() } : {}),
-    ...(options.secretKey ? { secretKey: String(options.secretKey).trim() } : {}),
-    ...(options.paper !== undefined ? { paper: Boolean(options.paper) } : {}),
-    ...(options.feed ? { feed: String(options.feed).trim() } : {}),
-    ...(options.baseUrl ? { baseUrl: String(options.baseUrl).trim() } : {}),
-  };
-
-  if (!credentials.configured && !(credentials.keyId && credentials.secretKey)) {
-    throw new Error('Alpaca credentials are missing. Set ALPACA_API_KEY and ALPACA_API_SECRET in .env.');
-  }
-
-  const Alpaca = requireAlpacaSdk();
-  const clientOptions = {
-    keyId: credentials.keyId,
-    secretKey: credentials.secretKey,
-    paper: credentials.paper,
-  };
-  if (credentials.feed) clientOptions.feed = credentials.feed;
-  if (credentials.baseUrl) clientOptions.baseUrl = credentials.baseUrl;
-  return new Alpaca(clientOptions);
 }
 
 function normalizeSnapshot(snapshot = {}) {
@@ -252,45 +154,12 @@ function normalizeBarsMap(rawBars, symbols = []) {
   return result;
 }
 
-function resolveTimeframe(client, timeframe = '1Day') {
-  const raw = String(timeframe || '1Day').trim();
-  const match = raw.match(/^(\d+)\s*(min|minute|minutes|hour|hours|day|days|week|weeks|month|months)$/i);
-  if (!match || typeof client?.newTimeframe !== 'function' || !client?.timeframeUnit) {
-    return raw;
-  }
-
-  const amount = Number.parseInt(match[1], 10);
-  const unit = match[2].toLowerCase();
-  const unitMap = {
-    min: client.timeframeUnit.MIN,
-    minute: client.timeframeUnit.MIN,
-    minutes: client.timeframeUnit.MIN,
-    hour: client.timeframeUnit.HOUR || client.timeframeUnit.HR,
-    hours: client.timeframeUnit.HOUR || client.timeframeUnit.HR,
-    day: client.timeframeUnit.DAY,
-    days: client.timeframeUnit.DAY,
-    week: client.timeframeUnit.WEEK,
-    weeks: client.timeframeUnit.WEEK,
-    month: client.timeframeUnit.MONTH,
-    months: client.timeframeUnit.MONTH,
-  };
-
-  return unitMap[unit] ? client.newTimeframe(amount, unitMap[unit]) : raw;
-}
-
 async function getMarketClock(options = {}) {
-  const client = createAlpacaClient(options);
-  return client.getClock();
+  return options.clock || null;
 }
 
 async function getMarketCalendar(options = {}) {
-  const client = createAlpacaClient(options);
-  const params = {};
-  const start = formatDateParam(options.start);
-  const end = formatDateParam(options.end);
-  if (start) params.start = start;
-  if (end) params.end = end;
-  return client.getCalendar(params);
+  return Array.isArray(options.calendar) ? options.calendar : [];
 }
 
 function resolveWatchlistEntries(symbols, options = {}) {
@@ -301,26 +170,29 @@ function resolveWatchlistEntries(symbols, options = {}) {
     })
   );
   return normalizedSymbols.map((ticker) => {
-    return watchlist.getEntry(ticker) || watchlist.normalizeWatchlistEntry({ ticker });
+    const existingEntry = watchlist.getEntry(ticker);
+    if (existingEntry) {
+      return existingEntry;
+    }
+    const inferredAssetClass = watchlist.getAssetClassForTicker(
+      ticker,
+      options.assetClass || options.asset_class || undefined
+    );
+    return watchlist.normalizeWatchlistEntry({
+      ticker,
+      assetClass: inferredAssetClass,
+      broker: watchlist.getBrokerForTicker(ticker),
+      exchange: watchlist.getExchangeForTicker(ticker),
+    });
   });
 }
 
 function groupEntriesByBroker(entries = []) {
   const grouped = new Map();
   for (const entry of entries) {
-    const brokerType = String(entry?.broker || 'alpaca').trim().toLowerCase() || 'alpaca';
+    const brokerType = String(entry?.broker || 'ibkr').trim().toLowerCase() || 'ibkr';
     if (!grouped.has(brokerType)) grouped.set(brokerType, []);
     grouped.get(brokerType).push(entry);
-  }
-  return grouped;
-}
-
-function groupEntriesByAssetClass(entries = []) {
-  const grouped = new Map();
-  for (const entry of entries) {
-    const assetClass = resolveAssetClass(entry?.assetClass || entry?.asset_class);
-    if (!grouped.has(assetClass)) grouped.set(assetClass, []);
-    grouped.get(assetClass).push(entry);
   }
   return grouped;
 }
@@ -366,24 +238,6 @@ function mergeSnapshotMaps(collections = [], symbols = []) {
   return merged;
 }
 
-async function getAlpacaWatchlistSnapshots(options = {}) {
-  const client = createAlpacaClient(options);
-  const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
-    ? options.watchlistEntries
-    : resolveWatchlistEntries(options.symbols, options);
-  const grouped = groupEntriesByAssetClass(entries);
-  const collections = await Promise.all(Array.from(grouped.entries()).map(async ([assetClass, assetEntries]) => {
-    const symbols = normalizeSymbols(assetEntries.map((entry) => entry.ticker));
-    if (symbols.length === 0) return new Map();
-    if (assetClass === 'crypto' && typeof client.getCryptoSnapshots === 'function') {
-      return normalizeSnapshotCollection(await client.getCryptoSnapshots(symbols), symbols);
-    }
-    return normalizeSnapshotCollection(await client.getSnapshots(symbols), symbols);
-  }));
-
-  return mergeSnapshotMaps(collections, entries.map((entry) => entry.ticker));
-}
-
 async function getWatchlistSnapshots(options = {}) {
   const { createBroker } = require('./broker-adapter');
   const entries = resolveWatchlistEntries(options.symbols, options);
@@ -399,76 +253,6 @@ async function getWatchlistSnapshots(options = {}) {
   }));
 
   return mergeSnapshotMaps(snapshots, entries.map((entry) => entry.ticker));
-}
-
-async function getAlpacaLatestBars(options = {}) {
-  const client = createAlpacaClient(options);
-  const normalized = new Map();
-  const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
-    ? options.watchlistEntries
-    : resolveWatchlistEntries(options.symbols, options);
-  const grouped = groupEntriesByAssetClass(entries);
-
-  for (const [assetClass, assetEntries] of grouped.entries()) {
-    const symbols = normalizeSymbols(assetEntries.map((entry) => entry.ticker));
-    if (symbols.length === 0) continue;
-    const rawBars = assetClass === 'crypto' && typeof client.getLatestCryptoBars === 'function'
-      ? await client.getLatestCryptoBars(symbols)
-      : await client.getLatestBars(symbols);
-
-    if (rawBars instanceof Map) {
-      for (const [symbol, bar] of rawBars.entries()) {
-        normalized.set(String(symbol).toUpperCase(), normalizeBarRecord(String(symbol).toUpperCase(), bar));
-      }
-    }
-  }
-
-  for (const symbol of normalizeSymbols(entries.map((entry) => entry.ticker))) {
-    if (!normalized.has(symbol)) normalized.set(symbol, null);
-  }
-
-  return normalized;
-}
-
-async function getAlpacaHistoricalBars(options = {}) {
-  const client = createAlpacaClient(options);
-  const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
-    ? options.watchlistEntries
-    : resolveWatchlistEntries(options.symbols, options);
-  const params = {
-    limit: Number.parseInt(options.limit || '30', 10) || 30,
-    timeframe: resolveTimeframe(client, options.timeframe || '1Day'),
-  };
-  const start = formatIsoParam(options.start);
-  const end = formatIsoParam(options.end);
-  if (start) params.start = start;
-  if (end) params.end = end;
-  const grouped = groupEntriesByAssetClass(entries);
-  const collections = await Promise.all(Array.from(grouped.entries()).map(async ([assetClass, assetEntries]) => {
-    const symbols = normalizeSymbols(assetEntries.map((entry) => entry.ticker));
-    if (symbols.length === 0) return new Map();
-    if (assetClass === 'crypto' && typeof client.getCryptoBars === 'function') {
-      return normalizeBarsMap(await client.getCryptoBars(symbols, params), symbols);
-    }
-
-    const rawBars = symbols.length === 1
-      ? new Map([[symbols[0], await collectAsyncBars(client.getBarsV2(symbols[0], params))]])
-      : await client.getMultiBarsV2(symbols, params);
-    return normalizeBarsMap(rawBars, symbols);
-  }));
-
-  const merged = new Map();
-  for (const collection of collections) {
-    for (const [symbol, bars] of collection.entries()) {
-      merged.set(symbol, bars);
-    }
-  }
-
-  for (const symbol of normalizeSymbols(entries.map((entry) => entry.ticker))) {
-    if (!merged.has(symbol)) merged.set(symbol, []);
-  }
-
-  return merged;
 }
 
 async function getLatestBars(options = {}) {
@@ -531,42 +315,6 @@ async function getHistoricalBars(options = {}) {
     if (!merged.has(symbol)) merged.set(symbol, []);
   }
   return merged;
-}
-
-async function collectAsyncBars(asyncIterable) {
-  const bars = [];
-  for await (const bar of asyncIterable) {
-    bars.push(bar);
-  }
-  return bars;
-}
-
-async function getAlpacaNews(options = {}) {
-  const client = createAlpacaClient(options);
-  const entries = Array.isArray(options.watchlistEntries) && options.watchlistEntries.length > 0
-    ? options.watchlistEntries
-    : resolveWatchlistEntries(options.symbols, options);
-  const symbols = normalizeSymbols(
-    entries
-      .filter((entry) => resolveAssetClass(entry?.assetClass || entry?.asset_class) !== 'crypto')
-      .map((entry) => entry.ticker)
-  );
-  if (symbols.length === 0) {
-    return [];
-  }
-  const params = {
-    totalLimit: Number.parseInt(options.limit || `${DEFAULT_NEWS_LIMIT}`, 10) || DEFAULT_NEWS_LIMIT,
-  };
-  if (symbols.length > 0) {
-    params.symbols = symbols;
-  }
-  const start = formatIsoParam(options.start);
-  const end = formatIsoParam(options.end);
-  if (start) params.start = start;
-  if (end) params.end = end;
-
-  const items = await client.getNews(params);
-  return Array.isArray(items) ? items.map(normalizeNewsItem) : [];
 }
 
 async function getNews(options = {}) {
@@ -740,12 +488,6 @@ async function buildWatchlistContext(options = {}) {
 module.exports = {
   DEFAULT_NEWS_LIMIT,
   DEFAULT_FILINGS_LIMIT,
-  resolveAlpacaCredentials,
-  createAlpacaClient,
-  getAlpacaWatchlistSnapshots,
-  getAlpacaLatestBars,
-  getAlpacaHistoricalBars,
-  getAlpacaNews,
   normalizeSymbols,
   normalizeSnapshot,
   normalizeSnapshotCollection,

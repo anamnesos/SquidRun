@@ -13,6 +13,9 @@ const path = require('path');
 let _db = null;
 const ALLOWED_TRADE_DIRECTIONS = Object.freeze(['BUY', 'SELL', 'SHORT', 'COVER']);
 const TRADE_DIRECTION_CHECK_SQL = `CHECK(direction IN (${ALLOWED_TRADE_DIRECTIONS.map((value) => `'${value}'`).join(',')}))`;
+const LIVE_SOURCE_SCOPE = 'live';
+const DRY_RUN_SOURCE_SCOPE = 'dry_run';
+const ARCHIVE_STATIC_SCOPE = 'archive_static';
 
 const TRADE_TABLE_COLUMNS = Object.freeze([
   'id',
@@ -32,6 +35,9 @@ const TRADE_TABLE_COLUMNS = Object.freeze([
   'reconciled_at',
   'realized_pnl',
   'outcome_recorded_at',
+  'source_scope',
+  'archived_at',
+  'archive_reason',
 ]);
 
 const POSITION_TABLE_COLUMNS = Object.freeze([
@@ -42,6 +48,9 @@ const POSITION_TABLE_COLUMNS = Object.freeze([
   'stop_loss_price',
   'opened_at',
   'updated_at',
+  'source_scope',
+  'archived_at',
+  'archive_reason',
 ]);
 
 const TRADES_TABLE_SQL = `
@@ -62,7 +71,10 @@ const TRADES_TABLE_SQL = `
     filled_at TEXT,
     reconciled_at TEXT,
     realized_pnl REAL,
-    outcome_recorded_at TEXT
+    outcome_recorded_at TEXT,
+    source_scope TEXT NOT NULL DEFAULT 'live',
+    archived_at TEXT,
+    archive_reason TEXT
   )
 `;
 
@@ -74,7 +86,10 @@ const POSITIONS_TABLE_SQL = `
     avg_price REAL NOT NULL,
     stop_loss_price REAL,
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    source_scope TEXT NOT NULL DEFAULT 'live',
+    archived_at TEXT,
+    archive_reason TEXT
   )
 `;
 
@@ -146,7 +161,10 @@ function ensureSchema(db) {
       avg_price REAL NOT NULL,
       stop_loss_price REAL,
       opened_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      source_scope TEXT NOT NULL DEFAULT 'live',
+      archived_at TEXT,
+      archive_reason TEXT
     );
 
     CREATE TABLE IF NOT EXISTS execution_reports (
@@ -175,6 +193,12 @@ function ensureSchema(db) {
   ensureColumnExists(db, 'trades', 'reconciled_at', 'TEXT');
   ensureColumnExists(db, 'trades', 'realized_pnl', 'REAL');
   ensureColumnExists(db, 'trades', 'outcome_recorded_at', 'TEXT');
+  ensureColumnExists(db, 'trades', 'source_scope', "TEXT NOT NULL DEFAULT 'live'");
+  ensureColumnExists(db, 'trades', 'archived_at', 'TEXT');
+  ensureColumnExists(db, 'trades', 'archive_reason', 'TEXT');
+  ensureColumnExists(db, 'positions', 'source_scope', "TEXT NOT NULL DEFAULT 'live'");
+  ensureColumnExists(db, 'positions', 'archived_at', 'TEXT');
+  ensureColumnExists(db, 'positions', 'archive_reason', 'TEXT');
   ensureColumnExists(db, 'daily_summary', 'best_trade_ticker', 'TEXT');
   ensureColumnExists(db, 'daily_summary', 'best_trade_pnl', 'REAL');
   ensureColumnExists(db, 'daily_summary', 'worst_trade_ticker', 'TEXT');
@@ -203,6 +227,47 @@ function ensureColumnExists(db, tableName, columnName, columnSql) {
 function normalizeTradeStatus(value) {
   const normalized = String(value || 'FILLED').trim().toUpperCase();
   return normalized || 'FILLED';
+}
+
+function normalizeSourceScope(value, fallback = LIVE_SOURCE_SCOPE) {
+  const normalized = String(value || fallback || LIVE_SOURCE_SCOPE)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || fallback || LIVE_SOURCE_SCOPE;
+}
+
+// Keep non-live filters after the one-time cleanup: future DRY_RUN/test rows
+// must stay inert unless a caller explicitly opts into archived/non-live state.
+function buildTradeVisibilityWhere(options = {}) {
+  const includeArchived = options.includeArchived === true;
+  const includeNonLive = options.includeNonLive === true || includeArchived;
+  const includeDryRun = options.includeDryRun === true || includeArchived;
+  const clauses = [];
+  if (!includeArchived) {
+    clauses.push('archived_at IS NULL');
+  }
+  if (!includeNonLive) {
+    clauses.push("COALESCE(source_scope, 'live') = 'live'");
+  }
+  if (!includeDryRun) {
+    clauses.push("UPPER(COALESCE(status, '')) <> 'DRY_RUN'");
+  }
+  return clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+}
+
+function buildPositionVisibilityWhere(options = {}) {
+  const includeArchived = options.includeArchived === true;
+  const includeNonLive = options.includeNonLive === true || includeArchived;
+  const clauses = [];
+  if (!includeArchived) {
+    clauses.push('archived_at IS NULL');
+  }
+  if (!includeNonLive) {
+    clauses.push("COALESCE(source_scope, 'live') = 'live'");
+  }
+  return clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
 function getTableSql(db, tableName) {
@@ -270,6 +335,10 @@ function requiresPositionsMigration(tableSql = '') {
   return /\bshares\s+INTEGER\b/i.test(normalized);
 }
 
+function getBrokerOrderId(record = {}) {
+  return record.brokerOrderId || record.alpacaOrderId || null;
+}
+
 /**
  * Record a trade execution.
  */
@@ -278,9 +347,26 @@ function recordTrade(db, trade) {
   if (!ALLOWED_TRADE_DIRECTIONS.includes(direction)) {
     throw new Error(`Unsupported trade direction for journal: ${trade.direction}`);
   }
+  const status = normalizeTradeStatus(trade.status);
+  const sourceScope = normalizeSourceScope(
+    trade.sourceScope || (status === 'DRY_RUN' ? DRY_RUN_SOURCE_SCOPE : LIVE_SOURCE_SCOPE)
+  );
   const stmt = db.prepare(`
-    INSERT INTO trades (ticker, direction, shares, price, stop_loss_price, total_value, consensus_detail, risk_check_detail, status, alpaca_order_id, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO trades (
+      ticker,
+      direction,
+      shares,
+      price,
+      stop_loss_price,
+      total_value,
+      consensus_detail,
+      risk_check_detail,
+      status,
+      alpaca_order_id,
+      notes,
+      source_scope
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   return stmt.run(
     trade.ticker,
@@ -291,9 +377,10 @@ function recordTrade(db, trade) {
     trade.shares * trade.price,
     trade.consensusDetail ? JSON.stringify(trade.consensusDetail) : null,
     trade.riskCheckDetail ? JSON.stringify(trade.riskCheckDetail) : null,
-    normalizeTradeStatus(trade.status),
-    trade.alpacaOrderId || null,
+    status,
+    getBrokerOrderId(trade),
     trade.notes || null,
+    sourceScope,
   );
 }
 
@@ -462,13 +549,27 @@ function getExecutionReports(db, limit = 50) {
  * Update or insert a position.
  */
 function upsertPosition(db, position) {
+  const sourceScope = normalizeSourceScope(position.sourceScope || LIVE_SOURCE_SCOPE);
   const stmt = db.prepare(`
-    INSERT INTO positions (ticker, shares, avg_price, stop_loss_price, opened_at, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+    INSERT INTO positions (
+      ticker,
+      shares,
+      avg_price,
+      stop_loss_price,
+      opened_at,
+      updated_at,
+      source_scope,
+      archived_at,
+      archive_reason
+    )
+    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), ?, NULL, NULL)
     ON CONFLICT(ticker) DO UPDATE SET
       shares = excluded.shares,
       avg_price = excluded.avg_price,
       stop_loss_price = excluded.stop_loss_price,
+      source_scope = excluded.source_scope,
+      archived_at = NULL,
+      archive_reason = NULL,
       updated_at = datetime('now')
   `);
   return stmt.run(
@@ -476,6 +577,7 @@ function upsertPosition(db, position) {
     position.shares,
     position.avgPrice,
     position.stopLossPrice || null,
+    sourceScope,
   );
 }
 
@@ -487,21 +589,71 @@ function closePosition(db, ticker) {
 }
 
 /**
- * Get all open positions.
+ * Mark a position as archived/static so it cannot leak into live-position reasoning.
  */
-function getOpenPositions(db) {
-  return db.prepare('SELECT * FROM positions ORDER BY ticker').all();
+function archivePosition(db, ticker, reason = 'stale_non_live_position', options = {}) {
+  const archivedAt = options.archivedAt || new Date().toISOString();
+  const sourceScope = normalizeSourceScope(options.sourceScope || ARCHIVE_STATIC_SCOPE, ARCHIVE_STATIC_SCOPE);
+  return db.prepare(`
+    UPDATE positions
+    SET
+      source_scope = ?,
+      archived_at = ?,
+      archive_reason = ?,
+      updated_at = datetime('now')
+    WHERE UPPER(ticker) = UPPER(?)
+  `).run(sourceScope, archivedAt, reason, ticker);
+}
+
+function archiveDryRunTrades(db, options = {}) {
+  const archivedAt = options.archivedAt || new Date().toISOString();
+  const reason = options.reason || 'dry_run_cleanup';
+  const clauses = ["UPPER(COALESCE(status, '')) = 'DRY_RUN'"];
+  const values = [DRY_RUN_SOURCE_SCOPE, archivedAt, reason];
+  if (options.includeAlreadyArchived !== true) {
+    clauses.push('archived_at IS NULL');
+  }
+  if (options.ticker) {
+    clauses.push('UPPER(ticker) = UPPER(?)');
+    values.push(options.ticker);
+  }
+  if (options.since) {
+    clauses.push('timestamp >= ?');
+    values.push(options.since);
+  }
+  if (options.until) {
+    clauses.push('timestamp < ?');
+    values.push(options.until);
+  }
+  return db.prepare(`
+    UPDATE trades
+    SET
+      source_scope = ?,
+      archived_at = ?,
+      archive_reason = ?
+    WHERE ${clauses.join(' AND ')}
+  `).run(...values);
 }
 
 /**
- * Get recent trades.
+ * Get live open positions by default. Archived/static rows require includeArchived.
  */
-function getRecentTrades(db, limit = 10) {
-  return db.prepare('SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?').all(limit);
+function getOpenPositions(db, options = {}) {
+  const visibilityWhere = buildPositionVisibilityWhere(options);
+  return db.prepare(`SELECT * FROM positions ${visibilityWhere} ORDER BY ticker`).all();
 }
 
-function getAllTrades(db) {
-  return db.prepare('SELECT * FROM trades ORDER BY timestamp ASC, id ASC').all();
+/**
+ * Get recent live trades. Archived/static and DRY_RUN rows are hidden by default.
+ */
+function getRecentTrades(db, limit = 10, options = {}) {
+  const visibilityWhere = buildTradeVisibilityWhere(options);
+  return db.prepare(`SELECT * FROM trades ${visibilityWhere} ORDER BY timestamp DESC LIMIT ?`).all(limit);
+}
+
+function getAllTrades(db, options = {}) {
+  const visibilityWhere = buildTradeVisibilityWhere(options);
+  return db.prepare(`SELECT * FROM trades ${visibilityWhere} ORDER BY timestamp ASC, id ASC`).all();
 }
 
 function getTradeById(db, tradeId) {
@@ -523,6 +675,8 @@ function getPendingTrades(db, statuses = ['PENDING_NEW', 'PENDING', 'ACCEPTED', 
     SELECT *
     FROM trades
     WHERE status IN (${placeholders})
+      AND archived_at IS NULL
+      AND COALESCE(source_scope, 'live') = 'live'
     ORDER BY timestamp ASC, id ASC
   `).all(...normalizedStatuses);
 }
@@ -557,12 +711,15 @@ function updateTrade(db, tradeId, patch = {}) {
     ? (patch.riskCheckDetail ? JSON.stringify(patch.riskCheckDetail) : null)
     : undefined);
   assign('status', patch.status !== undefined ? normalizeTradeStatus(patch.status) : undefined);
-  assign('alpaca_order_id', patch.alpacaOrderId);
+  assign('alpaca_order_id', patch.brokerOrderId !== undefined ? patch.brokerOrderId : patch.alpacaOrderId);
   assign('notes', patch.notes);
   assign('filled_at', patch.filledAt);
   assign('reconciled_at', patch.reconciledAt);
   assign('realized_pnl', patch.realizedPnl);
   assign('outcome_recorded_at', patch.outcomeRecordedAt);
+  assign('source_scope', patch.sourceScope !== undefined ? normalizeSourceScope(patch.sourceScope) : undefined);
+  assign('archived_at', patch.archivedAt);
+  assign('archive_reason', patch.archiveReason);
 
   if (updates.length === 0) {
     return current;
@@ -615,12 +772,15 @@ module.exports = {
   ensureSchema,
   migrateLegacySchemaIfNeeded,
   normalizeTradeStatus,
+  normalizeSourceScope,
   recordTrade,
   recordConsensus,
   recordDailySummary,
   recordExecutionReport,
   upsertPosition,
   closePosition,
+  archivePosition,
+  archiveDryRunTrades,
   getOpenPositions,
   getRecentTrades,
   getAllTrades,

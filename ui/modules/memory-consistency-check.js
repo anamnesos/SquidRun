@@ -7,6 +7,7 @@ const {
   buildKnowledgeSources,
   resolveWorkspacePaths,
 } = require('./memory-search');
+const { resolveDefaultCognitiveMemoryDbPath } = require('./cognitive-memory-store');
 const { EvidenceLedgerStore } = require('./main/evidence-ledger-store');
 
 const REQUIRED_NODE_COLUMNS = Object.freeze([
@@ -67,7 +68,10 @@ function hashKnowledgeNodeIdentity(input = {}) {
 }
 
 function resolveCognitiveMemoryDbPath(options = {}, paths = resolveWorkspacePaths(options)) {
-  return path.resolve(String(options.dbPath || options.cognitiveDbPath || path.join(paths.memoryDir, 'cognitive-memory.db')));
+  return path.resolve(String(options.dbPath || options.cognitiveDbPath || resolveDefaultCognitiveMemoryDbPath({
+    projectRoot: paths.projectRoot,
+    profileName: options.profileName,
+  })));
 }
 
 function listNodeColumns(db) {

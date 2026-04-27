@@ -10,8 +10,6 @@ const MARKET_TIME_ZONE = 'America/Los_Angeles';
 const CALENDAR_SOURCE_TIME_ZONE = 'America/New_York';
 const DEFAULT_SCHEDULE_PREFIX = 'trading-';
 const DEFAULT_CRYPTO_INTERVAL_HOURS = 4;
-const DEFAULT_POLYMARKET_SCAN_INTERVAL_HOURS = 4;
-const DEFAULT_POLYMARKET_MONITOR_INTERVAL_MINUTES = 30;
 const DEFAULT_PHASES = Object.freeze([
   { key: 'premarket_wake', label: 'Pre-market wake', offsetMinutes: -60 },
   { key: 'pre_open_consensus', label: 'Consensus round', offsetMinutes: -5 },
@@ -21,12 +19,6 @@ const DEFAULT_PHASES = Object.freeze([
 ]);
 const DEFAULT_CRYPTO_PHASES = Object.freeze([
   { key: 'crypto_consensus', label: 'Crypto consensus round' },
-]);
-const DEFAULT_POLYMARKET_PHASES = Object.freeze([
-  { key: 'polymarket_scan', label: 'Polymarket market scan', offsetMinutes: 0 },
-  { key: 'polymarket_consensus', label: 'Polymarket consensus round', offsetMinutes: 5 },
-  { key: 'polymarket_execute', label: 'Polymarket order execution', offsetMinutes: 10 },
-  { key: 'polymarket_monitor', label: 'Polymarket position monitor', kind: 'monitor' },
 ]);
 
 function resolveCalendarCachePath() {
@@ -56,18 +48,6 @@ function resolveCryptoIntervalHours(value, fallback = DEFAULT_CRYPTO_INTERVAL_HO
   const numeric = Number.parseInt(String(value || fallback), 10);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(4, Math.min(6, numeric));
-}
-
-function resolvePolymarketScanIntervalHours(value, fallback = DEFAULT_POLYMARKET_SCAN_INTERVAL_HOURS) {
-  const numeric = Number.parseInt(String(value || fallback), 10);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(4, Math.min(6, numeric));
-}
-
-function resolvePolymarketMonitorIntervalMinutes(value, fallback = DEFAULT_POLYMARKET_MONITOR_INTERVAL_MINUTES) {
-  const numeric = Number.parseInt(String(value || fallback), 10);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(15, Math.min(60, numeric));
 }
 
 function normalizeCalendarEntry(entry = {}) {
@@ -322,79 +302,6 @@ async function getNextCryptoWakeEvent(referenceDate = new Date(), options = {}) 
   return null;
 }
 
-function buildPolymarketDailySchedule(referenceDate = new Date(), options = {}) {
-  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  const displayTimeZone = options.displayTimeZone || MARKET_TIME_ZONE;
-  const scanIntervalHours = resolvePolymarketScanIntervalHours(options.scanIntervalHours);
-  const monitorIntervalMinutes = resolvePolymarketMonitorIntervalMinutes(options.monitorIntervalMinutes);
-  const phases = Array.isArray(options.phases) && options.phases.length > 0
-    ? options.phases
-    : DEFAULT_POLYMARKET_PHASES;
-  const dateKey = toDateKeyInZone(now, displayTimeZone);
-  const schedule = [];
-  const cyclePhases = phases.filter((phase) => phase.kind !== 'monitor');
-  const monitorPhases = phases.filter((phase) => phase.kind === 'monitor');
-
-  for (let hour = 0; hour < 24; hour += scanIntervalHours) {
-    const cycleAnchor = zonedDateTimeToUtc(dateKey, `${padTimePart(hour)}:00`, displayTimeZone);
-    for (const phase of cyclePhases) {
-      const scheduledAt = new Date(cycleAnchor.getTime() + (Number(phase.offsetMinutes || 0) * 60 * 1000));
-      schedule.push({
-        key: phase.key,
-        label: phase.label,
-        marketDate: dateKey,
-        scheduledAt: scheduledAt.toISOString(),
-        scheduledTimeLocal: formatTimeInZone(scheduledAt, displayTimeZone),
-        displayTimeZone,
-        windowKey: cycleAnchor.toISOString(),
-      });
-    }
-  }
-
-  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += monitorIntervalMinutes) {
-    const hour = Math.floor(minuteOfDay / 60);
-    const minute = minuteOfDay % 60;
-    const scheduledAt = zonedDateTimeToUtc(dateKey, `${padTimePart(hour)}:${padTimePart(minute)}`, displayTimeZone);
-    for (const phase of monitorPhases) {
-      schedule.push({
-        key: phase.key,
-        label: phase.label,
-        marketDate: dateKey,
-        scheduledAt: scheduledAt.toISOString(),
-        scheduledTimeLocal: formatTimeInZone(scheduledAt, displayTimeZone),
-        displayTimeZone,
-        windowKey: scheduledAt.toISOString(),
-      });
-    }
-  }
-
-  schedule.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
-
-  return {
-    marketDate: dateKey,
-    scanIntervalHours,
-    monitorIntervalMinutes,
-    displayTimeZone,
-    schedule,
-  };
-}
-
-async function getNextPolymarketWakeEvent(referenceDate = new Date(), options = {}) {
-  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  for (let offset = 0; offset < 3; offset += 1) {
-    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-    const polymarketDay = buildPolymarketDailySchedule(candidateDate, options);
-    const nextEvent = polymarketDay.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
-    if (nextEvent) {
-      return {
-        ...nextEvent,
-        tradingDay: polymarketDay,
-      };
-    }
-  }
-  return null;
-}
-
 function writeWakeSignal(event, wakeSignalPath = resolveWakeSignalPath()) {
   fs.mkdirSync(path.dirname(wakeSignalPath), { recursive: true });
   fs.writeFileSync(wakeSignalPath, JSON.stringify({
@@ -460,24 +367,19 @@ module.exports = {
   MARKET_TIME_ZONE,
   CALENDAR_SOURCE_TIME_ZONE,
   DEFAULT_CRYPTO_INTERVAL_HOURS,
-  DEFAULT_POLYMARKET_SCAN_INTERVAL_HOURS,
-  DEFAULT_POLYMARKET_MONITOR_INTERVAL_MINUTES,
   DEFAULT_PHASES,
   DEFAULT_CRYPTO_PHASES,
-  DEFAULT_POLYMARKET_PHASES,
   resolveCalendarCachePath,
   resolveWakeSignalPath,
   normalizeCalendarEntry,
   zonedDateTimeToUtc,
   buildTradingDaySchedule,
   buildCryptoDailySchedule,
-  buildPolymarketDailySchedule,
   refreshTradingCalendar,
   getCalendarDay,
   isTradingDay,
   getNextWakeEvent,
   getNextCryptoWakeEvent,
-  getNextPolymarketWakeEvent,
   writeWakeSignal,
   syncSchedulesForNextTradingDay,
 };

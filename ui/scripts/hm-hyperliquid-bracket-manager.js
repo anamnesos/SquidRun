@@ -6,6 +6,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: t
 
 const bracketManager = require('../modules/trading/bracket-manager');
 const journal = require('../modules/trading/journal');
+const manualStopOverrides = require('../modules/trading/manual-stop-overrides');
 const hmDefiExecute = require('./hm-defi-execute');
 
 function parseCliArgs(argv = process.argv.slice(2)) {
@@ -65,7 +66,11 @@ function parseManageOptions(argv = parseCliArgs()) {
 
 async function fetchOpenOrders(info, walletAddress) {
   if (!info || typeof info.openOrders !== 'function') return [];
-  const orders = await info.openOrders({ user: walletAddress });
+  const hyperliquidClient = require('../modules/trading/hyperliquid-client');
+  const orders = await hyperliquidClient.getOpenOrders({
+    walletAddress,
+    infoClient: info,
+  });
   return Array.isArray(orders) ? orders : [];
 }
 
@@ -450,6 +455,7 @@ async function manageHyperliquidBracket(input = {}, options = {}) {
       },
     });
     response.replacementStopOrderId = hmDefiExecute.extractHyperliquidOrderId(replacementStopResult);
+    manualStopOverrides.clearManualStopOverride(params.asset);
   } catch (replacementError) {
     if (originalStopOrder?.price > 0) {
       try {

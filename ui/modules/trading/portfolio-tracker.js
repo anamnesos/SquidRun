@@ -4,11 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const { resolveCoordPath } = require('../../config');
-const executor = require('./executor');
 const ibkrClient = require('./ibkr-client');
-const polymarketClient = require('./polymarket-client');
 const riskEngine = require('./risk-engine');
-const yieldRouter = require('./yield-router');
 
 const DEFAULT_PORTFOLIO_STATE_PATH = resolveCoordPath(path.join('runtime', 'portfolio-tracker-state.json'), { forWrite: true });
 const MARKET_TIME_ZONE = 'America/Los_Angeles';
@@ -88,11 +85,7 @@ function createEmptySnapshot() {
     lockedCapital: 0,
     totalPnl: 0,
     markets: {
-      alpaca_stocks: createMarketSnapshot('alpaca_stocks', { label: 'Alpaca Stocks' }),
-      alpaca_crypto: createMarketSnapshot('alpaca_crypto', { label: 'Alpaca Crypto' }),
       ibkr_global: createMarketSnapshot('ibkr_global', { label: 'IBKR Global' }),
-      polymarket: createMarketSnapshot('polymarket', { label: 'Polymarket' }),
-      defi_yield: createMarketSnapshot('defi_yield', { label: 'DeFi Yield' }),
       solana_tokens: createMarketSnapshot('solana_tokens', { label: 'Solana Tokens' }),
       cash_reserve: createMarketSnapshot('cash_reserve', { label: 'Cash Reserve' }),
     },
@@ -124,36 +117,6 @@ function normalizeEquityPosition(position = {}, defaults = {}) {
     unrealizedPnl: toNumber(position.unrealizedPnl ?? position.raw?.unrealized_pl, 0),
     side: toText(position.side, 'long'),
     raw: position.raw || position,
-  };
-}
-
-function normalizePolymarketPosition(position = {}) {
-  return {
-    ticker: toText(position.market || position.tokenId || position.token_id),
-    broker: 'polymarket',
-    assetClass: 'prediction_market',
-    exchange: 'POLYMARKET',
-    tokenId: toText(position.tokenId || position.token_id),
-    outcome: toText(position.outcome),
-    shares: toNumber(position.size, 0),
-    avgPrice: toNumber(position.avgEntryPrice, 0),
-    marketValue: toNumber(position.marketValue, 0),
-    unrealizedPnl: toNumber(position.unrealizedPnl, 0),
-    realizedPnl: toNumber(position.realizedPnl, 0),
-    side: 'long',
-    raw: position.raw || position,
-  };
-}
-
-function normalizeYieldDeposit(deposit = {}) {
-  return {
-    venue: toText(deposit.venue || deposit.protocol),
-    amount: toNumber(deposit.amount, 0),
-    currentValue: toNumber(deposit.currentValue ?? deposit.amount, 0),
-    apy: toNumber(deposit.apy, 0),
-    locked: deposit.locked !== false,
-    depositedAt: deposit.depositedAt || null,
-    raw: deposit.raw || deposit,
   };
 }
 
@@ -236,15 +199,6 @@ function resolvePersistentState(totalEquity, options = {}) {
   };
 }
 
-async function collectAlpacaData(options = {}) {
-  const account = options.alpacaAccount ?? await executor.getAlpacaAccountSnapshot(options);
-  const positions = options.alpacaPositions ?? await executor.getAlpacaOpenPositions(options);
-  return {
-    account,
-    positions: Array.isArray(positions) ? positions : [],
-  };
-}
-
 async function collectIbkrData(options = {}) {
   const account = options.ibkrAccount ?? await ibkrClient.getAccount(options);
   const positions = options.ibkrPositions ?? await ibkrClient.getPositions(options);
@@ -254,77 +208,9 @@ async function collectIbkrData(options = {}) {
   };
 }
 
-async function collectPolymarketData(options = {}) {
-  const balance = options.polymarketBalance ?? await polymarketClient.getBalance(options);
-  const positions = options.polymarketPositions ?? await polymarketClient.getPositions(options);
-  return {
-    balance,
-    positions: Array.isArray(positions) ? positions : [],
-  };
-}
-
-async function collectYieldDeposits(options = {}) {
-  if (Array.isArray(options.defiDeposits)) {
-    return options.defiDeposits;
-  }
-  if (options.includeYieldRouter === false || options.yieldRouter === null) {
-    return [];
-  }
-
-  const router = options.yieldRouter || yieldRouter.createYieldRouter({
-    fetch: options.fetch || global.fetch,
-    env: options.env || process.env,
-  });
-  if (!router || typeof router.getDeposits !== 'function') {
-    return [];
-  }
-  return router.getDeposits(options);
-}
-
 async function getPortfolioSnapshot(options = {}) {
   const snapshot = createEmptySnapshot();
-  const includeAlpaca = options.includeAlpaca === true || options.alpacaAccount || options.alpacaPositions;
   const includeIbkr = options.includeIbkr === true || options.ibkrAccount || options.ibkrPositions;
-  const polymarketConfigured = polymarketClient.resolvePolymarketConfig(process.env).configured;
-  const includePolymarket = options.includePolymarket === false
-    ? false
-    : options.includePolymarket === true
-      || options.polymarketBalance
-      || options.polymarketPositions
-      || polymarketConfigured;
-
-  if (includeAlpaca) {
-    try {
-      const { account, positions } = await collectAlpacaData(options);
-      const normalizedPositions = positions.map((position) => normalizeEquityPosition(position, { broker: 'alpaca' }));
-      const stockPositions = normalizedPositions.filter((position) => position.assetClass !== 'crypto');
-      const cryptoPositions = normalizedPositions.filter((position) => position.assetClass === 'crypto');
-      const stockMarketValue = sumPositionValues(stockPositions);
-      const cryptoMarketValue = sumPositionValues(cryptoPositions);
-      const cash = toNumber(account?.cash, 0);
-      const residual = toNumber(account?.equity, 0) - (cash + stockMarketValue + cryptoMarketValue);
-
-      snapshot.markets.alpaca_stocks.positions = stockPositions;
-      snapshot.markets.alpaca_stocks.marketValue = Number(stockMarketValue.toFixed(2));
-      snapshot.markets.alpaca_stocks.pnl = Number(sumPositionPnl(stockPositions).toFixed(2));
-      snapshot.markets.alpaca_stocks.equity = Number(stockMarketValue.toFixed(2));
-      snapshot.markets.alpaca_stocks.liquidCapital = Number(stockMarketValue.toFixed(2));
-      snapshot.markets.alpaca_stocks.buyingPower = toNumber(account?.buyingPower, 0);
-
-      snapshot.markets.alpaca_crypto.positions = cryptoPositions;
-      snapshot.markets.alpaca_crypto.marketValue = Number(cryptoMarketValue.toFixed(2));
-      snapshot.markets.alpaca_crypto.pnl = Number(sumPositionPnl(cryptoPositions).toFixed(2));
-      snapshot.markets.alpaca_crypto.equity = Number(cryptoMarketValue.toFixed(2));
-      snapshot.markets.alpaca_crypto.liquidCapital = Number(cryptoMarketValue.toFixed(2));
-
-      snapshot.markets.cash_reserve.cash += Number((cash + residual).toFixed(2));
-      snapshot.markets.cash_reserve.equity += Number((cash + residual).toFixed(2));
-      snapshot.markets.cash_reserve.liquidCapital += Number((cash + residual).toFixed(2));
-      snapshot.positions.push(...normalizedPositions);
-    } catch (err) {
-      appendSourceError(snapshot, 'alpaca', err);
-    }
-  }
 
   if (includeIbkr) {
     try {
@@ -348,45 +234,6 @@ async function getPortfolioSnapshot(options = {}) {
       appendSourceError(snapshot, 'ibkr', err);
       snapshot.markets.ibkr_global.sourceErrors.push(err.message);
     }
-  }
-
-  if (includePolymarket) {
-    try {
-      const { balance, positions } = await collectPolymarketData(options);
-      const normalizedPositions = positions.map(normalizePolymarketPosition);
-      const marketValue = sumPositionValues(normalizedPositions);
-      const available = toNumber(balance?.available ?? balance?.balance, 0);
-
-      snapshot.markets.polymarket.positions = normalizedPositions;
-      snapshot.markets.polymarket.cash = Number(available.toFixed(2));
-      snapshot.markets.polymarket.marketValue = Number(marketValue.toFixed(2));
-      snapshot.markets.polymarket.pnl = Number(sumPositionPnl(normalizedPositions).toFixed(2));
-      snapshot.markets.polymarket.equity = Number((available + marketValue).toFixed(2));
-      snapshot.markets.polymarket.liquidCapital = Number((available + marketValue).toFixed(2));
-      snapshot.positions.push(...normalizedPositions);
-    } catch (err) {
-      appendSourceError(snapshot, 'polymarket', err);
-      snapshot.markets.polymarket.sourceErrors.push(err.message);
-    }
-  }
-
-  try {
-    const defiDeposits = (await collectYieldDeposits(options)).map(normalizeYieldDeposit);
-    snapshot.markets.defi_yield.deposits = defiDeposits;
-    snapshot.markets.defi_yield.marketValue = Number(defiDeposits.reduce((sum, deposit) => sum + deposit.currentValue, 0).toFixed(2));
-    snapshot.markets.defi_yield.equity = snapshot.markets.defi_yield.marketValue;
-    snapshot.markets.defi_yield.pnl = Number(defiDeposits.reduce((sum, deposit) => sum + (deposit.currentValue - deposit.amount), 0).toFixed(2));
-    snapshot.markets.defi_yield.lockedCapital = Number(defiDeposits
-      .filter((deposit) => deposit.locked !== false)
-      .reduce((sum, deposit) => sum + deposit.currentValue, 0)
-      .toFixed(2));
-    snapshot.markets.defi_yield.liquidCapital = Number(defiDeposits
-      .filter((deposit) => deposit.locked === false)
-      .reduce((sum, deposit) => sum + deposit.currentValue, 0)
-      .toFixed(2));
-  } catch (err) {
-    appendSourceError(snapshot, 'yield_router', err);
-    snapshot.markets.defi_yield.sourceErrors.push(err.message);
   }
 
   const solanaPositions = Array.isArray(options.solanaPositions) ? options.solanaPositions.map(normalizeSolanaPosition) : [];

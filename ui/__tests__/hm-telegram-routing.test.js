@@ -50,6 +50,21 @@ describe('hm-telegram-routing', () => {
     }));
   });
 
+  it('defaults no-chat Eunbyeol profile sends to the Eunbyeol route', () => {
+    const routing = require('../scripts/hm-telegram-routing');
+
+    const defaultRoute = routing.resolveTelegramRoute({
+      env: {
+        SQUIDRUN_PROFILE: 'eunbyeol',
+      },
+    });
+
+    expect(defaultRoute.route).toEqual(expect.objectContaining({
+      method: 'send-long-telegram',
+      language: 'ko',
+    }));
+  });
+
   it('chunks long routed messages for Eunbyeol', async () => {
     const { sendTelegram } = require('../scripts/hm-telegram');
     const routing = require('../scripts/hm-telegram-routing');

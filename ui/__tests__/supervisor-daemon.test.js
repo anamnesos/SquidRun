@@ -58,7 +58,6 @@ jest.mock('../modules/local-model-capabilities', () => ({
   readSystemCapabilitiesSnapshot: jest.fn(() => ({
     localModels: {
       enabled: true,
-      provider: 'ollama',
       sleepExtraction: {
         enabled: true,
         available: true,
@@ -78,6 +77,23 @@ jest.mock('../modules/trading/hyperliquid-client', () => ({
   getLatestBars: jest.fn().mockResolvedValue(new Map()),
   getHistoricalBars: jest.fn().mockResolvedValue(new Map()),
   getUniverseMarketData: jest.fn().mockResolvedValue([]),
+}));
+
+jest.mock('../modules/trading/spark-capture', () => ({
+  DEFAULT_SPARK_STATE_PATH: '/tmp/spark-state.json',
+  DEFAULT_SPARK_EVENTS_PATH: '/tmp/spark-events.jsonl',
+  DEFAULT_SPARK_FIREPLANS_PATH: '/tmp/spark-fireplans.json',
+  DEFAULT_SPARK_WATCHLIST_PATH: '/tmp/spark-watchlist.json',
+  runSparkScan: jest.fn().mockResolvedValue({
+    ok: true,
+    scannedAt: '2026-04-23T09:00:00.000Z',
+    upbitListingCount: 1,
+    hyperliquidListingCount: 0,
+    tokenUnlockCount: 1,
+    newAlertEvents: [],
+    firePlans: [],
+    alertMessage: '',
+  }),
 }));
 
 jest.mock('../modules/trading/hyperliquid-native-layer', () => ({
@@ -105,23 +121,24 @@ jest.mock('../modules/trading/prediction-tracker', () => ({
   PREDICTIONS_FILE: '/tmp/prediction-log.json',
 }));
 
-jest.mock('../modules/main/comms-journal', () => ({
-  queryCommsJournalEntries: jest.fn(() => []),
-}));
-
 const chokidar = require('chokidar');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
+const sparkCapture = require('../modules/trading/spark-capture');
 const executor = require('../modules/trading/executor');
 const macroRiskGate = require('../modules/trading/macro-risk-gate');
 const tradingWatchlist = require('../modules/trading/watchlist');
 const dynamicWatchlist = require('../modules/trading/dynamic-watchlist');
 const hyperliquidNativeLayer = require('../modules/trading/hyperliquid-native-layer');
 const predictionTracker = require('../modules/trading/prediction-tracker');
-const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
-const { SupervisorDaemon } = require('../supervisor-daemon');
+const {
+  SupervisorDaemon,
+  resolveProjectUiScriptPath,
+  containsHangulSyllables,
+  shouldSuppressMainTelegramForHangul,
+} = require('../supervisor-daemon');
 
 function createMockStore() {
   return {
@@ -145,6 +162,46 @@ function createMockLogger() {
   };
 }
 
+function buildOrdiPatternBars() {
+  const bars1h = Array.from({ length: 30 }, (_, index) => ({
+    open: 1 + (index * 0.01),
+    high: 1.08 + (index * 0.012),
+    low: 0.98 + (index * 0.008),
+    close: 1.02 + (index * 0.009),
+  }));
+  bars1h[12] = {
+    open: 1.48,
+    high: 1.5,
+    low: 1.34,
+    close: 1.39,
+  };
+  const bars5m = [
+    { open: 1.34, high: 1.36, low: 1.31, close: 1.32 },
+    { open: 1.32, high: 1.34, low: 1.29, close: 1.29 },
+    { open: 1.29, high: 1.3, low: 1.25, close: 1.26 },
+    { open: 1.26, high: 1.27, low: 1.22, close: 1.23 },
+    { open: 1.23, high: 1.24, low: 1.2, close: 1.21 },
+  ];
+  const bars15m = [
+    { open: 1.38, high: 1.4, low: 1.33, close: 1.35 },
+    { open: 1.35, high: 1.36, low: 1.3, close: 1.31 },
+    { open: 1.31, high: 1.32, low: 1.26, close: 1.27 },
+    { open: 1.27, high: 1.28, low: 1.22, close: 1.23 },
+    { open: 1.23, high: 1.24, low: 1.2, close: 1.21 },
+  ];
+  return { bars1h, bars5m, bars15m };
+}
+
+function mockOrdiPatternBars(ticker = 'ORDI/USD') {
+  const bars = buildOrdiPatternBars();
+  hyperliquidClient.getHistoricalBars.mockImplementation(async ({ timeframe }) => {
+    const selected = timeframe === '5m'
+      ? bars.bars5m
+      : (timeframe === '15m' ? bars.bars15m : bars.bars1h);
+    return new Map([[ticker, selected]]);
+  });
+}
+
 function getWatcherByTarget(pattern) {
   return watcherRecords.find((watcher) => {
     const targets = Array.isArray(watcher.targets) ? watcher.targets : [watcher.targets];
@@ -163,8 +220,8 @@ describe('supervisor-daemon integrations', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     watcherRecords.length = 0;
-    queryCommsJournalEntries.mockReset();
-    queryCommsJournalEntries.mockReturnValue([]);
+    hyperliquidClient.getOpenPositions.mockReset();
+    hyperliquidClient.getOpenPositions.mockResolvedValue([]);
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-supervisor-test-'));
     originalMarketScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '0';
@@ -201,12 +258,6 @@ describe('supervisor-daemon integrations', () => {
       sleepConsolidator: mockSleepConsolidator,
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
-      tradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
       statusPath: path.join(tempRoot, 'supervisor-status.json'),
       logPath: path.join(tempRoot, 'supervisor.log'),
@@ -230,6 +281,94 @@ describe('supervisor-daemon integrations', () => {
     }
     jest.restoreAllMocks();
     jest.useRealTimers();
+  });
+
+  test('reconciles position attribution from the live Hyperliquid snapshot', async () => {
+    const statePath = path.join(tempRoot, 'agent-position-attribution.json');
+    fs.writeFileSync(statePath, JSON.stringify({
+      version: 2,
+      positions: {
+        'AVAX/USD': {
+          ticker: 'AVAX/USD',
+          agentId: 'architect',
+          direction: 'SHORT',
+          entryPrice: 9.1,
+          currentSize: 12,
+        },
+      },
+      closedPositions: [],
+      quarantinedPositions: [],
+    }, null, 2));
+    hyperliquidClient.getOpenPositions.mockResolvedValueOnce([
+      {
+        coin: 'AXS',
+        size: -18,
+        entryPx: 2.72,
+        liquidationPx: 3.12,
+        markPrice: 2.76,
+      },
+    ]);
+    daemon.positionAttributionReconciliationEnabled = true;
+    daemon.positionAttributionStatePath = statePath;
+    daemon.runtimeEnv = { HYPERLIQUID_WALLET_ADDRESS: '0xabc' };
+
+    const result = await daemon.maybeRunPositionAttributionReconciliation(
+      new Date('2026-04-25T23:58:00.000Z').getTime()
+    );
+
+    expect(hyperliquidClient.getOpenPositions).toHaveBeenCalledWith(expect.objectContaining({
+      walletAddress: '0xabc',
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      status: 'ok',
+      liveCount: 1,
+      createdCount: 1,
+      quarantinedCount: 1,
+      created: ['AXS/USD'],
+      quarantined: ['AVAX/USD'],
+    }));
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    expect(state.positions['AXS/USD']).toEqual(expect.objectContaining({
+      agentId: '',
+      source: 'live_snapshot_reconciliation',
+      strategyLane: 'manual_unattributed',
+      currentSize: 18,
+      liquidationPx: 3.12,
+    }));
+    expect(state.quarantinedPositions).toEqual([
+      expect.objectContaining({
+        ticker: 'AVAX/USD',
+        quarantineReason: 'not_in_live_hyperliquid_snapshot',
+      }),
+    ]);
+  });
+
+  test('tick runs position attribution reconciliation before crypto automation', async () => {
+    const callOrder = [];
+    const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
+    daemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
+    daemon.maybeRunPositionAttributionReconciliation = jest.fn(async () => {
+      callOrder.push('position_attribution');
+      return { ok: true, status: 'ok' };
+    });
+    daemon.maybeRunCryptoTradingAutomation = jest.fn(async () => {
+      callOrder.push('crypto');
+      return { ok: true, skipped: true };
+    });
+    daemon.maybeRunTradeReconciliation = skippedLane;
+    daemon.maybeRunTokenomistAutomation = skippedLane;
+    daemon.maybeRunSparkAutomation = skippedLane;
+    daemon.maybeRunMarketScannerAutomation = skippedLane;
+    daemon.maybeRunSaylorWatcher = skippedLane;
+    daemon.maybeRunOracleWatchEngine = skippedLane;
+    daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
+    daemon.maybeRunSleepCycle = skippedLane;
+
+    const result = await daemon.tick();
+
+    expect(daemon.maybeRunPositionAttributionReconciliation).toHaveBeenCalledTimes(1);
+    expect(result.positionAttributionReconciliationResult).toEqual({ ok: true, status: 'ok' });
+    expect(callOrder).toEqual(['position_attribution', 'crypto']);
   });
 
   test('runs the oracle watch engine through the supervisor lane and reports status', async () => {
@@ -270,12 +409,6 @@ describe('supervisor-daemon integrations', () => {
       sleepConsolidator: mockSleepConsolidator,
       smartMoneyScanner: null,
       cryptoTradingEnabled: false,
-      tradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'supervisor.pid'),
       statusPath: path.join(tempRoot, 'supervisor-status.json'),
       logPath: path.join(tempRoot, 'supervisor.log'),
@@ -283,6 +416,7 @@ describe('supervisor-daemon integrations', () => {
       wakeSignalPath: path.join(tempRoot, 'supervisor-wake.signal'),
       sessionStatePath: path.join(tempRoot, 'session-state.json'),
       agentTaskQueuePath: path.join(tempRoot, 'agent-task-queue.json'),
+      hyperliquidManualActivityPath: path.join(tempRoot, 'hyperliquid-manual-activity.json'),
       oracleWatchEnabled: true,
       oracleWatchEngineScriptPath: scriptPath,
       oracleWatchRulesPath: rulesPath,
@@ -329,9 +463,6 @@ describe('supervisor-daemon integrations', () => {
     expect(status.dailyTargetProgress).toEqual(expect.objectContaining({
       targetUsd: 200,
     }));
-    expect(status.paperCompetition).toEqual(expect.objectContaining({
-      path: expect.any(String),
-    }));
   });
 
   test('alerts when the oracle watch heartbeat goes stale for more than sixty seconds and notifies recovery', () => {
@@ -342,13 +473,7 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-heartbeat.pid'),
       statusPath: path.join(tempRoot, 'oracle-watch-heartbeat-status.json'),
       logPath: path.join(tempRoot, 'oracle-watch-heartbeat.log'),
@@ -404,17 +529,11 @@ describe('supervisor-daemon integrations', () => {
     const delayMs = daemon.computeNextTickDelay({
       claimedCount: 0,
       activeWorkerCount: 0,
-      tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
-      polymarketTradingResult: { skipped: true },
-      newsScanResult: { skipped: true },
-      pendingFollowupResult: { skipped: true },
-      marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
       hyperliquidSqueezeDetectorResult: { skipped: true },
-      eunbyeolCheckInResult: { skipped: true },
       sleepResult: { skipped: true },
       memoryConsistency: { skipped: true },
       agentTaskQueue: { dispatched: 0, completed: 0 },
@@ -459,18 +578,13 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-relaunch.pid'),
       statusPath: path.join(tempRoot, 'oracle-watch-relaunch-status.json'),
       logPath: path.join(tempRoot, 'oracle-watch-relaunch.log'),
       taskLogDir: path.join(tempRoot, 'oracle-watch-relaunch-tasks'),
       wakeSignalPath: path.join(tempRoot, 'oracle-watch-relaunch-wake.signal'),
+      hyperliquidManualActivityPath: path.join(tempRoot, 'oracle-watch-relaunch-manual-activity.json'),
       oracleWatchEnabled: true,
       oracleWatchEngineScriptPath: scriptPath,
       oracleWatchRulesPath: rulesPath,
@@ -556,18 +670,13 @@ describe('supervisor-daemon integrations', () => {
       },
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
-      eunbyeolCheckInEnabled: false,
       pidPath: path.join(tempRoot, 'oracle-watch-crash-restart.pid'),
       statusPath: path.join(tempRoot, 'oracle-watch-crash-restart-status.json'),
       logPath: path.join(tempRoot, 'oracle-watch-crash-restart.log'),
       taskLogDir: path.join(tempRoot, 'oracle-watch-crash-restart-tasks'),
       wakeSignalPath: path.join(tempRoot, 'oracle-watch-crash-restart-wake.signal'),
+      hyperliquidManualActivityPath: path.join(tempRoot, 'oracle-watch-crash-restart-manual-activity.json'),
       oracleWatchEnabled: true,
       oracleWatchEngineScriptPath: scriptPath,
       oracleWatchRulesPath: rulesPath,
@@ -587,17 +696,11 @@ describe('supervisor-daemon integrations', () => {
     const restartDelayMs = daemon.computeNextTickDelay({
       claimedCount: 0,
       activeWorkerCount: 0,
-      tradingResult: { skipped: true },
       tradeReconciliationResult: { skipped: true },
       cryptoTradingResult: { skipped: true },
-      polymarketTradingResult: { skipped: true },
-      newsScanResult: { skipped: true },
-      pendingFollowupResult: { skipped: true },
-      marketResearchResult: { skipped: true },
       saylorWatcherResult: { skipped: true },
       oracleWatchResult: { skipped: true },
       hyperliquidSqueezeDetectorResult: { skipped: true },
-      eunbyeolCheckInResult: { skipped: true },
       sleepResult: { skipped: true },
       memoryConsistency: { skipped: true },
       agentTaskQueue: { dispatched: 0, completed: 0 },
@@ -608,6 +711,102 @@ describe('supervisor-daemon integrations', () => {
     expect(restartDelayMs).toBe(daemon.pollMs);
 
     daemon.lastOracleWatchRunAtMs = Date.now();
+    daemon.lastOracleWatchRelaunchAtMs = 0;
+    const recoveredResult = await daemon.maybeRunOracleWatchEngine(Date.now());
+    const recoveredState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+
+    expect(recoveredResult).toEqual(expect.objectContaining({ ok: true, alertCount: 0 }));
+    expect(daemon.lastOracleWatchSummary).toEqual(expect.objectContaining({
+      status: 'ok',
+      statePath,
+      rulesPath,
+    }));
+    expect(recoveredState.heartbeat).toEqual(expect.objectContaining({
+      stale: false,
+      state: 'green',
+    }));
+    expect(new Date(recoveredState.heartbeat.lastTickAt).getTime()).toBeGreaterThan(new Date(staleAt).getTime());
+    expect(daemon.logger.warn).toHaveBeenCalledWith(expect.stringContaining('forcing relaunch'));
+  });
+
+  test('restarts the oracle watch lane after rate-limit backoff expires even if the state file still says backoff', async () => {
+    const rulesPath = path.join(tempRoot, 'oracle-watch-rules.json');
+    const statePath = path.join(tempRoot, 'oracle-watch-state.json');
+    const scriptPath = path.join(tempRoot, 'oracle-watch-backoff-expired-recover.js');
+    const staleAt = '2026-04-20T05:52:33.876Z';
+    const expiredBackoffAt = '2026-04-20T06:04:25.574Z';
+
+    fs.writeFileSync(rulesPath, JSON.stringify({
+      mode: 'normal',
+      pollIntervalMs: 120000,
+      macroPollIntervalMs: 5000,
+      targets: ['oracle'],
+      symbols: ['BTC/USD', 'ETH/USD', 'SOL/USD'],
+      hotSymbols: [],
+      rules: [],
+    }, null, 2));
+    fs.writeFileSync(statePath, JSON.stringify({
+      version: 2,
+      updatedAt: '2026-04-20T16:30:07.245Z',
+      heartbeat: {
+        lastTickAt: staleAt,
+        intervalMs: 120000,
+        stale: false,
+        state: 'backoff',
+        lastErrorAt: '2026-04-20T06:00:25.574Z',
+        backoffUntil: expiredBackoffAt,
+      },
+      rateLimit: {
+        consecutive429s: 1,
+        backoffUntil: expiredBackoffAt,
+        last429At: '2026-04-20T06:00:25.574Z',
+        lastBackoffMs: 240000,
+        lastError: '429 Too Many Requests - null',
+      },
+      counters: {},
+      rules: {},
+    }, null, 2));
+    fs.writeFileSync(scriptPath, [
+      "const fs = require('fs');",
+      "const args = process.argv.slice(2);",
+      "const statePath = args[args.indexOf('--state') + 1];",
+      "const now = new Date().toISOString();",
+      "fs.writeFileSync(statePath, JSON.stringify({",
+      "  version: 2,",
+      "  updatedAt: now,",
+      "  mode: 'normal',",
+      "  heartbeat: { lastTickAt: now, intervalMs: 120000, stale: false, state: 'green' },",
+      "  counters: { triggersSeen: 0, triggersArmed: 0, triggersFired: 0, triggersInvalidated: 0, triggersActedOn: 0, alertsSent: 0, lastCycleSeen: 0, lastCycleFired: 0, lastCycleAlertCount: 0 },",
+      "  rateLimit: { consecutive429s: 0, backoffUntil: null, last429At: '2026-04-20T06:00:25.574Z', lastBackoffMs: 240000, lastError: null },",
+      "  marketByTicker: {},",
+      "  rules: {},",
+      "  lastError: null,",
+      "  lastFailureAt: null",
+      "}, null, 2));",
+      "console.log(JSON.stringify({ ok: true, alertCount: 0, alerts: [] }));",
+    ].join('\n'));
+
+    daemon = new SupervisorDaemon({
+      projectRoot: tempRoot,
+      store: createMockStore(),
+      logger: createMockLogger(),
+      env: process.env,
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      cryptoTradingEnabled: false,
+      pidPath: path.join(tempRoot, 'oracle-watch-backoff-expired-restart.pid'),
+      statusPath: path.join(tempRoot, 'oracle-watch-backoff-expired-status.json'),
+      logPath: path.join(tempRoot, 'oracle-watch-backoff-expired.log'),
+      taskLogDir: path.join(tempRoot, 'oracle-watch-backoff-expired-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'oracle-watch-backoff-expired-wake.signal'),
+      oracleWatchEnabled: true,
+      oracleWatchEngineScriptPath: scriptPath,
+      oracleWatchRulesPath: rulesPath,
+      oracleWatchStatePath: statePath,
+      saylorWatcherEnabled: false,
+      hyperliquidSqueezeDetectorEnabled: false,
+    });
+
     const recoveredResult = await daemon.maybeRunOracleWatchEngine(Date.now());
     const recoveredState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 
@@ -733,9 +932,10 @@ describe('supervisor-daemon integrations', () => {
       enoughGap: true,
     });
 
-    await daemon.tick();
+    const result = await daemon.maybeRunSleepCycle();
 
     expect(mockSleepConsolidator.runOnce).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({ generatedPrCount: 1 }));
     expect(daemon.lastSleepCycleSummary).toEqual(expect.objectContaining({ generatedPrCount: 1 }));
   });
 
@@ -784,7 +984,38 @@ describe('supervisor-daemon integrations', () => {
     expect(mockLeaseJanitor.close).toHaveBeenCalled();
   });
 
-  test('uses the configured hm-send script path for trading Telegram and agent notifications', async () => {
+  test('resolves packaged hm-send path through app.asar/ui/scripts instead of app.asar/scripts', () => {
+    const asarRoot = path.join(tempRoot, 'resources', 'app.asar');
+    const packagedScript = path.join(asarRoot, 'ui', 'scripts', 'hm-send.js');
+    fs.mkdirSync(path.dirname(packagedScript), { recursive: true });
+    fs.writeFileSync(packagedScript, 'module.exports = {};\n', 'utf8');
+
+    expect(resolveProjectUiScriptPath('hm-send.js', asarRoot)).toBe(packagedScript);
+  });
+
+  test('resolves hm-send when the packaged project root is already the ui directory', () => {
+    const packagedUiRoot = path.join(tempRoot, 'resources', 'app.asar', 'ui');
+    const packagedScript = path.join(packagedUiRoot, 'scripts', 'hm-send.js');
+    fs.mkdirSync(path.dirname(packagedScript), { recursive: true });
+    fs.writeFileSync(packagedScript, 'module.exports = {};\n', 'utf8');
+
+    expect(resolveProjectUiScriptPath('hm-send.js', packagedUiRoot)).toBe(packagedScript);
+  });
+
+  test('suppresses default hm-send side effects under Jest unless a capture script is provided', () => {
+    daemon.logger.info.mockClear();
+
+    daemon.notifyOracleWatchLane('(SUPERVISOR): test-only stale alert', 'stale');
+
+    expect(daemon.logger.info).toHaveBeenCalledWith(
+      'hm-send suppressed during stale: architect'
+    );
+    expect(daemon.logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('Oracle watch notify failed')
+    );
+  });
+
+  test('uses the configured hm-send script path for trading Telegram notifications', async () => {
     const projectRoot = path.join(tempRoot, 'repo-root');
     const capturePath = path.join(tempRoot, 'hm-send-calls.jsonl');
     const captureScriptPath = path.join(tempRoot, 'capture-hm-send.js');
@@ -811,9 +1042,7 @@ describe('supervisor-daemon integrations', () => {
       },
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       pidPath: path.join(tempRoot, 'notify.pid'),
       statusPath: path.join(tempRoot, 'notify-status.json'),
       logPath: path.join(tempRoot, 'notify.log'),
@@ -823,7 +1052,6 @@ describe('supervisor-daemon integrations', () => {
 
     try {
       notifyDaemon.notifyTelegramTrading('Trading Day Summary - 2026-03-29');
-      notifyDaemon.notifyTradingAgents('end_of_day', { marketDate: '2026-03-29' });
     } finally {
       await notifyDaemon.stop('test-cleanup-notify-script-path');
     }
@@ -834,10 +1062,8 @@ describe('supervisor-daemon integrations', () => {
       .filter(Boolean)
       .map((line) => JSON.parse(line));
 
-    expect(capturedCalls).toHaveLength(4);
+    expect(capturedCalls).toHaveLength(1);
     expect(capturedCalls[0].args).toEqual(['telegram', 'Trading Day Summary - 2026-03-29', '--chat-id', '5613428850']);
-    expect(capturedCalls.slice(1).map((entry) => entry.args[0])).toEqual(['architect', 'builder', 'oracle']);
-    expect(capturedCalls.slice(1).every((entry) => String(entry.args[1] || '').includes('2026-03-29'))).toBe(true);
   });
 
   test('runs a Hyperliquid monitor loop independent of consultations', async () => {
@@ -880,8 +1106,6 @@ describe('supervisor-daemon integrations', () => {
       smartMoneyScanner: null,
       circuitBreaker: null,
       cryptoTradingEnabled: false,
-      tradingEnabled: false,
-      polymarketTradingEnabled: false,
       hyperliquidMonitorEnabled: true,
       hyperliquidMonitorPollMs: 50,
       hyperliquidExecutor: {},
@@ -914,6 +1138,64 @@ describe('supervisor-daemon integrations', () => {
     }
   });
 
+  test('pauses the Hyperliquid monitor while manual Hyperliquid activity is active', async () => {
+    const hyperliquidMonitorOrchestrator = {
+      runDefiMonitorCycle: jest.fn(),
+    };
+    const manualActivityPath = path.join(tempRoot, 'hyperliquid-manual-activity.json');
+    fs.writeFileSync(manualActivityPath, JSON.stringify({
+      ownerId: 'manual-lock',
+      command: 'hm-defi-execute',
+      caller: 'manual',
+      pid: 4242,
+      startedAt: '2026-04-23T00:00:00.000Z',
+      lastHeartbeatAt: '2026-04-23T00:00:05.000Z',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      metadata: {
+        argv: ['trade', '--asset', 'AAVE'],
+      },
+    }, null, 2));
+
+    const monitorDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      smartMoneyScanner: null,
+      circuitBreaker: null,
+      cryptoTradingEnabled: false,
+      hyperliquidMonitorEnabled: true,
+      hyperliquidExecutor: {},
+      hyperliquidManualActivityPath: manualActivityPath,
+      hyperliquidMonitorOrchestrator,
+      pidPath: path.join(tempRoot, 'hyperliquid-monitor-pause.pid'),
+      statusPath: path.join(tempRoot, 'hyperliquid-monitor-pause-status.json'),
+      logPath: path.join(tempRoot, 'hyperliquid-monitor-pause.log'),
+      taskLogDir: path.join(tempRoot, 'hyperliquid-monitor-pause-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'hyperliquid-monitor-pause-wake.signal'),
+    });
+    monitorDaemon.writeStatus = jest.fn();
+
+    const result = await monitorDaemon.runHyperliquidPositionMonitorCycle('manual');
+
+    expect(hyperliquidMonitorOrchestrator.runDefiMonitorCycle).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: true,
+      reason: 'manual_hyperliquid_activity',
+      manualActivity: expect.objectContaining({
+        command: 'hm-defi-execute',
+        caller: 'manual',
+      }),
+    }));
+    expect(monitorDaemon.lastHyperliquidMonitorSummary).toEqual(expect.objectContaining({
+      status: 'paused_for_manual_activity',
+      riskExit: expect.objectContaining({
+        reason: 'manual_activity_pause',
+      }),
+    }));
+  });
+
   test('enables the Hyperliquid monitor with HYPERLIQUID_WALLET_ADDRESS fallback', async () => {
     const hyperliquidMonitorOrchestrator = {
       runDefiMonitorCycle: jest.fn().mockResolvedValue({
@@ -932,13 +1214,11 @@ describe('supervisor-daemon integrations', () => {
       sleepEnabled: false,
       smartMoneyScanner: null,
       circuitBreaker: null,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
       hyperliquidMonitorOrchestrator,
       env: {
         ...process.env,
-        POLYMARKET_PRIVATE_KEY: '0xabc123',
+        HYPERLIQUID_PRIVATE_KEY: '0xabc123',
         HYPERLIQUID_WALLET_ADDRESS: '0xdef456',
       },
       pidPath: path.join(tempRoot, 'hl-wallet-fallback.pid'),
@@ -995,7 +1275,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidExecutionEnabled: true,
       hyperliquidExecutor,
@@ -1313,9 +1592,10 @@ describe('supervisor-daemon integrations', () => {
       pruned: 3,
     });
 
-    await daemon.tick();
+    const result = daemon.runMemoryLeaseHousekeeping(Date.now(), 'tick');
 
     expect(mockLeaseJanitor.pruneExpiredLeases).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({ pruned: 3 }));
     expect(daemon.logger.warn).toHaveBeenCalledWith('Pruned 3 expired memory lease(s) during tick');
   });
 
@@ -1347,6 +1627,18 @@ describe('supervisor-daemon integrations', () => {
       daemon.activeWorkers.delete(taskId);
     });
     jest.spyOn(daemon, 'launchTask').mockResolvedValue();
+    const skippedLane = jest.fn(async () => ({ ok: true, skipped: true }));
+    daemon.maybeRunAgentTaskQueue = jest.fn(async () => ({ ok: true, dispatched: 0, completed: 0 }));
+    daemon.maybeRunPositionAttributionReconciliation = skippedLane;
+    daemon.maybeRunCryptoTradingAutomation = skippedLane;
+    daemon.maybeRunTradeReconciliation = skippedLane;
+    daemon.maybeRunTokenomistAutomation = skippedLane;
+    daemon.maybeRunSparkAutomation = skippedLane;
+    daemon.maybeRunMarketScannerAutomation = skippedLane;
+    daemon.maybeRunSaylorWatcher = skippedLane;
+    daemon.maybeRunOracleWatchEngine = skippedLane;
+    daemon.maybeRunHyperliquidSqueezeDetector = skippedLane;
+    daemon.maybeRunSleepCycle = skippedLane;
 
     await daemon.tick();
 
@@ -1370,13 +1662,14 @@ describe('supervisor-daemon integrations', () => {
       tasks: [{ taskId: 'task-1' }, { taskId: 'task-2' }],
     });
 
-    await daemon.tick();
+    const result = daemon.runQueueHousekeeping(Date.now(), 'tick');
 
     expect(daemon.store.pruneExpiredPendingTasks).toHaveBeenCalledWith(
       expect.objectContaining({
         maxAgeMs: 60000,
       })
     );
+    expect(result.pruneResult).toEqual(expect.objectContaining({ pruned: 2 }));
     expect(daemon.logger.warn).toHaveBeenCalledWith('Pruned 2 stale pending supervisor task(s) during tick');
   });
 
@@ -1397,8 +1690,9 @@ describe('supervisor-daemon integrations', () => {
     });
     daemon.lastMemoryConsistencyCheckAtMs = Date.now() - daemon.memoryConsistencyPollMs - 1;
 
-    await daemon.tick();
+    const result = daemon.maybeRunMemoryConsistencyAudit(Date.now(), 'tick');
 
+    expect(result).toEqual(expect.objectContaining({ status: 'drift_detected' }));
     expect(daemon.lastMemoryConsistencySummary).toEqual(expect.objectContaining({
       status: 'drift_detected',
       synced: false,
@@ -1409,6 +1703,72 @@ describe('supervisor-daemon integrations', () => {
     }));
     expect(daemon.logger.warn).toHaveBeenCalledWith(
       'Memory consistency (tick): status=drift_detected entries=15 nodes=19 missing=2 orphans=6 duplicates=0'
+    );
+  });
+
+  test('rate-limits repeated memory consistency drift while still logging state changes', () => {
+    const drift = {
+      ok: true,
+      checkedAt: '2026-03-15T00:05:00.000Z',
+      status: 'drift_detected',
+      synced: false,
+      summary: {
+        knowledgeEntryCount: 15,
+        knowledgeNodeCount: 19,
+        missingInCognitiveCount: 2,
+        orphanedNodeCount: 6,
+        duplicateKnowledgeHashCount: 0,
+        issueCount: 0,
+      },
+    };
+    const changedDrift = {
+      ...drift,
+      summary: {
+        ...drift.summary,
+        missingInCognitiveCount: 3,
+      },
+    };
+    runMemoryConsistencyCheck.mockReturnValue(drift);
+    daemon.memoryConsistencyRepeatLogMs = 60_000;
+    daemon.logger.warn.mockClear();
+
+    daemon.runMemoryConsistencyAudit('tick', 100_000);
+    daemon.runMemoryConsistencyAudit('tick', 110_000);
+
+    expect(daemon.logger.warn).toHaveBeenCalledTimes(1);
+    expect(daemon.logger.warn).toHaveBeenLastCalledWith(
+      'Memory consistency (tick): status=drift_detected entries=15 nodes=19 missing=2 orphans=6 duplicates=0'
+    );
+
+    runMemoryConsistencyCheck.mockReturnValue(changedDrift);
+    daemon.runMemoryConsistencyAudit('tick', 120_000);
+
+    expect(daemon.logger.warn).toHaveBeenCalledTimes(2);
+    expect(daemon.logger.warn).toHaveBeenLastCalledWith(
+      'Memory consistency (tick): status=drift_detected entries=15 nodes=19 missing=3 orphans=6 duplicates=0'
+    );
+  });
+
+  test('rate-limits steady-state memory index refresh completions', async () => {
+    daemon.memoryIndexRepeatLogMs = 60_000;
+    daemon.logger.info.mockClear();
+    jest.spyOn(Date, 'now')
+      .mockReturnValueOnce(100_000)
+      .mockReturnValueOnce(110_000)
+      .mockReturnValueOnce(170_001);
+
+    await daemon.runMemoryIndexRefresh('change:session.md');
+    await daemon.runMemoryIndexRefresh('change:session.md');
+    await daemon.runMemoryIndexRefresh('change:session.md');
+
+    expect(daemon.logger.info).toHaveBeenCalledTimes(2);
+    expect(daemon.logger.info).toHaveBeenNthCalledWith(
+      1,
+      'Memory index refresh (change:session.md) complete: groups=1 skipped=0 docs=3'
+    );
+    expect(daemon.logger.info).toHaveBeenNthCalledWith(
+      2,
+      'Memory index refresh (change:session.md) complete: groups=1 skipped=0 docs=3 (suppressed 1 repeat)'
     );
   });
 
@@ -1444,142 +1804,6 @@ describe('supervisor-daemon integrations', () => {
     }));
 
     writeSpy.mockRestore();
-  });
-
-  test('reconciles pending trades on a 5-minute cadence while pending orders remain', async () => {
-    const tradingOrchestrator = {
-      getPendingReconciliationTrades: jest.fn()
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([]),
-      runReconciliation: jest.fn()
-        .mockResolvedValueOnce({
-          phase: 'reconciliation',
-          marketDate: '2026-03-19',
-          orderUpdates: [{ tradeId: 1, status: 'FILLED' }],
-          recordedOutcomes: [],
-          asOf: '2026-03-19T14:35:00.000Z',
-        })
-        .mockResolvedValueOnce({
-          phase: 'reconciliation',
-          marketDate: '2026-03-19',
-          orderUpdates: [],
-          recordedOutcomes: [],
-          asOf: '2026-03-19T14:40:01.000Z',
-        }),
-    };
-    const tradingDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: true,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      tradingOrchestrator,
-      tradingStatePath: '/tmp/trade-reconcile-cadence-trading-state.json',
-      pidPath: '/tmp/trade-reconcile-cadence.pid',
-      statusPath: '/tmp/trade-reconcile-cadence-status.json',
-      logPath: '/tmp/trade-reconcile-cadence.log',
-      taskLogDir: '/tmp/trade-reconcile-cadence-tasks',
-      wakeSignalPath: '/tmp/trade-reconcile-cadence-wake.signal',
-    });
-
-    const first = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:35:00.000Z'));
-    expect(first).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-      remainingPendingCount: 1,
-    }));
-
-    const second = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:39:00.000Z'));
-    expect(second).toEqual(expect.objectContaining({
-      ok: false,
-      skipped: true,
-      reason: 'interval_guard',
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-    }));
-
-    const third = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:40:01.000Z'));
-    expect(third).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-      remainingPendingCount: 0,
-    }));
-
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenCalledTimes(2);
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenNthCalledWith(1, expect.objectContaining({ date: '2026-03-19' }));
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenNthCalledWith(2, expect.objectContaining({ date: '2026-03-19' }));
-
-    await tradingDaemon.stop('test-cleanup-trade-reconcile-cadence');
-  });
-
-  test('runs reconciliation from the supervisor tick without waiting for end of day', async () => {
-    jest.setSystemTime(new Date('2026-03-19T21:10:00.000Z'));
-
-    const tradingOrchestrator = {
-      getPendingReconciliationTrades: jest.fn()
-        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
-        .mockReturnValueOnce([]),
-      runReconciliation: jest.fn().mockResolvedValue({
-        phase: 'reconciliation',
-        marketDate: '2026-03-19',
-        orderUpdates: [{ tradeId: 1, status: 'FILLED' }],
-        recordedOutcomes: [],
-        asOf: '2026-03-19T21:10:00.000Z',
-      }),
-      runPreMarket: jest.fn(),
-      runConsensusRound: jest.fn(),
-      runMarketOpen: jest.fn(),
-      runMidDayCheck: jest.fn(),
-      runMarketClose: jest.fn(),
-      runEndOfDay: jest.fn(),
-    };
-    const tradingDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: true,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
-      eunbyeolCheckInEnabled: false,
-      tradingOrchestrator,
-      tradingStatePath: '/tmp/trade-reconcile-tick-trading-state.json',
-      pidPath: '/tmp/trade-reconcile-tick.pid',
-      statusPath: '/tmp/trade-reconcile-tick-status.json',
-      logPath: '/tmp/trade-reconcile-tick.log',
-      taskLogDir: '/tmp/trade-reconcile-tick-tasks',
-      wakeSignalPath: '/tmp/trade-reconcile-tick-wake.signal',
-    });
-    jest.spyOn(tradingDaemon, 'getTradingDaySchedule').mockResolvedValue(null);
-    jest.spyOn(tradingDaemon, 'getNextTradingEvent').mockResolvedValue(null);
-
-    const result = await tradingDaemon.tick();
-
-    expect(result.tradeReconciliationResult).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-      marketDate: '2026-03-19',
-      pendingCount: 1,
-      remainingPendingCount: 0,
-    }));
-    expect(tradingOrchestrator.runReconciliation).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-19',
-    }));
-    expect(tradingOrchestrator.runEndOfDay).not.toHaveBeenCalled();
-
-    await tradingDaemon.stop('test-cleanup-trade-reconcile-tick');
   });
 
   test('opens a Hyperliquid ETH short after approved crypto SELL consensus', async () => {
@@ -1642,7 +1866,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -1768,7 +1991,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -1841,7 +2063,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -1941,7 +2162,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: true,
       hyperliquidExecutionEnabled: true,
@@ -2035,7 +2255,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       circuitBreaker: null,
       hyperliquidMonitorEnabled: true,
@@ -2107,7 +2326,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2172,7 +2390,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2213,6 +2430,7 @@ describe('supervisor-daemon integrations', () => {
             markPrice: 2080.5,
             liquidationPx: 2361.69,
             stopLossPrice: 2075,
+            stopLossVerifiedAt: '2026-03-29T01:04:59.000Z',
             peakUnrealizedPnl: 17.46,
             retainedPeakRatio: -0.4651,
             drawdownFromPeakPct: 1,
@@ -2240,7 +2458,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2314,7 +2531,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       hyperliquidMonitorEnabled: true,
       hyperliquidExecutionEnabled: true,
@@ -2408,7 +2624,6 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
       cryptoMonitorOnly: false,
       hyperliquidExecutionEnabled: true,
@@ -2469,1233 +2684,113 @@ describe('supervisor-daemon integrations', () => {
     await tradingDaemon.stop('test-cleanup-hyperliquid-close');
   });
 
-  test('runs Polymarket scan through orchestrator consensus and execution', async () => {
-    const consensusPhase = {
-      markets: [
-        {
-          conditionId: 'market-1',
-          question: 'Will BTC close above $120k by June 30?',
-        },
-      ],
-      approvedTrades: [
-        {
-          ticker: 'market-1',
-          consensus: { decision: 'BUY_YES', consensus: true },
-        },
-      ],
-      rejectedTrades: [],
-    };
-    const executionPhase = {
-      executions: [
-        { ticker: 'market-1', execution: { ok: true, status: 'dry_run' } },
-        { ticker: 'market-2', execution: { ok: false, status: 'rejected' } },
-      ],
-    };
-    const polymarketTradingOrchestrator = {
-      runPolymarketConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
-      runPolymarketMarketOpen: jest.fn().mockResolvedValue(executionPhase),
-      getUnifiedPortfolioSnapshot: jest.fn(),
-    };
-    const polymarketDaemon = new SupervisorDaemon({
+  test('runs coord heartbeat immediately and then respects the 15 minute cadence', async () => {
+    const heartbeatScriptPath = path.join(tempRoot, 'hm-heartbeat-ok.js');
+    fs.writeFileSync(heartbeatScriptPath, [
+      "console.log(JSON.stringify({",
+      "  ok: true,",
+      "  path: 'coord/heartbeat.json',",
+      "  heartbeat: { ts: new Date().toISOString(), headCommit: 'abc123' }",
+      "}));",
+    ].join('\n'));
+    const heartbeatDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: true,
-      polymarketTradingOrchestrator,
-      polymarketClient: {
-        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
-        getPositions: jest.fn().mockResolvedValue([]),
-        createOrder: jest.fn().mockResolvedValue({ ok: true, status: 'dry_run' }),
-      },
-      polymarketScanner: {
-        scanMarkets: jest.fn().mockResolvedValue([
-          {
-            conditionId: 'market-1',
-            question: 'Will BTC close above $120k by June 30?',
-            tokens: { yes: 'yes-token', no: 'no-token' },
-            currentPrices: { yes: 0.61, no: 0.39 },
-          },
-        ]),
-      },
-      polymarketSignals: {
-        produceSignals: jest.fn(() => new Map([
-          ['architect', [{ conditionId: 'market-1', probability: 0.74, confidence: 0.84, marketPrice: 0.61 }]],
-          ['builder', [{ conditionId: 'market-1', probability: 0.76, confidence: 0.86, marketPrice: 0.61 }]],
-          ['oracle', [{ conditionId: 'market-1', probability: 0.58, confidence: 0.7, marketPrice: 0.61 }]],
-        ])),
-        buildConsensus: jest.fn(() => ({
-          conditionId: 'market-1',
-          decision: 'BUY_YES',
-          consensus: true,
-          agreementCount: 2,
-          probability: 0.72,
-          edge: 0.11,
-        })),
-      },
-      polymarketSizer: {
-        positionSize: jest.fn().mockReturnValue({
-          executable: true,
-          stake: 24.3,
-          shares: 39.836,
-          reasons: [],
-        }),
-        shouldExit: jest.fn().mockReturnValue({ exit: false, reason: 'Hold', stopPrice: 0.48, adverseMovePct: 0 }),
-      },
-      pidPath: '/tmp/polymarket-supervisor.pid',
-      statusPath: '/tmp/polymarket-supervisor-status.json',
-      logPath: '/tmp/polymarket-supervisor.log',
-      taskLogDir: '/tmp/polymarket-supervisor-tasks',
-      wakeSignalPath: '/tmp/polymarket-supervisor-wake.signal',
-    });
-
-    const result = await polymarketDaemon.runPolymarketPhase({
-      key: 'polymarket_scan',
-      marketDate: '2026-03-18',
-      scheduledAt: '2026-03-18T08:10:00.000Z',
-      windowKey: '2026-03-18T08:00:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'polymarket_scan',
-      summary: expect.objectContaining({
-        markets: 1,
-        actionable: 1,
-        executions: 1,
-      }),
-    }));
-    expect(polymarketTradingOrchestrator.runPolymarketConsensusRound).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-18',
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      includePolymarket: true,
-    }));
-    expect(polymarketTradingOrchestrator.runPolymarketMarketOpen).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-18',
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      includePolymarket: true,
-      consensusPhase,
-    }));
-    expect(polymarketDaemon.polymarketTradingState.lastExecution).toEqual(expect.objectContaining({
-      executions: expect.arrayContaining([
-        expect.objectContaining({
-          ticker: 'market-1',
-        }),
-      ]),
-    }));
-
-    await polymarketDaemon.stop('test-cleanup-polymarket');
-  });
-
-  test('runs Polymarket monitor exits with unified portfolio gates', async () => {
-    const submitOrderSpy = jest.spyOn(executor, 'submitOrder').mockResolvedValue({
-      ok: true,
-      status: 'dry_run',
-      orderId: 'pm-exit-1',
-    });
-    const polymarketTradingOrchestrator = {
-      runPolymarketConsensusRound: jest.fn(),
-      runPolymarketMarketOpen: jest.fn(),
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        markets: {
-          polymarket: {
-            equity: 160,
-            positions: [],
-          },
-        },
-      }),
-    };
-    const polymarketDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: true,
-      polymarketTradingOrchestrator,
-      polymarketClient: {
-        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
-        getPositions: jest.fn().mockResolvedValue([
-          {
-            tokenId: 'yes-token',
-            market: 'market-1',
-            size: 12.5,
-            avgEntryPrice: 0.61,
-            currentPrice: 0.44,
-          },
-          {
-            tokenId: 'no-token',
-            market: 'market-2',
-            size: 5,
-            avgEntryPrice: 0.38,
-            currentPrice: 0.41,
-          },
-        ]),
-        createOrder: jest.fn(),
-      },
-      polymarketSizer: {
-        positionSize: jest.fn(),
-        shouldExit: jest.fn((position) => {
-          if (position.tokenId === 'yes-token') {
-            return { exit: true, reason: 'Stop loss triggered', stopPrice: 0.488, adverseMovePct: 27.87 };
-          }
-          return { exit: false, reason: 'Hold', stopPrice: 0.304, adverseMovePct: -7.89 };
-        }),
-      },
-      pidPath: '/tmp/polymarket-monitor.pid',
-      statusPath: '/tmp/polymarket-monitor-status.json',
-      logPath: '/tmp/polymarket-monitor.log',
-      taskLogDir: '/tmp/polymarket-monitor-tasks',
-      wakeSignalPath: '/tmp/polymarket-monitor-wake.signal',
-    });
-
-    const result = await polymarketDaemon.runPolymarketPhase({
-      key: 'polymarket_monitor',
-      marketDate: '2026-03-18',
-      scheduledAt: '2026-03-18T08:30:00.000Z',
-      windowKey: '2026-03-18T08:30:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'polymarket_monitor',
-      summary: expect.objectContaining({
-        positions: 2,
-        exits: 1,
-        killSwitch: false,
-        dailyPause: false,
-      }),
-    }));
-    expect(polymarketTradingOrchestrator.getUnifiedPortfolioSnapshot).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-18',
-      includePolymarket: true,
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-    }));
-    expect(polymarketDaemon.polymarketSizer.shouldExit).toHaveBeenCalledTimes(2);
-    expect(submitOrderSpy).toHaveBeenCalledWith(expect.objectContaining({
-      ticker: 'market-1',
-      broker: 'polymarket',
-      assetClass: 'prediction_market',
-      direction: 'SELL',
-      shares: 12.5,
-      tokenId: 'yes-token',
-      price: 0.44,
-    }), expect.objectContaining({
-      broker: 'polymarket',
-    }));
-    expect(polymarketDaemon.polymarketTradingState.lastMonitor).toEqual(expect.objectContaining({
-      exits: [
-        expect.objectContaining({
-          tokenId: 'yes-token',
-          market: 'market-1',
-        }),
-      ],
-    }));
-
-    await polymarketDaemon.stop('test-cleanup-polymarket-monitor');
-  });
-
-  test('schedules only Polymarket scan and monitor phases for automation', async () => {
-    const consensusPhase = {
-      markets: [{ conditionId: 'market-1' }],
-      approvedTrades: [],
-      rejectedTrades: [],
-    };
-    const executionPhase = {
-      executions: [],
-    };
-    const polymarketTradingOrchestrator = {
-      runPolymarketConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
-      runPolymarketMarketOpen: jest.fn().mockResolvedValue(executionPhase),
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        markets: { polymarket: { equity: 1000, positions: [] } },
-      }),
-    };
-    const polymarketDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: true,
-      polymarketTradingOrchestrator,
-      polymarketClient: {
-        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
-        getPositions: jest.fn().mockResolvedValue([]),
-        createOrder: jest.fn(),
-      },
-      polymarketSizer: {
-        positionSize: jest.fn(),
-        shouldExit: jest.fn().mockReturnValue({ exit: false, reason: 'Hold', stopPrice: 0.48, adverseMovePct: 0 }),
-      },
-      pidPath: '/tmp/polymarket-schedule.pid',
-      statusPath: '/tmp/polymarket-schedule-status.json',
-      logPath: '/tmp/polymarket-schedule.log',
-      taskLogDir: '/tmp/polymarket-schedule-tasks',
-      wakeSignalPath: '/tmp/polymarket-schedule-wake.signal',
-    });
-    polymarketDaemon.polymarketTradingState.lastProcessedAt = '2026-03-18T10:30:00.000Z';
-
-    const result = await polymarketDaemon.maybeRunPolymarketTradingAutomation(new Date('2026-03-18T11:00:00.000Z'));
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-    }));
-    expect(result.executed.map((entry) => entry.phase)).toEqual(['polymarket_scan', 'polymarket_monitor']);
-    expect(result.executed.map((entry) => entry.phase)).not.toContain('polymarket_consensus');
-    expect(result.executed.map((entry) => entry.phase)).not.toContain('polymarket_execute');
-
-    await polymarketDaemon.stop('test-cleanup-polymarket-schedule');
-  });
-
-  test('runs launch radar scans through the supervisor phase wiring', async () => {
-    const qualified = [
-      {
-        chain: 'solana',
-        symbol: 'SQD',
-        name: 'Squid Launch',
-        address: 'SoLaunch11111111111111111111111111111111111',
-        liquidityUsd: 12500,
-        holders: 44,
-        audit: { recommendation: 'proceed' },
-      },
-    ];
-    const launchRadarInstance = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        launches: qualified,
-        qualified,
-        rejected: [],
-      }),
-      stop: jest.fn(),
-    };
-    const launchRadarOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1200,
-        dayStartEquity: 1000,
-        positions: [],
-      }),
-      syncLaunchRadarWatchlist: jest.fn().mockResolvedValue({
-        ok: true,
-        qualifiedTokens: qualified,
-        added: ['SQD'],
-        refreshed: [],
-      }),
-    };
-    const launchRadarDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      launchRadarEnabled: true,
-      launchRadarDryRun: true,
-      launchRadar: launchRadarInstance,
-      launchRadarOrchestrator,
-      pidPath: '/tmp/launch-radar.pid',
-      statusPath: '/tmp/launch-radar-status.json',
-      logPath: '/tmp/launch-radar.log',
-      taskLogDir: '/tmp/launch-radar-tasks',
-      wakeSignalPath: '/tmp/launch-radar-wake.signal',
-    });
-
-    const result = await launchRadarDaemon.runLaunchRadarPhase({
-      key: 'launch_radar_scan',
-      marketDate: '2026-03-19',
-      scheduledAt: '2026-03-19T21:00:00.000Z',
-      windowKey: '2026-03-19T21:00:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'launch_radar_scan',
-      summary: expect.objectContaining({
-        launches: 1,
-        qualified: 1,
-        rejected: 0,
-        added: 1,
-        refreshed: 0,
-        killSwitch: false,
-        dryRun: true,
-      }),
-    }));
-    expect(launchRadarInstance.pollNow).toHaveBeenCalledWith({ reason: 'launch_radar_scan' });
-    expect(launchRadarOrchestrator.syncLaunchRadarWatchlist).toHaveBeenCalledWith(expect.objectContaining({
-      reason: 'launch_radar_scan',
-      date: '2026-03-19',
-      launchRadar: launchRadarInstance,
-      launchRadarQualifiedTokens: qualified,
-      launchRadarExpiryDays: 7,
-      persistDynamicWatchlist: false,
-    }));
-    expect(launchRadarDaemon.launchRadarState.lastScan).toEqual(expect.objectContaining({
-      syncResult: expect.objectContaining({
-        added: ['SQD'],
-      }),
-    }));
-
-    await launchRadarDaemon.stop('test-cleanup-launch-radar');
-  });
-
-  test('skips launch radar watchlist sync when the kill switch is triggered', async () => {
-    const launchRadarInstance = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        launches: [
-          {
-            chain: 'solana',
-            symbol: 'RISK',
-            address: 'SoRisk111111111111111111111111111111111111',
-            liquidityUsd: 9000,
-            holders: 22,
-            audit: { recommendation: 'proceed' },
-          },
-        ],
-        qualified: [
-          {
-            chain: 'solana',
-            symbol: 'RISK',
-            address: 'SoRisk111111111111111111111111111111111111',
-            liquidityUsd: 9000,
-            holders: 22,
-            audit: { recommendation: 'proceed' },
-          },
-        ],
-        rejected: [],
-      }),
-      stop: jest.fn(),
-    };
-    const launchRadarOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 700,
-        totalEquity: 700,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        positions: [],
-      }),
-      syncLaunchRadarWatchlist: jest.fn(),
-    };
-    const launchRadarDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      launchRadarEnabled: true,
-      launchRadar: launchRadarInstance,
-      launchRadarOrchestrator,
-      pidPath: '/tmp/launch-radar-kill.pid',
-      statusPath: '/tmp/launch-radar-kill-status.json',
-      logPath: '/tmp/launch-radar-kill.log',
-      taskLogDir: '/tmp/launch-radar-kill-tasks',
-      wakeSignalPath: '/tmp/launch-radar-kill-wake.signal',
-    });
-
-    const result = await launchRadarDaemon.runLaunchRadarPhase({
-      key: 'launch_radar_scan',
-      marketDate: '2026-03-19',
-      scheduledAt: '2026-03-19T21:15:00.000Z',
-      windowKey: '2026-03-19T21:15:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      summary: expect.objectContaining({
-        qualified: 1,
-        added: 0,
-        killSwitch: true,
-      }),
-    }));
-    expect(launchRadarOrchestrator.syncLaunchRadarWatchlist).not.toHaveBeenCalled();
-
-    await launchRadarDaemon.stop('test-cleanup-launch-radar-kill');
-  });
-
-  test('schedules launch radar scans every 15 minutes', async () => {
-    const qualified = [
-      {
-        chain: 'solana',
-        symbol: 'SQD',
-        address: 'SoLaunch11111111111111111111111111111111111',
-        liquidityUsd: 12500,
-        holders: 44,
-        audit: { recommendation: 'proceed' },
-      },
-    ];
-    const launchRadarInstance = {
-      pollNow: jest.fn().mockResolvedValue({
-        ok: true,
-        launches: qualified,
-        qualified,
-        rejected: [],
-      }),
-      stop: jest.fn(),
-    };
-    const launchRadarOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        equity: 1000,
-        totalEquity: 1000,
-        peakEquity: 1000,
-        dayStartEquity: 1000,
-        positions: [],
-      }),
-      syncLaunchRadarWatchlist: jest.fn().mockResolvedValue({
-        ok: true,
-        qualifiedTokens: qualified,
-        added: ['SQD'],
-        refreshed: [],
-      }),
-    };
-    const launchRadarDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      launchRadarEnabled: true,
-      launchRadar: launchRadarInstance,
-      launchRadarOrchestrator,
-      pidPath: '/tmp/launch-radar-schedule.pid',
-      statusPath: '/tmp/launch-radar-schedule-status.json',
-      logPath: '/tmp/launch-radar-schedule.log',
-      taskLogDir: '/tmp/launch-radar-schedule-tasks',
-      wakeSignalPath: '/tmp/launch-radar-schedule-wake.signal',
-    });
-    launchRadarDaemon.launchRadarState.lastProcessedAt = '2026-03-19T10:45:00.000Z';
-
-    const result = await launchRadarDaemon.maybeRunLaunchRadarAutomation(new Date('2026-03-19T11:00:00.000Z'));
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-    }));
-    expect(result.executed.map((entry) => entry.phase)).toEqual(['launch_radar_scan']);
-    expect(launchRadarDaemon.launchRadarState.nextEvent).toEqual(expect.objectContaining({
-      key: 'launch_radar_scan',
-    }));
-
-    await launchRadarDaemon.stop('test-cleanup-launch-radar-schedule');
-  });
-
-  test('runs yield rebalances through the supervisor phase wiring', async () => {
-    const yieldRouter = {
-      requestCapital: jest.fn(),
-      returnCapital: jest.fn(),
-    };
-    const yieldRouterOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        totalEquity: 1000,
-        markets: {
-          alpaca_stocks: { equity: 400 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
-          defi_yield: { equity: 100 },
-          solana_tokens: { equity: 0 },
-          cash_reserve: { cash: 500, equity: 500 },
-        },
-        risk: {
-          killSwitchTriggered: false,
-        },
-      }),
-      getCapitalAllocation: jest.fn().mockReturnValue({
-        totalEquity: 1000,
-        excess: { idleCapital: 250 },
-        gaps: { yield: 250, activeTrading: 0 },
-      }),
-      returnIdleCapital: jest.fn().mockResolvedValue({
-        ok: true,
-        action: 'return_idle',
-        amount: 250,
-        deposit: { deposited: 250, venue: 'Morpho' },
-      }),
-    };
-    const yieldDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      yieldRouterEnabled: true,
-      yieldRouter,
-      yieldRouterOrchestrator,
-      pidPath: '/tmp/yield-router.pid',
-      statusPath: '/tmp/yield-router-status.json',
-      logPath: '/tmp/yield-router.log',
-      taskLogDir: '/tmp/yield-router-tasks',
-      wakeSignalPath: '/tmp/yield-router-wake.signal',
-    });
-
-    const result = await yieldDaemon.runYieldRebalancePhase({
-      key: 'yield_rebalance',
-      marketDate: '2026-03-19',
-      scheduledAt: '2026-03-19T18:00:00.000Z',
-      windowKey: '2026-03-19T18:00:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'yield_rebalance',
-      summary: expect.objectContaining({
-        action: 'return_idle',
-        deposited: 250,
-        withdrawn: 0,
-        idleCapital: 250,
-        yieldGap: 250,
-        killSwitch: false,
-      }),
-    }));
-    expect(yieldRouterOrchestrator.getUnifiedPortfolioSnapshot).toHaveBeenCalledWith(expect.objectContaining({
-      date: '2026-03-19',
-      includePolymarket: true,
-      yieldRouter,
-    }));
-    expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
-      portfolioSnapshot: expect.objectContaining({
-        totalEquity: 1000,
-      }),
-      yieldRouter,
-      dryRun: false,
-      killSwitchTriggered: false,
-    }));
-    expect(yieldDaemon.yieldRouterState.lastRebalance).toEqual(expect.objectContaining({
-      rebalanceResult: expect.objectContaining({
-        amount: 250,
-      }),
-    }));
-
-    await yieldDaemon.stop('test-cleanup-yield-router');
-  });
-
-  test('withdraws all yield positions when the kill switch is triggered during rebalance', async () => {
-    const yieldRouter = {
-      requestCapital: jest.fn(),
-      returnCapital: jest.fn(),
-    };
-    const yieldRouterOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        totalEquity: 700,
-        markets: {
-          alpaca_stocks: { equity: 250 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
-          defi_yield: { equity: 180 },
-          solana_tokens: { equity: 0 },
-          cash_reserve: { cash: 270, equity: 270 },
-        },
-        risk: {
-          killSwitchTriggered: true,
-        },
-      }),
-      getCapitalAllocation: jest.fn().mockReturnValue({
-        totalEquity: 700,
-        excess: { idleCapital: 0 },
-        gaps: { yield: 65, activeTrading: 0 },
-      }),
-      returnIdleCapital: jest.fn().mockResolvedValue({
-        ok: true,
-        action: 'withdraw_all',
-        withdrawal: {
-          ok: true,
-          withdrawn: 180,
-          sources: [{ venue: { protocol: 'Aave' }, amount: 180 }],
-        },
-      }),
-    };
-    const yieldDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      yieldRouterEnabled: true,
-      yieldRouter,
-      yieldRouterOrchestrator,
-      pidPath: '/tmp/yield-router-kill.pid',
-      statusPath: '/tmp/yield-router-kill-status.json',
-      logPath: '/tmp/yield-router-kill.log',
-      taskLogDir: '/tmp/yield-router-kill-tasks',
-      wakeSignalPath: '/tmp/yield-router-kill-wake.signal',
-    });
-
-    const result = await yieldDaemon.runYieldRebalancePhase({
-      key: 'yield_rebalance',
-      marketDate: '2026-03-19',
-      scheduledAt: '2026-03-19T19:00:00.000Z',
-      windowKey: '2026-03-19T19:00:00.000Z',
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      summary: expect.objectContaining({
-        action: 'withdraw_all',
-        withdrawn: 180,
-        killSwitch: true,
-      }),
-    }));
-    expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
-      killSwitchTriggered: true,
-    }));
-
-    await yieldDaemon.stop('test-cleanup-yield-router-kill');
-  });
-
-  test('runs yield rebalance after market close review and on the 6-hour schedule', async () => {
-    const tradingOrchestrator = {
-      runMarketClose: jest.fn().mockResolvedValue({
-        phase: 'market_close',
-        marketDate: '2026-03-19',
-        openPositions: [],
-      }),
-      runPreMarket: jest.fn(),
-      runConsensusRound: jest.fn(),
-      runMarketOpen: jest.fn(),
-      runMidDayCheck: jest.fn(),
-      runEndOfDay: jest.fn(),
-    };
-    const yieldRouter = {
-      requestCapital: jest.fn(),
-      returnCapital: jest.fn(),
-    };
-    const yieldRouterOrchestrator = {
-      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
-        totalEquity: 1000,
-        markets: {
-          alpaca_stocks: { equity: 400 },
-          alpaca_crypto: { equity: 0 },
-          ibkr_global: { equity: 0 },
-          polymarket: { equity: 0 },
-          defi_yield: { equity: 150 },
-          solana_tokens: { equity: 0 },
-          cash_reserve: { cash: 450, equity: 450 },
-        },
-        risk: {
-          killSwitchTriggered: false,
-        },
-      }),
-      getCapitalAllocation: jest.fn().mockReturnValue({
-        totalEquity: 1000,
-        excess: { idleCapital: 200 },
-        gaps: { yield: 200, activeTrading: 0 },
-      }),
-      returnIdleCapital: jest.fn().mockResolvedValue({
-        ok: true,
-        action: 'return_idle',
-        amount: 200,
-        deposit: { deposited: 200 },
-      }),
-    };
-    const yieldDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: true,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      tradingOrchestrator,
-      yieldRouterEnabled: true,
-      yieldRouter,
-      yieldRouterOrchestrator,
-      pidPath: '/tmp/yield-router-trigger.pid',
-      statusPath: '/tmp/yield-router-trigger-status.json',
-      logPath: '/tmp/yield-router-trigger.log',
-      taskLogDir: '/tmp/yield-router-trigger-tasks',
-      wakeSignalPath: '/tmp/yield-router-trigger-wake.signal',
-    });
-
-    const tradingResult = await yieldDaemon.runTradingPhase({
-      key: 'market_close_review',
-      scheduledAt: '2026-03-19T20:00:00.000Z',
-      windowKey: '2026-03-19T20:00:00.000Z',
-    }, {
-      marketDate: '2026-03-19',
-    });
-
-    expect(tradingResult).toEqual(expect.objectContaining({
-      ok: true,
-      phase: 'market_close_review',
-    }));
-    expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
-      killSwitchTriggered: false,
-    }));
-    expect(yieldDaemon.yieldRouterState.lastRebalance).toEqual(expect.objectContaining({
-      triggerSource: 'market_close_review',
-    }));
-
-    yieldDaemon.yieldRouterState.lastProcessedAt = '2026-03-19T06:00:00.000Z';
-    const scheduledResult = await yieldDaemon.maybeRunYieldRouterAutomation(new Date('2026-03-19T12:00:00.000Z'));
-
-    expect(scheduledResult).toEqual(expect.objectContaining({
-      ok: true,
-      skipped: false,
-    }));
-    expect(scheduledResult.executed.map((entry) => entry.phase)).toEqual(['yield_rebalance']);
-    expect(yieldDaemon.yieldRouterState.nextEvent).toEqual(expect.objectContaining({
-      key: 'yield_rebalance',
-    }));
-
-    await yieldDaemon.stop('test-cleanup-yield-router-trigger');
-  });
-
-  test('keeps Polymarket automation disabled by default until explicitly opted in', async () => {
-    const originalPrivateKey = process.env.POLYMARKET_PRIVATE_KEY;
-    const originalFunder = process.env.POLYMARKET_FUNDER_ADDRESS;
-    const originalAutomation = process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
-
-    try {
-      process.env.POLYMARKET_PRIVATE_KEY = '0xabc123';
-      process.env.POLYMARKET_FUNDER_ADDRESS = '0xfunder';
-      delete process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
-
-      const polymarketDaemon = new SupervisorDaemon({
-        store: createMockStore(),
-        logger: createMockLogger(),
-        memoryIndexEnabled: false,
-        sleepEnabled: false,
-        tradingEnabled: false,
-        cryptoTradingEnabled: false,
-        pidPath: '/tmp/polymarket-default-off.pid',
-        statusPath: '/tmp/polymarket-default-off-status.json',
-        logPath: '/tmp/polymarket-default-off.log',
-        taskLogDir: '/tmp/polymarket-default-off-tasks',
-        wakeSignalPath: '/tmp/polymarket-default-off-wake.signal',
-      });
-
-      expect(polymarketDaemon.polymarketTradingEnabled).toBe(false);
-      expect(polymarketDaemon.lastPolymarketTradingSummary).toEqual(expect.objectContaining({
-        enabled: false,
-        status: 'disabled',
-        reason: 'manual_opt_in_required',
-      }));
-
-      await polymarketDaemon.stop('test-cleanup-polymarket-default-off');
-    } finally {
-      if (originalPrivateKey == null) {
-        delete process.env.POLYMARKET_PRIVATE_KEY;
-      } else {
-        process.env.POLYMARKET_PRIVATE_KEY = originalPrivateKey;
-      }
-      if (originalFunder == null) {
-        delete process.env.POLYMARKET_FUNDER_ADDRESS;
-      } else {
-        process.env.POLYMARKET_FUNDER_ADDRESS = originalFunder;
-      }
-      if (originalAutomation == null) {
-        delete process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
-      } else {
-        process.env.SQUIDRUN_POLYMARKET_AUTOMATION = originalAutomation;
-      }
-    }
-  });
-
-  test('keeps legacy stock automation disabled by default until explicitly opted in', async () => {
-    const stockDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
+      smartMoneyScanner: null,
       cryptoTradingEnabled: true,
-      pidPath: '/tmp/stock-default-off.pid',
-      statusPath: '/tmp/stock-default-off-status.json',
-      logPath: '/tmp/stock-default-off.log',
-      taskLogDir: '/tmp/stock-default-off-tasks',
-      wakeSignalPath: '/tmp/stock-default-off-wake.signal',
+      cryptoTradingOrchestrator: {},
+      coordHeartbeatEnabled: true,
+      coordHeartbeatScriptPath: heartbeatScriptPath,
+      coordHeartbeatIntervalMs: 15 * 60 * 1000,
+      pidPath: path.join(tempRoot, 'coord-heartbeat.pid'),
+      statusPath: path.join(tempRoot, 'coord-heartbeat-status.json'),
+      logPath: path.join(tempRoot, 'coord-heartbeat.log'),
+      taskLogDir: path.join(tempRoot, 'coord-heartbeat-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'coord-heartbeat-wake.signal'),
     });
 
-    expect(stockDaemon.tradingEnabled).toBe(false);
-    expect(stockDaemon.tradingOrchestrator).toBeNull();
-    expect(stockDaemon.circuitBreaker).toBeNull();
-    expect(stockDaemon.lastTradingSummary).toEqual(expect.objectContaining({
-      enabled: false,
-      status: 'disabled',
-      reason: 'manual_opt_in_required',
+    const nowMs = Date.now();
+    const first = await heartbeatDaemon.maybeRunCoordHeartbeat(nowMs);
+    const cooldown = await heartbeatDaemon.maybeRunCoordHeartbeat(nowMs + (5 * 60 * 1000));
+    const second = await heartbeatDaemon.maybeRunCoordHeartbeat(nowMs + (15 * 60 * 1000) + 1);
+
+    expect(first).toEqual(expect.objectContaining({
+      ok: true,
+      path: 'coord/heartbeat.json',
+    }));
+    expect(cooldown).toEqual(expect.objectContaining({
+      skipped: true,
+      reason: 'coord_heartbeat_cooldown',
+    }));
+    expect(second).toEqual(expect.objectContaining({ ok: true }));
+    expect(heartbeatDaemon.lastCoordHeartbeatSummary).toEqual(expect.objectContaining({
+      enabled: true,
+      status: 'ok',
+      intervalMs: 15 * 60 * 1000,
+      scriptPath: heartbeatScriptPath,
     }));
 
-    await stockDaemon.stop('test-cleanup-stock-default-off');
+    await heartbeatDaemon.stop('test-cleanup-coord-heartbeat');
   });
 
-  test('runs a proactive news scan loop and stores level-0 results without Telegram spam', async () => {
-    const newsDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: true,
-      newsScanIntervalMinutes: 120,
-      newsVetoModule: {
-        fetchTier1News: jest.fn().mockResolvedValue([{
-          headline: 'CoinDesk: BTC ETF inflows stabilize after volatile week',
-          source: 'CoinDesk',
-          url: 'https://example.com/btc',
-          createdAt: '2026-04-03T03:58:00.000Z',
-        }]),
-        buildEventVeto: jest.fn().mockResolvedValue({
-          decision: 'CLEAR',
-          sourceTier: 'feeds_checked',
-          matchedEvents: [],
-        }),
-      },
-      newsScanOpenPositionProvider: jest.fn().mockResolvedValue([]),
-      pidPath: path.join(tempRoot, 'news.pid'),
-      statusPath: path.join(tempRoot, 'news-status.json'),
-      logPath: path.join(tempRoot, 'news.log'),
-      taskLogDir: path.join(tempRoot, 'news-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'news-wake.signal'),
-      newsScanStatePath: path.join(tempRoot, 'news-state.json'),
-    });
-
-    try {
-      jest.spyOn(newsDaemon, 'getCryptoSymbols').mockReturnValue(['BTC/USD', 'ETH/USD']);
-      const architectSpy = jest.spyOn(newsDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(newsDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      newsDaemon.newsScanState.lastProcessedAt = '2026-04-03T02:00:00.000Z';
-
-      const result = await newsDaemon.maybeRunNewsScanAutomation(Date.parse('2026-04-03T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(newsDaemon.lastNewsScanSummary).toEqual(expect.objectContaining({
-        status: 'alert_sent',
-        lastProcessedAt: '2026-04-03T04:00:00.000Z',
-      }));
-      expect(newsDaemon.newsScanState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_0',
-        headlineCount: 1,
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][NEWS]');
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      await newsDaemon.stop('test-cleanup-news-scan');
-    }
-  });
-
-  test('routes a level-2 news scan alert to Architect only when it hits a live position', async () => {
-    const newsDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: true,
-      newsScanIntervalMinutes: 120,
-      newsVetoModule: {
-        fetchTier1News: jest.fn().mockResolvedValue([{
-          headline: 'Reuters Best: Exchange outage halts BTC withdrawals',
-          source: 'Reuters Best',
-          url: 'https://example.com/outage',
-          createdAt: '2026-04-03T03:55:00.000Z',
-        }]),
-        buildEventVeto: jest.fn().mockResolvedValue({
-          decision: 'VETO',
-          sourceTier: 'tier1',
-          matchedEvents: [{
-            headline: 'Reuters Best: Exchange outage halts BTC withdrawals',
-            source: 'Reuters Best',
-            severity: 'VETO',
-          }],
-        }),
-      },
-      newsScanOpenPositionProvider: jest.fn().mockResolvedValue([{
-        coin: 'BTC',
-        side: 'long',
-        size: 0.01,
-      }]),
-      pidPath: path.join(tempRoot, 'news-alert.pid'),
-      statusPath: path.join(tempRoot, 'news-alert-status.json'),
-      logPath: path.join(tempRoot, 'news-alert.log'),
-      taskLogDir: path.join(tempRoot, 'news-alert-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'news-alert-wake.signal'),
-      newsScanStatePath: path.join(tempRoot, 'news-alert-state.json'),
-    });
-
-    try {
-      jest.spyOn(newsDaemon, 'getCryptoSymbols').mockReturnValue(['BTC/USD', 'ETH/USD']);
-      const architectSpy = jest.spyOn(newsDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(newsDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      newsDaemon.newsScanState.lastProcessedAt = '2026-04-03T02:00:00.000Z';
-
-      await newsDaemon.maybeRunNewsScanAutomation(Date.parse('2026-04-03T04:05:00.000Z'));
-
-      expect(newsDaemon.newsScanState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_2',
-        reason: 'live_position_event_risk',
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      await newsDaemon.stop('test-cleanup-news-scan-alert');
-    }
-  });
-
-  test('keeps Eunbyeol-blocked pending follow-ups internal instead of alerting James', async () => {
-    const caseOperationsPath = path.join(tempRoot, 'case-operations.md');
-    fs.writeFileSync(caseOperationsPath, [
-      '## ACTIVE PENDING ITEMS',
-      '### Case 1: Jeon Myeongsam (전명삼) — Investment Fraud',
-      '| # | Item | Blocked on | Status |',
-      '|---|------|-----------|--------|',
-      '| 1 | 은별 real name/address/ID/phone in complaint | 은별 input | ⚠️ WAITING |',
-      '| 2 | Mail letters via registered post | items 7-9 | ⛔ BLOCKED |',
-      '',
-      '## 은별 내일 일정 (2026-04-03)',
-      '1. 대구 — 관세청에 USB 증거 제출',
+  test('records an anomaly when the coord heartbeat process fails', async () => {
+    const heartbeatScriptPath = path.join(tempRoot, 'hm-heartbeat-fail.js');
+    const anomalyScriptPath = path.join(tempRoot, 'hm-anomaly-recorder.js');
+    const anomalyArgsPath = path.join(tempRoot, 'heartbeat-anomaly-args.json');
+    fs.writeFileSync(heartbeatScriptPath, [
+      "console.error('heartbeat failed');",
+      'process.exit(3);',
     ].join('\n'));
-
-    const proactiveDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: true,
-      pendingFollowupIntervalMinutes: 240,
-      caseOperationsPath,
-      pidPath: path.join(tempRoot, 'pending.pid'),
-      statusPath: path.join(tempRoot, 'pending-status.json'),
-      logPath: path.join(tempRoot, 'pending.log'),
-      taskLogDir: path.join(tempRoot, 'pending-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'pending-wake.signal'),
-      pendingFollowupStatePath: path.join(tempRoot, 'pending-state.json'),
-    });
-
-    try {
-      const architectSpy = jest.spyOn(proactiveDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(proactiveDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      proactiveDaemon.pendingFollowupState.lastProcessedAt = '2026-04-04T00:00:00.000Z';
-
-      const result = await proactiveDaemon.maybeRunPendingFollowupAutomation(Date.parse('2026-04-04T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(proactiveDaemon.pendingFollowupState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_0',
-        overdueEunbyeolSchedule: true,
-        waitingCount: 1,
-        blockedCount: 1,
-        jamesActionCount: 0,
-        eunbyeolActionCount: expect.any(Number),
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][FOLLOWUPS]');
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      await proactiveDaemon.stop('test-cleanup-pending-followups');
-    }
-  });
-
-  test('routes James-owned pending follow-up items to Architect for decision, not Telegram', async () => {
-    const caseOperationsPath = path.join(tempRoot, 'case-operations-james.md');
-    fs.writeFileSync(caseOperationsPath, [
-      '## ACTIVE PENDING ITEMS',
-      '### Case 3: Qeline Shop (큐라인샵) — Counterfeit Goods',
-      '| # | Item | Blocked on | Status |',
-      '|---|------|-----------|--------|',
-      '| 11 | USB 증거 관세청 제출 | 은별 action | ⏳ 내일 대구에서 직접 or 등기 |',
-      '| 12 | James US filings package submission | James action | ⚠️ WAITING |',
+    fs.writeFileSync(anomalyScriptPath, [
+      "const fs = require('fs');",
+      "fs.writeFileSync(process.env.ANOMALY_ARGS_PATH, JSON.stringify(process.argv.slice(2), null, 2));",
+      "console.log(JSON.stringify({ ok: true }));",
     ].join('\n'));
-
-    const proactiveDaemon = new SupervisorDaemon({
+    const heartbeatDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: true,
-      pendingFollowupIntervalMinutes: 240,
-      caseOperationsPath,
-      pidPath: path.join(tempRoot, 'pending-james.pid'),
-      statusPath: path.join(tempRoot, 'pending-james-status.json'),
-      logPath: path.join(tempRoot, 'pending-james.log'),
-      taskLogDir: path.join(tempRoot, 'pending-james-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'pending-james-wake.signal'),
-      pendingFollowupStatePath: path.join(tempRoot, 'pending-james-state.json'),
-    });
-
-    try {
-      const architectSpy = jest.spyOn(proactiveDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(proactiveDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      proactiveDaemon.pendingFollowupState.lastProcessedAt = '2026-04-04T00:00:00.000Z';
-
-      const result = await proactiveDaemon.maybeRunPendingFollowupAutomation(Date.parse('2026-04-04T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(proactiveDaemon.pendingFollowupState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_2',
-        jamesActionCount: 1,
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      await proactiveDaemon.stop('test-cleanup-pending-followups-james');
-    }
-  });
-
-  test('runs market research automation and stores a macro-plus-news summary without Telegram spam by default', async () => {
-    jest.spyOn(macroRiskGate, 'assessMacroRisk').mockResolvedValueOnce({
-      regime: 'red',
-      score: 55,
-      reason: 'extreme fear',
-      constraints: {
-        allowLongs: false,
+      smartMoneyScanner: null,
+      cryptoTradingEnabled: true,
+      cryptoTradingOrchestrator: {},
+      coordHeartbeatEnabled: true,
+      coordHeartbeatScriptPath: heartbeatScriptPath,
+      anomalyScriptPath,
+      env: {
+        ...process.env,
+        ANOMALY_ARGS_PATH: anomalyArgsPath,
       },
-    });
-    const researchDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: true,
-      marketResearchIntervalMinutes: 240,
-      newsVetoModule: {
-        fetchTier1News: jest.fn().mockResolvedValue([{
-          headline: 'CoinDesk: BTC volatility cools after selloff',
-          source: 'CoinDesk',
-          url: 'https://example.com/research',
-          createdAt: '2026-04-03T03:55:00.000Z',
-        }]),
-        buildEventVeto: jest.fn().mockResolvedValue({
-          decision: 'CLEAR',
-          sourceTier: 'feeds_checked',
-          matchedEvents: [],
-        }),
-      },
-      marketResearchOpenPositionProvider: jest.fn().mockResolvedValue([]),
-      pidPath: path.join(tempRoot, 'research.pid'),
-      statusPath: path.join(tempRoot, 'research-status.json'),
-      logPath: path.join(tempRoot, 'research.log'),
-      taskLogDir: path.join(tempRoot, 'research-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'research-wake.signal'),
-      marketResearchStatePath: path.join(tempRoot, 'research-state.json'),
+      pidPath: path.join(tempRoot, 'coord-heartbeat-fail.pid'),
+      statusPath: path.join(tempRoot, 'coord-heartbeat-fail-status.json'),
+      logPath: path.join(tempRoot, 'coord-heartbeat-fail.log'),
+      taskLogDir: path.join(tempRoot, 'coord-heartbeat-fail-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'coord-heartbeat-fail-wake.signal'),
     });
 
-    try {
-      jest.spyOn(researchDaemon, 'getCryptoSymbols').mockReturnValue(['BTC/USD', 'ETH/USD']);
-      const architectSpy = jest.spyOn(researchDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(researchDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      researchDaemon.marketResearchState.lastProcessedAt = '2026-04-03T00:00:00.000Z';
+    const result = await heartbeatDaemon.maybeRunCoordHeartbeat(Date.now());
+    const anomalyArgs = JSON.parse(fs.readFileSync(anomalyArgsPath, 'utf8'));
 
-      const result = await researchDaemon.maybeRunMarketResearchAutomation(Date.parse('2026-04-03T04:05:00.000Z'));
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'failed',
+      exitCode: 3,
+    }));
+    expect(heartbeatDaemon.lastCoordHeartbeatSummary).toEqual(expect.objectContaining({
+      enabled: true,
+      status: 'failed',
+    }));
+    expect(anomalyArgs).toEqual(expect.arrayContaining([
+      'type=heartbeat_lane_failure',
+      'src=supervisor',
+      'sev=medium',
+      '--json',
+    ]));
+    expect(anomalyArgs.some((arg) => String(arg).startsWith('details='))).toBe(true);
 
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(researchDaemon.marketResearchState.lastResult).toEqual(expect.objectContaining({
-        alertLevel: 'level_0',
-        eventDecision: 'CLEAR',
-        macroRisk: expect.objectContaining({
-          regime: 'red',
-          score: 55,
-        }),
-        headlineCount: 1,
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][RESEARCH]');
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      await researchDaemon.stop('test-cleanup-market-research');
-    }
-  });
-
-  test('drafts an Eunbyeol check-in after 24 hours of silence without auto-sending it', async () => {
-    const caseOperationsPath = path.join(tempRoot, 'eunbyeol-case-operations.md');
-    fs.writeFileSync(caseOperationsPath, [
-      '## ACTIVE PENDING ITEMS',
-      '### Case 1: Jeon Myeongsam (전명삼) — Investment Fraud',
-      '| # | Item | Blocked on | Status |',
-      '|---|------|-----------|--------|',
-      '| 1 | 은별 real name/address/ID/phone in complaint | 은별 input | ⚠️ WAITING |',
-      '| 2 | USB 증거 관세청 제출 | 은별 action | ⏳ 내일 대구에서 직접 or 등기 |',
-    ].join('\n'));
-
-    const checkInDaemon = new SupervisorDaemon({
-      store: createMockStore(),
-      logger: createMockLogger(),
-      memoryIndexEnabled: false,
-      sleepEnabled: false,
-      tradingEnabled: false,
-      cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      eunbyeolCheckInEnabled: true,
-      eunbyeolCheckInIntervalMinutes: 240,
-      eunbyeolCheckInSilenceMs: 24 * 60 * 60 * 1000,
-      caseOperationsPath,
-      proactiveCommsProvider: jest.fn(() => [{
-        rawBody: '은별 sent updates yesterday',
-        sentAtMs: Date.parse('2026-04-02T00:00:00.000Z'),
-        metadata: {
-          chatId: '8754356993',
-          from: 'Eunbyeol',
-        },
-      }]),
-      pidPath: path.join(tempRoot, 'eunbyeol.pid'),
-      statusPath: path.join(tempRoot, 'eunbyeol-status.json'),
-      logPath: path.join(tempRoot, 'eunbyeol.log'),
-      taskLogDir: path.join(tempRoot, 'eunbyeol-tasks'),
-      wakeSignalPath: path.join(tempRoot, 'eunbyeol-wake.signal'),
-      eunbyeolCheckInStatePath: path.join(tempRoot, 'eunbyeol-state.json'),
-    });
-
-    try {
-      const architectSpy = jest.spyOn(checkInDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
-      const notifySpy = jest.spyOn(checkInDaemon, 'notifyTelegramTrading').mockImplementation(() => {});
-      checkInDaemon.eunbyeolCheckInState.lastProcessedAt = '2026-04-03T00:00:00.000Z';
-
-      const result = await checkInDaemon.maybeRunEunbyeolCheckInAutomation(Date.parse('2026-04-03T04:05:00.000Z'));
-
-      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
-      expect(checkInDaemon.eunbyeolCheckInState.lastResult).toEqual(expect.objectContaining({
-        drafted: true,
-        pendingCount: 2,
-      }));
-      expect(checkInDaemon.eunbyeolCheckInState.lastDraft).toEqual(expect.objectContaining({
-        message: expect.stringContaining('은별님, 진행 중인 항목들 확인차 체크인드립니다.'),
-      }));
-      expect(architectSpy).toHaveBeenCalledTimes(1);
-      expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][EUNBYEOL]');
-      expect(notifySpy).not.toHaveBeenCalled();
-    } finally {
-      await checkInDaemon.stop('test-cleanup-eunbyeol-checkin');
-    }
+    await heartbeatDaemon.stop('test-cleanup-coord-heartbeat-fail');
   });
 
   test('runs the Tokenomist unlock scan every 6 hours and stores the parsed result', async () => {
@@ -3715,12 +2810,7 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
       tokenomistEnabled: true,
       tokenomistIntervalMinutes: 360,
       tokenomistUnlocksScriptPath: tokenomistScriptPath,
@@ -3754,47 +2844,185 @@ describe('supervisor-daemon integrations', () => {
     }
   });
 
-  test('runs the market scanner loop and alerts Architect on newly flagged movers', async () => {
+  test('runs the spark monitor lane and alerts Architect and Telegram on new catalyst events', async () => {
+    sparkCapture.runSparkScan.mockResolvedValueOnce({
+      ok: true,
+      scannedAt: '2026-04-23T09:01:00.000Z',
+      upbitListingCount: 1,
+      hyperliquidListingCount: 1,
+      tokenUnlockCount: 1,
+      newAlertEvents: [
+        { eventKey: 'upbit:9999', tickers: ['CHIP/USD'] },
+      ],
+      firePlans: [],
+      alertMessage: '[LIVE SPARK] New catalyst alerts\n- UPBIT Test notice | CHIP/USD | entry 0.1-0.101 stop 0.097 tp1 0.12',
+    });
+
+    const sparkDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      cryptoTradingEnabled: false,
+      tokenomistEnabled: false,
+      sparkMonitorEnabled: true,
+      sparkMonitorIntervalMinutes: 1,
+      pidPath: path.join(tempRoot, 'spark.pid'),
+      statusPath: path.join(tempRoot, 'spark-status.json'),
+      logPath: path.join(tempRoot, 'spark.log'),
+      taskLogDir: path.join(tempRoot, 'spark-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'spark-wake.signal'),
+      sparkMonitorStatePath: path.join(tempRoot, 'spark-monitor-state.json'),
+      sparkMonitorDataStatePath: path.join(tempRoot, 'spark-state.json'),
+      sparkMonitorEventsPath: path.join(tempRoot, 'spark-events.jsonl'),
+      sparkMonitorFirePlansPath: path.join(tempRoot, 'spark-fireplans.json'),
+      sparkMonitorWatchlistPath: path.join(tempRoot, 'spark-watchlist.json'),
+    });
+
+    try {
+      sparkDaemon.sparkMonitorState.lastProcessedAt = '2026-04-23T08:58:00.000Z';
+      sparkDaemon.notifyArchitectInternal = jest.fn();
+      sparkDaemon.notifyTelegramTrading = jest.fn();
+
+      const result = await sparkDaemon.maybeRunSparkAutomation(Date.parse('2026-04-23T09:01:30.000Z'));
+
+      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
+      expect(sparkCapture.runSparkScan).toHaveBeenCalledWith(expect.objectContaining({
+        statePath: path.join(tempRoot, 'spark-state.json'),
+        eventsPath: path.join(tempRoot, 'spark-events.jsonl'),
+        firePlansPath: path.join(tempRoot, 'spark-fireplans.json'),
+        watchlistPath: path.join(tempRoot, 'spark-watchlist.json'),
+      }));
+      expect(sparkDaemon.lastSparkMonitorSummary).toEqual(expect.objectContaining({
+        status: 'scan_complete',
+        alertCount: 1,
+        upbitListingCount: 1,
+        hyperliquidListingCount: 1,
+        tokenUnlockCount: 1,
+      }));
+      expect(sparkDaemon.notifyArchitectInternal).toHaveBeenCalledWith(
+        '[LIVE SPARK] New catalyst alerts\n- UPBIT Test notice | CHIP/USD | entry 0.1-0.101 stop 0.097 tp1 0.12',
+        'spark_monitor'
+      );
+      expect(sparkDaemon.notifyTelegramTrading).toHaveBeenCalledWith(
+        expect.stringContaining('[LIVE SPARK] New catalyst alerts')
+      );
+    } finally {
+      await sparkDaemon.stop('test-cleanup-spark-monitor');
+    }
+  });
+
+  test('suppresses Hangul-containing spark Telegram alerts in the main profile', async () => {
+    sparkCapture.runSparkScan.mockResolvedValueOnce({
+      ok: true,
+      scannedAt: '2026-04-23T09:01:00.000Z',
+      upbitListingCount: 1,
+      hyperliquidListingCount: 0,
+      tokenUnlockCount: 0,
+      newAlertEvents: [
+        { eventKey: 'upbit:9999', tickers: ['XCN/USD'] },
+      ],
+      firePlans: [],
+      alertMessage: '[LIVE SPARK] New catalyst alerts\n- UPBIT 오닉스코인(XCN) 신규 거래지원 안내 | XCN/USD | plan pending / non-tradeable on HL',
+    });
+
+    const sparkDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      cryptoTradingEnabled: false,
+      tokenomistEnabled: false,
+      sparkMonitorEnabled: true,
+      sparkMonitorIntervalMinutes: 1,
+      pidPath: path.join(tempRoot, 'spark-hangul.pid'),
+      statusPath: path.join(tempRoot, 'spark-hangul-status.json'),
+      logPath: path.join(tempRoot, 'spark-hangul.log'),
+      taskLogDir: path.join(tempRoot, 'spark-hangul-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'spark-hangul-wake.signal'),
+      sparkMonitorStatePath: path.join(tempRoot, 'spark-hangul-monitor-state.json'),
+      sparkMonitorDataStatePath: path.join(tempRoot, 'spark-hangul-state.json'),
+      sparkMonitorEventsPath: path.join(tempRoot, 'spark-hangul-events.jsonl'),
+      sparkMonitorFirePlansPath: path.join(tempRoot, 'spark-hangul-fireplans.json'),
+      sparkMonitorWatchlistPath: path.join(tempRoot, 'spark-hangul-watchlist.json'),
+      env: {
+        ...process.env,
+        SQUIDRUN_PROFILE: 'main',
+        TELEGRAM_CHAT_ID: '5613428850',
+      },
+    });
+
+    try {
+      sparkDaemon.sparkMonitorState.lastProcessedAt = '2026-04-23T08:58:00.000Z';
+      sparkDaemon.notifyArchitectInternal = jest.fn();
+      sparkDaemon.executeHmSendSync = jest.fn();
+
+      const result = await sparkDaemon.maybeRunSparkAutomation(Date.parse('2026-04-23T09:01:30.000Z'));
+
+      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
+      expect(sparkDaemon.notifyArchitectInternal).toHaveBeenCalledWith(
+        expect.stringContaining('오닉스코인'),
+        'spark_monitor'
+      );
+      expect(sparkDaemon.executeHmSendSync).not.toHaveBeenCalled();
+      expect(sparkDaemon.logger.warn).toHaveBeenCalledWith(
+        'Trading Telegram notify suppressed: Hangul detected in main-profile alert. Raw alert retained in internal logs.'
+      );
+    } finally {
+      await sparkDaemon.stop('test-cleanup-spark-monitor-hangul');
+    }
+  });
+
+  test('detects Hangul and limits suppression to the main profile', () => {
+    expect(containsHangulSyllables('UPBIT 오닉스코인(XCN) 신규 거래지원 안내')).toBe(true);
+    expect(containsHangulSyllables('UPBIT new listing: XCN')).toBe(false);
+    expect(shouldSuppressMainTelegramForHangul('UPBIT 펄(PRL) 신규 거래지원 안내', {
+      SQUIDRUN_PROFILE: 'main',
+    })).toBe(true);
+    expect(shouldSuppressMainTelegramForHangul('UPBIT 펄(PRL) 신규 거래지원 안내', {
+      SQUIDRUN_PROFILE: 'eunbyeol',
+    })).toBe(false);
+  });
+
+  test('runs the market scanner loop and alerts Architect on ORDI-pattern movers', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: false,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: false,
       marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
       marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
           scannedAt: '2026-04-05T01:00:00.000Z',
           assetCount: 132,
           flaggedMovers: [{
-            coin: 'AVAX',
-            ticker: 'AVAX/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             direction: 'DOWN',
-            price: 9.0246,
+            price: 1.21,
             change4hPct: -0.073,
-            change24hPct: -0.081,
+            change24hPct: 0.22,
             volumeUsd24h: 185000000,
             fundingRate: -0.00004,
             flagged: true,
           }],
           topMovers: [{
-            coin: 'AVAX',
-            ticker: 'AVAX/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             flagged: true,
           }],
           alerts: [{
-            coin: 'AVAX',
-            ticker: 'AVAX/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             direction: 'DOWN',
-            price: 9.0246,
+            price: 1.21,
             change4hPct: -0.073,
-            change24hPct: -0.081,
+            change24hPct: 0.22,
             volumeUsd24h: 185000000,
             fundingRate: -0.00004,
             flagged: true,
@@ -3804,18 +3032,24 @@ describe('supervisor-daemon integrations', () => {
             lastScanAt: '2026-04-05T01:00:00.000Z',
             assetCount: 132,
             topMovers: [{
-              coin: 'AVAX',
-              ticker: 'AVAX/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
               flagged: true,
             }],
             flaggedMovers: [{
-              coin: 'AVAX',
-              ticker: 'AVAX/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
+              change4hPct: -0.073,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.00004,
               flagged: true,
             }],
             history: {},
             lastAlertFingerprintByCoin: {
-              AVAX: '{"direction":"DOWN"}',
+              ORDI: '{"direction":"DOWN"}',
             },
           },
         }),
@@ -3831,10 +3065,13 @@ describe('supervisor-daemon integrations', () => {
     try {
       const architectSpy = jest.spyOn(scanDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
       jest.spyOn(scanDaemon, 'filterExecutableMarketScannerMovers').mockResolvedValue([]);
+      mockOrdiPatternBars('ORDI/USD');
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
-      const result = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const result = await scanDaemon.marketScannerPhasePromise;
 
+      expect(started).toEqual(expect.objectContaining({ ok: true, skipped: false, started: true }));
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(scanDaemon.marketScanner.runMarketScan).toHaveBeenCalledTimes(1);
       expect(scanDaemon.lastMarketScannerSummary).toEqual(expect.objectContaining({
@@ -3847,26 +3084,25 @@ describe('supervisor-daemon integrations', () => {
       }));
       expect(architectSpy).toHaveBeenCalledTimes(1);
       expect(architectSpy.mock.calls[0][0]).toContain('[PROACTIVE][MARKET]');
-      expect(architectSpy.mock.calls[0][0]).toContain('AVAX');
+      expect(architectSpy.mock.calls[0][0]).toContain('ORDI');
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner');
     }
-  });
+  }, 30000);
 
-  test('triggers an immediate crypto mini-consultation for 3%+ 4h scanner movers and promotes them into the watchlist first', async () => {
-    process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
+  test('suppresses market scanner alerts that fail the ORDI source gate', async () => {
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: false,
       marketScannerEnabled: true,
-      marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
           scannedAt: '2026-04-05T01:00:00.000Z',
@@ -3902,31 +3138,112 @@ describe('supervisor-daemon integrations', () => {
             updatedAt: '2026-04-05T01:00:00.000Z',
             lastScanAt: '2026-04-05T01:00:00.000Z',
             assetCount: 132,
+            topMovers: [{ coin: 'BOME', ticker: 'BOME/USD', flagged: true }],
+            flaggedMovers: [{ coin: 'BOME', ticker: 'BOME/USD', direction: 'UP', change4hPct: 0.0409, change24hPct: 0.0026, volumeUsd24h: 8984.99, flagged: true }],
+            history: {},
+          },
+        }),
+      },
+      pidPath: path.join(tempRoot, 'scanner-suppress.pid'),
+      statusPath: path.join(tempRoot, 'scanner-suppress-status.json'),
+      logPath: path.join(tempRoot, 'scanner-suppress.log'),
+      taskLogDir: path.join(tempRoot, 'scanner-suppress-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'scanner-suppress-wake.signal'),
+      marketScannerStatePath: path.join(tempRoot, 'market-scanner-suppress-state.json'),
+      oracleWatchRulesPath: path.join(tempRoot, 'scanner-suppress-oracle-rules.json'),
+      oracleWatchStatePath: path.join(tempRoot, 'scanner-suppress-oracle-state.json'),
+      oracleShortRegimeStatePath: path.join(tempRoot, 'scanner-suppress-short-regime.json'),
+    });
+
+    try {
+      const architectSpy = jest.spyOn(scanDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
+      const result = await scanDaemon.runMarketScannerPhase({ key: 'market_scanner' });
+
+      expect(result.alerts).toEqual([]);
+      expect(result.alertGate).toEqual(expect.objectContaining({
+        policy: 'ordi_pattern_source_gate',
+        rawAlertCount: 1,
+        qualifiedCount: 0,
+        suppressedCount: 1,
+      }));
+      expect(architectSpy).not.toHaveBeenCalled();
+    } finally {
+      await scanDaemon.stop('test-cleanup-market-scanner-suppress');
+    }
+  });
+
+  test('triggers an immediate crypto mini-consultation for ORDI-gated scanner movers and promotes them into the watchlist first', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+    process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
+    const scanDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      cryptoTradingEnabled: true,
+      marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
+      marketScannerIntervalMinutes: 30,
+      marketScanner: {
+        runMarketScan: jest.fn().mockResolvedValue({
+          scannedAt: '2026-04-05T01:00:00.000Z',
+          assetCount: 132,
+          flaggedMovers: [{
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
+            direction: 'DOWN',
+            price: 1.21,
+            change4hPct: -0.0409,
+            change24hPct: 0.22,
+            volumeUsd24h: 185000000,
+            fundingRate: -0.0000125,
+            flagged: true,
+          }],
+          topMovers: [{
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
+            flagged: true,
+          }],
+          alerts: [{
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
+            direction: 'DOWN',
+            price: 1.21,
+            change4hPct: -0.0409,
+            change24hPct: 0.22,
+            volumeUsd24h: 185000000,
+            fundingRate: -0.0000125,
+            flagged: true,
+          }],
+          state: {
+            updatedAt: '2026-04-05T01:00:00.000Z',
+            lastScanAt: '2026-04-05T01:00:00.000Z',
+            assetCount: 132,
             topMovers: [{
-              coin: 'BOME',
-              ticker: 'BOME/USD',
-              direction: 'UP',
-              price: 0.000382,
-              change4hPct: 0.0409,
-              change24hPct: 0.0026,
-              volumeUsd24h: 8984.99,
-              fundingRate: 0.0000125,
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
+              change4hPct: -0.0409,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.0000125,
               flagged: true,
             }],
             flaggedMovers: [{
-              coin: 'BOME',
-              ticker: 'BOME/USD',
-              direction: 'UP',
-              price: 0.000382,
-              change4hPct: 0.0409,
-              change24hPct: 0.0026,
-              volumeUsd24h: 8984.99,
-              fundingRate: 0.0000125,
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
+              change4hPct: -0.0409,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.0000125,
               flagged: true,
             }],
             history: {},
             lastAlertFingerprintByCoin: {
-              BOME: '{"direction":"UP"}',
+              ORDI: '{"direction":"DOWN"}',
             },
           },
         }),
@@ -3949,64 +3266,68 @@ describe('supervisor-daemon integrations', () => {
         ok: true,
         trigger: 'market_scanner',
       });
-      hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-        ['BOME/USD', [{ open: 0.00036, close: 0.000382 }]],
-      ]));
+      mockOrdiPatternBars('ORDI/USD');
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
-      const result = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const result = await scanDaemon.marketScannerPhasePromise;
 
+      expect(started).toEqual(expect.objectContaining({ ok: true, skipped: false, started: true }));
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(result.executed?.[0]).toEqual(expect.objectContaining({
-        urgentPromotedSymbols: expect.arrayContaining(['BOME/USD']),
+        urgentPromotedSymbols: expect.arrayContaining(['ORDI/USD']),
       }));
       expect(immediateConsultSpy).toHaveBeenCalledWith(expect.objectContaining({
         key: 'market_scanner_trigger',
         trigger: 'market_scanner',
-        symbols: ['BOME/USD'],
+        symbols: ['ORDI/USD'],
       }), expect.objectContaining({
         trigger: 'market_scanner',
       }));
       expect(architectSpy).toHaveBeenCalledTimes(1);
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner-immediate');
     }
-  });
+  }, 15000);
 
-  test('triggers an immediate crypto mini-consultation from current urgent 4h flagged movers even when no new alerts are emitted', async () => {
+  test('triggers an immediate crypto mini-consultation from current ORDI-gated movers even when no new alerts are emitted', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: false,
       marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
       marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
           scannedAt: '2026-04-05T01:00:00.000Z',
           assetCount: 229,
           flaggedMovers: [{
-            coin: 'ZETA',
-            ticker: 'ZETA/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             direction: 'DOWN',
-            price: 0.05147,
+            price: 1.21,
             change4hPct: -0.08,
-            change24hPct: -0.0693,
-            volumeUsd24h: 842029.43,
+            change24hPct: 0.22,
+            volumeUsd24h: 185000000,
             fundingRate: -0.00112542,
             flagged: true,
           }],
           topMovers: [{
-            coin: 'ZETA',
-            ticker: 'ZETA/USD',
+            coin: 'ORDI',
+            ticker: 'ORDI/USD',
             flagged: true,
             change4hPct: -0.08,
+            change24hPct: 0.22,
           }],
           alerts: [],
           state: {
@@ -4014,16 +3335,22 @@ describe('supervisor-daemon integrations', () => {
             lastScanAt: '2026-04-05T01:00:00.000Z',
             assetCount: 229,
             topMovers: [{
-              coin: 'ZETA',
-              ticker: 'ZETA/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
               flagged: true,
               change4hPct: -0.08,
+              change24hPct: 0.22,
             }],
             flaggedMovers: [{
-              coin: 'ZETA',
-              ticker: 'ZETA/USD',
+              coin: 'ORDI',
+              ticker: 'ORDI/USD',
+              direction: 'DOWN',
+              price: 1.21,
               flagged: true,
               change4hPct: -0.08,
+              change24hPct: 0.22,
+              volumeUsd24h: 185000000,
+              fundingRate: -0.00112542,
             }],
             history: {},
           },
@@ -4046,44 +3373,47 @@ describe('supervisor-daemon integrations', () => {
         ok: true,
         trigger: 'market_scanner',
       });
-      hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-        ['ZETA/USD', [{ open: 0.056, close: 0.05147 }]],
-      ]));
+      mockOrdiPatternBars('ORDI/USD');
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
 
-      const result = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const started = await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      const result = await scanDaemon.marketScannerPhasePromise;
 
+      expect(started).toEqual(expect.objectContaining({ ok: true, skipped: false, started: true }));
       expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
       expect(result.executed?.[0]).toEqual(expect.objectContaining({
         urgentMovers: expect.arrayContaining([
-          expect.objectContaining({ ticker: 'ZETA/USD' }),
+          expect.objectContaining({ ticker: 'ORDI/USD' }),
         ]),
         immediateConsultation: expect.objectContaining({ ok: true, trigger: 'market_scanner' }),
       }));
       expect(immediateConsultSpy).toHaveBeenCalledWith(expect.objectContaining({
         key: 'market_scanner_trigger',
-        symbols: ['ZETA/USD'],
+        symbols: ['ORDI/USD'],
       }), expect.objectContaining({
         trigger: 'market_scanner',
       }));
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner-urgent-existing');
     }
   });
 
-  test('filters non-executable market-scanner movers before triggering immediate consultation', async () => {
+  test('filters non-ORDI market-scanner movers before triggering immediate consultation', async () => {
+    const originalScannerAutomation = process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
     process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = '1';
     const scanDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: false,
       marketScannerEnabled: true,
+      marketScannerImmediateConsultationEnabled: true,
       marketScannerIntervalMinutes: 30,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
@@ -4091,15 +3421,15 @@ describe('supervisor-daemon integrations', () => {
           assetCount: 229,
           flaggedMovers: [
             { coin: 'BOME', ticker: 'BOME/USD', direction: 'UP', price: 0.000382, change4hPct: 0.0409, change24hPct: 0.0026, volumeUsd24h: 8984.99, fundingRate: 0.0000125, flagged: true },
-            { coin: 'AVAX', ticker: 'AVAX/USD', direction: 'DOWN', price: 9.0246, change4hPct: -0.073, change24hPct: -0.081, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
+            { coin: 'ORDI', ticker: 'ORDI/USD', direction: 'DOWN', price: 1.21, change4hPct: -0.073, change24hPct: 0.22, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
           ],
           topMovers: [
             { coin: 'BOME', ticker: 'BOME/USD', flagged: true },
-            { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true },
+            { coin: 'ORDI', ticker: 'ORDI/USD', flagged: true },
           ],
           alerts: [
             { coin: 'BOME', ticker: 'BOME/USD', direction: 'UP', price: 0.000382, change4hPct: 0.0409, change24hPct: 0.0026, volumeUsd24h: 8984.99, fundingRate: 0.0000125, flagged: true },
-            { coin: 'AVAX', ticker: 'AVAX/USD', direction: 'DOWN', price: 9.0246, change4hPct: -0.073, change24hPct: -0.081, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
+            { coin: 'ORDI', ticker: 'ORDI/USD', direction: 'DOWN', price: 1.21, change4hPct: -0.073, change24hPct: 0.22, volumeUsd24h: 185000000, fundingRate: -0.00004, flagged: true },
           ],
           state: {
             updatedAt: '2026-04-05T01:00:00.000Z',
@@ -4107,15 +3437,15 @@ describe('supervisor-daemon integrations', () => {
             assetCount: 229,
             assets: [
               { coin: 'BOME', ticker: 'BOME/USD', flagged: true, change4hPct: 0.0409 },
-              { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true, change4hPct: -0.073 },
+              { coin: 'ORDI', ticker: 'ORDI/USD', flagged: true, change4hPct: -0.073, change24hPct: 0.22 },
             ],
             topMovers: [
               { coin: 'BOME', ticker: 'BOME/USD', flagged: true },
-              { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true },
+              { coin: 'ORDI', ticker: 'ORDI/USD', flagged: true },
             ],
             flaggedMovers: [
               { coin: 'BOME', ticker: 'BOME/USD', flagged: true, change4hPct: 0.0409 },
-              { coin: 'AVAX', ticker: 'AVAX/USD', flagged: true, change4hPct: -0.073 },
+              { coin: 'ORDI', ticker: 'ORDI/USD', direction: 'DOWN', price: 1.21, flagged: true, change4hPct: -0.073, change24hPct: 0.22, volumeUsd24h: 185000000, fundingRate: -0.00004 },
             ],
             history: {},
           },
@@ -4136,23 +3466,23 @@ describe('supervisor-daemon integrations', () => {
     try {
       const architectSpy = jest.spyOn(scanDaemon, 'notifyArchitectInternal').mockImplementation(() => {});
       const immediateConsultSpy = jest.spyOn(scanDaemon, 'triggerImmediateCryptoConsensus').mockResolvedValue({ ok: true });
-      jest.spyOn(hyperliquidClient, 'getHistoricalBars').mockImplementation(async ({ symbols }) => {
-        const ticker = Array.isArray(symbols) ? symbols[0] : symbols;
-        if (ticker === 'AVAX/USD') {
-          return new Map([[ticker, [{ open: 9.2, close: 9.0 }]]]);
-        }
-        throw new Error(`code=400, message=invalid symbol: ${ticker}`);
-      });
+      mockOrdiPatternBars('ORDI/USD');
 
       scanDaemon.marketScannerState.lastProcessedAt = '2026-04-05T00:00:00.000Z';
       await scanDaemon.maybeRunMarketScannerAutomation(Date.parse('2026-04-05T01:05:00.000Z'));
+      await scanDaemon.marketScannerPhasePromise;
 
       expect(architectSpy).toHaveBeenCalledTimes(1);
       expect(architectSpy.mock.calls[0][0]).toContain('Tracked pairs: 229');
       expect(immediateConsultSpy).toHaveBeenCalledWith(expect.objectContaining({
-        symbols: ['AVAX/USD'],
+        symbols: ['ORDI/USD'],
       }), expect.any(Object));
     } finally {
+      if (originalScannerAutomation == null) {
+        delete process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_MARKET_SCANNER_AUTOMATION = originalScannerAutomation;
+      }
       await scanDaemon.stop('test-cleanup-market-scanner-filter');
     }
   });
@@ -4163,11 +3493,7 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: false,
       marketScannerEnabled: true,
       marketScanner: {
         runMarketScan: jest.fn().mockResolvedValue({
@@ -4234,11 +3560,7 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: false,
       marketScannerEnabled: false,
       cryptoTradingOrchestrator: {
         runConsensusRound: jest.fn(),
@@ -4309,13 +3631,7 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      pendingFollowupEnabled: false,
-      marketResearchEnabled: false,
-      eunbyeolCheckInEnabled: false,
       hyperliquidExecutionEnabled: true,
       hyperliquidExecutor: {
         getAccountState: jest.fn().mockResolvedValue({
@@ -4360,11 +3676,7 @@ describe('supervisor-daemon integrations', () => {
       logger: createMockLogger(),
       memoryIndexEnabled: false,
       sleepEnabled: false,
-      tradingEnabled: false,
       cryptoTradingEnabled: true,
-      polymarketTradingEnabled: false,
-      newsScanEnabled: false,
-      marketResearchEnabled: false,
       marketScannerEnabled: false,
       cryptoTradingOrchestrator: {
         clearSignals: jest.fn(),
@@ -4571,6 +3883,16 @@ describe('supervisor-daemon integrations', () => {
       lastProcessedAt: '2026-04-05T19:30:00.000Z',
       nextEvent: { key: 'crypto_consensus' },
     };
+    daemon.coordHeartbeatEnabled = true;
+    daemon.lastCoordHeartbeatRunAtMs = Date.parse('2026-04-05T19:15:00.000Z');
+    daemon.lastCoordHeartbeatSummary = {
+      enabled: true,
+      status: 'ok',
+      intervalMs: 15 * 60 * 1000,
+      scriptPath: 'hm-heartbeat.js',
+      lastRunAt: '2026-04-05T19:15:00.000Z',
+      lastSummary: { ok: true },
+    };
     daemon.lastCryptoCoverage = {
       symbolsConsulted: ['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD'],
       symbolsExecutable: ['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD'],
@@ -4611,107 +3933,13 @@ describe('supervisor-daemon integrations', () => {
       confidenceRiskFloorPct: 0.005,
       confidenceRiskCeilingPct: 0.02,
     }));
+    expect(payload.coordHeartbeat).toEqual(expect.objectContaining({
+      enabled: true,
+      running: false,
+      intervalMs: 15 * 60 * 1000,
+      lastRunAt: '2026-04-05T19:15:00.000Z',
+    }));
 
     writeSpy.mockRestore();
-  });
-
-  test('dispatches per-agent paper trading prompts and applies a valid builder response with audit logging', async () => {
-    const tradingDir = path.join(tempRoot, 'workspace', 'agent-trading');
-    fs.mkdirSync(tradingDir, { recursive: true });
-    for (const agentId of ['architect', 'builder', 'oracle']) {
-      fs.writeFileSync(path.join(tradingDir, `${agentId}-portfolio.json`), JSON.stringify({
-        schemaVersion: 1,
-        agentId,
-        startingBalance: 500,
-        cashBalance: 500,
-        equity: 500,
-        realizedPnl: 0,
-        unrealizedPnl: 0,
-        totalPnl: 0,
-        openPositions: [],
-        closedTrades: [],
-        hourlyMarks: [],
-      }, null, 2));
-    }
-
-    hyperliquidClient.getUniverseMarketData.mockResolvedValue([
-      { ticker: 'BTC/USD', price: 75000, openInterest: 1000, fundingRate: 0.0001 },
-      { ticker: 'ETH/USD', price: 2350, openInterest: 2000, fundingRate: -0.0001 },
-      { ticker: 'SOL/USD', price: 89.2, openInterest: 3000, fundingRate: -0.0002 },
-    ]);
-    hyperliquidClient.getHistoricalBars.mockResolvedValue(new Map([
-      ['BTC/USD', [{ close: 74880 }, { close: 74950 }, { close: 75000 }]],
-      ['ETH/USD', [{ close: 2335 }, { close: 2342 }, { close: 2350 }]],
-      ['SOL/USD', [{ close: 88.9 }, { close: 89.05 }, { close: 89.2 }]],
-    ]));
-
-    daemon.dispatchAgentQueuedTask = jest.fn().mockResolvedValue({ ok: true });
-    daemon.projectRoot = tempRoot;
-    daemon.paperTradingAutomationStatePath = path.join(tempRoot, 'paper-trading-automation-state.json');
-    daemon.paperTradingAutomationState = {
-      updatedAt: null,
-      lastProcessedAt: null,
-      lastSummary: null,
-      agents: {
-        architect: { agentId: 'architect', lastDispatchAtMs: 0, nextTimerWakeAtMs: 0 },
-        builder: { agentId: 'builder', lastDispatchAtMs: 0, nextTimerWakeAtMs: 0 },
-        oracle: { agentId: 'oracle', lastDispatchAtMs: 0, nextTimerWakeAtMs: 0 },
-      },
-    };
-
-    const firstSummary = await daemon.maybeRunPaperTradingAutomation(Date.parse('2026-04-16T20:00:00.000Z'));
-    expect(firstSummary.dispatched).toBe(3);
-    expect(daemon.dispatchAgentQueuedTask).toHaveBeenCalledTimes(3);
-
-    const builderRequestId = daemon.paperTradingAutomationState.agents.builder.pendingRequestId;
-    queryCommsJournalEntries.mockImplementation(({ senderRole }) => {
-      if (senderRole !== 'builder') return [];
-      return [{
-        rawBody: `[AGENT MSG - reply via hm-send.js] (BUILDER #42): ${JSON.stringify({
-          requestId: builderRequestId,
-          agentId: 'builder',
-          action: {
-            type: 'open',
-            ticker: 'BTC/USD',
-            side: 'LONG',
-            marginUsd: 100,
-            leverage: 5,
-          },
-          rationale: 'Opening a paper BTC long on the cycle wake.',
-          stopDeclaration: {
-            type: 'stop_loss',
-            price: 74220,
-            note: 'Hard invalidation.',
-          },
-        })}`,
-      }];
-    });
-
-    await daemon.maybeRunPaperTradingAutomation(Date.parse('2026-04-16T20:01:00.000Z'));
-    expect(daemon.lastPaperTradingAutomationSummary).toEqual(expect.objectContaining({
-      enabled: true,
-    }));
-
-    const builderPortfolio = JSON.parse(fs.readFileSync(path.join(tradingDir, 'builder-portfolio.json'), 'utf8'));
-    expect(builderPortfolio.openPositions).toHaveLength(1);
-    expect(builderPortfolio.openPositions[0]).toEqual(expect.objectContaining({
-      ticker: 'BTC/USD',
-      side: 'LONG',
-    }));
-
-    const auditLogPath = path.join(tradingDir, 'paper-trading-actions.jsonl');
-    const auditLines = fs.readFileSync(auditLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-    expect(auditLines).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'paper_trading_request_dispatched',
-        agentId: 'builder',
-        requestId: builderRequestId,
-      }),
-      expect.objectContaining({
-        kind: 'paper_trading_response_applied',
-        agentId: 'builder',
-        requestId: builderRequestId,
-      }),
-    ]));
   });
 });

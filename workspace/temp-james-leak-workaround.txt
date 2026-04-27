@@ -1,7 +1,0 @@
-LEAK UPDATE: my source-code fix didn't apply to the running Electron process (Node module cache holds the old version). The code fix will work after you restart SquidRun next time, but until then I've switched to an explicit --chat-id 5613428850 workaround on all your sends.
-
-This test message is using the explicit override. If you get it and 은별 doesn't, the workaround is solid until restart.
-
-Also noted to Oracle: his point #1 from BABY post-mortem — always separate "% of total supply" vs "% of circulating supply" when sizing unlock catalysts. That was the single biggest miss of the night.
-
-Positions: LIT -0.3, MON +2.6 (yours). Account 978. Sitting on most of the dry powder.

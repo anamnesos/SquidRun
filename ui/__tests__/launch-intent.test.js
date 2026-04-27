@@ -24,13 +24,13 @@ describe('launch-intent', () => {
 
   test('parses standalone Eunbyeol launch flags', () => {
     expect(parseLaunchIntent(['--window=eunbyeol', '--solo-window'])).toEqual({
-      profileName: 'main',
+      profileName: 'eunbyeol',
       windowKey: 'eunbyeol',
       includeMainWindow: false,
       focusWindowKey: 'eunbyeol',
     });
     expect(parseLaunchIntent(['--eunbyul'])).toEqual({
-      profileName: 'main',
+      profileName: 'eunbyeol',
       windowKey: 'eunbyeol',
       includeMainWindow: false,
       focusWindowKey: 'eunbyeol',
@@ -39,7 +39,7 @@ describe('launch-intent', () => {
 
   test('keeps the main window included when explicitly requested', () => {
     expect(parseLaunchIntent(['--window', 'eunbyeol', '--with-main-window'])).toEqual({
-      profileName: 'main',
+      profileName: 'eunbyeol',
       windowKey: 'eunbyeol',
       includeMainWindow: true,
       focusWindowKey: 'eunbyeol',
@@ -58,12 +58,30 @@ describe('launch-intent', () => {
     });
   });
 
-  test('parses profile launches independently of the window key', () => {
+  test('routes profile-only Eunbyeol launches to the standalone Eunbyeol window', () => {
     expect(parseLaunchIntent(['--profile=eunbyeol'])).toEqual({
       profileName: 'eunbyeol',
-      windowKey: 'main',
+      windowKey: 'eunbyeol',
+      includeMainWindow: false,
+      focusWindowKey: 'eunbyeol',
+    });
+  });
+
+  test('lets profile-only Eunbyeol launches include main when explicitly requested', () => {
+    expect(parseLaunchIntent(['--profile=eunbyeol', '--with-main-window'])).toEqual({
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
       includeMainWindow: true,
-      focusWindowKey: 'main',
+      focusWindowKey: 'eunbyeol',
+    });
+  });
+
+  test('allows an explicit profile to override an Eunbyeol window launch', () => {
+    expect(parseLaunchIntent(['--profile=main', '--window=eunbyeol', '--solo-window'])).toEqual({
+      profileName: 'main',
+      windowKey: 'eunbyeol',
+      includeMainWindow: false,
+      focusWindowKey: 'eunbyeol',
     });
   });
 });

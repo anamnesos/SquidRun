@@ -58,6 +58,16 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-permission-guard.js\""
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "matcher": "auto|manual",

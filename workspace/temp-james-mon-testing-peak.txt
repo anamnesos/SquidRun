@@ -1,7 +1,0 @@
-MON is testing your 0.036420 line right now.
-
-Price: 0.03642 (exactly at prior peak)
-PnL: -298
-Liq: 4.86%
-
-This is the decision candle. Wick above + close below = failed breakout, your short is good. Close above 0.03645 = uptrend wins, cover time.

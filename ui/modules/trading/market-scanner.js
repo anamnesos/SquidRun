@@ -176,11 +176,17 @@ function buildMoverMap(entries = []) {
 }
 
 function normalizeMarketScannerState(state = {}) {
+  const historyReferenceNowMs = Date.parse(
+    state?.updatedAt
+    || state?.lastScanAt
+    || state?.lastProcessedAt
+    || ''
+  ) || Date.now();
   const history = state && typeof state.history === 'object' && state.history
     ? Object.fromEntries(
       Object.entries(state.history).map(([coin, entries]) => ([
         normalizeCoin(coin),
-        pruneHistory(entries),
+        pruneHistory(entries, historyReferenceNowMs),
       ])).filter(([coin]) => Boolean(coin))
     )
     : {};

@@ -78,12 +78,14 @@ describe('supervisor range conviction', () => {
       reentryAfterManagement: false,
     });
 
-    expect(closePosition).toHaveBeenCalledWith({ asset: 'AVAX' });
+    expect(closePosition).not.toHaveBeenCalled();
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       action: 'abort_thesis',
       ticker: 'AVAX/USD',
+      reason: 'manual_only_reset',
     }));
+    expect(daemon.notifyTelegramTrading).toHaveBeenCalledWith(expect.stringContaining('Manual-only reset is active'));
     expect(daemon.triggerImmediateCryptoConsensus).not.toHaveBeenCalled();
   });
 });

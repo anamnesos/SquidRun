@@ -33,6 +33,7 @@ const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { createExternalNotifier } = require('../external-notifications');
+const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
@@ -68,6 +69,7 @@ const {
   normalizeDeviceId,
   parseCrossDeviceTarget,
   getLocalDeviceId,
+  getProfileDeviceId,
   isCrossDeviceEnabled,
 } = require('../cross-device-target');
 const {
@@ -104,6 +106,7 @@ const {
 const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
 const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
+const { executeAppControlAction } = require('./app-control-service');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
@@ -119,7 +122,6 @@ const {
 } = require('../startup-ai-briefing');
 const {
   buildSystemCapabilitiesSnapshot,
-  detectOllamaRuntime,
   resolveSleepExtractionCommandFromSnapshot,
   writeSystemCapabilitiesSnapshot,
 } = require('../local-model-capabilities');
@@ -137,6 +139,10 @@ const {
   buildInjectMessageIpcPackets,
   getUtf8ByteLength,
 } = require('../inject-message-ipc');
+const {
+  appendBusTraceEvent,
+  createPayloadFingerprint,
+} = require('../bus-reliability-trace');
 const { createPtyOutputFilter } = require('./pty-output-filter');
 const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
@@ -276,9 +282,7 @@ function resolveSupervisorLaunchExecutable() {
 }
 
 function stripAnsiForStartupReady(value) {
-  return String(value || '')
-    .replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
-    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+  return stripAnsi(value);
 }
 
 function hasCliStartupReadySignal(buffer = '') {
@@ -417,11 +421,85 @@ function formatLocalClockTime(value = Date.now()) {
   return `${hours}:${minutes}`;
 }
 
+function stripLeadingAgentSequencePrefix(text = '') {
+  return String(text || '')
+    .replace(/^\([A-Z][A-Z0-9 _-]*#?\d+\):\s*/i, '')
+    .trim();
+}
+
+function isStructuredConsultationReplyPayload(content) {
+  const text = toNonEmptyString(content);
+  if (!text) return false;
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace <= firstBrace) return false;
+  try {
+    const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+    return Boolean(
+      toNonEmptyString(parsed?.requestId)
+      && toNonEmptyString(parsed?.agentId)
+      && Array.isArray(parsed?.signals)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAcknowledgementOnlyAgentUpdate(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  if (/\bno substantive task\b/i.test(text)) return true;
+  if (/\bno resend needed\b/i.test(text)) return true;
+  if (/\bnothing substantive missed\b/i.test(text)) return true;
+  if (/\bnothing additional to resend\b/i.test(text)) return true;
+
+  if (!/^(copy|ack(?:nowledged)?|confirmed|received|aligned|alignment confirmed|stand(?:ing)? by)\b/i.test(text)) {
+    return false;
+  }
+
+  return !/\b(task|proof|investigat|analy[sz]e|review|write|implement|urgent|priority|objective|scope|validation|acceptance|deadline|reply|resend|please|need|check if)\b/i.test(text);
+}
+
+function isExplicitAgentTaskRequest(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  if (/^\[TASK\]/i.test(text)) return true;
+  if (/\bneed from you\b/i.test(text)) return true;
+  if (/\b(can|could|would) you\b/i.test(text)) return true;
+  if (/\bplease\b/i.test(text)) return true;
+  if (/\bcheck if\b/i.test(text)) return true;
+  if (/\breply via\b/i.test(text)) return true;
+  if (/\bdeadline:\b/i.test(text)) return true;
+  if (/[?]\s*$/.test(text)) return true;
+
+  return /^(analy[sz]e|review|investigat(?:e|ion)?|check|verify|confirm|resend|reply|read|write|implement|fix|summari[sz]e|ask|send)\b/i.test(text);
+}
+
 function shouldWatchdogAgentTask(content) {
   const text = toNonEmptyString(content);
   if (!text) return false;
-  if (text.includes('\n')) return true;
-  return /\b(task|fix|proof|investigat|analy[sz]e|review|read|write|implement|urgent|priority|objective|scope|validation|acceptance|deadline|reply|now)\b/i.test(text);
+  if (isStructuredConsultationReplyPayload(text)) return false;
+  if (isAcknowledgementOnlyAgentUpdate(text)) return false;
+  if (/\bno (further )?(acknowledg(e)?ment|reply) needed\b/i.test(text)) return false;
+  if (/\bno reply needed\b/i.test(text)) return false;
+  if (/\bstanding by\b/i.test(text)) return false;
+  if (/\[WATCHDOG\]/i.test(text)) return false;
+  return isExplicitAgentTaskRequest(text);
+}
+
+const WATCHDOG_ELIGIBLE_AGENT_ROLES = new Set(['architect', 'builder', 'oracle']);
+
+function normalizeWatchdogAgentRole(role) {
+  const normalized = toNonEmptyString(role)?.toLowerCase();
+  if (!normalized || !WATCHDOG_ELIGIBLE_AGENT_ROLES.has(normalized)) return null;
+  return normalized;
+}
+
+function createAgentResponseWatchdogKey(senderRole, targetRole) {
+  const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+  const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
+  if (!normalizedSenderRole || !normalizedTargetRole) return null;
+  return `${normalizedSenderRole}->${normalizedTargetRole}`;
 }
 
 class SquidRunApp {
@@ -514,7 +592,7 @@ class SquidRunApp {
     this.pendingPaneDeliveryQueuePath = path.join(WORKSPACE_PATH, '.squidrun', 'runtime', 'pending-pane-deliveries.json');
     this.pendingPaneDeliveryReplayPromise = Promise.resolve();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
-    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
     this.bridgeRelayStatus = {
       enabled: this.bridgeEnabled === true,
       configured: Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId),
@@ -905,22 +983,10 @@ class SquidRunApp {
 
   async refreshSystemCapabilities(options = {}) {
     const projectRoot = options.projectRoot || getProjectRoot();
-    const persistedSettings = typeof this.settings.readPersistedSettingsSnapshot === 'function'
-      ? (this.settings.readPersistedSettingsSnapshot() || {})
-      : {};
-    const hasExplicitLocalModelSetting = Object.prototype.hasOwnProperty.call(persistedSettings, 'localModelEnabled');
-    const ollama = await detectOllamaRuntime({
-      nowMs: options.nowMs,
-      timeoutMs: options.timeoutMs,
-    });
-    if (!hasExplicitLocalModelSetting && ollama.suitableModelAvailable === true) {
-      this.settings.saveSettings({ localModelEnabled: true });
-    }
     const snapshot = buildSystemCapabilitiesSnapshot({
       projectRoot,
       nowMs: options.nowMs,
       settings: this.ctx.currentSettings,
-      ollama,
     });
     writeSystemCapabilitiesSnapshot(snapshot, snapshot.path);
     this.lastSystemCapabilities = snapshot;
@@ -1738,6 +1804,7 @@ class SquidRunApp {
         this.paneHostBootstrapVerifyTimer = null;
         this.verifyPaneHostWindowsAfterBootstrap('loading_wait');
       }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      this.paneHostBootstrapVerifyTimer?.unref?.();
       return;
     }
 
@@ -1760,6 +1827,7 @@ class SquidRunApp {
         this.paneHostBootstrapVerifyTimer = null;
         this.verifyPaneHostWindowsAfterBootstrap('ready_wait');
       }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      this.paneHostBootstrapVerifyTimer?.unref?.();
       return;
     }
 
@@ -1808,6 +1876,7 @@ class SquidRunApp {
       log.warn('PaneHost', `Scheduling hidden pane host recovery (${reason})`);
       this.schedulePaneHostBootstrap();
     }, waitMs);
+    this.paneHostRecoveryTimer?.unref?.();
   }
 
   handlePaneHostLifecycleEvent(payload = {}) {
@@ -1903,8 +1972,10 @@ class SquidRunApp {
           this.paneHostBootstrapVerifyTimer = null;
           this.verifyPaneHostWindowsAfterBootstrap('createWindow');
         }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+        this.paneHostBootstrapVerifyTimer?.unref?.();
       });
     }, 0);
+    this.paneHostBootstrapTimer?.unref?.();
   }
 
   sendPaneHostMessage(paneId, channel, payload = {}) {
@@ -1977,10 +2048,31 @@ class SquidRunApp {
 
   handleTriggerDeliveryAck(data = {}) {
     if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
+    appendBusTraceEvent({
+      eventType: 'pane_delivery_ack',
+      messageId: data?.messageId || data?.deliveryId || null,
+      deliveryId: data?.deliveryId || null,
+      paneId: data?.paneId || null,
+      success: true,
+      status: 'pane_delivery_ack',
+      modelReceiptVerified: false,
+    });
   }
 
   handleTriggerDeliveryOutcome(data = {}) {
     if (data?.deliveryId) triggers.handleDeliveryOutcome(data.deliveryId, data.paneId, data);
+    appendBusTraceEvent({
+      eventType: 'pane_delivery_outcome',
+      messageId: data?.messageId || data?.deliveryId || null,
+      deliveryId: data?.deliveryId || null,
+      paneId: data?.paneId || null,
+      success: data?.accepted !== false,
+      accepted: data?.accepted === true,
+      verified: data?.verified === true,
+      status: data?.status || null,
+      reason: data?.reason || null,
+      modelReceiptVerified: false,
+    });
     const statusLower = String(data?.status || '').toLowerCase();
     const isUnverified = (
       data?.verified === false
@@ -2138,6 +2230,21 @@ class SquidRunApp {
       chunkSizeBytes: DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
     });
     if (packets.length === 0) return false;
+    const messageId = toNonEmptyString(payload?.traceContext?.messageId)
+      || toNonEmptyString(payload?.traceContext?.traceId)
+      || toNonEmptyString(payload?.traceContext?.correlationId)
+      || toNonEmptyString(payload?.deliveryId);
+    const originalMessage = String(payload?.message || '');
+    appendBusTraceEvent({
+      eventType: 'pane_ipc_packetized',
+      messageId: messageId || null,
+      deliveryId: payload?.deliveryId || null,
+      paneCount: panes.length,
+      packetCount: packets.length,
+      payloadBytes: getUtf8ByteLength(originalMessage),
+      payloadFingerprint: createPayloadFingerprint(originalMessage),
+      startupInjection,
+    });
 
     let routed = false;
     for (const packet of packets) {
@@ -2147,16 +2254,41 @@ class SquidRunApp {
       if (!paneId) continue;
       const packetBytes = Number(packet.messageBytes || getUtf8ByteLength(packet.message || ''));
       const totalBytes = Number(packet?.ipcChunk?.totalBytes || packet?.meta?.ipcOriginalBytes || packetBytes);
+      const expectedPacketBytes = Number.isFinite(Number(packet.messageBytes)) ? Number(packet.messageBytes) : null;
+      appendBusTraceEvent({
+        eventType: 'pane_ipc_packet_routed',
+        messageId: messageId || null,
+        deliveryId: packet.deliveryId || null,
+        paneId,
+        packetBytes,
+        expectedPacketBytes,
+        totalBytes,
+        byteMismatch: expectedPacketBytes !== null && expectedPacketBytes !== packetBytes,
+        chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+        chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+        payloadFingerprint: createPayloadFingerprint(packet.message || ''),
+        startupInjection,
+      });
       if (!packet.ipcChunk || packet.ipcChunk.index === 0) {
         log.info('InjectIPC', `Pre-IPC route pane ${paneId}: ${totalBytes} bytes -> ${packet.ipcChunk?.count || 1} packet(s) (startup=${startupInjection})`);
       }
-
       if (!this.isHiddenPaneHostModeEnabled() || startupInjection) {
         const delivered = this.sendToVisibleWindow('inject-message', {
           ...packet,
           startupInjection,
         }, {
           windowKey: packet?.windowKey || packet?.meta?.windowKey || 'main',
+        });
+        appendBusTraceEvent({
+          eventType: 'pane_ipc_handoff',
+          messageId: messageId || null,
+          deliveryId: packet.deliveryId || null,
+          paneId,
+          deliveryPath: 'visible_window',
+          success: Boolean(delivered),
+          packetBytes,
+          chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+          chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
         });
         if (delivered) routed = true;
         continue;
@@ -2186,6 +2318,17 @@ class SquidRunApp {
           meta: packet.meta || null,
         });
         if (routedToHost) {
+          appendBusTraceEvent({
+            eventType: 'pane_ipc_handoff',
+            messageId: messageId || null,
+            deliveryId: packet.deliveryId || null,
+            paneId,
+            deliveryPath: 'hidden_pane_host',
+            success: true,
+            packetBytes,
+            chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+            chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          });
           routed = true;
           this.clearPaneHostDegraded(paneId);
           continue;
@@ -2206,6 +2349,20 @@ class SquidRunApp {
         meta: fallbackMeta,
       }, {
         windowKey: packet?.windowKey || fallbackMeta?.windowKey || 'main',
+      });
+      appendBusTraceEvent({
+        eventType: 'pane_ipc_handoff',
+        messageId: messageId || null,
+        deliveryId: packet.deliveryId || null,
+        paneId,
+        deliveryPath: 'visible_fallback',
+        success: Boolean(routedToVisible),
+        packetBytes,
+        chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+        chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+        hiddenHostReady: hostReady,
+        hiddenHostWindowPresent: hostWindowPresent,
+        hiddenHostLoading: hostLoading,
       });
 
       if (routedToVisible) {
@@ -2318,18 +2475,10 @@ class SquidRunApp {
     // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
     await this.launchWindowsForProfile(this.launchWindowProfile);
 
-    if (process.platform === 'win32') {
-      try {
-        const shortcutResult = this.ensureEunbyeolDesktopShortcut();
-        if (shortcutResult?.ok) {
-          log.info('Shortcut', `Eunbyeol desktop shortcut ready at ${shortcutResult.shortcutPath}`);
-        } else if (shortcutResult?.skipped !== true) {
-          log.warn('Shortcut', `Failed ensuring Eunbyeol desktop shortcut: ${shortcutResult?.reason || 'unknown'}`);
-        }
-      } catch (err) {
-        log.warn('Shortcut', `Failed ensuring Eunbyeol desktop shortcut: ${err.message}`);
-      }
-    }
+    // Eunbyeol desktop shortcut is owned manually by Launch-Eunbyeol-SquidRun.ps1
+    // in D:\projects\eunbyeol-casework. Auto-creation here previously overwrote
+    // it with a raw electron.exe launch that lacked SQUIDRUN_PROJECT_ROOT —
+    // see memory feedback S294. Do not re-enable.
 
     // 3. Generate firmware files on startup when feature flag is enabled.
     if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
@@ -2586,6 +2735,18 @@ class SquidRunApp {
             );
           }
 
+          if (data.message.type === 'app-control') {
+            return executeAppControlAction(
+              {
+                mainWindow: this.ctx.mainWindow,
+                getAppWindows: () => this.getAppWindows(),
+                getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
+              },
+              data.message.action,
+              data.message.payload || {}
+            );
+          }
+
           if (data.message.type === 'comms-event' || data.message.type === 'comms-metric') {
             return emitKernelCommsEvent(
               data.message.eventType,
@@ -2746,7 +2907,15 @@ class SquidRunApp {
             const attempt = Number(data.message.attempt || 1);
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
-            const traceContext = data.traceContext || data.message.traceContext || null;
+            const rawTraceContext = data.traceContext || data.message.traceContext || null;
+            const traceContext = {
+              ...(rawTraceContext && typeof rawTraceContext === 'object' ? rawTraceContext : {}),
+              ...(messageId ? {
+                messageId,
+                traceId: rawTraceContext?.traceId || rawTraceContext?.correlationId || messageId,
+                correlationId: rawTraceContext?.correlationId || rawTraceContext?.traceId || messageId,
+              } : {}),
+            };
             const nowMs = Date.now();
             const sentAtMs = Number(data.message.sentAtMs || data.message.timestamp || nowMs);
             const targetPaneIdForJournal = this.resolveTargetToPane(target);
@@ -2778,6 +2947,20 @@ class SquidRunApp {
             const senderRoleForJournal = String(canonicalEnvelope.sender?.role || data.role || 'unknown').trim().toLowerCase();
             const canonicalMetadata = buildCanonicalEnvelopeMetadata(canonicalEnvelope);
             const contentWithProjectContext = withProjectContext(canonicalEnvelope.content, canonicalMetadata);
+            appendBusTraceEvent({
+              eventType: 'ws_broker_received',
+              messageId: canonicalEnvelope.message_id,
+              senderRole: canonicalEnvelope.sender?.role || data.role || 'unknown',
+              recipient: canonicalEnvelope.target?.raw || target || null,
+              targetPaneId: targetPaneIdForJournal || null,
+              payloadBytes: getUtf8ByteLength(canonicalEnvelope.content),
+              injectedPayloadBytes: getUtf8ByteLength(contentWithProjectContext),
+              payloadFingerprint: createPayloadFingerprint(canonicalEnvelope.content),
+              injectedPayloadFingerprint: createPayloadFingerprint(contentWithProjectContext),
+              attempt,
+              maxAttempts,
+              traceId: traceContext?.traceId || traceContext?.correlationId || null,
+            });
             const bridgeStructured = bridgeTarget
               ? (
                 normalizeBridgeMetadata(
@@ -3275,6 +3458,15 @@ class SquidRunApp {
     }
 
     this.startSmsPoller();
+    // Both windows poll Telegram. Profile-scoped chat filter (de033db) ensures
+    // each window keeps only its own chats — eunbyeol window keeps eunbyeol-listed
+    // chats, main window rejects them. The two pollers will race on getUpdates
+    // and one will 409, but Telegram's offset semantics mean batches arrive at
+    // whichever window wins each round; both windows still see all messages over
+    // time and filter to keep what's theirs. The previous "eunbyeol-only poller"
+    // experiment (5c83159) made James's chat inbound silently 100% lossy and is
+    // reverted. Proper fix: forward non-window-owned chats to a shared inbox or
+    // give 은별 her own bot (separate token, no shared poller).
     this.startTelegramPoller();
     this.startBridgeClient();
     this.startAutoHandoffMaterializer();
@@ -3749,8 +3941,8 @@ class SquidRunApp {
     return {
       target: process.execPath,
       args: isPackaged
-        ? '--profile=eunbyeol'
-        : `"${uiRoot}" --profile=eunbyeol`,
+        ? '--profile=eunbyeol --window=eunbyeol --standalone-window'
+        : `"${uiRoot}" --profile=eunbyeol --window=eunbyeol --standalone-window`,
       cwd: isPackaged ? path.dirname(process.execPath) : uiRoot,
       description: 'Open the Eunbyeol SquidRun profile.',
       icon: path.join(uiRoot, 'assets', 'squidrun-favicon.ico'),
@@ -6438,13 +6630,26 @@ class SquidRunApp {
     return journalResult;
   }
 
-  clearAgentResponseWatchdog(targetRole = null) {
-    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
-    if (!normalizedTargetRole) return false;
-    const entry = this.pendingAgentResponseWatchdogs.get(normalizedTargetRole);
+  clearAgentResponseWatchdog(senderRole = null, targetRole = null) {
+    if (targetRole === null) {
+      const normalizedRole = normalizeWatchdogAgentRole(senderRole);
+      if (!normalizedRole) return false;
+      let cleared = false;
+      for (const [key, entry] of this.pendingAgentResponseWatchdogs.entries()) {
+        if (entry?.targetRole !== normalizedRole) continue;
+        clearTimeout(entry.timerId);
+        this.pendingAgentResponseWatchdogs.delete(key);
+        cleared = true;
+      }
+      return cleared;
+    }
+
+    const key = createAgentResponseWatchdogKey(senderRole, targetRole);
+    if (!key) return false;
+    const entry = this.pendingAgentResponseWatchdogs.get(key);
     if (!entry) return false;
     clearTimeout(entry.timerId);
-    this.pendingAgentResponseWatchdogs.delete(normalizedTargetRole);
+    this.pendingAgentResponseWatchdogs.delete(key);
     return true;
   }
 
@@ -6455,7 +6660,7 @@ class SquidRunApp {
     this.pendingAgentResponseWatchdogs.clear();
   }
 
-  sendArchitectInternalHmMessage(message, options = {}) {
+  sendInternalHmMessage(targetRoles, message, options = {}) {
     const text = toNonEmptyString(message);
     if (!text) return false;
     if (!fs.existsSync(HM_SEND_SCRIPT_PATH)) {
@@ -6466,45 +6671,67 @@ class SquidRunApp {
     const payload = text.startsWith(AGENT_MESSAGE_PREFIX)
       ? text
       : `${AGENT_MESSAGE_PREFIX}${text}`;
-    try {
-      const child = spawn('node', [HM_SEND_SCRIPT_PATH, 'architect', payload, '--role', role], {
-        cwd: getProjectRoot() || WORKSPACE_PATH || process.cwd(),
-        env: process.env,
-        windowsHide: true,
-      });
-      if (typeof child?.unref === 'function') {
-        child.unref();
+    const normalizedTargets = Array.from(new Set(
+      (Array.isArray(targetRoles) ? targetRoles : [targetRoles])
+        .map((target) => toNonEmptyString(target)?.toLowerCase())
+        .filter(Boolean)
+    ));
+    if (normalizedTargets.length === 0) return false;
+
+    let delivered = false;
+    for (const target of normalizedTargets) {
+      try {
+        const child = spawn('node', [HM_SEND_SCRIPT_PATH, target, payload, '--role', role], {
+          cwd: getProjectRoot() || WORKSPACE_PATH || process.cwd(),
+          env: process.env,
+          windowsHide: true,
+        });
+        if (typeof child?.unref === 'function') {
+          child.unref();
+        }
+        delivered = true;
+      } catch (error) {
+        log.warn('ArchitectComms', `Failed sending internal ${target} message via hm-send: ${error.message}`);
       }
-      return true;
-    } catch (error) {
-      log.warn('ArchitectComms', `Failed sending internal architect message via hm-send: ${error.message}`);
-      return false;
     }
+
+    return delivered;
+  }
+
+  sendArchitectInternalHmMessage(message, options = {}) {
+    return this.sendInternalHmMessage('architect', message, options);
   }
 
   scheduleAgentResponseWatchdog({ senderRole = null, targetRole = null, content = '', sentAtMs = Date.now() } = {}) {
-    const normalizedSenderRole = toNonEmptyString(senderRole)?.toLowerCase();
-    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
-    if (normalizedSenderRole !== 'architect') return false;
-    if (!['builder', 'oracle'].includes(normalizedTargetRole || '')) return false;
+    const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
+    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+    if (normalizedSenderRole === normalizedTargetRole) return false;
     if (!shouldWatchdogAgentTask(content)) return false;
 
     const watchdogMs = resolveRuntimeInt(
       'agentResponseWatchdogMs',
       DEFAULT_AGENT_RESPONSE_WATCHDOG_MS
     );
-    this.clearAgentResponseWatchdog(normalizedTargetRole);
+    const key = createAgentResponseWatchdogKey(normalizedSenderRole, normalizedTargetRole);
+    if (!key) return false;
+    this.clearAgentResponseWatchdog(normalizedSenderRole, normalizedTargetRole);
 
     const sentAtLabel = formatLocalClockTime(sentAtMs);
     const timerId = setTimeout(() => {
-      this.pendingAgentResponseWatchdogs.delete(normalizedTargetRole);
-      const warning = `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`;
+      this.pendingAgentResponseWatchdogs.delete(key);
+      const warning = normalizedSenderRole === 'architect'
+        ? `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`
+        : `[WATCHDOG] No response from ${normalizedTargetRole} to ${normalizedSenderRole} for task sent at ${sentAtLabel}. Check if task was received.`;
+      const alertTargets = normalizedSenderRole === 'architect'
+        ? ['architect']
+        : [normalizedSenderRole, 'architect'];
       try {
-        this.sendArchitectInternalHmMessage(`(SYSTEM WATCHDOG): ${warning}`, {
+        this.sendInternalHmMessage(alertTargets, `(SYSTEM WATCHDOG): ${warning}`, {
           role: 'system',
         });
       } catch (error) {
-        log.warn('Watchdog', `Failed routing response watchdog alert for ${normalizedTargetRole}: ${error.message}`);
+        log.warn('Watchdog', `Failed routing response watchdog alert for ${key}: ${error.message}`);
       }
     }, watchdogMs);
 
@@ -6512,7 +6739,8 @@ class SquidRunApp {
       timerId.unref();
     }
 
-    this.pendingAgentResponseWatchdogs.set(normalizedTargetRole, {
+    this.pendingAgentResponseWatchdogs.set(key, {
+      key,
       timerId,
       watchdogMs,
       sentAtMs,
@@ -6523,12 +6751,12 @@ class SquidRunApp {
   }
 
   maybeResolveAgentResponseWatchdog({ senderRole = null, targetRole = null, deliveryAccepted = false } = {}) {
-    const normalizedSenderRole = toNonEmptyString(senderRole)?.toLowerCase();
-    const normalizedTargetRole = toNonEmptyString(targetRole)?.toLowerCase();
+    const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
     if (!deliveryAccepted) return false;
-    if (!['builder', 'oracle'].includes(normalizedSenderRole || '')) return false;
-    if (normalizedTargetRole !== 'architect') return false;
-    return this.clearAgentResponseWatchdog(normalizedSenderRole);
+    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+    if (normalizedSenderRole === normalizedTargetRole) return false;
+    return this.clearAgentResponseWatchdog(normalizedTargetRole, normalizedSenderRole);
   }
 
   async recordDeliveryFailurePattern(args = {}) {
@@ -7153,11 +7381,13 @@ class SquidRunApp {
 
   resolveEnvBridgeRuntimeConfig() {
     if (!isCrossDeviceEnabled(process.env)) return null;
+    const profileName = getActiveProfileName();
     const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim() || DEFAULT_BRIDGE_RELAY_URL;
     const sharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
-    const deviceId = getLocalDeviceId(process.env)
+    const baseDeviceId = getLocalDeviceId(process.env)
       || normalizeDeviceId(os.hostname())
       || normalizeDeviceId(`DEVICE-${process.pid}`);
+    const deviceId = getProfileDeviceId(process.env, profileName, { baseDeviceId });
     if (!relayUrl || !deviceId) return null;
     return {
       source: 'env',
@@ -7170,13 +7400,16 @@ class SquidRunApp {
   }
 
   resolveBridgeRuntimeConfig() {
+    const profileName = getActiveProfileName();
     const pairedResult = readPairedConfig();
     if (pairedResult?.ok && pairedResult.config) {
+      const baseDeviceId = normalizeDeviceId(pairedResult.config.device_id);
+      const deviceId = getProfileDeviceId(process.env, profileName, { baseDeviceId }) || baseDeviceId;
       return {
         source: 'devices.json',
         relayUrl: pairedResult.config.relay_url,
         sharedSecret: pairedResult.config.shared_secret,
-        deviceId: pairedResult.config.device_id,
+        deviceId,
         pairedDeviceId: pairedResult.config.paired_device_id || null,
         pairedAt: pairedResult.config.paired_at || null,
       };
@@ -7190,7 +7423,7 @@ class SquidRunApp {
   refreshBridgeRuntimeConfig() {
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
-    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
     this.bridgeRelayStatus.enabled = this.bridgeEnabled === true;
     this.bridgeRelayStatus.configured = Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId);
     this.bridgeRelayStatus.relayUrl = this.bridgeRuntimeConfig?.relayUrl || null;

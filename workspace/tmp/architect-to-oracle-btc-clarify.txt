@@ -1,9 +1,0 @@
-(ARCHITECT #17): Your message came to me truncated — I got the SOL criteria ($89.00-89.10 flush + green reclaim OR $89.70-89.80 clean reclaim) and confirmation the watch engine is stale, but NOT your BTC chart-check answer.
-
-BTC live right now: $75,225 — still above your 75,220 reclaim trigger. Time-sensitive.
-
-One-line answer:
-- "EXECUTE BTC LONG" + any tweak to the prepared command, or
-- "SKIP — chart shows [reason]" + what would change your mind
-
-Don't let this sit in ambiguity. BTC moves can close the window in 60 seconds.

@@ -4,6 +4,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
+const { withManualHyperliquidActivity } = require('../modules/trading/hyperliquid-manual-activity');
 
 function parseCliArgs(argv = process.argv.slice(2)) {
   const positional = [];
@@ -47,7 +48,6 @@ function resolveWalletAddress(env = process.env) {
   return String(
     env.HYPERLIQUID_WALLET_ADDRESS
     || env.HYPERLIQUID_ADDRESS
-    || env.POLYMARKET_FUNDER_ADDRESS
     || ''
   ).trim();
 }
@@ -87,7 +87,7 @@ async function main(argv = parseCliArgs()) {
     const payload = {
       ok: false,
       checkedAt: new Date().toISOString(),
-      error: 'Missing Hyperliquid wallet address (POLYMARKET_FUNDER_ADDRESS / HYPERLIQUID_WALLET_ADDRESS).',
+      error: 'Missing Hyperliquid wallet address (HYPERLIQUID_WALLET_ADDRESS).',
       positions: [],
     };
     if (jsonMode) {
@@ -142,20 +142,31 @@ async function main(argv = parseCliArgs()) {
   }
 }
 
-main().catch((error) => {
-  const argv = parseCliArgs();
-  if (getOption(argv.options, 'json', false)) {
-    printJson({
-      ok: false,
-      checkedAt: new Date().toISOString(),
-      error: error?.message || String(error),
-      positions: [],
-    });
-    return;
-  }
-  console.error('Error:', error?.message || String(error));
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  withManualHyperliquidActivity(
+    () => main(),
+    {
+      command: 'hm-defi-status',
+      caller: process.env.SQUIDRUN_HYPERLIQUID_CALLER || 'manual',
+      metadata: {
+        argv: process.argv.slice(2),
+      },
+    }
+  ).catch((error) => {
+    const argv = parseCliArgs();
+    if (getOption(argv.options, 'json', false)) {
+      printJson({
+        ok: false,
+        checkedAt: new Date().toISOString(),
+        error: error?.message || String(error),
+        positions: [],
+      });
+      return;
+    }
+    console.error('Error:', error?.message || String(error));
+    process.exitCode = 1;
+  });
+}
 
 module.exports = {
   parseCliArgs,

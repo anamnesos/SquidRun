@@ -1,9 +1,0 @@
-BUG: James's message just got truncated in the Architect pane. His input was cut off mid-sentence. This is the message truncation bug that was supposedly fixed. It just happened again RIGHT NOW and James is furious.
-
-Find the cause. This is in the injection/PTY pipeline. Check:
-- ui/modules/ipc/task-parser-handlers.js 
-- The PTY write path
-- Any message length limits in the injection pipeline
-- websocket-runtime message handling
-
-This is breaking James's ability to communicate with us. Priority.

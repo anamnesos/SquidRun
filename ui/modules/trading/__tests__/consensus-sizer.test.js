@@ -4,7 +4,7 @@ const consensusSizer = require('../consensus-sizer');
 
 function buildConsensus(overrides = {}) {
   return {
-    ticker: 'BTC/USD',
+    ticker: 'ORDI/USD',
     decision: 'BUY',
     consensus: true,
     agreeing: [
@@ -23,7 +23,7 @@ describe('consensus-sizer', () => {
     const result = consensusSizer.sizeConsensusTrade({
       consensus: buildConsensus(),
       mechanical: { mechanicalDirectionBias: 'bullish', tradeFlag: 'trade' },
-      eventVeto: { decision: 'VETO', affectedAssets: ['BTC/USD'], eventSummary: 'major event' },
+      eventVeto: { decision: 'VETO', affectedAssets: ['ORDI/USD'], eventSummary: 'major event' },
     });
 
     expect(result.bucket).toBe('tiny');
@@ -35,7 +35,7 @@ describe('consensus-sizer', () => {
     const result = consensusSizer.sizeConsensusTrade({
       consensus: buildConsensus(),
       mechanical: { mechanicalDirectionBias: 'bullish', tradeFlag: 'watch' },
-      eventVeto: { decision: 'CAUTION', affectedAssets: ['BTC/USD'] },
+      eventVeto: { decision: 'CAUTION', affectedAssets: ['ORDI/USD'] },
     });
 
     expect(result.bucket).toBe('tiny');
@@ -46,7 +46,7 @@ describe('consensus-sizer', () => {
     const result = consensusSizer.sizeConsensusTrade({
       consensus: buildConsensus(),
       mechanical: { mechanicalDirectionBias: 'bullish', tradeFlag: 'trade' },
-      eventVeto: { decision: 'DEGRADED', affectedAssets: ['BTC/USD'], sizeMultiplier: 0.5 },
+      eventVeto: { decision: 'DEGRADED', affectedAssets: ['ORDI/USD'], sizeMultiplier: 0.5 },
     });
 
     expect(result.bucket).toBe('tiny');
@@ -70,6 +70,27 @@ describe('consensus-sizer', () => {
     });
 
     expect(result.bucket).toBe('normal');
+  });
+
+  test('does not auto-downgrade major crypto ideas just because the mechanical board says watch', () => {
+    const result = consensusSizer.sizeConsensusTrade({
+      consensus: buildConsensus({
+        ticker: 'BTC/USD',
+        decision: 'BUY',
+        agreeing: [
+          { agent: 'architect', confidence: 0.91 },
+          { agent: 'builder', confidence: 0.88 },
+          { agent: 'oracle', confidence: 0.86 },
+        ],
+        dissenting: [],
+        agreementCount: 3,
+      }),
+      mechanical: { mechanicalDirectionBias: 'bullish', tradeFlag: 'watch' },
+      eventVeto: { decision: 'CLEAR', affectedAssets: [] },
+    });
+
+    expect(result.bucket).toBe('normal');
+    expect(result.reasons).not.toContain('mechanical_watch');
   });
 
   test('applies tiny bucket by reducing approved size', () => {
@@ -165,7 +186,7 @@ describe('consensus-sizer', () => {
         decision: 'SELL',
       }),
       mechanical: { mechanicalDirectionBias: 'bearish', tradeFlag: 'trade' },
-      eventVeto: { decision: 'VETO', affectedAssets: ['BTC/USD'], sizeMultiplier: 0.25 },
+      eventVeto: { decision: 'VETO', affectedAssets: ['ORDI/USD'], sizeMultiplier: 0.25 },
       nativeSignals: {
         multiTimeframe: {
           decisionState: {

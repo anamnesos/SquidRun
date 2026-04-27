@@ -5,6 +5,7 @@ const {
   classifyRegime,
   classifyCrisisType,
   computeRiskScore,
+  fetchLiveOilPrice,
   regimeConstraints,
   getFedEventState,
   normalizeGdeltArticles,
@@ -360,7 +361,7 @@ describe('getFedEventState', () => {
 describe('assessMacroRisk', () => {
   test('GREEN regime with calm indicators', async () => {
     mockFetch({ fearGreed: 60, vix: 15, oil: 70 });
-    const result = await assessMacroRisk();
+    const result = await assessMacroRisk({ now: '2026-04-14T18:00:00.000Z', skipCache: true });
 
     expect(result.regime).toBe('green');
     expect(result.strategyMode).toBe('normal');
@@ -524,5 +525,45 @@ describe('assessMacroRisk', () => {
     expect(result.indicators.oilPrice.stale).toBe(true);
     expect(result.indicators.oilPrice.staleReason).toBe('fred_oil_observation_stale');
     expect(result.reason).toContain('Oil data stale');
+  });
+
+  test('treats an active Yahoo session snapshot as fresh when Yahoo omits a current trade timestamp', async () => {
+    process.env.FRED_API_KEY = 'test-key';
+    global.fetch = jest.fn(async (url) => {
+      if (url.includes('query1.finance.yahoo.com') && url.includes('CL=F')) {
+        return {
+          ok: true,
+          text: async () => JSON.stringify({
+            chart: {
+              result: [{
+                meta: {
+                  regularMarketPrice: 82.59,
+                  regularMarketTime: toEpochSeconds('2026-04-17T20:59:59.000Z'),
+                  chartPreviousClose: 91.17,
+                  previousClose: 91.17,
+                  currentTradingPeriod: {
+                    regular: {
+                      start: toEpochSeconds('2026-04-19T04:00:00.000Z'),
+                      end: toEpochSeconds('2026-04-20T03:59:00.000Z'),
+                    },
+                  },
+                },
+                timestamp: [],
+                indicators: {
+                  quote: [{}],
+                },
+              }],
+            },
+          }),
+        };
+      }
+      return { ok: false, text: async () => '{}' };
+    });
+
+    const result = await fetchLiveOilPrice({ now: '2026-04-20T02:15:45.206Z' });
+
+    expect(result.source).toBe('yahoo_finance:CL=F:session_snapshot');
+    expect(result.observedAt).toBe('2026-04-20T02:15:45.206Z');
+    expect(result.stale).toBe(false);
   });
 });

@@ -49,10 +49,27 @@ function getTelegramConfig(env = process.env) {
       : []
   ));
 
+  // Profile-scoped routing: each SquidRun window sets SQUIDRUN_PROFILE
+  // ('eunbyeol' for the case-work window, anything else for main/trading).
+  // TELEGRAM_EUNBYEOL_CHAT_IDS declares which chats belong exclusively to
+  // the eunbyeol window — eunbyeol poller accepts ONLY those, main poller
+  // rejects ONLY those. Fail-safe: empty list preserves legacy behavior.
+  const profile = String(env.SQUIDRUN_PROFILE || '').trim().toLowerCase();
+  const eunbyeolRaw = typeof env.TELEGRAM_EUNBYEOL_CHAT_IDS === 'string'
+    ? env.TELEGRAM_EUNBYEOL_CHAT_IDS.trim()
+    : '';
+  const eunbyeolChatIds = Array.from(new Set(
+    eunbyeolRaw
+      ? eunbyeolRaw.split(',').map(s => Number.parseInt(s.trim(), 10)).filter(Number.isFinite)
+      : []
+  ));
+
   return {
     botToken,
     chatId,
     authorizedChatIds,
+    profile,
+    eunbyeolChatIds,
   };
 }
 
@@ -73,6 +90,7 @@ function requestTelegram(method, path) {
         method,
       },
       (response) => {
+        response.setEncoding('utf8');
         let responseBody = '';
         response.on('data', (chunk) => {
           responseBody += chunk;
@@ -132,6 +150,18 @@ function getAuthorizedChatId(message) {
 function isAuthorizedChat(message, currentConfig) {
   const chatId = getAuthorizedChatId(message);
   if (chatId === null) return false;
+
+  const eunbyeolIds = Array.isArray(currentConfig.eunbyeolChatIds) ? currentConfig.eunbyeolChatIds : [];
+  const profile = typeof currentConfig.profile === 'string' ? currentConfig.profile : '';
+
+  if (profile === 'eunbyeol') {
+    // Eunbyeol window: accept ONLY chats declared as eunbyeol-scoped.
+    return eunbyeolIds.includes(chatId);
+  }
+
+  // Main window (profile unset or anything else): accept the normal allowlist
+  // but REJECT any chat declared as eunbyeol-scoped so case-work does not leak in.
+  if (eunbyeolIds.includes(chatId)) return false;
   if (chatId === currentConfig.chatId) return true;
   if (Array.isArray(currentConfig.authorizedChatIds) && currentConfig.authorizedChatIds.includes(chatId)) return true;
   return false;
@@ -254,7 +284,7 @@ function selectInboundMedia(message) {
   }
 
   const document = message?.document && typeof message.document === 'object' ? message.document : null;
-  if (isImageDocument(document)) {
+  if (document) {
     const fileId = typeof document?.file_id === 'string' ? document.file_id.trim() : '';
     if (fileId) {
       return {
@@ -445,7 +475,7 @@ async function pollNow() {
       if (!isAuthorizedChat(message, config)) {
         log.warn(
           'Telegram',
-          `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
+          `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — profile=${config.profile || 'main'} config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} eunbyeolChatIds=${JSON.stringify(config.eunbyeolChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
         );
         continue;
       }

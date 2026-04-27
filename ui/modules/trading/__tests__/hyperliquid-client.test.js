@@ -11,6 +11,10 @@ jest.mock('@nktkas/hyperliquid', () => ({
 
 const hyperliquidClient = require('../hyperliquid-client');
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe('hyperliquid-client native wrappers', () => {
   let requestPoolPath;
 
@@ -20,15 +24,13 @@ describe('hyperliquid-client native wrappers', () => {
     requestPoolPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hl-pool-')), 'request-pool.json');
   });
 
-  test('prefers Hyperliquid wallet env vars over Polymarket funder address', () => {
+  test('prefers explicit Hyperliquid wallet env vars', () => {
     expect(hyperliquidClient.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_WALLET_ADDRESS: '0xhyper',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xhyper');
 
     expect(hyperliquidClient.resolveWalletAddress({
-      POLYMARKET_FUNDER_ADDRESS: '0xpoly',
       HYPERLIQUID_ADDRESS: '0xlegacy',
     })).toBe('0xlegacy');
   });
@@ -182,6 +184,51 @@ describe('hyperliquid-client native wrappers', () => {
     expect(infoClient.metaAndAssetCtxs).toHaveBeenCalledTimes(1);
   });
 
+  test('honors file-backed pending claims across fresh process state resets', async () => {
+    const payload = [
+      { universe: [{ name: 'BTC' }] },
+      [{ markPx: '67511', midPx: '67512', dayNtlVlm: '1200000', openInterest: '25000', prevDayPx: '67000' }],
+    ];
+    let resolveFirstRequest = null;
+    const infoClient = {
+      metaAndAssetCtxs: jest.fn().mockImplementation(() => new Promise((resolve) => {
+        resolveFirstRequest = () => resolve(payload);
+      })),
+    };
+
+    const poolOptions = {
+      infoClient,
+      requestPoolPath,
+      requestPoolTtlMs: 10_000,
+      requestPoolPendingTtlMs: 5_000,
+      requestPoolWaitPollMs: 25,
+    };
+
+    const firstPromise = hyperliquidClient.getMetaAndAssetCtxs(poolOptions);
+
+    let pendingClaimSeen = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (fs.existsSync(requestPoolPath)) {
+        const poolState = JSON.parse(fs.readFileSync(requestPoolPath, 'utf8'));
+        if (poolState?.['info:metaAndAssetCtxs']?.pendingUntilMs) {
+          pendingClaimSeen = true;
+          break;
+        }
+      }
+      await sleep(25);
+    }
+    expect(pendingClaimSeen).toBe(true);
+
+    hyperliquidClient.__resetRequestPoolState();
+
+    const secondPromise = hyperliquidClient.getMetaAndAssetCtxs(poolOptions);
+    resolveFirstRequest();
+
+    await expect(firstPromise).resolves.toEqual(payload);
+    await expect(secondPromise).resolves.toEqual(payload);
+    expect(infoClient.metaAndAssetCtxs).toHaveBeenCalledTimes(1);
+  });
+
   test('merges builder-dex positions into the open position list', async () => {
     const infoClient = {
       perpDexs: jest.fn().mockResolvedValue([
@@ -317,5 +364,108 @@ describe('hyperliquid-client native wrappers', () => {
         positions: 1,
       }),
     ]));
+  });
+
+  test('getUniverseMarketData exposes meta.universe position as assetIndex, independent of szDecimals', async () => {
+    const infoClient = {
+      allMids: jest.fn().mockResolvedValue({ BTC: '60000', ATOM: '5', SOL: '80' }),
+      metaAndAssetCtxs: jest.fn().mockResolvedValue([
+        {
+          universe: [
+            { name: 'BTC', szDecimals: 5 },
+            { name: 'ETH', szDecimals: 4 },
+            { name: 'ATOM', szDecimals: 2 },
+            { name: 'MATIC', szDecimals: 1 },
+            { name: 'AVAX', szDecimals: 2 },
+            { name: 'SOL', szDecimals: 2 },
+          ],
+        },
+        [
+          { markPx: '60000', midPx: '60000', funding: '0' },
+          { markPx: '3000', midPx: '3000', funding: '0' },
+          { markPx: '5', midPx: '5', funding: '0' },
+          { markPx: '0.6', midPx: '0.6', funding: '0' },
+          { markPx: '25', midPx: '25', funding: '0' },
+          { markPx: '80', midPx: '80', funding: '0' },
+        ],
+      ]),
+    };
+
+    const data = await hyperliquidClient.getUniverseMarketData({ infoClient });
+    const btc = data.find((row) => row.coin === 'BTC');
+    const atom = data.find((row) => row.coin === 'ATOM');
+    const sol = data.find((row) => row.coin === 'SOL');
+
+    expect(btc.assetIndex).toBe(0);
+    expect(atom.assetIndex).toBe(2);
+    expect(sol.assetIndex).toBe(5);
+    expect(sol.assetIndex).not.toBe(sol.sizeDecimals);
+    expect(sol.sizeDecimals).toBe(2);
+  });
+
+  test('rate-limit token bucket serializes a burst of concurrent callers', async () => {
+    const originalCapacity = process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY;
+    const originalRefill = process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC;
+    // Tight bucket so the test observes queueing in a handful of ms rather than real seconds.
+    process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY = '3';
+    process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC = '100';
+    jest.resetModules();
+    const client = require('../hyperliquid-client');
+    client.__resetRateLimitBucket();
+    try {
+      const burst = 10;
+      const acquired = [];
+      const results = await Promise.all(
+        Array.from({ length: burst }, (_, idx) =>
+          client
+            .acquireRateLimitToken({ rateLimitQueueTimeoutMs: 2000 })
+            .then(() => {
+              acquired.push(idx);
+              return idx;
+            })
+        )
+      );
+      expect(results).toHaveLength(burst);
+      expect(acquired).toHaveLength(burst);
+    } finally {
+      if (originalCapacity === undefined) delete process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY;
+      else process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY = originalCapacity;
+      if (originalRefill === undefined) delete process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC;
+      else process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC = originalRefill;
+      jest.resetModules();
+    }
+  });
+
+  test('rate-limit token bucket rejects on queue timeout', async () => {
+    const originalCapacity = process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY;
+    const originalRefill = process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC;
+    // Capacity 1, refill 1/sec — second acquire waits ~1s, so a 50ms timeout trips.
+    process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY = '1';
+    process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC = '1';
+    jest.resetModules();
+    const client = require('../hyperliquid-client');
+    client.__resetRateLimitBucket();
+    try {
+      await client.acquireRateLimitToken();
+      await expect(
+        client.acquireRateLimitToken({ rateLimitQueueTimeoutMs: 50 })
+      ).rejects.toMatchObject({ code: 'rate_limit_queue_timeout' });
+    } finally {
+      if (originalCapacity === undefined) delete process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY;
+      else process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_CAPACITY = originalCapacity;
+      if (originalRefill === undefined) delete process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC;
+      else process.env.SQUIDRUN_HYPERLIQUID_RATE_LIMIT_BUCKET_REFILL_PER_SEC = originalRefill;
+      jest.resetModules();
+    }
+  });
+
+  test('rate-limit token bucket respects bypassRateLimitBucket option', async () => {
+    const client = require('../hyperliquid-client');
+    client.__resetRateLimitBucket();
+    // Even if we drained all tokens, bypass still resolves immediately.
+    for (let i = 0; i < 200; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await client.acquireRateLimitToken({ bypassRateLimitBucket: true });
+    }
   });
 });

@@ -10,17 +10,7 @@ jest.mock('../ibkr-client', () => ({
   getNews: jest.fn().mockResolvedValue([{ id: 'ibkr-news' }]),
 }));
 
-jest.mock('../data-ingestion', () => ({
-  getAlpacaWatchlistSnapshots: jest.fn().mockResolvedValue(new Map([['AAPL', { symbol: 'AAPL' }]])),
-  getAlpacaLatestBars: jest.fn().mockResolvedValue(new Map([['AAPL', { symbol: 'AAPL' }]])),
-  getAlpacaHistoricalBars: jest.fn().mockResolvedValue(new Map([['AAPL', [{ symbol: 'AAPL' }]]])),
-  getAlpacaNews: jest.fn().mockResolvedValue([{ id: 'alpaca-news' }]),
-}));
-
 jest.mock('../executor', () => ({
-  getAlpacaAccountSnapshot: jest.fn().mockResolvedValue({ id: 'alpaca-account' }),
-  getAlpacaOpenPositions: jest.fn().mockResolvedValue([{ ticker: 'AAPL', broker: 'alpaca' }]),
-  submitAlpacaOrder: jest.fn().mockResolvedValue({ ok: true, order: { id: 'alpaca-1' } }),
   submitHyperliquidOrder: jest.fn().mockResolvedValue({ ok: true, status: 'accepted', order: { id: 'hl-1' } }),
 }));
 
@@ -32,7 +22,6 @@ jest.mock('../hyperliquid-client', () => ({
   getHistoricalBars: jest.fn().mockResolvedValue(new Map([['BTC/USD', [{ symbol: 'BTC/USD' }]]])),
 }));
 
-const dataIngestion = require('../data-ingestion');
 const executor = require('../executor');
 const hyperliquidClient = require('../hyperliquid-client');
 const ibkrClient = require('../ibkr-client');
@@ -43,21 +32,21 @@ describe('broker-adapter', () => {
     jest.clearAllMocks();
   });
 
-  test('defaults to the Alpaca broker when broker type is unset', async () => {
+  test('defaults to the IBKR broker when broker type is unset', async () => {
     const broker = createBroker();
 
-    expect(broker.type).toBe('alpaca');
-    await broker.getSnapshots({ symbols: ['AAPL'] });
-    await broker.getNews({ symbols: ['AAPL'] });
+    expect(broker.type).toBe('ibkr');
+    await broker.getSnapshots({ symbols: ['5801'] });
+    await broker.getNews({ symbols: ['5801'] });
     await broker.getAccount();
     await broker.getPositions();
-    await broker.submitOrder({ ticker: 'AAPL', direction: 'BUY', shares: 1 });
+    await broker.submitOrder({ ticker: '5801', direction: 'BUY', shares: 100 });
 
-    expect(dataIngestion.getAlpacaWatchlistSnapshots).toHaveBeenCalled();
-    expect(dataIngestion.getAlpacaNews).toHaveBeenCalled();
-    expect(executor.getAlpacaAccountSnapshot).toHaveBeenCalled();
-    expect(executor.getAlpacaOpenPositions).toHaveBeenCalled();
-    expect(executor.submitAlpacaOrder).toHaveBeenCalled();
+    expect(ibkrClient.getSnapshots).toHaveBeenCalled();
+    expect(ibkrClient.getNews).toHaveBeenCalled();
+    expect(ibkrClient.getAccount).toHaveBeenCalled();
+    expect(ibkrClient.getPositions).toHaveBeenCalled();
+    expect(ibkrClient.submitOrder).toHaveBeenCalled();
   });
 
   test('routes IBKR operations to the IBKR client', async () => {

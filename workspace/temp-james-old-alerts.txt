@@ -1,5 +1,0 @@
-Got it — those are old stale alerts replaying, not live trades. Nobody is touching your account but you. The supervisor was killed earlier.
-
-The position monitor cron is probably just re-sending old cached alerts. I'll look into stopping the stale notifications so you only get real-time updates from me.
-
-Your account is safe — only your manual trades are running. $999, AVAX short -$21.

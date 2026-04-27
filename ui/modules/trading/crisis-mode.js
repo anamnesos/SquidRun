@@ -48,8 +48,6 @@ const SUPPORTED_SIGNAL_DIRECTIONS = Object.freeze([
   'SHORT',
   'COVER',
   'BUY_PUT',
-  'BUY_YES',
-  'BUY_NO',
 ]);
 
 const STRATEGY_MODES = Object.freeze({
@@ -82,9 +80,6 @@ function toNumber(value, fallback = 0) {
 function normalizeSignalDirection(value, options = {}) {
   const normalized = toText(value, options.fallback || 'HOLD').toUpperCase();
   if (SUPPORTED_SIGNAL_DIRECTIONS.includes(normalized)) {
-    return normalized;
-  }
-  if (options.allowPolymarket === true && (normalized === 'BUY_YES' || normalized === 'BUY_NO')) {
     return normalized;
   }
   if (options.strict === true) {
@@ -167,7 +162,7 @@ function buildBrokerCapabilityPayload({ account = null, assets = new Map(), phas
   }
 
   return {
-    broker: 'alpaca',
+    broker: 'ibkr',
     phase,
     account: {
       shortingEnabled: Boolean(account?.shorting_enabled || account?.shortingEnabled),
@@ -215,7 +210,7 @@ function validateCrisisSignalCapability(signal = {}, brokerCapabilities = null, 
   const capability = brokerCapabilities?.instruments?.[ticker] || {};
   if (direction === 'BUY') {
     if (capability.tradable !== true) {
-      return { ok: false, reason: `${ticker} is not tradable on Alpaca` };
+      return { ok: false, reason: `${ticker} is not tradable on IBKR` };
     }
     if (capability.phase1Executable !== true) {
       return { ok: false, reason: `${ticker} is not Phase 1 executable` };

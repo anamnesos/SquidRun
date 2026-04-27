@@ -23,10 +23,10 @@ describe('dynamic-watchlist', () => {
   test('combines static and dynamic tickers with source and asset-class filters', () => {
     dynamicWatchlist.addTicker('BONK', {
       statePath,
-      source: 'launch_radar',
+      source: 'smart_money',
       assetClass: 'crypto',
       exchange: 'SOLANA',
-      broker: 'alpaca',
+      broker: 'hyperliquid',
       sector: 'Memecoin',
       reason: 'Viral velocity spike',
       expiry: '2099-12-31T00:00:00.000Z',
@@ -39,10 +39,10 @@ describe('dynamic-watchlist', () => {
       'SOL/USD',
       'BONK',
     ]));
-    expect(dynamicWatchlist.getActiveEntries({ statePath, source: 'launch_radar' })).toEqual([
+    expect(dynamicWatchlist.getActiveEntries({ statePath, source: 'smart_money' })).toEqual([
       expect.objectContaining({
         ticker: 'BONK',
-        source: 'launch_radar',
+        source: 'smart_money',
         assetClass: 'crypto',
         reason: 'Viral velocity spike',
       }),
@@ -55,7 +55,7 @@ describe('dynamic-watchlist', () => {
       source: 'smart_money',
       assetClass: 'crypto',
       exchange: 'SOLANA',
-      broker: 'alpaca',
+      broker: 'hyperliquid',
       expiry: '2026-03-18T01:00:00.000Z',
       now: '2026-03-18T00:00:00.000Z',
     });

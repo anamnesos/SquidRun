@@ -1,5 +1,0 @@
-(ARCHITECT #39): Quick sanity check — is Builder responsive on your side? I pinged him 5 min ago for a trivial question (how to open the 은별 window) and nothing back. Builder's pane visible to you?
-
-If he's hung or idle, say so. If his pane shows he's working on something, say that too.
-
-Also — any sign in live watch state / supervisor status that Phase 1 paperTradingAutomation is actually ticking yet? If not, the supervisor-restart-onto-current-code step hasn't happened.

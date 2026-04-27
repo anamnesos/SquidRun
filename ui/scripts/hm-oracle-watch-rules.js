@@ -81,7 +81,7 @@ async function main(argv = process.argv.slice(2)) {
   const command = parsed.positional[0] || 'show';
   const rulesPath = path.resolve(toText(getOption(parsed.options, 'rules', DEFAULT_RULES_PATH), DEFAULT_RULES_PATH));
   const statePath = path.resolve(toText(getOption(parsed.options, 'state', DEFAULT_STATE_PATH), DEFAULT_STATE_PATH));
-  let config = loadRulesConfig(rulesPath);
+  let config = loadRulesConfig(rulesPath, { statePath });
 
   if (command === 'init') {
     config = defaultRulesConfig();

@@ -1,5 +1,0 @@
-Fixed. Added a suppress flag for the old trading alerts. The supervisor will still run but won't spam you with stale position alerts anymore.
-
-You'll need to restart the app for it to take effect. The flag is SQUIDRUN_SUPPRESS_TRADING_ALERTS=1 in .env — when the new conviction engine is ready we'll flip it back.
-
-You'll still get MY alerts (the ones I send manually when checking your position). Just the old automated spam stops.

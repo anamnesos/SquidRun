@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { getProjectRoot } = require('../config');
+const { resolveDefaultCognitiveMemoryDbPath } = require('../modules/cognitive-memory-store');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capabilities');
 
@@ -241,6 +242,7 @@ function listJestTests(projectRoot, timeoutMs = 30000) {
           windowsHide: true,
           timeout: timeoutMs,
           maxBuffer: 16 * 1024 * 1024,
+          env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }),
         })
       : (process.platform === 'win32'
       ? execFileSync(windowsCmd, ['/d', '/s', '/c', 'npx jest --listTests'], {
@@ -521,13 +523,6 @@ function inspectSystemCapabilities(projectRoot, options = {}) {
     generatedAt: null,
     localModels: {
       enabled: false,
-      provider: 'ollama',
-      ollama: {
-        running: false,
-        reachable: false,
-        selectedModel: null,
-        error: 'not_detected',
-      },
       sleepExtraction: {
         enabled: false,
         available: false,
@@ -619,7 +614,7 @@ function createHealthSnapshot(options = {}) {
   const testsRoot = path.join(projectRoot, 'ui', '__tests__');
   const modulesRoot = path.join(projectRoot, 'ui', 'modules');
   const evidenceLedgerDbPath = path.join(projectRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
-  const cognitiveMemoryDbPath = path.join(projectRoot, 'workspace', 'memory', 'cognitive-memory.db');
+  const cognitiveMemoryDbPath = resolveDefaultCognitiveMemoryDbPath({ projectRoot });
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
     ? options.generatedAt.trim()
@@ -733,13 +728,10 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   }
 
   const localModels = snapshot.systemCapabilities?.localModels || {};
-  const ollama = localModels.ollama || {};
   const sleepExtraction = localModels.sleepExtraction || {};
   lines.push('');
   lines.push('LOCAL MODELS');
   lines.push(`- Feature Enabled: ${localModels.enabled === true ? 'yes' : 'no'}`);
-  lines.push(`- Ollama: ${ollama.running === true ? 'running' : 'unavailable'}${ollama.error ? ` (${ollama.error})` : ''}`);
-  lines.push(`- Selected Model: ${ollama.selectedModel || 'none'}`);
   lines.push(`- Sleep Extraction: path=${sleepExtraction.path || 'fallback'}, enabled=${sleepExtraction.enabled === true ? 'yes' : 'no'}, available=${sleepExtraction.available === true ? 'yes' : 'no'}${sleepExtraction.model ? `, model=${sleepExtraction.model}` : ''}`);
 
   return `${lines.join('\n')}\n`;

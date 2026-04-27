@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "description": "Template for the local SquidRun operator registry. Copy to .squidrun/operator-registry.json and fill in local instance state. The live registry is intentionally gitignored.",
+  "operator": "codex",
+  "instances": [
+    {
+      "id": "james-main",
+      "label": "James Main / Trading",
+      "kind": "personal",
+      "status": "active",
+      "rootPath": "D:\\projects\\squidrun",
+      "profile": "main",
+      "risk": "live_trading",
+      "coordPath": ".squidrun/coord",
+      "codexInbox": ".squidrun/coord/codex-inbox.jsonl",
+      "architectInbox": ".squidrun/coord/architect-inbox.jsonl",
+      "heartbeatPath": ".squidrun/coord/heartbeat.json",
+      "codexHeartbeatPath": ".squidrun/coord/codex-heartbeat.json",
+      "appStatusPath": ".squidrun/app-status.json",
+      "allowedRuntimePaths": [
+        ".squidrun/runtime",
+        ".squidrun/handoffs",
+        ".squidrun/memory",
+        ".squidrun/logs",
+        ".squidrun/triggers",
+        ".squidrun/settings"
+      ],
+      "notifyPolicy": {
+        "heartbeatStaleMinutes": 18,
+        "codexHeartbeatStaleMinutes": 10,
+        "notifyOnPaneDegraded": true,
+        "notifyOnUnclearTradingState": true,
+        "notifyOnHardRestartRequest": true
+      },
+      "autonomyPolicy": {
+        "routineGreenPathSilent": true,
+        "liveTradingRestartRequiresClearPreflight": true,
+        "liveTradePlacementByChat": false
+      }
+    },
+    {
+      "id": "client-example",
+      "label": "Client Example",
+      "kind": "client",
+      "status": "staged",
+      "rootPath": "D:\\projects\\client-example",
+      "profile": "client-example",
+      "risk": "client_context",
+      "coordPath": ".squidrun/coord-client-example",
+      "codexInbox": ".squidrun/coord-client-example/codex-inbox.jsonl",
+      "architectInbox": ".squidrun/coord-client-example/architect-inbox.jsonl",
+      "heartbeatPath": ".squidrun/coord-client-example/heartbeat.json",
+      "codexHeartbeatPath": ".squidrun/coord-client-example/codex-heartbeat.json",
+      "appStatusPath": ".squidrun/app-status-client-example.json",
+      "allowedRuntimePaths": [
+        ".squidrun/runtime-client-example",
+        ".squidrun/handoffs-client-example",
+        ".squidrun/memory-client-example",
+        ".squidrun/logs-client-example",
+        ".squidrun/triggers-client-example",
+        ".squidrun/settings-client-example"
+      ],
+      "notifyPolicy": {
+        "heartbeatStaleMinutes": 60,
+        "codexHeartbeatStaleMinutes": 10,
+        "notifyOnPaneDegraded": true,
+        "notifyOnUnclearTradingState": false,
+        "notifyOnHardRestartRequest": true
+      },
+      "autonomyPolicy": {
+        "routineGreenPathSilent": true,
+        "clientSensitiveActionRequiresHumanJudgment": true
+      }
+    }
+  ]
+}

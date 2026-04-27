@@ -262,7 +262,7 @@ async function fetchReplayDataset(options = {}) {
   const startMs = start.getTime();
   const endMs = end.getTime();
   const symbols = resolveSymbols(options.symbols);
-  const client = hyperliquidClient.createInfoClient(options);
+  const client = await hyperliquidClient.createInfoClient(options);
   const strategyMode = resolveReplayStrategyMode(options);
   const datasets = [];
   for (const ticker of symbols) {

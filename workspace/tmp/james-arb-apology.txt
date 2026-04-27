@@ -1,7 +1,0 @@
-Got it. That was your trade and we killed it by accident.
-
-What happened: Oracle ran `hm-defi-close.js --help` to check the syntax. Turns out --help still runs the close path. That's a real bug — Builder's fixing it right now. Your ARB long got flattened at mark ~$0.1291 (entry was $0.12923, so small realized loss, maybe $5-6).
-
-Do you want us to put it back on? If yes, tell me size and stop and I'll have Oracle call whether the entry still looks right at current price. If no, we sit flat until a real setup.
-
-Sorry — we broke your trade.

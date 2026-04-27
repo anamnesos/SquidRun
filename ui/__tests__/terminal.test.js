@@ -59,7 +59,7 @@ const mockContractPromotion = {
 jest.mock('../modules/contract-promotion', () => mockContractPromotion);
 
 const mockStartupAiBriefing = {
-  readStartupBriefing: jest.fn(() => ''),
+  readStartupBriefingForInjection: jest.fn(() => ''),
 };
 jest.mock('../modules/startup-ai-briefing', () => mockStartupAiBriefing);
 
@@ -73,6 +73,7 @@ const mockSquidRun = {
     create: jest.fn().mockResolvedValue(),
     write: jest.fn().mockResolvedValue(),
     clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
+    clipboardPasteText: jest.fn().mockResolvedValue({ success: true, method: 'insertText', insertedLength: 0 }),
     kill: jest.fn().mockResolvedValue(),
     resize: jest.fn().mockResolvedValue(),
     onData: jest.fn(),
@@ -402,10 +403,11 @@ describe('terminal.js module', () => {
       });
 
       const caps = terminal.getPaneInjectionCapabilities('2');
+      const isDarwin = process.platform === 'darwin';
       expect(caps.mode).toBe('pty');
-      expect(caps.modeLabel).toBe('codex-pty');
+      expect(caps.modeLabel).toBe(isDarwin ? 'codex-pty' : 'codex-trusted');
       expect(caps.verifySubmitAccepted).toBe(false);
-      expect(caps.enterMethod).toBe('pty');
+      expect(caps.enterMethod).toBe(isDarwin ? 'pty' : 'trusted');
     });
 
     test('returns safe generic defaults for unknown runtimes', () => {
@@ -551,9 +553,11 @@ describe('terminal.js module', () => {
 
   describe('startup health briefing', () => {
     test('reads startup ai briefing when present', () => {
-      mockStartupAiBriefing.readStartupBriefing.mockReturnValueOnce('# AI Startup Briefing\n\n- James cares about shipping automation safely.');
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('STALE SNAPSHOT generated 16 minutes ago, account values may have moved.\n\n# AI Startup Briefing\n\n- James cares about shipping automation safely.');
       const briefing = terminal._internals.fetchStartupAiBriefing();
 
+      expect(mockStartupAiBriefing.readStartupBriefingForInjection).toHaveBeenCalledTimes(1);
+      expect(briefing).toContain('STALE SNAPSHOT generated 16 minutes ago');
       expect(briefing).toContain('AI Startup Briefing');
       expect(briefing).not.toContain('[SQUIDRUN RECALL START]');
     });
@@ -577,7 +581,7 @@ describe('terminal.js module', () => {
     });
 
     test('builds startup identity without recall blocks', async () => {
-      mockStartupAiBriefing.readStartupBriefing.mockReturnValueOnce('# AI Startup Briefing\n\n- Current priority: supervisor stability.');
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('# AI Startup Briefing\n\n- Current priority: supervisor stability.');
       const existsSpy = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
 
       const message = await terminal._internals.buildStartupIdentityMessage('2');
@@ -642,6 +646,22 @@ describe('terminal.js module', () => {
       expect(terminal.messageQueue['1']).toBeDefined();
       expect(terminal.messageQueue['1'][0].message).toBe('James direct prompt');
       expect(terminal.messageQueue['1'][0].message).not.toContain('[SQUIDRUN RECALL START]');
+
+      jest.clearAllTimers();
+      terminal.setInjectionInFlight(false);
+    });
+
+    test('marks long user broadcasts for clipboard-paste injection', async () => {
+      terminal.setInjectionInFlight(true);
+      const longMessage = 'L'.repeat(1500);
+
+      terminal.broadcast(longMessage);
+      await Promise.resolve();
+
+      expect(terminal.messageQueue['1']).toBeDefined();
+      expect(terminal.messageQueue['1'][0].message).toBe(longMessage);
+      expect(terminal.messageQueue['1'][0].preferClipboardPasteForLongMessage).toBe(true);
+      expect(terminal.messageQueue['1'][0].clipboardPasteThresholdBytes).toBe(1024);
 
       jest.clearAllTimers();
       terminal.setInjectionInFlight(false);

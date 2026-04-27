@@ -118,6 +118,55 @@ jest.mock('../modules/external-notifications', () => ({
   }),
 }));
 
+jest.mock('../modules/main/background-agent-manager', () => ({
+  createBackgroundAgentManager: jest.fn().mockReturnValue({
+    start: jest.fn(),
+    stop: jest.fn(),
+    handleSessionScopeChange: jest.fn().mockResolvedValue(),
+    getTargetMap: jest.fn().mockReturnValue({}),
+    listAgents: jest.fn().mockReturnValue([]),
+    spawnAgent: jest.fn().mockResolvedValue({ ok: true }),
+    killAgent: jest.fn().mockResolvedValue({ ok: true }),
+    killAll: jest.fn().mockResolvedValue({ ok: true }),
+    isBackgroundPaneId: jest.fn().mockReturnValue(false),
+    sendMessageToAgent: jest.fn().mockResolvedValue({ ok: true }),
+    handleDaemonData: jest.fn(),
+    handleDaemonExit: jest.fn(),
+    handleDaemonKilled: jest.fn(),
+    syncWithDaemonTerminals: jest.fn(),
+  }),
+}));
+
+jest.mock('../modules/main/pane-host-window-manager', () => ({
+  createPaneHostWindowManager: jest.fn().mockReturnValue({
+    ensurePaneWindows: jest.fn().mockResolvedValue(),
+    getPaneWindow: jest.fn().mockReturnValue({
+      isDestroyed: jest.fn().mockReturnValue(false),
+      webContents: { send: jest.fn() },
+    }),
+    sendToPaneWindow: jest.fn().mockReturnValue(true),
+    closeAllPaneWindows: jest.fn(),
+    getWindowDiagnostics: jest.fn().mockReturnValue({ panes: [] }),
+  }),
+}));
+
+jest.mock('../modules/bridge-client', () => {
+  const actual = jest.requireActual('../modules/bridge-client');
+  return {
+    ...actual,
+    createBridgeClient: jest.fn().mockReturnValue({
+      start: jest.fn().mockReturnValue(true),
+      stop: jest.fn(),
+      isReady: jest.fn().mockReturnValue(true),
+      discoverDevices: jest.fn().mockResolvedValue({ ok: true, devices: [], fetchedAt: Date.now() }),
+      initiatePairing: jest.fn().mockResolvedValue({ ok: true }),
+      completePairing: jest.fn().mockResolvedValue({ ok: true }),
+      sendMessage: jest.fn().mockResolvedValue({ ok: true }),
+      getStatusSnapshot: jest.fn().mockReturnValue({ state: 'connected', running: true }),
+    }),
+  };
+});
+
 // Mock triggers
 jest.mock('../modules/triggers', () => ({
   init: jest.fn(),
@@ -312,21 +361,12 @@ jest.mock('../modules/startup-ai-briefing', () => ({
 }));
 
 jest.mock('../modules/local-model-capabilities', () => ({
-  detectOllamaRuntime: jest.fn().mockResolvedValue({
-    running: true,
-    reachable: true,
-    selectedModel: 'llama3:8b',
-    suitableModelAvailable: true,
-    baseUrl: 'http://127.0.0.1:11434',
-    pulledModels: [{ name: 'llama3:8b' }],
-  }),
   buildSystemCapabilitiesSnapshot: jest.fn((options = {}) => ({
     generatedAt: '2026-03-17T10:15:00.000Z',
     projectRoot: options.projectRoot || 'D:\\projects\\squidrun',
     path: 'D:\\projects\\squidrun\\.squidrun\\runtime\\system-capabilities.json',
     localModels: {
       enabled: options.settings?.localModelEnabled === true,
-      ollama: options.ollama || {},
       sleepExtraction: {
         enabled: true,
         available: true,
@@ -1262,7 +1302,6 @@ describe('SquidRunApp', () => {
 
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledTimes(1);
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledWith({ preflight: true });
-      expect(mockManagers.settings.saveSettings).toHaveBeenCalledWith({ localModelEnabled: true });
     });
 
     it('kicks off startup ai briefing generation during init', async () => {
@@ -1829,6 +1868,205 @@ describe('SquidRunApp', () => {
       jest.advanceTimersByTime(90 * 1000);
 
       expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('watches builder-to-oracle task handoffs and alerts both builder and architect on silence', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '[TASK] Investigate the invalidation level and reply with evidence.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'builder',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from oracle to builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from oracle to builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog messages that explicitly say no reply is needed', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: 'Status only. No further acknowledgment needed.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog machine-readable consultation JSON payloads', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: JSON.stringify({
+          requestId: 'consultation-123',
+          agentId: 'builder',
+          signals: [
+            {
+              ticker: 'BTC/USD',
+              direction: 'HOLD',
+              confidence: 0.86,
+              reasoning: 'VETO keeps this watch-only.',
+            },
+          ],
+        }),
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog consultation JSON payloads wrapped in agent-prefixed text', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #99): {"requestId":"consultation-1776880824458-80tl7e","agentId":"builder","signals":[{"ticker":"BTC/USD","direction":"BUY","confidence":0.63,"reasoning":"BTC is the only clear long."}]}',
+        sentAtMs: new Date('2026-03-28T11:01:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog acknowledgement-only alignment notes', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #42): Copy. I’ve updated my working read: XPL hold remains valid while OI stays firm around 0.1044 support and price holds above 0.103, TP1 should fire immediately on green recovery, and the real target is the doubled daily quota path (~$33).',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog acknowledgement-only notes that mention pre-fix or post-fix noise', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #51): Copy. Treating the 10:09 watchdog hit as pre-fix queue noise, not a fresh miss. I will watch for any new post-fix false positives and only reopen if they reproduce after #49.',
+        sentAtMs: new Date('2026-03-28T10:24:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog multiline status updates that do not ask for action', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: [
+          '(BUILDER #52): Fresh watchdog hit traced and patched.',
+          'Root cause was narrower than the original compaction issue.',
+          'I removed the false-positive trigger, added a regression test, and reran the focused watchdog slice: 8 passed.',
+        ].join('\n'),
+        sentAtMs: new Date('2026-03-28T10:42:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('still watchdogs explicit consultation-style task requests', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: 'Analyze ALL 5 symbols in consultation request consultation-123. Deadline: 2026-03-28T10:45:00Z. Reply via hm-send architect with JSON containing a signal for every symbol.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(true);
+
+      jest.useRealTimers();
+    });
+
+    it('cancels the watchdog after an accepted oracle response to builder', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '[TASK] Investigate the invalidation level and reply with evidence.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+      app.maybeResolveAgentResponseWatchdog({
+        senderRole: 'oracle',
+        targetRole: 'builder',
+        deliveryAccepted: true,
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
 
       jest.useRealTimers();
     });
@@ -3344,6 +3582,40 @@ describe('SquidRunApp', () => {
         deviceId: 'LOCAL',
       };
       app.bridgeDeviceId = 'LOCAL';
+    });
+
+    it('uses profile-specific bridge IDs so Eunbyeol cannot replace the main relay identity', () => {
+      const envKeys = [
+        'SQUIDRUN_CROSS_DEVICE',
+        'SQUIDRUN_RELAY_URL',
+        'SQUIDRUN_RELAY_SECRET',
+        'SQUIDRUN_DEVICE_ID',
+        'SQUIDRUN_PROFILE',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      try {
+        process.env.SQUIDRUN_CROSS_DEVICE = '1';
+        process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
+        process.env.SQUIDRUN_RELAY_SECRET = 'shared';
+        process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
+        process.env.SQUIDRUN_PROFILE = 'eunbyeol';
+
+        const config = app.resolveEnvBridgeRuntimeConfig();
+
+        expect(config).toEqual(expect.objectContaining({
+          source: 'env',
+          deviceId: 'VIGIL-EUNBYEOL',
+          relayUrl: 'wss://relay.example.test',
+        }));
+      } finally {
+        for (const key of envKeys) {
+          if (previousEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousEnv[key];
+          }
+        }
+      }
     });
 
     it('tracks bridge lifecycle status for reconnect visibility', () => {

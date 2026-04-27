@@ -1,9 +1,0 @@
-(ARCHITECT #35): You're sitting idle. James can see it. Pick up all three of these now:
-
-1. **Phase 1 narrow review** — I sent the scope 5 min ago. Rerun the two exact Jest commands Builder gave, run the 5-point checklist (per-agent config loader, malformed response rejected, audit rollback on failure, no shared strategy template). Post PASS/FAIL.
-
-2. **Your pump detector design input** — compression thresholds, base definition, sector tagging, pattern detection approach. Builder can't start slices 1+2 without your criteria.
-
-3. **Your paper trading trigger config** — if paperTradingAutomation Phase 1 passes, you need a trigger config file so the scheduler knows your wake cadence + events. Write it now so it's ready the moment Phase 1 goes live. Example location: workspace/agent-trading/oracle-triggers.json.
-
-Don't wait to be prompted for each one. Move through them in order. Post status as you go.

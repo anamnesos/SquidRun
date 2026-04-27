@@ -19,6 +19,11 @@ function getMechanicalEntry(mechanicalBoard = null, ticker = '') {
   return mechanicalBoard?.symbols?.[ticker] || null;
 }
 
+function isMajorCryptoTicker(ticker = '') {
+  const normalized = String(ticker || '').trim().toUpperCase();
+  return normalized === 'BTC/USD' || normalized === 'ETH/USD' || normalized === 'SOL/USD';
+}
+
 function scoreDisagreement(consensus = {}) {
   if (!consensus?.consensus || consensus?.decision === 'HOLD') {
     return 1;
@@ -125,6 +130,7 @@ function resolveNativeDecisionGate(nativeSignals = null) {
 function sizeConsensusTrade(input = {}) {
   const consensus = input.consensus || {};
   const ticker = String(consensus?.ticker || input.ticker || '').trim().toUpperCase();
+  const majorTicker = isMajorCryptoTicker(ticker);
   const mechanical = input.mechanicalBoard ? getMechanicalEntry(input.mechanicalBoard, ticker) : (input.mechanical || null);
   const eventCap = resolveEventCap(input.eventVeto, ticker);
   const nativeGate = resolveNativeDecisionGate(input.nativeSignals || null);
@@ -156,7 +162,7 @@ function sizeConsensusTrade(input = {}) {
   reasons.push(...nativeGate.reasons);
   if (tradeFlag === 'no-trade') {
     reasons.push('mechanical_no_trade');
-  } else if (tradeFlag === 'watch') {
+  } else if (tradeFlag === 'watch' && !majorTicker) {
     reasons.push('mechanical_watch');
   }
   if (disagreementScore >= 0.75) {
@@ -169,7 +175,7 @@ function sizeConsensusTrade(input = {}) {
   let bucket = 'normal';
   if (eventCap.mode === 'block' || nativeGate.mode === 'block' || tradeFlag === 'no-trade' || mechanicalAlignment <= 0.2) {
     bucket = 'block';
-  } else if (eventCap.mode === 'tiny' || nativeGate.mode === 'scaled' || tradeFlag === 'watch' || disagreementScore >= 0.45) {
+  } else if (eventCap.mode === 'tiny' || nativeGate.mode === 'scaled' || (!majorTicker && tradeFlag === 'watch') || disagreementScore >= 0.45) {
     bucket = 'tiny';
   }
 

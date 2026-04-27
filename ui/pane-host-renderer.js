@@ -21,6 +21,16 @@ function readPositiveIntFromQuery(params, key, fallback) {
   }
 }
 
+function readNonNegativeIntFromQuery(params, key, fallback) {
+  try {
+    const raw = params.get(key);
+    const numeric = Number.parseInt(String(raw || ''), 10);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function detectDarwin() {
   const platform = String(
     navigator.userAgentData?.platform
@@ -145,6 +155,82 @@ function resolvePostEnterDeliveryResult({ outputObserved = false, enterSucceeded
   };
 }
 
+// SYSTEM INVARIANT: broker payload bytes are DATA, never terminal-control input.
+// Do not reintroduce a homeResetBeforeWrite parameter or any path that prepends
+// ESC sequences (\x1b[H, \x1b[J, etc.) to inject payloads. Cursor-home before a
+// long payload moves the cursor to the top of Claude CLI's input viewport so the
+// wrapped payload overwrites its own head — silently dropping bytes the model
+// never sees. See workspace/knowledge/workflows.md "Inject Path Invariant" and
+// the regression history in commits 6ea6c58, d0f2183, 702a0e9.
+function buildPtyWriteDispatchPlan({
+  text = '',
+  payloadBytes = null,
+  hmSendTrace = false,
+  ipcReassembled = false,
+  hasChunkedWriter = false,
+  chunkThresholdBytes = 1024,
+  chunkSizeBytes = 4096,
+  hmSendChunkThresholdBytes = 256,
+  hmSendChunkYieldEveryChunks = 0,
+} = {}) {
+  const normalizedText = typeof text === 'string' ? text : String(text || '');
+  const normalizedPayloadBytes = Number.isFinite(payloadBytes)
+    ? payloadBytes
+    : getUtf8ByteLength(normalizedText);
+  const normalizedChunkThresholdBytes = Number.isFinite(chunkThresholdBytes) && chunkThresholdBytes > 0
+    ? chunkThresholdBytes
+    : 1024;
+  const normalizedChunkSizeBytes = Number.isFinite(chunkSizeBytes) && chunkSizeBytes > 0
+    ? chunkSizeBytes
+    : 4096;
+  const normalizedHmSendChunkThresholdBytes = Number.isFinite(hmSendChunkThresholdBytes) && hmSendChunkThresholdBytes > 0
+    ? hmSendChunkThresholdBytes
+    : 256;
+  const normalizedHmSendChunkYieldEveryChunks = Number.isFinite(hmSendChunkYieldEveryChunks)
+    && hmSendChunkYieldEveryChunks >= 0
+    ? hmSendChunkYieldEveryChunks
+    : 0;
+
+  const forceChunkedWrite = Boolean(hmSendTrace || ipcReassembled);
+  const forceChunkForHmSend = Boolean(hmSendTrace && normalizedPayloadBytes >= normalizedHmSendChunkThresholdBytes);
+  const shouldChunkWrite = Boolean(
+    hasChunkedWriter
+    && (
+      forceChunkedWrite
+      || normalizedPayloadBytes >= normalizedChunkThresholdBytes
+      || forceChunkForHmSend
+    )
+  );
+
+  if (!shouldChunkWrite) {
+    return {
+      method: 'direct',
+      forceChunkedWrite,
+      forceChunkForHmSend,
+      writeText: normalizedText,
+      payloadBytes: normalizedPayloadBytes,
+      chunkOptions: null,
+    };
+  }
+
+  const writeText = normalizedText;
+  const chunkOptions = {
+    chunkSize: normalizedChunkSizeBytes,
+  };
+  if (forceChunkedWrite || forceChunkForHmSend) {
+    chunkOptions.yieldEveryChunks = normalizedHmSendChunkYieldEveryChunks;
+  }
+
+  return {
+    method: 'chunked',
+    forceChunkedWrite,
+    forceChunkForHmSend,
+    writeText,
+    payloadBytes: normalizedPayloadBytes,
+    chunkOptions,
+  };
+}
+
 function createPaneRuntime(paneId, terminal, fitAddon) {
   return {
     paneId,
@@ -164,9 +250,11 @@ function createPaneRuntime(paneId, terminal, fitAddon) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     _internals: {
+      buildPtyWriteDispatchPlan,
       formatHmSendForPrompt,
       getPromptKindFromLine,
       resolvePostEnterDeliveryResult,
+      stripInternalRoutingWrappers,
     },
   };
 }
@@ -198,9 +286,21 @@ if (typeof window !== 'undefined') {
   const DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = isDarwin ? 700 : 800;
   const DEFAULT_MIN_ENTER_DELAY_MS = isDarwin ? 150 : 500;
   const DEFAULT_CHUNK_THRESHOLD_BYTES = 1024;
-  const DEFAULT_CHUNK_SIZE_BYTES = 4096;
+  // SYSTEM INVARIANT: chunk SIZE on Windows must match the chunk THRESHOLD.
+  // Commit 88e6987 (Mar 12 2026) lowered the threshold to 256 bytes because
+  // ConPTY/Claude CLI's input handler drops chars on single PTY writes >256
+  // bytes — but it left chunk SIZE at 4096, so messages 256..4096 bytes still
+  // wrote in one chunk (the threshold gated whether to chunk; the size gated
+  // how big each chunk was). Net effect: zero protection for the typical
+  // agent-to-agent reply size range, which is exactly what was firing the
+  // tail-only truncation James kept seeing. macOS PTY does not have this
+  // limit so 4096 stays.
+  const DEFAULT_CHUNK_SIZE_BYTES = isDarwin ? 4096 : 256;
   const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = isDarwin ? 1024 : 256;
-  const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = 1;
+  // Yield to event loop between chunks on Windows so ConPTY's pipe buffer
+  // drains before the next chunk arrives. 0 means no yield (back-to-back),
+  // which on Windows starves the input handler.
+  const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = isDarwin ? 0 : 1;
 
   const POST_ENTER_VERIFY_TIMEOUT_MS = readPositiveIntFromQuery(
     params,
@@ -257,7 +357,7 @@ if (typeof window !== 'undefined') {
     'hmSendChunkThresholdBytes',
     DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES
   );
-  const HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = readPositiveIntFromQuery(
+  const HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = readNonNegativeIntFromQuery(
     params,
     'hmSendChunkYieldEveryChunks',
     DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
@@ -285,9 +385,9 @@ if (typeof window !== 'undefined') {
     });
   }
 
-  function reportDeliveryAck(paneId, deliveryId) {
+  function reportDeliveryAck(paneId, deliveryId, extra = {}) {
     if (!deliveryId) return;
-    sendPaneHostAction('delivery-ack', paneId, { deliveryId }).catch((err) => {
+    sendPaneHostAction('delivery-ack', paneId, { deliveryId, ...(extra || {}) }).catch((err) => {
       console.error(`[PaneHost] Failed to report delivery ack for pane ${paneId}:`, err?.message || err);
     });
   }
@@ -456,6 +556,11 @@ if (typeof window !== 'undefined') {
     const baseText = stripInternalRoutingWrappers(String(payload.message || ''));
     const deliveryId = payload.deliveryId || null;
     const traceContext = payload.traceContext || null;
+    const messageId = toNonEmptyString(traceContext?.messageId)
+      || toNonEmptyString(traceContext?.traceId)
+      || toNonEmptyString(traceContext?.correlationId)
+      || deliveryId
+      || null;
     const hmSendTrace = isHmSendTraceContext(traceContext);
     const promptKind = hmSendTrace ? getCurrentPromptKind(runtime.terminal) : 'unknown';
     const text = hmSendTrace ? formatHmSendForPrompt(baseText, promptKind) : baseText;
@@ -464,8 +569,22 @@ if (typeof window !== 'undefined') {
       1,
       Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
     );
+    const deferMaxWaitMs = isLongPayload
+      ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
+      : SUBMIT_DEFER_MAX_WAIT_MS;
 
     try {
+      // Match the visible renderer path: wait for active pane output to settle
+      // before the PTY write so the front of the injected message is not
+      // interleaved with streaming CLI output.
+      const preWriteDeferResult = await deferSubmitWhilePaneActive(runtime, deferMaxWaitMs);
+      if (preWriteDeferResult.forcedExpire) {
+        console.warn(
+          `[PaneHost] Pre-write defer window expired for pane ${runtime.paneId} after ${preWriteDeferResult.waitedMs}ms; `
+          + 'writing while output is still active'
+        );
+      }
+
       const chunkThreshold = Number.isFinite(CHUNK_THRESHOLD_BYTES) && CHUNK_THRESHOLD_BYTES > 0
         ? CHUNK_THRESHOLD_BYTES
         : DEFAULT_CHUNK_THRESHOLD_BYTES;
@@ -475,21 +594,26 @@ if (typeof window !== 'undefined') {
       const hmSendChunkThreshold = Number.isFinite(HM_SEND_CHUNK_THRESHOLD_BYTES) && HM_SEND_CHUNK_THRESHOLD_BYTES > 0
         ? HM_SEND_CHUNK_THRESHOLD_BYTES
         : DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES;
-      const forceChunkForHmSend = hmSendTrace && payloadBytes >= hmSendChunkThreshold;
-      const shouldChunkWrite = Boolean(api.pty.writeChunked)
-        && (payloadBytes >= chunkThreshold || forceChunkForHmSend);
-      if (shouldChunkWrite) {
-        const chunkOptions = { chunkSize };
-        if (forceChunkForHmSend) {
-          chunkOptions.yieldEveryChunks = Math.max(
-            1,
-            Number.isFinite(HM_SEND_CHUNK_YIELD_EVERY_CHUNKS)
-              ? HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
-              : DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
-          );
-        }
+      const chunkYieldEveryChunks = Math.max(
+        1,
+        Number.isFinite(HM_SEND_CHUNK_YIELD_EVERY_CHUNKS)
+          ? HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
+          : DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
+      );
+      const writePlan = buildPtyWriteDispatchPlan({
+        text,
+        payloadBytes,
+        hmSendTrace,
+        ipcReassembled: payload?.meta?.ipcReassembled === true,
+        hasChunkedWriter: Boolean(api.pty.writeChunked),
+        chunkThresholdBytes: chunkThreshold,
+        chunkSizeBytes: chunkSize,
+        hmSendChunkThresholdBytes: hmSendChunkThreshold,
+        hmSendChunkYieldEveryChunks: chunkYieldEveryChunks,
+      });
+      if (writePlan.method === 'chunked') {
         const chunkedResult = await withTimeout(
-          api.pty.writeChunked(runtime.paneId, text, chunkOptions, traceContext || null),
+          api.pty.writeChunked(runtime.paneId, writePlan.writeText, writePlan.chunkOptions, traceContext || null),
           WRITE_TIMEOUT_MS,
           'pane-host writeChunked'
         );
@@ -498,7 +622,7 @@ if (typeof window !== 'undefined') {
         }
       } else {
         await withTimeout(
-          api.pty.write(runtime.paneId, text, traceContext || null),
+          api.pty.write(runtime.paneId, writePlan.writeText, traceContext || null),
           WRITE_TIMEOUT_MS,
           'pane-host write'
         );
@@ -513,17 +637,6 @@ if (typeof window !== 'undefined') {
         : 0;
       const minDelay = baseMinDelay + hmSendExtraDelayMs;
       await sleep(minDelay);
-
-      const deferMaxWaitMs = isLongPayload
-        ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
-        : SUBMIT_DEFER_MAX_WAIT_MS;
-      const deferResult = await deferSubmitWhilePaneActive(runtime, deferMaxWaitMs);
-      if (deferResult.forcedExpire) {
-        console.warn(
-          `[PaneHost] Submit defer window expired for pane ${runtime.paneId} after ${deferResult.waitedMs}ms; `
-          + 'sending Enter while output is still active'
-        );
-      }
 
       const outputBaseline = runtime.ptyOutputTick;
       const enterResult = await withTimeout(
@@ -554,10 +667,11 @@ if (typeof window !== 'undefined') {
 
       if (deliveryId) {
         if (deliveryResult.ack) {
-          reportDeliveryAck(runtime.paneId, deliveryId);
+          reportDeliveryAck(runtime.paneId, deliveryId, { messageId });
         } else {
           reportDeliveryOutcome(runtime.paneId, {
             deliveryId,
+            messageId,
             paneId: runtime.paneId,
             ...deliveryResult.outcome,
           });
@@ -584,6 +698,7 @@ if (typeof window !== 'undefined') {
       if (deliveryId) {
         reportDeliveryOutcome(runtime.paneId, {
           deliveryId,
+          messageId,
           paneId: runtime.paneId,
           accepted: false,
           verified: false,

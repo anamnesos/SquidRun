@@ -428,7 +428,7 @@ async function buildCryptoMechBoard(options = {}) {
   }
 
   const coins = symbols.map((ticker) => hyperliquidClient.normalizeCoinSymbol(ticker)).filter(Boolean);
-  const client = hyperliquidClient.createInfoClient(options);
+  const client = await hyperliquidClient.createInfoClient(options);
   const [metaAndAssetCtxs, predictedFundings, fundingHistories] = await Promise.all([
     options.metaAndAssetCtxs || client.metaAndAssetCtxs().catch(() => [null, []]),
     options.predictedFundings || client.predictedFundings().catch(() => []),

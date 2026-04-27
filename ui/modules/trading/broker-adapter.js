@@ -1,28 +1,12 @@
 'use strict';
 
-const dataIngestion = require('./data-ingestion');
 const executor = require('./executor');
 const hyperliquidClient = require('./hyperliquid-client');
 const ibkrClient = require('./ibkr-client');
 
 function normalizeBrokerType(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  return normalized || 'alpaca';
-}
-
-function createAlpacaBroker() {
-  return {
-    type: 'alpaca',
-    connect: async () => null,
-    disconnect: async () => null,
-    getAccount: (options = {}) => executor.getAlpacaAccountSnapshot(options),
-    getPositions: (options = {}) => executor.getAlpacaOpenPositions(options),
-    submitOrder: (input = {}, options = {}) => executor.submitAlpacaOrder(input, options),
-    getSnapshots: (options = {}) => dataIngestion.getAlpacaWatchlistSnapshots(options),
-    getLatestBars: (options = {}) => dataIngestion.getAlpacaLatestBars(options),
-    getHistoricalBars: (options = {}) => dataIngestion.getAlpacaHistoricalBars(options),
-    getNews: (options = {}) => dataIngestion.getAlpacaNews(options),
-  };
+  return normalized || 'ibkr';
 }
 
 function createIbkrBroker() {
@@ -55,9 +39,6 @@ function createHyperliquidBroker() {
 
 function createBroker(type) {
   const normalized = normalizeBrokerType(type);
-  if (normalized === 'alpaca') {
-    return createAlpacaBroker();
-  }
   if (normalized === 'hyperliquid') {
     return createHyperliquidBroker();
   }

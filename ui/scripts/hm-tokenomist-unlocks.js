@@ -5,8 +5,13 @@ const fs = require('fs');
 const path = require('path');
 
 const hyperliquidClient = require('../modules/trading/hyperliquid-client');
+const {
+  DEFAULT_TOKENOMIST_SOURCE_PATH,
+  inspectTokenomistSource,
+} = require('./hm-tokenomist-source');
+const { runRefresh: refreshTokenomistSource } = require('./hm-tokenomist-refresh');
 
-const DEFAULT_SOURCE_PATH = path.resolve(__dirname, '..', '..', 'tokenomist-current.yml');
+const DEFAULT_SOURCE_PATH = DEFAULT_TOKENOMIST_SOURCE_PATH;
 const DEFAULT_MAX_HOURS = 48;
 
 function toText(value, fallback = '') {
@@ -115,6 +120,7 @@ async function runScan(options = {}) {
   const maxHours = Math.max(1, Number.parseInt(options.maxHours || `${DEFAULT_MAX_HOURS}`, 10) || DEFAULT_MAX_HOURS);
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
   const nowMs = now.getTime();
+  const sourceFreshness = inspectTokenomistSource(sourcePath, options);
   const raw = fs.readFileSync(sourcePath, 'utf8');
   const marketData = Array.isArray(options.marketData)
     ? options.marketData
@@ -148,6 +154,7 @@ async function runScan(options = {}) {
     ok: true,
     scannedAt: now.toISOString(),
     sourcePath,
+    sourceFreshness,
     maxHours,
     unlockCount: unlocks.length,
     unlocks,
@@ -170,11 +177,20 @@ function parseCliArgs(argv = process.argv.slice(2)) {
     sourcePath: DEFAULT_SOURCE_PATH,
     maxHours: DEFAULT_MAX_HOURS,
     json: false,
+    refreshBeforeScan: true,
   };
   while (args.length > 0) {
     const token = args.shift();
     if (token === '--json') {
       parsed.json = true;
+      continue;
+    }
+    if (token === '--refresh') {
+      parsed.refreshBeforeScan = true;
+      continue;
+    }
+    if (token === '--no-refresh') {
+      parsed.refreshBeforeScan = false;
       continue;
     }
     if (token === '--source' && args.length > 0) {
@@ -191,6 +207,11 @@ function parseCliArgs(argv = process.argv.slice(2)) {
 
 async function main() {
   const options = parseCliArgs();
+  if (options.refreshBeforeScan) {
+    await refreshTokenomistSource({
+      outputPath: options.sourcePath,
+    });
+  }
   const result = await runScan(options);
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -209,6 +230,7 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_SOURCE_PATH,
   DEFAULT_MAX_HOURS,
+  inspectTokenomistSource,
   parseCompactUsd,
   parseCountdownMs,
   parseTokenUnlockRows,

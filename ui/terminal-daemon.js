@@ -46,6 +46,7 @@ const {
   resolvePaneCwd,
   resolveCoordPath,
 } = require('./config');
+const { appendInputShadowLog } = require('./modules/input-shadow-log');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -1499,6 +1500,12 @@ function writeTerminal(paneId, data) {
   if (terminal.pty) {
     // Track last INPUT time (for stuck detection)
     terminal.lastInputTime = Date.now();
+    appendInputShadowLog({
+      paneId,
+      source: 'pty-write',
+      byteLen: Buffer.byteLength(String(data ?? ''), 'utf8'),
+      text: data,
+    });
     terminal.pty.write(data);
     return { ok: true, status: 'accepted' };
   }
