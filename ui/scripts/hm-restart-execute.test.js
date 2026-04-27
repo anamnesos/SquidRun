@@ -94,6 +94,53 @@ function processRowsWithDescendants() {
   ];
 }
 
+function orphanSweepRows() {
+  return [
+    {
+      ProcessId: 500,
+      ParentProcessId: 99,
+      Name: 'electron.exe',
+      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+    },
+    {
+      ProcessId: 501,
+      ParentProcessId: 500,
+      Name: 'node.exe',
+      ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
+      CommandLine: 'node D:\\projects\\squidrun\\ui\\terminal-daemon.js',
+    },
+    {
+      ProcessId: 502,
+      ParentProcessId: 501,
+      Name: 'claude.exe',
+      ExecutablePath: 'C:\\Users\\James\\AppData\\Roaming\\npm\\claude.exe',
+      CommandLine: 'claude --dangerously-skip-permissions',
+    },
+    {
+      ProcessId: 38852,
+      ParentProcessId: 42,
+      Name: 'node.exe',
+      ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
+      CommandLine: 'node D:\\projects\\squidrun\\ui\\terminal-daemon.js',
+    },
+    {
+      ProcessId: 41552,
+      ParentProcessId: 38852,
+      Name: 'powershell.exe',
+      ExecutablePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      CommandLine: 'powershell.exe',
+    },
+    {
+      ProcessId: 44480,
+      ParentProcessId: 41552,
+      Name: 'claude.exe',
+      ExecutablePath: 'C:\\Users\\James\\AppData\\Roaming\\npm\\claude.exe',
+      CommandLine: 'claude --dangerously-skip-permissions',
+    },
+  ];
+}
+
 describe('hm-restart-execute', () => {
   let tempRoot;
 
@@ -237,6 +284,23 @@ describe('hm-restart-execute', () => {
     expect(killed).toEqual([{ pid: 111, role: 'target' }]);
   });
 
+  test('orphan sweep excludes fresh Electron descendants and kills stale terminal tree', async () => {
+    const killed = [];
+
+    const result = await restartExecute.sweepOrphanProcesses('D:\\projects\\squidrun', {
+      orphanSweepProcessRows: orphanSweepRows(),
+      killProcess: (pid, proc) => killed.push({ pid, role: proc.role }),
+      processExists: jest.fn(() => false),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(killed).toEqual([
+      { pid: 44480, role: 'orphan' },
+      { pid: 38852, role: 'orphan' },
+    ]);
+    expect(result.killed.map((proc) => proc.pid)).not.toEqual(expect.arrayContaining([500, 501, 502]));
+  });
+
   test('exits cleanly on a simulated shutdown and relaunch', async () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
@@ -292,6 +356,7 @@ describe('hm-restart-execute', () => {
     expect(unref).toHaveBeenCalled();
     expect(result.relaunch.pid).toBe(222);
     expect(result.verification.ok).toBe(true);
+    expect(result.orphanSweep).toBeNull();
     const steps = readJsonLines(path.join(tempRoot, '.squidrun', 'coord', 'restart-execute-log.jsonl'))
       .map((entry) => entry.step);
     expect(steps).toEqual([
@@ -486,6 +551,61 @@ describe('hm-restart-execute', () => {
       'sev=high',
       '--json',
     ]));
+  });
+
+  test('opt-in executeRestart orphan sweep runs after verified relaunch', async () => {
+    writeRegistry(tempRoot);
+    appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
+      type: 'audit_grade',
+      instance: 'james-main',
+      grade: 'green',
+      timestampUtc: '2026-04-27T00:04:30.000Z',
+    });
+    const killed = [];
+    const launchStartedMs = Date.parse('2026-04-27T00:05:00.000Z');
+    const captureAppStatus = jest.fn()
+      .mockReturnValueOnce({
+        exists: true,
+        timestampMs: Date.parse('2026-04-27T00:00:00.000Z'),
+        session: '301',
+        pid: null,
+        mtimeMs: 1,
+      })
+      .mockReturnValueOnce({
+        exists: true,
+        timestampMs: Date.parse('2026-04-27T00:05:02.000Z'),
+        session: '302',
+        pid: null,
+        mtimeMs: 2,
+      });
+
+    const result = await restartExecute.executeRestart({
+      projectRoot: tempRoot,
+      instance: 'james-main',
+      reason: 'sweep test',
+      nowMs: launchStartedMs,
+      launchStartedMs,
+      now: jest.fn(() => launchStartedMs),
+      captureAppStatus,
+      listElectronProcesses: jest.fn(() => [{ pid: 111, name: 'electron.exe' }]),
+      processExists: jest.fn(() => false),
+      killProcess: (pid, proc) => killed.push({ pid, role: proc.role }),
+      spawn: jest.fn(() => ({ pid: 222, unref: jest.fn() })),
+      sweepOrphans: true,
+      orphanSweepProcessRows: orphanSweepRows(),
+      runNodeScript: jest.fn(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.orphanSweep).toEqual(expect.objectContaining({ ok: true }));
+    expect(killed).toEqual(expect.arrayContaining([
+      { pid: 111, role: 'target' },
+      { pid: 44480, role: 'orphan' },
+      { pid: 38852, role: 'orphan' },
+    ]));
+    const steps = readJsonLines(path.join(tempRoot, '.squidrun', 'coord', 'restart-execute-log.jsonl'))
+      .map((entry) => entry.step);
+    expect(steps).toContain('orphan_sweep_complete');
   });
 
   test('logs relaunch_unverified when app-status does not refresh after launcher success', async () => {
