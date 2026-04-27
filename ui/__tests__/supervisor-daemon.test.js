@@ -133,7 +133,12 @@ const tradingWatchlist = require('../modules/trading/watchlist');
 const dynamicWatchlist = require('../modules/trading/dynamic-watchlist');
 const hyperliquidNativeLayer = require('../modules/trading/hyperliquid-native-layer');
 const predictionTracker = require('../modules/trading/prediction-tracker');
-const { SupervisorDaemon, resolveProjectUiScriptPath } = require('../supervisor-daemon');
+const {
+  SupervisorDaemon,
+  resolveProjectUiScriptPath,
+  containsHangulSyllables,
+  shouldSuppressMainTelegramForHangul,
+} = require('../supervisor-daemon');
 
 function createMockStore() {
   return {
@@ -2905,6 +2910,78 @@ describe('supervisor-daemon integrations', () => {
     } finally {
       await sparkDaemon.stop('test-cleanup-spark-monitor');
     }
+  });
+
+  test('suppresses Hangul-containing spark Telegram alerts in the main profile', async () => {
+    sparkCapture.runSparkScan.mockResolvedValueOnce({
+      ok: true,
+      scannedAt: '2026-04-23T09:01:00.000Z',
+      upbitListingCount: 1,
+      hyperliquidListingCount: 0,
+      tokenUnlockCount: 0,
+      newAlertEvents: [
+        { eventKey: 'upbit:9999', tickers: ['XCN/USD'] },
+      ],
+      firePlans: [],
+      alertMessage: '[LIVE SPARK] New catalyst alerts\n- UPBIT 오닉스코인(XCN) 신규 거래지원 안내 | XCN/USD | plan pending / non-tradeable on HL',
+    });
+
+    const sparkDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      cryptoTradingEnabled: false,
+      tokenomistEnabled: false,
+      sparkMonitorEnabled: true,
+      sparkMonitorIntervalMinutes: 1,
+      pidPath: path.join(tempRoot, 'spark-hangul.pid'),
+      statusPath: path.join(tempRoot, 'spark-hangul-status.json'),
+      logPath: path.join(tempRoot, 'spark-hangul.log'),
+      taskLogDir: path.join(tempRoot, 'spark-hangul-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'spark-hangul-wake.signal'),
+      sparkMonitorStatePath: path.join(tempRoot, 'spark-hangul-monitor-state.json'),
+      sparkMonitorDataStatePath: path.join(tempRoot, 'spark-hangul-state.json'),
+      sparkMonitorEventsPath: path.join(tempRoot, 'spark-hangul-events.jsonl'),
+      sparkMonitorFirePlansPath: path.join(tempRoot, 'spark-hangul-fireplans.json'),
+      sparkMonitorWatchlistPath: path.join(tempRoot, 'spark-hangul-watchlist.json'),
+      env: {
+        ...process.env,
+        SQUIDRUN_PROFILE: 'main',
+        TELEGRAM_CHAT_ID: '5613428850',
+      },
+    });
+
+    try {
+      sparkDaemon.sparkMonitorState.lastProcessedAt = '2026-04-23T08:58:00.000Z';
+      sparkDaemon.notifyArchitectInternal = jest.fn();
+      sparkDaemon.executeHmSendSync = jest.fn();
+
+      const result = await sparkDaemon.maybeRunSparkAutomation(Date.parse('2026-04-23T09:01:30.000Z'));
+
+      expect(result).toEqual(expect.objectContaining({ ok: true, skipped: false }));
+      expect(sparkDaemon.notifyArchitectInternal).toHaveBeenCalledWith(
+        expect.stringContaining('오닉스코인'),
+        'spark_monitor'
+      );
+      expect(sparkDaemon.executeHmSendSync).not.toHaveBeenCalled();
+      expect(sparkDaemon.logger.warn).toHaveBeenCalledWith(
+        'Trading Telegram notify suppressed: Hangul detected in main-profile alert. Raw alert retained in internal logs.'
+      );
+    } finally {
+      await sparkDaemon.stop('test-cleanup-spark-monitor-hangul');
+    }
+  });
+
+  test('detects Hangul and limits suppression to the main profile', () => {
+    expect(containsHangulSyllables('UPBIT 오닉스코인(XCN) 신규 거래지원 안내')).toBe(true);
+    expect(containsHangulSyllables('UPBIT new listing: XCN')).toBe(false);
+    expect(shouldSuppressMainTelegramForHangul('UPBIT 펄(PRL) 신규 거래지원 안내', {
+      SQUIDRUN_PROFILE: 'main',
+    })).toBe(true);
+    expect(shouldSuppressMainTelegramForHangul('UPBIT 펄(PRL) 신규 거래지원 안내', {
+      SQUIDRUN_PROFILE: 'eunbyeol',
+    })).toBe(false);
   });
 
   test('runs the market scanner loop and alerts Architect on ORDI-pattern movers', async () => {
