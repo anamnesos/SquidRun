@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "checklistVersion": "2026-04-26-v1",
+  "profile": "main",
+  "description": "Deterministic startup drift checks for the main SquidRun trading pane. Hard failures pause restart clearance.",
+  "items": [
+    {
+      "id": "window_profile_main",
+      "severity": "hard",
+      "expectedAnswer": "main",
+      "match": "exact",
+      "verifyCommand": "node -e \"console.log(process.env.SQUIDRUN_PROFILE || 'main')\"",
+      "rationale": "The trading pane must run on the main profile."
+    },
+    {
+      "id": "git_branch_current",
+      "severity": "hard",
+      "expectedAnswer": "architect/session-283-trading-inject-cherrypicks",
+      "match": "exact",
+      "verifyCommand": "git rev-parse --abbrev-ref HEAD",
+      "rationale": "Restart handoff must know the current working branch."
+    },
+    {
+      "id": "hyperliquid_wallet_config_present",
+      "severity": "hard",
+      "expectedAnswer": "ok",
+      "match": "exact",
+      "verifyCommand": "node -e \"const fs=require('fs'); const s=fs.existsSync('.env')?fs.readFileSync('.env','utf8'):''; const ok=s.split(/\\r?\\n/).some(l=>/^HYPERLIQUID_(WALLET_)?ADDRESS\\s*=\\s*[^#\\s]+/.test(l)); console.log(ok?'ok':'missing')\"",
+      "rationale": "Main trading checks require a configured Hyperliquid wallet address."
+    },
+    {
+      "id": "alpaca_paper_warning_present",
+      "severity": "hard",
+      "expectedAnswer": "ok",
+      "match": "exact",
+      "verifyCommand": "node -e \"const fs=require('fs'); const s=fs.readFileSync('CLAUDE.md','utf8'); console.log(s.includes('Alpaca = PAPER MONEY')?'ok':'missing')\"",
+      "rationale": "Startup context must preserve the fake-vs-real broker distinction."
+    },
+    {
+      "id": "profile_isolation_blanks_live_credentials",
+      "severity": "hard",
+      "expectedAnswer": "ok",
+      "match": "exact",
+      "verifyCommand": "node -e \"const fs=require('fs'); const s=fs.readFileSync('ui/profile.js','utf8'); const ok=s.includes(\\\"env.SQUIDRUN_HYPERLIQUID_AUTOMATION = '0'\\\")&&s.includes(\\\"env.HYPERLIQUID_PRIVATE_KEY = ''\\\"); console.log(ok?'ok':'missing')\"",
+      "rationale": "Non-main profiles must not retain live wallet-touching automation."
+    },
+    {
+      "id": "auto_open_requires_explicit_env",
+      "severity": "hard",
+      "expectedAnswer": "ok",
+      "match": "exact",
+      "verifyCommand": "node -e \"const fs=require('fs'); const a=fs.readFileSync('ui/supervisor-daemon.js','utf8'); const b=fs.readFileSync('ui/modules/trading/orchestrator.js','utf8'); console.log(a.includes('SQUIDRUN_ALLOW_HYPERLIQUID_AUTO_OPEN')&&b.includes('SQUIDRUN_ALLOW_HYPERLIQUID_AUTO_OPEN')?'ok':'missing')\"",
+      "rationale": "Live auto-open behavior must remain behind explicit environment gating."
+    },
+    {
+      "id": "codex_inbox_protocol_present",
+      "severity": "soft",
+      "expectedAnswer": "ok",
+      "match": "exact",
+      "verifyCommand": "node -e \"const fs=require('fs'); const p='.squidrun/coord/inbox-protocol.md'; console.log(fs.existsSync(p)?'ok':'missing')\"",
+      "rationale": "Codex/Architect restart coordination depends on the file inbox protocol."
+    },
+    {
+      "id": "session_handoff_current_shape",
+      "severity": "soft",
+      "expectedAnswer": "app-session-",
+      "match": "contains",
+      "verifyCommand": "node -e \"const fs=require('fs'); const p='.squidrun/handoffs/session.md'; console.log(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'missing')\"",
+      "rationale": "The deterministic handoff materializer should be present and session-shaped."
+    }
+  ]
+}
