@@ -195,33 +195,179 @@ function defaultLaunchCommand(projectRoot, instanceConfig) {
   };
 }
 
-function listElectronProcesses(projectRoot) {
-  if (process.platform !== 'win32') return [];
+function normalizeForProcessMatch(value = '') {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .toLowerCase();
+}
+
+function asProcessRow(raw = {}) {
+  const pid = Number(raw.ProcessId ?? raw.PID ?? raw.pid);
+  const parentPid = Number(raw.ParentProcessId ?? raw.ParentPID ?? raw.parentPid);
+  return {
+    pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+    parentPid: Number.isInteger(parentPid) && parentPid > 0 ? parentPid : null,
+    name: raw.Name || raw['Image Name'] || raw.ImageName || raw.name || null,
+    executablePath: raw.ExecutablePath || raw.Path || raw.executablePath || null,
+    commandLine: raw.CommandLine || raw.commandLine || null,
+    windowTitle: raw.WindowTitle || raw['Window Title'] || raw.windowTitle || null,
+  };
+}
+
+function parseCsvLine(line = '') {
+  const fields = [];
+  let current = '';
+  let inQuotes = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"' && inQuotes && next === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === ',' && !inQuotes) {
+      fields.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  fields.push(current);
+  return fields;
+}
+
+function parseTasklistCsv(output = '') {
+  const lines = String(output || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]);
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    return headers.reduce((row, header, index) => {
+      row[header] = values[index] || '';
+      return row;
+    }, {});
+  });
+}
+
+function queryWindowsProcessRows(projectRoot, options = {}) {
+  if (Array.isArray(options.processRows)) return options.processRows;
+  if (typeof options.tasklistOutput === 'string') return parseTasklistCsv(options.tasklistOutput);
   const script = [
-    '$root = [System.IO.Path]::GetFullPath($args[0]).ToLowerInvariant()',
-    '$items = Get-CimInstance Win32_Process | Where-Object {',
-    "  ($_.Name -match '^(electron|SquidRun).*\\.exe$' -or $_.CommandLine -match 'electron') -and",
-    '  ($_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($root))',
-    '} | Select-Object ProcessId,Name,CommandLine',
+    '$items = Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine',
     '$items | ConvertTo-Json -Depth 3',
   ].join('; ');
   try {
-    const stdout = execFileSync('powershell', ['-NoProfile', '-Command', script, projectRoot], {
+    const stdout = execFileSync('powershell', ['-NoProfile', '-Command', script], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 10_000,
     });
     const parsed = JSON.parse(String(stdout || '[]').trim() || '[]');
-    return (Array.isArray(parsed) ? parsed : [parsed])
-      .filter((entry) => Number.isInteger(Number(entry?.ProcessId)))
-      .map((entry) => ({
-        pid: Number(entry.ProcessId),
-        name: entry.Name || null,
-        commandLine: entry.CommandLine || null,
-      }));
+    return Array.isArray(parsed) ? parsed : [parsed];
   } catch {
     return [];
   }
+}
+
+function processText(row = {}) {
+  return [
+    row.name,
+    row.executablePath,
+    row.commandLine,
+    row.windowTitle,
+  ].map((value) => normalizeForProcessMatch(value)).join(' ');
+}
+
+function isElectronProcess(row = {}) {
+  const name = normalizeForProcessMatch(row.name);
+  const executablePath = normalizeForProcessMatch(row.executablePath);
+  const commandLine = normalizeForProcessMatch(row.commandLine);
+  return (
+    name.includes('electron')
+    || name.includes('squidrun')
+    || executablePath.includes('electron')
+    || executablePath.includes('squidrun')
+    || commandLine.includes('electron')
+  );
+}
+
+function isPrimaryElectronProcess(row = {}) {
+  if (!isElectronProcess(row)) return false;
+  const commandLine = normalizeForProcessMatch(row.commandLine);
+  const windowTitle = normalizeForProcessMatch(row.windowTitle);
+  if (!commandLine) {
+    return !windowTitle || (windowTitle !== 'n/a' && windowTitle.includes('squidrun'));
+  }
+  if (commandLine.includes(' --type=')) return false;
+  if (commandLine.includes('/modules/')) return false;
+  if (commandLine.includes('--standalone-window')) return false;
+  if (commandLine.includes('--profile=') && !commandLine.includes('--profile=main')) return false;
+  return true;
+}
+
+function isProjectRelatedProcess(row = {}, projectRoot = '') {
+  const text = processText(row);
+  const root = normalizeForProcessMatch(projectRoot);
+  return Boolean(
+    (root && text.includes(root))
+    || text.includes('/squidrun/')
+    || text.includes('squidrun-ui')
+    || text.includes('squidrun')
+  );
+}
+
+function selectSquidRunElectronProcesses(projectRoot, rawRows = []) {
+  const rows = rawRows.map(asProcessRow).filter((row) => row.pid);
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
+  const selected = new Map();
+  const select = (row, matchReason) => {
+    if (!row || !row.pid || !isPrimaryElectronProcess(row)) return;
+    if (selected.has(row.pid)) return;
+    selected.set(row.pid, {
+      pid: row.pid,
+      parentPid: row.parentPid,
+      name: row.name,
+      executablePath: row.executablePath,
+      commandLine: row.commandLine,
+      windowTitle: row.windowTitle,
+      matchReason,
+    });
+  };
+
+  for (const row of rows) {
+    if (isPrimaryElectronProcess(row) && isProjectRelatedProcess(row, projectRoot)) {
+      select(row, 'direct_project_match');
+    }
+  }
+
+  for (const row of rows) {
+    if (!isProjectRelatedProcess(row, projectRoot)) continue;
+    let parent = byPid.get(row.parentPid);
+    const seen = new Set([row.pid]);
+    while (parent && !seen.has(parent.pid)) {
+      if (isElectronProcess(parent)) {
+        select(parent, 'project_descendant_parent');
+        break;
+      }
+      seen.add(parent.pid);
+      parent = byPid.get(parent.parentPid);
+    }
+  }
+
+  return Array.from(selected.values()).sort((left, right) => left.pid - right.pid);
+}
+
+function listElectronProcesses(projectRoot, options = {}) {
+  if (process.platform !== 'win32' && !options.processRows && !options.tasklistOutput) return [];
+  return selectSquidRunElectronProcesses(projectRoot, queryWindowsProcessRows(projectRoot, options));
 }
 
 function processExists(pid) {
@@ -238,13 +384,21 @@ async function sleep(ms) {
 }
 
 async function shutdownElectronProcesses(projectRoot, options = {}) {
-  const listProcesses = options.listElectronProcesses || listElectronProcesses;
+  const listProcesses = options.listElectronProcesses || ((root) => listElectronProcesses(root, options));
   const exists = options.processExists || processExists;
   const killProcess = options.killProcess || ((pid) => process.kill(pid, 'SIGTERM'));
   const sleepFn = options.sleep || sleep;
   const timeoutMs = Math.max(1000, Number(options.shutdownTimeoutMs || DEFAULT_SHUTDOWN_TIMEOUT_MS));
   const processes = listProcesses(projectRoot);
   const killed = [];
+  if (processes.length === 0) {
+    return {
+      ok: false,
+      reason: 'no_target_found',
+      processes,
+      killed,
+    };
+  }
   for (const proc of processes) {
     try {
       killProcess(proc.pid, proc);
@@ -468,7 +622,10 @@ async function executeRestart(options = {}) {
   logStep(instanceConfig, 'shutdown_complete', shutdown);
   if (!shutdown.ok) {
     const failure = { ok: false, stage: 'shutdown', reason: shutdown.reason || 'shutdown_failed', shutdown };
-    recordFailureAnomaly(projectRoot, failure, options);
+    const anomalyType = shutdown.reason === 'no_target_found'
+      ? 'restart_execute_no_target_found'
+      : 'restart_execute_failure';
+    recordFailureAnomaly(projectRoot, failure, options, anomalyType);
     return failure;
   }
 
@@ -540,6 +697,8 @@ module.exports = {
   isGreenPreflightMessage,
   findLatestGreenPreflight,
   defaultLaunchCommand,
+  parseTasklistCsv,
+  selectSquidRunElectronProcesses,
   listElectronProcesses,
   shutdownElectronProcesses,
   captureAppStatus,
