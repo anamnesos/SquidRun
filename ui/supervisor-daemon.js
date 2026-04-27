@@ -206,6 +206,7 @@ const DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS = Math.max(
   30_000,
   Number.parseInt(process.env.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS || '60000', 10) || 60_000
 );
+const DEFAULT_COORD_HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_ORACLE_WATCH_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_INTERVAL_MS || '10000', 10) || 10_000
@@ -1113,6 +1114,8 @@ class SupervisorDaemon {
     this.hm[private-live-ops]SqueezeDetectorScriptPath = path.resolve(String(options.[private-live-ops]SqueezeDetectorScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-squeeze-detector.js', this.projectRoot)));
     this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolveProjectUiScriptPath('hm-oracle-watch-engine.js', this.projectRoot)));
     this.hm[private-live-ops]UnlocksScriptPath = path.resolve(String(options.[private-live-ops]UnlocksScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-unlocks.js', this.projectRoot)));
+    this.hmCoordHeartbeatScriptPath = path.resolve(String(options.coordHeartbeatScriptPath || resolveProjectUiScriptPath('hm-heartbeat.js', this.projectRoot)));
+    this.hmAnomalyScriptPath = path.resolve(String(options.anomalyScriptPath || resolveProjectUiScriptPath('hm-anomaly.js', this.projectRoot)));
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
     this.pollMs = Math.max(1000, Number.parseInt(options.pollMs || DEFAULT_POLL_MS, 10) || DEFAULT_POLL_MS);
     this.heartbeatMs = Math.max(1000, Number.parseInt(options.heartbeatMs || DEFAULT_HEARTBEAT_MS, 10) || DEFAULT_HEARTBEAT_MS);
@@ -1360,6 +1363,23 @@ class SupervisorDaemon {
       };
     this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
       && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
+    this.coordHeartbeatEnabled = options.coordHeartbeatEnabled === true
+      || (options.coordHeartbeatEnabled !== false && RUNNING_SUPERVISOR_MAIN);
+    this.coordHeartbeatIntervalMs = Math.max(
+      60_000,
+      Number.parseInt(options.coordHeartbeatIntervalMs || DEFAULT_COORD_HEARTBEAT_INTERVAL_MS, 10)
+      || DEFAULT_COORD_HEARTBEAT_INTERVAL_MS
+    );
+    this.coordHeartbeatPromise = null;
+    this.lastCoordHeartbeatRunAtMs = 0;
+    this.lastCoordHeartbeatSummary = {
+      enabled: this.isCoordHeartbeatActive(),
+      status: this.isCoordHeartbeatActive() ? 'idle' : 'disabled',
+      intervalMs: this.coordHeartbeatIntervalMs,
+      scriptPath: this.hmCoordHeartbeatScriptPath,
+      lastRunAt: null,
+      lastSummary: null,
+    };
     this.cryptoMonitorOnly = options.cryptoMonitorOnly === true
       || this.runtimeEnv.SQUIDRUN_CRYPTO_MONITOR_ONLY === '1';
     this.cryptoTradingStatePath = options.cryptoTradingStatePath || DEFAULT_CRYPTO_TRADING_STATE_PATH;
@@ -2234,6 +2254,7 @@ class SupervisorDaemon {
     const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
     const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
+    const coordHeartbeatResult = await this.maybeRunCoordHeartbeat(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
     const [private-live-ops]SqueezeDetectorResult = await this.maybeRun[private-live-ops]SqueezeDetector(nowMs);
@@ -2253,6 +2274,7 @@ class SupervisorDaemon {
       [private-live-ops]Result,
       sparkMonitorResult,
       marketScannerResult,
+      coordHeartbeatResult,
       saylorWatcherResult,
       oracleWatchResult,
       [private-live-ops]SqueezeDetectorResult,
@@ -2579,6 +2601,99 @@ class SupervisorDaemon {
         exitCode: result?.exitCode ?? null,
       };
     }
+  }
+
+  isCoordHeartbeatActive() {
+    const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
+    return Boolean(this.coordHeartbeatEnabled && this.cryptoTradingEnabled && profile !== 'private-profile');
+  }
+
+  async recordCoordHeartbeatFailure(result = {}, summary = {}) {
+    const details = {
+      scriptPath: this.hmCoordHeartbeatScriptPath,
+      exitCode: result?.exitCode ?? null,
+      signal: result?.signal || null,
+      timedOut: result?.timedOut === true,
+      error: summary?.error || result?.error || null,
+      stderr: trimTail(String(result?.stderr || ''), 2048),
+      stdout: trimTail(String(result?.stdout || ''), 2048),
+    };
+    const anomalyResult = await executeNodeScript(
+      this.hmAnomalyScriptPath,
+      [
+        'type=heartbeat_lane_failure',
+        'src=supervisor',
+        'sev=medium',
+        `details=${JSON.stringify(details)}`,
+        '--json',
+      ],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 15_000,
+      }
+    );
+    if (!anomalyResult.ok) {
+      this.logger.warn(`Coord heartbeat anomaly logging failed: ${anomalyResult.error || anomalyResult.stderr || 'unknown'}`);
+    }
+    return anomalyResult;
+  }
+
+  async maybeRunCoordHeartbeat(nowMs = Date.now()) {
+    const active = this.isCoordHeartbeatActive();
+    if (!active || this.stopping) {
+      this.lastCoordHeartbeatSummary = {
+        ...(this.lastCoordHeartbeatSummary || {}),
+        enabled: active,
+        status: active ? 'stopping' : 'disabled',
+        intervalMs: this.coordHeartbeatIntervalMs,
+        scriptPath: this.hmCoordHeartbeatScriptPath,
+      };
+      return { ok: false, skipped: true, reason: active ? 'stopping' : 'coord_heartbeat_disabled' };
+    }
+    if (this.coordHeartbeatPromise) {
+      return this.coordHeartbeatPromise;
+    }
+    if ((nowMs - this.lastCoordHeartbeatRunAtMs) < this.coordHeartbeatIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'coord_heartbeat_cooldown',
+        nextEligibleAtMs: this.lastCoordHeartbeatRunAtMs + this.coordHeartbeatIntervalMs,
+      };
+    }
+
+    this.coordHeartbeatPromise = executeNodeScript(
+      this.hmCoordHeartbeatScriptPath,
+      ['--json'],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 90_000,
+      }
+    ).then(async (result) => {
+      const summary = this.parseWatcherScriptSummary(result, 'coord_heartbeat');
+      this.lastCoordHeartbeatRunAtMs = Date.now();
+      this.lastCoordHeartbeatSummary = {
+        enabled: true,
+        status: summary?.ok ? 'ok' : 'failed',
+        intervalMs: this.coordHeartbeatIntervalMs,
+        scriptPath: this.hmCoordHeartbeatScriptPath,
+        lastRunAt: new Date(this.lastCoordHeartbeatRunAtMs).toISOString(),
+        lastSummary: summary,
+      };
+      if (!result.ok) {
+        await this.recordCoordHeartbeatFailure(result, summary);
+      }
+      if (summary?.ok !== true) {
+        this.logger.warn(`Coord heartbeat failed: ${summary?.error || 'unknown'}`);
+      }
+      return summary;
+    }).finally(() => {
+      this.coordHeartbeatPromise = null;
+    });
+
+    return this.coordHeartbeatPromise;
   }
 
   async maybeRunSaylorWatcher(nowMs = Date.now()) {
@@ -6045,6 +6160,17 @@ class SupervisorDaemon {
         lastProcessedAt: this.marketScannerState.lastProcessedAt || null,
         nextEvent: this.marketScannerState.nextEvent || null,
         lastSummary: this.lastMarketScannerSummary || null,
+      },
+      coordHeartbeat: {
+        enabled: this.isCoordHeartbeatActive(),
+        running: Boolean(this.coordHeartbeatPromise),
+        intervalMs: this.coordHeartbeatIntervalMs,
+        scriptPath: this.hmCoordHeartbeatScriptPath,
+        lastRunAt: this.lastCoordHeartbeatSummary?.lastRunAt || null,
+        nextEligibleAtMs: this.lastCoordHeartbeatRunAtMs
+          ? this.lastCoordHeartbeatRunAtMs + this.coordHeartbeatIntervalMs
+          : null,
+        lastSummary: this.lastCoordHeartbeatSummary || null,
       },
       saylorWatcher: {
         enabled: this.saylorWatcherEnabled,
