@@ -207,6 +207,7 @@ const DEFAULT_HYPERLIQUID_SQUEEZE_DETECTOR_INTERVAL_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_HYPERLIQUID_SQUEEZE_DETECTOR_INTERVAL_MS || '60000', 10) || 60_000
 );
 const DEFAULT_COORD_HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
+const DEFAULT_BUS_SENTINEL_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_RULES_ENGINE_TICK_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_ORACLE_WATCH_INTERVAL_MS = Math.max(
   5_000,
@@ -1128,6 +1129,7 @@ class SupervisorDaemon {
     this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolveProjectUiScriptPath('hm-oracle-watch-engine.js', this.projectRoot)));
     this.hmTokenomistUnlocksScriptPath = path.resolve(String(options.tokenomistUnlocksScriptPath || resolveProjectUiScriptPath('hm-tokenomist-unlocks.js', this.projectRoot)));
     this.hmCoordHeartbeatScriptPath = path.resolve(String(options.coordHeartbeatScriptPath || resolveProjectUiScriptPath('hm-heartbeat.js', this.projectRoot)));
+    this.hmBusSentinelScriptPath = path.resolve(String(options.busSentinelScriptPath || resolveProjectUiScriptPath('hm-bus-sentinel.js', this.projectRoot)));
     this.hmTradingTickScriptPath = path.resolve(String(options.tradingTickScriptPath || resolveProjectUiScriptPath('hm-trading-tick.js', this.projectRoot)));
     this.hmAnomalyScriptPath = path.resolve(String(options.anomalyScriptPath || resolveProjectUiScriptPath('hm-anomaly.js', this.projectRoot)));
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
@@ -1391,6 +1393,23 @@ class SupervisorDaemon {
       status: this.isCoordHeartbeatActive() ? 'idle' : 'disabled',
       intervalMs: this.coordHeartbeatIntervalMs,
       scriptPath: this.hmCoordHeartbeatScriptPath,
+      lastRunAt: null,
+      lastSummary: null,
+    };
+    this.busSentinelEnabled = options.busSentinelEnabled === true
+      || (options.busSentinelEnabled !== false && this.runtimeEnv.SQUIDRUN_BUS_SENTINEL_AUTOMATION === '1');
+    this.busSentinelIntervalMs = Math.max(
+      60_000,
+      Number.parseInt(options.busSentinelIntervalMs || DEFAULT_BUS_SENTINEL_INTERVAL_MS, 10)
+      || DEFAULT_BUS_SENTINEL_INTERVAL_MS
+    );
+    this.busSentinelPromise = null;
+    this.lastBusSentinelRunAtMs = 0;
+    this.lastBusSentinelSummary = {
+      enabled: this.isBusSentinelActive(),
+      status: this.isBusSentinelActive() ? 'idle' : 'disabled',
+      intervalMs: this.busSentinelIntervalMs,
+      scriptPath: this.hmBusSentinelScriptPath,
       lastRunAt: null,
       lastSummary: null,
     };
@@ -2286,6 +2305,7 @@ class SupervisorDaemon {
     const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
     const coordHeartbeatResult = await this.maybeRunCoordHeartbeat(nowMs);
+    const busSentinelResult = await this.maybeRunBusSentinel(nowMs);
     const rulesEngineTickResult = await this.maybeRunRulesEngineTick(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
@@ -2307,6 +2327,7 @@ class SupervisorDaemon {
       sparkMonitorResult,
       marketScannerResult,
       coordHeartbeatResult,
+      busSentinelResult,
       rulesEngineTickResult,
       saylorWatcherResult,
       oracleWatchResult,
@@ -2641,6 +2662,11 @@ class SupervisorDaemon {
     return Boolean(this.coordHeartbeatEnabled && this.cryptoTradingEnabled && profile !== 'eunbyeol');
   }
 
+  isBusSentinelActive() {
+    const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
+    return Boolean(this.busSentinelEnabled && profile !== 'eunbyeol');
+  }
+
   isRulesEngineTickActive() {
     const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
     return Boolean(this.rulesEngineTickEnabled && this.cryptoTradingEnabled && profile !== 'eunbyeol');
@@ -2818,6 +2844,60 @@ class SupervisorDaemon {
     });
 
     return this.coordHeartbeatPromise;
+  }
+
+  async maybeRunBusSentinel(nowMs = Date.now()) {
+    const active = this.isBusSentinelActive();
+    if (!active || this.stopping) {
+      this.lastBusSentinelSummary = {
+        ...(this.lastBusSentinelSummary || {}),
+        enabled: active,
+        status: active ? 'stopping' : 'disabled',
+        intervalMs: this.busSentinelIntervalMs,
+        scriptPath: this.hmBusSentinelScriptPath,
+      };
+      return { ok: false, skipped: true, reason: active ? 'stopping' : 'bus_sentinel_disabled' };
+    }
+    if (this.busSentinelPromise) {
+      return this.busSentinelPromise;
+    }
+    if ((nowMs - this.lastBusSentinelRunAtMs) < this.busSentinelIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'bus_sentinel_cooldown',
+        nextEligibleAtMs: this.lastBusSentinelRunAtMs + this.busSentinelIntervalMs,
+      };
+    }
+
+    this.busSentinelPromise = executeNodeScript(
+      this.hmBusSentinelScriptPath,
+      [],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 120_000,
+      }
+    ).then(async (result) => {
+      const summary = this.parseWatcherScriptSummary(result, 'bus_sentinel');
+      this.lastBusSentinelRunAtMs = Date.now();
+      this.lastBusSentinelSummary = {
+        enabled: true,
+        status: summary?.ok ? 'ok' : 'failed',
+        intervalMs: this.busSentinelIntervalMs,
+        scriptPath: this.hmBusSentinelScriptPath,
+        lastRunAt: new Date(this.lastBusSentinelRunAtMs).toISOString(),
+        lastSummary: summary,
+      };
+      if (summary?.ok !== true) {
+        this.logger.warn(`Bus sentinel run failed: ${summary?.error || 'unknown'}`);
+      }
+      return summary;
+    }).finally(() => {
+      this.busSentinelPromise = null;
+    });
+
+    return this.busSentinelPromise;
   }
 
   async maybeRunSaylorWatcher(nowMs = Date.now()) {
@@ -6299,6 +6379,17 @@ class SupervisorDaemon {
           ? this.lastCoordHeartbeatRunAtMs + this.coordHeartbeatIntervalMs
           : null,
         lastSummary: this.lastCoordHeartbeatSummary || null,
+      },
+      busSentinel: {
+        enabled: this.isBusSentinelActive(),
+        running: Boolean(this.busSentinelPromise),
+        intervalMs: this.busSentinelIntervalMs,
+        scriptPath: this.hmBusSentinelScriptPath,
+        lastRunAt: this.lastBusSentinelSummary?.lastRunAt || null,
+        nextEligibleAtMs: this.lastBusSentinelRunAtMs
+          ? this.lastBusSentinelRunAtMs + this.busSentinelIntervalMs
+          : null,
+        lastSummary: this.lastBusSentinelSummary || null,
       },
       rulesEngineTick: {
         enabled: this.isRulesEngineTickActive(),
