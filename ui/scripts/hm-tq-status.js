@@ -156,6 +156,9 @@ async function fetchTodayEvents(db, businessId, windowHours) {
       clientName: ciName || v.clientName || v.clientFirstName || '',
       clientPhone: ci.phone || v.clientPhone || '',
       clientAddress: ci.address || v.clientAddress || '',
+      customerId: v.customerId || v.clientId || ci.customerId || '',
+      jobId: v.jobId || v.invoiceId || v.invoiceJobId || '',
+      invoiceNumber: v.invoiceNumber || v.number || '',
       type: v.type || v.eventType || '',
       amount: v.amount || v.eventAmount || null,
     };
@@ -203,6 +206,7 @@ async function fetchUnpaidInvoices(db, businessId, hours) {
     return {
       id: d.id,
       number: v.invoiceNumber || v.number || d.id,
+      customerId: v.customerId || v.clientId || ci.customerId || '',
       clientName: ciName || v.clientName || v.customerName || '',
       total: typeof v.total === 'number' ? v.total : null,
       totalPaid,
@@ -220,7 +224,79 @@ async function fetchUnpaidInvoices(db, businessId, hours) {
     .sort((a, b) => (a.staleAnchor - b.staleAnchor));
 }
 
-function renderText({ events, unpaid, windowHours, unpaidHours }) {
+async function fetchOwnerContext(db, businessId) {
+  const snap = await db
+    .collection('ownerContext')
+    .where('businessId', '==', businessId)
+    .limit(200)
+    .get();
+
+  return snap.docs
+    .map((d) => {
+      const v = d.data();
+      return {
+        id: d.id,
+        text: String(v.text || '').trim(),
+        scopeType: String(v.scopeType || ''),
+        customerId: String(v.customerId || ''),
+        customerName: String(v.customerName || ''),
+        jobId: String(v.jobId || ''),
+        invoiceNumber: String(v.invoiceNumber || ''),
+        eventId: String(v.eventId || ''),
+        importance: String(v.importance || 'normal'),
+        tags: Array.isArray(v.tags) ? v.tags.map(String) : [],
+        createdAt: tsToDate(v.createdAt),
+      };
+    })
+    .filter((entry) => entry.text)
+    .sort((a, b) => {
+      const ai = a.importance === 'high' ? 1 : 0;
+      const bi = b.importance === 'high' ? 1 : 0;
+      if (ai !== bi) return bi - ai;
+      return (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0);
+    });
+}
+
+function normalizeNeedle(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function namesOverlap(left, right) {
+  const a = normalizeNeedle(left);
+  const b = normalizeNeedle(right);
+  return Boolean(a && b && (a.includes(b) || b.includes(a)));
+}
+
+function contextForEvent(event, context) {
+  return context
+    .filter((entry) => {
+      if (entry.eventId && entry.eventId === event.id) return true;
+      if (entry.jobId && event.jobId && entry.jobId === event.jobId) return true;
+      if (entry.customerId && event.customerId && entry.customerId === event.customerId) return true;
+      if (entry.customerName && namesOverlap(entry.customerName, event.clientName)) return true;
+      return false;
+    })
+    .slice(0, 2);
+}
+
+function contextForInvoice(invoice, context) {
+  return context
+    .filter((entry) => {
+      if (entry.jobId && entry.jobId === invoice.id) return true;
+      if (entry.invoiceNumber && String(entry.invoiceNumber) === String(invoice.number)) return true;
+      if (entry.customerId && invoice.customerId && entry.customerId === invoice.customerId) return true;
+      if (entry.customerName && namesOverlap(entry.customerName, invoice.clientName)) return true;
+      return false;
+    })
+    .slice(0, 2);
+}
+
+function summarizeContext(entry) {
+  const tags = entry.tags?.length ? ` [${entry.tags.slice(0, 2).join(', ')}]` : '';
+  return `${entry.text}${tags}`;
+}
+
+function renderText({ events, unpaid, ownerContext, windowHours, unpaidHours }) {
   const lines = [];
   const now = new Date();
   lines.push(`TrustQuote operator status — ${fmtDateShort(now)}`);
@@ -237,6 +313,10 @@ function renderText({ events, unpaid, windowHours, unpaidHours }) {
       const phone = e.clientPhone ? ` ☎ ${e.clientPhone}` : '';
       const title = e.title && e.title !== '(untitled)' ? ` — ${e.title}` : '';
       lines.push(`  ${when}  ${who}${title}${where ? ` @ ${where}` : ''}${phone}`);
+      const remembered = contextForEvent(e, ownerContext);
+      remembered.forEach((entry) => {
+        lines.push(`    context: ${summarizeContext(entry)}`);
+      });
     }
   }
   lines.push('');
@@ -253,9 +333,25 @@ function renderText({ events, unpaid, windowHours, unpaidHours }) {
       const paid = u.totalPaid > 0 ? ` (paid $${u.totalPaid.toLocaleString('en-US')})` : '';
       const lastPay = u.lastPaymentDate ? `, last paid ${u.lastPaymentDate.toISOString().slice(0, 10)}` : '';
       lines.push(`  #${u.number}  ${u.clientName || '(no client)'}  ${balStr}${paid}  [${u.paymentStatus}, ${fmtAge(u.ageHours)} since activity${lastPay}]`);
+      const remembered = contextForInvoice(u, ownerContext);
+      remembered.forEach((entry) => {
+        lines.push(`    context: ${summarizeContext(entry)}`);
+      });
     }
     lines.push('');
     lines.push(`  Total outstanding balance: $${totalOwed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  }
+
+  const highContext = ownerContext
+    .filter((entry) => entry.importance === 'high')
+    .slice(0, 3);
+  if (highContext.length) {
+    lines.push('');
+    lines.push('High-importance context:');
+    highContext.forEach((entry) => {
+      const scope = entry.customerName || entry.invoiceNumber || entry.scopeType || 'business';
+      lines.push(`  ${scope}: ${summarizeContext(entry)}`);
+    });
   }
   return lines.join('\n');
 }
@@ -362,15 +458,16 @@ Env override:
     });
     return;
   }
-  const [events, unpaid] = await Promise.all([
+  const [events, unpaid, ownerContext] = await Promise.all([
     fetchTodayEvents(db, businessId, opts.windowHours),
     fetchUnpaidInvoices(db, businessId, opts.unpaidHours),
+    fetchOwnerContext(db, businessId),
   ]);
 
   if (opts.json) {
-    console.log(JSON.stringify({ businessId, events, unpaid, generatedAt: new Date().toISOString() }, null, 2));
+    console.log(JSON.stringify({ businessId, events, unpaid, ownerContext, generatedAt: new Date().toISOString() }, null, 2));
   } else {
-    console.log(renderText({ events, unpaid, windowHours: opts.windowHours, unpaidHours: opts.unpaidHours }));
+    console.log(renderText({ events, unpaid, ownerContext, windowHours: opts.windowHours, unpaidHours: opts.unpaidHours }));
   }
 }
 
