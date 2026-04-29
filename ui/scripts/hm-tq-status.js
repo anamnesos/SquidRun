@@ -344,6 +344,7 @@ function renderText({ events, unpaid, ownerContext, windowHours, unpaidHours }) 
 
   const highContext = ownerContext
     .filter((entry) => entry.importance === 'high')
+    .filter((entry) => entry.scopeType !== 'owner')
     .slice(0, 3);
   if (highContext.length) {
     lines.push('');
