@@ -21,6 +21,33 @@ const TRUSTQUOTE_DIR = path.resolve(__dirname, '../../../TrustQuote');
 const ENV_PATH = path.join(TRUSTQUOTE_DIR, '.env.local');
 const ADMIN_PATH = path.join(TRUSTQUOTE_DIR, 'node_modules', 'firebase-admin');
 const DEFAULT_CANDIDATES_PATH = resolveCoordPath('coord/owner-context-promotion-candidates.jsonl');
+const SOURCE_TYPE_ALIASES = new Map([
+  ['james', 'james'],
+  ['james-sourced', 'james'],
+  ['james_sourced', 'james'],
+  ['james-authored', 'james'],
+  ['james_authored', 'james'],
+  ['direct-james', 'james'],
+  ['customer', 'customer'],
+  ['client', 'customer'],
+  ['customer-sourced', 'customer'],
+  ['customer_sourced', 'customer'],
+  ['customer-authored', 'customer'],
+  ['customer_authored', 'customer'],
+  ['client-sourced', 'customer'],
+  ['factual', 'factual'],
+  ['fact', 'factual'],
+  ['fact-record', 'factual'],
+  ['payment-record', 'factual'],
+  ['business-data', 'factual'],
+  ['trustquote-data', 'factual'],
+  ['agent', 'agent'],
+  ['agent-analysis', 'agent'],
+  ['agent-derived', 'agent'],
+  ['oracle', 'agent'],
+  ['architect', 'agent'],
+  ['builder', 'agent'],
+]);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const args = {
@@ -111,6 +138,12 @@ function hasAnyTag(candidate, wantedTags) {
   return wantedTags.some((tag) => tags.includes(tag));
 }
 
+function normalizeSourceType(candidate) {
+  const raw = String(candidate.sourceType || candidate.source_type || '').trim().toLowerCase();
+  if (!raw) return null;
+  return SOURCE_TYPE_ALIASES.get(raw) || 'invalid';
+}
+
 function candidateAuthorshipText(candidate) {
   return [
     candidate.candidate,
@@ -121,6 +154,8 @@ function candidateAuthorshipText(candidate) {
 }
 
 function isJamesSourced(candidate) {
+  const sourceType = normalizeSourceType(candidate);
+  if (sourceType) return sourceType === 'james';
   const text = candidateAuthorshipText(candidate);
   return hasAnyTag(candidate, ['james-sourced', 'james_authored', 'james-authored', 'direct-james'])
     || /\bjames[- ]sourced\b/i.test(text)
@@ -128,6 +163,8 @@ function isJamesSourced(candidate) {
 }
 
 function isCustomerSourced(candidate) {
+  const sourceType = normalizeSourceType(candidate);
+  if (sourceType) return sourceType === 'customer';
   const text = candidateAuthorshipText(candidate);
   return hasAnyTag(candidate, ['customer-sourced', 'customer_authored', 'customer-authored', 'client-sourced'])
     || /\b(customer|client)\s+(said|asked|told|wrote|authored|requested|instructed)\b/i.test(text);
@@ -138,6 +175,8 @@ function hasDirectSource(candidate) {
 }
 
 function isFactualCustomerRecord(candidate) {
+  const sourceType = normalizeSourceType(candidate);
+  if (sourceType) return sourceType === 'factual';
   return hasAnyTag(candidate, ['fact-record', 'factual', 'payment-record', 'address', 'phone', 'email', 'payment'])
     || /\b(address|phone|email|paid|payment|totalPaid|balanceDue|invoice #?|job #?)\b/i.test(String(candidate.candidate || ''));
 }
@@ -187,6 +226,13 @@ function validateCandidateForApply(candidate) {
     throw new Error(`Candidate status is ${candidate.status || 'unknown'}; only status=candidate can be promoted`);
   }
   const scope = inferScope(candidate);
+  const sourceType = normalizeSourceType(candidate);
+  if (sourceType === 'invalid') {
+    throw new Error('Candidate sourceType must be one of: james, customer, factual, agent');
+  }
+  if ((scope.scopeType === 'customer' || scope.scopeType === 'owner') && !sourceType) {
+    throw new Error('Customer/owner-scope promotion requires structured sourceType');
+  }
   if (scope.scopeType === 'customer') {
     if (isAgentCustomerJudgment(candidate) && !hasDirectSource(candidate)) {
       throw new Error('Agent-derived customer tone/judgment requires James/customer sign-off before promotion');
@@ -240,6 +286,7 @@ function buildOwnerContextRecord({ businessId, candidate, reason }) {
       promotionReason: candidate.promotionReason || '',
       appliedReason: String(reason || '').trim(),
       expectedBehaviorChange: candidate.expectedBehaviorChange || '',
+      sourceType: normalizeSourceType(candidate),
       candidateTs: candidate.ts || null,
       candidateLineNumber: candidate.lineNumber,
       promotionKey,
@@ -309,7 +356,7 @@ function renderList(candidates) {
       `${index + 1}. ${candidate.candidate}`,
       `   reason: ${candidate.promotionReason || ''}`,
       `   future: ${candidate.expectedBehaviorChange || ''}`,
-      `   source: ${candidate.sourceReceipt || ''}${tags ? ` [${tags}]` : ''}`,
+      `   source: ${candidate.sourceReceipt || ''}${candidate.sourceType ? ` (${candidate.sourceType})` : ''}${tags ? ` [${tags}]` : ''}`,
     ].join('\n');
   }).join('\n\n');
 }
@@ -413,6 +460,7 @@ module.exports = {
   parseArgs,
   readJsonl,
   writeJsonl,
+  normalizeSourceType,
   inferScope,
   promotionKeyFor,
   validateCandidateForApply,
