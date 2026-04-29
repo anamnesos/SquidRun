@@ -82,6 +82,11 @@ describe('hm-current-objective', () => {
           id: 'oracle',
           status: 'closed',
           owner: 'oracle',
+          worldChange: 'Oracle guardrail documented.',
+          residual: 'none',
+          nextOwner: 'architect',
+          clientFailureMode: 'Guardrail can become prose-only.',
+          stopReason: 'closed because checkpoint answers are complete',
           updatedAt: staleAt,
         },
       },
@@ -98,6 +103,42 @@ describe('hm-current-objective', () => {
         type: 'lane_stale',
         lane: 'builder',
         owner: 'builder',
+      }),
+    ]);
+  });
+
+  test('checkState refuses closed lanes without checkpoint answers', () => {
+    const state = {
+      objective: 'Keep agents moving.',
+      lanes: {
+        builder: {
+          id: 'builder',
+          status: 'closed',
+          owner: 'builder',
+          currentReality: 'Commit landed.',
+          evidencePath: 'ui/scripts/hm-current-objective.js',
+        },
+      },
+    };
+
+    const result = currentObjective.checkState(state, {
+      statePath,
+      staleMinutes: 30,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        type: 'closed_lane_missing_checkpoint',
+        lane: 'builder',
+        owner: 'builder',
+        missing: expect.arrayContaining([
+          'worldChange',
+          'residual',
+          'nextOwner',
+          'clientFailureMode',
+          'stopReason',
+        ]),
       }),
     ]);
   });
@@ -126,6 +167,16 @@ describe('hm-current-objective', () => {
       'ui/scripts/hm-current-objective.js',
       '--stop-condition',
       'Supervisor status shows currentObjectiveWake.',
+      '--world-change',
+      'The wake loop is represented.',
+      '--residual',
+      'Supervisor wiring remains.',
+      '--next-owner',
+      'builder',
+      '--client-failure-mode',
+      'A green schema can hide incomplete work.',
+      '--stop-reason',
+      'not closing yet',
     ]);
 
     const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
@@ -133,6 +184,7 @@ describe('hm-current-objective', () => {
     expect(state.lanes['builder-wake-loop']).toEqual(expect.objectContaining({
       owner: 'builder',
       nextAction: 'Wire supervisor lane.',
+      clientFailureMode: 'A green schema can hide incomplete work.',
     }));
   });
 });

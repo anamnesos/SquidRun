@@ -25,6 +25,13 @@ const DEFAULT_STATE_PATH = resolveCoordPath('coord/current-objective-state.json'
 const DEFAULT_LOG_PATH = resolveCoordPath('coord/current-objective-wake-log.jsonl', { forWrite: true });
 const INBOX_APPEND_PATH = path.join(__dirname, 'hm-inbox-append.js');
 const DEFAULT_STALE_MINUTES = 30;
+const CLOSED_CHECKPOINT_FIELDS = [
+  'worldChange',
+  'residual',
+  'nextOwner',
+  'clientFailureMode',
+  'stopReason',
+];
 
 function parseArgs(argv = process.argv.slice(2)) {
   const opts = {
@@ -41,6 +48,11 @@ function parseArgs(argv = process.argv.slice(2)) {
     evidencePath: '',
     stopCondition: '',
     status: '',
+    worldChange: '',
+    residual: '',
+    nextOwner: '',
+    clientFailureMode: '',
+    stopReason: '',
     objective: '',
     summary: '',
     help: false,
@@ -60,6 +72,11 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (token === '--evidence-path') opts.evidencePath = String(argv[++index] || '').trim();
     else if (token === '--stop-condition') opts.stopCondition = String(argv[++index] || '').trim();
     else if (token === '--status') opts.status = String(argv[++index] || '').trim().toLowerCase();
+    else if (token === '--world-change') opts.worldChange = String(argv[++index] || '').trim();
+    else if (token === '--residual') opts.residual = String(argv[++index] || '').trim();
+    else if (token === '--next-owner') opts.nextOwner = String(argv[++index] || '').trim().toLowerCase();
+    else if (token === '--client-failure-mode') opts.clientFailureMode = String(argv[++index] || '').trim();
+    else if (token === '--stop-reason') opts.stopReason = String(argv[++index] || '').trim();
     else if (token === '--objective') opts.objective = String(argv[++index] || '').trim();
     else if (token === '--summary') opts.summary = String(argv[++index] || '').trim();
     else if (token === '-h' || token === '--help') opts.help = true;
@@ -77,7 +94,8 @@ Commands:
   status [--json]
   check [--wake] [--stale-minutes 30] [--json]
 
-Lane rule: every active lane needs currentReality, nextAction, owner, evidencePath, stopCondition.`);
+Lane rule: every active lane needs currentReality, nextAction, owner, evidencePath, stopCondition.
+Closure rule: every closed lane must answer worldChange, residual, nextOwner, clientFailureMode, stopReason.`);
 }
 
 function readJson(filePath, fallback = null) {
@@ -148,6 +166,11 @@ function updateLane(opts) {
     nextAction: opts.nextAction || prior.nextAction || '',
     evidencePath: opts.evidencePath || prior.evidencePath || '',
     stopCondition: opts.stopCondition || prior.stopCondition || '',
+    worldChange: opts.worldChange || prior.worldChange || '',
+    residual: opts.residual || prior.residual || '',
+    nextOwner: opts.nextOwner || prior.nextOwner || '',
+    clientFailureMode: opts.clientFailureMode || prior.clientFailureMode || '',
+    stopReason: opts.stopReason || prior.stopReason || '',
     updatedAt: now,
   };
   saveState(opts.statePath, state);
@@ -156,6 +179,10 @@ function updateLane(opts) {
 
 function missingFields(lane) {
   return REQUIRED_LANE_FIELDS.filter((field) => !String(lane[field] || '').trim());
+}
+
+function missingClosureFields(lane) {
+  return CLOSED_CHECKPOINT_FIELDS.filter((field) => !String(lane[field] || '').trim());
 }
 
 function minutesSince(value, nowMs = Date.now()) {
@@ -181,7 +208,21 @@ function checkState(state, opts) {
 
   for (const lane of lanes) {
     const status = String(lane.status || 'active').toLowerCase();
-    if (status === 'closed') continue;
+    if (status === 'closed') {
+      const missingClosure = missingClosureFields(lane);
+      if (missingClosure.length > 0) {
+        findings.push({
+          severity: 'high',
+          type: 'closed_lane_missing_checkpoint',
+          lane: lane.id || 'unknown',
+          owner: lane.owner || lane.nextOwner || 'architect',
+          missing: missingClosure,
+          summary: `Closed lane ${lane.id || 'unknown'} is missing checkpoint answers: ${missingClosure.join(', ')}`,
+          evidencePath: opts.statePath,
+        });
+      }
+      continue;
+    }
     const missing = missingFields(lane);
     if (missing.length > 0) {
       findings.push({
@@ -282,6 +323,13 @@ function renderStatus(state) {
     lines.push(`    next: ${lane.nextAction || ''}`);
     lines.push(`    evidence: ${lane.evidencePath || ''}`);
     lines.push(`    stop: ${lane.stopCondition || ''}`);
+    if (String(lane.status || '').toLowerCase() === 'closed') {
+      lines.push(`    worldChange: ${lane.worldChange || ''}`);
+      lines.push(`    residual: ${lane.residual || ''}`);
+      lines.push(`    nextOwner: ${lane.nextOwner || ''}`);
+      lines.push(`    clientFailureMode: ${lane.clientFailureMode || ''}`);
+      lines.push(`    stopReason: ${lane.stopReason || ''}`);
+    }
   }
   return lines.join('\n');
 }
@@ -354,5 +402,6 @@ module.exports = {
   updateLane,
   checkState,
   missingFields,
+  missingClosureFields,
   main,
 };
