@@ -2793,6 +2793,125 @@ describe('supervisor-daemon integrations', () => {
     await heartbeatDaemon.stop('test-cleanup-coord-heartbeat-fail');
   });
 
+  test('runs current objective wake checks and treats residual findings as attention', async () => {
+    const objectiveScriptPath = path.join(tempRoot, 'hm-current-objective-attention.js');
+    fs.writeFileSync(objectiveScriptPath, [
+      'console.log(JSON.stringify({',
+      '  ok: false,',
+      '  laneCount: 1,',
+      '  findings: [{ type: "lane_stale", owner: "builder", summary: "Builder lane stale" }],',
+      '  woken: [{ owner: "builder", ok: true }]',
+      '}));',
+    ].join('\n'));
+    const wakeDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      smartMoneyScanner: null,
+      cryptoTradingOrchestrator: {},
+      currentObjectiveWakeEnabled: true,
+      currentObjectiveScriptPath: objectiveScriptPath,
+      currentObjectiveWakeIntervalMs: 10 * 60 * 1000,
+      env: {
+        ...process.env,
+        SQUIDRUN_PROFILE: 'main',
+      },
+      pidPath: path.join(tempRoot, 'current-objective-wake.pid'),
+      statusPath: path.join(tempRoot, 'current-objective-wake-status.json'),
+      logPath: path.join(tempRoot, 'current-objective-wake.log'),
+      taskLogDir: path.join(tempRoot, 'current-objective-wake-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'current-objective-wake.signal'),
+    });
+
+    const nowMs = Date.now();
+    const first = await wakeDaemon.maybeRunCurrentObjectiveWake(nowMs);
+    const cooldown = await wakeDaemon.maybeRunCurrentObjectiveWake(nowMs + (60 * 1000));
+    const second = await wakeDaemon.maybeRunCurrentObjectiveWake(nowMs + (10 * 60 * 1000) + 1);
+
+    expect(first).toEqual(expect.objectContaining({
+      ok: false,
+      findings: expect.arrayContaining([
+        expect.objectContaining({ type: 'lane_stale' }),
+      ]),
+    }));
+    expect(cooldown).toEqual(expect.objectContaining({
+      skipped: true,
+      reason: 'current_objective_wake_cooldown',
+    }));
+    expect(second).toEqual(expect.objectContaining({
+      woken: expect.arrayContaining([
+        expect.objectContaining({ owner: 'builder', ok: true }),
+      ]),
+    }));
+    expect(wakeDaemon.lastCurrentObjectiveWakeSummary).toEqual(expect.objectContaining({
+      enabled: true,
+      status: 'attention',
+      intervalMs: 10 * 60 * 1000,
+      scriptPath: objectiveScriptPath,
+    }));
+
+    await wakeDaemon.stop('test-cleanup-current-objective-wake');
+  });
+
+  test('records an anomaly when the current objective wake process fails', async () => {
+    const objectiveScriptPath = path.join(tempRoot, 'hm-current-objective-fail.js');
+    const anomalyScriptPath = path.join(tempRoot, 'hm-anomaly-current-objective.js');
+    const anomalyArgsPath = path.join(tempRoot, 'current-objective-anomaly-args.json');
+    fs.writeFileSync(objectiveScriptPath, [
+      "console.error('current objective failed');",
+      'process.exit(4);',
+    ].join('\n'));
+    fs.writeFileSync(anomalyScriptPath, [
+      "const fs = require('fs');",
+      "fs.writeFileSync(process.env.ANOMALY_ARGS_PATH, JSON.stringify(process.argv.slice(2), null, 2));",
+      "console.log(JSON.stringify({ ok: true }));",
+    ].join('\n'));
+    const wakeDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      smartMoneyScanner: null,
+      cryptoTradingOrchestrator: {},
+      currentObjectiveWakeEnabled: true,
+      currentObjectiveScriptPath: objectiveScriptPath,
+      anomalyScriptPath,
+      env: {
+        ...process.env,
+        SQUIDRUN_PROFILE: 'main',
+        ANOMALY_ARGS_PATH: anomalyArgsPath,
+      },
+      pidPath: path.join(tempRoot, 'current-objective-fail.pid'),
+      statusPath: path.join(tempRoot, 'current-objective-fail-status.json'),
+      logPath: path.join(tempRoot, 'current-objective-fail.log'),
+      taskLogDir: path.join(tempRoot, 'current-objective-fail-tasks'),
+      wakeSignalPath: path.join(tempRoot, 'current-objective-fail.signal'),
+    });
+
+    const result = await wakeDaemon.maybeRunCurrentObjectiveWake(Date.now());
+    const anomalyArgs = JSON.parse(fs.readFileSync(anomalyArgsPath, 'utf8'));
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'failed',
+      exitCode: 4,
+    }));
+    expect(wakeDaemon.lastCurrentObjectiveWakeSummary).toEqual(expect.objectContaining({
+      enabled: true,
+      status: 'failed',
+    }));
+    expect(anomalyArgs).toEqual(expect.arrayContaining([
+      'type=current_objective_wake_failure',
+      'src=supervisor',
+      'sev=medium',
+      '--json',
+    ]));
+    expect(anomalyArgs.some((arg) => String(arg).startsWith('details='))).toBe(true);
+
+    await wakeDaemon.stop('test-cleanup-current-objective-fail');
+  });
+
   test('runs opt-in rules engine ticks on the five minute cadence', async () => {
     const tradingTickScriptPath = path.join(tempRoot, 'hm-trading-tick-ok.js');
     fs.writeFileSync(tradingTickScriptPath, [
@@ -3951,6 +4070,16 @@ describe('supervisor-daemon integrations', () => {
       lastRunAt: '2026-04-05T19:15:00.000Z',
       lastSummary: { ok: true },
     };
+    daemon.currentObjectiveWakeEnabled = true;
+    daemon.lastCurrentObjectiveWakeRunAtMs = Date.parse('2026-04-05T19:20:00.000Z');
+    daemon.lastCurrentObjectiveWakeSummary = {
+      enabled: true,
+      status: 'ok',
+      intervalMs: 10 * 60 * 1000,
+      scriptPath: 'hm-current-objective.js',
+      lastRunAt: '2026-04-05T19:20:00.000Z',
+      lastSummary: { ok: true, findings: [] },
+    };
     daemon.lastCryptoCoverage = {
       symbolsConsulted: ['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD'],
       symbolsExecutable: ['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD'],
@@ -3996,6 +4125,12 @@ describe('supervisor-daemon integrations', () => {
       running: false,
       intervalMs: 15 * 60 * 1000,
       lastRunAt: '2026-04-05T19:15:00.000Z',
+    }));
+    expect(payload.currentObjectiveWake).toEqual(expect.objectContaining({
+      enabled: true,
+      running: false,
+      intervalMs: 10 * 60 * 1000,
+      lastRunAt: '2026-04-05T19:20:00.000Z',
     }));
 
     writeSpy.mockRestore();

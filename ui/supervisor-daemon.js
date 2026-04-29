@@ -209,6 +209,7 @@ const DEFAULT_HYPERLIQUID_SQUEEZE_DETECTOR_INTERVAL_MS = Math.max(
 const DEFAULT_COORD_HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_BUS_SENTINEL_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_RULES_ENGINE_TICK_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_CURRENT_OBJECTIVE_WAKE_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_ORACLE_WATCH_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_ORACLE_WATCH_INTERVAL_MS || '10000', 10) || 10_000
@@ -1130,6 +1131,7 @@ class SupervisorDaemon {
     this.hmTokenomistUnlocksScriptPath = path.resolve(String(options.tokenomistUnlocksScriptPath || resolveProjectUiScriptPath('hm-tokenomist-unlocks.js', this.projectRoot)));
     this.hmCoordHeartbeatScriptPath = path.resolve(String(options.coordHeartbeatScriptPath || resolveProjectUiScriptPath('hm-heartbeat.js', this.projectRoot)));
     this.hmBusSentinelScriptPath = path.resolve(String(options.busSentinelScriptPath || resolveProjectUiScriptPath('hm-bus-sentinel.js', this.projectRoot)));
+    this.hmCurrentObjectiveScriptPath = path.resolve(String(options.currentObjectiveScriptPath || resolveProjectUiScriptPath('hm-current-objective.js', this.projectRoot)));
     this.hmTradingTickScriptPath = path.resolve(String(options.tradingTickScriptPath || resolveProjectUiScriptPath('hm-trading-tick.js', this.projectRoot)));
     this.hmAnomalyScriptPath = path.resolve(String(options.anomalyScriptPath || resolveProjectUiScriptPath('hm-anomaly.js', this.projectRoot)));
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
@@ -1410,6 +1412,25 @@ class SupervisorDaemon {
       status: this.isBusSentinelActive() ? 'idle' : 'disabled',
       intervalMs: this.busSentinelIntervalMs,
       scriptPath: this.hmBusSentinelScriptPath,
+      lastRunAt: null,
+      lastSummary: null,
+    };
+    this.currentObjectiveWakeEnabled = options.currentObjectiveWakeEnabled === true
+      || (options.currentObjectiveWakeEnabled !== false
+        && RUNNING_SUPERVISOR_MAIN
+        && this.runtimeEnv.SQUIDRUN_CURRENT_OBJECTIVE_WAKE !== '0');
+    this.currentObjectiveWakeIntervalMs = Math.max(
+      60_000,
+      Number.parseInt(options.currentObjectiveWakeIntervalMs || DEFAULT_CURRENT_OBJECTIVE_WAKE_INTERVAL_MS, 10)
+      || DEFAULT_CURRENT_OBJECTIVE_WAKE_INTERVAL_MS
+    );
+    this.currentObjectiveWakePromise = null;
+    this.lastCurrentObjectiveWakeRunAtMs = 0;
+    this.lastCurrentObjectiveWakeSummary = {
+      enabled: this.isCurrentObjectiveWakeActive(),
+      status: this.isCurrentObjectiveWakeActive() ? 'idle' : 'disabled',
+      intervalMs: this.currentObjectiveWakeIntervalMs,
+      scriptPath: this.hmCurrentObjectiveScriptPath,
       lastRunAt: null,
       lastSummary: null,
     };
@@ -2306,6 +2327,7 @@ class SupervisorDaemon {
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
     const coordHeartbeatResult = await this.maybeRunCoordHeartbeat(nowMs);
     const busSentinelResult = await this.maybeRunBusSentinel(nowMs);
+    const currentObjectiveWakeResult = await this.maybeRunCurrentObjectiveWake(nowMs);
     const rulesEngineTickResult = await this.maybeRunRulesEngineTick(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
@@ -2328,6 +2350,7 @@ class SupervisorDaemon {
       marketScannerResult,
       coordHeartbeatResult,
       busSentinelResult,
+      currentObjectiveWakeResult,
       rulesEngineTickResult,
       saylorWatcherResult,
       oracleWatchResult,
@@ -2667,6 +2690,11 @@ class SupervisorDaemon {
     return Boolean(this.busSentinelEnabled && profile !== 'eunbyeol');
   }
 
+  isCurrentObjectiveWakeActive() {
+    const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
+    return Boolean(this.currentObjectiveWakeEnabled && profile !== 'eunbyeol');
+  }
+
   isRulesEngineTickActive() {
     const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
     return Boolean(this.rulesEngineTickEnabled && this.cryptoTradingEnabled && profile !== 'eunbyeol');
@@ -2898,6 +2926,95 @@ class SupervisorDaemon {
     });
 
     return this.busSentinelPromise;
+  }
+
+  async recordCurrentObjectiveWakeFailure(result = {}, summary = {}) {
+    const details = {
+      scriptPath: this.hmCurrentObjectiveScriptPath,
+      exitCode: result?.exitCode ?? null,
+      signal: result?.signal || null,
+      timedOut: result?.timedOut === true,
+      error: summary?.error || result?.error || null,
+      stderr: trimTail(String(result?.stderr || ''), 2048),
+      stdout: trimTail(String(result?.stdout || ''), 2048),
+    };
+    const anomalyResult = await executeNodeScript(
+      this.hmAnomalyScriptPath,
+      [
+        'type=current_objective_wake_failure',
+        'src=supervisor',
+        'sev=medium',
+        `details=${JSON.stringify(details)}`,
+        '--json',
+      ],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 15_000,
+      }
+    );
+    if (!anomalyResult.ok) {
+      this.logger.warn(`Current objective wake anomaly logging failed: ${anomalyResult.error || anomalyResult.stderr || 'unknown'}`);
+    }
+    return anomalyResult;
+  }
+
+  async maybeRunCurrentObjectiveWake(nowMs = Date.now()) {
+    const active = this.isCurrentObjectiveWakeActive();
+    if (!active || this.stopping) {
+      this.lastCurrentObjectiveWakeSummary = {
+        ...(this.lastCurrentObjectiveWakeSummary || {}),
+        enabled: active,
+        status: active ? 'stopping' : 'disabled',
+        intervalMs: this.currentObjectiveWakeIntervalMs,
+        scriptPath: this.hmCurrentObjectiveScriptPath,
+      };
+      return { ok: false, skipped: true, reason: active ? 'stopping' : 'current_objective_wake_disabled' };
+    }
+    if (this.currentObjectiveWakePromise) {
+      return this.currentObjectiveWakePromise;
+    }
+    if ((nowMs - this.lastCurrentObjectiveWakeRunAtMs) < this.currentObjectiveWakeIntervalMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'current_objective_wake_cooldown',
+        nextEligibleAtMs: this.lastCurrentObjectiveWakeRunAtMs + this.currentObjectiveWakeIntervalMs,
+      };
+    }
+
+    this.currentObjectiveWakePromise = executeNodeScript(
+      this.hmCurrentObjectiveScriptPath,
+      ['check', '--wake', '--json'],
+      {
+        cwd: this.projectRoot,
+        env: this.runtimeEnv,
+        timeoutMs: 60_000,
+      }
+    ).then(async (result) => {
+      const summary = this.parseWatcherScriptSummary(result, 'current_objective_wake');
+      const findingCount = Array.isArray(summary?.findings) ? summary.findings.length : 0;
+      this.lastCurrentObjectiveWakeRunAtMs = Date.now();
+      this.lastCurrentObjectiveWakeSummary = {
+        enabled: true,
+        status: summary?.ok ? 'ok' : (findingCount > 0 ? 'attention' : 'failed'),
+        intervalMs: this.currentObjectiveWakeIntervalMs,
+        scriptPath: this.hmCurrentObjectiveScriptPath,
+        lastRunAt: new Date(this.lastCurrentObjectiveWakeRunAtMs).toISOString(),
+        lastSummary: summary,
+      };
+      if (!result.ok || (summary?.ok !== true && findingCount === 0)) {
+        await this.recordCurrentObjectiveWakeFailure(result, summary);
+        this.logger.warn(`Current objective wake failed: ${summary?.error || result?.error || 'unknown'}`);
+      } else if (findingCount > 0) {
+        this.logger.warn(`Current objective wake found ${findingCount} residual(s).`);
+      }
+      return summary;
+    }).finally(() => {
+      this.currentObjectiveWakePromise = null;
+    });
+
+    return this.currentObjectiveWakePromise;
   }
 
   async maybeRunSaylorWatcher(nowMs = Date.now()) {
@@ -6390,6 +6507,17 @@ class SupervisorDaemon {
           ? this.lastBusSentinelRunAtMs + this.busSentinelIntervalMs
           : null,
         lastSummary: this.lastBusSentinelSummary || null,
+      },
+      currentObjectiveWake: {
+        enabled: this.isCurrentObjectiveWakeActive(),
+        running: Boolean(this.currentObjectiveWakePromise),
+        intervalMs: this.currentObjectiveWakeIntervalMs,
+        scriptPath: this.hmCurrentObjectiveScriptPath,
+        lastRunAt: this.lastCurrentObjectiveWakeSummary?.lastRunAt || null,
+        nextEligibleAtMs: this.lastCurrentObjectiveWakeRunAtMs
+          ? this.lastCurrentObjectiveWakeRunAtMs + this.currentObjectiveWakeIntervalMs
+          : null,
+        lastSummary: this.lastCurrentObjectiveWakeSummary || null,
       },
       rulesEngineTick: {
         enabled: this.isRulesEngineTickActive(),
