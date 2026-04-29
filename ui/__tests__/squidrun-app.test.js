@@ -3106,6 +3106,47 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('does not crash when the pending delivery queue directory is unwritable', async () => {
+      const triggers = require('../modules/triggers');
+      const queuePath = path.join('/test/workspace/.squidrun/runtime', 'pending-pane-deliveries.json');
+      const realMkdirSync = fs.mkdirSync.bind(fs);
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation((targetPath, options) => {
+        if (String(targetPath).includes('test') && String(targetPath).includes('runtime')) {
+          const err = new Error(`EACCES: permission denied, mkdir '${targetPath}'`);
+          err.code = 'EACCES';
+          throw err;
+        }
+        return realMkdirSync(targetPath, options);
+      });
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.unverified',
+      });
+
+      try {
+        const result = await app.deliverHumanMessageWithRecall(
+          '[Telegram from eunbyeol]: hello',
+          {
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'eunbyeol',
+            messageId: 'telegram-in-123',
+          },
+          'Telegram'
+        );
+
+        expect(result).toEqual(expect.objectContaining({
+          pendingQueued: false,
+          pendingFailureReason: 'accepted.unverified',
+        }));
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+    });
+
     it('delivers pane-1 human messages without injecting recall blocks', async () => {
       const triggers = require('../modules/triggers');
       triggers.sendDirectMessage.mockResolvedValueOnce({
