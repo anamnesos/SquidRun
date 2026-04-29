@@ -14,6 +14,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { createHash } = require('crypto');
 const { resolveCoordPath } = require('../config');
 
 const TRUSTQUOTE_DIR = path.resolve(__dirname, '../../../TrustQuote');
@@ -91,6 +92,14 @@ function readJsonl(filePath) {
     });
 }
 
+function writeJsonl(filePath, records) {
+  const lines = records.map((record) => {
+    const { lineNumber, ...payload } = record;
+    return JSON.stringify(payload);
+  });
+  fs.writeFileSync(filePath, `${lines.join('\n')}${lines.length ? '\n' : ''}`, 'utf8');
+}
+
 function normalizeTags(tags) {
   return Array.isArray(tags)
     ? tags.map((tag) => String(tag || '').trim().toLowerCase()).filter(Boolean)
@@ -116,10 +125,33 @@ function inferScope(candidate) {
   };
 }
 
+function promotionKeyFor(candidate) {
+  const source = [
+    candidate.sourceReceipt || '',
+    candidate.lineNumber || '',
+    candidate.candidate || '',
+  ].join('|');
+  return `promotion_${createHash('sha256').update(source).digest('hex').slice(0, 24)}`;
+}
+
+function validateCandidateForApply(candidate) {
+  const missing = [];
+  if (!String(candidate.sourceReceipt || '').trim()) missing.push('sourceReceipt');
+  if (!String(candidate.promotionReason || '').trim()) missing.push('promotionReason');
+  if (!String(candidate.expectedBehaviorChange || '').trim()) missing.push('expectedBehaviorChange');
+  if (missing.length > 0) {
+    throw new Error(`Apply requires candidate provenance: missing ${missing.join(', ')}`);
+  }
+  if (String(candidate.status || '').toLowerCase() !== 'candidate') {
+    throw new Error(`Candidate status is ${candidate.status || 'unknown'}; only status=candidate can be promoted`);
+  }
+}
+
 function buildOwnerContextRecord({ businessId, candidate, reason }) {
   const tags = normalizeTags(candidate.tags);
   const scope = inferScope(candidate);
   const now = new Date();
+  const promotionKey = promotionKeyFor(candidate);
   const text = [
     String(candidate.candidate || '').trim(),
     String(candidate.expectedBehaviorChange || '').trim()
@@ -157,6 +189,7 @@ function buildOwnerContextRecord({ businessId, candidate, reason }) {
       expectedBehaviorChange: candidate.expectedBehaviorChange || '',
       candidateTs: candidate.ts || null,
       candidateLineNumber: candidate.lineNumber,
+      promotionKey,
     },
     status: 'active',
     createdAt: now,
@@ -178,6 +211,20 @@ function selectCandidate(candidates, args) {
     return selected;
   }
   return null;
+}
+
+function markCandidatePromoted(filePath, candidates, selected, ownerContextId, appliedReason) {
+  const updated = candidates.map((candidate) => {
+    if (candidate.lineNumber !== selected.lineNumber) return candidate;
+    return {
+      ...candidate,
+      status: 'promoted',
+      promotedAt: new Date().toISOString(),
+      ownerContextId,
+      appliedReason,
+    };
+  });
+  writeJsonl(filePath, updated);
 }
 
 async function resolveBusinessId(admin, db, ownerEmail) {
@@ -241,23 +288,31 @@ Options:
   const candidate = selectCandidate(candidates, args);
   if (!candidate) throw new Error('No candidate selected. Use --index or --candidate-text.');
 
-  loadEnvLocal(ENV_PATH);
-  const admin = loadAdmin(ADMIN_PATH);
-  if (!admin.apps.length) {
-    if (!process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
-      throw new Error('FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY missing from TrustQuote .env.local');
-    }
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-      }),
-    });
+  if (args.apply) {
+    validateCandidateForApply(candidate);
   }
 
-  const db = admin.firestore();
-  const businessId = await resolveBusinessId(admin, db, args.ownerEmail);
+  let admin = null;
+  let db = null;
+  let businessId = process.env.TQ_BUSINESS_ID || '<resolved-on-apply>';
+  if (args.apply) {
+    loadEnvLocal(ENV_PATH);
+    admin = loadAdmin(ADMIN_PATH);
+    if (!admin.apps.length) {
+      if (!process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
+        throw new Error('FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY missing from TrustQuote .env.local');
+      }
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+        }),
+      });
+    }
+    db = admin.firestore();
+    businessId = await resolveBusinessId(admin, db, args.ownerEmail);
+  }
   const record = buildOwnerContextRecord({ businessId, candidate, reason: args.reason });
 
   const result = {
@@ -270,8 +325,14 @@ Options:
   };
 
   if (args.apply) {
-    const ref = await db.collection('ownerContext').add(record);
+    const ref = db.collection('ownerContext').doc(record.metadata.promotionKey);
+    const existing = await ref.get();
+    if (existing.exists) {
+      throw new Error(`Candidate already promoted as ownerContext ${ref.id}`);
+    }
+    await ref.create(record);
     result.id = ref.id;
+    markCandidatePromoted(args.filePath, candidates, candidate, ref.id, args.reason);
   }
 
   if (args.json) console.log(JSON.stringify(result, null, 2));
@@ -293,8 +354,12 @@ if (require.main === module) {
 module.exports = {
   parseArgs,
   readJsonl,
+  writeJsonl,
   inferScope,
+  promotionKeyFor,
+  validateCandidateForApply,
   buildOwnerContextRecord,
   selectCandidate,
+  markCandidatePromoted,
   main,
 };
