@@ -36,6 +36,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (t === '--unpaid-hours') opts.unpaidHours = Number(argv[++i]);
     else if (t === '--list-users') opts.listUsers = true;
     else if (t === '--debug-events') opts.debugEvents = true;
+    else if (t === '--invoice') opts.invoiceQuery = argv[++i];
     else if (t === '-h' || t === '--help') opts.help = true;
   }
   return opts;
@@ -169,24 +170,54 @@ async function fetchUnpaidInvoices(db, businessId, hours) {
     .where('paymentStatus', 'in', ['unpaid', 'partial'])
     .get();
 
-  const items = snap.docs.map((d) => {
+  const items = snap.docs
+    .filter((d) => {
+      const v = d.data();
+      // Exclude soft-deleted invoices and those converted back to quotes.
+      if (v.isDeleted) return false;
+      if (v.convertedToType && v.convertedToType !== 'jobs') return false;
+      return true;
+    })
+    .map((d) => {
     const v = d.data();
     const created = tsToDate(v.createdAt) || tsToDate(v.updatedAt) || null;
+    const lastPay = v.lastPaymentDate ? new Date(v.lastPaymentDate) : null;
     const ci = v.clientInfo || {};
     const ciName = [ci.firstName, ci.lastName].filter(Boolean).join(' ').trim();
+    // Sum paymentDates as source of truth (totalPaid scalar can be stale).
+    let summedPaid = 0;
+    if (Array.isArray(v.paymentDates)) {
+      for (const p of v.paymentDates) {
+        const amt = typeof p?.amount === 'number' ? p.amount : Number(p?.amount || 0);
+        if (Number.isFinite(amt) && amt > 0) summedPaid += amt;
+      }
+    }
+    const totalPaid = Math.max(summedPaid, typeof v.totalPaid === 'number' ? v.totalPaid : 0);
+    // Compute balance from total - paid (authoritative); fall back only if total missing.
+    let balance = null;
+    if (typeof v.total === 'number') balance = v.total - totalPaid;
+    else if (typeof v.balanceDue === 'number') balance = v.balanceDue;
+    if (balance != null) balance = Math.round(balance * 100) / 100;
+    // "Stale" for collection purposes = lastPaymentDate (or createdAt) older than threshold.
+    const staleAnchor = lastPay || created;
     return {
       id: d.id,
       number: v.invoiceNumber || v.number || d.id,
       clientName: ciName || v.clientName || v.customerName || '',
       total: typeof v.total === 'number' ? v.total : null,
+      totalPaid,
+      balanceDue: balance,
       paymentStatus: v.paymentStatus,
       createdAt: created,
-      ageHours: created ? Math.floor((Date.now() - created.getTime()) / 36e5) : null,
+      lastPaymentDate: lastPay,
+      staleAnchor,
+      ageHours: staleAnchor ? Math.floor((Date.now() - staleAnchor.getTime()) / 36e5) : null,
     };
   });
   return items
-    .filter((i) => i.createdAt && i.createdAt < cutoff)
-    .sort((a, b) => (a.createdAt - b.createdAt));
+    .filter((i) => i.balanceDue != null && i.balanceDue > 0.5)
+    .filter((i) => i.staleAnchor && i.staleAnchor < cutoff)
+    .sort((a, b) => (a.staleAnchor - b.staleAnchor));
 }
 
 function renderText({ events, unpaid, windowHours, unpaidHours }) {
@@ -214,10 +245,17 @@ function renderText({ events, unpaid, windowHours, unpaidHours }) {
   if (unpaid.length === 0) {
     lines.push('  (none)');
   } else {
+    let totalOwed = 0;
     for (const u of unpaid) {
-      const total = u.total != null ? `$${u.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$?';
-      lines.push(`  #${u.number}  ${u.clientName || '(no client)'}  ${total}  [${u.paymentStatus}, ${fmtAge(u.ageHours)} old]`);
+      const balance = u.balanceDue != null ? u.balanceDue : 0;
+      totalOwed += balance;
+      const balStr = `$${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const paid = u.totalPaid > 0 ? ` (paid $${u.totalPaid.toLocaleString('en-US')})` : '';
+      const lastPay = u.lastPaymentDate ? `, last paid ${u.lastPaymentDate.toISOString().slice(0, 10)}` : '';
+      lines.push(`  #${u.number}  ${u.clientName || '(no client)'}  ${balStr}${paid}  [${u.paymentStatus}, ${fmtAge(u.ageHours)} since activity${lastPay}]`);
     }
+    lines.push('');
+    lines.push(`  Total outstanding balance: $${totalOwed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
   }
   return lines.join('\n');
 }
@@ -268,6 +306,36 @@ Env override:
   }
 
   const businessId = await resolveBusinessId(admin, db, opts.ownerEmail);
+
+  if (opts.invoiceQuery) {
+    const q = String(opts.invoiceQuery).toLowerCase();
+    // Match by invoiceNumber, document id, or client first/last name (substring).
+    const snap = await db.collection('jobs').where('businessId', '==', businessId).get();
+    const matches = snap.docs.filter((d) => {
+      const v = d.data();
+      const ci = v.clientInfo || {};
+      const hay = [
+        v.invoiceNumber, d.id,
+        v.clientName, v.customerName,
+        ci.firstName, ci.lastName,
+      ].filter(Boolean).map((s) => String(s).toLowerCase()).join(' | ');
+      return hay.includes(q);
+    });
+    console.log(`Matches for "${opts.invoiceQuery}": ${matches.length}`);
+    matches.forEach((d) => {
+      const v = d.data();
+      console.log(`\n=== job ${d.id}  (#${v.invoiceNumber || '?'})`);
+      Object.entries(v).forEach(([k, val]) => {
+        let s;
+        if (val && typeof val === 'object' && val.toDate) s = val.toDate().toISOString();
+        else if (val && typeof val === 'object') s = JSON.stringify(val);
+        else s = String(val);
+        if (s && s.length > 400) s = s.slice(0, 400) + '…';
+        console.log(`  ${k}: ${s}`);
+      });
+    });
+    return;
+  }
 
   if (opts.debugEvents) {
     const start = new Date();
