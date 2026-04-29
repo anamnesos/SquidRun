@@ -106,6 +106,47 @@ function normalizeTags(tags) {
     : [];
 }
 
+function hasAnyTag(candidate, wantedTags) {
+  const tags = normalizeTags(candidate.tags);
+  return wantedTags.some((tag) => tags.includes(tag));
+}
+
+function candidateAuthorshipText(candidate) {
+  return [
+    candidate.candidate,
+    candidate.promotionReason,
+    candidate.expectedBehaviorChange,
+    candidate.sourceReceipt,
+  ].map((value) => String(value || '')).join('\n');
+}
+
+function isJamesSourced(candidate) {
+  const text = candidateAuthorshipText(candidate);
+  return hasAnyTag(candidate, ['james-sourced', 'james_authored', 'james-authored', 'direct-james'])
+    || /\bjames[- ]sourced\b/i.test(text)
+    || /\bjames\s+(said|asked|told|wrote|authored|corrected|called out|explicitly|requested|instructed)\b/i.test(text);
+}
+
+function isCustomerSourced(candidate) {
+  const text = candidateAuthorshipText(candidate);
+  return hasAnyTag(candidate, ['customer-sourced', 'customer_authored', 'customer-authored', 'client-sourced'])
+    || /\b(customer|client)\s+(said|asked|told|wrote|authored|requested|instructed)\b/i.test(text);
+}
+
+function hasDirectSource(candidate) {
+  return isJamesSourced(candidate) || isCustomerSourced(candidate);
+}
+
+function isFactualCustomerRecord(candidate) {
+  return hasAnyTag(candidate, ['fact-record', 'factual', 'payment-record', 'address', 'phone', 'email', 'payment'])
+    || /\b(address|phone|email|paid|payment|totalPaid|balanceDue|invoice #?|job #?)\b/i.test(String(candidate.candidate || ''));
+}
+
+function isAgentCustomerJudgment(candidate) {
+  return hasAnyTag(candidate, ['customer-tone', 'relationship-judgment', 'receivables-tone'])
+    || /\b(warm|tone|steady|high-value|relationship|delinquent|collections framing|treat(ed)? as)\b/i.test(String(candidate.candidate || ''));
+}
+
 function inferScope(candidate) {
   const tags = normalizeTags(candidate.tags);
   const text = String(candidate.candidate || '');
@@ -144,6 +185,18 @@ function validateCandidateForApply(candidate) {
   }
   if (String(candidate.status || '').toLowerCase() !== 'candidate') {
     throw new Error(`Candidate status is ${candidate.status || 'unknown'}; only status=candidate can be promoted`);
+  }
+  const scope = inferScope(candidate);
+  if (scope.scopeType === 'customer') {
+    if (isAgentCustomerJudgment(candidate) && !hasDirectSource(candidate)) {
+      throw new Error('Agent-derived customer tone/judgment requires James/customer sign-off before promotion');
+    }
+    if (!hasDirectSource(candidate) && !isFactualCustomerRecord(candidate)) {
+      throw new Error('Customer-scope promotion requires direct James/customer source or factual customer record');
+    }
+  }
+  if (scope.scopeType === 'owner' && !isJamesSourced(candidate)) {
+    throw new Error('Owner-scope promotion requires direct James source');
   }
 }
 
