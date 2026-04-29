@@ -14,6 +14,19 @@
  * agents may have their own anchor files; this log is anchor-file-agnostic —
  * just point at any anchor id from any agent's anchor file.
  *
+ * USE BOUNDARY (per Oracle ORACLE #95 adoption constraint, 2026-04-29):
+ *   - DO log when observing a specific anchor or adopted operating-rule
+ *     violation WITH exact evidence (commit hash, message id, file path,
+ *     verbatim quote).
+ *   - DO ping the violator with the violation id so they can defend or
+ *     accept the correction.
+ *   - DO NOT use this as a disagreement diary. Normal disagreement belongs
+ *     in conversation/thread. Repeated or specific rule/anchor breaks
+ *     belong here.
+ *   - Closing rule: close on successful defense (violator showed it wasn't
+ *     a violation) or on accepted correction (behavior changed and is
+ *     documented).
+ *
  * Usage:
  *   hm-anchor-violation.js record \
  *     --observer <agent>             (architect|builder|oracle|codex)
