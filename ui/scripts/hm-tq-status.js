@@ -35,6 +35,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (t === '--window-hours') opts.windowHours = Number(argv[++i]);
     else if (t === '--unpaid-hours') opts.unpaidHours = Number(argv[++i]);
     else if (t === '--list-users') opts.listUsers = true;
+    else if (t === '--debug-events') opts.debugEvents = true;
     else if (t === '-h' || t === '--help') opts.help = true;
   }
   return opts;
@@ -63,8 +64,11 @@ function loadAdmin(adminPath) {
   return require(adminPath);
 }
 
-function fmtWhen(d) {
-  // "Tue 10:00 AM" — short weekday + time, suitable for multi-day windows.
+function fmtWhen(d, timeWindow) {
+  // Use timeWindow string for time-of-day if available (it's the authoritative
+  // field in TrustQuote); fall back to the Timestamp's time only if not.
+  const day = d.toLocaleString('en-US', { weekday: 'short' });
+  if (timeWindow && timeWindow.trim()) return `${day} ${timeWindow.trim()}`;
   return d.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
@@ -144,6 +148,10 @@ async function fetchTodayEvents(db, businessId, windowHours) {
       title: v.title || v.eventTitle || '(untitled)',
       start: tsToDate(v.start),
       end: tsToDate(v.end),
+      // timeWindow ("11:00 AM") is the authoritative time-of-day in TrustQuote;
+      // the `start` Timestamp can drift to midnight via certain create paths
+      // (quicksearch + manual edit). Trust timeWindow when present.
+      timeWindow: v.timeWindow || '',
       clientName: ciName || v.clientName || v.clientFirstName || '',
       clientPhone: ci.phone || v.clientPhone || '',
       clientAddress: ci.address || v.clientAddress || '',
@@ -192,7 +200,7 @@ function renderText({ events, unpaid, windowHours, unpaidHours }) {
     lines.push('  (nothing scheduled)');
   } else {
     for (const e of events) {
-      const when = e.start ? fmtWhen(e.start) : 'TBD';
+      const when = e.start ? fmtWhen(e.start, e.timeWindow) : 'TBD';
       const who = e.clientName || '(no client)';
       const where = e.clientAddress || '';
       const phone = e.clientPhone ? ` ☎ ${e.clientPhone}` : '';
@@ -260,6 +268,32 @@ Env override:
   }
 
   const businessId = await resolveBusinessId(admin, db, opts.ownerEmail);
+
+  if (opts.debugEvents) {
+    const start = new Date();
+    const end = new Date(start.getTime() + opts.windowHours * 60 * 60 * 1000);
+    const snap = await db
+      .collection('calendar-events')
+      .where('businessId', '==', businessId)
+      .where('start', '>=', start)
+      .where('start', '<', end)
+      .orderBy('start', 'asc')
+      .get();
+    snap.docs.forEach((d) => {
+      const v = d.data();
+      console.log(`--- ${d.id}`);
+      console.log(`  keys: ${Object.keys(v).sort().join(',')}`);
+      Object.entries(v).forEach(([k, val]) => {
+        let s;
+        if (val && typeof val === 'object' && val.toDate) s = val.toDate().toISOString();
+        else if (val && typeof val === 'object') s = JSON.stringify(val);
+        else s = String(val);
+        if (s && s.length > 200) s = s.slice(0, 200) + '…';
+        console.log(`  ${k}: ${s}`);
+      });
+    });
+    return;
+  }
   const [events, unpaid] = await Promise.all([
     fetchTodayEvents(db, businessId, opts.windowHours),
     fetchUnpaidInvoices(db, businessId, opts.unpaidHours),
