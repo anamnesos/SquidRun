@@ -386,9 +386,11 @@ describe('PTY Handlers', () => {
       ctx.daemonClient.write.mockReturnValue(true);
       const payload = 'X'.repeat(2500);
 
-      const result = await harness.invoke('pty-write', '1', payload);
+      const invokePromise = harness.invoke('pty-write', '1', payload);
+      await jest.runAllTimersAsync();
+      const result = await invokePromise;
 
-      expect(result).toEqual({ success: true, chunked: true, chunks: 1, chunkSize: 4096 });
+      expect(result).toEqual({ success: true, chunked: true, chunks: 10, chunkSize: 256 });
       expect(ctx.daemonClient.write).toHaveBeenCalled();
     });
 
