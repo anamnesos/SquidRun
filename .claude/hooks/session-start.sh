@@ -28,6 +28,20 @@ if [ "$SOURCE" != "compact" ] && command -v node >/dev/null 2>&1; then
   )
 fi
 
+# Architect inbox summary — surface unread file-first sidechannel entries.
+# Per agent-sidechannel-protocol-2026-04-29.md: agents may write to
+# .squidrun/coord/architect-inbox.jsonl with thread-update / review-request /
+# wake entries. Pull a short summary at startup so the architect doesn't miss
+# them when the parent dispatch was a short pointer-only hm-send (or omitted).
+INBOX_SUMMARY=""
+if [ "$PROFILE" != "eunbyeol" ] && command -v node >/dev/null 2>&1; then
+  if [ -f "$PROJECT_DIR/.squidrun/coord/architect-inbox.jsonl" ] && [ -f "$PROJECT_DIR/ui/scripts/hm-inbox-read.js" ]; then
+    INBOX_SUMMARY=$(
+      node "$PROJECT_DIR/ui/scripts/hm-inbox-read.js" architect --summary 2>> "$AUDIT_DIR/inbox-summary-errors.log" || true
+    )
+  fi
+fi
+
 AGENCY_LAYER=""
 AI_BRIEFING=""
 if command -v node >/dev/null 2>&1; then
@@ -199,7 +213,7 @@ if [ "$PROFILE" = "eunbyeol" ]; then
   # agents to mix James's trading state into 은별's case window after compaction.
   COMBINED_CONTEXT="$PREFIX\n\n[EUNBYEOL WINDOW — case work only. Do not discuss trading, account balances, or Hyperliquid positions in this window. James has a separate trading window.]\n\nSYSTEM HEALTH (auto-fixed where safe):\n$STARTUP_HEALTH\n\nMANDATORY READS BEFORE REPLYING TO 은별:\n1. workspace/knowledge/case-operations.md - 은별 pending items dashboard + routing\n2. workspace/knowledge/handoff-corrections.md - drift guard: disputed facts that MUST be re-checked against source evidence\n3. D:/projects/Korean Fraud/reference/confirmed-facts.md - Qeline counterfeit case\n4. D:/projects/Hillstate Case/reference/confirmed-facts.md - Hillstate apartment fraud\n5. D:/projects/Jeon Myeongsam Case/reference/confirmed-facts.md - 전명삼 investment fraud\n\nROUTING: 은별 = node ../tools/send-long-telegram.js 8754356993 <filepath> (Korean only). Builder/Oracle = hm-send.js builder|oracle (NOT subagents).\n\nTERMINOLOGY: When you see 'session NNN' in handoffs/memory, that refers to a SquidRun session number — distinct from this CLI conversation and from Anthropic's per-conversation context. Don't conflate them.\n\nDO NOT auto-load: trading-operations.md, ai-briefing.md (trading half), Architect agency layer."
 else
-  COMBINED_CONTEXT="$PREFIX\n\nSYSTEM HEALTH (auto-fixed where safe):\n$STARTUP_HEALTH\n\nMANDATORY READS BEFORE DOING ANYTHING:\n1. $LATEST_HANDOFF_PATH - Current session handoff with open items, live positions, and James's feedback\n2. workspace/knowledge/trading-operations.md - Hyperliquid=REAL money, Alpaca=FAKE. Check positions FIRST.\n3. workspace/knowledge/case-operations.md - 은별 pending items and routing rules.\n\n$ADDITIONAL_HANDOFF_CONTEXT\n\nROUTING: 은별=send-long-telegram.js 8754356993. James=hm-send.js telegram (ENGLISH ONLY). Use Builder/Oracle not subagents.\n\nTRADING: Alpaca is paper. Hyperliquid is real. Run hm-defi-status.js every cycle. Don't wait for prompts.\n\n$AI_BRIEFING\n\n$AGENCY_LAYER"
+  COMBINED_CONTEXT="$PREFIX\n\nSYSTEM HEALTH (auto-fixed where safe):\n$STARTUP_HEALTH\n\nARCHITECT INBOX:\n$INBOX_SUMMARY\n\nMANDATORY READS BEFORE DOING ANYTHING:\n1. $LATEST_HANDOFF_PATH - Current session handoff with open items, live positions, and James's feedback\n2. workspace/knowledge/trading-operations.md - Hyperliquid=REAL money, Alpaca=FAKE. Check positions FIRST.\n3. workspace/knowledge/case-operations.md - 은별 pending items and routing rules.\n\n$ADDITIONAL_HANDOFF_CONTEXT\n\nROUTING: 은별=send-long-telegram.js 8754356993. James=hm-send.js telegram (ENGLISH ONLY). Use Builder/Oracle not subagents.\n\nTRADING: Alpaca is paper. Hyperliquid is real. Run hm-defi-status.js every cycle. Don't wait for prompts.\n\n$AI_BRIEFING\n\n$AGENCY_LAYER"
 fi
 JSON_SAFE_CONTEXT=$(echo -n "$COMBINED_CONTEXT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.stringify(d)))" 2>/dev/null || echo '"context unavailable"')
 
