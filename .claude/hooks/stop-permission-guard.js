@@ -55,9 +55,44 @@ process.stdin.on('end', () => {
     }
   } catch { process.exit(0); }
 
+  // Strip quoted/cited content before phrase-matching so we don't flag
+  // verbatim relays of the user's or other agents' words.
+  // Quoted forms recognized:
+  //   - Markdown blockquotes: lines starting with "> "
+  //   - Fenced code blocks: ```...```
+  //   - Inline backtick code: `...`
+  //   - Italic-inside-quotes: *"..."* and "..."  (paired quotes only)
+  //   - Single-quoted phrases: '...' (paired only)
+  //   - Smart-quote pairs: "..."  '...'
+  const stripQuoted = (text) => {
+    let t = text;
+    // blockquote prefix: just strip the leading "> " marker, let quote
+    // stripping below handle the inner content. This way a line like
+    //   > "do you want X" — should I do Y?
+    // keeps the tail "should I do Y?" scannable while removing the quoted span.
+    t = t.split('\n').map((line) => line.replace(/^\s*>\s?/, '')).join('\n');
+    // fenced code blocks
+    t = t.replace(/```[\s\S]*?```/g, '');
+    // inline code
+    t = t.replace(/`[^`\n]+`/g, '');
+    // italic-wrapped double-quoted strings: *"..."*
+    t = t.replace(/\*"[^"\n]*"\*/g, '');
+    // straight double-quoted strings (paired on same line)
+    t = t.replace(/"[^"\n]*"/g, '');
+    // straight single-quoted strings (paired on same line)
+    t = t.replace(/'[^'\n]*'/g, '');
+    // smart double quotes
+    t = t.replace(/[“”][^“”\n]*[“”]/g, '');
+    // smart single quotes
+    t = t.replace(/[‘’][^‘’\n]*[‘’]/g, '');
+    return t;
+  };
+
+  const scannable = stripQuoted(lastAssistant);
+
   const hits = [];
   for (const re of PHRASES) {
-    const m = lastAssistant.match(re);
+    const m = scannable.match(re);
     if (m) hits.push(m[0]);
   }
 
