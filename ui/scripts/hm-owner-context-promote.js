@@ -328,7 +328,12 @@ Options:
     const ref = db.collection('ownerContext').doc(record.metadata.promotionKey);
     const existing = await ref.get();
     if (existing.exists) {
-      throw new Error(`Candidate already promoted as ownerContext ${ref.id}`);
+      markCandidatePromoted(args.filePath, candidates, candidate, ref.id, args.reason);
+      result.id = ref.id;
+      result.alreadyPromoted = true;
+      if (args.json) console.log(JSON.stringify(result, null, 2));
+      else console.log(`Candidate already promoted as ownerContext ${ref.id}; marked candidate consumed.`);
+      return result;
     }
     await ref.create(record);
     result.id = ref.id;
