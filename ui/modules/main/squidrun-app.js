@@ -4922,7 +4922,18 @@ class SquidRunApp {
 
   ensurePendingPaneDeliveryQueueDir() {
     const queuePath = this.getPendingPaneDeliveryQueuePath();
-    fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+    try {
+      fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+    } catch (err) {
+      if (err?.code === 'EACCES' || err?.code === 'ENOENT') {
+        log.warn(
+          'PendingPaneDelivery',
+          `Pending delivery queue unavailable at ${queuePath}: ${err.message}`
+        );
+        return null;
+      }
+      throw err;
+    }
     return queuePath;
   }
 
@@ -4978,11 +4989,14 @@ class SquidRunApp {
   }
 
   writePendingPaneDeliveries(items = []) {
-    this.ensurePendingPaneDeliveryQueueDir();
+    const queuePath = this.ensurePendingPaneDeliveryQueueDir();
+    if (!queuePath) {
+      return null;
+    }
     const normalizedItems = Array.isArray(items)
       ? items.map((item) => this.normalizePendingPaneDeliveryEntry(item)).filter(Boolean)
       : [];
-    fs.writeFileSync(this.getPendingPaneDeliveryQueuePath(), JSON.stringify({
+    fs.writeFileSync(queuePath, JSON.stringify({
       updatedAt: new Date().toISOString(),
       count: normalizedItems.length,
       items: normalizedItems,
@@ -5006,7 +5020,10 @@ class SquidRunApp {
     } else {
       items.push(normalized);
     }
-    this.writePendingPaneDeliveries(items);
+    const persisted = this.writePendingPaneDeliveries(items);
+    if (!persisted) {
+      return { ok: false, reason: 'pending_delivery_queue_unavailable', queued: false, entry: normalized };
+    }
     return { ok: true, queued: true, entry: normalized, count: items.length };
   }
 
