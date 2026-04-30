@@ -750,6 +750,48 @@ describe('SquidRunApp', () => {
       expect(primaryWindow.webContents.send).not.toHaveBeenCalled();
     });
 
+    it('does not route scoped secondary-window injection through the main hidden pane host', async () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
+      const secondaryWindow = app.ctx.getWindow('private-profile');
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+      primaryWindow.webContents.send.mockClear();
+      secondaryWindow.webContents.send.mockClear();
+
+      const routed = app.routeInjectMessage({
+        panes: ['1'],
+        message: '[Telegram from scoped]: hello',
+        meta: {
+          windowKey: 'private-profile',
+        },
+      });
+
+      expect(routed).toBe(true);
+      expect(sendPaneHostBridgeEvent).not.toHaveBeenCalled();
+      expect(app.paneHostWindowManager.getPaneWindow).not.toHaveBeenCalled();
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: '[Telegram from scoped]: hello',
+          meta: expect.objectContaining({
+            windowKey: 'private-profile',
+          }),
+        })
+      );
+      expect(primaryWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
     it('launches only [private-profile] for standalone launch intent', async () => {
       await app.launchWindowsForProfile({
         windowKey: 'private-profile',
