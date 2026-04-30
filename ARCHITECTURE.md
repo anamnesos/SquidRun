@@ -139,6 +139,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/evidence-ledger-store.js: Exports EvidenceLedgerStore, DEFAULT_DB_PATH, resolveDefaultDbPath, DEFAULT_MAX_ROWS, ....
 - ui/modules/main/firmware-manager.js: Exports FirmwareManager.
 - ui/modules/main/github-service.js: Exports createGitHubService, execAsync, toGhError.
+- ui/modules/main/inbound-poller-service.js: Owns main-process inbound Telegram/SMS poller lifecycle behind a small service boundary so channel handling can move out of Electron without changing message routing callbacks.
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
 - ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows like [private-profile] can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
