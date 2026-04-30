@@ -3458,15 +3458,10 @@ class SquidRunApp {
     }
 
     this.startSmsPoller();
-    // Both windows poll Telegram. Profile-scoped chat filter (de033db) ensures
-    // each window keeps only its own chats — private-profile window keeps private-profile-listed
-    // chats, main window rejects them. The two pollers will race on getUpdates
-    // and one will 409, but Telegram's offset semantics mean batches arrive at
-    // whichever window wins each round; both windows still see all messages over
-    // time and filter to keep what's theirs. The previous "private-profile-only poller"
-    // experiment (5c83159) made the user's chat inbound silently 100% lossy and is
-    // reverted. Proper fix: forward non-window-owned chats to a shared inbox or
-    // give 은별 her own bot (separate token, no shared poller).
+    // Telegram must have one getUpdates owner. Duplicate pollers race offsets
+    // and lose messages; hm-telegram-longpoll-relay.js is intentionally disabled
+    // for that reason. Keep this lifecycle path as the single runtime owner until
+    // the poller is extracted to a single-owner child process or supervisor lane.
     this.startTelegramPoller();
     this.startBridgeClient();
     this.startAutoHandoffMaterializer();
