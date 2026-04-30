@@ -2272,19 +2272,27 @@ class SquidRunApp {
       if (!packet.ipcChunk || packet.ipcChunk.index === 0) {
         log.info('InjectIPC', `Pre-IPC route pane ${paneId}: ${totalBytes} bytes -> ${packet.ipcChunk?.count || 1} packet(s) (startup=${startupInjection})`);
       }
-      if (!this.isHiddenPaneHostModeEnabled() || startupInjection) {
+      const targetWindowKey = packet?.windowKey || packet?.meta?.windowKey || 'main';
+      const routeToVisibleWindow = (
+        !this.isHiddenPaneHostModeEnabled()
+        || startupInjection
+        || String(targetWindowKey || 'main').trim() !== 'main'
+      );
+      if (routeToVisibleWindow) {
         const delivered = this.sendToVisibleWindow('inject-message', {
           ...packet,
           startupInjection,
         }, {
-          windowKey: packet?.windowKey || packet?.meta?.windowKey || 'main',
+          windowKey: targetWindowKey,
         });
         appendBusTraceEvent({
           eventType: 'pane_ipc_handoff',
           messageId: messageId || null,
           deliveryId: packet.deliveryId || null,
           paneId,
-          deliveryPath: 'visible_window',
+          deliveryPath: String(targetWindowKey || 'main').trim() === 'main'
+            ? 'visible_window'
+            : 'visible_window_scoped',
           success: Boolean(delivered),
           packetBytes,
           chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
