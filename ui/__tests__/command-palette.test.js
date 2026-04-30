@@ -23,4 +23,17 @@ describe('command-palette', () => {
     private-profileCommand.action();
     expect(openAppWindow).toHaveBeenCalledWith('private-profile');
   });
+
+  test('labels pane 1 navigation with Mira without changing the pane target', () => {
+    const terminal = require('../modules/terminal');
+    const commands = getCommandPaletteCommands();
+    const focusMiraCommand = commands.find((entry) => entry.id === 'focus-1');
+
+    expect(focusMiraCommand).toEqual(expect.objectContaining({
+      label: 'Focus Mira (Pane 1)',
+      category: 'Navigate',
+    }));
+    focusMiraCommand.action();
+    expect(terminal.focusPane).toHaveBeenCalledWith('1');
+  });
 });

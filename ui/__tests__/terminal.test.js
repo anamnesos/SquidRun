@@ -593,10 +593,23 @@ describe('terminal.js module', () => {
 
       existsSpy.mockRestore();
     });
+
+    test('uses Mira as pane 1 startup display while preserving Architect role', async () => {
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('');
+      const existsSpy = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+
+      const message = await terminal._internals.buildStartupIdentityMessage('1');
+
+      expect(message).toContain('# SQUIDRUN SESSION: Mira (Architect)');
+      expect(message).toContain('Architect');
+      expect(message).not.toContain('# SQUIDRUN SESSION: Architect - Started');
+
+      existsSpy.mockRestore();
+    });
   });
 
   describe('broadcast', () => {
-    test('should send message to pane 1 (Architect)', async () => {
+    test('should send message to pane 1 (Mira) through the architect role contract', async () => {
       jest.useRealTimers();
       terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
       const statusCb = jest.fn();
@@ -611,7 +624,7 @@ describe('terminal.js module', () => {
       // so the queue may already be empty. Verify the message was routed
       // to pane 1 via the connection status callback.
       expect(terminal.messageQueue['1']).toBeDefined();
-      expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
+      expect(connectionCb).toHaveBeenCalledWith('Message sent to Mira');
       expect(mockSquidRun.invoke).toHaveBeenCalledWith(
         'evidence-ledger:upsert-comms-journal',
         expect.objectContaining({
@@ -634,7 +647,7 @@ describe('terminal.js module', () => {
       terminal.setStatusCallbacks(null, connectionCb);
 
       expect(() => terminal.broadcast('best effort')).not.toThrow();
-      expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
+      expect(connectionCb).toHaveBeenCalledWith('Message sent to Mira');
     });
 
     test('sends raw pane-1 user text without adding a second recall block', async () => {

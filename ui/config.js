@@ -94,17 +94,37 @@ const INSTANCE_DIRS = {
   '3': path.join(WORKSPACE_PATH, 'instances', 'oracle'),
 };
 
-// Pane roles for display
+// Pane role names. These are the stable role labels used by logs, routing,
+// startup contracts, and tests that need the machine role to stay legible.
 const PANE_ROLES = {
   '1': 'Architect',
   '2': 'Builder',
   '3': 'Oracle',
 };
 
+// User-facing names. Keep these separate from role IDs/role labels so a persona
+// name can change without breaking hm-send targets, trigger files, or routing.
+const PANE_DISPLAY_NAMES = {
+  '1': 'Mira',
+  '2': 'Builder',
+  '3': 'Oracle',
+};
+
+function getPaneDisplayName(paneId, options = {}) {
+  const id = String(paneId || '');
+  const role = PANE_ROLES[id] || `Pane ${id}`;
+  const display = PANE_DISPLAY_NAMES[id] || role;
+  if (options.includeRole === true && display !== role) {
+    return `${display} (${role})`;
+  }
+  return display;
+}
+
 const PANE_ROLE_BUNDLES = {
   '1': {
-    heading: PANE_ROLES['1'],
+    heading: getPaneDisplayName('1', { includeRole: true }),
     members: [
+      PANE_DISPLAY_NAMES['1'],
       PANE_ROLES['1'],
       'Data Engineer',
       'Reviewer',
@@ -138,7 +158,7 @@ const PANE_ROLE_BUNDLES = {
 
 // Short names for space-constrained UI elements
 const SHORT_AGENT_NAMES = {
-  '1': 'Arch',
+  '1': 'Mira',
   '2': 'Builder',
   '3': 'Oracle',
   'system': 'Sys',
@@ -434,8 +454,10 @@ module.exports = {
   GLOBAL_STATE_ROOT,
   PANE_IDS,
   PANE_ROLES,
+  PANE_DISPLAY_NAMES,
   PANE_ROLE_BUNDLES,
   SHORT_AGENT_NAMES,
+  getPaneDisplayName,
   ROLE_NAMES,
   BACKWARD_COMPAT_ROLE_ALIASES,
   LEGACY_ROLE_ALIASES,
