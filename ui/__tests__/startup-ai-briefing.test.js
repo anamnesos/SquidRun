@@ -47,6 +47,11 @@ describe('startup-ai-briefing', () => {
     const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
 
     try {
+      fs.mkdirSync(path.join(tempRoot, 'workspace', 'knowledge'), { recursive: true });
+      fs.writeFileSync(path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md'), [
+        '## Hard Error Rules',
+        '- 사업자등록 must happen **before 2026-06-03** (the 조기재취업 기준시점), not after.',
+      ].join('\n'));
       const transcriptPath = path.join(tempRoot, 'session-1.jsonl');
       fs.writeFileSync(transcriptPath, [
         JSON.stringify({
@@ -63,6 +68,7 @@ describe('startup-ai-briefing', () => {
 
       const result = await generateStartupBriefing({
         projectsDir: tempRoot,
+        projectRoot: tempRoot,
         outputPath,
         statusPath,
         apiKey: 'sk-ant-test-fake-key-do-not-use',
@@ -86,6 +92,7 @@ describe('startup-ai-briefing', () => {
         ok: true,
         transcriptCount: 1,
         liveSnapshotOk: true,
+        canonicalSourceCount: 1,
       }));
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -210,5 +217,81 @@ describe('startup-ai-briefing', () => {
     expect(prompt).toContain('Verified live [private-live-ops] snapshot:');
     expect(prompt).toContain('SOL/USD short size=-111.46');
     expect(prompt).toContain('Use the verified live snapshot');
+  });
+
+  test('uses canonical case files to override stale [private-profile] transcript summaries', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-canonical-'));
+    const outputPath = path.join(tempRoot, 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
+
+    try {
+      fs.mkdirSync(path.join(tempRoot, 'workspace', 'knowledge'), { recursive: true });
+      fs.writeFileSync(path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md'), [
+        '## Hard Error Rules',
+        '- 사업자등록 must happen **before 2026-06-03** (the 조기재취업 기준시점), not after.',
+        '',
+        '| 모두의 창업 2026 1기 | **Submitted 2026-04-29** ([private-profile] confirmed via Telegram). | Selection result. |',
+      ].join('\n'));
+      fs.writeFileSync(path.join(tempRoot, 'workspace', 'knowledge', 'handoff-corrections.md'), [
+        '## Fast Use',
+        '- If an agent is about to say stale facts, re-check this file first.',
+      ].join('\n'));
+
+      const transcriptPath = path.join(tempRoot, 'session-1.jsonl');
+      fs.writeFileSync(transcriptPath, JSON.stringify({
+        type: 'user',
+        timestamp: '2026-04-29T20:58:00.000Z',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '사업자등록 timing Must be after 6/3. 모두의 창업 status uncertain.',
+            },
+          ],
+        },
+      }));
+
+      const fetchImpl = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              type: 'text',
+              text: [
+                '## Key Dates & Numbers',
+                '| 사업자등록 timing | Must be **after 6/3** to preserve 조기재취업수당 eligibility |',
+                '',
+                '## Immediate Priorities',
+                '1. Confirm 모두의 창업 submission status — did she finish and submit, or is it still in progress?',
+              ].join('\n'),
+            },
+          ],
+        }),
+      });
+
+      const result = await generateStartupBriefing({
+        projectsDir: tempRoot,
+        projectRoot: tempRoot,
+        outputPath,
+        statusPath,
+        apiKey: 'sk-ant-test-fake-key-do-not-use',
+        fetchImpl,
+      });
+
+      const prompt = JSON.parse(fetchImpl.mock.calls[0][1].body).messages[0].content;
+      const briefing = readStartupBriefing({ outputPath });
+
+      expect(result.ok).toBe(true);
+      expect(prompt).toContain('Canonical source-of-truth (highest priority):');
+      expect(prompt).toContain('사업자등록 must happen **before 2026-06-03**');
+      expect(briefing).toContain('Canonical Source-Of-Truth Overrides');
+      expect(briefing).toContain('Must be **on or before 2026-06-03**');
+      expect(briefing).toContain('Monitor 모두의 창업 Stage 1 announcement');
+      expect(briefing).not.toContain('Must be **after 6/3**');
+      expect(briefing).not.toContain('Confirm 모두의 창업 submission status');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

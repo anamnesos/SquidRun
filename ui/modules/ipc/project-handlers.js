@@ -108,13 +108,28 @@ function buildReadmeFirstContent() {
   ].join('\n');
 }
 
+function resolveSquidrunScriptRoot(options = {}) {
+  const appRoot = path.resolve(options.appRoot || path.join(__dirname, '..', '..', '..'));
+  const configuredRoot = path.resolve(
+    options.configuredRoot
+    || (typeof getSquidrunRoot === 'function'
+      ? getSquidrunRoot()
+      : appRoot)
+  );
+  const configuredHmSend = path.join(configuredRoot, 'ui', 'scripts', 'hm-send.js');
+  if (fs.existsSync(configuredHmSend)) {
+    return configuredRoot;
+  }
+  const appHmSend = path.join(appRoot, 'ui', 'scripts', 'hm-send.js');
+  if (fs.existsSync(appHmSend)) {
+    return appRoot;
+  }
+  return configuredRoot;
+}
+
 function writeProjectBootstrapFiles(projectPath, deps = {}) {
   const projectRoot = path.resolve(projectPath);
-  const squidrunRoot = path.resolve(
-    typeof getSquidrunRoot === 'function'
-      ? getSquidrunRoot()
-      : path.resolve(path.join(__dirname, '..', '..', '..'))
-  );
+  const squidrunRoot = resolveSquidrunScriptRoot();
   const sessionId = buildSessionId(deps);
   const coordDir = path.join(projectRoot, '.squidrun');
   const linkFilePath = path.join(coordDir, 'link.json');
@@ -774,4 +789,9 @@ function unregisterProjectHandlers(ctx) {
 
 registerProjectHandlers.unregister = unregisterProjectHandlers;
 
-module.exports = { registerProjectHandlers };
+module.exports = {
+  registerProjectHandlers,
+  _internals: {
+    resolveSquidrunScriptRoot,
+  },
+};
