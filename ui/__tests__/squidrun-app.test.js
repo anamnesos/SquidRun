@@ -2975,6 +2975,15 @@ describe('SquidRunApp', () => {
       expect(app.telegramInboundContext.lastInboundAtMs).toBeGreaterThan(0);
     });
 
+    it('does not start Telegram polling from a secondary profile', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      app.activeProfileName = 'private-profile';
+
+      app.startTelegramPoller();
+
+      expect(telegramPoller.start).not.toHaveBeenCalled();
+    });
+
     it('captures inbound Telegram chatId for reply routing', () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
