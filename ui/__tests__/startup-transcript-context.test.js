@@ -152,4 +152,72 @@ describe('startup-transcript-context', () => {
     expect(result.activeItems.join('\n')).not.toContain('Qeline Shop');
     expect(result.activeItems.join('\n')).not.toContain('[private-profile] case update');
   });
+
+  test('scopes recent comms to the requested side window during startup recovery', () => {
+    const tradingPath = path.join(tempRoot, 'workspace', 'knowledge', 'trading-operations.md');
+    const casePath = path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md');
+    const indexPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index.jsonl');
+    const metaPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index-meta.json');
+    const dbPath = path.join(tempRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
+
+    fs.writeFileSync(tradingPath, '- **Open positions**: ETH SHORT -1.7113 @ $2,008.10');
+    fs.writeFileSync(casePath, [
+      '### Case 3: Qeline Shop (큐라인샵) — Counterfeit Goods',
+      '| 11 | Monday 3/30 customs call with team lead | 은별 action | ⚠️ WAITING |',
+    ].join('\n'));
+    fs.writeFileSync(indexPath, '');
+    fs.writeFileSync(metaPath, JSON.stringify({
+      builtAt: new Date().toISOString(),
+      transcriptFileCount: 0,
+      recordCount: 0,
+    }, null, 2));
+
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE comms_journal (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_role TEXT,
+        target_role TEXT,
+        channel TEXT,
+        raw_body TEXT,
+        session_id TEXT,
+        metadata_json TEXT
+      );
+    `);
+    const insert = db.prepare(`
+      INSERT INTO comms_journal (sender_role, target_role, channel, raw_body, session_id, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(
+      'user',
+      'architect',
+      'telegram',
+      'Main chat should stay main-only',
+      'app-session-275',
+      JSON.stringify({ chatId: '5613428850', windowKey: 'main' })
+    );
+    insert.run(
+      'user',
+      'architect',
+      'telegram',
+      'Scoped chat should appear in side startup only',
+      'app-session-275:private-profile',
+      JSON.stringify({ chatId: '8754356993', windowKey: 'private-profile' })
+    );
+    db.close();
+
+    const result = buildStartupTranscriptContext({
+      projectRoot: tempRoot,
+      indexPath,
+      metaPath,
+      evidenceLedgerDbPath: dbPath,
+      windowKey: 'private-profile',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.activeItems.join('\n')).toContain('Qeline Shop');
+    expect(result.activeItems.join('\n')).toContain('Scoped chat should appear in side startup only');
+    expect(result.activeItems.join('\n')).not.toContain('Open positions');
+    expect(result.activeItems.join('\n')).not.toContain('Main chat should stay main-only');
+  });
 });

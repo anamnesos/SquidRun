@@ -56,6 +56,7 @@ describe('profile helpers', () => {
     expect(mainEnv.TELEGRAM_CHAT_ID).toBe('5613428850');
     expect(mainEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('111111');
     expect(mainEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('222222');
+    expect(mainEnv.TELEGRAM_EUNBYEOL_CHAT_IDS).toBe('8754356993');
 
     const private-profileEnv = buildProfileTelegramEnv({
       TELEGRAM_CHAT_ID: '5613428850',
@@ -64,5 +65,6 @@ describe('profile helpers', () => {
     expect(private-profileEnv.TELEGRAM_CHAT_ID).toBe('8754356993');
     expect(private-profileEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('');
     expect(private-profileEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('');
+    expect(private-profileEnv.TELEGRAM_EUNBYEOL_CHAT_IDS).toBe('8754356993');
   });
 });

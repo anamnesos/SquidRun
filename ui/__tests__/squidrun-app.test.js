@@ -3026,6 +3026,20 @@ describe('SquidRunApp', () => {
       expect(telegramPoller.start).not.toHaveBeenCalled();
     });
 
+    it('starts the main Telegram owner with scoped chat routing enabled', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      expect(options.env).toEqual(expect.objectContaining({
+        SQUIDRUN_PROFILE: 'main',
+        SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+        TELEGRAM_EUNBYEOL_CHAT_IDS: '8754356993',
+      }));
+    });
+
     it('captures inbound Telegram chatId for reply routing', () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
@@ -3041,6 +3055,68 @@ describe('SquidRunApp', () => {
           chatId: '8754356993',
           windowKey: 'private-profile',
         })
+      );
+    });
+
+    it('routes main Telegram chat inbound to the main window scope', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('main hello', 'james', { chatId: 5613428850, updateId: 101 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from james]: main hello',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'main',
+          chatId: 5613428850,
+          metadata: expect.objectContaining({
+            chatId: 5613428850,
+            windowKey: 'main',
+          }),
+        }),
+        'Telegram'
+      );
+    });
+
+    it('routes scoped Telegram chat inbound to the side window scope', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('side hello', 'scoped', { chatId: 8754356993, updateId: 102 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from scoped]: side hello',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'private-profile',
+          chatId: 8754356993,
+          metadata: expect.objectContaining({
+            chatId: 8754356993,
+            windowKey: 'private-profile',
+          }),
+        }),
+        'Telegram'
       );
     });
 

@@ -183,6 +183,7 @@ function buildActiveItems(options = {}) {
     projectRoot,
     evidenceLedgerDbPath: options.evidenceLedgerDbPath,
     limit: options.recentCommsLimit,
+    windowKey: options.windowKey,
   });
 
   const tradingItems = extractTradingActiveItems(tradingContent).slice(0, 4);
