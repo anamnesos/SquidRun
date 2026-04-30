@@ -55,7 +55,9 @@ describe('pane-host-window-manager query defaults', () => {
 
     expect(query).toEqual(expect.objectContaining({
       paneId: '1',
-      chunkThresholdBytes: '1024',
+      paneIds: '1',
+      chunkThresholdBytes: '256',
+      chunkSizeBytes: '256',
       hmSendChunkThresholdBytes: expectedThreshold,
     }));
   });
