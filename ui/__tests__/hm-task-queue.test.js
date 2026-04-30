@@ -1,26 +1,34 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { mockDefaultConfig } = require('./helpers/mock-config');
-
-jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
 
 describe('hm-task-queue', () => {
-  const originalWorkspacePath = mockDefaultConfig.WORKSPACE_PATH;
   let tempRoot;
   let queue;
 
   beforeEach(() => {
     jest.resetModules();
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-task-queue-'));
-    mockDefaultConfig.WORKSPACE_PATH = tempRoot;
     fs.mkdirSync(path.join(tempRoot, 'runtime'), { recursive: true });
+    jest.doMock('../config', () => ({
+      ...require('./helpers/mock-config').mockDefaultConfig,
+      WORKSPACE_PATH: tempRoot,
+      PROJECT_ROOT: tempRoot,
+      resolveCoordRoot: () => tempRoot,
+      getProjectRoot: () => tempRoot,
+      resolveCoordPath: (relPath) => path.join(
+        tempRoot,
+        String(relPath || '')
+          .replace(/^[/\\]+/, '')
+          .replace(/[/\\]+/g, path.sep),
+      ),
+    }));
     queue = require('../scripts/hm-task-queue');
   });
 
   afterEach(() => {
-    mockDefaultConfig.WORKSPACE_PATH = originalWorkspacePath;
     fs.rmSync(tempRoot, { recursive: true, force: true });
+    jest.dontMock('../config');
   });
 
   it('enqueues a task into the selected agent queue', () => {
