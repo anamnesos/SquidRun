@@ -1580,8 +1580,8 @@ function setupEventListeners() {
   // Keep command bar copy explicit now that target selection UI is removed.
   function updateCommandPlaceholder() {
     if (!broadcastInput) return;
-    broadcastInput.placeholder = 'Type here to message Architect (Enter to send)';
-    broadcastInput.title = 'Send message to Architect';
+    broadcastInput.placeholder = 'Type here to message Mira (Enter to send)';
+    broadcastInput.title = 'Send message to Mira';
   }
 
   // showStatusNotice now imported from ./modules/notifications
@@ -1988,7 +1988,7 @@ function setupEventListeners() {
       return await routeNaturalTask(trimmed.slice(6));
     }
 
-    // Direct command-bar messages default to Architect.
+    // Direct command-bar messages default to Mira's Architect pane.
     return await sendArchitectMessage(message + '\r');
   }
 

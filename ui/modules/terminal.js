@@ -23,7 +23,13 @@ const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
-const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH, resolveCoordPath } = require('../config');
+const {
+  PANE_IDS,
+  PANE_ROLES,
+  WORKSPACE_PATH,
+  resolveCoordPath,
+  getPaneDisplayName,
+} = require('../config');
 const {
   TYPING_GUARD_MS,
   QUEUE_RETRY_MS,
@@ -646,6 +652,17 @@ function isCodexPane(paneId) {
   return isCodexFromSettings(paneId);
 }
 
+function getPaneIdentityLabel(paneId) {
+  if (typeof getPaneDisplayName === 'function') {
+    return getPaneDisplayName(paneId, { includeRole: true });
+  }
+  return PANE_ROLES[String(paneId)] || `Pane ${paneId}`;
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Renderer calls these based on pane-cli-identity IPC
 function registerCodexPane(paneId) {
   registerPaneCliIdentity(paneId, { provider: 'codex', label: 'Codex' });
@@ -661,7 +678,7 @@ function buildCodexExecPrompt(paneId, text) {
     return safeText;
   }
 
-  const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+  const role = getPaneIdentityLabel(paneId);
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const identity = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}\n`;
@@ -876,9 +893,15 @@ function stripAnsiForStartup(input) {
 }
 
 function hasStartupSessionHeader(scrollback, paneId) {
-  const role = paneId ? (PANE_ROLES[String(paneId)] || '') : '';
-  if (role) {
-    return new RegExp(`#\\s*SQUIDRUN SESSION:\\s*${role}\\b`, 'i').test(String(scrollback || ''));
+  const id = String(paneId || '');
+  const role = paneId ? (PANE_ROLES[id] || '') : '';
+  const identityLabel = paneId ? getPaneIdentityLabel(id) : '';
+  const candidates = [role, identityLabel].filter(Boolean);
+  if (candidates.length > 0) {
+    return candidates.some((label) => (
+      new RegExp(`#\\s*SQUIDRUN SESSION:\\s*${escapeRegExp(label)}(?:\\s|-|$)`, 'i')
+        .test(String(scrollback || ''))
+    ));
   }
   return /#\s*SQUIDRUN SESSION:/i.test(String(scrollback || ''));
 }
@@ -1041,7 +1064,7 @@ function fetchStartupAiBriefing() {
 }
 
 async function buildStartupIdentityMessage(paneId) {
-  const role = PANE_ROLES[String(paneId)] || `Pane ${paneId}`;
+  const role = getPaneIdentityLabel(paneId);
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const header = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
@@ -1064,7 +1087,7 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
     state.identityMsgPromise = buildStartupIdentityMessage(id)
       .catch((err) => {
         log.warn('spawnAgent', `Startup identity message build failed for pane ${id}: ${err.message}`);
-        const role = PANE_ROLES[id] || `Pane ${id}`;
+        const role = getPaneIdentityLabel(id);
         const d = new Date();
         const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         return `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
@@ -1125,7 +1148,7 @@ function triggerStartupInjection(paneId, state, reason) {
 
   // Session 69 fix: Gemini needs longer delay - CLI takes longer to initialize input handling
   const identityDelayMs = state.isGemini ? 1000 : STARTUP_IDENTITY_DELAY_MS;
-  const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+  const role = getPaneIdentityLabel(paneId);
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   state.identityMsg = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
@@ -2144,7 +2167,7 @@ function blurAllTerminals() {
 }
 
 
-// Send message to Architect only (user interacts with Architect, Architect coordinates execution)
+// Send message to Mira's Architect pane only (the architect role coordinates execution)
 // User messages get PRIORITY + IMMEDIATE - bypass queue ordering AND idle gating
 const USER_BROADCAST_CLIPBOARD_PASTE_THRESHOLD_BYTES = 1024;
 
@@ -2188,7 +2211,7 @@ function broadcast(message, options = {}) {
     clipboardPasteThresholdBytes: USER_BROADCAST_CLIPBOARD_PASTE_THRESHOLD_BYTES,
     ...options,
   });
-  updateConnectionStatus('Message sent to Architect');
+  updateConnectionStatus('Message sent to Mira');
 }
 
 // Spawn agent CLI in a pane
@@ -2671,6 +2694,7 @@ module.exports = {
     buildStartupIdentityMessage,
     fetchStartupHealthSummary,
     fetchStartupAiBriefing,
+    getPaneIdentityLabel,
   },
 };
 

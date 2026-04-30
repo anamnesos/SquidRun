@@ -80,6 +80,14 @@ jest.mock('../modules/terminal/agent-colors', () => ({
 jest.mock('../config', () => ({
   PANE_IDS: ['1', '2', '3'],
   PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
+  PANE_DISPLAY_NAMES: { '1': 'Mira', '2': 'Builder', '3': 'Oracle' },
+  getPaneDisplayName: (paneId, options = {}) => {
+    const roles = { '1': 'Architect', '2': 'Builder', '3': 'Oracle' };
+    const displayNames = { '1': 'Mira', '2': 'Builder', '3': 'Oracle' };
+    const role = roles[String(paneId)] || `Pane ${paneId}`;
+    const display = displayNames[String(paneId)] || role;
+    return options.includeRole === true && display !== role ? `${display} (${role})` : display;
+  },
   WORKSPACE_PATH: '/tmp/workspace',
   getProjectRoot: () => '/tmp/workspace',
   setProjectRoot: jest.fn(),
@@ -319,7 +327,7 @@ describe('Terminal Events', () => {
       const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
         args[0] === '1'
         && typeof args[1] === 'string'
-        && args[1].includes('# SQUIDRUN SESSION: Architect - Started')
+        && args[1].includes('# SQUIDRUN SESSION: Mira (Architect) - Started')
       ));
       expect(startupCall).toBeDefined();
       expect(startupCall[2]).toEqual(expect.objectContaining({

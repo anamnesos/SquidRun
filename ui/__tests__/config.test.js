@@ -12,6 +12,7 @@ const {
   COORD_ROOT,
   GLOBAL_STATE_ROOT,
   PANE_ROLES,
+  PANE_DISPLAY_NAMES,
   TRIGGER_TARGETS,
   BACKWARD_COMPAT_ROLE_ALIASES,
   LEGACY_ROLE_ALIASES,
@@ -25,6 +26,7 @@ const {
   resolveCoordRoot,
   resolveCoordPath,
   resolveGlobalPath,
+  getPaneDisplayName,
 } = require('../config');
 
 describe('config.js', () => {
@@ -115,6 +117,16 @@ describe('config.js', () => {
       expect(PANE_ROLES['1']).toBe('Architect');
       expect(PANE_ROLES['2']).toBe('Builder');
       expect(PANE_ROLES['3']).toBe('Oracle');
+    });
+  });
+
+  describe('PANE_DISPLAY_NAMES', () => {
+    test('keeps Mira as the pane 1 display name without changing the role contract', () => {
+      expect(PANE_DISPLAY_NAMES['1']).toBe('Mira');
+      expect(getPaneDisplayName('1')).toBe('Mira');
+      expect(getPaneDisplayName('1', { includeRole: true })).toBe('Mira (Architect)');
+      expect(ROLE_ID_MAP.architect).toBe('1');
+      expect(TRIGGER_TARGETS['architect.txt']).toEqual(['1']);
     });
   });
 
