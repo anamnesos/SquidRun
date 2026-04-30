@@ -15,10 +15,13 @@ const DEFAULT_CONTEXT_LEAK_BYPASSES_PATH = resolveCoordPath(
   { forWrite: true }
 );
 
-const CONTEXT_LEAK_PATTERNS = Object.freeze([
+const SCOPED_PROFILE_REFERENCE_PATTERNS = Object.freeze([
   /은별/i,
   /private-profile/i,
   /private-profile/i,
+]);
+
+const CASE_CONTENT_PATTERNS = Object.freeze([
   /NurseCura/i,
   /힐스테이트/i,
   /Hillstate/i,
@@ -27,6 +30,35 @@ const CONTEXT_LEAK_PATTERNS = Object.freeze([
   /Qeline/i,
   /큐라인/i,
   /case-operations/i,
+]);
+
+const CONTEXT_LEAK_PATTERNS = Object.freeze([
+  ...SCOPED_PROFILE_REFERENCE_PATTERNS,
+  ...CASE_CONTENT_PATTERNS,
+]);
+
+const INTERNAL_AGENT_ROLES = new Set(['architect', 'builder', 'oracle']);
+
+const OPERATIONAL_CONTEXT_PATTERNS = Object.freeze([
+  /\bTASK\b/i,
+  /\bOBJECTIVE\b/i,
+  /\bSCOPE\s+IN\b/i,
+  /\bSCOPE\s+OUT\b/i,
+  /\bdiagnos(?:e|is|tic|tics)\b/i,
+  /\bdebug(?:ging)?\b/i,
+  /\brout(?:e|ing)\b/i,
+  /\bside[-\s]?window\b/i,
+  /\bwindowKey\b/i,
+  /\bprofile\b/i,
+  /\bstartup\b/i,
+  /\bqueued?\b/i,
+  /\breplay\b/i,
+  /\bpoller\b/i,
+  /\binbound\b/i,
+  /\bvalidation\b/i,
+  /\btests?\b/i,
+  /\bpatch\b/i,
+  /\blog evidence\b/i,
 ]);
 
 function toText(value, fallback = '') {
@@ -49,10 +81,10 @@ function appendJsonLine(filePath, payload) {
   return filePath;
 }
 
-function findContextLeakMatch(content = '') {
+function findPatternMatch(content = '', patterns = []) {
   const text = toText(content, '');
   if (!text) return null;
-  for (const pattern of CONTEXT_LEAK_PATTERNS) {
+  for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match && match[0]) {
       return {
@@ -62,6 +94,22 @@ function findContextLeakMatch(content = '') {
     }
   }
   return null;
+}
+
+function isInternalOperationalMessage(input = {}, content = '') {
+  const targetRole = normalizeLower(input.targetRole || input.targetRaw);
+  if (!INTERNAL_AGENT_ROLES.has(targetRole)) return false;
+  return OPERATIONAL_CONTEXT_PATTERNS.some((pattern) => pattern.test(toText(content, '')));
+}
+
+function findContextLeakMatch(content = '', input = {}) {
+  const caseContentMatch = findPatternMatch(content, CASE_CONTENT_PATTERNS);
+  if (caseContentMatch) return caseContentMatch;
+
+  const profileReferenceMatch = findPatternMatch(content, SCOPED_PROFILE_REFERENCE_PATTERNS);
+  if (!profileReferenceMatch) return null;
+  if (isInternalOperationalMessage(input, content)) return null;
+  return profileReferenceMatch;
 }
 
 function shouldEnforceContextLeakGuard(input = {}) {
@@ -74,7 +122,7 @@ function shouldEnforceContextLeakGuard(input = {}) {
 
 function detectContextLeakViolation(input = {}) {
   if (!shouldEnforceContextLeakGuard(input)) return null;
-  const match = findContextLeakMatch(input.content);
+  const match = findContextLeakMatch(input.content, input);
   if (!match) return null;
   return {
     type: 'context_leak',
@@ -143,6 +191,7 @@ module.exports = {
   appendContextLeakBypass,
   _internals: {
     findContextLeakMatch,
+    isInternalOperationalMessage,
     shouldEnforceContextLeakGuard,
   },
 };

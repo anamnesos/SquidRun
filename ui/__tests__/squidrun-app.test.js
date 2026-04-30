@@ -3432,6 +3432,11 @@ describe('SquidRunApp', () => {
         fs.rmSync(tempRoot, { recursive: true, force: true });
       }
     });
+
+    it('stores pending pane deliveries in the canonical runtime directory', () => {
+      expect(app.getPendingPaneDeliveryQueuePath()).toBe('/test/workspace/runtime/pending-pane-deliveries.json');
+      expect(app.getPendingPaneDeliveryQueuePath()).not.toContain('/.squidrun/runtime/');
+    });
   });
 
   describe('Telegram auto-reply routing', () => {
@@ -3872,6 +3877,28 @@ describe('SquidRunApp', () => {
           }
         }
       }
+    });
+
+    it('does not start the cross-device bridge from scoped side profiles', () => {
+      const { createBridgeClient } = require('../modules/bridge-client');
+      createBridgeClient.mockClear();
+      app.activeProfileName = 'private-profile';
+      app.bridgeEnabled = true;
+      app.bridgeRuntimeConfig = {
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'VIGIL-EUNBYEOL',
+        sharedSecret: 'shared',
+      };
+
+      const started = app.startBridgeClient();
+
+      expect(started).toBe(false);
+      expect(createBridgeClient).not.toHaveBeenCalled();
+      expect(app.bridgeRelayStatus).toEqual(expect.objectContaining({
+        running: false,
+        state: 'skipped',
+        status: 'profile_scope_skipped',
+      }));
     });
 
     it('tracks bridge lifecycle status for reconnect visibility', () => {
