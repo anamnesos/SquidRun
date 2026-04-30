@@ -8201,8 +8201,19 @@ class SquidRunApp {
   }
 
   startTelegramPoller() {
+    if (!isMainProfile(this.activeProfileName)) {
+      log.info(
+        'Telegram',
+        `Inbound Telegram bridge skipped for profile ${this.activeProfileName}; main profile owns getUpdates`
+      );
+      return;
+    }
+    const telegramEnv = {
+      ...buildProfileTelegramEnv(process.env, this.activeProfileName),
+      SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+    };
     const started = this.inboundPollerService.startTelegram({
-      env: buildProfileTelegramEnv(process.env, this.activeProfileName),
+      env: telegramEnv,
       onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
         const media = metadata?.media && typeof metadata.media === 'object' ? metadata.media : null;

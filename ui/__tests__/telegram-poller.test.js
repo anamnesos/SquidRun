@@ -407,6 +407,14 @@ describe('telegram-poller', () => {
       expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(false);
     });
 
+    test('central main-profile owner accepts scoped chat ids for window routing', () => {
+      const config = buildConfig({
+        SQUIDRUN_PROFILE: '',
+        SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+      });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(true);
+    });
+
     test('main profile accepts the user chat', () => {
       const config = buildConfig({ SQUIDRUN_PROFILE: '' });
       expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);

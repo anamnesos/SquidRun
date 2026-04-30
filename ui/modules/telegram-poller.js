@@ -48,11 +48,10 @@ function getTelegramConfig(env = process.env) {
       : []
   ));
 
-  // Profile-scoped routing: each SquidRun window sets SQUIDRUN_PROFILE
-  // ('private-profile' for the case-work window, anything else for main/trading).
-  // TELEGRAM_EUNBYEOL_CHAT_IDS declares which chats belong exclusively to
-  // the private-profile window — private-profile poller accepts ONLY those, main poller
-  // rejects ONLY those. Fail-safe: empty list preserves legacy behavior.
+  // Profile-scoped routing is resolved by one getUpdates owner. The main
+  // profile can opt into accepting scoped chat IDs centrally, then route them
+  // by chatId/windowKey; secondary profiles must not run competing pollers.
+  // Fail-safe: without the central-owner flag, main rejects scoped chat IDs.
   const profile = String(env.SQUIDRUN_PROFILE || '').trim().toLowerCase();
   const private-profileRaw = typeof env.TELEGRAM_EUNBYEOL_CHAT_IDS === 'string'
     ? env.TELEGRAM_EUNBYEOL_CHAT_IDS.trim()
@@ -69,6 +68,7 @@ function getTelegramConfig(env = process.env) {
     authorizedChatIds,
     profile,
     private-profileChatIds,
+    acceptScopedChatIds: env.SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS === '1',
   };
 }
 
@@ -160,7 +160,9 @@ function isAuthorizedChat(message, currentConfig) {
 
   // Main window (profile unset or anything else): accept the normal allowlist
   // but REJECT any chat declared as private-profile-scoped so case-work does not leak in.
-  if (private-profileIds.includes(chatId)) return false;
+  if (private-profileIds.includes(chatId)) {
+    return currentConfig.acceptScopedChatIds === true;
+  }
   if (chatId === currentConfig.chatId) return true;
   if (Array.isArray(currentConfig.authorizedChatIds) && currentConfig.authorizedChatIds.includes(chatId)) return true;
   return false;
