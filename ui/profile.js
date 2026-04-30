@@ -197,6 +197,9 @@ function buildProfileTelegramEnv(env = process.env, profileName = null) {
     ...env,
     SQUIDRUN_PROFILE: normalizedProfile,
   };
+  nextEnv.TELEGRAM_sideprofile_CHAT_IDS = sanitizeChatList(
+    `${env?.TELEGRAM_sideprofile_CHAT_IDS || ''},${sideprofile_CHAT_ID}`
+  );
   if (normalizedProfile === 'private-profile') {
     nextEnv.TELEGRAM_CHAT_ID = sideprofile_CHAT_ID;
     nextEnv.TELEGRAM_AUTHORIZED_CHAT_IDS = '';
