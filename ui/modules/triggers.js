@@ -139,6 +139,24 @@ function setInjectMessageRouter(routerFn) {
   injectMessageRouter = typeof routerFn === 'function' ? routerFn : null;
 }
 
+function normalizeWindowScope(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
+function payloadHasNonMainWindowScope(payload = {}) {
+  if (!payload || typeof payload !== 'object') return false;
+  const meta = payload.meta && typeof payload.meta === 'object' ? payload.meta : {};
+  const windowKey = normalizeWindowScope(payload.windowKey || meta.windowKey);
+  if (windowKey && windowKey !== 'main') return true;
+
+  const sessionScopeId = normalizeWindowScope(payload.sessionScopeId || meta.sessionScopeId);
+  if (!sessionScopeId) return false;
+  const scopeParts = sessionScopeId.split(':').map((part) => part.trim()).filter(Boolean);
+  if (scopeParts.length < 2) return false;
+  return scopeParts[scopeParts.length - 1] !== 'main';
+}
+
 function dispatchInjectMessage(payload) {
   if (!payload || typeof payload !== 'object') return false;
 
@@ -149,6 +167,17 @@ function dispatchInjectMessage(payload) {
     } catch (err) {
       log.warn('Trigger', `Inject router failed: ${err.message}`);
     }
+  }
+
+  if (payloadHasNonMainWindowScope(payload)) {
+    const meta = payload.meta && typeof payload.meta === 'object' ? payload.meta : {};
+    const windowKey = normalizeWindowScope(payload.windowKey || meta.windowKey) || 'unknown';
+    const sessionScopeId = normalizeWindowScope(payload.sessionScopeId || meta.sessionScopeId) || 'unknown';
+    log.warn(
+      'Trigger',
+      `Scoped inject fallback blocked for windowKey=${windowKey} sessionScopeId=${sessionScopeId}; refusing global main delivery`
+    );
+    return false;
   }
 
   const targetWindow = mainWindow;
