@@ -50,11 +50,10 @@ const organicUI = require('../ipc/organic-ui-handlers');
 const pipeline = require('../pipeline');
 const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
-const smsPoller = require('../sms-poller');
-const telegramPoller = require('../telegram-poller');
 const { normalizeChatId } = require('../../scripts/hm-telegram');
 const { sendTelegram } = require('../../scripts/hm-telegram');
 const { sendRoutedTelegramMessage } = require('../../scripts/hm-telegram-routing');
+const { createInboundPollerService } = require('./inbound-poller-service');
 const {
   shouldTriggerAutonomousSmoke,
   buildSmokeRunnerArgs,
@@ -519,6 +518,7 @@ class SquidRunApp {
       getCurrentSettings: () => this.ctx.currentSettings || {},
       onLifecycleEvent: (event) => this.handlePaneHostLifecycleEvent(event),
     });
+    this.inboundPollerService = createInboundPollerService();
     this.backgroundAgentManager = createBackgroundAgentManager({
       getDaemonClient: () => this.ctx.daemonClient,
       getSettings: () => this.ctx.currentSettings || {},
@@ -8136,7 +8136,7 @@ class SquidRunApp {
   }
 
   startSmsPoller() {
-    const started = smsPoller.start({
+    const started = this.inboundPollerService.startSms({
       onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
         const body = typeof text === 'string' ? text.trim() : '';
@@ -8206,7 +8206,7 @@ class SquidRunApp {
   }
 
   startTelegramPoller() {
-    const started = telegramPoller.start({
+    const started = this.inboundPollerService.startTelegram({
       env: buildProfileTelegramEnv(process.env, this.activeProfileName),
       onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
@@ -8513,8 +8513,7 @@ class SquidRunApp {
     this.backgroundAgentManager.killAll({ reason: 'app_shutdown' }).catch((err) => {
       log.warn('BackgroundAgent', `Failed to kill background agents during shutdown: ${err.message}`);
     });
-    smsPoller.stop();
-    telegramPoller.stop();
+    this.inboundPollerService.stopAll();
     closeCommsJournalStores();
     this.consoleLogWriter.flush().catch((err) => {
       log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);
