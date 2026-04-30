@@ -590,7 +590,7 @@ class SquidRunApp {
     };
     this.bridgeClient = null;
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
-    this.pendingPaneDeliveryQueuePath = path.join(WORKSPACE_PATH, '.squidrun', 'runtime', 'pending-pane-deliveries.json');
+    this.pendingPaneDeliveryQueuePath = resolveCoordPath('runtime/pending-pane-deliveries.json', { forWrite: true });
     this.pendingPaneDeliveryReplayPromise = Promise.resolve();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
     this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
@@ -7754,6 +7754,14 @@ class SquidRunApp {
   }
 
   startBridgeClient() {
+    if (!isMainProfile(this.activeProfileName)) {
+      log.info('Bridge', `Cross-device relay bridge skipped for profile ${this.activeProfileName}; main profile owns bridge connectivity`);
+      this.bridgeRelayStatus.running = false;
+      this.bridgeRelayStatus.state = 'skipped';
+      this.bridgeRelayStatus.status = 'profile_scope_skipped';
+      this.emitBridgeStatusSnapshot();
+      return false;
+    }
     this.refreshBridgeRuntimeConfig();
     if (!this.bridgeEnabled) return false;
     if (!this.isBridgeConfigured()) {

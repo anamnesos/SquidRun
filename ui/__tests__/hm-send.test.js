@@ -285,6 +285,71 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('allows internal operational routing messages that name the scoped side window', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'context-leak-violations.jsonl');
+
+    try {
+      const result = await runHmSend(
+        [
+          'builder',
+          '(ARCH #16): TASK - [private-profile] window slow startup + Telegram lane sanity. OBJECTIVE: diagnose queued replay and scoped windowKey routing.',
+          '--timeout',
+          '80',
+          '--retries',
+          '0',
+          '--no-fallback',
+        ],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'main', SQUIDRUN_ROLE: 'architect' },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('Delivered to builder');
+      expect(fs.existsSync(logPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('still blocks operational messages when they include case facts', async () => {
+    const tempProject = createLinkedProject();
+    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'context-leak-violations.jsonl');
+
+    try {
+      const result = await runHmSend(
+        [
+          'builder',
+          '(ARCH #16): TASK - [private-profile] window status. Check NurseCura case notes.',
+          '--timeout',
+          '80',
+          '--retries',
+          '0',
+          '--no-fallback',
+        ],
+        { HM_SEND_PORT: '1', SQUIDRUN_PROFILE: 'main', SQUIDRUN_ROLE: 'architect' },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('BLOCKED: [private-profile]/case context in main pane');
+      expect(fs.existsSync(logPath)).toBe(true);
+      const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        type: 'context_leak',
+        profile: 'main',
+        phrase: 'NurseCura',
+      });
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
   test('allows case context in the private-profile profile', async () => {
     const tempProject = createLinkedProject();
     const sendAttempts = [];
