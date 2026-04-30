@@ -27,6 +27,7 @@ const {
   getActiveProfileName,
   isMainProfile,
   buildProfileTelegramEnv,
+  getProfileProjectRootOverride,
   resolveProfileInstructionPath,
 } = require('../../profile');
 const { createPluginManager } = require('../plugins');
@@ -6947,6 +6948,38 @@ class SquidRunApp {
     return normalizedChatId === '8754356993' ? 'private-profile' : 'main';
   }
 
+  getScopedTelegramTriggerPaths(windowKey = '') {
+    const normalizedWindowKey = toNonEmptyString(windowKey);
+    if (!normalizedWindowKey || normalizedWindowKey === 'main') return [];
+
+    const profileRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env);
+    const roots = profileRoot
+      ? [profileRoot]
+      : [getProjectRoot()].filter(Boolean);
+
+    return Array.from(new Set(roots.map((root) => path.resolve(root))))
+      .map((root) => path.join(root, '.squidrun', `triggers-${normalizedWindowKey}`, 'architect.txt'));
+  }
+
+  forwardScopedTelegramInboundToProfileWindow(windowKey, message) {
+    const normalizedWindowKey = toNonEmptyString(windowKey);
+    const normalizedMessage = toNonEmptyString(message);
+    if (!normalizedWindowKey || normalizedWindowKey === 'main' || !normalizedMessage) return false;
+
+    let wrote = false;
+    for (const triggerPath of this.getScopedTelegramTriggerPaths(normalizedWindowKey)) {
+      try {
+        fs.mkdirSync(path.dirname(triggerPath), { recursive: true });
+        fs.writeFileSync(triggerPath, normalizedMessage, 'utf8');
+        wrote = true;
+        log.info('Telegram', `Forwarded scoped Telegram inbound to ${normalizedWindowKey} trigger lane: ${triggerPath}`);
+      } catch (err) {
+        log.warn('Telegram', `Failed to forward scoped Telegram inbound to ${triggerPath}: ${err.message}`);
+      }
+    }
+    return wrote;
+  }
+
   hasRecentTelegramInbound(nowMs = Date.now()) {
     const lastInboundAtMs = Number(this.telegramInboundContext?.lastInboundAtMs || 0);
     if (!Number.isFinite(lastInboundAtMs) || lastInboundAtMs <= 0) return false;
@@ -8339,6 +8372,12 @@ class SquidRunApp {
         const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
           ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
           : fullTelegramMessage;
+        const scopedStandaloneForwarded = inboundWindowKey !== 'main'
+          && !this.canSendToWindow(this.getAppWindow(inboundWindowKey))
+          && this.forwardScopedTelegramInboundToProfileWindow(inboundWindowKey, safeMessage);
+        if (scopedStandaloneForwarded) {
+          return;
+        }
         void this.deliverHumanMessageWithRecall(
           safeMessage,
           {

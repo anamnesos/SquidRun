@@ -3044,6 +3044,13 @@ describe('SquidRunApp', () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
 
+      app.registerAppWindow('private-profile', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
@@ -3098,6 +3105,13 @@ describe('SquidRunApp', () => {
         verified: true,
       });
 
+      app.registerAppWindow('private-profile', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
@@ -3120,6 +3134,66 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('forwards scoped Telegram chat inbound to [private-profile] profile triggers when side window is standalone', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('standalone hello', 'scoped', { chatId: 8754356993, updateId: 103 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(forwardSpy).toHaveBeenCalledWith(
+        'private-profile',
+        '[Telegram from scoped]: standalone hello'
+      );
+      expect(deliverySpy).not.toHaveBeenCalled();
+    });
+
+    it('writes standalone scoped Telegram forwarding into the scoped profile trigger root', () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-root-'));
+      const previousRoot = process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT;
+      process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT = tempRoot;
+
+      try {
+        const forwarded = app.forwardScopedTelegramInboundToProfileWindow(
+          'private-profile',
+          '[Telegram from scoped]: root test'
+        );
+        const scopedTriggerPath = path.join(
+          tempRoot,
+          '.squidrun',
+          'triggers-private-profile',
+          'architect.txt'
+        );
+        const mainTriggerPath = path.join(
+          require('../config').getProjectRoot(),
+          '.squidrun',
+          'triggers-private-profile',
+          'architect.txt'
+        );
+
+        expect(app.getScopedTelegramTriggerPaths('private-profile')).toEqual([scopedTriggerPath]);
+        expect(forwarded).toBe(true);
+        expect(fs.readFileSync(scopedTriggerPath, 'utf8')).toBe('[Telegram from scoped]: root test');
+        expect(app.getScopedTelegramTriggerPaths('private-profile')).not.toContain(mainTriggerPath);
+      } finally {
+        if (previousRoot === undefined) {
+          delete process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT;
+        } else {
+          process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT = previousRoot;
+        }
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
     it('includes saved file path in pane injection for inbound Telegram photos', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
@@ -3129,6 +3203,13 @@ describe('SquidRunApp', () => {
         verified: true,
       });
 
+      app.registerAppWindow('private-profile', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
@@ -3167,6 +3248,13 @@ describe('SquidRunApp', () => {
         verified: true,
       });
 
+      app.registerAppWindow('private-profile', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
