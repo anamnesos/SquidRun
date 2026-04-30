@@ -821,6 +821,7 @@ describe('daemon-handlers.js module', () => {
           'trigger-delivery-outcome',
           {
             deliveryId: 'delivery-unverified-1',
+            messageId: 'delivery-unverified-1',
             paneId: '3',
             accepted: true,
             verified: false,
@@ -847,6 +848,7 @@ describe('daemon-handlers.js module', () => {
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
         expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-ack', {
           deliveryId: 'delivery-verified-1',
+          messageId: 'delivery-verified-1',
           paneId: '3',
         });
       });
@@ -872,6 +874,7 @@ describe('daemon-handlers.js module', () => {
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
         expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-outcome', {
           deliveryId: 'delivery-failed-1',
+          messageId: 'delivery-failed-1',
           paneId: '3',
           accepted: true,
           verified: false,
