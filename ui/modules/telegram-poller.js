@@ -11,9 +11,8 @@ const log = require('./logger');
 
 const DEFAULT_POLL_INTERVAL_MS = 5000;
 const MIN_POLL_INTERVAL_MS = 1000;
-const DEFAULT_INBOUND_MEDIA_DIR = path.join('screenshots', 'telegram-inbound');
+const DEFAULT_INBOUND_MEDIA_DIR = path.join('runtime', 'telegram-inbound-media');
 const DEFAULT_LATEST_SCREENSHOT_PATH = path.join('screenshots', 'latest.png');
-const DEFAULT_EXTERNAL_TELEGRAM_PHOTO_DIR = 'D:\\projects\\Korean Fraud\\telegram-photos';
 
 let running = false;
 let pollTimer = null;
@@ -207,10 +206,10 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function resolveDefaultMediaDownloadRoot() {
-  return process.env.TELEGRAM_INBOUND_MEDIA_DIR
-    ? path.resolve(process.env.TELEGRAM_INBOUND_MEDIA_DIR)
-    : DEFAULT_EXTERNAL_TELEGRAM_PHOTO_DIR;
+function resolveDefaultMediaDownloadRoot(env = process.env) {
+  return env.TELEGRAM_INBOUND_MEDIA_DIR
+    ? path.resolve(env.TELEGRAM_INBOUND_MEDIA_DIR)
+    : resolveWritableCoordPath(DEFAULT_INBOUND_MEDIA_DIR);
 }
 
 function resolveDefaultLatestScreenshotPath() {
@@ -567,7 +566,7 @@ function start(options = {}) {
     ? path.resolve(options.mediaDownloadRoot)
     : (typeof options.env?.TELEGRAM_INBOUND_MEDIA_DIR === 'string' && options.env.TELEGRAM_INBOUND_MEDIA_DIR.trim()
       ? path.resolve(options.env.TELEGRAM_INBOUND_MEDIA_DIR)
-      : resolveDefaultMediaDownloadRoot());
+      : resolveDefaultMediaDownloadRoot(options.env || process.env));
   latestScreenshotPath = typeof options.latestScreenshotPath === 'string' && options.latestScreenshotPath.trim()
     ? path.resolve(options.latestScreenshotPath)
     : resolveDefaultLatestScreenshotPath();
@@ -625,6 +624,7 @@ const _internals = {
   parseUpdateId,
   isAuthorizedChat,
   isImageDocument,
+  resolveDefaultMediaDownloadRoot,
 };
 
 module.exports = {

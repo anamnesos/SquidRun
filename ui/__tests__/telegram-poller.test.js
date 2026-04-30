@@ -367,6 +367,22 @@ describe('telegram-poller', () => {
     })).toBe('[Photo received]');
   });
 
+  test('default media download root is a neutral SquidRun runtime path', () => {
+    const root = telegramPoller._internals.resolveDefaultMediaDownloadRoot({});
+    const normalized = root.replace(/\\/g, '/');
+
+    expect(normalized).toContain('/.squidrun/runtime/telegram-inbound-media');
+    expect(normalized).not.toContain('Korean Fraud');
+  });
+
+  test('explicit Telegram inbound media directory override still wins', () => {
+    const root = telegramPoller._internals.resolveDefaultMediaDownloadRoot({
+      TELEGRAM_INBOUND_MEDIA_DIR: 'D:\\custom-profile-media',
+    });
+
+    expect(root).toBe(path.resolve('D:\\custom-profile-media'));
+  });
+
   describe('profile-scoped chat routing', () => {
     const JAMES_CHAT_ID = 111111111;
     const EUNBYEOL_CHAT_ID = 8754356993;
