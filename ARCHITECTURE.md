@@ -143,6 +143,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
 - ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows like [private-profile] can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
+- ui/modules/main/telegram-poller-worker.js: Child-process Telegram inbound poller owner; it is the only runtime `getUpdates` loop and sends inbound messages back to `SquidRunApp` through the inbound-poller service IPC boundary.
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
 - ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
