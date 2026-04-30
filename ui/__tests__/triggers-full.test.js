@@ -76,6 +76,7 @@ describe('triggers.js module', () => {
     
     // Reset module state (as much as possible via exported functions)
     triggers.setWatcher(null);
+    triggers.setInjectMessageRouter(null);
     // Reset window mock
     global.window.webContents.send.mockClear();
     global.window.isDestroyed.mockReturnValue(false);
@@ -276,6 +277,53 @@ describe('triggers.js module', () => {
       const notified = triggers.notifyAgents(['1'], 'hello');
 
       expect(notified).toEqual([]);
+      expect(global.window.webContents.send).not.toHaveBeenCalledWith(
+        'inject-message',
+        expect.anything()
+      );
+    });
+
+    test('blocks scoped-window fallback from leaking into the main window when router misses', () => {
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      triggers.setInjectMessageRouter(() => false);
+
+      const result = triggers.sendDirectMessage(['1'], 'side-only message', 'user', {
+        meta: {
+          windowKey: 'private-profile',
+          sessionScopeId: 'app-session-308:private-profile',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: false,
+        queued: false,
+        status: 'window_unavailable',
+      }));
+      expect(global.window.webContents.send).not.toHaveBeenCalledWith(
+        'inject-message',
+        expect.anything()
+      );
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Scoped inject fallback blocked')
+      );
+    });
+
+    test('blocks non-main session-scope fallback even without an explicit windowKey', () => {
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      triggers.setInjectMessageRouter(() => false);
+
+      const result = triggers.sendDirectMessage(['1'], 'scoped session only', 'user', {
+        meta: {
+          sessionScopeId: 'app-session-308:private-profile',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: false,
+        queued: false,
+        status: 'window_unavailable',
+      }));
       expect(global.window.webContents.send).not.toHaveBeenCalledWith(
         'inject-message',
         expect.anything()
