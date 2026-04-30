@@ -23,6 +23,7 @@ describe('transcript-index', () => {
   });
 
   test('parses user conversation turns and tags corrections/entities', () => {
+    const sourceFile = 'C:\\test\\session.jsonl';
     const record = parseClaudeTranscriptRecord({
       type: 'user',
       sessionId: 'session-1',
@@ -32,14 +33,14 @@ describe('transcript-index', () => {
         content: 'Actually that is not why Qeline affects me. It had to do with my wife\'s brother and Michelle Aviso at 8754356993.',
       },
     }, {
-      sourceFile: 'C:\\test\\session.jsonl',
+      sourceFile,
       lineNumber: 7,
     });
 
     expect(record).toEqual(expect.objectContaining({
       speaker: 'user',
       sessionId: 'session-1',
-      sourceCitation: 'C:\\test\\session.jsonl:7',
+      sourceCitation: `${path.resolve(sourceFile)}:7`,
     }));
     expect(record.tags).toEqual(expect.arrayContaining(['correction', 'qeline_case', 'telegram']));
     expect(record.entities).toEqual(expect.arrayContaining(['Michelle Aviso', '8754356993']));
