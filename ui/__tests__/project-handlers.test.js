@@ -37,7 +37,7 @@ const fs = require('fs');
 const log = require('../modules/logger');
 const { initializeEvidenceLedgerRuntime } = require('../modules/ipc/evidence-ledger-runtime');
 const { initializeTeamMemoryRuntime } = require('../modules/team-memory/runtime');
-const { registerProjectHandlers } = require('../modules/ipc/project-handlers');
+const { registerProjectHandlers, _internals } = require('../modules/ipc/project-handlers');
 
 describe('Project Handlers', () => {
   let harness;
@@ -162,6 +162,16 @@ describe('Project Handlers', () => {
         workspace: path.resolve('/startup/project').replace(/\\/g, '/'),
         session_id: 'app-session-186',
       }));
+    });
+
+    test('falls back to app root when configured project root lacks hm-send', () => {
+      const configuredRoot = path.resolve('/isolated/casework');
+      const appRoot = path.resolve('/real/squidrun');
+      fs.existsSync.mockImplementation((filePath) => (
+        path.resolve(filePath) === path.join(appRoot, 'ui', 'scripts', 'hm-send.js')
+      ));
+
+      expect(_internals.resolveSquidrunScriptRoot({ configuredRoot, appRoot })).toBe(appRoot);
     });
 
     test('surfaces startup rebind failure and keeps runtime lifecycle recoverable', async () => {

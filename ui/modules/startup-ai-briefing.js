@@ -15,6 +15,10 @@ const DEFAULT_MAX_TOTAL_CHARS = 220000;
 const DEFAULT_OUTPUT_RELATIVE_PATH = path.join('handoffs', 'ai-briefing.md');
 const DEFAULT_STATUS_RELATIVE_PATH = path.join('runtime', 'startup-briefing-status.json');
 const RECALL_BLOCK_RE = /\[SQUIDRUN RECALL START\][\s\S]*?\[SQUIDRUN RECALL END\]\s*/gi;
+const CANONICAL_SOURCE_RELATIVE_PATHS = [
+  path.join('workspace', 'knowledge', 'case-operations.md'),
+  path.join('workspace', 'knowledge', 'handoff-corrections.md'),
+];
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -105,6 +109,141 @@ function readStartupBriefingForInjection(options = {}) {
   }
 
   return `${notes.join('\n')}\n\n${body}\n`;
+}
+
+function readFileIfExists(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return '';
+    return String(fs.readFileSync(filePath, 'utf8') || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function resolveCanonicalSourceFiles(options = {}) {
+  const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+  return CANONICAL_SOURCE_RELATIVE_PATHS
+    .map((relativePath) => {
+      const filePath = path.join(projectRoot, relativePath);
+      const content = readFileIfExists(filePath);
+      if (!content) return null;
+      return {
+        relativePath: relativePath.replace(/\\/g, '/'),
+        path: filePath,
+        content,
+      };
+    })
+    .filter(Boolean);
+}
+
+function extractSection(content = '', headingPattern) {
+  const lines = String(content || '').split(/\r?\n/);
+  const startIndex = lines.findIndex((line) => headingPattern.test(line.trim()));
+  if (startIndex < 0) return '';
+  const section = [];
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (index > startIndex && /^#{1,2}\s+/.test(line.trim())) break;
+    section.push(line);
+  }
+  return section.join('\n').trim();
+}
+
+function extractCanonicalHighlights(source = {}) {
+  const content = String(source.content || '');
+  if (!content) return [];
+
+  const highlights = [];
+  for (const section of [
+    extractSection(content, /^##\s+Hard Error Rules$/i),
+    extractSection(content, /^##\s+Fast Use$/i),
+  ]) {
+    if (section) highlights.push(section);
+  }
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (
+      /사업자등록|조기재취업|모두의 창업|NurseCura|postpartum|산후|Channel A|방송 확정|Hillstate Mailing|송달 완료|14-day/i.test(trimmed)
+    ) {
+      highlights.push(trimmed);
+    }
+  }
+
+  return Array.from(new Set(highlights)).slice(0, 32);
+}
+
+function buildCanonicalSourceBlock(sources = [], options = {}) {
+  const maxChars = Math.max(1200, Number.parseInt(String(options.maxChars || 12000), 10) || 12000);
+  const sections = [];
+  for (const source of sources) {
+    const highlights = extractCanonicalHighlights(source);
+    if (highlights.length === 0) continue;
+    sections.push([
+      `### ${source.relativePath}`,
+      ...highlights.map((line) => `- ${line.replace(/^-+\s*/, '')}`),
+    ].join('\n'));
+  }
+  const block = sections.join('\n\n').trim();
+  return block.length > maxChars ? block.slice(0, maxChars).trim() : block;
+}
+
+function deriveCanonicalBriefingOverrides(sources = []) {
+  const content = sources.map((source) => source.content || '').join('\n');
+  return {
+    businessRegistrationOnOrBefore20260603: (
+      /사업자등록[\s\S]{0,240}(before|on or before)\s+2026-06-03/i.test(content)
+      || /사업자등록[\s\S]{0,240}2026-06-03[\s\S]{0,160}(전|이전|on or before|before)/i.test(content)
+    ),
+    modueuiChangupSubmitted20260429: (
+      /모두의 창업 2026 1기\s*\|\s*\*\*Submitted 2026-04-29\*\*/i.test(content)
+      || /모두의 창업[\s\S]{0,160}Submitted 2026-04-29/i.test(content)
+    ),
+  };
+}
+
+function applyCanonicalBriefingOverrides(body = '', sources = []) {
+  const overrides = deriveCanonicalBriefingOverrides(sources);
+  let output = String(body || '');
+
+  if (overrides.businessRegistrationOnOrBefore20260603) {
+    output = output
+      .replace(
+        /(사업자등록 timing\s*\|\s*)Must be\s*\*\*?after\s+6\/3\*\*?[^\n]*/gi,
+        '$1Must be **on or before 2026-06-03** to preserve 조기재취업수당 eligibility'
+      )
+      .replace(
+        /(사업자등록[^|\n]*\|\s*)Must be\s*\*\*?after\s+2026-06-03\*\*?[^\n]*/gi,
+        '$1Must be **on or before 2026-06-03** to preserve 조기재취업수당 eligibility'
+      )
+      .replace(
+        /business registration must happen\s+\*\*?after\s+(?:6\/3|2026-06-03)\*\*?/gi,
+        'business registration must happen **on or before 2026-06-03**'
+      )
+      .replace(
+        /coordinate 사업자등록 timing \(must be after 6\/3\)/gi,
+        'coordinate 사업자등록 timing (must be on or before 2026-06-03)'
+      );
+  }
+
+  if (overrides.modueuiChangupSubmitted20260429) {
+    output = output
+      .replace(
+        /-\s+\*\*Status uncertain\*\*\s*[^\n]*Unknown if she completed submission\./gi,
+        '- **Submitted 2026-04-29** ([private-profile] confirmed via Telegram).'
+      )
+      .replace(
+        /Confirm 모두의 창업 submission status[^\n]*/gi,
+        'Monitor 모두의 창업 Stage 1 announcement'
+      )
+      .replace(
+        /did she finish and submit, or is it still in progress\?/gi,
+        'submission is complete; monitor Stage 1 result.'
+      );
+  }
+
+  return output;
 }
 
 function stripRecallNoise(value) {
@@ -361,6 +500,7 @@ function formatLiveSnapshotBlock(liveSnapshot = {}) {
 function buildBriefingPrompt(files = [], transcriptCorpus = '', context = {}) {
   const sourceList = files.map((file, index) => `${index + 1}. ${file.name} | modified ${file.modifiedAt}`).join('\n');
   const liveSnapshotBlock = formatLiveSnapshotBlock(context.liveSnapshot);
+  const canonicalSourceBlock = String(context.canonicalSourceBlock || '').trim();
   return [
     'Read these conversations and write a briefing for the agents starting up: what happened, what\'s unfinished, what decisions were made, what the user cares about right now.',
     '',
@@ -369,6 +509,8 @@ function buildBriefingPrompt(files = [], transcriptCorpus = '', context = {}) {
     '- Keep it under 2000 tokens.',
     '- Be concrete about current priorities, unfinished work, decisions, user preferences, blockers, and risks.',
     '- Prefer recent facts when the transcripts disagree, but call out uncertainty when needed.',
+    '- Treat the Canonical source-of-truth block below as higher priority than transcripts, memories, and prior handoffs.',
+    '- If transcript summaries conflict with canonical source-of-truth, use the canonical fact and briefly note that stale transcript summaries were overridden.',
     '- Write for the SquidRun startup context so Architect, Builder, and Oracle can act immediately.',
     '- Use the verified live snapshot for any live-position or live-account prose.',
     '- Do not include analysis process or mention token budgets.',
@@ -379,6 +521,9 @@ function buildBriefingPrompt(files = [], transcriptCorpus = '', context = {}) {
     '',
     'Source transcripts:',
     sourceList || 'None found.',
+    '',
+    'Canonical source-of-truth (highest priority):',
+    canonicalSourceBlock || 'No canonical source-of-truth files found.',
     '',
     'Conversations:',
     transcriptCorpus || 'No usable transcript content found.',
@@ -431,6 +576,7 @@ async function requestStartupBriefing(prompt, options = {}) {
           role: 'user',
           content: buildBriefingPrompt(options.transcriptFiles || [], prompt, {
             liveSnapshot: options.liveSnapshot,
+            canonicalSourceBlock: options.canonicalSourceBlock,
           }),
         },
       ],
@@ -449,6 +595,7 @@ async function requestStartupBriefing(prompt, options = {}) {
 function formatBriefingDocument(body = '', files = [], options = {}) {
   const generatedAt = toText(options.generatedAt || new Date().toISOString(), new Date().toISOString());
   const model = toText(options.model || DEFAULT_MODEL, DEFAULT_MODEL);
+  const canonicalSourceBlock = String(options.canonicalSourceBlock || '').trim();
   const lines = [
     '# AI Startup Briefing',
     '',
@@ -460,6 +607,16 @@ function formatBriefingDocument(body = '', files = [], options = {}) {
       ? files.map((file, index) => `${index + 1}. ${file.name} | modified ${file.modifiedAt}`)
       : ['1. None found']),
     '',
+    ...(canonicalSourceBlock
+      ? [
+        '## Canonical Source-Of-Truth Overrides',
+        '',
+        'These local files override stale transcript summaries and generated prose when they conflict:',
+        '',
+        canonicalSourceBlock,
+        '',
+      ]
+      : []),
     body.trim(),
   ];
   return lines.join('\n').trim();
@@ -476,16 +633,21 @@ async function generateStartupBriefing(options = {}) {
   const outputPath = resolveBriefingPath(options);
   const statusPath = resolveStatusPath(options);
   const liveSnapshot = await resolveLiveDefiSnapshot(options);
+  const canonicalSources = resolveCanonicalSourceFiles(options);
+  const canonicalSourceBlock = buildCanonicalSourceBlock(canonicalSources, options);
 
   try {
-    const body = await requestStartupBriefing(transcriptCorpus, {
+    const generatedBody = await requestStartupBriefing(transcriptCorpus, {
       ...options,
       transcriptFiles,
       liveSnapshot,
+      canonicalSourceBlock,
     });
+    const body = applyCanonicalBriefingOverrides(generatedBody, canonicalSources);
     const document = formatBriefingDocument(body, transcriptFiles, {
       ...options,
       generatedAt,
+      canonicalSourceBlock,
     });
 
     writeFileAtomic(outputPath, `${document}\n`);
@@ -500,6 +662,8 @@ async function generateStartupBriefing(options = {}) {
       model: toText(options.model || DEFAULT_MODEL, DEFAULT_MODEL),
       liveSnapshotOk: liveSnapshot?.ok === true,
       liveOpenPositionCount: Array.isArray(liveSnapshot?.positions) ? liveSnapshot.positions.length : 0,
+      canonicalSourceCount: canonicalSources.length,
+      canonicalSourceFiles: canonicalSources.map((source) => source.relativePath),
     });
 
     return {
@@ -524,6 +688,8 @@ async function generateStartupBriefing(options = {}) {
       error: error.message,
       liveSnapshotOk: liveSnapshot?.ok === true,
       liveOpenPositionCount: Array.isArray(liveSnapshot?.positions) ? liveSnapshot.positions.length : 0,
+      canonicalSourceCount: canonicalSources.length,
+      canonicalSourceFiles: canonicalSources.map((source) => source.relativePath),
     });
     return {
       ok: false,
@@ -555,5 +721,9 @@ module.exports = {
     resolveLiveDefiSnapshot,
     formatLiveSnapshotBlock,
     stripLiveAccountBlocks,
+    resolveCanonicalSourceFiles,
+    buildCanonicalSourceBlock,
+    deriveCanonicalBriefingOverrides,
+    applyCanonicalBriefingOverrides,
   },
 };
