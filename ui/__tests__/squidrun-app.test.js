@@ -3280,6 +3280,54 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('synthesizes video display text and includes saved file path for inbound Telegram videos', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('', '@VideoSender', {
+        updateId: 808489707,
+        messageId: 556,
+        chatId: 5613428850,
+        video: {
+          file_id: 'video-xyz',
+        },
+        media: {
+          kind: 'video',
+          telegramKind: 'video',
+          fileId: 'video-xyz',
+          mimeType: 'video/mp4',
+          localPath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4',
+        },
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from @VideoSender]: [Video received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          channel: 'telegram',
+          sender: '@VideoSender',
+          metadata: expect.objectContaining({
+            media: expect.objectContaining({
+              kind: 'video',
+              fileId: 'video-xyz',
+              localPath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4',
+            }),
+          }),
+        }),
+        'Telegram'
+      );
+    });
+
     it('queues inbound human delivery for replay when pane delivery stays unverified', async () => {
       const triggers = require('../modules/triggers');
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-'));

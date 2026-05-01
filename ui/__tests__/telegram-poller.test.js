@@ -361,10 +361,124 @@ describe('telegram-poller', () => {
     );
   });
 
+  test('pollNow downloads inbound Telegram videos with safe video metadata', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-video-'));
+    const mediaDir = path.join(tempDir, 'telegram-inbound');
+    const latestPath = path.join(tempDir, 'latest.png');
+    const onMessage = jest.fn();
+    const videoBytes = Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]);
+
+    telegramPoller.start({
+      env: {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      },
+      onMessage,
+      mediaDownloadRoot: mediaDir,
+      latestScreenshotPath: latestPath,
+    });
+
+    mockTelegramRequestSequence({
+      '/bot123456789:fake_telegram_bot_token_do_not_use/getUpdates?offset=0&timeout=0': {
+        body: JSON.stringify({
+          ok: true,
+          result: [
+            {
+              update_id: 41,
+              message: {
+                message_id: 101,
+                chat: { id: 123456 },
+                from: { username: 'iphone-user' },
+                caption: 'toilet movement',
+                video: {
+                  file_id: 'video-file',
+                  file_unique_id: 'video-unique',
+                  mime_type: 'video/mp4',
+                  duration: 7,
+                  width: 1920,
+                  height: 1080,
+                },
+              },
+            },
+          ],
+        }),
+      },
+      '/bot123456789:fake_telegram_bot_token_do_not_use/getFile?file_id=video-file': {
+        body: JSON.stringify({
+          ok: true,
+          result: {
+            file_path: 'videos/file_456.mp4',
+          },
+        }),
+      },
+      '/file/bot123456789:fake_telegram_bot_token_do_not_use/videos/file_456.mp4': {
+        body: videoBytes,
+      },
+    });
+
+    try {
+      await telegramPoller._internals.pollNow();
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage).toHaveBeenCalledWith(
+        '[Video] toilet movement',
+        '@iphone-user',
+        expect.objectContaining({
+          updateId: 41,
+          updateKind: 'message',
+          messageId: 101,
+          video: expect.objectContaining({ file_id: 'video-file' }),
+          media: expect.objectContaining({
+            kind: 'video',
+            telegramKind: 'video',
+            fileId: 'video-file',
+            telegramFilePath: 'videos/file_456.mp4',
+            mimeType: 'video/mp4',
+            duration: 7,
+            width: 1920,
+            height: 1080,
+            latestScreenshotPath: null,
+          }),
+        })
+      );
+
+      const metadata = onMessage.mock.calls[0][2];
+      expect(path.extname(metadata.media.localPath)).toBe('.mp4');
+      expect(fs.existsSync(metadata.media.localPath)).toBe(true);
+      expect(fs.readFileSync(metadata.media.localPath)).toEqual(videoBytes);
+      expect(fs.existsSync(latestPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('buildInboundDisplayText falls back to photo text for captionless media', () => {
     expect(telegramPoller._internals.buildInboundDisplayText({
       photo: [{ file_id: 'photo-1' }],
     })).toBe('[Photo received]');
+  });
+
+  test('buildInboundDisplayText falls back to video text for captionless media', () => {
+    expect(telegramPoller._internals.buildInboundDisplayText({
+      video: { file_id: 'video-1', mime_type: 'video/mp4' },
+    })).toBe('[Video received]');
+  });
+
+  test('selectInboundMedia treats video documents as video attachments', () => {
+    expect(telegramPoller._internals.selectInboundMedia({
+      document: {
+        file_id: 'doc-video',
+        file_unique_id: 'doc-video-unique',
+        file_name: 'clip.mov',
+        mime_type: 'video/quicktime',
+      },
+    })).toEqual(expect.objectContaining({
+      kind: 'video',
+      telegramKind: 'document',
+      fileId: 'doc-video',
+      fileName: 'clip.mov',
+      mimeType: 'video/quicktime',
+    }));
   });
 
   test('default media download root is a neutral SquidRun runtime path', () => {

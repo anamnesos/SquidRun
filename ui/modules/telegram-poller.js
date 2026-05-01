@@ -240,6 +240,12 @@ function getFileExtension(fileName = '', mimeType = '', telegramFilePath = '', f
   if (normalizedMimeType === 'image/gif') return '.gif';
   if (normalizedMimeType === 'image/heic' || normalizedMimeType === 'image/heif') return '.heic';
   if (normalizedMimeType.startsWith('image/')) return '.jpg';
+  if (normalizedMimeType === 'video/mp4') return '.mp4';
+  if (normalizedMimeType === 'video/quicktime') return '.mov';
+  if (normalizedMimeType === 'video/x-m4v') return '.m4v';
+  if (normalizedMimeType === 'video/webm') return '.webm';
+  if (normalizedMimeType === 'video/x-matroska') return '.mkv';
+  if (normalizedMimeType.startsWith('video/')) return '.mp4';
 
   return fallback;
 }
@@ -251,6 +257,15 @@ function isImageDocument(document) {
 
   const extension = path.extname(String(document.file_name || '')).trim().toLowerCase();
   return ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif'].includes(extension);
+}
+
+function isVideoDocument(document) {
+  if (!document || typeof document !== 'object') return false;
+  const mimeType = String(document.mime_type || '').trim().toLowerCase();
+  if (mimeType.startsWith('video/')) return true;
+
+  const extension = path.extname(String(document.file_name || '')).trim().toLowerCase();
+  return ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi'].includes(extension);
 }
 
 function extractInboundMessage(update) {
@@ -284,12 +299,33 @@ function selectInboundMedia(message) {
     }
   }
 
+  const video = message?.video && typeof message.video === 'object' ? message.video : null;
+  if (video) {
+    const fileId = typeof video?.file_id === 'string' ? video.file_id.trim() : '';
+    if (fileId) {
+      return {
+        kind: 'video',
+        telegramKind: 'video',
+        fileId,
+        telegram: video,
+        fileName: typeof video.file_name === 'string' ? video.file_name.trim() : '',
+        mimeType: typeof video.mime_type === 'string' ? video.mime_type.trim() : 'video/mp4',
+        fileUniqueId: typeof video.file_unique_id === 'string' ? video.file_unique_id.trim() : '',
+        duration: Number.isFinite(Number(video.duration)) ? Number(video.duration) : null,
+        width: Number.isFinite(Number(video.width)) ? Number(video.width) : null,
+        height: Number.isFinite(Number(video.height)) ? Number(video.height) : null,
+      };
+    }
+  }
+
   const document = message?.document && typeof message.document === 'object' ? message.document : null;
   if (document) {
     const fileId = typeof document?.file_id === 'string' ? document.file_id.trim() : '';
     if (fileId) {
+      const isVideo = isVideoDocument(document);
       return {
-        kind: 'document',
+        kind: isVideo ? 'video' : 'document',
+        telegramKind: 'document',
         fileId,
         telegram: document,
         fileName: typeof document.file_name === 'string' ? document.file_name.trim() : '',
@@ -310,6 +346,9 @@ function buildInboundDisplayText(message, selectedMedia = null) {
   const media = selectedMedia || selectInboundMedia(message);
   if (media?.kind === 'photo') {
     return caption ? `[Photo] ${caption}` : '[Photo received]';
+  }
+  if (media?.kind === 'video') {
+    return caption ? `[Video] ${caption}` : '[Video received]';
   }
 
   const document = message?.document && typeof message.document === 'object' ? message.document : null;
@@ -393,6 +432,10 @@ function persistInboundMedia(buffer, media, context = {}) {
     telegramFilePath: media.telegramFilePath || null,
     fileName: media.fileName || null,
     mimeType: media.mimeType || null,
+    telegramKind: media.telegramKind || media.kind,
+    duration: media.duration ?? null,
+    width: media.width ?? null,
+    height: media.height ?? null,
     localPath: archivePath,
     bytes: buffer.length,
     latestScreenshotPath: null,
@@ -535,6 +578,7 @@ async function pollNow() {
             chatId: getAuthorizedChatId(message),
             timestampMs: parseMessageTimestampMs(message),
             photo: photoArray ? photoArray[photoArray.length - 1] : null,
+            video: message.video && typeof message.video === 'object' ? message.video : null,
             document: document || null,
             media: downloadedMedia,
           }));
@@ -626,6 +670,7 @@ const _internals = {
   parseUpdateId,
   isAuthorizedChat,
   isImageDocument,
+  isVideoDocument,
   resolveDefaultMediaDownloadRoot,
 };
 
