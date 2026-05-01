@@ -14,24 +14,11 @@ Before ANY agent states "we can't", "we don't have access", "there is no tool", 
 4. Negative capability claims without a verified lookup = **process violation**
 5. If unsure, say "let me check" — NEVER confidently state inability from memory alone
 
-## 은별 Case Operations (MANDATORY FOR THE EUNBYEOL WINDOW ONLY)
+## Optional Scoped Profile Operations
 
-### Routing — NEVER violate
-- **은별** (@Rachelchoi, chat 8754356993): `cd D:/projects/squidrun/ui && node ../tools/send-long-telegram.js 8754356993 <filepath>` — Korean only
-- **the user** (@jaymz6435): `cd D:/projects/squidrun && node ui/scripts/hm-send.js telegram --file <filepath>` — ENGLISH ONLY. Never send Korean to the user.
-- **Builder/Oracle**: `node ui/scripts/hm-send.js builder|oracle --file <filepath>` — Use these for help. NEVER use Claude Code subagents.
-
-### Before replying to 은별 in the dedicated [private-profile] window — MUST read these files first
-1. `D:\projects\Jeon Myeongsam Case\reference\confirmed-facts.md` — Investment fraud case
-2. `D:\projects\Hillstate Case\reference\confirmed-facts.md` — Apartment fraud case
-3. `D:\projects\Korean Fraud\reference\confirmed-facts.md` — Counterfeit goods case
-4. `D:\projects\squidrun\workspace\knowledge\case-operations.md` — Active pending items dashboard
-5. `D:\projects\squidrun\workspace\knowledge\handoff-corrections.md` — Drift guard: 4 disputed facts that MUST NOT be stated as settled without re-checking source evidence
-
-### Three cases — NEVER mix them
-- **전명삼 case**: Investment fraud ~$700K. Criminal complaint at `D:\projects\Jeon Myeongsam Case\documents\`
-- **힐스테이트 case**: Apartment sales fraud. Demand letters at `D:\projects\Hillstate Case\documents\`
-- **큐라인샵 case**: Counterfeit goods. Evidence at `D:\projects\Korean Fraud\`
+- Scoped side-profile routing and recipient details are private operating context.
+- Keep public docs generic. Store real chat IDs, customer/case names, and external private project paths in ignored local overlays or environment configuration.
+- Use `node ui/scripts/hm-send.js builder|oracle --file <filepath>` for agent-to-agent help. Do not use Claude Code subagents inside SquidRun.
 
 ## Trading Reality (MANDATORY — every agent, every session)
 
@@ -48,6 +35,6 @@ Before ANY agent states "we can't", "we don't have access", "there is no tool", 
 ## On Startup (MANDATORY)
 
 1. Read `ROLES.md` — it contains your role definition and startup baseline. Execute it.
-2. Main window: do NOT force-load [private-profile] case files by default. That context is injected through the dedicated [private-profile] window startup path.
+2. Main window: do NOT force-load private side-profile files by default. Scoped context belongs in the relevant private profile overlay.
 3. Read `workspace/knowledge/trading-operations.md` for live trading state.
 4. Internalize the fix-first rule from `ROLES.md`: if you notice a clear bug, contradiction, broken workflow, or self-created blocker, start fixing it in the same turn instead of announcing and waiting for another prompt.
