@@ -5,7 +5,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 
 ## 2) PROCESS MODEL
 1. `ui/main.js` starts Electron, enforces single-instance lock, installs global error handlers, builds managers, and calls `SquidRunApp.init()`.
-2. `ui/modules/main/squidrun-app.js` loads settings, resolves launch intent, creates the requested top-level BrowserWindow set (main and/or [private-profile]), runs firmware/CLI identity startup work, sets session scope, and starts WebSocket + runtime services.
+2. `ui/modules/main/squidrun-app.js` loads settings, resolves launch intent, creates the requested top-level BrowserWindow set (main and/or scoped side windows), runs firmware/CLI identity startup work, sets session scope, and starts WebSocket + runtime services.
 3. Main window preload (`ui/preload.js`) exposes safe bridge APIs to renderer (`window.squidrun` / `window.squidrunAPI`) under context isolation.
 4. Hidden pane hosts are created by `ui/modules/main/pane-host-window-manager.js` as offscreen BrowserWindows (`pane-host.html`) for robust PTY injection and delivery acknowledgements.
 5. PTY runtime is managed by daemon client (`ui/daemon-client.js`) connecting to `ui/terminal-daemon.js`; panes attach through renderer/hidden-host bridges.
@@ -141,7 +141,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/github-service.js: Exports createGitHubService, execAsync, toGhError.
 - ui/modules/main/inbound-poller-service.js: Owns main-process inbound Telegram/SMS poller lifecycle behind a small service boundary so channel handling can move out of Electron without changing message routing callbacks.
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
-- ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows like [private-profile] can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
+- ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
 - ui/modules/main/telegram-poller-worker.js: Child-process Telegram inbound poller owner; it is the only runtime `getUpdates` loop and sends inbound messages back to `SquidRunApp` through the inbound-poller service IPC boundary.
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
@@ -210,8 +210,6 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/team-memory/worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
 - ui/modules/team-memory/worker.js: Child-process worker entrypoint for async runtime tasks.
 - ui/modules/telegram-poller.js: Exports start, stop, isRunning, _internals, ....
-- ui/scripts/create-private-profile-shortcut.ps1: Creates a Windows desktop shortcut that launches the [private-profile] window directly.
-- ui/scripts/launch-private-profile.ps1: Standalone Windows launcher that opens [private-profile] via packaged EXE or `npm start -- --window=private-profile --solo-window`.
 - ui/modules/terminal.js: Exports PANE_IDS, terminals, fitAddons, setStatusCallbacks, ....
 - ui/modules/terminal/agent-colors.js: Exports attachAgentColors, AGENT_COLORS.
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
@@ -289,7 +287,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-screenshot.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-search.js: Safe `rg` wrapper for Windows/PowerShell with optional glob filters and escaped-pattern default behavior.
 - ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket; hot-loads outbound guardrails before journaling or websocket dispatch.
-- ui/scripts/hm-send-context-leak-guard.js: Outbound hm-send guard that blocks [private-profile]/case-context leakage from the main profile and records violations/bypasses as JSONL runtime audit rows.
+- ui/scripts/hm-send-context-leak-guard.js: Outbound hm-send guard that blocks private side-profile context leakage from the main profile and records violations/bypasses as JSONL runtime audit rows.
 - ui/scripts/hm-send-permission-guard.js: Outbound hm-send guard that detects permission-ask phrases, records violations/bypasses as JSONL runtime audit rows, and supports summary reporting.
 - ui/scripts/hm-sms.js: Exports parseMessage, getTwilioConfig, getMissingConfigKeys, buildAuthHeader, ....
 - ui/scripts/hm-surface-audit.js: UI/documentation surface audit helper used to check exposed commands and runtime-facing features.
