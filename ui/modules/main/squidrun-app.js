@@ -8245,6 +8245,8 @@ class SquidRunApp {
         let body = typeof text === 'string' ? text.trim() : '';
         if (!body && media?.kind === 'photo') {
           body = '[Photo received]';
+        } else if (!body && media?.kind === 'video') {
+          body = '[Video received]';
         } else if (!body && photo) {
           body = '[Photo received]';
         } else if (!body && media?.kind === 'document') {
@@ -8318,10 +8320,14 @@ class SquidRunApp {
               windowKey: inboundWindowKey,
               sessionScopeId: inboundSessionScopeId,
               mediaKind: typeof media?.kind === 'string' ? media.kind : null,
+              telegramMediaKind: typeof media?.telegramKind === 'string' ? media.telegramKind : null,
               telegramFileId: typeof media?.fileId === 'string' ? media.fileId : null,
               telegramFilePath: typeof media?.telegramFilePath === 'string' ? media.telegramFilePath : null,
               mediaMimeType: typeof media?.mimeType === 'string' ? media.mimeType : null,
               mediaFileName: typeof media?.fileName === 'string' ? media.fileName : null,
+              mediaDuration: Number.isFinite(Number(media?.duration)) ? Number(media.duration) : null,
+              mediaWidth: Number.isFinite(Number(media?.width)) ? Number(media.width) : null,
+              mediaHeight: Number.isFinite(Number(media?.height)) ? Number(media.height) : null,
               downloadedFilePath: archivePath,
               latestScreenshotPath: typeof media?.latestScreenshotPath === 'string'
                 ? media.latestScreenshotPath
