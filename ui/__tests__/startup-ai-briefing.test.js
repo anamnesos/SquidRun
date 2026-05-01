@@ -51,7 +51,7 @@ describe('startup-ai-briefing', () => {
         JSON.stringify({
           type: 'user',
           timestamp: '2026-04-04T00:00:00.000Z',
-          message: { role: 'user', content: [{ type: 'text', text: 'the user wants a hard cap of $200 notional.' }] },
+          message: { role: 'user', content: [{ type: 'text', text: 'The user wants a hard cap of three active tasks.' }] },
         }),
         JSON.stringify({
           type: 'assistant',

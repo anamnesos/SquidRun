@@ -80,7 +80,7 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
       '',
       '## Active Focus Areas',
       '',
-      '- the user runs a plumbing business and wants automation that actually sticks.',
+      '- The user runs an operations workflow and wants automation that actually sticks.',
       '',
       '## Observed Preferences',
       '',
@@ -274,7 +274,7 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
     expect(noisySnapshot.ok).toBe(true);
 
     teamMemoryClaims.createClaim({
-      statement: 'the user said the shipping label, invoice, and Messenger thread are all the same Example Buyer test-buy trail.',
+      statement: 'The user said the shipping label, invoice, and message thread are all the same Example Buyer test-buy trail.',
       owner: 'builder',
       claimType: 'fact',
       session: 'tm-real',

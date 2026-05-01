@@ -1568,7 +1568,7 @@ function setupEventListeners() {
   let audioChunks = [];
   let audioStream = null;
   let recordingStartTime = 0;
-  const MIN_REC[private-live-ops]NG_MS = 500;
+  const MIN_RECLiveOpsNG_MS = 500;
   const WHISPER_HALLUCINATIONS = new Set([
     'you', 'thank you', 'thanks', 'bye', 'goodbye', 'hey',
     'thanks for watching', 'thank you for watching',
@@ -1616,8 +1616,8 @@ function setupEventListeners() {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         audioChunks = [];
 
-        // Gate: discard recordings shorter than MIN_REC[private-live-ops]NG_MS
-        if (elapsed < MIN_REC[private-live-ops]NG_MS) {
+        // Gate: discard recordings shorter than MIN_RECLiveOpsNG_MS
+        if (elapsed < MIN_RECLiveOpsNG_MS) {
           log.info('Voice', `Recording too short (${elapsed}ms), discarding`);
           updateVoiceUI('Too short');
           if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }

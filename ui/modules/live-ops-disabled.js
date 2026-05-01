@@ -116,14 +116,14 @@ const rangeStructure = disabledModule({
   analyzeRangeStructure: () => ({ ok: false, reason: DISABLED_REASON }),
 });
 
-const [private-live-ops]Client = disabledModule({
-  has[private-live-ops]Credentials: () => false,
+const LiveOpsClient = disabledModule({
+  hasLiveOpsCredentials: () => false,
   getAccountSnapshot: async () => ({}),
   getOpenPositions: async () => [],
   getHistoricalBars: async () => [],
 });
 
-const [private-live-ops]NativeLayer = disabledModule({
+const LiveOpsNativeLayer = disabledModule({
   buildNativeFeatureBundle: async () => ({ ok: false, reason: DISABLED_REASON }),
 });
 
@@ -134,8 +134,8 @@ const agentPositionAttribution = disabledModule({
 
 const manualActivity = {
   DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH: null,
-  readManual[private-live-ops]Activity: () => null,
-  isManual[private-live-ops]ActivityActive: () => false,
+  readManualLiveOpsActivity: () => null,
+  isManualLiveOpsActivityActive: () => false,
 };
 
 const marketScannerModule = disabledModule({
@@ -175,8 +175,8 @@ module.exports = {
   consensusSizer,
   convictionEngine,
   rangeStructure,
-  [private-live-ops]Client,
-  [private-live-ops]NativeLayer,
+  LiveOpsClient,
+  LiveOpsNativeLayer,
   agentPositionAttribution,
   manualActivity,
   SmartMoneyScanner: DisabledSmartMoneyScanner,

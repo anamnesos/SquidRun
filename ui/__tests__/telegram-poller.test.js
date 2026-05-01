@@ -415,7 +415,7 @@ describe('telegram-poller', () => {
       expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
     });
 
-    test('main profile accepts the user chat', () => {
+    test('main profile accepts owner chat', () => {
       const config = buildConfig({ SQUIDRUN_PROFILE: '' });
       expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);
     });
@@ -425,7 +425,7 @@ describe('telegram-poller', () => {
       expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
     });
 
-    test('scoped profile rejects the user chat so main-lane talk does not leak in', () => {
+    test('scoped profile rejects owner chat so main-lane talk does not leak in', () => {
       const config = buildConfig({ SQUIDRUN_PROFILE: 'scoped' });
       expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(false);
     });

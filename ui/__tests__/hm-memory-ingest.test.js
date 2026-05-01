@@ -46,7 +46,7 @@ describe('hm-memory-ingest CLI helpers', () => {
 
   test('supports claim_type in strict flags mode', () => {
     const { options } = parseArgs([
-      '--content', 'the user prefers concise updates',
+      '--content', 'The user prefers concise updates',
       '--memory-class', 'user_preference',
       '--provenance-json', '{"source":"user","kind":"direct_user_correction"}',
       '--confidence', '1',

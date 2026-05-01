@@ -116,5 +116,5 @@ File triggers still work as fallback: write to `.squidrun/triggers/{role}.txt`
 - If an agent notices a clear bug, contradiction, broken workflow, or self-created blocker, it must fix it immediately instead of waiting for another user prompt.
 - Do not say you are going to fix something and then stop. Acknowledging a fix means starting the fix in the same turn unless a real blocker appears.
 - Do not ask the user for permission to fix obvious defects, broken automation, documentation errors, or self-created conservative blockers. Fix first, then report what changed.
-- Escalate only when the change would materially alter live trading risk, capital allocation, irreversible data state, or other meaningful user-facing consequences.
+- Escalate only when the change would materially alter live financial risk, capital allocation, irreversible data state, or other meaningful user-facing consequences.
 - Repeatedly noticing the same fixable problem without patching it is a behavioral defect.

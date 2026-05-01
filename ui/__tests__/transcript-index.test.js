@@ -80,7 +80,7 @@ describe('transcript-index', () => {
         timestamp: '2026-03-28T22:00:00.000Z',
         message: {
           role: 'user',
-          content: 'the user said ExampleShop first mattered because of his wife\'s brother and Example Person.',
+          content: 'The user said ExampleShop first mattered because of Example Contact.',
         },
       }),
       JSON.stringify({
@@ -126,7 +126,7 @@ describe('transcript-index', () => {
     expect(searchResult.results[0]).toEqual(expect.objectContaining({
       speaker: 'user',
     }));
-    expect(searchResult.results[0].excerpt).toContain('Example Person');
+    expect(searchResult.results[0].excerpt).toContain('Example Contact');
   });
 
   test('parses a transcript file and reports malformed lines separately', () => {

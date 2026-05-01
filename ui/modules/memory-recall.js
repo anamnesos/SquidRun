@@ -332,11 +332,11 @@ function shouldBoostScopedProfile(context = {}, message = '') {
   return /\b(scoped|profile context|scoped profile|private profile|case note|evidence)\b/i.test(lowered);
 }
 
-function shouldBoostthe userDirectInput(context = {}) {
-  if (context.assumethe userDirectInput === true) return true;
+function shouldBoostOwnerDirectInput(context = {}) {
+  if (context.assumeOwnerDirectInput === true) return true;
   const identity = asString(context.userIdentity || context.sender || '', '').toLowerCase();
   const channel = asString(context.channel || '', '').toLowerCase();
-  if (identity === 'james' || identity === 'james kim') return true;
+  if (identity === 'owner' || identity === 'primary user') return true;
   return channel === 'user_prompt' || channel === 'direct_terminal';
 }
 
@@ -350,7 +350,7 @@ function buildRecallQueryFromMessage(message, context = {}) {
   if (shouldBoostScopedProfile(context, baseMessage)) {
     parts.push(...SCOPED_PROFILE_BOOST_TERMS);
   }
-  if (shouldBoostthe userDirectInput(context)) {
+  if (shouldBoostOwnerDirectInput(context)) {
     parts.push(...JAMES_DIRECT_BOOST_TERMS);
   }
   return dedupeTerms(parts).join(' ');
@@ -1153,7 +1153,7 @@ module.exports = {
     mapEvidenceLedgerRows,
     rotateRecallAuditIfNeeded,
     scoreTokenMatch,
-    shouldBoostthe userDirectInput,
+    shouldBoostOwnerDirectInput,
     shouldBoostScopedProfile,
     summarize,
     withRecallLock,

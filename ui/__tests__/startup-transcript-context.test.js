@@ -38,7 +38,7 @@ describe('startup-transcript-context', () => {
         sourceCitation: 'C:\\archive\\session.jsonl:10',
         speaker: 'user',
         timestamp: '2026-03-28T22:55:34.659Z',
-        text: 'the user said ExampleShop first mattered because of his wife\'s brother and Example Person.',
+        text: 'The user said ExampleShop first mattered because of Example Contact.',
         entities: ['ExampleShop', 'Example Person'],
         tags: ['qeline_case'],
       }),

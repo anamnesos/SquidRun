@@ -34,8 +34,8 @@ const {
   consensusSizer,
   convictionEngine,
   rangeStructure,
-  [private-live-ops]Client,
-  [private-live-ops]NativeLayer,
+  LiveOpsClient,
+  LiveOpsNativeLayer,
   agentPositionAttribution,
   SmartMoneyScanner,
   createEtherscanProvider,
@@ -48,8 +48,8 @@ const {
 } = liveOps;
 const {
   DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH,
-  readManual[private-live-ops]Activity,
-  isManual[private-live-ops]ActivityActive,
+  readManualLiveOpsActivity,
+  isManualLiveOpsActivityActive,
 } = liveOps.manualActivity;
 const RUNNING_SUPERVISOR_MAIN = require.main === module;
 
@@ -199,7 +199,7 @@ const DEFAULT_WAKE_SIGNAL_PATH = resolveRuntimePath('supervisor-wake.signal');
 const DEFAULT_AGENT_TASK_QUEUE_PATH = resolveRuntimePath('agent-task-queue.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_DEFI_PEAK_PNL_PATH = resolveRuntimePath('defi-peak-pnl.json');
-const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('[private-live-ops]-supervisor-state.json');
+const DEFAULT_LIVE_OPS_STATE_PATH = resolveRuntimePath('LiveOps-supervisor-state.json');
 const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-supervisor-state.json');
 const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-state.json');
 const DEFAULT_ORACLE_WATCH_RULES_PATH = resolveRuntimePath('oracle-watch-rules.json');
@@ -251,7 +251,7 @@ const DEFAULT_AGENT_TASK_REENGAGE_IDLE_MS = Math.max(
 );
 const AGENT_TASK_QUEUE_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const MARKET_SCANNER_PHASES = Object.freeze([
-  { key: 'market_scanner', label: '[private-live-ops] market scanner' },
+  { key: 'market_scanner', label: 'LiveOps market scanner' },
 ]);
 const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;
@@ -586,7 +586,7 @@ function appendFileSafe(filePath, chunk) {
   } catch {}
 }
 
-function resolve[private-live-ops]WalletAddress(env = process.env) {
+function resolveLiveOpsWalletAddress(env = process.env) {
   return String(
     env?.LIVE_OPS_WALLET_ADDRESS
     || env?.LIVE_OPS_ADDRESS
@@ -594,7 +594,7 @@ function resolve[private-live-ops]WalletAddress(env = process.env) {
   ).trim();
 }
 
-function normalize[private-live-ops]KillSwitchAction(value, fallback = 'block_new_entries') {
+function normalizeLiveOpsKillSwitchAction(value, fallback = 'block_new_entries') {
   const normalized = String(value || fallback).trim().toLowerCase();
   return normalized === 'flatten_positions' ? 'flatten_positions' : 'block_new_entries';
 }
@@ -637,14 +637,14 @@ function applyMacroRiskSizeCapToApprovedTrades(approvedTrades = [], macroRisk = 
   return approvedTrades;
 }
 
-function has[private-live-ops]Credentials(env = process.env) {
+function hasLiveOpsCredentials(env = process.env) {
   return Boolean(
     String(env?.LIVE_OPS_PRIVATE_KEY || '').trim()
-    && resolve[private-live-ops]WalletAddress(env)
+    && resolveLiveOpsWalletAddress(env)
   );
 }
 
-function normalize[private-live-ops]Position(position = {}) {
+function normalizeLiveOpsPosition(position = {}) {
   const size = toNumber(position?.szi ?? position?.size, 0);
   return {
     coin: String(position?.coin || position?.asset || '').trim().toUpperCase(),
@@ -657,16 +657,16 @@ function normalize[private-live-ops]Position(position = {}) {
   };
 }
 
-function format[private-live-ops]RetainedRatio(value) {
+function formatLiveOpsRetainedRatio(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 'n/a';
   return `${(numeric * 100).toFixed(0)}%`;
 }
 
-function build[private-live-ops]PaneAlert(position = {}, level = 'warning') {
+function buildLiveOpsPaneAlert(position = {}, level = 'warning') {
   const label = String(level || 'warning').trim().toUpperCase();
   const side = String(position?.side || '').trim().toUpperCase() || 'POSITION';
-  return `[${label}] [private-live-ops] ${position.coin} ${side} unrealized P&L is now $${toNumber(position?.unrealizedPnl, 0).toFixed(2)} vs peak $${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} (${format[private-live-ops]RetainedRatio(position?.retainedPeakRatio)} retained). Review the live position now.`;
+  return `[${label}] LiveOps ${position.coin} ${side} unrealized P&L is now $${toNumber(position?.unrealizedPnl, 0).toFixed(2)} vs peak $${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} (${formatLiveOpsRetainedRatio(position?.retainedPeakRatio)} retained). Review the live position now.`;
 }
 
 async function executeNodeScript(scriptPath, args = [], options = {}) {
@@ -736,7 +736,7 @@ async function executeNodeScript(scriptPath, args = [], options = {}) {
   });
 }
 
-function create[private-live-ops]Executor(options = {}) {
+function createLiveOpsExecutor(options = {}) {
   const env = options.env || process.env;
   const cwd = options.cwd || getProjectRoot();
   const dryRun = options.dryRun === true;
@@ -753,19 +753,19 @@ function create[private-live-ops]Executor(options = {}) {
 
   return {
     async getAccountState() {
-      const walletAddress = resolve[private-live-ops]WalletAddress(env);
+      const walletAddress = resolveLiveOpsWalletAddress(env);
       if (!walletAddress) {
-        throw new Error('[private-live-ops] wallet address is missing. Set LIVE_OPS_WALLET_ADDRESS.');
+        throw new Error('LiveOps wallet address is missing. Set LIVE_OPS_WALLET_ADDRESS.');
       }
       const [account, positions] = await Promise.all([
-        [private-live-ops]Client.getAccountSnapshot({ walletAddress }),
-        [private-live-ops]Client.getOpenPositions({ walletAddress }),
+        LiveOpsClient.getAccountSnapshot({ walletAddress }),
+        LiveOpsClient.getOpenPositions({ walletAddress }),
       ]);
       return {
         accountValue: toNumber(account?.equity, 0),
         withdrawable: toNumber(account?.cash, 0),
         positions: (Array.isArray(positions) ? positions : [])
-          .map((position) => normalize[private-live-ops]Position({
+          .map((position) => normalizeLiveOpsPosition({
             ...(position?.raw || {}),
             dex: position?.dex || null,
           }))
@@ -895,7 +895,7 @@ function defaultCryptoTradingState() {
   };
 }
 
-function default[private-live-ops]State() {
+function defaultLiveOpsState() {
   return {
     lastProcessedAt: null,
     lastResult: null,
@@ -942,15 +942,15 @@ function startOfUtcDay(value = new Date()) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
 }
 
-function build[private-live-ops]DailySchedule(referenceDate = new Date(), options = {}) {
-  return buildUtcIntervalSchedule(referenceDate, [{ key: '[private-live-ops]_scan', label: 'Token unlock scan' }], options.intervalMinutes || DEFAULT_LIVE_OPS_INTERVAL_MINUTES);
+function buildLiveOpsDailySchedule(referenceDate = new Date(), options = {}) {
+  return buildUtcIntervalSchedule(referenceDate, [{ key: 'LiveOps_scan', label: 'Token unlock scan' }], options.intervalMinutes || DEFAULT_LIVE_OPS_INTERVAL_MINUTES);
 }
 
-function getNext[private-live-ops]Event(referenceDate = new Date(), options = {}) {
+function getNextLiveOpsEvent(referenceDate = new Date(), options = {}) {
   const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
   for (let offset = 0; offset < 3; offset += 1) {
     const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
-    const day = build[private-live-ops]DailySchedule(candidateDate, options);
+    const day = buildLiveOpsDailySchedule(candidateDate, options);
     const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
     if (nextEvent) {
       return {
@@ -1132,7 +1132,7 @@ class MemoryLeaseJanitor {
 class SupervisorDaemon {
   constructor(options = {}) {
     this.projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
-    this.[private-live-ops]ManualActivityPath = options.[private-live-ops]ManualActivityPath || DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH;
+    this.LiveOpsManualActivityPath = options.LiveOpsManualActivityPath || DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH;
     this.hmSendScriptPath = path.resolve(String(options.hmSendScriptPath || resolveProjectUiScriptPath('hm-send.js', this.projectRoot)));
     this.hmSendExternalDisabled = options.hmSendExternalDisabled === true
       || (Boolean(process.env.JEST_WORKER_ID) && !options.hmSendScriptPath);
@@ -1140,9 +1140,9 @@ class SupervisorDaemon {
     this.hmDefiExecuteScriptPath = path.resolve(String(options.defiExecuteScriptPath || resolvePrivateLiveOpsScriptPath('account-execute', this.projectRoot)));
     this.hmDefiCloseScriptPath = path.resolve(String(options.defiCloseScriptPath || resolvePrivateLiveOpsScriptPath('account-close', this.projectRoot)));
     this.hmSaylorWatcherScriptPath = path.resolve(String(options.saylorWatcherScriptPath || resolvePrivateLiveOpsScriptPath('external-watchlist', this.projectRoot)));
-    this.hm[private-live-ops]SqueezeDetectorScriptPath = path.resolve(String(options.[private-live-ops]SqueezeDetectorScriptPath || resolvePrivateLiveOpsScriptPath('squeeze-detector', this.projectRoot)));
+    this.hmLiveOpsSqueezeDetectorScriptPath = path.resolve(String(options.LiveOpsSqueezeDetectorScriptPath || resolvePrivateLiveOpsScriptPath('squeeze-detector', this.projectRoot)));
     this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolvePrivateLiveOpsScriptPath('oracle-watch-engine', this.projectRoot)));
-    this.hm[private-live-ops]UnlocksScriptPath = path.resolve(String(options.[private-live-ops]UnlocksScriptPath || resolvePrivateLiveOpsScriptPath('token-unlocks', this.projectRoot)));
+    this.hmLiveOpsUnlocksScriptPath = path.resolve(String(options.LiveOpsUnlocksScriptPath || resolvePrivateLiveOpsScriptPath('token-unlocks', this.projectRoot)));
     this.hmCoordHeartbeatScriptPath = path.resolve(String(options.coordHeartbeatScriptPath || resolveProjectUiScriptPath('hm-heartbeat.js', this.projectRoot)));
     this.hmAnomalyScriptPath = path.resolve(String(options.anomalyScriptPath || resolveProjectUiScriptPath('hm-anomaly.js', this.projectRoot)));
     this.liveOpsDisabledReason = 'live_ops_removed_from_public_core';
@@ -1152,8 +1152,8 @@ class SupervisorDaemon {
       defiClose: fs.existsSync(this.hmDefiCloseScriptPath),
       xWatchlist: fs.existsSync(this.hmSaylorWatcherScriptPath),
       oracleWatchEngine: fs.existsSync(this.hmOracleWatchEngineScriptPath),
-      [private-live-ops]Unlocks: fs.existsSync(this.hm[private-live-ops]UnlocksScriptPath),
-      [private-live-ops]SqueezeDetector: fs.existsSync(this.hm[private-live-ops]SqueezeDetectorScriptPath),
+      LiveOpsUnlocks: fs.existsSync(this.hmLiveOpsUnlocksScriptPath),
+      LiveOpsSqueezeDetector: fs.existsSync(this.hmLiveOpsSqueezeDetectorScriptPath),
     };
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
     this.pollMs = Math.max(1000, Number.parseInt(options.pollMs || DEFAULT_POLL_MS, 10) || DEFAULT_POLL_MS);
@@ -1285,7 +1285,7 @@ class SupervisorDaemon {
     this.sleepCyclePromise = null;
     this.lastSleepCycleSummary = null;
     this.wakeSignalPath = options.wakeSignalPath || DEFAULT_WAKE_SIGNAL_PATH;
-    // Previously hardcoded to true → produced manualOnly=true, [private-live-ops]Execution.enabled=false,
+    // Previously hardcoded to true → produced manualOnly=true, LiveOpsExecution.enabled=false,
     // approvedTrades=0, convictionSelection=null cascade because consensus + execution phases
     // all gate on !manualTradingOnly. Now env-gated: set SQUIDRUN_MANUAL_TRADING=0 to allow
     // the automation phases to run. Default stays true for safety.
@@ -1293,7 +1293,7 @@ class SupervisorDaemon {
       || String(this.runtimeEnv.SQUIDRUN_MANUAL_TRADING || '').trim() === '0'
       ? false
       : true;
-    this.[private-live-ops]ScalpModeArmed = options.[private-live-ops]ScalpModeArmed === true
+    this.LiveOpsScalpModeArmed = options.LiveOpsScalpModeArmed === true
       || this.runtimeEnv.SQUIDRUN_LIVE_OPS_SCALP_MODE === '1';
     this.tradeReconciliationPollMs = Math.max(
       60_000,
@@ -1339,23 +1339,23 @@ class SupervisorDaemon {
         lastRunAt: null,
         lastSummary: null,
       };
-    this.[private-live-ops]SqueezeDetectorEnabled = options.[private-live-ops]SqueezeDetectorEnabled === true
-      && this.liveOpsScriptAvailability.[private-live-ops]SqueezeDetector
+    this.LiveOpsSqueezeDetectorEnabled = options.LiveOpsSqueezeDetectorEnabled === true
+      && this.liveOpsScriptAvailability.LiveOpsSqueezeDetector
       && this.runtimeEnv.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR !== '0';
-    this.[private-live-ops]SqueezeDetectorIntervalMs = Math.max(
+    this.LiveOpsSqueezeDetectorIntervalMs = Math.max(
       30_000,
       Number.parseInt(
-        options.[private-live-ops]SqueezeDetectorIntervalMs || DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS,
+        options.LiveOpsSqueezeDetectorIntervalMs || DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS,
         10
       ) || DEFAULT_LIVE_OPS_SQUEEZE_DETECTOR_INTERVAL_MS
     );
-    this.last[private-live-ops]SqueezeDetectorRunAtMs = 0;
-    this.[private-live-ops]SqueezeDetectorPromise = null;
-    this.last[private-live-ops]SqueezeDetectorSummary = this.[private-live-ops]SqueezeDetectorEnabled
+    this.lastLiveOpsSqueezeDetectorRunAtMs = 0;
+    this.LiveOpsSqueezeDetectorPromise = null;
+    this.lastLiveOpsSqueezeDetectorSummary = this.LiveOpsSqueezeDetectorEnabled
       ? {
         enabled: true,
         status: 'idle',
-        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        intervalMs: this.LiveOpsSqueezeDetectorIntervalMs,
         lastRunAt: null,
         lastSummary: null,
       }
@@ -1363,7 +1363,7 @@ class SupervisorDaemon {
         enabled: false,
         status: 'disabled',
         reason: this.liveOpsDisabledReason,
-        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
+        intervalMs: this.LiveOpsSqueezeDetectorIntervalMs,
         lastRunAt: null,
         lastSummary: null,
       };
@@ -1463,29 +1463,29 @@ class SupervisorDaemon {
         strategyMode: this.cryptoTradingStrategyMode,
       }))
       : null;
-    const [private-live-ops]Configured = false;
-    this.[private-live-ops]MonitorPollMs = Math.max(
+    const LiveOpsConfigured = false;
+    this.LiveOpsMonitorPollMs = Math.max(
       60_000,
-      Number.parseInt(options.[private-live-ops]MonitorPollMs || DEFAULT_LIVE_OPS_MONITOR_POLL_MS, 10) || DEFAULT_LIVE_OPS_MONITOR_POLL_MS
+      Number.parseInt(options.LiveOpsMonitorPollMs || DEFAULT_LIVE_OPS_MONITOR_POLL_MS, 10) || DEFAULT_LIVE_OPS_MONITOR_POLL_MS
     );
-    this.[private-live-ops]MonitorEnabled = options.[private-live-ops]MonitorEnabled === true
+    this.LiveOpsMonitorEnabled = options.LiveOpsMonitorEnabled === true
       && this.liveOpsScriptAvailability.defiStatus
-      && [private-live-ops]Configured;
-    this.[private-live-ops]MonitorTimer = null;
-    this.[private-live-ops]MonitorPromise = null;
+      && LiveOpsConfigured;
+    this.LiveOpsMonitorTimer = null;
+    this.LiveOpsMonitorPromise = null;
     this.defiPeakPnlPath = options.defiPeakPnlPath || DEFAULT_DEFI_PEAK_PNL_PATH;
-    this.[private-live-ops]MonitorOrchestrator = this.[private-live-ops]MonitorEnabled
-      ? (options.[private-live-ops]MonitorOrchestrator || tradingOrchestrator.createOrchestrator({
+    this.LiveOpsMonitorOrchestrator = this.LiveOpsMonitorEnabled
+      ? (options.LiveOpsMonitorOrchestrator || tradingOrchestrator.createOrchestrator({
         defiMonitorAutoStart: false,
         defiPeakPnlPath: this.defiPeakPnlPath,
         defiStatusScriptPath: this.hmDefiStatusScriptPath,
       }))
       : null;
-    this.last[private-live-ops]MonitorSummary = this.[private-live-ops]MonitorEnabled
+    this.lastLiveOpsMonitorSummary = this.LiveOpsMonitorEnabled
       ? {
         enabled: true,
         status: 'idle',
-        pollMs: this.[private-live-ops]MonitorPollMs,
+        pollMs: this.LiveOpsMonitorPollMs,
         checkedAt: null,
         warnings: [],
         telegramAlerts: [],
@@ -1494,7 +1494,7 @@ class SupervisorDaemon {
         enabled: false,
         status: 'disabled',
         reason: this.liveOpsDisabledReason,
-        pollMs: this.[private-live-ops]MonitorPollMs,
+        pollMs: this.LiveOpsMonitorPollMs,
         checkedAt: null,
         warnings: [],
         telegramAlerts: [],
@@ -1507,7 +1507,7 @@ class SupervisorDaemon {
     const positionAttributionReconciliationRequested = options.positionAttributionReconciliationEnabled === true
       || (options.positionAttributionReconciliationEnabled !== false && !process.env.JEST_WORKER_ID);
     this.positionAttributionReconciliationEnabled = false && positionAttributionReconciliationRequested
-      && (Boolean(resolve[private-live-ops]WalletAddress(this.runtimeEnv)) || Boolean(this.positionAttributionSnapshotProvider));
+      && (Boolean(resolveLiveOpsWalletAddress(this.runtimeEnv)) || Boolean(this.positionAttributionSnapshotProvider));
     this.lastPositionAttributionReconciliationSummary = this.positionAttributionReconciliationEnabled
       ? {
         enabled: true,
@@ -1530,50 +1530,50 @@ class SupervisorDaemon {
         createdCount: 0,
         quarantinedCount: 0,
       };
-    const [private-live-ops]AutomationRequested = options.[private-live-ops]ExecutionEnabled === true
+    const LiveOpsAutomationRequested = options.LiveOpsExecutionEnabled === true
       && this.runtimeEnv.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0';
-    this.[private-live-ops]ExecutionEnabled = Boolean(this.cryptoTradingEnabled && [private-live-ops]AutomationRequested && [private-live-ops]Configured);
-    this.[private-live-ops]ExecutionDryRun = options.[private-live-ops]ExecutionDryRun === true
+    this.LiveOpsExecutionEnabled = Boolean(this.cryptoTradingEnabled && LiveOpsAutomationRequested && LiveOpsConfigured);
+    this.LiveOpsExecutionDryRun = options.LiveOpsExecutionDryRun === true
       || this.runtimeEnv.SQUIDRUN_LIVE_OPS_DRY_RUN === '1';
-    this.[private-live-ops]ExecutionLeverage = Math.max(
+    this.LiveOpsExecutionLeverage = Math.max(
       1,
       Number.parseInt(
-        options.[private-live-ops]ExecutionLeverage
+        options.LiveOpsExecutionLeverage
         || this.runtimeEnv.SQUIDRUN_LIVE_OPS_DEFAULT_LEVERAGE
-        || (this.[private-live-ops]ScalpModeArmed ? '20' : '5'),
+        || (this.LiveOpsScalpModeArmed ? '20' : '5'),
         10
-      ) || (this.[private-live-ops]ScalpModeArmed ? 20 : 5)
+      ) || (this.LiveOpsScalpModeArmed ? 20 : 5)
     );
-    this.[private-live-ops]KillSwitchAction = normalize[private-live-ops]KillSwitchAction(
-      options.[private-live-ops]KillSwitchAction || this.runtimeEnv.SQUIDRUN_LIVE_OPS_KILL_SWITCH_ACTION,
+    this.LiveOpsKillSwitchAction = normalizeLiveOpsKillSwitchAction(
+      options.LiveOpsKillSwitchAction || this.runtimeEnv.SQUIDRUN_LIVE_OPS_KILL_SWITCH_ACTION,
       'block_new_entries'
     );
-    this.[private-live-ops]Executor = this.[private-live-ops]ExecutionEnabled
-      ? (options.[private-live-ops]Executor || create[private-live-ops]Executor({
+    this.LiveOpsExecutor = this.LiveOpsExecutionEnabled
+      ? (options.LiveOpsExecutor || createLiveOpsExecutor({
         env: this.runtimeEnv,
         cwd: this.projectRoot,
-        dryRun: this.[private-live-ops]ExecutionDryRun,
+        dryRun: this.LiveOpsExecutionDryRun,
         defiExecuteScriptPath: this.hmDefiExecuteScriptPath,
         defiCloseScriptPath: this.hmDefiCloseScriptPath,
       }))
       : null;
-    this.last[private-live-ops]ExecutionSummary = (this.manualTradingOnly && !this.[private-live-ops]ScalpModeArmed)
+    this.lastLiveOpsExecutionSummary = (this.manualTradingOnly && !this.LiveOpsScalpModeArmed)
       ? {
         enabled: false,
         status: 'manual_only',
-        dryRun: this.[private-live-ops]ExecutionDryRun,
+        dryRun: this.LiveOpsExecutionDryRun,
         reason: 'manual_only_reset',
         accountValue: null,
         position: null,
         action: null,
         executedAt: null,
       }
-      : this.[private-live-ops]ExecutionEnabled
+      : this.LiveOpsExecutionEnabled
         ? {
           enabled: true,
           status: 'idle',
-          armed: this.[private-live-ops]ScalpModeArmed,
-          dryRun: this.[private-live-ops]ExecutionDryRun,
+          armed: this.LiveOpsScalpModeArmed,
+          dryRun: this.LiveOpsExecutionDryRun,
           accountValue: null,
           position: null,
           action: null,
@@ -1583,7 +1583,7 @@ class SupervisorDaemon {
         : {
           enabled: false,
           status: 'disabled',
-          dryRun: this.[private-live-ops]ExecutionDryRun,
+          dryRun: this.LiveOpsExecutionDryRun,
           reason: this.liveOpsDisabledReason,
           accountValue: null,
           position: null,
@@ -1643,37 +1643,37 @@ class SupervisorDaemon {
     this.circuitBreaker = null;
 
     this.newsVetoModule = options.newsVetoModule || eventVeto;
-    this.[private-live-ops]Enabled = options.[private-live-ops]Enabled === true
-      && this.liveOpsScriptAvailability.[private-live-ops]Unlocks
+    this.LiveOpsEnabled = options.LiveOpsEnabled === true
+      && this.liveOpsScriptAvailability.LiveOpsUnlocks
       || (
         false
-        && options.[private-live-ops]Enabled !== false
+        && options.LiveOpsEnabled !== false
         && RUNNING_SUPERVISOR_MAIN
         && process.env.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0'
       );
-    this.[private-live-ops]IntervalMinutes = Math.max(
+    this.LiveOpsIntervalMinutes = Math.max(
       60,
-      Math.floor(Number(options.[private-live-ops]IntervalMinutes) || DEFAULT_LIVE_OPS_INTERVAL_MINUTES)
+      Math.floor(Number(options.LiveOpsIntervalMinutes) || DEFAULT_LIVE_OPS_INTERVAL_MINUTES)
     );
-    this.[private-live-ops]StatePath = options.[private-live-ops]StatePath || DEFAULT_LIVE_OPS_STATE_PATH;
-    this.[private-live-ops]State = {
-      ...default[private-live-ops]State(),
-      ...(readJsonFile(this.[private-live-ops]StatePath, default[private-live-ops]State()) || {}),
+    this.LiveOpsStatePath = options.LiveOpsStatePath || DEFAULT_LIVE_OPS_STATE_PATH;
+    this.LiveOpsState = {
+      ...defaultLiveOpsState(),
+      ...(readJsonFile(this.LiveOpsStatePath, defaultLiveOpsState()) || {}),
     };
-    this.[private-live-ops]PhasePromise = null;
-    this.last[private-live-ops]Summary = this.[private-live-ops]Enabled
+    this.LiveOpsPhasePromise = null;
+    this.lastLiveOpsSummary = this.LiveOpsEnabled
       ? {
         enabled: true,
         status: 'idle',
-        intervalMinutes: this.[private-live-ops]IntervalMinutes,
-        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
-        nextEvent: this.[private-live-ops]State.nextEvent || null,
+        intervalMinutes: this.LiveOpsIntervalMinutes,
+        lastProcessedAt: this.LiveOpsState.lastProcessedAt || null,
+        nextEvent: this.LiveOpsState.nextEvent || null,
       }
       : {
         enabled: false,
         status: 'disabled',
         reason: this.liveOpsDisabledReason,
-        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+        intervalMinutes: this.LiveOpsIntervalMinutes,
         lastProcessedAt: null,
         nextEvent: null,
       };
@@ -1953,7 +1953,7 @@ class SupervisorDaemon {
       this.circuitBreaker.start();
       this.logger.info('Circuit breaker started (30s poll, 4% hard stop, 3% trailing stop, 5% flash crash)');
     }
-    this.start[private-live-ops]PositionMonitor();
+    this.startLiveOpsPositionMonitor();
     this.requestTick('startup');
     this.statusTimer = setInterval(() => {
       this.writeStatus();
@@ -1984,7 +1984,7 @@ class SupervisorDaemon {
       this.circuitBreaker.stop();
       this.logger.info('Circuit breaker stopped');
     }
-    await this.stop[private-live-ops]PositionMonitor();
+    await this.stopLiveOpsPositionMonitor();
     if (this.sleepConsolidator) {
       try { this.sleepConsolidator.close(); } catch {}
     }
@@ -2303,13 +2303,13 @@ class SupervisorDaemon {
     const positionAttributionReconciliationResult = await this.maybeRunPositionAttributionReconciliation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
-    const [private-live-ops]Result = await this.maybeRun[private-live-ops]Automation(nowMs);
+    const LiveOpsResult = await this.maybeRunLiveOpsAutomation(nowMs);
     const sparkMonitorResult = await this.maybeRunSparkAutomation(nowMs);
     const marketScannerResult = await this.maybeRunMarketScannerAutomation(nowMs);
     const coordHeartbeatResult = await this.maybeRunCoordHeartbeat(nowMs);
     const saylorWatcherResult = await this.maybeRunSaylorWatcher(nowMs);
     const oracleWatchResult = await this.maybeRunOracleWatchEngine(nowMs);
-    const [private-live-ops]SqueezeDetectorResult = await this.maybeRun[private-live-ops]SqueezeDetector(nowMs);
+    const LiveOpsSqueezeDetectorResult = await this.maybeRunLiveOpsSqueezeDetector(nowMs);
     const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
     return {
@@ -2323,13 +2323,13 @@ class SupervisorDaemon {
       positionAttributionReconciliationResult,
       tradeReconciliationResult,
       cryptoTradingResult,
-      [private-live-ops]Result,
+      LiveOpsResult,
       sparkMonitorResult,
       marketScannerResult,
       coordHeartbeatResult,
       saylorWatcherResult,
       oracleWatchResult,
-      [private-live-ops]SqueezeDetectorResult,
+      LiveOpsSqueezeDetectorResult,
       sleepResult,
     };
   }
@@ -2391,7 +2391,7 @@ class SupervisorDaemon {
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
     const saylorWatcherRan = summary?.saylorWatcherResult && summary.saylorWatcherResult.skipped !== true;
     const oracleWatchRan = summary?.oracleWatchResult && summary.oracleWatchResult.skipped !== true;
-    const [private-live-ops]SqueezeDetectorRan = summary?.[private-live-ops]SqueezeDetectorResult && summary.[private-live-ops]SqueezeDetectorResult.skipped !== true;
+    const LiveOpsSqueezeDetectorRan = summary?.LiveOpsSqueezeDetectorResult && summary.LiveOpsSqueezeDetectorResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
     const memoryChecked = summary?.memoryConsistency && summary.memoryConsistency.skipped !== true;
     const performedWork = claimedCount > 0
@@ -2405,7 +2405,7 @@ class SupervisorDaemon {
       || cryptoTradingRan
       || saylorWatcherRan
       || oracleWatchRan
-      || [private-live-ops]SqueezeDetectorRan
+      || LiveOpsSqueezeDetectorRan
       || sleepRan
       || memoryChecked;
 
@@ -2531,9 +2531,9 @@ class SupervisorDaemon {
     writeJsonFile(this.cryptoTradingStatePath, this.cryptoTradingState);
   }
 
-  persist[private-live-ops]State() {
-    this.[private-live-ops]State.updatedAt = new Date().toISOString();
-    writeJsonFile(this.[private-live-ops]StatePath, this.[private-live-ops]State);
+  persistLiveOpsState() {
+    this.LiveOpsState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.LiveOpsStatePath, this.LiveOpsState);
   }
 
   persistSparkMonitorState() {
@@ -2570,7 +2570,7 @@ class SupervisorDaemon {
       return `${mover?.coin || mover?.ticker}: ${mover?.direction || 'FLAT'} @ ${price} | 4h ${change4h} | 24h ${change24h} | vol ${volume} | funding ${fundingBps}`;
     });
     return [
-      '[PROACTIVE][MARKET] [private-live-ops] full-universe scan found movers.',
+      '[PROACTIVE][MARKET] LiveOps full-universe scan found movers.',
       `Tracked pairs: ${Number(summary.assetCount || 0)}`,
       `Flagged movers: ${Number(summary.flaggedCount || 0)}`,
       ...lines,
@@ -2795,40 +2795,40 @@ class SupervisorDaemon {
     return this.saylorWatcherPromise;
   }
 
-  async maybeRun[private-live-ops]SqueezeDetector(nowMs = Date.now()) {
-    if (!this.[private-live-ops]SqueezeDetectorEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: '[private-live-ops]_squeeze_detector_disabled' };
+  async maybeRunLiveOpsSqueezeDetector(nowMs = Date.now()) {
+    if (!this.LiveOpsSqueezeDetectorEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'LiveOps_squeeze_detector_disabled' };
     }
-    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    const manualActivity = this.getActiveLiveOpsManualActivity(nowMs);
     if (manualActivity) {
-      this.last[private-live-ops]SqueezeDetectorSummary = {
+      this.lastLiveOpsSqueezeDetectorSummary = {
         enabled: true,
         status: 'paused_for_manual_activity',
-        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
-        lastRunAt: this.last[private-live-ops]SqueezeDetectorSummary?.lastRunAt || null,
+        intervalMs: this.LiveOpsSqueezeDetectorIntervalMs,
+        lastRunAt: this.lastLiveOpsSqueezeDetectorSummary?.lastRunAt || null,
         manualActivity,
       };
       return {
         ok: true,
         skipped: true,
-        reason: 'manual_[private-live-ops]_activity',
+        reason: 'manual_LiveOps_activity',
         manualActivity,
       };
     }
-    if (this.[private-live-ops]SqueezeDetectorPromise) {
-      return this.[private-live-ops]SqueezeDetectorPromise;
+    if (this.LiveOpsSqueezeDetectorPromise) {
+      return this.LiveOpsSqueezeDetectorPromise;
     }
-    if ((nowMs - this.last[private-live-ops]SqueezeDetectorRunAtMs) < this.[private-live-ops]SqueezeDetectorIntervalMs) {
+    if ((nowMs - this.lastLiveOpsSqueezeDetectorRunAtMs) < this.LiveOpsSqueezeDetectorIntervalMs) {
       return {
         ok: false,
         skipped: true,
-        reason: '[private-live-ops]_squeeze_detector_cooldown',
-        nextEligibleAtMs: this.last[private-live-ops]SqueezeDetectorRunAtMs + this.[private-live-ops]SqueezeDetectorIntervalMs,
+        reason: 'LiveOps_squeeze_detector_cooldown',
+        nextEligibleAtMs: this.lastLiveOpsSqueezeDetectorRunAtMs + this.LiveOpsSqueezeDetectorIntervalMs,
       };
     }
 
-    this.[private-live-ops]SqueezeDetectorPromise = executeNodeScript(
-      this.hm[private-live-ops]SqueezeDetectorScriptPath,
+    this.LiveOpsSqueezeDetectorPromise = executeNodeScript(
+      this.hmLiveOpsSqueezeDetectorScriptPath,
       ['--json'],
       {
         cwd: this.projectRoot,
@@ -2836,38 +2836,38 @@ class SupervisorDaemon {
         timeoutMs: 30_000,
       }
     ).then((result) => {
-      const summary = this.parseWatcherScriptSummary(result, '[private-live-ops]_squeeze_detector');
-      this.last[private-live-ops]SqueezeDetectorRunAtMs = Date.now();
-      this.last[private-live-ops]SqueezeDetectorSummary = {
+      const summary = this.parseWatcherScriptSummary(result, 'LiveOps_squeeze_detector');
+      this.lastLiveOpsSqueezeDetectorRunAtMs = Date.now();
+      this.lastLiveOpsSqueezeDetectorSummary = {
         enabled: true,
         status: summary?.ok ? (summary?.alerted ? 'alert_sent' : 'ok') : 'failed',
-        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
-        lastRunAt: new Date(this.last[private-live-ops]SqueezeDetectorRunAtMs).toISOString(),
+        intervalMs: this.LiveOpsSqueezeDetectorIntervalMs,
+        lastRunAt: new Date(this.lastLiveOpsSqueezeDetectorRunAtMs).toISOString(),
         lastSummary: summary,
       };
       if (summary?.ok !== true) {
-        this.logger.warn(`[private-live-ops] squeeze detector failed: ${summary?.error || 'unknown'}`);
+        this.logger.warn(`LiveOps squeeze detector failed: ${summary?.error || 'unknown'}`);
       } else if (Number(summary?.detectionCount || 0) > 0) {
-        this.logger.warn(`[private-live-ops] squeeze detector flagged ${summary.detectionCount} setup(s).`);
+        this.logger.warn(`LiveOps squeeze detector flagged ${summary.detectionCount} setup(s).`);
       }
       return summary;
     }).finally(() => {
-      this.[private-live-ops]SqueezeDetectorPromise = null;
+      this.LiveOpsSqueezeDetectorPromise = null;
     });
 
-    return this.[private-live-ops]SqueezeDetectorPromise;
+    return this.LiveOpsSqueezeDetectorPromise;
   }
 
   async maybeRunOracleWatchEngine(nowMs = Date.now()) {
     if (!this.oracleWatchEnabled || this.stopping) {
       return { ok: false, skipped: true, reason: 'oracle_watch_disabled' };
     }
-    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    const manualActivity = this.getActiveLiveOpsManualActivity(nowMs);
     if (manualActivity) {
       return {
         ok: true,
         skipped: true,
-        reason: 'manual_[private-live-ops]_activity',
+        reason: 'manual_LiveOps_activity',
         manualActivity,
       };
     }
@@ -3102,7 +3102,7 @@ class SupervisorDaemon {
       const ticker = String(mover?.ticker || '').trim().toUpperCase();
       if (!ticker) continue;
       try {
-        const barsBySymbol = await [private-live-ops]Client.getHistoricalBars({
+        const barsBySymbol = await LiveOpsClient.getHistoricalBars({
           symbols: [ticker],
           timeframe: '1Hour',
           limit: 2,
@@ -3198,19 +3198,19 @@ class SupervisorDaemon {
     const tickers = rolloverCandidates.map((mover) => mover.ticker);
     const end = options.scannedAt || options.now || new Date().toISOString();
     const [bars5m, bars15m, bars1h] = await Promise.all([
-      [private-live-ops]Client.getHistoricalBars({
+      LiveOpsClient.getHistoricalBars({
         symbols: tickers,
         timeframe: '5m',
         limit: 24,
         end,
       }).catch(() => new Map()),
-      [private-live-ops]Client.getHistoricalBars({
+      LiveOpsClient.getHistoricalBars({
         symbols: tickers,
         timeframe: '15m',
         limit: 24,
         end,
       }).catch(() => new Map()),
-      [private-live-ops]Client.getHistoricalBars({
+      LiveOpsClient.getHistoricalBars({
         symbols: tickers,
         timeframe: '1Hour',
         limit: 96,
@@ -3264,9 +3264,9 @@ class SupervisorDaemon {
     });
   }
 
-  async run[private-live-ops]Phase(event) {
+  async runLiveOpsPhase(event) {
     const executedAt = new Date().toISOString();
-    const result = await executeNodeScript(this.hm[private-live-ops]UnlocksScriptPath, ['--json', '--hours', '48'], {
+    const result = await executeNodeScript(this.hmLiveOpsUnlocksScriptPath, ['--json', '--hours', '48'], {
       cwd: this.projectRoot,
       timeoutMs: 30_000,
       env: this.runtimeEnv,
@@ -3274,9 +3274,9 @@ class SupervisorDaemon {
     if (!result?.ok) {
       return {
         ok: false,
-        key: event?.key || '[private-live-ops]_scan',
+        key: event?.key || 'LiveOps_scan',
         executedAt,
-        error: result?.error || result?.stderr || '[private-live-ops]_scan_failed',
+        error: result?.error || result?.stderr || 'LiveOps_scan_failed',
         stdout: result?.stdout || '',
         stderr: result?.stderr || '',
       };
@@ -3287,15 +3287,15 @@ class SupervisorDaemon {
     } catch (error) {
       return {
         ok: false,
-        key: event?.key || '[private-live-ops]_scan',
+        key: event?.key || 'LiveOps_scan',
         executedAt,
-        error: `[private-live-ops]_json_parse_failed:${error.message}`,
+        error: `LiveOps_json_parse_failed:${error.message}`,
         stdout: result.stdout || '',
       };
     }
     return {
       ok: true,
-      key: event?.key || '[private-live-ops]_scan',
+      key: event?.key || 'LiveOps_scan',
       executedAt,
       unlockCount: Number(payload?.unlockCount || 0),
       unlocks: Array.isArray(payload?.unlocks) ? payload.unlocks.slice(0, 10) : [],
@@ -3304,74 +3304,74 @@ class SupervisorDaemon {
     };
   }
 
-  async maybeRun[private-live-ops]Automation(nowMs = Date.now()) {
-    if (!this.[private-live-ops]Enabled || this.stopping) {
-      return { ok: false, skipped: true, reason: '[private-live-ops]_disabled' };
+  async maybeRunLiveOpsAutomation(nowMs = Date.now()) {
+    if (!this.LiveOpsEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'LiveOps_disabled' };
     }
-    if (this.[private-live-ops]PhasePromise) {
-      return this.[private-live-ops]PhasePromise;
+    if (this.LiveOpsPhasePromise) {
+      return this.LiveOpsPhasePromise;
     }
 
     const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
-    const nextEvent = getNext[private-live-ops]Event(now, {
-      intervalMinutes: this.[private-live-ops]IntervalMinutes,
+    const nextEvent = getNextLiveOpsEvent(now, {
+      intervalMinutes: this.LiveOpsIntervalMinutes,
     });
-    const day = build[private-live-ops]DailySchedule(now, {
-      intervalMinutes: this.[private-live-ops]IntervalMinutes,
+    const day = buildLiveOpsDailySchedule(now, {
+      intervalMinutes: this.LiveOpsIntervalMinutes,
     });
-    const lastProcessedAtMs = this.[private-live-ops]State.lastProcessedAt
-      ? new Date(this.[private-live-ops]State.lastProcessedAt).getTime()
+    const lastProcessedAtMs = this.LiveOpsState.lastProcessedAt
+      ? new Date(this.LiveOpsState.lastProcessedAt).getTime()
       : 0;
     const dueEvents = day.schedule.filter((event) => {
       const scheduledAtMs = new Date(event.scheduledAt).getTime();
       return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
     });
 
-    this.[private-live-ops]State.nextEvent = this.describeTradingEvent(nextEvent);
-    this.persist[private-live-ops]State();
+    this.LiveOpsState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistLiveOpsState();
 
     if (dueEvents.length === 0) {
-      this.last[private-live-ops]Summary = {
+      this.lastLiveOpsSummary = {
         enabled: true,
         status: 'scheduled',
-        intervalMinutes: this.[private-live-ops]IntervalMinutes,
-        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
-        nextEvent: this.[private-live-ops]State.nextEvent,
+        intervalMinutes: this.LiveOpsIntervalMinutes,
+        lastProcessedAt: this.LiveOpsState.lastProcessedAt || null,
+        nextEvent: this.LiveOpsState.nextEvent,
       };
-      return { ok: false, skipped: true, reason: 'no_due_[private-live-ops]_phase', nextEvent: this.[private-live-ops]State.nextEvent };
+      return { ok: false, skipped: true, reason: 'no_due_LiveOps_phase', nextEvent: this.LiveOpsState.nextEvent };
     }
 
-    this.[private-live-ops]PhasePromise = (async () => {
+    this.LiveOpsPhasePromise = (async () => {
       const executed = [];
       for (const dueEvent of dueEvents) {
-        const phaseResult = await this.run[private-live-ops]Phase(dueEvent);
+        const phaseResult = await this.runLiveOpsPhase(dueEvent);
         executed.push(phaseResult);
-        this.[private-live-ops]State.lastProcessedAt = dueEvent.scheduledAt;
-        this.[private-live-ops]State.lastResult = phaseResult;
-        this.[private-live-ops]State.lastScan = phaseResult;
-        this.persist[private-live-ops]State();
+        this.LiveOpsState.lastProcessedAt = dueEvent.scheduledAt;
+        this.LiveOpsState.lastResult = phaseResult;
+        this.LiveOpsState.lastScan = phaseResult;
+        this.persistLiveOpsState();
       }
 
-      const upcomingEvent = getNext[private-live-ops]Event(new Date(), {
-        intervalMinutes: this.[private-live-ops]IntervalMinutes,
+      const upcomingEvent = getNextLiveOpsEvent(new Date(), {
+        intervalMinutes: this.LiveOpsIntervalMinutes,
       });
-      this.[private-live-ops]State.nextEvent = this.describeTradingEvent(upcomingEvent);
-      this.persist[private-live-ops]State();
-      this.last[private-live-ops]Summary = {
+      this.LiveOpsState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistLiveOpsState();
+      this.lastLiveOpsSummary = {
         enabled: true,
         status: executed.every((entry) => entry.ok) ? 'scan_complete' : 'scan_failed',
-        intervalMinutes: this.[private-live-ops]IntervalMinutes,
-        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
-        nextEvent: this.[private-live-ops]State.nextEvent,
+        intervalMinutes: this.LiveOpsIntervalMinutes,
+        lastProcessedAt: this.LiveOpsState.lastProcessedAt || null,
+        nextEvent: this.LiveOpsState.nextEvent,
         lastResult: executed[executed.length - 1] || null,
       };
 
-      return { ok: executed.every((entry) => entry.ok), skipped: false, executed, nextEvent: this.[private-live-ops]State.nextEvent };
+      return { ok: executed.every((entry) => entry.ok), skipped: false, executed, nextEvent: this.LiveOpsState.nextEvent };
     })().finally(() => {
-      this.[private-live-ops]PhasePromise = null;
+      this.LiveOpsPhasePromise = null;
     });
 
-    return this.[private-live-ops]PhasePromise;
+    return this.LiveOpsPhasePromise;
   }
 
   async maybeRunSparkAutomation(nowMs = Date.now()) {
@@ -3441,7 +3441,7 @@ class SupervisorDaemon {
         nextEvent: this.sparkMonitorState.nextEvent,
         alertCount,
         upbitListingCount: Number(phaseResult?.upbitListingCount || 0),
-        [private-live-ops]ListingCount: Number(phaseResult?.[private-live-ops]ListingCount || 0),
+        LiveOpsListingCount: Number(phaseResult?.LiveOpsListingCount || 0),
         tokenUnlockCount: Number(phaseResult?.tokenUnlockCount || 0),
         lastResult: phaseResult || null,
       };
@@ -3666,7 +3666,7 @@ class SupervisorDaemon {
     if (!this.marketScannerEnabled || this.stopping || !this.marketScanner || typeof this.marketScanner.runMarketScan !== 'function') {
       return { ok: false, skipped: true, reason: 'market_scanner_disabled' };
     }
-    const manualActivity = this.getActive[private-live-ops]ManualActivity(nowMs);
+    const manualActivity = this.getActiveLiveOpsManualActivity(nowMs);
     if (manualActivity) {
       this.lastMarketScannerSummary = {
         enabled: true,
@@ -3679,7 +3679,7 @@ class SupervisorDaemon {
       return {
         ok: true,
         skipped: true,
-        reason: 'manual_[private-live-ops]_activity',
+        reason: 'manual_LiveOps_activity',
         manualActivity,
       };
     }
@@ -4038,8 +4038,8 @@ class SupervisorDaemon {
     }
   }
 
-  async run[private-live-ops]PositionMonitorCycle(trigger = 'manual') {
-    if (!this.[private-live-ops]MonitorEnabled || !this.[private-live-ops]MonitorOrchestrator) {
+  async runLiveOpsPositionMonitorCycle(trigger = 'manual') {
+    if (!this.LiveOpsMonitorEnabled || !this.LiveOpsMonitorOrchestrator) {
       return {
         enabled: false,
         status: 'disabled',
@@ -4050,12 +4050,12 @@ class SupervisorDaemon {
       };
     }
     const checkedAt = new Date().toISOString();
-    const manualActivity = this.getActive[private-live-ops]ManualActivity();
+    const manualActivity = this.getActiveLiveOpsManualActivity();
     if (manualActivity) {
       const pausedResult = {
         ok: true,
         skipped: true,
-        reason: 'manual_[private-live-ops]_activity',
+        reason: 'manual_LiveOps_activity',
         trigger,
         checkedAt,
         positions: [],
@@ -4063,11 +4063,11 @@ class SupervisorDaemon {
         telegramAlerts: [],
         manualActivity,
       };
-      this.last[private-live-ops]MonitorSummary = {
+      this.lastLiveOpsMonitorSummary = {
         enabled: true,
         status: 'paused_for_manual_activity',
         trigger,
-        pollMs: this.[private-live-ops]MonitorPollMs,
+        pollMs: this.LiveOpsMonitorPollMs,
         checkedAt,
         warnings: [],
         telegramAlerts: [],
@@ -4081,21 +4081,21 @@ class SupervisorDaemon {
       return pausedResult;
     }
 
-    const result = await this.[private-live-ops]MonitorOrchestrator.runDefiMonitorCycle({
+    const result = await this.LiveOpsMonitorOrchestrator.runDefiMonitorCycle({
       trigger,
       sendTelegram: false,
     });
     const riskExit = trigger === 'startup'
       ? { attempted: false, reason: 'startup_grace', executions: [] }
-      : await this.maybeExecute[private-live-ops]RiskExit(result, {
+      : await this.maybeExecuteLiveOpsRiskExit(result, {
         trigger,
         checkedAt: result?.checkedAt || new Date().toISOString(),
       });
-    this.last[private-live-ops]MonitorSummary = {
+    this.lastLiveOpsMonitorSummary = {
       enabled: true,
       status: result?.ok === false ? 'error' : 'ok',
       trigger,
-      pollMs: this.[private-live-ops]MonitorPollMs,
+      pollMs: this.LiveOpsMonitorPollMs,
       checkedAt: result?.checkedAt || null,
       warnings: Array.isArray(result?.warnings) ? result.warnings : [],
       telegramAlerts: Array.isArray(result?.telegramAlerts) ? result.telegramAlerts : [],
@@ -4106,7 +4106,7 @@ class SupervisorDaemon {
     };
 
     if (result?.ok === false && result?.error) {
-      this.logger.warn(`[private-live-ops] monitor failed (${trigger}): ${result.error}`);
+      this.logger.warn(`LiveOps monitor failed (${trigger}): ${result.error}`);
     }
     if (this.cryptoTradingStrategyMode === 'range_conviction') {
       await this.maybeRunRangeConvictionCycle({
@@ -4118,13 +4118,13 @@ class SupervisorDaemon {
     return result;
   }
 
-  getActive[private-live-ops]ManualActivity(nowMs = Date.now()) {
-    const activity = readManual[private-live-ops]Activity(this.[private-live-ops]ManualActivityPath);
-    if (!isManual[private-live-ops]ActivityActive(activity, { nowMs })) {
+  getActiveLiveOpsManualActivity(nowMs = Date.now()) {
+    const activity = readManualLiveOpsActivity(this.LiveOpsManualActivityPath);
+    if (!isManualLiveOpsActivityActive(activity, { nowMs })) {
       return null;
     }
     return {
-      command: String(activity.command || '[private-live-ops]_manual'),
+      command: String(activity.command || 'LiveOps_manual'),
       caller: String(activity.caller || 'manual'),
       pid: Number(activity.pid) || null,
       startedAt: activity.startedAt || null,
@@ -4134,12 +4134,12 @@ class SupervisorDaemon {
     };
   }
 
-  async sync[private-live-ops]PeakStateFromAccountState(accountState = {}, options = {}) {
-    if (!this.[private-live-ops]MonitorOrchestrator || typeof this.[private-live-ops]MonitorOrchestrator.syncDefiPeakStateFromStatus !== 'function') {
+  async syncLiveOpsPeakStateFromAccountState(accountState = {}, options = {}) {
+    if (!this.LiveOpsMonitorOrchestrator || typeof this.LiveOpsMonitorOrchestrator.syncDefiPeakStateFromStatus !== 'function') {
       return null;
     }
     try {
-      return await this.[private-live-ops]MonitorOrchestrator.syncDefiPeakStateFromStatus({
+      return await this.LiveOpsMonitorOrchestrator.syncDefiPeakStateFromStatus({
         ok: true,
         checkedAt: options.checkedAt || new Date().toISOString(),
         accountValue: toNumber(accountState?.accountValue, 0),
@@ -4149,12 +4149,12 @@ class SupervisorDaemon {
         sendTelegram: options.sendTelegram === true,
       });
     } catch (error) {
-      this.logger.warn(`[private-live-ops] peak-state sync failed (${options.trigger || 'execution_snapshot'}): ${error?.message || String(error)}`);
+      this.logger.warn(`LiveOps peak-state sync failed (${options.trigger || 'execution_snapshot'}): ${error?.message || String(error)}`);
       return null;
     }
   }
 
-  async maybeExecute[private-live-ops]RiskExit(monitorResult = {}, options = {}) {
+  async maybeExecuteLiveOpsRiskExit(monitorResult = {}, options = {}) {
     const positions = Array.isArray(monitorResult?.positions) ? monitorResult.positions : [];
     const executions = [];
 
@@ -4162,16 +4162,16 @@ class SupervisorDaemon {
       const drawdown = Number(position?.drawdownFromPeakPct || 0);
       const previousAlertThreshold = Number(position?.previousGivebackAlertThreshold || 0);
       if (drawdown >= 0.3 && previousAlertThreshold < 0.3) {
-        this.notifyTelegramTrading(this.build[private-live-ops]GivebackAlert(position));
+        this.notifyTelegramTrading(this.buildLiveOpsGivebackAlert(position));
       }
 
       const reasons = [];
-      if (this.shouldTrigger[private-live-ops]Stop(position)) {
+      if (this.shouldTriggerLiveOpsStop(position)) {
         reasons.push('stop_loss_crossed');
       }
       const peakPnl = toNumber(position?.peakUnrealizedPnl, 0);
       const timeOpenMs = toNumber(position?.timeOpenMs, 0);
-      // giveback_75 DISABLED — killed the user's profitable BLUR trade on a normal pullback. Session 268.
+      // giveback_75 DISABLED after it interrupted a profitable manual action on a normal pullback.
       // if (drawdown >= 0.75 && peakPnl >= 5 && timeOpenMs >= 1200000) {
       //   reasons.push('giveback_75');
       // }
@@ -4187,12 +4187,12 @@ class SupervisorDaemon {
         asset: position.coin,
         ok: true,
         reasons,
-        position: this.summarize[private-live-ops]Position(position),
+        position: this.summarizeLiveOpsPosition(position),
         execution: null,
       };
       executions.push(summary);
-      this.logger.warn(`[TradeLog] [private-live-ops] risk exit requires manual action for ${position.coin} ${position.side} | reasons: ${reasons.join('+')} | pnl: $${toNumber(position?.unrealizedPnl, 0).toFixed(2)} | entry: ${position.entryPx} | mark: ${position.markPrice}`);
-      this.notifyTelegramTrading(this.build[private-live-ops]ManualActionAlert(position, reasons));
+      this.logger.warn(`[TradeLog] LiveOps risk exit requires manual action for ${position.coin} ${position.side} | reasons: ${reasons.join('+')} | pnl: $${toNumber(position?.unrealizedPnl, 0).toFixed(2)} | entry: ${position.entryPx} | mark: ${position.markPrice}`);
+      this.notifyTelegramTrading(this.buildLiveOpsManualActionAlert(position, reasons));
     }
 
     if (!executions.length) {
@@ -4207,56 +4207,56 @@ class SupervisorDaemon {
     };
   }
 
-  start[private-live-ops]PositionMonitor() {
-    if (!this.[private-live-ops]MonitorEnabled || this.[private-live-ops]MonitorTimer) {
+  startLiveOpsPositionMonitor() {
+    if (!this.LiveOpsMonitorEnabled || this.LiveOpsMonitorTimer) {
       return;
     }
-    this.[private-live-ops]MonitorPromise = this.run[private-live-ops]PositionMonitorCycle('startup')
+    this.LiveOpsMonitorPromise = this.runLiveOpsPositionMonitorCycle('startup')
       .catch((error) => {
-        this.logger.warn(`[private-live-ops] startup monitor failed: ${error.message}`);
+        this.logger.warn(`LiveOps startup monitor failed: ${error.message}`);
         return { ok: false, error: error.message };
       })
       .finally(() => {
-        this.[private-live-ops]MonitorPromise = null;
+        this.LiveOpsMonitorPromise = null;
       });
-    this.[private-live-ops]MonitorTimer = setInterval(() => {
-      if (this.[private-live-ops]MonitorPromise) {
+    this.LiveOpsMonitorTimer = setInterval(() => {
+      if (this.LiveOpsMonitorPromise) {
         return;
       }
-      this.[private-live-ops]MonitorPromise = this.run[private-live-ops]PositionMonitorCycle('interval')
+      this.LiveOpsMonitorPromise = this.runLiveOpsPositionMonitorCycle('interval')
         .catch((error) => {
-          this.logger.warn(`[private-live-ops] interval monitor failed: ${error.message}`);
+          this.logger.warn(`LiveOps interval monitor failed: ${error.message}`);
           return { ok: false, error: error.message };
         })
         .finally(() => {
-          this.[private-live-ops]MonitorPromise = null;
+          this.LiveOpsMonitorPromise = null;
         });
-    }, this.[private-live-ops]MonitorPollMs);
-    if (typeof this.[private-live-ops]MonitorTimer.unref === 'function') {
-      this.[private-live-ops]MonitorTimer.unref();
+    }, this.LiveOpsMonitorPollMs);
+    if (typeof this.LiveOpsMonitorTimer.unref === 'function') {
+      this.LiveOpsMonitorTimer.unref();
     }
   }
 
-  async stop[private-live-ops]PositionMonitor() {
-    if (this.[private-live-ops]MonitorTimer) {
-      clearInterval(this.[private-live-ops]MonitorTimer);
-      this.[private-live-ops]MonitorTimer = null;
+  async stopLiveOpsPositionMonitor() {
+    if (this.LiveOpsMonitorTimer) {
+      clearInterval(this.LiveOpsMonitorTimer);
+      this.LiveOpsMonitorTimer = null;
     }
-    if (this.[private-live-ops]MonitorPromise) {
-      await Promise.resolve(this.[private-live-ops]MonitorPromise).catch(() => {});
-      this.[private-live-ops]MonitorPromise = null;
+    if (this.LiveOpsMonitorPromise) {
+      await Promise.resolve(this.LiveOpsMonitorPromise).catch(() => {});
+      this.LiveOpsMonitorPromise = null;
     }
   }
 
-  async getCurrent[private-live-ops]PositionSymbols() {
+  async getCurrentLiveOpsPositionSymbols() {
     const sources = [];
     const liveAccountState = await Promise.resolve(
-      this.[private-live-ops]Executor?.getAccountState?.()
+      this.LiveOpsExecutor?.getAccountState?.()
     ).catch(() => null);
     if (Array.isArray(liveAccountState?.positions) && liveAccountState.positions.length > 0) {
       sources.push(...liveAccountState.positions);
     } else {
-      const fallbackPositions = await [private-live-ops]Client.getOpenPositions({
+      const fallbackPositions = await LiveOpsClient.getOpenPositions({
         env: this.runtimeEnv,
       }).catch(() => []);
       if (Array.isArray(fallbackPositions) && fallbackPositions.length > 0) {
@@ -4283,11 +4283,11 @@ class SupervisorDaemon {
       };
     }
 
-    const walletAddress = resolve[private-live-ops]WalletAddress(this.runtimeEnv);
+    const walletAddress = resolveLiveOpsWalletAddress(this.runtimeEnv);
     try {
       const livePositions = this.positionAttributionSnapshotProvider
         ? await Promise.resolve(this.positionAttributionSnapshotProvider({ walletAddress, env: this.runtimeEnv, nowMs }))
-        : await [private-live-ops]Client.getOpenPositions({ walletAddress, env: this.runtimeEnv });
+        : await LiveOpsClient.getOpenPositions({ walletAddress, env: this.runtimeEnv });
       const reconcileSummary = agentPositionAttribution.reconcilePositionAttributionWithLivePositions(
         Array.isArray(livePositions) ? livePositions : [],
         {
@@ -4332,7 +4332,7 @@ class SupervisorDaemon {
   }
 
   async getCryptoSymbolCandidates(options = {}) {
-    const openPositionSymbols = await this.getCurrent[private-live-ops]PositionSymbols();
+    const openPositionSymbols = await this.getCurrentLiveOpsPositionSymbols();
     const prioritySymbols = (Array.isArray(options.prioritySymbols) ? options.prioritySymbols : [])
       .map((ticker) => String(ticker || '').trim().toUpperCase())
       .filter((ticker) => /\/USD$/i.test(ticker));
@@ -4363,7 +4363,7 @@ class SupervisorDaemon {
       .filter((ticker) => /\/USD$/i.test(ticker) && !baseSymbolSet.has(ticker) && !moverSymbols.includes(ticker))
       .slice(0, Math.max(0, requestedLimit - baseSymbols.length - moverSymbols.length));
     const orderedSymbols = [...baseSymbols, ...moverSymbols, ...promotedSymbols];
-    const symbolsExecutable = orderedSymbols.filter((ticker) => this.is[private-live-ops]ConsensusTicker(ticker));
+    const symbolsExecutable = orderedSymbols.filter((ticker) => this.isLiveOpsConsensusTicker(ticker));
     this.lastCryptoCoverage = {
       basketBuiltAt: new Date().toISOString(),
       openPositionSymbols,
@@ -4399,22 +4399,22 @@ class SupervisorDaemon {
     }
 
     const [bars5m, bars15m, bars1h, accountState] = await Promise.all([
-      [private-live-ops]Client.getHistoricalBars({
+      LiveOpsClient.getHistoricalBars({
         symbols: candidates,
         timeframe: '5Min',
         limit: 72,
       }).catch(() => new Map()),
-      [private-live-ops]Client.getHistoricalBars({
+      LiveOpsClient.getHistoricalBars({
         symbols: candidates,
         timeframe: '15Min',
         limit: 48,
       }).catch(() => new Map()),
-      [private-live-ops]Client.getHistoricalBars({
+      LiveOpsClient.getHistoricalBars({
         symbols: candidates,
         timeframe: '1Hour',
         limit: 24,
       }).catch(() => new Map()),
-      this.[private-live-ops]Executor?.getAccountState?.().catch(() => null),
+      this.LiveOpsExecutor?.getAccountState?.().catch(() => null),
     ]);
 
     const positionsByCoin = new Map(
@@ -4474,7 +4474,7 @@ class SupervisorDaemon {
       rationale: positionAction?.rationale || null,
       invalidationPrice: Number(positionAction?.invalidationPrice || 0) || null,
       targetPrice: Number(positionAction?.targetPrice || 0) || null,
-      activePosition: activeRow ? this.summarize[private-live-ops]Position(activeRow.openPosition) : null,
+      activePosition: activeRow ? this.summarizeLiveOpsPosition(activeRow.openPosition) : null,
       ranked: (selection.ranked || []).slice(0, 5).map((entry) => ({
         ticker: entry.ticker,
         direction: entry.setup?.direction || null,
@@ -4527,7 +4527,7 @@ class SupervisorDaemon {
 
     let nativeBundle = null;
     try {
-      nativeBundle = await [private-live-ops]NativeLayer.buildNativeFeatureBundle({
+      nativeBundle = await LiveOpsNativeLayer.buildNativeFeatureBundle({
         symbols: normalized.map((entry) => entry.ticker),
       });
     } catch (error) {
@@ -4589,7 +4589,7 @@ class SupervisorDaemon {
     return results.find((result) => String(result?.ticker || '').trim().toUpperCase() === normalizedTicker) || null;
   }
 
-  summarize[private-live-ops]Position(position) {
+  summarizeLiveOpsPosition(position) {
     if (!position || !position.coin) return null;
     return {
       coin: position.coin,
@@ -4601,7 +4601,7 @@ class SupervisorDaemon {
     };
   }
 
-  is[private-live-ops]ConsensusTicker(ticker) {
+  isLiveOpsConsensusTicker(ticker) {
     return /\/USD$/i.test(String(ticker || '').trim());
   }
 
@@ -4703,7 +4703,7 @@ class SupervisorDaemon {
         confidence: Number(selection?.confidence || 0) || null,
         invalidationPrice: Number(selection?.positionAction?.invalidationPrice || 0) || null,
         targetPrice: Number(selection?.positionAction?.targetPrice || 0) || null,
-        activePosition: selection?.activePosition ? this.summarize[private-live-ops]Position(selection.activePosition) : null,
+        activePosition: selection?.activePosition ? this.summarizeLiveOpsPosition(selection.activePosition) : null,
         updatedAt: new Date().toISOString(),
       }
       : null;
@@ -4734,7 +4734,7 @@ class SupervisorDaemon {
       rationale: positionAction?.rationale || null,
       asset,
       ticker: selection?.selectedTicker || `${asset}/USD`,
-      position: this.summarize[private-live-ops]Position(activePosition),
+      position: this.summarizeLiveOpsPosition(activePosition),
       execution: null,
     };
   }
@@ -4818,7 +4818,7 @@ class SupervisorDaemon {
     });
   }
 
-  build[private-live-ops]AutoExecutionSummary(autoExecution = {}, scheduledAt = null) {
+  buildLiveOpsAutoExecutionSummary(autoExecution = {}, scheduledAt = null) {
     const executions = Array.isArray(autoExecution?.executions) ? autoExecution.executions : [];
     const firstAction = executions[0]?.action || null;
     return {
@@ -4826,7 +4826,7 @@ class SupervisorDaemon {
       status: executions.length === 0
         ? 'idle'
         : (executions.every((entry) => entry.ok !== false) ? 'completed' : 'failed'),
-      dryRun: this.[private-live-ops]ExecutionDryRun,
+      dryRun: this.LiveOpsExecutionDryRun,
       action: firstAction,
       reason: executions.length === 0
         ? 'no_consensus_execution'
@@ -4836,25 +4836,25 @@ class SupervisorDaemon {
     };
   }
 
-  build[private-live-ops]GivebackAlert(position) {
+  buildLiveOpsGivebackAlert(position) {
     const drawdownPct = Number(position?.drawdownFromPeakPct || 0);
     const stopLossText = position?.stopLossVerifiedAt
       && Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
       ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
       : '';
-    return `[TRADING] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} has given back ${(drawdownPct * 100).toFixed(0)}% of peak PnL. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} peak=$${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText}`;
+    return `[TRADING] LiveOps ${position.coin} ${String(position.side || '').toUpperCase()} has given back ${(drawdownPct * 100).toFixed(0)}% of peak PnL. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} peak=$${toNumber(position?.peakUnrealizedPnl, 0).toFixed(2)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText}`;
   }
 
-  build[private-live-ops]ManualActionAlert(position = {}, reasons = []) {
+  buildLiveOpsManualActionAlert(position = {}, reasons = []) {
     const reasonText = Array.isArray(reasons) && reasons.length > 0 ? reasons.join('+') : 'risk_exit_signal';
     const stopLossText = position?.stopLossVerifiedAt
       && Number.isFinite(Number(position?.stopLossPrice)) && Number(position.stopLossPrice) > 0
       ? ` stop=$${Number(position.stopLossPrice).toFixed(4)}`
       : '';
-    return `[ACTION REQUIRED] [private-live-ops] ${position.coin} ${String(position.side || '').toUpperCase()} hit ${reasonText}. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} entry=$${toNumber(position?.entryPx, 0).toFixed(4)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText} Manual-only reset is active, so the supervisor did not close it.`;
+    return `[ACTION REQUIRED] LiveOps ${position.coin} ${String(position.side || '').toUpperCase()} hit ${reasonText}. Current=$${toNumber(position?.unrealizedPnl, 0).toFixed(2)} entry=$${toNumber(position?.entryPx, 0).toFixed(4)} mark=$${toNumber(position?.markPrice, 0).toFixed(4)}.${stopLossText} Manual-only reset is active, so the supervisor did not close it.`;
   }
 
-  shouldTrigger[private-live-ops]Stop(position = {}) {
+  shouldTriggerLiveOpsStop(position = {}) {
     const stopLossPrice = Number(position?.stopLossPrice);
     const markPrice = Number(position?.markPrice);
     const side = String(position?.side || '').trim().toLowerCase();
@@ -4870,7 +4870,7 @@ class SupervisorDaemon {
     return false;
   }
 
-  resolve[private-live-ops]EthDirective(consensusPhase, approvedTrades = []) {
+  resolveLiveOpsEthDirective(consensusPhase, approvedTrades = []) {
     const ethConsensus = this.extractConsensusResultForTicker(consensusPhase, 'ETH/USD');
     const approvedEthTrade = (Array.isArray(approvedTrades) ? approvedTrades : []).find((trade) => {
       return String(trade?.ticker || '').trim().toUpperCase() === 'ETH/USD';
@@ -4921,17 +4921,17 @@ class SupervisorDaemon {
     };
   }
 
-  async run[private-live-ops]ExecutionPhase({ scheduledAt, marketDate, consensusPhase, approvedTrades = [] } = {}) {
-    const phase = '[private-live-ops]_execution';
-    if (this.manualTradingOnly && !this.[private-live-ops]ScalpModeArmed) {
-      const accountState = typeof this.[private-live-ops]Executor?.getAccountState === 'function'
-        ? await Promise.resolve(this.[private-live-ops]Executor.getAccountState()).catch(() => null)
+  async runLiveOpsExecutionPhase({ scheduledAt, marketDate, consensusPhase, approvedTrades = [] } = {}) {
+    const phase = 'LiveOps_execution';
+    if (this.manualTradingOnly && !this.LiveOpsScalpModeArmed) {
+      const accountState = typeof this.LiveOpsExecutor?.getAccountState === 'function'
+        ? await Promise.resolve(this.LiveOpsExecutor.getAccountState()).catch(() => null)
         : null;
       const ethPosition = Array.isArray(accountState?.positions)
         ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
         : null;
-      await this.sync[private-live-ops]PeakStateFromAccountState(accountState || {}, {
-        trigger: '[private-live-ops]_execution_none',
+      await this.syncLiveOpsPeakStateFromAccountState(accountState || {}, {
+        trigger: 'LiveOps_execution_none',
         checkedAt: scheduledAt || new Date().toISOString(),
         sendTelegram: false,
       });
@@ -4946,13 +4946,13 @@ class SupervisorDaemon {
         signal: null,
         approvedTrade: null,
         accountValue: toNumber(accountState?.accountValue, 0),
-        position: this.summarize[private-live-ops]Position(ethPosition),
+        position: this.summarizeLiveOpsPosition(ethPosition),
         execution: null,
       };
-      this.last[private-live-ops]ExecutionSummary = {
+      this.lastLiveOpsExecutionSummary = {
         enabled: false,
         status: 'manual_only',
-        dryRun: this.[private-live-ops]ExecutionDryRun,
+        dryRun: this.LiveOpsExecutionDryRun,
         accountValue: result.accountValue,
         position: result.position,
         action: result.action,
@@ -4962,21 +4962,21 @@ class SupervisorDaemon {
       };
       return result;
     }
-    if (!this.[private-live-ops]ExecutionEnabled || !this.[private-live-ops]Executor) {
+    if (!this.LiveOpsExecutionEnabled || !this.LiveOpsExecutor) {
       return {
         ok: false,
         skipped: true,
         phase,
-        reason: '[private-live-ops]_disabled',
+        reason: 'LiveOps_disabled',
       };
     }
 
-    const directive = this.resolve[private-live-ops]EthDirective(consensusPhase, approvedTrades);
-    let accountState = await this.[private-live-ops]Executor.getAccountState();
+    const directive = this.resolveLiveOpsEthDirective(consensusPhase, approvedTrades);
+    let accountState = await this.LiveOpsExecutor.getAccountState();
     let ethPosition = Array.isArray(accountState?.positions)
       ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
       : null;
-    const positionSummary = this.summarize[private-live-ops]Position(ethPosition);
+    const positionSummary = this.summarizeLiveOpsPosition(ethPosition);
     let result = {
       ok: true,
       skipped: true,
@@ -5011,7 +5011,7 @@ class SupervisorDaemon {
       } else if (ethPosition?.side === 'long') {
         result.reason = 'eth_long_position_present';
       } else {
-        const execution = await this.[private-live-ops]Executor.openEthShort({
+        const execution = await this.LiveOpsExecutor.openEthShort({
           scheduledAt,
           marketDate,
           consensus: directive.consensus,
@@ -5025,21 +5025,21 @@ class SupervisorDaemon {
           execution,
         };
         if (execution?.ok !== false) {
-          accountState = await this.[private-live-ops]Executor.getAccountState();
+          accountState = await this.LiveOpsExecutor.getAccountState();
           ethPosition = Array.isArray(accountState?.positions)
             ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
             : null;
           result.accountValue = toNumber(accountState?.accountValue, 0);
-          result.position = this.summarize[private-live-ops]Position(ethPosition);
+          result.position = this.summarizeLiveOpsPosition(ethPosition);
         }
       }
     } else if (directive.action === 'close_position') {
       // AUTO-CLOSE DISABLED: agents manage exits manually
-      this.logger.info('[[private-live-ops]Execution] close_position directive BLOCKED — agents manage exits manually');
+      this.logger.info('[LiveOpsExecution] close_position directive BLOCKED — agents manage exits manually');
       result.reason = 'auto_close_disabled_agent_managed';
       result.skipped = true;
       if (false) { // dead code — original close logic disabled
-        const execution = await this.[private-live-ops]Executor.closeEthPosition({
+        const execution = await this.LiveOpsExecutor.closeEthPosition({
           scheduledAt,
           marketDate,
           consensus: directive.consensus,
@@ -5053,26 +5053,26 @@ class SupervisorDaemon {
           execution,
         };
         if (execution?.ok !== false) {
-          accountState = await this.[private-live-ops]Executor.getAccountState();
+          accountState = await this.LiveOpsExecutor.getAccountState();
           ethPosition = Array.isArray(accountState?.positions)
             ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
             : null;
           result.accountValue = toNumber(accountState?.accountValue, 0);
-          result.position = this.summarize[private-live-ops]Position(ethPosition);
+          result.position = this.summarizeLiveOpsPosition(ethPosition);
         }
       }
     }
 
-    await this.sync[private-live-ops]PeakStateFromAccountState(accountState, {
-      trigger: `[private-live-ops]_execution_${result.action || 'none'}`,
+    await this.syncLiveOpsPeakStateFromAccountState(accountState, {
+      trigger: `LiveOps_execution_${result.action || 'none'}`,
       checkedAt: scheduledAt || new Date().toISOString(),
       sendTelegram: false,
     });
 
-    this.last[private-live-ops]ExecutionSummary = {
+    this.lastLiveOpsExecutionSummary = {
       enabled: true,
       status: result.ok ? (result.skipped ? 'idle' : 'completed') : 'failed',
-      dryRun: this.[private-live-ops]ExecutionDryRun,
+      dryRun: this.LiveOpsExecutionDryRun,
       accountValue: result.accountValue,
       position: result.position,
       action: result.action,
@@ -5145,19 +5145,19 @@ class SupervisorDaemon {
         whaleTransfers: whaleTransfers.length > 0 ? whaleTransfers : undefined,
         macroRisk,
         autoExecuteLiveConsensus: false,
-        [private-live-ops]ExecutionDryRun: this.[private-live-ops]ExecutionDryRun,
-        [private-live-ops]ExecutionEnv: this.runtimeEnv,
-        [private-live-ops]ExecuteScriptPath: this.hmDefiExecuteScriptPath,
-        [private-live-ops]CloseScriptPath: this.hmDefiCloseScriptPath,
-        [private-live-ops]ExecutionLeverage: this.[private-live-ops]ExecutionLeverage,
+        LiveOpsExecutionDryRun: this.LiveOpsExecutionDryRun,
+        LiveOpsExecutionEnv: this.runtimeEnv,
+        LiveOpsExecuteScriptPath: this.hmDefiExecuteScriptPath,
+        LiveOpsCloseScriptPath: this.hmDefiCloseScriptPath,
+        LiveOpsExecutionLeverage: this.LiveOpsExecutionLeverage,
       });
 
       let approved = Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades : [];
       // Macro risk should cap size, not double-compress an already vetoed/MTF-scaled trade.
       approved = applyMacroRiskSizeCapToApprovedTrades(approved, macroRisk);
 
-      const [private-live-ops]ScalpExecutionEnabled = this.[private-live-ops]ExecutionEnabled
-        && this.[private-live-ops]ScalpModeArmed
+      const LiveOpsScalpExecutionEnabled = this.LiveOpsExecutionEnabled
+        && this.LiveOpsScalpModeArmed
         && !this.cryptoMonitorOnly;
 
       if (this.cryptoMonitorOnly) {
@@ -5165,7 +5165,7 @@ class SupervisorDaemon {
           this.logger.info(`Crypto automation is monitor-only: skipping execution for ${approved.length} approved trade(s)`);
         }
         approved = [];
-      } else if (this.manualTradingOnly && ![private-live-ops]ScalpExecutionEnabled && approved.length > 0) {
+      } else if (this.manualTradingOnly && !LiveOpsScalpExecutionEnabled && approved.length > 0) {
         this.logger.info(`Crypto automation is manual-only: supervisor will not execute ${approved.length} approved trade(s)`);
       }
       consensusPhase.approvedTrades = approved;
@@ -5176,24 +5176,24 @@ class SupervisorDaemon {
         this.logger.warn(`Prediction logging failed during ${phaseKey}: ${error?.message || String(error)}`);
       }
       const actionableCount = approved.length;
-      const approvedForMarketOpen = (this.manualTradingOnly && ![private-live-ops]ScalpExecutionEnabled)
+      const approvedForMarketOpen = (this.manualTradingOnly && !LiveOpsScalpExecutionEnabled)
         ? []
         : approved;
 
-      const [private-live-ops]Execution = typeof this.cryptoTradingOrchestrator.maybeAutoExecuteLiveConsensus === 'function'
+      const LiveOpsExecution = typeof this.cryptoTradingOrchestrator.maybeAutoExecuteLiveConsensus === 'function'
         ? await this.cryptoTradingOrchestrator.maybeAutoExecuteLiveConsensus(
-          [private-live-ops]ScalpExecutionEnabled ? [] : consensusPhase?.results,
-          [private-live-ops]ScalpExecutionEnabled ? [] : approved,
+          LiveOpsScalpExecutionEnabled ? [] : consensusPhase?.results,
+          LiveOpsScalpExecutionEnabled ? [] : approved,
           consensusPhase?.defiStatus || {},
           {
-            autoExecuteLiveConsensus: this.[private-live-ops]ExecutionEnabled && !this.cryptoMonitorOnly && (!this.manualTradingOnly || this.[private-live-ops]ScalpModeArmed),
-            [private-live-ops]ExecutionDryRun: this.[private-live-ops]ExecutionDryRun,
-            [private-live-ops]ExecutionEnv: this.runtimeEnv,
-            [private-live-ops]ExecuteScriptPath: this.hmDefiExecuteScriptPath,
-            [private-live-ops]CloseScriptPath: this.hmDefiCloseScriptPath,
-            [private-live-ops]ExecutionLeverage: this.[private-live-ops]ExecutionLeverage,
-            [private-live-ops]ScalpModeArmed: this.[private-live-ops]ScalpModeArmed,
-            [private-live-ops]KillSwitchAction: this.[private-live-ops]KillSwitchAction,
+            autoExecuteLiveConsensus: this.LiveOpsExecutionEnabled && !this.cryptoMonitorOnly && (!this.manualTradingOnly || this.LiveOpsScalpModeArmed),
+            LiveOpsExecutionDryRun: this.LiveOpsExecutionDryRun,
+            LiveOpsExecutionEnv: this.runtimeEnv,
+            LiveOpsExecuteScriptPath: this.hmDefiExecuteScriptPath,
+            LiveOpsCloseScriptPath: this.hmDefiCloseScriptPath,
+            LiveOpsExecutionLeverage: this.LiveOpsExecutionLeverage,
+            LiveOpsScalpModeArmed: this.LiveOpsScalpModeArmed,
+            LiveOpsKillSwitchAction: this.LiveOpsKillSwitchAction,
             killSwitchTriggered: consensusPhase?.killSwitch?.triggered === true,
             defiPeakPnlPath: this.defiPeakPnlPath,
           }
@@ -5206,7 +5206,7 @@ class SupervisorDaemon {
           skipped: [],
         };
 
-      // Execute non-[private-live-ops] approved trades immediately after [private-live-ops] sizing/execution is settled.
+      // Execute non-LiveOps approved trades immediately after LiveOps sizing/execution is settled.
       let executionResult = null;
       if (approvedForMarketOpen.length > 0) {
         this.logger.info(`Crypto consensus approved ${approvedForMarketOpen.length} executable trades — executing immediately`);
@@ -5215,34 +5215,34 @@ class SupervisorDaemon {
           assetClass: 'crypto',
           consensusPhase,
           approvedTrades: approvedForMarketOpen,
-          allow[private-live-ops]LiveExecution: [private-live-ops]ScalpExecutionEnabled,
-          [private-live-ops]ScalpModeArmed: this.[private-live-ops]ScalpModeArmed,
-          [private-live-ops]ExecutionDryRun: this.[private-live-ops]ExecutionDryRun,
-          [private-live-ops]ExecutionEnv: this.runtimeEnv,
-          [private-live-ops]ExecuteScriptPath: this.hmDefiExecuteScriptPath,
-          [private-live-ops]CloseScriptPath: this.hmDefiCloseScriptPath,
-          [private-live-ops]ExecutionLeverage: this.[private-live-ops]ExecutionLeverage,
+          allowLiveOpsLiveExecution: LiveOpsScalpExecutionEnabled,
+          LiveOpsScalpModeArmed: this.LiveOpsScalpModeArmed,
+          LiveOpsExecutionDryRun: this.LiveOpsExecutionDryRun,
+          LiveOpsExecutionEnv: this.runtimeEnv,
+          LiveOpsExecuteScriptPath: this.hmDefiExecuteScriptPath,
+          LiveOpsCloseScriptPath: this.hmDefiCloseScriptPath,
+          LiveOpsExecutionLeverage: this.LiveOpsExecutionLeverage,
         });
         const execCount = Array.isArray(executionResult?.executions) ? executionResult.executions.length : 0;
         const fills = (executionResult?.executions || []).filter((e) => e.execution?.ok);
         this.logger.info(`Crypto execution: ${fills.length}/${execCount} orders filled`);
       }
 
-      if ([private-live-ops]Execution?.attempted > 0 && typeof this.[private-live-ops]Executor?.getAccountState === 'function') {
-        const accountState = await Promise.resolve(this.[private-live-ops]Executor.getAccountState()).catch(() => null);
+      if (LiveOpsExecution?.attempted > 0 && typeof this.LiveOpsExecutor?.getAccountState === 'function') {
+        const accountState = await Promise.resolve(this.LiveOpsExecutor.getAccountState()).catch(() => null);
         if (accountState) {
-          await this.sync[private-live-ops]PeakStateFromAccountState(accountState, {
+          await this.syncLiveOpsPeakStateFromAccountState(accountState, {
             trigger: 'consensus_auto_execution',
             checkedAt: scheduledAt,
             sendTelegram: false,
           });
         }
-        this.last[private-live-ops]ExecutionSummary = this.build[private-live-ops]AutoExecutionSummary([private-live-ops]Execution, scheduledAt);
+        this.lastLiveOpsExecutionSummary = this.buildLiveOpsAutoExecutionSummary(LiveOpsExecution, scheduledAt);
         this.logger.info(
-          `[private-live-ops] auto-execution ${[private-live-ops]Execution.succeeded}/${[private-live-ops]Execution.attempted} completed`
+          `LiveOps auto-execution ${LiveOpsExecution.succeeded}/${LiveOpsExecution.attempted} completed`
         );
       } else {
-        this.last[private-live-ops]ExecutionSummary = this.build[private-live-ops]AutoExecutionSummary([private-live-ops]Execution, scheduledAt);
+        this.lastLiveOpsExecutionSummary = this.buildLiveOpsAutoExecutionSummary(LiveOpsExecution, scheduledAt);
       }
 
       return {
@@ -5253,7 +5253,7 @@ class SupervisorDaemon {
         preMarket,
         macroRisk: { regime: macroRisk.regime, score: macroRisk.score, reason: macroRisk.reason },
         execution: executionResult,
-        [private-live-ops]Execution,
+        LiveOpsExecution,
         summary: {
           strategyMode,
           symbols: cryptoSymbols.length,
@@ -5265,8 +5265,8 @@ class SupervisorDaemon {
           rejectedTrades: Array.isArray(consensusPhase?.rejectedTrades) ? consensusPhase.rejectedTrades.length : 0,
           incompleteSignals: Array.isArray(consensusPhase?.incompleteSignals) ? consensusPhase.incompleteSignals.length : 0,
           executedTrades: executionResult ? (executionResult.executions || []).filter((e) => e.execution?.ok).length : 0,
-          [private-live-ops]Action: [private-live-ops]Execution?.executions?.[0]?.action || 'none',
-          [private-live-ops]Executed: Number([private-live-ops]Execution?.succeeded || 0) > 0,
+          LiveOpsAction: LiveOpsExecution?.executions?.[0]?.action || 'none',
+          LiveOpsExecuted: Number(LiveOpsExecution?.succeeded || 0) > 0,
           monitorOnly: this.cryptoMonitorOnly,
           manualOnly: this.manualTradingOnly,
         },
@@ -6154,22 +6154,22 @@ class SupervisorDaemon {
         nextEvent: this.cryptoTradingState.nextEvent || null,
         lastSummary: this.lastCryptoTradingSummary || null,
       },
-      [private-live-ops]Execution: {
-        enabled: this.[private-live-ops]ExecutionEnabled && (!this.manualTradingOnly || this.[private-live-ops]ScalpModeArmed),
+      LiveOpsExecution: {
+        enabled: this.LiveOpsExecutionEnabled && (!this.manualTradingOnly || this.LiveOpsScalpModeArmed),
         manualOnly: this.manualTradingOnly,
-        scalpModeArmed: this.[private-live-ops]ScalpModeArmed,
-        dryRun: this.[private-live-ops]ExecutionDryRun,
-        autoOpenEnabled: this.[private-live-ops]ScalpModeArmed || String(this.runtimeEnv.SQUIDRUN_ALLOW_LIVE_OPS_AUTO_OPEN || '').trim() === '1',
-        killSwitchAction: this.[private-live-ops]KillSwitchAction,
+        scalpModeArmed: this.LiveOpsScalpModeArmed,
+        dryRun: this.LiveOpsExecutionDryRun,
+        autoOpenEnabled: this.LiveOpsScalpModeArmed || String(this.runtimeEnv.SQUIDRUN_ALLOW_LIVE_OPS_AUTO_OPEN || '').trim() === '1',
+        killSwitchAction: this.LiveOpsKillSwitchAction,
         symbolsExecutable,
-        lastSummary: this.last[private-live-ops]ExecutionSummary || null,
+        lastSummary: this.lastLiveOpsExecutionSummary || null,
       },
-      [private-live-ops]PositionMonitor: {
-        enabled: this.[private-live-ops]MonitorEnabled,
-        running: Boolean(this.[private-live-ops]MonitorTimer || this.[private-live-ops]MonitorPromise),
-        pollMs: this.[private-live-ops]MonitorPollMs,
+      LiveOpsPositionMonitor: {
+        enabled: this.LiveOpsMonitorEnabled,
+        running: Boolean(this.LiveOpsMonitorTimer || this.LiveOpsMonitorPromise),
+        pollMs: this.LiveOpsMonitorPollMs,
         peakStatePath: this.defiPeakPnlPath,
-        lastSummary: this.last[private-live-ops]MonitorSummary || null,
+        lastSummary: this.lastLiveOpsMonitorSummary || null,
       },
       smartMoneyScanner: {
         enabled: Boolean(this.smartMoneyScanner),
@@ -6184,14 +6184,14 @@ class SupervisorDaemon {
           convergenceSignals: this.smartMoneyScanner.state?.convergenceSignals?.length || 0,
         } : null,
       },
-      [private-live-ops]Automation: {
-        enabled: this.[private-live-ops]Enabled,
-        running: Boolean(this.[private-live-ops]PhasePromise),
-        intervalMinutes: this.[private-live-ops]IntervalMinutes,
-        statePath: this.[private-live-ops]StatePath,
-        lastProcessedAt: this.[private-live-ops]State.lastProcessedAt || null,
-        nextEvent: this.[private-live-ops]State.nextEvent || null,
-        lastSummary: this.last[private-live-ops]Summary || null,
+      LiveOpsAutomation: {
+        enabled: this.LiveOpsEnabled,
+        running: Boolean(this.LiveOpsPhasePromise),
+        intervalMinutes: this.LiveOpsIntervalMinutes,
+        statePath: this.LiveOpsStatePath,
+        lastProcessedAt: this.LiveOpsState.lastProcessedAt || null,
+        nextEvent: this.LiveOpsState.nextEvent || null,
+        lastSummary: this.lastLiveOpsSummary || null,
       },
       sparkMonitorAutomation: {
         enabled: this.sparkMonitorEnabled,
@@ -6250,13 +6250,13 @@ class SupervisorDaemon {
         lastSummary: this.lastOracleWatchSummary || null,
       },
       oracleShortRegime: readJsonFile(this.oracleShortRegimeStatePath, null) || this.lastOracleShortRegimeSummary || null,
-      [private-live-ops]SqueezeDetector: {
-        enabled: this.[private-live-ops]SqueezeDetectorEnabled,
-        running: Boolean(this.[private-live-ops]SqueezeDetectorPromise),
-        intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
-        scriptPath: this.hm[private-live-ops]SqueezeDetectorScriptPath,
-        lastRunAt: this.last[private-live-ops]SqueezeDetectorSummary?.lastRunAt || null,
-        lastSummary: this.last[private-live-ops]SqueezeDetectorSummary || null,
+      LiveOpsSqueezeDetector: {
+        enabled: this.LiveOpsSqueezeDetectorEnabled,
+        running: Boolean(this.LiveOpsSqueezeDetectorPromise),
+        intervalMs: this.LiveOpsSqueezeDetectorIntervalMs,
+        scriptPath: this.hmLiveOpsSqueezeDetectorScriptPath,
+        lastRunAt: this.lastLiveOpsSqueezeDetectorSummary?.lastRunAt || null,
+        lastSummary: this.lastLiveOpsSqueezeDetectorSummary || null,
       },
       ...extra,
     };

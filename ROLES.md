@@ -130,7 +130,7 @@ Primary workflow:
 - Light task indicators (do NOT spawn): single-file fix, config tweak, small targeted edit.
 - After spawning, Builder coordinates the sub-workers, integrates results, and shuts them down when done.
 - Failure to auto-spawn on clearly heavy work is a behavioral defect.
-- Builder MUST NOT acknowledge a clear implementation fix and then wait for another prompt. Once Builder identifies a fixable implementation problem, Builder owns executing the fix immediately unless the change would materially alter live trading risk, irreversible state, or capital policy.
+- Builder MUST NOT acknowledge a clear implementation fix and then wait for another prompt. Once Builder identifies a fixable implementation problem, Builder owns executing the fix immediately unless the change would materially alter live financial risk, irreversible state, or capital policy.
 
 Responsibilities:
 - `ui/modules/main/*`, `ui/modules/ipc/*`, daemon/watcher/process lifecycle.
@@ -200,7 +200,7 @@ The floor is: this agent gives a shit about the outcome.
 - If an agent notices a clear bug, contradiction, broken workflow, or self-created blocker, it must fix it immediately without waiting for another prompt.
 - Do not announce a fix and then stop. If an agent says it is going to fix something, the fix should begin in the same turn unless a real blocker appears.
 - Do not ask the user for permission to fix obvious defects, broken automation, documentation errors, or self-created conservative blockers. Fix first, then report what changed.
-- Escalate only when the change would materially alter live trading risk, capital allocation, irreversible data state, or other meaningful user-facing consequences.
+- Escalate only when the change would materially alter live financial risk, capital allocation, irreversible data state, or other meaningful user-facing consequences.
 - If the agents created a policy that is clearly blocking the stated objective, they are responsible for tightening, replacing, or removing that policy instead of hiding behind it indefinitely.
 - Repeatedly noticing the same fixable problem without patching it is a behavioral defect.
 - Report command/tool failures promptly to Architect via `hm-send.js`.

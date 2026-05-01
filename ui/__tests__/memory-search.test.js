@@ -63,7 +63,7 @@ maybeDescribe('memory-search', () => {
       '',
       '## Plumbing',
       '',
-      'the user runs a plumbing business and wants practical automation.',
+      'The user runs an operations workflow and wants practical automation.',
       '',
       '## Messaging',
       '',
@@ -77,7 +77,7 @@ maybeDescribe('memory-search', () => {
       '## Decision Digest',
       '| session_id | latest_at | decisions | findings | highlights |',
       '| --- | --- | --- | --- | --- |',
-      '| app-session-170 | 2026-02-21T22:32:39.337Z | Add shutdown button | Menu cleanup | the user prefers one clear shutdown path |',
+      '| app-session-170 | 2026-02-21T22:32:39.337Z | Add shutdown button | Menu cleanup | The user prefers one clear shutdown path |',
       '',
       '## Cross-Session Decisions',
       '| sent_at | session_id | tag | message_id | trace_id | sender | target | detail |',
@@ -163,7 +163,7 @@ maybeDescribe('memory-search', () => {
       expect(indexResult.indexedGroups).toBeGreaterThanOrEqual(2);
       expect(indexResult.status.document_count).toBeGreaterThan(0);
 
-      const searchResult = await index.search('plumbing business automation', { limit: 3 });
+      const searchResult = await index.search('operations workflow automation', { limit: 3 });
       expect(searchResult.ok).toBe(true);
       expect(searchResult.results).toHaveLength(3);
       expect(searchResult.results[0]).toEqual(expect.objectContaining({
@@ -338,12 +338,12 @@ maybeDescribe('memory-search', () => {
 
     try {
       await index.indexAll({ force: true });
-      const original = await index.search('plumbing business automation', { limit: 3 });
+      const original = await index.search('operations workflow automation', { limit: 3 });
       const document = original.results.find((entry) => entry.sourcePath === 'knowledge/user-context.md');
       expect(document).toBeTruthy();
 
       const updated = await index.updateDocument(document.documentId, {
-        content: 'the user now wants concise plumbing dispatch automation with milestone checkpoints.',
+        content: 'The user now wants concise dispatch automation with milestone checkpoints.',
         metadata: { syncedFrom: 'test' },
         nowMs: 5000,
       });

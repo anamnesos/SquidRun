@@ -37,7 +37,7 @@ describe('cognitive-memory store and extraction', () => {
     const candidates = extractCandidates({
       session_id: 'session-1',
       transcript: [
-        'the user prefers direct execution over lengthy planning.',
+        'The user prefers direct execution over lengthy planning.',
         'The supervisor watcher should keep the memory index fresh.',
       ],
     });
@@ -52,7 +52,7 @@ describe('cognitive-memory store and extraction', () => {
     const result = store.stageMemoryPRs([
       {
         category: 'preference',
-        statement: 'the user prefers direct execution over lengthy planning.',
+        statement: 'The user prefers direct execution over lengthy planning.',
         confidence_score: 0.72,
         source_trace: 'session-1:0',
         proposed_by: 'precompact-hook',
