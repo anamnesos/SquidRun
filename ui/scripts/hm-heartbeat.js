@@ -10,12 +10,12 @@ const { appendJsonLine, buildAnomaly, DEFAULT_ANOMALY_PATH } = require('./hm-ano
 
 const DEFAULT_HEARTBEAT_PATH = resolveCoordPath('coord/heartbeat.json', { forWrite: true });
 const HEARTBEAT_GAP_MS = 18 * 60 * 1000;
-const MAX_CACHED_HL_AGE_MS = 5 * 60 * 1000;
+const MAX_CACHED_LIVE_ACCOUNT_AGE_MS = 5 * 60 * 1000;
 
 function parseArgs(argv = process.argv.slice(2)) {
   const args = {
     json: false,
-    captureHl: true,
+    captureLiveAccount: true,
     topPriority: '',
     heartbeatPath: DEFAULT_HEARTBEAT_PATH,
   };
@@ -27,8 +27,8 @@ function parseArgs(argv = process.argv.slice(2)) {
       args.json = true;
       continue;
     }
-    if (token === '--skip-hl') {
-      args.captureHl = false;
+    if (token === '--skip-live-account') {
+      args.captureLiveAccount = false;
       continue;
     }
     if (token === '--top-priority' && argv[index + 1]) {
@@ -73,7 +73,7 @@ function md5File(filePath) {
   return hash.digest('hex');
 }
 
-function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
+function captureLiveAccountSnapshot(projectRoot, enabled = true) {
   if (!enabled) {
     return {
       ok: false,
@@ -81,17 +81,27 @@ function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
       checkedAt: new Date().toISOString(),
       accountValue: null,
       positions: [],
-      error: 'Skipped by --skip-hl.',
+      error: 'Skipped by --skip-live-account.',
     };
   }
 
-  const scriptPath = path.join(projectRoot, 'ui', 'scripts', 'hm-defi-status.js');
+  const scriptPath = path.join(projectRoot, 'ui', 'scripts', 'hm-live-account-status.js');
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      ok: false,
+      skipped: true,
+      checkedAt: new Date().toISOString(),
+      accountValue: null,
+      positions: [],
+      error: 'live_ops_removed_from_public_core',
+    };
+  }
   const result = spawnSync(process.execPath, [scriptPath, '--json'], {
     cwd: projectRoot,
     env: {
       ...process.env,
       SQUIDRUN_PROJECT_ROOT: projectRoot,
-      SQUIDRUN_LIVE_OPS_CALLER: 'heartbeat',
+      SQUIDRUN_LIVE_ACCOUNT_CALLER: 'heartbeat',
     },
     encoding: 'utf8',
     timeout: 45_000,
@@ -100,12 +110,12 @@ function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
   const parsed = readJsonFromString(result.stdout);
   if (parsed?.ok) return parsed;
 
-  const cached = readCached[private-live-ops]Snapshot(projectRoot);
+  const cached = readCachedLiveAccountSnapshot(projectRoot);
   if (cached) {
     return {
       ...cached,
-      ok: cached.ageMs <= MAX_CACHED_HL_AGE_MS,
-      fallbackReason: parsed?.error || String(result.stderr || result.error?.message || 'hm-defi-status failed').trim(),
+      ok: cached.ageMs <= MAX_CACHED_LIVE_ACCOUNT_AGE_MS,
+      fallbackReason: parsed?.error || String(result.stderr || result.error?.message || 'live-account status failed').trim(),
     };
   }
 
@@ -114,7 +124,7 @@ function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
     checkedAt: new Date().toISOString(),
     accountValue: null,
     positions: [],
-    error: parsed?.error || String(result.stderr || result.error?.message || 'hm-defi-status failed').trim(),
+    error: parsed?.error || String(result.stderr || result.error?.message || 'live-account status failed').trim(),
   };
 }
 
@@ -131,8 +141,8 @@ function toNumber(value, fallback = null) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function readCached[private-live-ops]Snapshot(projectRoot) {
-  const statePath = path.join(projectRoot, '.squidrun', 'runtime', 'crypto-trading-supervisor-state.json');
+function readCachedLiveAccountSnapshot(projectRoot) {
+  const statePath = path.join(projectRoot, '.squidrun', 'runtime', 'live-account-supervisor-state.json');
   const state = readJson(statePath, null);
   const account = state?.lastResult?.preMarket?.accountSnapshot;
   if (!account) return null;
@@ -160,7 +170,7 @@ function readSessionId() {
 }
 
 function buildHeartbeat(projectRoot, args = {}) {
-  const hlSnapshot = capture[private-live-ops]Snapshot(projectRoot, args.captureHl);
+  const liveAccountSnapshot = captureLiveAccountSnapshot(projectRoot, args.captureLiveAccount);
   const statusPath = resolveCoordPath('app-status.json');
   const appStatus = readJson(statusPath, {});
   const dirtyOutput = runGit(projectRoot, ['status', '--porcelain'], '');
@@ -178,13 +188,13 @@ function buildHeartbeat(projectRoot, args = {}) {
     branch: runGit(projectRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], null),
     dirtyTree: Boolean(dirtyOutput.trim()),
     dirtyCount: dirtyOutput.split(/\r?\n/).filter((line) => line.trim()).length,
-    hlSnapshotOk: Boolean(hlSnapshot.ok),
-    hlSnapshotCached: Boolean(hlSnapshot.cached),
-    hlSnapshotAgeMs: Number.isFinite(Number(hlSnapshot.ageMs)) ? Number(hlSnapshot.ageMs) : null,
-    hlPositionCount: Array.isArray(hlSnapshot.positions) ? hlSnapshot.positions.length : 0,
-    hlAccountValue: Number.isFinite(Number(hlSnapshot.accountValue)) ? Number(hlSnapshot.accountValue) : null,
-    hlCheckedAt: hlSnapshot.checkedAt || null,
-    hlError: hlSnapshot.error || null,
+    liveAccountSnapshotOk: Boolean(liveAccountSnapshot.ok),
+    liveAccountSnapshotCached: Boolean(liveAccountSnapshot.cached),
+    liveAccountSnapshotAgeMs: Number.isFinite(Number(liveAccountSnapshot.ageMs)) ? Number(liveAccountSnapshot.ageMs) : null,
+    liveAccountPositionCount: Array.isArray(liveAccountSnapshot.positions) ? liveAccountSnapshot.positions.length : 0,
+    liveAccountValue: Number.isFinite(Number(liveAccountSnapshot.accountValue)) ? Number(liveAccountSnapshot.accountValue) : null,
+    liveAccountCheckedAt: liveAccountSnapshot.checkedAt || null,
+    liveAccountError: liveAccountSnapshot.error || null,
     memoryChecksum: md5File(memoryPath),
     memoryPath: path.relative(projectRoot, memoryPath).replace(/\\/g, '/'),
     topPriority: args.topPriority || null,
@@ -229,7 +239,7 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
     console.log(`Heartbeat written: ${args.heartbeatPath}`);
-    console.log(`  branch=${heartbeat.branch} dirty=${heartbeat.dirtyTree} hlPositions=${heartbeat.hlPositionCount}`);
+    console.log(`  branch=${heartbeat.branch} dirty=${heartbeat.dirtyTree} liveAccountPositions=${heartbeat.liveAccountPositionCount}`);
   }
   return result;
 }

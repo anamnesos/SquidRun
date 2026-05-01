@@ -34,10 +34,10 @@ describe('recall feedback service', () => {
   test('promotes recall items that are actually used in the next outbound message', () => {
     const usedIdentity = buildRecallIdentityKey({
       store: 'memory_search',
-      sourcePath: 'workspace/knowledge/trading.md',
+      sourcePath: 'workspace/knowledge/runtime.md',
       citation: 'doc-1',
-      title: '[private-live-ops] stop plan',
-      excerpt: 'Tighten stop loss on the BTC position after giveback.',
+      title: 'Runtime routing plan',
+      excerpt: 'Tighten the scoped routing guard before replaying queued messages.',
     });
     const unusedIdentity = buildRecallIdentityKey({
       store: 'memory_search',
@@ -52,7 +52,7 @@ describe('recall feedback service', () => {
       paneId: '1',
       agentRole: 'architect',
       channel: 'user',
-      query: 'manage btc position',
+      query: 'manage scoped routing',
       items: [
         {
           resultItemId: 'item-used',
@@ -60,10 +60,10 @@ describe('recall feedback service', () => {
           rankIndex: 0,
           store: 'memory_search',
           sourceRole: 'corpus',
-          sourcePath: 'workspace/knowledge/trading.md',
+          sourcePath: 'workspace/knowledge/runtime.md',
           citation: 'doc-1',
-          title: '[private-live-ops] stop plan',
-          excerpt: 'Tighten stop loss on the BTC position after giveback.',
+          title: 'Runtime routing plan',
+          excerpt: 'Tighten the scoped routing guard before replaying queued messages.',
           score: 5,
           rankScore: 5,
         },
@@ -87,7 +87,7 @@ describe('recall feedback service', () => {
       feedbackType: 'used',
       paneId: '1',
       agentRole: 'architect',
-      messageText: 'We should tighten the [private-live-ops] stop loss on the BTC position now.',
+      messageText: 'We should tighten the scoped routing guard before replaying queued messages now.',
     });
 
     expect(feedback.ok).toBe(true);

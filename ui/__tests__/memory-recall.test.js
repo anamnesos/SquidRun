@@ -19,16 +19,14 @@ describe('memory recall broker', () => {
     closeSharedRecallRuntime();
   });
 
-  test('boosts the user direct terminal input with trading and architecture memory terms', () => {
-    const query = buildRecallQueryFromMessage('Should we manage the open [private-live-ops] position now?', {
+  test('boosts the user direct terminal input with architecture memory terms', () => {
+    const query = buildRecallQueryFromMessage('Should we check the current runtime routing now?', {
       channel: 'user_prompt',
       userIdentity: 'james',
       assumethe userDirectInput: true,
     });
 
-    expect(query.toLowerCase()).toContain('[private-live-ops]');
-    expect(query.toLowerCase()).toContain('positions');
-    expect(query.toLowerCase()).toContain('pnl');
+    expect(query.toLowerCase()).toContain('runtime routing');
     expect(query.toLowerCase()).toContain('squidrun');
     expect(query.toLowerCase()).toContain('feedback history');
     expect(query.toLowerCase()).toContain('agent conversations');
@@ -146,7 +144,7 @@ describe('memory recall broker', () => {
     expect(stripRecallBlocks(delivery.message)).toBe('Original human message');
   });
 
-  test('extends recall with existing time-awareness context for session, consultation, and monitor', async () => {
+  test('extends recall with existing time-awareness context for session and consultation', async () => {
     const nowMs = Date.parse('2026-04-03T23:40:00.000Z');
     const result = await recall({
       query: 'check runtime freshness',
@@ -154,17 +152,11 @@ describe('memory recall broker', () => {
       appStatus: {
         started: '2026-03-31T05:49:46.608Z',
       },
-      supervisorStatus: {
-        cryptoTradingAutomation: {
-          lastProcessedAt: '2026-04-03T23:00:00.000Z',
-        },
-        [private-live-ops]PositionMonitor: {
-          lastSummary: {
-            checkedAt: '2026-04-03T23:31:43.646Z',
-          },
-        },
-      },
-      commsRows: [],
+      supervisorStatus: {},
+      commsRows: [{
+        rawBody: 'consultation-12345-runtime completed',
+        sentAtMs: Date.parse('2026-04-03T23:00:00.000Z'),
+      }],
       feedbackOps: {
         getRankAdjustments: jest.fn(() => ({ ok: true, adjustments: {} })),
         recordRecallSet: jest.fn(() => ({ ok: true })),
@@ -184,7 +176,6 @@ describe('memory recall broker', () => {
     expect(block).toContain('TIME AWARENESS');
     expect(block).toContain('Session duration:');
     expect(block).toContain('Last consultation: 40m 0s ago');
-    expect(block).toContain('Last [private-live-ops] check: 8m 16s ago');
   });
 
   test('can render a compact injection block with time awareness and only 3 short recall items', () => {

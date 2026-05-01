@@ -4,12 +4,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-jest.mock('../modules/trading/[private-live-ops]-client', () => ({
-  resolveWalletAddress: jest.fn(() => '0xtest-wallet'),
-  getAccountSnapshot: jest.fn(async () => ({ equity: 508.55, cash: 0 })),
-  getOpenPositions: jest.fn(async () => []),
-}));
-
 const {
   generateStartupBriefing,
   readStartupBriefing,
@@ -91,7 +85,7 @@ describe('startup-ai-briefing', () => {
       expect(JSON.parse(fs.readFileSync(statusPath, 'utf8'))).toEqual(expect.objectContaining({
         ok: true,
         transcriptCount: 1,
-        liveSnapshotOk: true,
+        liveSnapshotOk: false,
         canonicalSourceCount: 1,
       }));
     } finally {
@@ -156,12 +150,12 @@ describe('startup-ai-briefing', () => {
         '',
         '## Live Account Status',
         '- Account value: $616.93',
-        '- HYPER/USD short size=-7683',
+        '- SAMPLE/USD short size=-7683',
         '',
         '## What Happened',
         '- Curator cleanup landed and non-live context remains useful.',
         '',
-        '## [private-live-ops] Snapshot',
+        '## Verified Live Account Snapshot',
         '- Withdrawable: $0.04',
         '',
         '## Next Work',
@@ -180,8 +174,8 @@ describe('startup-ai-briefing', () => {
 
       expect(guarded).toMatch(/^STALE SNAPSHOT generated 61 minutes ago; live-account block omitted, account values may have moved\./);
       expect(guarded).not.toContain('Account value: $616.93');
-      expect(guarded).not.toContain('HYPER/USD short');
-      expect(guarded).not.toContain('[private-live-ops] Snapshot');
+      expect(guarded).not.toContain('SAMPLE/USD short');
+      expect(guarded).not.toContain('Verified Live Account Snapshot');
       expect(guarded).not.toContain('Withdrawable: $0.04');
       expect(guarded).toContain('Curator cleanup landed and non-live context remains useful.');
       expect(guarded).toContain('Keep removing disabled lanes.');
@@ -214,7 +208,7 @@ describe('startup-ai-briefing', () => {
       }
     );
 
-    expect(prompt).toContain('Verified live [private-live-ops] snapshot:');
+    expect(prompt).toContain('Verified live account snapshot:');
     expect(prompt).toContain('SOL/USD short size=-111.46');
     expect(prompt).toContain('Use the verified live snapshot');
   });

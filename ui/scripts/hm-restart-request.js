@@ -15,7 +15,7 @@ const VALID_REASONS = new Set([
   'james_request',
   'manual_test',
 ]);
-const MAX_CACHED_HL_AGE_MS = 5 * 60 * 1000;
+const MAX_CACHED_LIVE_ACCOUNT_AGE_MS = 5 * 60 * 1000;
 
 function parseArgs(argv = process.argv.slice(2)) {
   const args = {
@@ -27,7 +27,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     anticipatedQuestion: [],
     json: false,
     send: true,
-    captureHl: true,
+    captureLiveAccount: true,
     dryRun: false,
   };
 
@@ -42,8 +42,8 @@ function parseArgs(argv = process.argv.slice(2)) {
       args.send = false;
       continue;
     }
-    if (token === '--skip-hl') {
-      args.captureHl = false;
+    if (token === '--skip-live-account') {
+      args.captureLiveAccount = false;
       continue;
     }
     if (token === '--dry-run') {
@@ -162,24 +162,33 @@ function getMemoryChecksums(projectRoot) {
   return checksums;
 }
 
-function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
+function captureLiveAccountSnapshot(projectRoot, enabled = true) {
   if (!enabled) {
     return {
       ok: false,
       skipped: true,
       checkedAt: new Date().toISOString(),
       positions: [],
-      error: 'Skipped by --skip-hl.',
+      error: 'Skipped by --skip-live-account.',
     };
   }
 
-  const scriptPath = path.join(projectRoot, 'ui', 'scripts', 'hm-defi-status.js');
+  const scriptPath = path.join(projectRoot, 'ui', 'scripts', 'hm-live-account-status.js');
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      ok: false,
+      skipped: true,
+      checkedAt: new Date().toISOString(),
+      positions: [],
+      error: 'live_ops_removed_from_public_core',
+    };
+  }
   const result = spawnSync(process.execPath, [scriptPath, '--json'], {
     cwd: projectRoot,
     env: {
       ...process.env,
       SQUIDRUN_PROJECT_ROOT: projectRoot,
-      SQUIDRUN_LIVE_OPS_CALLER: 'restart-request',
+      SQUIDRUN_LIVE_ACCOUNT_CALLER: 'restart-request',
     },
     encoding: 'utf8',
     timeout: 45_000,
@@ -190,7 +199,7 @@ function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
       ok: false,
       checkedAt: new Date().toISOString(),
       positions: [],
-      error: String(result.stderr || result.error?.message || 'hm-defi-status failed').trim(),
+      error: String(result.stderr || result.error?.message || 'live-account status failed').trim(),
     };
   }
 
@@ -199,12 +208,12 @@ function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
     return parsed;
   }
 
-  const cached = readCached[private-live-ops]Snapshot(projectRoot);
+  const cached = readCachedLiveAccountSnapshot(projectRoot);
   if (cached) {
     return {
       ...cached,
-      ok: cached.ageMs <= MAX_CACHED_HL_AGE_MS,
-      fallbackReason: parsed?.error || String(result.stderr || result.error?.message || 'hm-defi-status failed').trim(),
+      ok: cached.ageMs <= MAX_CACHED_LIVE_ACCOUNT_AGE_MS,
+      fallbackReason: parsed?.error || String(result.stderr || result.error?.message || 'live-account status failed').trim(),
     };
   }
 
@@ -213,7 +222,7 @@ function capture[private-live-ops]Snapshot(projectRoot, enabled = true) {
       ok: false,
       checkedAt: new Date().toISOString(),
       positions: [],
-      error: 'hm-defi-status returned invalid JSON',
+      error: 'live-account status returned invalid JSON',
       raw: result.stdout,
     };
   }
@@ -233,8 +242,8 @@ function toNumber(value, fallback = null) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function readCached[private-live-ops]Snapshot(projectRoot) {
-  const statePath = path.join(projectRoot, '.squidrun', 'runtime', 'crypto-trading-supervisor-state.json');
+function readCachedLiveAccountSnapshot(projectRoot) {
+  const statePath = path.join(projectRoot, '.squidrun', 'runtime', 'live-account-supervisor-state.json');
   const state = readJson(statePath, null);
   const account = state?.lastResult?.preMarket?.accountSnapshot;
   if (!account) return null;
@@ -255,21 +264,21 @@ function readCached[private-live-ops]Snapshot(projectRoot) {
   };
 }
 
-function inferApprovalMode(reason, hlSnapshot, explicitMode = null) {
+function inferApprovalMode(reason, liveAccountSnapshot, explicitMode = null) {
   if (explicitMode) return explicitMode;
-  const positions = Array.isArray(hlSnapshot?.positions) ? hlSnapshot.positions : [];
-  const unclear = !hlSnapshot?.ok || hlSnapshot?.skipped || Boolean(hlSnapshot?.error);
+  const positions = Array.isArray(liveAccountSnapshot?.positions) ? liveAccountSnapshot.positions : [];
+  const unclear = !liveAccountSnapshot?.ok || liveAccountSnapshot?.skipped || Boolean(liveAccountSnapshot?.error);
   if (unclear || positions.length > 0 || reason === 'supervisor_recovery') {
-    return 'trading_approval_required';
+    return 'live_account_approval_required';
   }
-  return 'non_trading_lower_friction';
+  return 'lower_friction';
 }
 
 function buildRequest(projectRoot, args) {
   const sourceSessionId = readSessionId();
   const openedAt = new Date().toISOString();
   const safeStamp = openedAt.replace(/[:.]/g, '-');
-  const hlSnapshot = capture[private-live-ops]Snapshot(projectRoot, args.captureHl);
+  const liveAccountSnapshot = captureLiveAccountSnapshot(projectRoot, args.captureLiveAccount);
   const requestId = `restart-${sourceSessionId || 'unknown'}-${safeStamp}`;
 
   return {
@@ -281,23 +290,23 @@ function buildRequest(projectRoot, args) {
     reason: args.reason,
     reasonDetails: args.reasonDetails,
     git: getGitSnapshot(projectRoot),
-    hlSnapshot: {
-      checkedAt: hlSnapshot.checkedAt || openedAt,
-      ok: Boolean(hlSnapshot.ok),
-      skipped: Boolean(hlSnapshot.skipped),
-      cached: Boolean(hlSnapshot.cached),
-      ageMs: Number.isFinite(Number(hlSnapshot.ageMs)) ? Number(hlSnapshot.ageMs) : null,
-      accountValue: Number.isFinite(Number(hlSnapshot.accountValue)) ? Number(hlSnapshot.accountValue) : null,
-      withdrawable: Number.isFinite(Number(hlSnapshot.withdrawable)) ? Number(hlSnapshot.withdrawable) : null,
-      positions: Array.isArray(hlSnapshot.positions) ? hlSnapshot.positions : [],
-      error: hlSnapshot.error || null,
-      fallbackReason: hlSnapshot.fallbackReason || null,
+    liveAccountSnapshot: {
+      checkedAt: liveAccountSnapshot.checkedAt || openedAt,
+      ok: Boolean(liveAccountSnapshot.ok),
+      skipped: Boolean(liveAccountSnapshot.skipped),
+      cached: Boolean(liveAccountSnapshot.cached),
+      ageMs: Number.isFinite(Number(liveAccountSnapshot.ageMs)) ? Number(liveAccountSnapshot.ageMs) : null,
+      accountValue: Number.isFinite(Number(liveAccountSnapshot.accountValue)) ? Number(liveAccountSnapshot.accountValue) : null,
+      withdrawable: Number.isFinite(Number(liveAccountSnapshot.withdrawable)) ? Number(liveAccountSnapshot.withdrawable) : null,
+      positions: Array.isArray(liveAccountSnapshot.positions) ? liveAccountSnapshot.positions : [],
+      error: liveAccountSnapshot.error || null,
+      fallbackReason: liveAccountSnapshot.fallbackReason || null,
     },
     memoryChecksums: getMemoryChecksums(projectRoot),
     topPriorities: args.priority.slice(0, 3),
     openWork: args.openWork.map((title) => ({ title, owner: 'architect', status: 'open' })),
     anticipatedQuestions: args.anticipatedQuestion,
-    approvalMode: inferApprovalMode(args.reason, hlSnapshot, args.approvalMode),
+    approvalMode: inferApprovalMode(args.reason, liveAccountSnapshot, args.approvalMode),
   };
 }
 
@@ -312,8 +321,8 @@ function writeHandoff(projectRoot, request, handoffPath) {
     `- branch: ${request.git.branch || 'unknown'}`,
     `- headCommit: ${request.git.headCommit || 'unknown'}`,
     `- dirtyTree: ${request.git.dirtyTree ? 'yes' : 'no'}`,
-    `- hlSnapshot.ok: ${request.hlSnapshot.ok ? 'yes' : 'no'}`,
-    `- hlPositionCount: ${request.hlSnapshot.positions.length}`,
+    `- liveAccountSnapshot.ok: ${request.liveAccountSnapshot.ok ? 'yes' : 'no'}`,
+    `- liveAccountPositionCount: ${request.liveAccountSnapshot.positions.length}`,
     '',
     '## Narrative',
     '',
@@ -401,7 +410,7 @@ if (require.main === module) {
 module.exports = {
   parseArgs,
   getGitSnapshot,
-  capture[private-live-ops]Snapshot,
+  captureLiveAccountSnapshot,
   inferApprovalMode,
   buildRequest,
   main,

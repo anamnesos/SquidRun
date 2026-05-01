@@ -320,18 +320,18 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
 
   test('applies completed antibody coexistence outcomes back into team memory contradictions', async () => {
     const baseline = teamMemoryClaims.createClaim({
-      statement: 'The LINK short thesis is still active and should remain open.',
+      statement: 'The scoped routing thesis is still active and should remain open.',
       owner: 'builder',
       claimType: 'fact',
       session: 'tm-resolution',
-      scopes: ['trading.position-link'],
+      scopes: ['runtime.scoped-routing'],
     }).claim;
     const correction = teamMemoryClaims.createClaim({
-      statement: 'The LINK short thesis is no longer active and should be closed.',
+      statement: 'The scoped routing thesis is no longer active and should be closed.',
       owner: 'builder',
       claimType: 'negative',
       session: 'tm-resolution',
-      scopes: ['trading.position-link'],
+      scopes: ['runtime.scoped-routing'],
     }).claim;
     const snapshot = teamMemoryClaims.createBeliefSnapshot({
       agent: 'builder',

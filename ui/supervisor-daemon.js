@@ -23,30 +23,34 @@ const {
   readSystemCapabilitiesSnapshot,
   resolveSleepExtractionCommandFromSnapshot,
 } = require('./modules/local-model-capabilities');
-const tradingOrchestrator = require('./modules/trading/orchestrator');
-const tradingScheduler = require('./modules/trading/scheduler');
-const tradingWatchlist = require('./modules/trading/watchlist');
-const dynamicWatchlist = require('./modules/trading/dynamic-watchlist');
-const oracleWatchRegime = require('./modules/trading/oracle-watch-regime');
-const tradingRiskEngine = require('./modules/trading/risk-engine');
-const consensusSizer = require('./modules/trading/consensus-sizer');
-const convictionEngine = require('./modules/trading/conviction-engine');
-const rangeStructure = require('./modules/trading/range-structure');
-const [private-live-ops]Client = require('./modules/trading/[private-live-ops]-client');
-const [private-live-ops]NativeLayer = require('./modules/trading/[private-live-ops]-native-layer');
-const agentPositionAttribution = require('./modules/trading/agent-position-attribution');
+const liveOps = require('./modules/live-ops-disabled');
+const {
+  tradingOrchestrator,
+  tradingScheduler,
+  tradingWatchlist,
+  dynamicWatchlist,
+  oracleWatchRegime,
+  tradingRiskEngine,
+  consensusSizer,
+  convictionEngine,
+  rangeStructure,
+  [private-live-ops]Client,
+  [private-live-ops]NativeLayer,
+  agentPositionAttribution,
+  SmartMoneyScanner,
+  createEtherscanProvider,
+  macroRiskGate,
+  marketScannerModule,
+  sparkCapture,
+  predictionTrackerModule,
+  eventVeto,
+  tradeJournal,
+} = liveOps;
 const {
   DEFAULT_LIVE_OPS_MANUAL_ACTIVITY_PATH,
   readManual[private-live-ops]Activity,
   isManual[private-live-ops]ActivityActive,
-} = require('./modules/trading/[private-live-ops]-manual-activity');
-const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
-const macroRiskGate = require('./modules/trading/macro-risk-gate');
-const marketScannerModule = require('./modules/trading/market-scanner');
-const sparkCapture = require('./modules/trading/spark-capture');
-const predictionTrackerModule = require('./modules/trading/prediction-tracker');
-const eventVeto = require('./modules/trading/event-veto');
-const tradeJournal = require('./modules/trading/journal');
+} = liveOps.manualActivity;
 const RUNNING_SUPERVISOR_MAIN = require.main === module;
 
 const CONSULTATION_FUNDING_DIVERGENCE_STRONG_BPS = 50;
@@ -59,11 +63,9 @@ try {
   require('dotenv').config({ path: path.join(getProjectRoot(), '.env'), quiet: true, override: true });
 } catch {}
 
-// Scoped profile MUST NOT spawn wallet-touching trading lanes. The dotenv.config
-// call above uses override:true and would clobber any pre-set process.env values
-// that ui/profile.js applyProfileEnv tried to inject. So we re-apply the scoped
-// disable AFTER the .env load. Belt + suspenders: kill all SQUIDRUN_* trading flags
-// AND blank the HL credentials so even if a lane slipped through, has[private-live-ops]Credentials returns false.
+// Scoped profiles run only public-core coordination lanes. The dotenv.config
+// call above uses override:true, so re-apply disabled legacy live-op flags after
+// loading older local env files.
 if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'scoped') {
   process.env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
   process.env.SQUIDRUN_ORACLE_WATCH = '0';
@@ -177,6 +179,11 @@ function resolveProjectUiScriptPath(scriptName, projectRoot = getProjectRoot()) 
     return normalized.includes('/app.asar/') || normalized.includes('/app.asar.unpacked/');
   });
   return packagedCandidate || candidates[0];
+}
+
+function resolvePrivateLiveOpsScriptPath(scriptName, projectRoot = getProjectRoot()) {
+  const root = path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
+  return path.join(root, '.squidrun', 'private-overlays', 'live-ops', `${scriptName}.js`);
 }
 
 function resolveProjectUiSettingsPath(projectRoot = getProjectRoot()) {
@@ -314,6 +321,16 @@ function toLocalDateKey(value = new Date()) {
 }
 
 function buildOracleWatchHeartbeat(summary = {}, state = {}) {
+  if (summary?.enabled === false) {
+    return {
+      lastTickAt: null,
+      intervalMs: Number(summary?.intervalMs || DEFAULT_ORACLE_WATCH_INTERVAL_MS) || DEFAULT_ORACLE_WATCH_INTERVAL_MS,
+      ageMs: null,
+      stale: false,
+      state: 'disabled',
+      reason: summary?.reason || 'disabled',
+    };
+  }
   const heartbeat = state?.heartbeat || {};
   const lastTickAt = String(
     heartbeat.lastTickAt
@@ -723,8 +740,8 @@ function create[private-live-ops]Executor(options = {}) {
   const env = options.env || process.env;
   const cwd = options.cwd || getProjectRoot();
   const dryRun = options.dryRun === true;
-  const defiExecuteScriptPath = options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', cwd);
-  const defiCloseScriptPath = options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', cwd);
+  const defiExecuteScriptPath = options.defiExecuteScriptPath || resolvePrivateLiveOpsScriptPath('account-execute', cwd);
+  const defiCloseScriptPath = options.defiCloseScriptPath || resolvePrivateLiveOpsScriptPath('account-close', cwd);
   const supervisorEnv = {
     ...env,
     SQUIDRUN_LIVE_OPS_CALLER: 'supervisor',
@@ -1119,15 +1136,25 @@ class SupervisorDaemon {
     this.hmSendScriptPath = path.resolve(String(options.hmSendScriptPath || resolveProjectUiScriptPath('hm-send.js', this.projectRoot)));
     this.hmSendExternalDisabled = options.hmSendExternalDisabled === true
       || (Boolean(process.env.JEST_WORKER_ID) && !options.hmSendScriptPath);
-    this.hmDefiStatusScriptPath = path.resolve(String(options.defiStatusScriptPath || resolveProjectUiScriptPath('hm-defi-status.js', this.projectRoot)));
-    this.hmDefiExecuteScriptPath = path.resolve(String(options.defiExecuteScriptPath || resolveProjectUiScriptPath('hm-defi-execute.js', this.projectRoot)));
-    this.hmDefiCloseScriptPath = path.resolve(String(options.defiCloseScriptPath || resolveProjectUiScriptPath('hm-defi-close.js', this.projectRoot)));
-    this.hmSaylorWatcherScriptPath = path.resolve(String(options.saylorWatcherScriptPath || resolveProjectUiScriptPath('hm-x-watchlist.js', this.projectRoot)));
-    this.hm[private-live-ops]SqueezeDetectorScriptPath = path.resolve(String(options.[private-live-ops]SqueezeDetectorScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-squeeze-detector.js', this.projectRoot)));
-    this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolveProjectUiScriptPath('hm-oracle-watch-engine.js', this.projectRoot)));
-    this.hm[private-live-ops]UnlocksScriptPath = path.resolve(String(options.[private-live-ops]UnlocksScriptPath || resolveProjectUiScriptPath('hm-[private-live-ops]-unlocks.js', this.projectRoot)));
+    this.hmDefiStatusScriptPath = path.resolve(String(options.defiStatusScriptPath || resolvePrivateLiveOpsScriptPath('account-status', this.projectRoot)));
+    this.hmDefiExecuteScriptPath = path.resolve(String(options.defiExecuteScriptPath || resolvePrivateLiveOpsScriptPath('account-execute', this.projectRoot)));
+    this.hmDefiCloseScriptPath = path.resolve(String(options.defiCloseScriptPath || resolvePrivateLiveOpsScriptPath('account-close', this.projectRoot)));
+    this.hmSaylorWatcherScriptPath = path.resolve(String(options.saylorWatcherScriptPath || resolvePrivateLiveOpsScriptPath('external-watchlist', this.projectRoot)));
+    this.hm[private-live-ops]SqueezeDetectorScriptPath = path.resolve(String(options.[private-live-ops]SqueezeDetectorScriptPath || resolvePrivateLiveOpsScriptPath('squeeze-detector', this.projectRoot)));
+    this.hmOracleWatchEngineScriptPath = path.resolve(String(options.oracleWatchEngineScriptPath || resolvePrivateLiveOpsScriptPath('oracle-watch-engine', this.projectRoot)));
+    this.hm[private-live-ops]UnlocksScriptPath = path.resolve(String(options.[private-live-ops]UnlocksScriptPath || resolvePrivateLiveOpsScriptPath('token-unlocks', this.projectRoot)));
     this.hmCoordHeartbeatScriptPath = path.resolve(String(options.coordHeartbeatScriptPath || resolveProjectUiScriptPath('hm-heartbeat.js', this.projectRoot)));
     this.hmAnomalyScriptPath = path.resolve(String(options.anomalyScriptPath || resolveProjectUiScriptPath('hm-anomaly.js', this.projectRoot)));
+    this.liveOpsDisabledReason = 'live_ops_removed_from_public_core';
+    this.liveOpsScriptAvailability = {
+      defiStatus: fs.existsSync(this.hmDefiStatusScriptPath),
+      defiExecute: fs.existsSync(this.hmDefiExecuteScriptPath),
+      defiClose: fs.existsSync(this.hmDefiCloseScriptPath),
+      xWatchlist: fs.existsSync(this.hmSaylorWatcherScriptPath),
+      oracleWatchEngine: fs.existsSync(this.hmOracleWatchEngineScriptPath),
+      [private-live-ops]Unlocks: fs.existsSync(this.hm[private-live-ops]UnlocksScriptPath),
+      [private-live-ops]SqueezeDetector: fs.existsSync(this.hm[private-live-ops]SqueezeDetectorScriptPath),
+    };
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
     this.pollMs = Math.max(1000, Number.parseInt(options.pollMs || DEFAULT_POLL_MS, 10) || DEFAULT_POLL_MS);
     this.heartbeatMs = Math.max(1000, Number.parseInt(options.heartbeatMs || DEFAULT_HEARTBEAT_MS, 10) || DEFAULT_HEARTBEAT_MS);
@@ -1286,7 +1313,8 @@ class SupervisorDaemon {
       lastResult: null,
       lastError: null,
     };
-    this.saylorWatcherEnabled = options.saylorWatcherEnabled !== false
+    this.saylorWatcherEnabled = options.saylorWatcherEnabled === true
+      && this.liveOpsScriptAvailability.xWatchlist
       && this.runtimeEnv.SQUIDRUN_SAYLOR_WATCHER !== '0';
     this.saylorWatcherIntervalMs = Math.max(
       60_000,
@@ -1306,11 +1334,13 @@ class SupervisorDaemon {
       : {
         enabled: false,
         status: 'disabled',
+        reason: this.liveOpsDisabledReason,
         intervalMs: this.saylorWatcherIntervalMs,
         lastRunAt: null,
         lastSummary: null,
       };
-    this.[private-live-ops]SqueezeDetectorEnabled = options.[private-live-ops]SqueezeDetectorEnabled !== false
+    this.[private-live-ops]SqueezeDetectorEnabled = options.[private-live-ops]SqueezeDetectorEnabled === true
+      && this.liveOpsScriptAvailability.[private-live-ops]SqueezeDetector
       && this.runtimeEnv.SQUIDRUN_LIVE_OPS_SQUEEZE_DETECTOR !== '0';
     this.[private-live-ops]SqueezeDetectorIntervalMs = Math.max(
       30_000,
@@ -1332,16 +1362,18 @@ class SupervisorDaemon {
       : {
         enabled: false,
         status: 'disabled',
+        reason: this.liveOpsDisabledReason,
         intervalMs: this.[private-live-ops]SqueezeDetectorIntervalMs,
         lastRunAt: null,
         lastSummary: null,
       };
     this.oracleWatchRulesPath = path.resolve(String(options.oracleWatchRulesPath || DEFAULT_ORACLE_WATCH_RULES_PATH));
     this.oracleWatchStatePath = path.resolve(String(options.oracleWatchStatePath || DEFAULT_ORACLE_WATCH_STATE_PATH));
-    this.oracleShortRegimeStatePath = path.resolve(String(
-      options.oracleShortRegimeStatePath || oracleWatchRegime.DEFAULT_SHARED_SHORT_REGIME_STATE_PATH
-    ));
-    this.oracleWatchEnabled = options.oracleWatchEnabled !== false
+    this.oracleShortRegimeStatePath = options.oracleShortRegimeStatePath
+      || oracleWatchRegime.DEFAULT_SHARED_SHORT_REGIME_STATE_PATH
+      || null;
+    this.oracleWatchEnabled = options.oracleWatchEnabled === true
+      && this.liveOpsScriptAvailability.oracleWatchEngine
       && readProjectWatcherEnabled(this.projectRoot, true)
       && this.runtimeEnv.SQUIDRUN_ORACLE_WATCH !== '0';
     this.oracleWatchIntervalMs = resolveOracleWatchIntervalMs(this.oracleWatchRulesPath);
@@ -1367,13 +1399,14 @@ class SupervisorDaemon {
       : {
         enabled: false,
         status: 'disabled',
+        reason: this.liveOpsDisabledReason,
         intervalMs: this.oracleWatchIntervalMs,
         rulesPath: this.oracleWatchRulesPath,
         statePath: this.oracleWatchStatePath,
         lastRunAt: null,
         lastSummary: null,
       };
-    this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
+    this.cryptoTradingEnabled = options.cryptoTradingEnabled === true
       && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
     this.coordHeartbeatEnabled = options.coordHeartbeatEnabled === true
       || (options.coordHeartbeatEnabled !== false && RUNNING_SUPERVISOR_MAIN);
@@ -1430,12 +1463,14 @@ class SupervisorDaemon {
         strategyMode: this.cryptoTradingStrategyMode,
       }))
       : null;
-    const [private-live-ops]Configured = Boolean(options.[private-live-ops]Executor) || has[private-live-ops]Credentials(this.runtimeEnv);
+    const [private-live-ops]Configured = false;
     this.[private-live-ops]MonitorPollMs = Math.max(
       60_000,
       Number.parseInt(options.[private-live-ops]MonitorPollMs || DEFAULT_LIVE_OPS_MONITOR_POLL_MS, 10) || DEFAULT_LIVE_OPS_MONITOR_POLL_MS
     );
-    this.[private-live-ops]MonitorEnabled = options.[private-live-ops]MonitorEnabled !== false && [private-live-ops]Configured;
+    this.[private-live-ops]MonitorEnabled = options.[private-live-ops]MonitorEnabled === true
+      && this.liveOpsScriptAvailability.defiStatus
+      && [private-live-ops]Configured;
     this.[private-live-ops]MonitorTimer = null;
     this.[private-live-ops]MonitorPromise = null;
     this.defiPeakPnlPath = options.defiPeakPnlPath || DEFAULT_DEFI_PEAK_PNL_PATH;
@@ -1457,7 +1492,8 @@ class SupervisorDaemon {
       }
       : {
         enabled: false,
-        status: [private-live-ops]Configured ? 'manual_opt_out' : 'credentials_unavailable',
+        status: 'disabled',
+        reason: this.liveOpsDisabledReason,
         pollMs: this.[private-live-ops]MonitorPollMs,
         checkedAt: null,
         warnings: [],
@@ -1470,7 +1506,7 @@ class SupervisorDaemon {
       : null;
     const positionAttributionReconciliationRequested = options.positionAttributionReconciliationEnabled === true
       || (options.positionAttributionReconciliationEnabled !== false && !process.env.JEST_WORKER_ID);
-    this.positionAttributionReconciliationEnabled = positionAttributionReconciliationRequested
+    this.positionAttributionReconciliationEnabled = false && positionAttributionReconciliationRequested
       && (Boolean(resolve[private-live-ops]WalletAddress(this.runtimeEnv)) || Boolean(this.positionAttributionSnapshotProvider));
     this.lastPositionAttributionReconciliationSummary = this.positionAttributionReconciliationEnabled
       ? {
@@ -1485,7 +1521,8 @@ class SupervisorDaemon {
       }
       : {
         enabled: false,
-        status: resolve[private-live-ops]WalletAddress(this.runtimeEnv) ? 'manual_opt_out' : 'wallet_unavailable',
+        status: 'disabled',
+        reason: this.liveOpsDisabledReason,
         statePath: this.positionAttributionStatePath,
         checkedAt: null,
         liveCount: 0,
@@ -1493,7 +1530,7 @@ class SupervisorDaemon {
         createdCount: 0,
         quarantinedCount: 0,
       };
-    const [private-live-ops]AutomationRequested = options.[private-live-ops]ExecutionEnabled !== false
+    const [private-live-ops]AutomationRequested = options.[private-live-ops]ExecutionEnabled === true
       && this.runtimeEnv.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0';
     this.[private-live-ops]ExecutionEnabled = Boolean(this.cryptoTradingEnabled && [private-live-ops]AutomationRequested && [private-live-ops]Configured);
     this.[private-live-ops]ExecutionDryRun = options.[private-live-ops]ExecutionDryRun === true
@@ -1547,7 +1584,7 @@ class SupervisorDaemon {
           enabled: false,
           status: 'disabled',
           dryRun: this.[private-live-ops]ExecutionDryRun,
-          reason: [private-live-ops]Configured ? 'manual_opt_out' : 'credentials_unavailable',
+          reason: this.liveOpsDisabledReason,
           accountValue: null,
           position: null,
           action: null,
@@ -1607,8 +1644,10 @@ class SupervisorDaemon {
 
     this.newsVetoModule = options.newsVetoModule || eventVeto;
     this.[private-live-ops]Enabled = options.[private-live-ops]Enabled === true
+      && this.liveOpsScriptAvailability.[private-live-ops]Unlocks
       || (
-        options.[private-live-ops]Enabled !== false
+        false
+        && options.[private-live-ops]Enabled !== false
         && RUNNING_SUPERVISOR_MAIN
         && process.env.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0'
       );
@@ -1633,6 +1672,7 @@ class SupervisorDaemon {
       : {
         enabled: false,
         status: 'disabled',
+        reason: this.liveOpsDisabledReason,
         intervalMinutes: this.[private-live-ops]IntervalMinutes,
         lastProcessedAt: null,
         nextEvent: null,
@@ -2710,7 +2750,7 @@ class SupervisorDaemon {
 
   async maybeRunSaylorWatcher(nowMs = Date.now()) {
     if (!this.saylorWatcherEnabled || this.stopping) {
-      return { ok: false, skipped: true, reason: 'x_watchlist_disabled' };
+      return { ok: false, skipped: true, reason: this.liveOpsDisabledReason };
     }
     if (this.saylorWatcherPromise) {
       return this.saylorWatcherPromise;
