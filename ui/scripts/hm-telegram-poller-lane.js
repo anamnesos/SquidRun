@@ -12,6 +12,7 @@ const telegramPoller = require('../modules/telegram-poller');
 const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.log');
+const KEEPALIVE_INTERVAL_MS = 60_000;
 
 function usage() {
   console.log('Usage: node ui/scripts/hm-telegram-poller-lane.js <start|stop|status|run>');
@@ -95,6 +96,7 @@ function runLane() {
   fs.mkdirSync(path.dirname(PID_PATH), { recursive: true });
   fs.writeFileSync(PID_PATH, String(process.pid), 'utf8');
   writeLog(`[start] pid=${process.pid}`);
+  const keepAliveTimer = setInterval(() => {}, KEEPALIVE_INTERVAL_MS);
 
   const started = telegramPoller.start({
     env: {
@@ -118,6 +120,7 @@ function runLane() {
   }
 
   const shutdown = () => {
+    clearInterval(keepAliveTimer);
     try {
       telegramPoller.stop();
     } catch {
