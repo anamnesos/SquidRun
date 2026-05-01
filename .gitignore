@@ -36,6 +36,9 @@ __pycache__/
 *.swo
 
 # Claude Code local permissions (machine-specific)
+.claude/
+.gemini/
+.mcp.json
 .claude/settings.local.json
 
 # Electron
@@ -45,16 +48,17 @@ ui/daemon.log
 *.pid.lock
 
 # Runtime state (regenerated)
+workspace/
+knowledge/
+test-results/
+vision_test/
+[private-live-ops]-current.yml
+25
 workspace/state.json
 workspace/console.log
 workspace/triggers/*.txt
 .hivemind/
 .squidrun/*
-!.squidrun/operator-registry.template.json
-!.squidrun/coord/
-.squidrun/coord/*
-!.squidrun/coord/drift-checklist.json
-!.squidrun/coord/inbox-protocol.md
 
 # Playwright MCP browser-automation artifacts (screenshots, downloads, recordings)
 # History contains a 204MB video at 8f8d2ee that blocks pushes to GitHub.
@@ -128,6 +132,12 @@ workspace/all_claims.json
 workspace/capture.ps1
 workspace/oracle-qa.js
 workspace/oracle-test.js
+tools/check-private-profile-photos.js
+tools/check-telegram-updates.js
+tools/download-private-profile-photos.js
+tools/download-gmail-attachments.js
+tools/get-recent-photos.js
+tools/grab-telegram-files.js
 
 # Runtime state (regenerated each session)
 workspace/context-snapshots/
