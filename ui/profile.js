@@ -70,11 +70,8 @@ function parseProfileArg(argv = []) {
 function applyProfileEnv(profileName, env = process.env) {
   const normalized = normalizeProfileName(profileName);
   env.SQUIDRUN_PROFILE = normalized;
-  // Scoped profile MUST NOT spawn wallet-touching trading lanes — it shares the
-  // same .env wallet with the main profile and would cause duplicate HL polling
-  // (root cause of the 429 wall during live betting). Force every wallet-touching
-  // lane to disabled at supervisor construction time, and blank out HL credentials
-  // as defense in depth so any lane that slips through cannot reach the wallet.
+  // Scoped profiles run only the public-core coordination lanes. Keep removed
+  // live-ops flags disabled as defense in depth for older env files.
   if (normalized === 'scoped') {
     env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
     env.SQUIDRUN_ORACLE_WATCH = '0';

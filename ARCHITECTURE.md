@@ -11,7 +11,6 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 5. PTY runtime is managed by daemon client (`ui/daemon-client.js`) connecting to `ui/terminal-daemon.js`; panes attach through renderer/hidden-host bridges.
 6. Watchers (`ui/modules/watcher.js` + `ui/modules/watcher-worker.js`) monitor workspace/trigger/message paths and route payloads through `ui/modules/triggers.js`.
 7. IPC handlers are registered via `ui/modules/ipc-handlers.js` + `ui/modules/ipc/handler-registry.js`; websocket dispatch uses `ui/modules/websocket-server.js` / `ui/modules/websocket-runtime.js`.
-8. `ui/supervisor-daemon.js` runs a user-session durable background supervisor backed by SQLite for queued async work and autonomous trading cadences; it survives UI closure and writes PID/status/task logs under `.squidrun/runtime/`.
 9. Startup and coordination state is continuously materialized into `.squidrun/` (status, handoffs, snapshots, runtime ledgers).
 
 ## 3) KEY FILE MAP
@@ -175,7 +174,6 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/shared-state.js: Exports init, getState, getChangesSince, getChangelogForPane, ....
 - ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
-- ui/modules/startup-transcript-context.js: Startup-recovery helper that detects active trading/case/comms items, queries the transcript index, and formats a compact cited transcript-recall block for pane SessionStart hooks.
 - ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
 - ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, api-keys).
@@ -215,22 +213,6 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
 - ui/modules/transcript-index.js: Claude transcript indexing/search module that parses `~/.claude/projects/<project>/*.jsonl` into cited runtime records for startup recovery and transcript-backed memory retrieval.
-- ui/modules/trading/agent-attribution.js: Persistent prediction-attribution tracker that records per-agent calls and later outcomes, then computes asset-class-specific stats and leaderboards for future consensus vote weighting.
-- ui/modules/trading/broker-adapter.js: Unified trading-broker factory that presents the common account/positions/orders/snapshots/news interface used by the trading stack and dispatches requests to [private-live-ops] or [private-live-ops] implementations.
-- ui/modules/trading/consultation-store.js: Disk-backed consultation request/response layer that writes full market context to runtime files, dispatches lightweight hm-send prompts to the live pane agents, and correlates JSON replies from the comms journal by requestId for real multi-model trading debate.
-- ui/modules/trading/data-ingestion.js: Trading data access layer for watchlist snapshots, bars, news, SEC filings, and Yahoo fallbacks; broker-routes watchlist snapshot/news fetches across the surviving [private-live-ops] and [private-live-ops] broker surfaces.
-- ui/modules/trading/bracket-manager.js: Pure [private-live-ops] bracket-state planner that splits entry size into TP1/runner legs, classifies reduce-only stop/TP orders, and decides when the remainder stop must move to breakeven after a partial take-profit fill.
-- ui/modules/trading/dynamic-watchlist.js: Persistent static-plus-dynamic watchlist manager that lets smart-money sources add sourced tickers with expiry while preserving a unified active watchlist for the trading stack.
-- ui/modules/trading/executor.js: Broker-routed order execution and account/position access layer for [private-live-ops] and [private-live-ops] orders, liquidation, and account reads through the shared broker adapter.
-- ui/modules/trading/ibkr-client.js: [private-live-ops] client wrapper built on `@stoqey/ib`; handles env-based connection config, account summary reads, positions, stock order submission, market-data snapshots, and a unified [private-live-ops] broker surface for Asian-market routing.
-- ui/modules/trading/manual-stop-overrides.js: Runtime persistence + guard evaluation for manual wick-clearance stop widens so automated trailing logic can honor explicit stop ownership until break-even-or-better or bracket takeover.
-- ui/modules/trading/orchestrator.js: Phase coordinator for the autonomous trading workflow; stores per-ticker agent signals, auto-backfills missing Architect/Builder/Oracle signals from the live signal producer during premarket/consensus, runs consensus/risk gating, executes market-open and midday actions, journals end-of-day summaries, and chains the full trading-day loop.
-- ui/modules/trading/portfolio-tracker.js: Unified cross-market portfolio snapshot builder that aggregates optional [private-live-ops] and Solana-token exposure into one capital and risk view with persisted day-start / peak-equity state.
-- ui/modules/trading/spark-capture.js: Spark-catalyst monitor core that polls Upbit listing notices, diffs [private-live-ops] universe additions, routes [private-live-ops] unlocks into a deduped event stream, and writes manual-only fire plans plus persisted spark state under `.squidrun/runtime/`.
-- ui/modules/trading/signal-producer.js: Live market-data signal generator for trading agents; fetches broker-routed watchlist snapshots, 5-day bars, and routed news, scores momentum/news/volume with agent-specific weighting, and returns/registers BUY/SELL/HOLD signals for the orchestrator.
-- ui/modules/trading/smart-money-scanner.js: Event-driven smart-money poller that buffers large-wallet transfers, detects same-token convergence, persists scanner state, and emits immediate trigger events so supervisor/orchestrator wiring can wake consensus outside the normal cron cadence.
-- ui/modules/trading/wallet-tracker.js: Smart-money wallet registry that tracks named Solana/Ethereum wallets, supports mock/stub move ingestion before live API keys exist, and surfaces multi-wallet convergence signals for later dynamic-watchlist and scorer integration.
-- ui/modules/trading/watchlist.js: Backward-compatible facade over the dynamic watchlist that keeps existing trading callers on the same API while the underlying registry adds persistence, source tagging, and expiry-aware entries.
 - ui/modules/token-utils.js: Exports estimateTokens, truncateToTokenBudget.
 - ui/modules/transition-ledger.js: Exports init, stop, reset, getTransition, ....
 - ui/modules/triggers.js: Exports init, setSelfHealing, setPluginManager, setWatcher, ....
@@ -254,12 +236,6 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-claim.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-comms.js: CLI utility that reads comms history from `.squidrun/runtime/evidence-ledger.db` via `node:sqlite`.
 - ui/scripts/hm-compat-count.js: Utility script for compatibility/counting diagnostics used in release and audit workflows.
-- ui/scripts/hm-defi-close.js: [private-live-ops] position-close CLI that cancels open TP/SL orders, submits a reduce-only IOC close order, and verifies the position is flat.
-- ui/scripts/hm-defi-execute.js: DeFi execution pipeline CLI that bridges funds, swaps collateral, deposits to [private-live-ops], and opens the configured leveraged perp trade.
-- ui/scripts/hm-spark-monitor.js: Manual/automation entrypoint for spark-capture scans; emits JSON summaries for dry runs and is wired into the supervisor spark-monitor lane.
-- ui/scripts/arch-ordi-stop-move.js: Manual [private-live-ops] stop-widen helper that resolves/cancels the exact live stop `oid`, places the replacement stop, and records a runtime manual-stop override for downstream management guards.
-- ui/scripts/hm-[private-live-ops]-bracket-manager.js: [private-live-ops] bracket-management CLI that inspects the live position plus reduce-only orders, detects TP1 fills, cancels stale stops, and moves the remainder stop to breakeven on the normal bracket path.
-- ui/scripts/hm-trailing-stop.js: Trailing-stop CLI that tightens exchange-native stops from live price while honoring runtime manual-stop override guards before cancel/replace.
 - ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
 - ui/scripts/hm-experiment.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-github.js: CLI utility that sends/queries runtime actions via WebSocket.

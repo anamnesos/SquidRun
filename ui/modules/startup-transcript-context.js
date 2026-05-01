@@ -61,23 +61,6 @@ function readFileIfExists(filePath) {
   }
 }
 
-function extractTradingActiveItems(content = '') {
-  const lines = String(content || '').split(/\r?\n/);
-  const results = [];
-  for (const line of lines) {
-    const trimmed = trimText(line);
-    if (!trimmed) continue;
-    if (/^- \*\*(Open positions|[private-live-ops] balance|Thesis|Stop loss|Take profit)\*\*:/i.test(trimmed)) {
-      results.push(trimmed.replace(/^- /, ''));
-      continue;
-    }
-    if (/^- (ETH bounced|If bounce fades|Cascading liquidation)/i.test(trimmed)) {
-      results.push(trimmed.replace(/^- /, ''));
-    }
-  }
-  return results;
-}
-
 function extractCaseActiveItems(content = '') {
   const lines = String(content || '').split(/\r?\n/);
   const results = [];
@@ -175,9 +158,7 @@ function extractCommsActiveItems(rows = []) {
 
 function buildActiveItems(options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
-  const tradingPath = resolveKnowledgePath(projectRoot, 'trading-operations.md');
   const casePath = resolveKnowledgePath(projectRoot, 'case-operations.md');
-  const tradingContent = readFileIfExists(tradingPath);
   const caseContent = readFileIfExists(casePath);
   const recentComms = readRecentComms({
     projectRoot,
@@ -186,7 +167,6 @@ function buildActiveItems(options = {}) {
     windowKey: options.windowKey,
   });
 
-  const tradingItems = extractTradingActiveItems(tradingContent).slice(0, 4);
   const caseItems = extractCaseActiveItems(caseContent).slice(0, 3);
   const commsItems = extractCommsActiveItems(recentComms).slice(0, 2);
   const windowKey = normalizeWindowKey(options.windowKey);
@@ -195,21 +175,11 @@ function buildActiveItems(options = {}) {
       ...caseItems,
       ...commsItems,
     ]
-    : (windowKey === 'main'
-      ? [
-        ...tradingItems,
-        ...commsItems,
-      ]
-      : [
-        ...tradingItems,
-        ...caseItems,
-        ...commsItems,
-      ]);
+    : (windowKey === 'main' ? commsItems : [...caseItems, ...commsItems]);
 
   return {
     items: unique(items).slice(0, Math.max(1, Number.parseInt(options.maxActiveItems, 10) || DEFAULT_MAX_ACTIVE_ITEMS)),
     sources: {
-      tradingPath,
       casePath,
       recentCommsCount: recentComms.length,
     },
@@ -360,7 +330,6 @@ module.exports = {
   ensureTranscriptIndexAvailable,
   readRecentComms,
   _internals: {
-    extractTradingActiveItems,
     extractCaseActiveItems,
     extractCommsActiveItems,
     retrieveTranscriptMatches,

@@ -26,7 +26,7 @@ const STOPWORDS = new Set([
   'without', 'you', 'your',
 ]);
 const NEGATIVE_CLAIM_PATTERN = /\b(can(?:not|'t)|unable|don't|do not|doesn't|does not|no|not|without|missing|lack|lacking|unavailable)\b/i;
-const CATEGORY_ORDER = ['trading', 'memory', 'comms', 'visual', 'external-integrations', 'system'];
+const CATEGORY_ORDER = ['memory', 'comms', 'visual', 'external-integrations', 'system'];
 
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice() : [];
@@ -254,9 +254,6 @@ function inferCategories(fileId, description, usageLines, subcommands) {
   }
   const categories = [];
 
-  if (/(defi|[private-live-ops]|trade|trading|backtest|crypto|perp|broker|deposit|swap|bridge)/.test(haystack)) {
-    categories.push('trading');
-  }
   if (/memory/.test(haystack)) {
     categories.push('memory');
   }
@@ -266,7 +263,7 @@ function inferCategories(fileId, description, usageLines, subcommands) {
   if (/(visual|screenshot|image|subtitle|photo|capture|smoke)/.test(haystack)) {
     categories.push('visual');
   }
-  if (/(github|telegram|sms|twitter|reddit|[private-live-ops]|defi|bridge|twilio|external)/.test(haystack)) {
+  if (/(github|telegram|sms|twitter|reddit|twilio|external)/.test(haystack)) {
     categories.push('external-integrations');
   }
 

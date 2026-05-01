@@ -144,9 +144,6 @@ function deriveTags(text, speaker = '') {
   if (/(^|\b)(?:telegram|chat\s*2222222222|2222222222|Scoped|scoped|scoped-contact)/i.test(value)) {
     tags.push('telegram');
   }
-  if (/(^|\b)(?:[private-live-ops]|macro regime|consultation|btc\/usd|eth\/usd)/i.test(value)) {
-    tags.push('trading');
-  }
   if (speaker === 'user' && lowered.includes('james')) {
     tags.push('user_reference');
   }

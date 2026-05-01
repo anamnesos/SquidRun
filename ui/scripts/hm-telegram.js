@@ -294,7 +294,7 @@ function resolveOutboundChatId(config, options = {}) {
   const explicit = normalizeChatId(opts.chatId) || normalizeChatId(opts.telegramChatId);
   if (explicit) return explicit;
   // Reply context inheritance is OPT-IN only. Without opts.useReplyContext=true,
-  // unsolicited outbound (trading alerts, notifications) goes to the default chat,
+  // unsolicited outbound notifications go to the default chat,
   // NOT to whoever last messaged the bot. Prevents cross-user leaks.
   if (opts.useReplyContext === true) {
     const fromContext = resolveReplyContextChatId(config, opts);

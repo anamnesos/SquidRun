@@ -19,7 +19,6 @@ const DEFAULT_RECALL_AUDIT_MAX_BYTES = Math.max(
   1024 * 1024,
   Number.parseInt(process.env.SQUIDRUN_RECALL_AUDIT_MAX_BYTES || `${10 * 1024 * 1024}`, 10) || (10 * 1024 * 1024)
 );
-const SUPERVISOR_STATUS_PATH = resolveCoordPath(path.join('runtime', 'supervisor-status.json'));
 const APP_STATUS_PATH = path.join(getProjectRoot() || process.cwd(), '.squidrun', 'app-status.json');
 const RECALL_AUDIT_PATH = resolveCoordPath(path.join('runtime', 'memory-recall-audit.jsonl'), { forWrite: true });
 const RECALL_BLOCK_START = '[SQUIDRUN RECALL START]';
@@ -38,11 +37,6 @@ const SCOPED_PROFILE_BOOST_TERMS = Object.freeze([
 const JAMES_DIRECT_BOOST_TERMS = Object.freeze([
   'james',
   'kim',
-  '[private-live-ops]',
-  'positions',
-  'pnl',
-  'stop loss',
-  'giveback',
   'squidrun',
   'architecture',
   'memory recall',
@@ -50,7 +44,6 @@ const JAMES_DIRECT_BOOST_TERMS = Object.freeze([
   'architect builder oracle',
   'feedback history',
   'runtime',
-  'trading',
 ]);
 
 let sharedMemorySearchIndex = null;
@@ -372,8 +365,8 @@ function buildStartupRecallQuery(context = {}) {
     '3': 'oracle',
   }[paneId] || 'agent');
   const seed = {
-    architect: 'current session priorities recent decisions user preferences active investigations blockers scoped james telegram evidence trading',
-    builder: 'current session priorities recent decisions user preferences active investigations blockers runtime implementation supervisor trading scoped james telegram',
+    architect: 'current session priorities recent decisions user preferences active investigations blockers scoped james telegram evidence',
+    builder: 'current session priorities recent decisions user preferences active investigations blockers runtime implementation supervisor scoped james telegram',
     oracle: 'current session priorities recent decisions user preferences active investigations blockers research documentation evidence scoped james telegram',
   };
   return seed[roleSpecific] || seed.architect;
@@ -390,7 +383,6 @@ function buildTimeAwareness(input = {}) {
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const appStatus = asObject(input.appStatus || readJsonFileSafe(APP_STATUS_PATH));
-  const supervisorStatus = asObject(input.supervisorStatus || readJsonFileSafe(SUPERVISOR_STATUS_PATH));
   const commsRows = Array.isArray(input.commsRows)
     ? input.commsRows
     : queryCommsJournalEntries({
@@ -422,11 +414,7 @@ function buildTimeAwareness(input = {}) {
   }
 
   const consultationFromComms = findLatestCommsTimestamp(commsRows, (row) => /consultation-\d+/i.test(asString(row.rawBody || row.body || '', '')));
-  const consultationMs = selectLatestTimestamp(
-    override.lastConsultationAtMs,
-    supervisorStatus?.cryptoTradingAutomation?.lastProcessedAt,
-    consultationFromComms?.timestampMs
-  );
+  const consultationMs = selectLatestTimestamp(override.lastConsultationAtMs, consultationFromComms?.timestampMs);
   raw.lastConsultationAtMs = consultationMs;
   if (Number.isFinite(consultationMs)) {
     lines.push(
@@ -436,16 +424,6 @@ function buildTimeAwareness(input = {}) {
         zoneId: 'America/Los_Angeles',
       })}`
     );
-  }
-
-  const [private-live-ops]CheckMs = selectLatestTimestamp(
-    override.last[private-live-ops]CheckAtMs,
-    supervisorStatus?.[private-live-ops]PositionMonitor?.lastSummary?.checkedAt,
-    supervisorStatus?.[private-live-ops]PositionMonitor?.checkedAt
-  );
-  raw.last[private-live-ops]CheckAtMs = [private-live-ops]CheckMs;
-  if (Number.isFinite([private-live-ops]CheckMs)) {
-    lines.push(`Last [private-live-ops] check: ${describeElapsedSince([private-live-ops]CheckMs, { nowMs })}`);
   }
 
   if (shouldBoostScopedProfile(input, input.message || input.text || input.query || '')) {

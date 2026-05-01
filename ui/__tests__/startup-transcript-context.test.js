@@ -21,17 +21,12 @@ describe('startup-transcript-context', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  test('builds compact main-window startup context from trading knowledge, recent comms, and transcript index', () => {
-    const tradingPath = path.join(tempRoot, 'workspace', 'knowledge', 'trading-operations.md');
+  test('builds compact main-window startup context from recent comms and transcript index', () => {
     const casePath = path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md');
     const indexPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index.jsonl');
     const metaPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index-meta.json');
     const dbPath = path.join(tempRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
 
-    fs.writeFileSync(tradingPath, [
-      '- **Open positions**: ETH SHORT -1.7113 @ $2,008.10',
-      '- **Thesis**: dead cat bounce failed at $2,020',
-    ].join('\n'));
     fs.writeFileSync(casePath, [
       '### Case 3: ExampleShop (ExampleShop) — Counterfeit Goods',
       '| 11 | Monday 3/30 evidence call with team lead | Scoped action | ⚠️ WAITING |',
@@ -52,9 +47,9 @@ describe('startup-transcript-context', () => {
         sourceCitation: 'C:\\archive\\session.jsonl:20',
         speaker: 'assistant',
         timestamp: '2026-03-28T21:00:00.000Z',
-        text: 'The live [private-live-ops] ETH short is real money and should be checked first.',
-        entities: ['[private-live-ops]', 'ETH'],
-        tags: ['trading'],
+        text: 'The session-start parser recovery is urgent and should be checked first.',
+        entities: ['session-start parser'],
+        tags: ['decision'],
       }),
     ].join('\n'));
     fs.writeFileSync(metaPath, JSON.stringify({
@@ -70,13 +65,15 @@ describe('startup-transcript-context', () => {
         sender_role TEXT,
         target_role TEXT,
         channel TEXT,
-        raw_body TEXT
+        raw_body TEXT,
+        session_id TEXT,
+        metadata_json TEXT
       );
     `);
     db.prepare(`
-      INSERT INTO comms_journal (sender_role, target_role, channel, raw_body)
-      VALUES (?, ?, ?, ?)
-    `).run('architect', 'builder', 'ws', 'Parser shipped and verified. Now wire it into session-start for ExampleShop and ETH short startup recovery.');
+      INSERT INTO comms_journal (sender_role, target_role, channel, raw_body, session_id, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('architect', 'builder', 'ws', 'Parser shipped and verified. Now wire it into session-start recovery.', 'app-session-1', '{}');
     db.close();
 
     const result = buildStartupTranscriptContext({
@@ -89,21 +86,18 @@ describe('startup-transcript-context', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.activeItems.join('\n')).toContain('Open positions');
     expect(result.activeItems.join('\n')).not.toContain('ExampleShop');
     expect(result.context).toContain('Recovered Transcript Context');
-    expect(result.context).toContain('[private-live-ops] ETH short');
+    expect(result.context).toContain('session-start parser recovery');
     expect(result.context).toContain('C:\\archive\\session.jsonl:20');
   });
 
   test('defaults missing windowKey to main so Scoped case items are not force-loaded into main startup context', () => {
-    const tradingPath = path.join(tempRoot, 'workspace', 'knowledge', 'trading-operations.md');
     const casePath = path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md');
     const indexPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index.jsonl');
     const metaPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index-meta.json');
     const dbPath = path.join(tempRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
 
-    fs.writeFileSync(tradingPath, '- **Open positions**: ETH SHORT -1.7113 @ $2,008.10');
     fs.writeFileSync(casePath, [
       '### Case 3: ExampleShop (ExampleShop) — Counterfeit Goods',
       '| 11 | Monday 3/30 evidence call with team lead | Scoped action | ⚠️ WAITING |',
@@ -148,19 +142,16 @@ describe('startup-transcript-context', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.activeItems.join('\n')).toContain('Open positions');
     expect(result.activeItems.join('\n')).not.toContain('ExampleShop');
     expect(result.activeItems.join('\n')).not.toContain('Scoped case update');
   });
 
   test('scopes recent comms to the requested side window during startup recovery', () => {
-    const tradingPath = path.join(tempRoot, 'workspace', 'knowledge', 'trading-operations.md');
     const casePath = path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md');
     const indexPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index.jsonl');
     const metaPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index-meta.json');
     const dbPath = path.join(tempRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
 
-    fs.writeFileSync(tradingPath, '- **Open positions**: ETH SHORT -1.7113 @ $2,008.10');
     fs.writeFileSync(casePath, [
       '### Case 3: ExampleShop (ExampleShop) — Counterfeit Goods',
       '| 11 | Monday 3/30 evidence call with team lead | Scoped action | ⚠️ WAITING |',
@@ -217,7 +208,6 @@ describe('startup-transcript-context', () => {
     expect(result.ok).toBe(true);
     expect(result.activeItems.join('\n')).toContain('ExampleShop');
     expect(result.activeItems.join('\n')).toContain('Scoped chat should appear in side startup only');
-    expect(result.activeItems.join('\n')).not.toContain('Open positions');
     expect(result.activeItems.join('\n')).not.toContain('Main chat should stay main-only');
   });
 });

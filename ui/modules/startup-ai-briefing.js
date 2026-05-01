@@ -69,7 +69,7 @@ function stripLiveAccountBlocks(markdown) {
   for (const line of String(markdown || '').split(/\r?\n/)) {
     if (/^#{1,3}\s+/.test(line)) {
       const lower = line.toLowerCase();
-      skip = /live account|verified live|live positions|open positions|[private-live-ops].*snapshot/.test(lower);
+      skip = /live account|verified live|live positions|open positions/.test(lower);
     }
     if (!skip) out.push(line);
   }
@@ -389,14 +389,10 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function load[private-live-ops]Client() {
-  try {
-    return require('./trading/[private-live-ops]-client');
-  } catch (error) {
-    return {
-      __loadError: error,
-    };
-  }
+function loadLiveAccountClient() {
+  return {
+    __loadError: new Error('live ops removed from public core'),
+  };
 }
 
 function normalizeBriefingPosition(position = {}) {
@@ -413,48 +409,48 @@ function normalizeBriefingPosition(position = {}) {
   };
 }
 
-async function resolveLiveDefiSnapshot(options = {}) {
+async function resolveLiveAccountSnapshot(options = {}) {
   if (options.liveSnapshot && typeof options.liveSnapshot === 'object') {
     return options.liveSnapshot;
   }
 
   try {
-    const [private-live-ops]Client = load[private-live-ops]Client();
-    if ([private-live-ops]Client?.__loadError) {
+    const liveAccountClient = loadLiveAccountClient();
+    if (liveAccountClient?.__loadError) {
       return {
         ok: false,
         checkedAt: new Date().toISOString(),
-        error: [private-live-ops]Client.__loadError.message || '[private-live-ops]_client_load_failed',
+        error: liveAccountClient.__loadError.message || 'live_account_client_load_failed',
         positions: [],
       };
     }
-    const walletAddress = typeof [private-live-ops]Client.resolveWalletAddress === 'function'
-      ? [private-live-ops]Client.resolveWalletAddress(options.env || process.env)
+    const accountId = typeof liveAccountClient.resolveAccountId === 'function'
+      ? liveAccountClient.resolveAccountId(options.env || process.env)
       : '';
-    if (!walletAddress) {
+    if (!accountId) {
       return {
         ok: false,
         checkedAt: new Date().toISOString(),
-        error: 'missing_wallet_address',
+        error: 'missing_account_id',
         positions: [],
       };
     }
 
     const [account, positions] = await Promise.all([
-      [private-live-ops]Client.getAccountSnapshot({
+      liveAccountClient.getAccountSnapshot({
         env: options.env || process.env,
-        walletAddress,
+        accountId,
       }),
-      [private-live-ops]Client.getOpenPositions({
+      liveAccountClient.getOpenPositions({
         env: options.env || process.env,
-        walletAddress,
+        accountId,
       }),
     ]);
 
     return {
       ok: true,
       checkedAt: new Date().toISOString(),
-      walletAddress,
+      accountId,
       accountValue: toNumber(account?.equity, 0),
       withdrawable: toNumber(account?.cash, 0),
       positions: (Array.isArray(positions) ? positions : []).map((position) => normalizeBriefingPosition(position)),
@@ -479,7 +475,7 @@ function formatLiveSnapshotBlock(liveSnapshot = {}) {
 
   const positions = Array.isArray(liveSnapshot.positions) ? liveSnapshot.positions : [];
   const lines = [
-    'Verified live [private-live-ops] snapshot:',
+    'Verified live account snapshot:',
     `- checkedAt: ${toText(liveSnapshot.checkedAt, 'unknown')}`,
     `- accountValue: ${toNumber(liveSnapshot.accountValue, 0)}`,
     `- withdrawable: ${toNumber(liveSnapshot.withdrawable, 0)}`,
@@ -632,7 +628,7 @@ async function generateStartupBriefing(options = {}) {
   const transcriptCorpus = buildTranscriptCorpus(transcriptFiles, options);
   const outputPath = resolveBriefingPath(options);
   const statusPath = resolveStatusPath(options);
-  const liveSnapshot = await resolveLiveDefiSnapshot(options);
+  const liveSnapshot = await resolveLiveAccountSnapshot(options);
   const canonicalSources = resolveCanonicalSourceFiles(options);
   const canonicalSourceBlock = buildCanonicalSourceBlock(canonicalSources, options);
 
@@ -718,7 +714,7 @@ module.exports = {
     buildBriefingPrompt,
     formatBriefingDocument,
     requestStartupBriefing,
-    resolveLiveDefiSnapshot,
+    resolveLiveAccountSnapshot,
     formatLiveSnapshotBlock,
     stripLiveAccountBlocks,
     resolveCanonicalSourceFiles,

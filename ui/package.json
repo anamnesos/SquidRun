@@ -46,8 +46,7 @@
     "memory:extract": "node scripts/hm-memory-extract.js",
     "memory:registry": "node scripts/hm-memory-registry.js",
     "memory:promote": "node scripts/hm-memory-promote.js",
-    "memory:api": "node scripts/hm-memory-api.js",
-    "trading:backtest": "node scripts/hm-backtest.js"
+    "memory:api": "node scripts/hm-memory-api.js"
   },
   "keywords": [
     "electron",
@@ -148,7 +147,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
-    "@stoqey/ib": "^1.5.3",
     "@xenova/transformers": "^2.17.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
@@ -160,7 +158,6 @@
     "chokidar": "^3.6.0",
     "chrome-launcher": "^1.2.1",
     "dotenv": "^17.2.3",
-    "ethers": "^5.8.0",
     "lighthouse": "^13.0.3",
     "node-pty": "^1.1.0",
     "pixelmatch": "^7.1.0",

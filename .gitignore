@@ -52,7 +52,6 @@ workspace/
 knowledge/
 test-results/
 vision_test/
-[private-live-ops]-current.yml
 25
 workspace/state.json
 workspace/console.log
@@ -123,7 +122,6 @@ chess-current-state.png
 shorts-reference.png
 full-jest*.log
 .claude/*.lock
-[private-live-ops]_info.json
 workspace/tmp-*.js
 workspace/scripts/*.ps1
 workspace/inspect_dbs*.js
@@ -174,7 +172,6 @@ workspace/logs/
 
 # Sensitive operational data (public repo — keep private)
 workspace/knowledge/session-*-handoff.md
-workspace/knowledge/trading-operations.md
 workspace/knowledge/case-operations.md
 workspace/knowledge/architecture-decisions.md
 
