@@ -142,7 +142,7 @@ function classifyFragment(fragment) {
   if (/james prefers|user prefers|prefers .* over|prefers direct|prefers concise/.test(lowered)) {
     return { category: 'preference', confidence_score: 0.72, domain: 'user_preferences' };
   }
-  if (/plumbing business|runs a plumbing business|workers comp|insurance workflow/.test(lowered)) {
+  if (/operations workflow|runs an operations workflow|insurance workflow/.test(lowered)) {
     return { category: 'fact', confidence_score: 0.68, domain: 'business_context' };
   }
   if (/configured|deployed|path|scheduled task|supervisor|sqlite|hook|watcher/.test(lowered)) {

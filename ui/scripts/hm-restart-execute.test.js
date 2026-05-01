@@ -74,21 +74,21 @@ function processRowsWithDescendants() {
       ProcessId: 201,
       ParentProcessId: 111,
       Name: 'claude.exe',
-      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      ExecutablePath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\npm\\claude.exe',
       CommandLine: 'claude --dangerously-skip-permissions',
     },
     {
       ProcessId: 202,
       ParentProcessId: 111,
       Name: 'claude.exe',
-      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      ExecutablePath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\npm\\claude.exe',
       CommandLine: 'claude --dangerously-skip-permissions',
     },
     {
       ProcessId: 203,
       ParentProcessId: 202,
       Name: 'claude.exe',
-      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      ExecutablePath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\npm\\claude.exe',
       CommandLine: 'claude --dangerously-skip-permissions',
     },
   ];
@@ -114,7 +114,7 @@ function orphanSweepRows() {
       ProcessId: 502,
       ParentProcessId: 501,
       Name: 'claude.exe',
-      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      ExecutablePath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\npm\\claude.exe',
       CommandLine: 'claude --dangerously-skip-permissions',
     },
     {
@@ -135,7 +135,7 @@ function orphanSweepRows() {
       ProcessId: 44480,
       ParentProcessId: 41552,
       Name: 'claude.exe',
-      ExecutablePath: 'C:\\Users\\the user\\AppData\\Roaming\\npm\\claude.exe',
+      ExecutablePath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\npm\\claude.exe',
       CommandLine: 'claude --dangerously-skip-permissions',
     },
   ];
@@ -187,8 +187,8 @@ describe('hm-restart-execute', () => {
   test('discovers the parent Electron process from tasklist output', () => {
     const tasklistOutput = [
       '"Image Name","PID","Session Name","Session#","Mem Usage","Status","User Name","CPU Time","Window Title"',
-      '"electron.exe","29364","Console","1","150,000 K","Running","JAMES\\the user","0:01:00","SquidRun"',
-      '"powershell.exe","41000","Console","1","80,000 K","Running","JAMES\\the user","0:00:05","Terminal"',
+      '"electron.exe","29364","Console","1","150,000 K","Running","EXAMPLE\\ExampleUser","0:01:00","SquidRun"',
+      '"powershell.exe","41000","Console","1","80,000 K","Running","EXAMPLE\\ExampleUser","0:00:05","Terminal"',
     ].join('\r\n');
 
     const processes = restartExecute.listElectronProcesses('D:\\projects\\squidrun', {

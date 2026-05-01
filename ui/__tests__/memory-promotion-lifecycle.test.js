@@ -380,7 +380,7 @@ maybeDescribe('memory promotion and lifecycle phase 3', () => {
 
   test('direct user preference override auto-promotes and writes immediate session overlay', () => {
     const ingest = runtime.executeTeamMemoryOperation('ingest-memory', {
-      content: 'the user prefers concise milestone updates.',
+      content: 'The user prefers concise milestone updates.',
       memory_class: 'user_preference',
       provenance: { source: 'user', kind: 'direct_user_correction', claim_type: 'direct_preference' },
       confidence: 1,
@@ -391,7 +391,7 @@ maybeDescribe('memory promotion and lifecycle phase 3', () => {
     });
     expect(ingest.ok).toBe(true);
     expect(ingest.auto_promoted).toBe(true);
-    expect(fs.readFileSync(path.join(tempDir, 'workspace', 'knowledge', 'user-context.md'), 'utf8')).toContain('the user prefers concise milestone updates.');
+    expect(fs.readFileSync(path.join(tempDir, 'workspace', 'knowledge', 'user-context.md'), 'utf8')).toContain('The user prefers concise milestone updates.');
 
     const store = openStore(dbPath);
     expect(store.db.prepare('SELECT claim_type, status, review_required FROM memory_promotion_queue LIMIT 1').get()).toEqual(

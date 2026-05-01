@@ -30,13 +30,13 @@ describe('memory promotion helpers', () => {
 
   test('appendBulletToSection deduplicates repeated statements', () => {
     const target = path.join(knowledgeDir, 'user-context.md');
-    const first = appendBulletToSection(target, '## Observed Preferences', 'the user prefers direct execution.');
-    const second = appendBulletToSection(target, '## Observed Preferences', 'the user prefers direct execution.');
+    const first = appendBulletToSection(target, '## Observed Preferences', 'The user prefers direct execution.');
+    const second = appendBulletToSection(target, '## Observed Preferences', 'The user prefers direct execution.');
 
     expect(first.added).toBe(true);
     expect(second.alreadyPresent).toBe(true);
     const content = fs.readFileSync(target, 'utf8');
-    expect(content.match(/the user prefers direct execution\./g)).toHaveLength(1);
+    expect(content.match(/The user prefers direct execution\./g)).toHaveLength(1);
   });
 
   test('resolvePromotionTarget maps shared memory classes to expected files', () => {

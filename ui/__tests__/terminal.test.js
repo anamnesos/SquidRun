@@ -553,7 +553,7 @@ describe('terminal.js module', () => {
 
   describe('startup health briefing', () => {
     test('reads startup ai briefing when present', () => {
-      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('STALE SNAPSHOT generated 16 minutes ago, account values may have moved.\n\n# AI Startup Briefing\n\n- the user cares about shipping automation safely.');
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('STALE SNAPSHOT generated 16 minutes ago, account values may have moved.\n\n# AI Startup Briefing\n\n- The user cares about shipping automation safely.');
       const briefing = terminal._internals.fetchStartupAiBriefing();
 
       expect(mockStartupAiBriefing.readStartupBriefingForInjection).toHaveBeenCalledTimes(1);
@@ -653,11 +653,11 @@ describe('terminal.js module', () => {
     test('sends raw pane-1 user text without adding a second recall block', async () => {
       terminal.setInjectionInFlight(true);
 
-      terminal.broadcast('the user direct prompt');
+      terminal.broadcast('User direct prompt');
       await Promise.resolve();
 
       expect(terminal.messageQueue['1']).toBeDefined();
-      expect(terminal.messageQueue['1'][0].message).toBe('the user direct prompt');
+      expect(terminal.messageQueue['1'][0].message).toBe('User direct prompt');
       expect(terminal.messageQueue['1'][0].message).not.toContain('[SQUIDRUN RECALL START]');
 
       jest.clearAllTimers();

@@ -19,11 +19,11 @@ describe('memory recall broker', () => {
     closeSharedRecallRuntime();
   });
 
-  test('boosts the user direct terminal input with architecture memory terms', () => {
+  test('boosts direct owner terminal input with architecture memory terms', () => {
     const query = buildRecallQueryFromMessage('Should we check the current runtime routing now?', {
       channel: 'user_prompt',
-      userIdentity: 'james',
-      assumethe userDirectInput: true,
+      userIdentity: 'owner',
+      assumeOwnerDirectInput: true,
     });
 
     expect(query.toLowerCase()).toContain('runtime routing');
@@ -72,7 +72,7 @@ describe('memory recall broker', () => {
           store: 'team_memory',
           sourceRole: 'structured',
           title: 'Claim',
-          excerpt: 'the user wants real runtime proof, not theory.',
+          excerpt: 'The user wants real runtime proof, not theory.',
           sourcePath: 'team-memory/claims',
           score: 3,
         }],

@@ -71,7 +71,7 @@ maybeDescribe('cognitive-memory api', () => {
       '',
       '## Active Focus Areas',
       '',
-      'the user runs a plumbing business and wants automation he can trust.',
+      'The user runs an operations workflow and wants automation they can trust.',
       '',
     ].join('\n'));
 
@@ -148,7 +148,7 @@ maybeDescribe('cognitive-memory api', () => {
       expertise_delta: 0.25,
     });
 
-    const result = await api.retrieve('plumbing customer context', {
+    const result = await api.retrieve('operations customer context', {
       agentId: 'builder',
       limit: 1,
     });

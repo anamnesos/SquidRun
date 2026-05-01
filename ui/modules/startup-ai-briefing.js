@@ -498,7 +498,7 @@ function buildBriefingPrompt(files = [], transcriptCorpus = '', context = {}) {
   const liveSnapshotBlock = formatLiveSnapshotBlock(context.liveSnapshot);
   const canonicalSourceBlock = String(context.canonicalSourceBlock || '').trim();
   return [
-    'Read these conversations and write a briefing for the agents starting up: what happened, what\'s unfinished, what decisions were made, what the user cares about right now.',
+    'Read these conversations and write a briefing for the agents starting up: what happened, what\'s unfinished, what decisions were made, and what the user cares about right now.',
     '',
     'Requirements:',
     '- Output markdown only.',

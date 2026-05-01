@@ -15,7 +15,7 @@ const DEFAULT_TELEGRAM_ROUTING = Object.freeze({
   },
   default: {
     method: 'hm-send-telegram',
-    name: 'the user',
+    name: 'Owner',
     language: 'en',
   },
 });

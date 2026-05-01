@@ -44,7 +44,7 @@ describe('User Profile IPC Handlers', () => {
 
   test('save-user-profile creates file and writes editable fields', async () => {
     const payload = {
-      name: 'the user',
+      name: 'Example User',
       experience_level: 'tinkerer',
       communication_style: 'terse',
       domain_expertise: 'Strong JS/Electron',
@@ -66,14 +66,14 @@ describe('User Profile IPC Handlers', () => {
     const onboardingState = JSON.parse(fs.readFileSync(onboardingStatePath, 'utf8'));
 
     expect(result.success).toBe(true);
-    expect(saved.name).toBe('the user');
+    expect(saved.name).toBe('Example User');
     expect(saved.experience_level).toBe('tinkerer');
     expect(saved.communication_style).toBe('terse');
     expect(saved.domain_expertise).toBe('Strong JS/Electron');
     expect(saved.notes).toBe('Keep answers concise.');
     expect(saved.schema).toEqual(payload.schema);
     expect(onboardingState.onboarding_complete).toBe(true);
-    expect(onboardingState.user_name).toBe('the user');
+    expect(onboardingState.user_name).toBe('Example User');
     expect(onboardingState.workspace_path).toBe(tempRoot);
   });
 

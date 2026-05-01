@@ -293,7 +293,7 @@ if (typeof window !== 'undefined') {
   // wrote in one chunk (the threshold gated whether to chunk; the size gated
   // how big each chunk was). Net effect: zero protection for the typical
   // agent-to-agent reply size range, which is exactly what was firing the
-  // tail-only truncation the user kept seeing. macOS PTY does not have this
+  // tail-only truncation seen on Windows PTY. macOS PTY does not have this
   // limit so 4096 stays.
   const DEFAULT_CHUNK_SIZE_BYTES = isDarwin ? 4096 : 256;
   const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = isDarwin ? 1024 : 256;

@@ -44,7 +44,7 @@ describe('recall feedback service', () => {
       sourcePath: 'workspace/knowledge/evidence.md',
       citation: 'doc-2',
       title: 'Evidence packet',
-      excerpt: 'Korean evidence invoice trail and shipping label chain.',
+      excerpt: 'Evidence invoice trail and shipping label chain.',
     });
 
     expect(service.recordRecallSet({
@@ -76,7 +76,7 @@ describe('recall feedback service', () => {
           sourcePath: 'workspace/knowledge/evidence.md',
           citation: 'doc-2',
           title: 'Evidence packet',
-          excerpt: 'Korean evidence invoice trail and shipping label chain.',
+          excerpt: 'Evidence invoice trail and shipping label chain.',
           score: 3,
           rankScore: 3,
         },
