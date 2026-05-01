@@ -10,7 +10,7 @@ function getCommandPaletteCommands(options = {}) {
   return [
     // Agent Control
     { id: 'spawn-all', label: 'Spawn All Agents', icon: '🚀', category: 'Agents', action: () => document.getElementById('spawnAllBtn')?.click() },
-    { id: 'open-private-profile-window', label: 'Open [private-profile] Window', icon: '🪟', category: 'Windows', action: () => options.openAppWindow?.('private-profile') },
+    { id: 'open-scoped-window', label: 'Open Scoped Window', icon: '🪟', category: 'Windows', action: () => options.openAppWindow?.('scoped') },
     // Navigation
     { id: 'focus-1', label: 'Focus Mira (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
     { id: 'focus-2', label: 'Focus Builder (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },

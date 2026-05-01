@@ -12,7 +12,7 @@ describe('app-control-service', () => {
           isDestroyed: () => false,
           webContents: { reloadIgnoringCache: mainReload },
         }],
-        ['private-profile', {
+        ['scoped', {
           isDestroyed: () => false,
           webContents: { reloadIgnoringCache: sideReload },
         }],
@@ -28,7 +28,7 @@ describe('app-control-service', () => {
     expect(result).toEqual(expect.objectContaining({
       success: true,
       action: 'reload-renderers',
-      reloadedWindowKeys: ['main', 'private-profile', 'pane-host'],
+      reloadedWindowKeys: ['main', 'scoped', 'pane-host'],
       windowCount: 3,
     }));
     expect(mainReload).toHaveBeenCalledTimes(1);

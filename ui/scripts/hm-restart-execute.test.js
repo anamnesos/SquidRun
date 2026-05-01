@@ -233,7 +233,7 @@ describe('hm-restart-execute', () => {
         ParentProcessId: 36520,
         Name: 'electron.exe',
         ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-        CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" "D:\\projects\\squidrun\\ui" --profile=private-profile --window=private-profile --standalone-window',
+        CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" "D:\\projects\\squidrun\\ui" --profile=scoped --window=scoped --standalone-window',
       },
     ]);
 

@@ -352,7 +352,7 @@ describe('watcher module', () => {
     expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'foo.txt');
 
     triggers.handleTriggerFile.mockClear();
-    watcher.handleFileChange('D:/projects/private-profile-casework/some/triggers/path/x.txt');
+    watcher.handleFileChange('D:/projects/scoped-casework/some/triggers/path/x.txt');
     jest.advanceTimersByTime(250);
 
     expect(triggers.handleTriggerFile).not.toHaveBeenCalled();

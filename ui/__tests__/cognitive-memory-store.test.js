@@ -77,23 +77,23 @@ describe('cognitive-memory store and extraction', () => {
       projectRoot: tempDir,
       profileName: 'main',
     });
-    const private-profilePath = resolveDefaultCognitiveMemoryDbPath({
+    const scopedPath = resolveDefaultCognitiveMemoryDbPath({
       projectRoot: tempDir,
-      profileName: 'private-profile',
+      profileName: 'scoped',
     });
 
     expect(mainPath).toBe(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
-    expect(private-profilePath).toBe(path.join(tempDir, '.squidrun', 'runtime-private-profile', 'cognitive-memory.db'));
+    expect(scopedPath).toBe(path.join(tempDir, '.squidrun', 'runtime-scoped', 'cognitive-memory.db'));
     expect(resolveDefaultPendingPrPath({
       projectRoot: tempDir,
-      profileName: 'private-profile',
-    })).toBe(path.join(tempDir, '.squidrun', 'memory-private-profile', 'pending-pr.json'));
+      profileName: 'scoped',
+    })).toBe(path.join(tempDir, '.squidrun', 'memory-scoped', 'pending-pr.json'));
   });
 
   test('blocks mutating writes to unscoped legacy DB paths unless explicitly allowed', () => {
     const unsafeStore = new CognitiveMemoryStore({
       projectRoot: tempDir,
-      profileName: 'private-profile',
+      profileName: 'scoped',
       dbPath: path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'),
       pendingPrPath,
     });
@@ -133,36 +133,36 @@ describe('cognitive-memory store and extraction', () => {
     runtimeStore.close();
   });
 
-  test('keeps main and [private-profile] cognitive writes in separate runtime DBs', () => {
+  test('keeps main and Scoped cognitive writes in separate runtime DBs', () => {
     const mainStore = new CognitiveMemoryStore({
       projectRoot: tempDir,
       profileName: 'main',
     });
-    const private-profileStore = new CognitiveMemoryStore({
+    const scopedStore = new CognitiveMemoryStore({
       projectRoot: tempDir,
-      profileName: 'private-profile',
+      profileName: 'scoped',
     });
 
     mainStore.stageMemoryPRs([
       { category: 'fact', statement: 'main memory stays in main runtime.' },
     ]);
-    private-profileStore.stageMemoryPRs([
-      { category: 'fact', statement: 'private-profile memory stays in private-profile runtime.' },
+    scopedStore.stageMemoryPRs([
+      { category: 'fact', statement: 'scoped memory stays in scoped runtime.' },
     ]);
 
     expect(mainStore.dbPath).toBe(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
-    expect(private-profileStore.dbPath).toBe(path.join(tempDir, '.squidrun', 'runtime-private-profile', 'cognitive-memory.db'));
+    expect(scopedStore.dbPath).toBe(path.join(tempDir, '.squidrun', 'runtime-scoped', 'cognitive-memory.db'));
     expect(mainStore.pendingPrPath).toBe(path.join(tempDir, '.squidrun', 'memory', 'pending-pr.json'));
-    expect(private-profileStore.pendingPrPath).toBe(path.join(tempDir, '.squidrun', 'memory-private-profile', 'pending-pr.json'));
+    expect(scopedStore.pendingPrPath).toBe(path.join(tempDir, '.squidrun', 'memory-scoped', 'pending-pr.json'));
     expect(mainStore.listPendingPRs({ limit: 10 }).map((row) => row.statement)).toEqual([
       'main memory stays in main runtime.',
     ]);
-    expect(private-profileStore.listPendingPRs({ limit: 10 }).map((row) => row.statement)).toEqual([
-      'private-profile memory stays in private-profile runtime.',
+    expect(scopedStore.listPendingPRs({ limit: 10 }).map((row) => row.statement)).toEqual([
+      'scoped memory stays in scoped runtime.',
     ]);
 
     mainStore.close();
-    private-profileStore.close();
+    scopedStore.close();
   });
 
   test('rebuilds a zero-byte main runtime DB from the legacy seed', () => {

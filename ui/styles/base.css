@@ -165,8 +165,8 @@ body::before {
   z-index: -1;
 }
 
-body[data-window-key="private-profile"],
-body[data-profile-name="private-profile"] {
+body[data-window-key="scoped"],
+body[data-profile-name="scoped"] {
   --color-primary: #ff8f4a;
   --color-primary-hover: #ffb07b;
   --color-secondary: #ffd166;
@@ -206,24 +206,24 @@ body[data-profile-name="private-profile"] {
     var(--color-bg-dark);
 }
 
-body[data-window-key="private-profile"]::before,
-body[data-profile-name="private-profile"]::before {
+body[data-window-key="scoped"]::before,
+body[data-profile-name="scoped"]::before {
   background:
     radial-gradient(55% 50% at 12% 0%, rgba(255, 209, 102, 0.08), transparent 60%),
     radial-gradient(50% 45% at 92% 100%, rgba(255, 92, 138, 0.08), transparent 68%);
 }
 
-body[data-window-key="private-profile"] .header,
-body[data-window-key="private-profile"] .state-bar,
-body[data-window-key="private-profile"] .status-bar,
-body[data-profile-name="private-profile"] .header,
-body[data-profile-name="private-profile"] .state-bar,
-body[data-profile-name="private-profile"] .status-bar {
+body[data-window-key="scoped"] .header,
+body[data-window-key="scoped"] .state-bar,
+body[data-window-key="scoped"] .status-bar,
+body[data-profile-name="scoped"] .header,
+body[data-profile-name="scoped"] .state-bar,
+body[data-profile-name="scoped"] .status-bar {
   border-color: rgba(255, 143, 74, 0.22);
   box-shadow: 0 0 0 1px rgba(255, 92, 138, 0.08), 0 10px 28px rgba(0, 0, 0, 0.3);
 }
 
-body[data-window-key="private-profile"] .pane-header {
+body[data-window-key="scoped"] .pane-header {
   background:
     linear-gradient(90deg, rgba(255, 143, 74, 0.12), rgba(255, 92, 138, 0.04)),
     rgba(18, 11, 18, 0.88);

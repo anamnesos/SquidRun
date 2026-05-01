@@ -16,16 +16,16 @@ describe('window-team-bootstrap', () => {
     const bootstrap = createWindowTeamBootstrap({
       settings,
       terminal,
-      initialContext: readInitialWindowContextFromLocation('?windowKey=private-profile&windowTeam=private-profile'),
+      initialContext: readInitialWindowContextFromLocation('?windowKey=scoped&windowTeam=scoped'),
     });
 
     expect(bootstrap.shouldDeferAutoSpawn()).toBe(true);
 
     bootstrap.handleWindowContext({
-      windowKey: 'private-profile',
-      windowTeam: 'private-profile',
-      sessionScopeId: 'app-test:private-profile',
-      startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\private-profile\\startup-bundle.md',
+      windowKey: 'scoped',
+      windowTeam: 'scoped',
+      sessionScopeId: 'app-test:scoped',
+      startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\scoped\\startup-bundle.md',
       startupSourceFiles: ['D:\\projects\\squidrun\\workspace\\knowledge\\case-operations.md'],
       autoBootAgents: true,
     });
@@ -43,12 +43,12 @@ describe('window-team-bootstrap', () => {
     const bootstrap = createWindowTeamBootstrap({
       settings,
       terminal,
-      initialContext: readInitialWindowContextFromLocation('?windowKey=private-profile&windowTeam=private-profile'),
+      initialContext: readInitialWindowContextFromLocation('?windowKey=scoped&windowTeam=scoped'),
     });
 
     bootstrap.handleWindowContext({
-      windowKey: 'private-profile',
-      windowTeam: 'private-profile',
+      windowKey: 'scoped',
+      windowTeam: 'scoped',
       autoBootAgents: true,
     });
 
@@ -56,7 +56,7 @@ describe('window-team-bootstrap', () => {
       expect.objectContaining({
         ok: true,
         ran: true,
-        windowKey: 'private-profile',
+        windowKey: 'scoped',
       })
     );
     expect(settings.checkAutoSpawn).toHaveBeenCalledWith(terminal.spawnAllAgents, false);
