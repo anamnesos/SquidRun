@@ -107,6 +107,10 @@ workspace/tmp-session*
 temp-oracle-consultation-*.json
 .tmp_*.png
 captcha.png
+chatgpt-shared.png
+chess-3d*.png
+chess-current-state.png
+shorts-reference.png
 full-jest*.log
 .claude/*.lock
 [private-live-ops]_info.json
