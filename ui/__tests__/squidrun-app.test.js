@@ -3328,6 +3328,21 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('restarts the Telegram poller without reloading app panes', () => {
+      app.inboundPollerService.stopTelegram = jest.fn();
+      app.startTelegramPoller = jest.fn(() => true);
+
+      const result = app.restartTelegramPoller({ reason: 'test-reload' });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        started: true,
+        reason: 'test-reload',
+      }));
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
+      expect(app.startTelegramPoller).toHaveBeenCalledTimes(1);
+    });
+
     it('queues inbound human delivery for replay when pane delivery stays unverified', async () => {
       const triggers = require('../modules/triggers');
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-'));

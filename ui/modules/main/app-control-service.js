@@ -6,6 +6,13 @@ function normalizeAction(action) {
   if (normalized === 'reload-renderer' || normalized === 'reload-renderers' || normalized === 'hot-reload-renderers') {
     return 'reload-renderers';
   }
+  if (
+    normalized === 'restart-telegram-poller'
+    || normalized === 'reload-telegram-poller'
+    || normalized === 'restart-telegram'
+  ) {
+    return 'restart-telegram-poller';
+  }
   return normalized;
 }
 
@@ -66,6 +73,33 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       windowCount: reloaded.length,
       note: 'Renderer windows reloaded without restarting the Electron main process.',
     };
+  }
+
+  if (normalizedAction === 'restart-telegram-poller') {
+    if (typeof ctx.restartTelegramPoller !== 'function') {
+      return {
+        success: false,
+        reason: 'restart_unavailable',
+        action: normalizedAction,
+      };
+    }
+
+    try {
+      const result = ctx.restartTelegramPoller(payload);
+      return {
+        success: Boolean(result?.success),
+        action: normalizedAction,
+        ...result,
+      };
+    } catch (error) {
+      log.warn('AppControl', `Telegram poller restart failed: ${error.message}`);
+      return {
+        success: false,
+        reason: 'restart_failed',
+        action: normalizedAction,
+        error: error.message,
+      };
+    }
   }
 
   return {

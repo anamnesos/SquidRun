@@ -2743,6 +2743,7 @@ class SquidRunApp {
                 mainWindow: this.ctx.mainWindow,
                 getAppWindows: () => this.getAppWindows(),
                 getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
+                restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload),
               },
               data.message.action,
               data.message.payload || {}
@@ -8392,6 +8393,22 @@ class SquidRunApp {
     if (started) {
       log.info('Telegram', 'Inbound Telegram bridge enabled');
     }
+    return started;
+  }
+
+  restartTelegramPoller(payload = {}) {
+    const reason = typeof payload?.reason === 'string' && payload.reason.trim()
+      ? payload.reason.trim()
+      : 'app-control';
+    log.info('Telegram', `Restarting Telegram poller (${reason})`);
+    this.inboundPollerService.stopTelegram();
+    const started = this.startTelegramPoller();
+    return {
+      success: Boolean(started),
+      started: Boolean(started),
+      reason,
+      note: 'Telegram poller restart requested without reloading panes.',
+    };
   }
 
   async handleTeamMemoryGuardExperiment(entry = {}) {
