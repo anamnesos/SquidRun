@@ -55,4 +55,32 @@ describe('app-control-service', () => {
     }));
     expect(reload).toHaveBeenCalledTimes(1);
   });
+
+  test('restart-telegram-poller delegates to the app poller lifecycle without reloading panes', () => {
+    const restartTelegramPoller = jest.fn(() => ({
+      success: true,
+      started: true,
+      reason: 'test',
+    }));
+
+    const result = executeAppControlAction({
+      restartTelegramPoller,
+    }, 'restart-telegram-poller', { reason: 'test' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'restart-telegram-poller',
+      started: true,
+      reason: 'test',
+    }));
+    expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'test' });
+  });
+
+  test('restart-telegram-poller reports unavailable when the app lacks a restart hook', () => {
+    expect(executeAppControlAction({}, 'restart-telegram-poller')).toEqual(expect.objectContaining({
+      success: false,
+      action: 'restart-telegram-poller',
+      reason: 'restart_unavailable',
+    }));
+  });
 });

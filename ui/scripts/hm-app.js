@@ -4,6 +4,7 @@
  *
  * Commands:
  *   reload-renderers
+ *   restart-telegram-poller
  */
 
 const WebSocket = require('ws');
@@ -14,7 +15,7 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
   console.log('Usage: node hm-app.js <command> [options]');
-  console.log('Commands: reload-renderers');
+  console.log('Commands: reload-renderers, restart-telegram-poller');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
@@ -65,6 +66,7 @@ function normalizeCommand(command) {
   const normalized = asString(command, '').toLowerCase();
   if (!normalized) return null;
   if (normalized === 'reload' || normalized === 'reload-renderer') return 'reload-renderers';
+  if (normalized === 'restart-telegram' || normalized === 'reload-telegram-poller') return 'restart-telegram-poller';
   return normalized;
 }
 
@@ -178,7 +180,7 @@ async function main() {
     process.exit(1);
   }
 
-  const allowedCommands = new Set(['reload-renderers']);
+  const allowedCommands = new Set(['reload-renderers', 'restart-telegram-poller']);
   if (!allowedCommands.has(command)) {
     console.error(`Unsupported command: ${command}`);
     usage();
