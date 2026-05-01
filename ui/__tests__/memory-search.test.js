@@ -53,7 +53,7 @@ maybeDescribe('memory-search', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-memory-search-'));
     workspaceDir = path.join(tempDir, 'workspace');
-    caseEvidenceDir = path.join(tempDir, 'cases', 'Korean Fraud', 'evidence');
+    caseEvidenceDir = path.join(tempDir, 'cases', 'Example Case', 'evidence');
     fs.mkdirSync(path.join(workspaceDir, 'knowledge'), { recursive: true });
     fs.mkdirSync(path.join(tempDir, '.squidrun', 'handoffs'), { recursive: true });
     fs.mkdirSync(caseEvidenceDir, { recursive: true });
@@ -87,7 +87,7 @@ maybeDescribe('memory-search', () => {
     ].join('\n'));
 
     fs.writeFileSync(path.join(caseEvidenceDir, 'statement.txt'), [
-      '[private-profile] shared the customs packet and shipping label timeline.',
+      'Scoped shared the evidence packet and shipping label timeline.',
       'The investigator needs the payment trail tied to the alias account.',
     ].join('\n'));
     fs.writeFileSync(path.join(caseEvidenceDir, 'shipping-label.png'), 'fake-binary');
@@ -140,11 +140,11 @@ maybeDescribe('memory-search', () => {
     expect(sources).toEqual(expect.arrayContaining([
       expect.objectContaining({
         sourceType: 'case_evidence',
-        sourcePath: 'cases/Korean Fraud/evidence/statement.txt',
+        sourcePath: 'cases/Example Case/evidence/statement.txt',
       }),
       expect.objectContaining({
         sourceType: 'case_evidence_asset',
-        sourcePath: 'cases/Korean Fraud/evidence/shipping-label.png',
+        sourcePath: 'cases/Example Case/evidence/shipping-label.png',
       }),
     ]));
   });
@@ -176,11 +176,11 @@ maybeDescribe('memory-search', () => {
         sourceType: 'decision_digest',
       }));
 
-      const evidenceSearch = await index.search('customs packet alias account', { limit: 3 });
+      const evidenceSearch = await index.search('evidence packet alias account', { limit: 3 });
       expect(evidenceSearch.results).toEqual(expect.arrayContaining([
         expect.objectContaining({
           sourceType: 'case_evidence',
-          sourcePath: 'cases/Korean Fraud/evidence/statement.txt',
+          sourcePath: 'cases/Example Case/evidence/statement.txt',
         }),
       ]));
 
@@ -188,7 +188,7 @@ maybeDescribe('memory-search', () => {
       expect(assetSearch.results).toEqual(expect.arrayContaining([
         expect.objectContaining({
           sourceType: 'case_evidence_asset',
-          sourcePath: 'cases/Korean Fraud/evidence/shipping-label.png',
+          sourcePath: 'cases/Example Case/evidence/shipping-label.png',
         }),
       ]));
     } finally {

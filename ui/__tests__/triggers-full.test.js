@@ -289,8 +289,8 @@ describe('triggers.js module', () => {
 
       const result = triggers.sendDirectMessage(['1'], 'side-only message', 'user', {
         meta: {
-          windowKey: 'private-profile',
-          sessionScopeId: 'app-session-308:private-profile',
+          windowKey: 'scoped',
+          sessionScopeId: 'app-session-308:scoped',
         },
       });
 
@@ -315,7 +315,7 @@ describe('triggers.js module', () => {
 
       const result = triggers.sendDirectMessage(['1'], 'scoped session only', 'user', {
         meta: {
-          sessionScopeId: 'app-session-308:private-profile',
+          sessionScopeId: 'app-session-308:scoped',
         },
       });
 

@@ -25,21 +25,15 @@ const RECALL_AUDIT_PATH = resolveCoordPath(path.join('runtime', 'memory-recall-a
 const RECALL_BLOCK_START = '[SQUIDRUN RECALL START]';
 const RECALL_BLOCK_END = '[SQUIDRUN RECALL END]';
 const RECALL_CORRECTION_PATTERN = /\b(i already told you|i told you this|already told you|already said|we already covered this|you forgot|you missed this|you keep forgetting)\b/i;
-const EUNBYEOL_CHAT_ID = '8754356993';
-const EUNBYEOL_BOOST_TERMS = Object.freeze([
-  '은별',
-  'private-profile',
-  '8754356993',
-  '전명삼',
-  'jeon myeongsam',
-  '힐스테이트',
-  'hillstate',
-  '큐라인',
-  'qeline',
-  '동인동디엠',
-  'korean fraud',
-  '관세청',
-  'customs',
+const SCOPED_PROFILE_CHAT_ID = '2222222222';
+const SCOPED_PROFILE_BOOST_TERMS = Object.freeze([
+  'Scoped',
+  'scoped',
+  '2222222222',
+  'profile context',
+  'handoff',
+  'evidence',
+  'boundary',
 ]);
 const JAMES_DIRECT_BOOST_TERMS = Object.freeze([
   'james',
@@ -338,11 +332,11 @@ async function withRecallLock(key, work) {
   return current;
 }
 
-function shouldBoostKoreanCase(context = {}, message = '') {
+function shouldBoostScopedProfile(context = {}, message = '') {
   const chatId = asString(context.chatId || context.telegramChatId || context.userId || '', '');
-  if (chatId === EUNBYEOL_CHAT_ID) return true;
+  if (chatId === SCOPED_PROFILE_CHAT_ID) return true;
   const lowered = normalizeWhitespace(message).toLowerCase();
-  return /은별|private-profile|전명삼|힐스테이트|hillstate|큐라인|qeline|동인동디엠|관세청|customs|korean fraud/.test(lowered);
+  return /\b(scoped|profile context|scoped profile|private profile|case note|evidence)\b/i.test(lowered);
 }
 
 function shouldBoostthe userDirectInput(context = {}) {
@@ -360,8 +354,8 @@ function buildRecallQueryFromMessage(message, context = {}) {
   const channel = asString(context.channel || '', '');
   if (sender) parts.push(sender);
   if (channel) parts.push(channel);
-  if (shouldBoostKoreanCase(context, baseMessage)) {
-    parts.push(...EUNBYEOL_BOOST_TERMS);
+  if (shouldBoostScopedProfile(context, baseMessage)) {
+    parts.push(...SCOPED_PROFILE_BOOST_TERMS);
   }
   if (shouldBoostthe userDirectInput(context)) {
     parts.push(...JAMES_DIRECT_BOOST_TERMS);
@@ -378,9 +372,9 @@ function buildStartupRecallQuery(context = {}) {
     '3': 'oracle',
   }[paneId] || 'agent');
   const seed = {
-    architect: 'current session priorities recent decisions user preferences active investigations blockers private-profile james telegram customs trading',
-    builder: 'current session priorities recent decisions user preferences active investigations blockers runtime implementation supervisor trading private-profile james telegram',
-    oracle: 'current session priorities recent decisions user preferences active investigations blockers research documentation evidence customs private-profile james telegram',
+    architect: 'current session priorities recent decisions user preferences active investigations blockers scoped james telegram evidence trading',
+    builder: 'current session priorities recent decisions user preferences active investigations blockers runtime implementation supervisor trading scoped james telegram',
+    oracle: 'current session priorities recent decisions user preferences active investigations blockers research documentation evidence scoped james telegram',
   };
   return seed[roleSpecific] || seed.architect;
 }
@@ -454,26 +448,26 @@ function buildTimeAwareness(input = {}) {
     lines.push(`Last [private-live-ops] check: ${describeElapsedSince([private-live-ops]CheckMs, { nowMs })}`);
   }
 
-  if (shouldBoostKoreanCase(input, input.message || input.text || input.query || '')) {
-    const private-profileFromComms = findLatestCommsTimestamp(commsRows, (row) => {
+  if (shouldBoostScopedProfile(input, input.message || input.text || input.query || '')) {
+    const scopedFromComms = findLatestCommsTimestamp(commsRows, (row) => {
       const metadata = asObject(row.metadata);
       const rawBody = asString(row.rawBody || row.body || '', '');
       const chatId = asString(metadata.chatId || metadata.telegramChatId || row.chatId || '', '');
       const sender = asString(metadata.from || row.sender || '', '');
       return (
-        chatId === EUNBYEOL_CHAT_ID
-        || /은별|private-profile/i.test(sender)
-        || /은별|private-profile|8754356993/i.test(rawBody)
+        chatId === SCOPED_PROFILE_CHAT_ID
+        || /Scoped|scoped/i.test(sender)
+        || /Scoped|scoped|2222222222/i.test(rawBody)
       );
     });
-    const private-profileMs = selectLatestTimestamp(
-      override.last[private-profile]MessageAtMs,
-      private-profileFromComms?.timestampMs
+    const scopedMs = selectLatestTimestamp(
+      override.lastScopedMessageAtMs,
+      scopedFromComms?.timestampMs
     );
-    raw.last[private-profile]MessageAtMs = private-profileMs;
-    if (Number.isFinite(private-profileMs)) {
+    raw.lastScopedMessageAtMs = scopedMs;
+    if (Number.isFinite(scopedMs)) {
       lines.push(
-        `Last 은별 message: ${describeElapsedSince(private-profileMs, {
+        `Last Scoped message: ${describeElapsedSince(scopedMs, {
           nowMs,
           zoneLabel: 'KST',
           zoneId: 'Asia/Seoul',
@@ -1148,8 +1142,8 @@ async function buildMessageWithRecall(message, input = {}) {
 }
 
 module.exports = {
-  EUNBYEOL_BOOST_TERMS,
-  EUNBYEOL_CHAT_ID,
+  SCOPED_PROFILE_BOOST_TERMS,
+  SCOPED_PROFILE_CHAT_ID,
   JAMES_DIRECT_BOOST_TERMS,
   RECALL_AUDIT_PATH,
   RECALL_BLOCK_END,
@@ -1182,7 +1176,7 @@ module.exports = {
     rotateRecallAuditIfNeeded,
     scoreTokenMatch,
     shouldBoostthe userDirectInput,
-    shouldBoostKoreanCase,
+    shouldBoostScopedProfile,
     summarize,
     withRecallLock,
   },

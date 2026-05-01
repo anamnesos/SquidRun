@@ -16,7 +16,7 @@ const DEFAULT_MAX_ACTIVE_ITEMS = 8;
 const DEFAULT_MAX_QUERIES = 12;
 const DEFAULT_MAX_RESULTS = 6;
 const DEFAULT_RECENT_COMMS_LIMIT = 8;
-const EUNBYEOL_CHAT_ID = '8754356993';
+const SCOPED_PROFILE_CHAT_ID = '2222222222';
 const DatabaseSync = getDatabaseSync();
 
 function normalizeWindowKey(value) {
@@ -145,12 +145,12 @@ function readRecentComms(options = {}) {
       const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
       const chatId = trimText(metadata.chatId || metadata.telegramChatId);
       const commsWindowKey = trimText(metadata.windowKey).toLowerCase();
-      const is[private-profile]Row = (
-        chatId === EUNBYEOL_CHAT_ID
-        || commsWindowKey === 'private-profile'
-        || trimText(row.sessionId).toLowerCase().endsWith(':private-profile')
+      const isScopedRow = (
+        chatId === SCOPED_PROFILE_CHAT_ID
+        || commsWindowKey === 'scoped'
+        || trimText(row.sessionId).toLowerCase().endsWith(':scoped')
       );
-      return windowKey === 'private-profile' ? is[private-profile]Row : !is[private-profile]Row;
+      return windowKey === 'scoped' ? isScopedRow : !isScopedRow;
     });
   } catch (_) {
     return [];
@@ -190,7 +190,7 @@ function buildActiveItems(options = {}) {
   const caseItems = extractCaseActiveItems(caseContent).slice(0, 3);
   const commsItems = extractCommsActiveItems(recentComms).slice(0, 2);
   const windowKey = normalizeWindowKey(options.windowKey);
-  const items = windowKey === 'private-profile'
+  const items = windowKey === 'scoped'
     ? [
       ...caseItems,
       ...commsItems,

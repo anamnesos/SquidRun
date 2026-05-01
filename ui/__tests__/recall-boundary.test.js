@@ -9,7 +9,7 @@ describe('recall anti-loop boundary', () => {
         role: 'user',
         content: [{
           type: 'text',
-          text: 'Check the latest customs note.\n\n[SQUIDRUN RECALL START]\nRECALL resultSetId=recall-1\n1. [memory_search/corpus] Some old memory\n[SQUIDRUN RECALL END]',
+          text: 'Check the latest evidence note.\n\n[SQUIDRUN RECALL START]\nRECALL resultSetId=recall-1\n1. [memory_search/corpus] Some old memory\n[SQUIDRUN RECALL END]',
         }],
       },
       sessionId: 'sess-1',
@@ -19,7 +19,7 @@ describe('recall anti-loop boundary', () => {
       lineNumber: 1,
     });
 
-    expect(record.text).toBe('Check the latest customs note.');
+    expect(record.text).toBe('Check the latest evidence note.');
     expect(record.text).not.toContain('Some old memory');
   });
 

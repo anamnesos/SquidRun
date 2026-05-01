@@ -37,10 +37,10 @@ describe('hm-telegram-routing', () => {
   it('falls back to default routes when no routing file exists', () => {
     const routing = require('../scripts/hm-telegram-routing');
 
-    const private-profileRoute = routing.resolveTelegramRoute({ chatId: '8754356993' });
+    const scopedRoute = routing.resolveTelegramRoute({ chatId: '2222222222' });
     const defaultRoute = routing.resolveTelegramRoute({ chatId: '1111111111' });
 
-    expect(private-profileRoute.route).toEqual(expect.objectContaining({
+    expect(scopedRoute.route).toEqual(expect.objectContaining({
       method: 'send-long-telegram',
       language: 'ko',
     }));
@@ -50,12 +50,12 @@ describe('hm-telegram-routing', () => {
     }));
   });
 
-  it('defaults no-chat [private-profile] profile sends to the [private-profile] route', () => {
+  it('defaults no-chat Scoped profile sends to the Scoped route', () => {
     const routing = require('../scripts/hm-telegram-routing');
 
     const defaultRoute = routing.resolveTelegramRoute({
       env: {
-        SQUIDRUN_PROFILE: 'private-profile',
+        SQUIDRUN_PROFILE: 'scoped',
       },
     });
 
@@ -65,20 +65,20 @@ describe('hm-telegram-routing', () => {
     }));
   });
 
-  it('chunks long routed messages for [private-profile]', async () => {
+  it('chunks long routed messages for Scoped', async () => {
     const { sendTelegram } = require('../scripts/hm-telegram');
     const routing = require('../scripts/hm-telegram-routing');
     const longMessage = `${'A'.repeat(3200)}\n\n${'B'.repeat(3200)}`;
 
     const result = await routing.sendRoutedTelegramMessage(longMessage, process.env, {
-      chatId: '8754356993',
+      chatId: '2222222222',
       messageId: 'route-long',
       senderRole: 'builder',
     });
 
     expect(sendTelegram).toHaveBeenCalledTimes(2);
     expect(sendTelegram.mock.calls[0][2]).toEqual(expect.objectContaining({
-      chatId: '8754356993',
+      chatId: '2222222222',
       messageId: 'route-long-part1',
       metadata: expect.objectContaining({
         routeMethod: 'send-long-telegram',
@@ -87,7 +87,7 @@ describe('hm-telegram-routing', () => {
       }),
     }));
     expect(sendTelegram.mock.calls[1][2]).toEqual(expect.objectContaining({
-      chatId: '8754356993',
+      chatId: '2222222222',
       messageId: 'route-long-part2',
       metadata: expect.objectContaining({
         routeMethod: 'send-long-telegram',

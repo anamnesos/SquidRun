@@ -510,12 +510,12 @@ function applyWindowChrome(windowContext = getCurrentWindowContext()) {
     document.body.dataset.windowKey = windowKey;
     document.body.dataset.profileName = profileName;
   }
-  if (profileName === 'private-profile') {
-    document.title = 'SquidRun - 은별';
+  if (profileName === 'scoped') {
+    document.title = 'SquidRun - Scoped';
   } else {
     document.title = windowKey === 'main'
       ? 'SquidRun'
-      : `SquidRun - ${windowKey === 'private-profile' ? '[private-profile] Workspace' : windowKey}`;
+      : `SquidRun - ${windowKey === 'scoped' ? 'Scoped Workspace' : windowKey}`;
   }
 
   const fullRestartBtn = document.getElementById('fullRestartBtn');
@@ -529,8 +529,8 @@ function applyWindowChrome(windowContext = getCurrentWindowContext()) {
       fullRestartBtn.dataset.windowAction = 'shutdown-app';
     } else {
       fullRestartBtn.innerHTML = 'Close Window';
-      fullRestartBtn.title = profileName === 'private-profile'
-        ? 'Close the [private-profile] profile window only'
+      fullRestartBtn.title = profileName === 'scoped'
+        ? 'Close the Scoped profile window only'
         : `Close the ${windowKey} window only`;
       fullRestartBtn.dataset.windowAction = 'close-window';
     }

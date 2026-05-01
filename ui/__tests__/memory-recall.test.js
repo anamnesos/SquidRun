@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 
 const {
-  EUNBYEOL_BOOST_TERMS,
+  SCOPED_PROFILE_BOOST_TERMS,
   closeSharedRecallRuntime,
   persistRecallAudit,
   buildTimeAwareness,
@@ -34,16 +34,16 @@ describe('memory recall broker', () => {
     expect(query.toLowerCase()).toContain('agent conversations');
   });
 
-  test('boosts Korean case entities for [private-profile] Telegram chat', () => {
-    const query = buildRecallQueryFromMessage('Can you check the customs statement and Hillstate docs?', {
+  test('boosts scoped profile entities for Scoped Telegram chat', () => {
+    const query = buildRecallQueryFromMessage('Can you check the evidence statement and ExampleProperty docs?', {
       channel: 'telegram',
-      chatId: '8754356993',
-      sender: '[private-profile]',
+      chatId: '2222222222',
+      sender: 'Scoped',
     });
 
-    expect(query).toContain('customs');
-    expect(query).toContain('Hillstate');
-    for (const term of EUNBYEOL_BOOST_TERMS) {
+    expect(query).toContain('evidence');
+    expect(query).toContain('ExampleProperty');
+    for (const term of SCOPED_PROFILE_BOOST_TERMS) {
       expect(query.toLowerCase()).toContain(term.toLowerCase());
     }
   });
@@ -52,7 +52,7 @@ describe('memory recall broker', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-recall-'));
     const auditPath = path.join(tempDir, 'memory-recall-audit.jsonl');
     const result = await recall({
-      query: 'LINK short [private-profile] customs',
+      query: 'LINK short Scoped evidence',
       auditPath,
       feedbackOps: {
         getRankAdjustments: jest.fn(() => ({ ok: true, adjustments: {} })),
@@ -65,7 +65,7 @@ describe('memory recall broker', () => {
           store: 'evidence_ledger',
           sourceRole: 'episodic',
           title: 'Telegram message',
-          excerpt: '[private-profile] asked about customs evidence and LINK.',
+          excerpt: 'Scoped asked about evidence evidence and LINK.',
           sourcePath: 'evidence-ledger/comms_journal',
           score: 5,
         }],
@@ -85,8 +85,8 @@ describe('memory recall broker', () => {
           store: 'memory_search',
           sourceRole: 'corpus',
           title: 'Case evidence',
-          excerpt: 'Hillstate evidence packet references customs filing.',
-          sourcePath: 'Korean Fraud/evidence/statement.txt',
+          excerpt: 'ExampleProperty evidence packet references evidence filing.',
+          sourcePath: 'Example Case/evidence/statement.txt',
           score: 2,
         }],
         queryCognitiveMemory: async () => [{
@@ -94,7 +94,7 @@ describe('memory recall broker', () => {
           store: 'cognitive_memory',
           sourceRole: 'derived_semantic',
           title: 'Cognitive',
-          excerpt: 'Derived summary of customs packet and payment trail.',
+          excerpt: 'Derived summary of evidence packet and payment trail.',
           sourcePath: 'workspace/memory/cognitive-memory.db',
           score: 1,
         }],
@@ -220,26 +220,26 @@ describe('memory recall broker', () => {
     expect(compact).not.toContain('resultSetId=');
   });
 
-  test('adds [private-profile]-specific elapsed-time context when Korean-case recall is active', () => {
+  test('adds Scoped-specific elapsed-time context when scoped-profile recall is active', () => {
     const nowMs = Date.parse('2026-04-03T23:40:00.000Z');
     const timeAwareness = buildTimeAwareness({
       nowMs,
-      message: 'Please review [private-profile] customs evidence.',
+      message: 'Please review Scoped evidence evidence.',
       channel: 'telegram',
-      chatId: '8754356993',
+      chatId: '2222222222',
       commsRows: [{
-        rawBody: '은별 sent updated customs files',
+        rawBody: 'Scoped sent updated evidence files',
         sentAtMs: Date.parse('2026-04-03T16:29:00.000Z'),
         metadata: {
-          chatId: '8754356993',
-          from: '[private-profile]',
+          chatId: '2222222222',
+          from: 'Scoped',
         },
       }],
       appStatus: {},
       supervisorStatus: {},
     });
 
-    expect(timeAwareness.lines.join('\n')).toContain('Last 은별 message: 7h 11m ago (KST 01:29)');
+    expect(timeAwareness.lines.join('\n')).toContain('Last Scoped message: 7h 11m ago (KST 01:29)');
   });
 
   test('returns partial results when a backend times out instead of freezing recall', async () => {

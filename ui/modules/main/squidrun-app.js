@@ -232,12 +232,7 @@ const AUTONOMOUS_SMOKE_COOLDOWN_MS = Math.max(
   0,
   Number.parseInt(process.env.SQUIDRUN_AUTONOMOUS_SMOKE_COOLDOWN_MS || '15000', 10) || 15000
 );
-const EUNBYEOL_CHAT_ID = '8754356993';
-const EUNBYEOL_CONFIRMED_FACT_PATHS = Object.freeze([
-  'D:\\projects\\Jeon Myeongsam Case\\reference\\confirmed-facts.md',
-  'D:\\projects\\Hillstate Case\\reference\\confirmed-facts.md',
-  'D:\\projects\\Korean Fraud\\reference\\confirmed-facts.md',
-]);
+const SCOPED_PROFILE_CHAT_ID = '2222222222';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -1220,16 +1215,16 @@ class SquidRunApp {
         path.join(workspacePath, 'CLAUDE.md')
       );
       this.copyFileIfMissing(
-        path.join(templateRoot, 'CLAUDE.private-profile.md'),
-        path.join(workspacePath, 'CLAUDE.private-profile.md')
+        path.join(templateRoot, 'CLAUDE.scoped.md'),
+        path.join(workspacePath, 'CLAUDE.scoped.md')
       );
       this.copyFileIfMissing(
         path.join(templateRoot, 'ROLES.md'),
         path.join(workspacePath, 'ROLES.md')
       );
       this.copyFileIfMissing(
-        path.join(templateRoot, 'ROLES.private-profile.md'),
-        path.join(workspacePath, 'ROLES.private-profile.md')
+        path.join(templateRoot, 'ROLES.scoped.md'),
+        path.join(workspacePath, 'ROLES.scoped.md')
       );
       this.copyFileIfMissing(
         path.join(templateRoot, 'PRODUCT-GUIDE.md'),
@@ -2484,10 +2479,8 @@ class SquidRunApp {
     // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
     await this.launchWindowsForProfile(this.launchWindowProfile);
 
-    // [private-profile] desktop shortcut is owned manually by Launch-[private-profile]-SquidRun.ps1
-    // in D:\projects\private-profile-casework. Auto-creation here previously overwrote
-    // it with a raw electron.exe launch that lacked SQUIDRUN_PROJECT_ROOT —
-    // see memory feedback S294. Do not re-enable.
+    // Profile-specific desktop shortcuts are owned outside the default app
+    // bootstrap so they can carry explicit project-root/env overrides.
 
     // 3. Generate firmware files on startup when feature flag is enabled.
     if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
@@ -3683,13 +3676,13 @@ class SquidRunApp {
     const isPrimaryWindow = windowKey === 'main';
     const windowTitle = rawOptions.title
       || (isPrimaryWindow
-        ? (this.activeProfileName === 'private-profile' ? 'SquidRun - 은별' : 'SquidRun')
+        ? (this.activeProfileName === 'scoped' ? 'SquidRun - Scoped' : 'SquidRun')
         : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
     const query = {
       windowKey,
       windowTeam: String(rawOptions.windowTeam || windowKey).trim() || windowKey,
       profileName: this.activeProfileName,
-      profileLabel: this.activeProfileName === 'private-profile' ? '[private-profile]' : this.formatWindowKeyLabel(this.activeProfileName),
+      profileLabel: this.activeProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(this.activeProfileName),
     };
 
     const windowRef = new BrowserWindow({
@@ -3933,37 +3926,37 @@ class SquidRunApp {
     }
   }
 
-  get[private-profile]DesktopShortcutPath() {
+  getScopedDesktopShortcutPath() {
     if (process.platform !== 'win32' || typeof app?.getPath !== 'function') return null;
-    return path.join(app.getPath('desktop'), 'SquidRun - 은별.lnk');
+    return path.join(app.getPath('desktop'), 'SquidRun - Scoped.lnk');
   }
 
-  build[private-profile]DesktopShortcutOptions() {
+  buildScopedDesktopShortcutOptions() {
     if (process.platform !== 'win32') return null;
     const uiRoot = path.resolve(path.join(__dirname, '..', '..'));
     const isPackaged = app.isPackaged === true;
     return {
       target: process.execPath,
       args: isPackaged
-        ? '--profile=private-profile --window=private-profile --standalone-window'
-        : `"${uiRoot}" --profile=private-profile --window=private-profile --standalone-window`,
+        ? '--profile=scoped --window=scoped --standalone-window'
+        : `"${uiRoot}" --profile=scoped --window=scoped --standalone-window`,
       cwd: isPackaged ? path.dirname(process.execPath) : uiRoot,
-      description: 'Open the [private-profile] SquidRun profile.',
+      description: 'Open the Scoped SquidRun profile.',
       icon: path.join(uiRoot, 'assets', 'squidrun-favicon.ico'),
       iconIndex: 0,
       appUserModelId: WINDOWS_APP_USER_MODEL_ID,
     };
   }
 
-  ensure[private-profile]DesktopShortcut() {
+  ensureScopedDesktopShortcut() {
     if (process.platform !== 'win32') {
       return { ok: false, skipped: true, reason: 'unsupported_platform' };
     }
     if (!shell || typeof shell.writeShortcutLink !== 'function') {
       return { ok: false, skipped: true, reason: 'shortcut_api_unavailable' };
     }
-    const shortcutPath = this.get[private-profile]DesktopShortcutPath();
-    const shortcutOptions = this.build[private-profile]DesktopShortcutOptions();
+    const shortcutPath = this.getScopedDesktopShortcutPath();
+    const shortcutOptions = this.buildScopedDesktopShortcutOptions();
     if (!shortcutPath || !shortcutOptions?.target) {
       return { ok: false, skipped: true, reason: 'shortcut_target_unavailable' };
     }
@@ -3976,21 +3969,20 @@ class SquidRunApp {
     };
   }
 
-  get[private-profile]StartupBundlePath() {
-    return resolveCoordPath(path.join('runtime', 'window-teams', 'private-profile', 'startup-bundle.md'), { forWrite: true });
+  getScopedStartupBundlePath() {
+    return resolveCoordPath(path.join('runtime', 'window-teams', 'scoped', 'startup-bundle.md'), { forWrite: true });
   }
 
-  get[private-profile]StartupSourcePaths() {
+  getScopedStartupSourcePaths() {
     return [
-      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'CLAUDE.md', 'private-profile'),
-      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'ROLES.md', 'private-profile'),
-      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'case-operations.md'),
-      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'handoff-corrections.md'),
-      ...EUNBYEOL_CONFIRMED_FACT_PATHS,
+      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'CLAUDE.md', 'scoped'),
+      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'ROLES.md', 'scoped'),
+      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'scoped-profile.md'),
+      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'scoped-handoff.md'),
     ];
   }
 
-  async readRecent[private-profile]TelegramHistory(limit = 8) {
+  async readRecentScopedTelegramHistory(limit = 8) {
     const result = await executeEvidenceLedgerOperation(
       'query-comms-journal',
       {
@@ -4000,7 +3992,7 @@ class SquidRunApp {
       },
       {
         source: {
-          via: 'private-profile-startup-bundle',
+          via: 'scoped-startup-bundle',
           role: 'system',
           paneId: 'system',
         },
@@ -4015,25 +4007,25 @@ class SquidRunApp {
         const metadataChatId = normalizeChatId(metadata.chatId || metadata.telegramChatId || null);
         const windowKey = toNonEmptyString(metadata.windowKey) || null;
         const sessionId = toNonEmptyString(row?.sessionId) || null;
-        return metadataChatId === EUNBYEOL_CHAT_ID
-          || windowKey === 'private-profile'
-          || sessionId === this.getWindowSessionScopeId('private-profile')
-          || sessionId?.endsWith(':private-profile') === true;
+        return metadataChatId === SCOPED_PROFILE_CHAT_ID
+          || windowKey === 'scoped'
+          || sessionId === this.getWindowSessionScopeId('scoped')
+          || sessionId?.endsWith(':scoped') === true;
       })
       .slice(0, limit);
   }
 
-  async read[private-profile]CognitiveMemoryEntries(limit = 6) {
+  async readScopedCognitiveMemoryEntries(limit = 6) {
     const result = await executeCognitiveMemoryOperation(
       'retrieve',
       {
         agentId: 'architect',
-        query: '[private-profile] Hillstate Jeon Qeline case operations handoff corrections',
+        query: 'scoped profile operations handoff corrections',
         limit,
       },
       {
         source: {
-          via: 'private-profile-startup-bundle',
+          via: 'scoped-startup-bundle',
           role: 'system',
           paneId: 'system',
         },
@@ -4042,81 +4034,63 @@ class SquidRunApp {
     return Array.isArray(result?.results) ? result.results.slice(0, limit) : [];
   }
 
-  async build[private-profile]StartupBundle() {
-    const sourcePaths = this.get[private-profile]StartupSourcePaths();
+  async buildScopedStartupBundle() {
+    const sourcePaths = this.getScopedStartupSourcePaths();
     const claudePath = sourcePaths[0];
     const rolesPath = sourcePaths[1];
-    const caseOperationsPath = sourcePaths[2];
-    const handoffCorrectionsPath = sourcePaths[3];
-    const confirmedFactsPaths = sourcePaths.slice(4);
+    const scopedOperationsPath = sourcePaths[2];
+    const scopedHandoffPath = sourcePaths[3];
     const [telegramHistory, cognitiveEntries] = await Promise.all([
-      this.readRecent[private-profile]TelegramHistory(8),
-      this.read[private-profile]CognitiveMemoryEntries(6),
+      this.readRecentScopedTelegramHistory(8),
+      this.readScopedCognitiveMemoryEntries(6),
     ]);
 
     const claudeLines = this.readTextFileSafe(claudePath)
       .split(/\r?\n/)
-      .filter((line) => /은별|private-profile|rachelchoi|case-operations|confirmed-facts|hillstate|jeon|qeline|korean fraud/i.test(line))
+      .filter((line) => /scoped|profile|telegram|handoff|boundary/i.test(line))
       .slice(0, 16);
     const rolesLines = this.readTextFileSafe(rolesPath)
       .split(/\r?\n/)
-      .filter((line) => /은별|private-profile|telegram|8754356993|case|hillstate|jeon|qeline/i.test(line))
+      .filter((line) => /scoped|profile|telegram|handoff|boundary/i.test(line))
       .slice(0, 16);
-    const caseOperationsPreview = this.readTextFileSafe(caseOperationsPath)
+    const scopedOperationsPreview = this.readTextFileSafe(scopedOperationsPath)
       .split(/\r?\n/)
       .filter(Boolean)
       .slice(0, 20);
-    const handoffCorrectionsPreview = this.readTextFileSafe(handoffCorrectionsPath)
+    const scopedHandoffPreview = this.readTextFileSafe(scopedHandoffPath)
       .split(/\r?\n/)
       .filter(Boolean)
       .slice(0, 16);
-    const confirmedFactsPreviews = confirmedFactsPaths.map((filePath) => ({
-      filePath,
-      lines: this.readTextFileSafe(filePath)
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .slice(0, 12),
-    }));
 
     const lines = [
-      '# [private-profile] Startup Bundle',
+      '# Scoped Startup Bundle',
       '',
       `Generated: ${new Date().toISOString()}`,
-      `Session Scope: ${this.getWindowSessionScopeId('private-profile')}`,
+      `Session Scope: ${this.getWindowSessionScopeId('scoped')}`,
       '',
       'Window purpose:',
-      '- This window is for [private-profile]-only case work.',
-      '- Keep focus on Hillstate, Jeon Myeongsam, Qeline/Korean Fraud, insurance, and competition docs.',
-      '- Do not mix trading chatter into this lane.',
+      '- This window is for scoped-profile work only.',
+      '- Keep private profile context out of the main pane unless explicitly routed.',
+      '- Do not mix unrelated live-risk workflows into this lane.',
       '',
       'Authoritative source files:',
       ...sourcePaths.map((filePath) => `- ${filePath}`),
       '',
       'Scoped CLAUDE.md lines:',
-      ...(claudeLines.length > 0 ? claudeLines.map((line) => `> ${line}`) : ['> No [private-profile]-specific CLAUDE.md lines found.']),
+      ...(claudeLines.length > 0 ? claudeLines.map((line) => `> ${line}`) : ['> No Scoped-specific CLAUDE.md lines found.']),
       '',
       'Scoped ROLES.md lines:',
-      ...(rolesLines.length > 0 ? rolesLines.map((line) => `> ${line}`) : ['> No [private-profile]-specific ROLES.md lines found.']),
+      ...(rolesLines.length > 0 ? rolesLines.map((line) => `> ${line}`) : ['> No Scoped-specific ROLES.md lines found.']),
       '',
-      `Case dashboard preview (${caseOperationsPath}):`,
-      ...(caseOperationsPreview.length > 0 ? caseOperationsPreview.map((line) => `- ${line}`) : ['- Missing or empty case-operations.md']),
+      `Scoped operations preview (${scopedOperationsPath}):`,
+      ...(scopedOperationsPreview.length > 0 ? scopedOperationsPreview.map((line) => `- ${line}`) : ['- Missing or empty scoped-profile.md']),
       '',
-      `Handoff corrections preview (${handoffCorrectionsPath}):`,
-      ...(handoffCorrectionsPreview.length > 0 ? handoffCorrectionsPreview.map((line) => `- ${line}`) : ['- Missing or empty handoff-corrections.md']),
+      `Scoped handoff preview (${scopedHandoffPath}):`,
+      ...(scopedHandoffPreview.length > 0 ? scopedHandoffPreview.map((line) => `- ${line}`) : ['- Missing or empty scoped-handoff.md']),
     ];
 
-    for (const preview of confirmedFactsPreviews) {
-      lines.push('');
-      lines.push(`Confirmed facts preview (${preview.filePath}):`);
-      if (preview.lines.length > 0) {
-        lines.push(...preview.lines.map((line) => `- ${line}`));
-      } else {
-        lines.push('- Missing or empty confirmed-facts.md');
-      }
-    }
-
     lines.push('');
-    lines.push(`Recent [private-profile] Telegram history (chat ${EUNBYEOL_CHAT_ID}):`);
+    lines.push(`Recent Scoped Telegram history (chat ${SCOPED_PROFILE_CHAT_ID}):`);
     if (telegramHistory.length > 0) {
       for (const entry of telegramHistory) {
         const metadata = entry?.metadata && typeof entry.metadata === 'object' ? entry.metadata : {};
@@ -4126,7 +4100,7 @@ class SquidRunApp {
         lines.push(`- ${sender}: ${body.slice(0, 280)}`);
       }
     } else {
-      lines.push('- No recent Telegram history found for [private-profile] in the evidence ledger.');
+      lines.push('- No recent Telegram history found for Scoped in the evidence ledger.');
     }
 
     lines.push('');
@@ -4139,39 +4113,39 @@ class SquidRunApp {
         lines.push(`- ${title} (${sourcePath}): ${content.slice(0, 260)}`);
       }
     } else {
-      lines.push('- No cognitive memory entries were retrieved for the [private-profile] startup query.');
+      lines.push('- No cognitive memory entries were retrieved for the Scoped startup query.');
     }
 
     return {
       ok: true,
-      sessionScopeId: this.getWindowSessionScopeId('private-profile'),
+      sessionScopeId: this.getWindowSessionScopeId('scoped'),
       sourcePaths,
-      bundlePath: this.get[private-profile]StartupBundlePath(),
+      bundlePath: this.getScopedStartupBundlePath(),
       text: lines.join('\n'),
     };
   }
 
-  async write[private-profile]StartupBundle(bundle = null) {
-    const nextBundle = bundle && typeof bundle === 'object' ? bundle : await this.build[private-profile]StartupBundle();
+  async writeScopedStartupBundle(bundle = null) {
+    const nextBundle = bundle && typeof bundle === 'object' ? bundle : await this.buildScopedStartupBundle();
     if (!nextBundle?.bundlePath || !nextBundle?.text) return nextBundle;
     fs.mkdirSync(path.dirname(nextBundle.bundlePath), { recursive: true });
     fs.writeFileSync(nextBundle.bundlePath, `${nextBundle.text}\n`, 'utf8');
     return nextBundle;
   }
 
-  async inject[private-profile]StartupBundle() {
-    const bundle = await this.write[private-profile]StartupBundle();
-    const sessionScopeId = bundle?.sessionScopeId || this.getWindowSessionScopeId('private-profile');
+  async injectScopedStartupBundle() {
+    const bundle = await this.writeScopedStartupBundle();
+    const sessionScopeId = bundle?.sessionScopeId || this.getWindowSessionScopeId('scoped');
     for (const paneId of ['1', '2', '3']) {
       this.routeInjectMessage({
         panes: [paneId],
         message: `${bundle.text}\r`,
         startupInjection: true,
         meta: {
-          windowKey: 'private-profile',
+          windowKey: 'scoped',
           session_id: sessionScopeId,
           startupInjection: true,
-          contextBundle: 'private-profile',
+          contextBundle: 'scoped',
           authoritative: true,
           sourceFiles: bundle?.sourcePaths || [],
           bundlePath: bundle?.bundlePath || null,
@@ -4802,25 +4776,25 @@ class SquidRunApp {
       if (lifecycleRoot) {
         await this.initPostLoad();
       }
-      let private-profileBundle = null;
-      if (this.activeProfileName === 'private-profile' || windowKey === 'private-profile') {
+      let scopedBundle = null;
+      if (this.activeProfileName === 'scoped' || windowKey === 'scoped') {
         try {
-          private-profileBundle = await this.inject[private-profile]StartupBundle();
+          scopedBundle = await this.injectScopedStartupBundle();
         } catch (err) {
-          log.warn('Window', `Failed to build [private-profile] startup bundle: ${err.message}`);
+          log.warn('Window', `Failed to build Scoped startup bundle: ${err.message}`);
         }
       }
       try {
         window.webContents.send('window-context', {
           windowKey,
-          windowTeam: this.activeProfileName === 'private-profile' && windowKey === 'main' ? 'private-profile' : windowKey,
+          windowTeam: this.activeProfileName === 'scoped' && windowKey === 'main' ? 'scoped' : windowKey,
           profileName: this.activeProfileName,
-          profileLabel: this.activeProfileName === 'private-profile' ? '[private-profile]' : this.formatWindowKeyLabel(this.activeProfileName),
+          profileLabel: this.activeProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(this.activeProfileName),
           roleLayout: 'standard',
           sessionScopeId: this.getWindowSessionScopeId(windowKey),
-          startupBundlePath: private-profileBundle?.bundlePath || null,
-          startupSourceFiles: private-profileBundle?.sourcePaths || [],
-          autoBootAgents: this.activeProfileName === 'private-profile' || windowKey === 'private-profile',
+          startupBundlePath: scopedBundle?.bundlePath || null,
+          startupSourceFiles: scopedBundle?.sourcePaths || [],
+          autoBootAgents: this.activeProfileName === 'scoped' || windowKey === 'scoped',
         });
       } catch (err) {
         log.warn('Window', `Failed to seed window context for ${windowKey}: ${err.message}`);
@@ -6945,7 +6919,7 @@ class SquidRunApp {
       return 'main';
     }
     const normalizedChatId = normalizeChatId(chatId);
-    return normalizedChatId === '8754356993' ? 'private-profile' : 'main';
+    return normalizedChatId === '2222222222' ? 'scoped' : 'main';
   }
 
   getScopedTelegramTriggerPaths(windowKey = '') {

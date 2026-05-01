@@ -11,24 +11,22 @@ function toNonEmptyString(value) {
 function normalizeWindowKey(value) {
   const normalized = toNonEmptyString(String(value || '').toLowerCase());
   if (!normalized) return 'main';
-  if (normalized === '은별' || normalized === 'private-profile' || normalized === 'private-profile') {
-    return 'private-profile';
-  }
+  if (normalized === 'scoped') return 'scoped';
   return normalized;
 }
 
 function normalizeLaunchIntent(rawIntent = {}) {
   const explicitWindowKey = toNonEmptyString(String(rawIntent.windowKey || rawIntent.targetWindowKey || ''));
   const profileName = normalizeProfileName(
-    rawIntent.profileName || (normalizeWindowKey(explicitWindowKey) === 'private-profile' ? 'private-profile' : DEFAULT_PROFILE)
+    rawIntent.profileName || (normalizeWindowKey(explicitWindowKey) === 'scoped' ? 'scoped' : DEFAULT_PROFILE)
   );
-  const profileOnly[private-profile]Launch = !explicitWindowKey && profileName === 'private-profile';
-  const windowKey = profileOnly[private-profile]Launch
-    ? 'private-profile'
+  const profileOnlyScopedLaunch = !explicitWindowKey && profileName === 'scoped';
+  const windowKey = profileOnlyScopedLaunch
+    ? 'scoped'
     : normalizeWindowKey(explicitWindowKey || 'main');
   const includeMainWindow = windowKey === 'main'
     ? true
-    : (profileOnly[private-profile]Launch ? rawIntent.includeMainWindow === true : rawIntent.includeMainWindow !== false);
+    : (profileOnlyScopedLaunch ? rawIntent.includeMainWindow === true : rawIntent.includeMainWindow !== false);
   return {
     profileName,
     windowKey,
@@ -47,8 +45,8 @@ function parseLaunchIntent(argv = []) {
     const token = toNonEmptyString(String(args[index] || ''));
     if (!token) continue;
 
-    if (token === '--private-profile' || token === '--private-profile') {
-      windowKey = 'private-profile';
+    if (token === '--scoped') {
+      windowKey = 'scoped';
       includeMainWindow = false;
       continue;
     }

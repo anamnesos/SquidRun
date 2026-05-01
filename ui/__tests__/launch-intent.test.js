@@ -7,10 +7,10 @@ const {
 } = require('../modules/main/launch-intent');
 
 describe('launch-intent', () => {
-  test('normalizes [private-profile] aliases to the dedicated window key', () => {
-    expect(normalizeWindowKey('private-profile')).toBe('private-profile');
-    expect(normalizeWindowKey('private-profile')).toBe('private-profile');
-    expect(normalizeWindowKey('은별')).toBe('private-profile');
+  test('normalizes Scoped aliases to the dedicated window key', () => {
+    expect(normalizeWindowKey('scoped')).toBe('scoped');
+    expect(normalizeWindowKey('scoped')).toBe('scoped');
+    expect(normalizeWindowKey('Scoped')).toBe('scoped');
   });
 
   test('defaults to the main window intent', () => {
@@ -22,27 +22,27 @@ describe('launch-intent', () => {
     });
   });
 
-  test('parses standalone [private-profile] launch flags', () => {
-    expect(parseLaunchIntent(['--window=private-profile', '--solo-window'])).toEqual({
-      profileName: 'private-profile',
-      windowKey: 'private-profile',
+  test('parses standalone Scoped launch flags', () => {
+    expect(parseLaunchIntent(['--window=scoped', '--solo-window'])).toEqual({
+      profileName: 'scoped',
+      windowKey: 'scoped',
       includeMainWindow: false,
-      focusWindowKey: 'private-profile',
+      focusWindowKey: 'scoped',
     });
-    expect(parseLaunchIntent(['--private-profile'])).toEqual({
-      profileName: 'private-profile',
-      windowKey: 'private-profile',
+    expect(parseLaunchIntent(['--scoped'])).toEqual({
+      profileName: 'scoped',
+      windowKey: 'scoped',
       includeMainWindow: false,
-      focusWindowKey: 'private-profile',
+      focusWindowKey: 'scoped',
     });
   });
 
   test('keeps the main window included when explicitly requested', () => {
-    expect(parseLaunchIntent(['--window', 'private-profile', '--with-main-window'])).toEqual({
-      profileName: 'private-profile',
-      windowKey: 'private-profile',
+    expect(parseLaunchIntent(['--window', 'scoped', '--with-main-window'])).toEqual({
+      profileName: 'scoped',
+      windowKey: 'scoped',
       includeMainWindow: true,
-      focusWindowKey: 'private-profile',
+      focusWindowKey: 'scoped',
     });
   });
 
@@ -58,30 +58,30 @@ describe('launch-intent', () => {
     });
   });
 
-  test('routes profile-only [private-profile] launches to the standalone [private-profile] window', () => {
-    expect(parseLaunchIntent(['--profile=private-profile'])).toEqual({
-      profileName: 'private-profile',
-      windowKey: 'private-profile',
+  test('routes profile-only Scoped launches to the standalone Scoped window', () => {
+    expect(parseLaunchIntent(['--profile=scoped'])).toEqual({
+      profileName: 'scoped',
+      windowKey: 'scoped',
       includeMainWindow: false,
-      focusWindowKey: 'private-profile',
+      focusWindowKey: 'scoped',
     });
   });
 
-  test('lets profile-only [private-profile] launches include main when explicitly requested', () => {
-    expect(parseLaunchIntent(['--profile=private-profile', '--with-main-window'])).toEqual({
-      profileName: 'private-profile',
-      windowKey: 'private-profile',
+  test('lets profile-only Scoped launches include main when explicitly requested', () => {
+    expect(parseLaunchIntent(['--profile=scoped', '--with-main-window'])).toEqual({
+      profileName: 'scoped',
+      windowKey: 'scoped',
       includeMainWindow: true,
-      focusWindowKey: 'private-profile',
+      focusWindowKey: 'scoped',
     });
   });
 
-  test('allows an explicit profile to override an [private-profile] window launch', () => {
-    expect(parseLaunchIntent(['--profile=main', '--window=private-profile', '--solo-window'])).toEqual({
+  test('allows an explicit profile to override an Scoped window launch', () => {
+    expect(parseLaunchIntent(['--profile=main', '--window=scoped', '--solo-window'])).toEqual({
       profileName: 'main',
-      windowKey: 'private-profile',
+      windowKey: 'scoped',
       includeMainWindow: false,
-      focusWindowKey: 'private-profile',
+      focusWindowKey: 'scoped',
     });
   });
 });

@@ -265,20 +265,20 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['architect', '(BUILDER #1): NurseCura status update', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        ['architect', '(BUILDER #1): PrivateCase status update', '--timeout', '80', '--retries', '0', '--no-fallback'],
         { HM_SEND_PORT: '1', SQUIDRUN_PROFILE: 'main' },
         { cwd: tempProject }
       );
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain('BLOCKED: [private-profile]/case context in main pane');
+      expect(result.stderr).toContain('BLOCKED: Scoped/case context in main pane');
       expect(fs.existsSync(logPath)).toBe(true);
       const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({
         type: 'context_leak',
         profile: 'main',
-        phrase: 'NurseCura',
+        phrase: 'PrivateCase',
       });
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
@@ -295,7 +295,7 @@ describe('hm-send retry behavior', () => {
       const result = await runHmSend(
         [
           'builder',
-          '(ARCH #16): TASK - [private-profile] window slow startup + Telegram lane sanity. OBJECTIVE: diagnose queued replay and scoped windowKey routing.',
+          '(ARCH #16): TASK - Scoped window slow startup + Telegram lane sanity. OBJECTIVE: diagnose queued replay and scoped windowKey routing.',
           '--timeout',
           '80',
           '--retries',
@@ -324,7 +324,7 @@ describe('hm-send retry behavior', () => {
       const result = await runHmSend(
         [
           'builder',
-          '(ARCH #16): TASK - [private-profile] window status. Check NurseCura case notes.',
+          '(ARCH #16): TASK - Scoped window status. Check PrivateCase case notes.',
           '--timeout',
           '80',
           '--retries',
@@ -336,29 +336,29 @@ describe('hm-send retry behavior', () => {
       );
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain('BLOCKED: [private-profile]/case context in main pane');
+      expect(result.stderr).toContain('BLOCKED: Scoped/case context in main pane');
       expect(fs.existsSync(logPath)).toBe(true);
       const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({
         type: 'context_leak',
         profile: 'main',
-        phrase: 'NurseCura',
+        phrase: 'PrivateCase',
       });
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
     }
   });
 
-  test('allows case context in the private-profile profile', async () => {
+  test('allows case context in the scoped profile', async () => {
     const tempProject = createLinkedProject();
     const sendAttempts = [];
     const { server, port } = await startAckServer(sendAttempts);
 
     try {
       const result = await runHmSend(
-        ['architect', '(BUILDER #1): NurseCura status update', '--timeout', '80', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'private-profile' },
+        ['architect', '(BUILDER #1): PrivateCase status update', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'scoped' },
         { cwd: tempProject }
       );
 
@@ -910,7 +910,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['telegram', '--chat-id', '8754356993', '(TEST #2f): telegram override', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      ['telegram', '--chat-id', '2222222222', '(TEST #2f): telegram override', '--timeout', '80', '--retries', '0', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -918,8 +918,8 @@ describe('hm-send retry behavior', () => {
 
     expect(result.code).toBe(0);
     expect(sendAttempts).toHaveLength(1);
-    expect(sendAttempts[0].metadata.chatId).toBe('8754356993');
-    expect(sendAttempts[0].metadata.telegram).toEqual({ chatId: '8754356993' });
+    expect(sendAttempts[0].metadata.chatId).toBe('2222222222');
+    expect(sendAttempts[0].metadata.telegram).toEqual({ chatId: '2222222222' });
     expect(result.stdout).toContain('ack: telegram_delivered');
   });
 

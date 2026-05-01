@@ -33,8 +33,8 @@ describe('startup-transcript-context', () => {
       '- **Thesis**: dead cat bounce failed at $2,020',
     ].join('\n'));
     fs.writeFileSync(casePath, [
-      '### Case 3: Qeline Shop (큐라인샵) — Counterfeit Goods',
-      '| 11 | Monday 3/30 customs call with team lead | 은별 action | ⚠️ WAITING |',
+      '### Case 3: ExampleShop (ExampleShop) — Counterfeit Goods',
+      '| 11 | Monday 3/30 evidence call with team lead | Scoped action | ⚠️ WAITING |',
     ].join('\n'));
 
     fs.writeFileSync(indexPath, [
@@ -43,8 +43,8 @@ describe('startup-transcript-context', () => {
         sourceCitation: 'C:\\archive\\session.jsonl:10',
         speaker: 'user',
         timestamp: '2026-03-28T22:55:34.659Z',
-        text: 'the user said Qeline first mattered because of his wife\'s brother and Michelle Aviso.',
-        entities: ['Qeline', 'Michelle Aviso'],
+        text: 'the user said ExampleShop first mattered because of his wife\'s brother and Example Person.',
+        entities: ['ExampleShop', 'Example Person'],
         tags: ['qeline_case'],
       }),
       JSON.stringify({
@@ -76,7 +76,7 @@ describe('startup-transcript-context', () => {
     db.prepare(`
       INSERT INTO comms_journal (sender_role, target_role, channel, raw_body)
       VALUES (?, ?, ?, ?)
-    `).run('architect', 'builder', 'ws', 'Parser shipped and verified. Now wire it into session-start for Qeline and ETH short startup recovery.');
+    `).run('architect', 'builder', 'ws', 'Parser shipped and verified. Now wire it into session-start for ExampleShop and ETH short startup recovery.');
     db.close();
 
     const result = buildStartupTranscriptContext({
@@ -90,13 +90,13 @@ describe('startup-transcript-context', () => {
 
     expect(result.ok).toBe(true);
     expect(result.activeItems.join('\n')).toContain('Open positions');
-    expect(result.activeItems.join('\n')).not.toContain('Qeline Shop');
+    expect(result.activeItems.join('\n')).not.toContain('ExampleShop');
     expect(result.context).toContain('Recovered Transcript Context');
     expect(result.context).toContain('[private-live-ops] ETH short');
     expect(result.context).toContain('C:\\archive\\session.jsonl:20');
   });
 
-  test('defaults missing windowKey to main so [private-profile] case items are not force-loaded into main startup context', () => {
+  test('defaults missing windowKey to main so Scoped case items are not force-loaded into main startup context', () => {
     const tradingPath = path.join(tempRoot, 'workspace', 'knowledge', 'trading-operations.md');
     const casePath = path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md');
     const indexPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index.jsonl');
@@ -105,8 +105,8 @@ describe('startup-transcript-context', () => {
 
     fs.writeFileSync(tradingPath, '- **Open positions**: ETH SHORT -1.7113 @ $2,008.10');
     fs.writeFileSync(casePath, [
-      '### Case 3: Qeline Shop (큐라인샵) — Counterfeit Goods',
-      '| 11 | Monday 3/30 customs call with team lead | 은별 action | ⚠️ WAITING |',
+      '### Case 3: ExampleShop (ExampleShop) — Counterfeit Goods',
+      '| 11 | Monday 3/30 evidence call with team lead | Scoped action | ⚠️ WAITING |',
     ].join('\n'));
     fs.writeFileSync(indexPath, '');
     fs.writeFileSync(metaPath, JSON.stringify({
@@ -134,9 +134,9 @@ describe('startup-transcript-context', () => {
       'user',
       'architect',
       'telegram',
-      '[private-profile] case update',
-      'app-session-275:private-profile',
-      JSON.stringify({ chatId: '8754356993', windowKey: 'private-profile' })
+      'Scoped case update',
+      'app-session-275:scoped',
+      JSON.stringify({ chatId: '2222222222', windowKey: 'scoped' })
     );
     db.close();
 
@@ -149,8 +149,8 @@ describe('startup-transcript-context', () => {
 
     expect(result.ok).toBe(true);
     expect(result.activeItems.join('\n')).toContain('Open positions');
-    expect(result.activeItems.join('\n')).not.toContain('Qeline Shop');
-    expect(result.activeItems.join('\n')).not.toContain('[private-profile] case update');
+    expect(result.activeItems.join('\n')).not.toContain('ExampleShop');
+    expect(result.activeItems.join('\n')).not.toContain('Scoped case update');
   });
 
   test('scopes recent comms to the requested side window during startup recovery', () => {
@@ -162,8 +162,8 @@ describe('startup-transcript-context', () => {
 
     fs.writeFileSync(tradingPath, '- **Open positions**: ETH SHORT -1.7113 @ $2,008.10');
     fs.writeFileSync(casePath, [
-      '### Case 3: Qeline Shop (큐라인샵) — Counterfeit Goods',
-      '| 11 | Monday 3/30 customs call with team lead | 은별 action | ⚠️ WAITING |',
+      '### Case 3: ExampleShop (ExampleShop) — Counterfeit Goods',
+      '| 11 | Monday 3/30 evidence call with team lead | Scoped action | ⚠️ WAITING |',
     ].join('\n'));
     fs.writeFileSync(indexPath, '');
     fs.writeFileSync(metaPath, JSON.stringify({
@@ -201,8 +201,8 @@ describe('startup-transcript-context', () => {
       'architect',
       'telegram',
       'Scoped chat should appear in side startup only',
-      'app-session-275:private-profile',
-      JSON.stringify({ chatId: '8754356993', windowKey: 'private-profile' })
+      'app-session-275:scoped',
+      JSON.stringify({ chatId: '2222222222', windowKey: 'scoped' })
     );
     db.close();
 
@@ -211,11 +211,11 @@ describe('startup-transcript-context', () => {
       indexPath,
       metaPath,
       evidenceLedgerDbPath: dbPath,
-      windowKey: 'private-profile',
+      windowKey: 'scoped',
     });
 
     expect(result.ok).toBe(true);
-    expect(result.activeItems.join('\n')).toContain('Qeline Shop');
+    expect(result.activeItems.join('\n')).toContain('ExampleShop');
     expect(result.activeItems.join('\n')).toContain('Scoped chat should appear in side startup only');
     expect(result.activeItems.join('\n')).not.toContain('Open positions');
     expect(result.activeItems.join('\n')).not.toContain('Main chat should stay main-only');

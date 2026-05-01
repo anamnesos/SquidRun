@@ -165,7 +165,7 @@ function extractCanonicalHighlights(source = {}) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (
-      /사업자등록|조기재취업|모두의 창업|NurseCura|postpartum|산후|Channel A|방송 확정|Hillstate Mailing|송달 완료|14-day/i.test(trimmed)
+      /registration|eligibility|Startup Program|PrivateCase|postpartum|care|Channel A|broadcast confirmed|ExampleProperty Mailing|delivered|14-day/i.test(trimmed)
     ) {
       highlights.push(trimmed);
     }
@@ -193,12 +193,12 @@ function deriveCanonicalBriefingOverrides(sources = []) {
   const content = sources.map((source) => source.content || '').join('\n');
   return {
     businessRegistrationOnOrBefore20260603: (
-      /사업자등록[\s\S]{0,240}(before|on or before)\s+2026-06-03/i.test(content)
-      || /사업자등록[\s\S]{0,240}2026-06-03[\s\S]{0,160}(전|이전|on or before|before)/i.test(content)
+      /registration[\s\S]{0,240}(before|on or before)\s+2026-06-03/i.test(content)
+      || /registration[\s\S]{0,240}2026-06-03[\s\S]{0,160}(전|이전|on or before|before)/i.test(content)
     ),
     modueuiChangupSubmitted20260429: (
-      /모두의 창업 2026 1기\s*\|\s*\*\*Submitted 2026-04-29\*\*/i.test(content)
-      || /모두의 창업[\s\S]{0,160}Submitted 2026-04-29/i.test(content)
+      /Startup Program 2026 1기\s*\|\s*\*\*Submitted 2026-04-29\*\*/i.test(content)
+      || /Startup Program[\s\S]{0,160}Submitted 2026-04-29/i.test(content)
     ),
   };
 }
@@ -210,20 +210,20 @@ function applyCanonicalBriefingOverrides(body = '', sources = []) {
   if (overrides.businessRegistrationOnOrBefore20260603) {
     output = output
       .replace(
-        /(사업자등록 timing\s*\|\s*)Must be\s*\*\*?after\s+6\/3\*\*?[^\n]*/gi,
-        '$1Must be **on or before 2026-06-03** to preserve 조기재취업수당 eligibility'
+        /(registration timing\s*\|\s*)Must be\s*\*\*?after\s+6\/3\*\*?[^\n]*/gi,
+        '$1Must be **on or before 2026-06-03** to preserve eligibility benefit eligibility'
       )
       .replace(
-        /(사업자등록[^|\n]*\|\s*)Must be\s*\*\*?after\s+2026-06-03\*\*?[^\n]*/gi,
-        '$1Must be **on or before 2026-06-03** to preserve 조기재취업수당 eligibility'
+        /(registration[^|\n]*\|\s*)Must be\s*\*\*?after\s+2026-06-03\*\*?[^\n]*/gi,
+        '$1Must be **on or before 2026-06-03** to preserve eligibility benefit eligibility'
       )
       .replace(
         /business registration must happen\s+\*\*?after\s+(?:6\/3|2026-06-03)\*\*?/gi,
         'business registration must happen **on or before 2026-06-03**'
       )
       .replace(
-        /coordinate 사업자등록 timing \(must be after 6\/3\)/gi,
-        'coordinate 사업자등록 timing (must be on or before 2026-06-03)'
+        /coordinate registration timing \(must be after 6\/3\)/gi,
+        'coordinate registration timing (must be on or before 2026-06-03)'
       );
   }
 
@@ -231,11 +231,11 @@ function applyCanonicalBriefingOverrides(body = '', sources = []) {
     output = output
       .replace(
         /-\s+\*\*Status uncertain\*\*\s*[^\n]*Unknown if she completed submission\./gi,
-        '- **Submitted 2026-04-29** ([private-profile] confirmed via Telegram).'
+        '- **Submitted 2026-04-29** (Scoped confirmed via Telegram).'
       )
       .replace(
-        /Confirm 모두의 창업 submission status[^\n]*/gi,
-        'Monitor 모두의 창업 Stage 1 announcement'
+        /Confirm Startup Program submission status[^\n]*/gi,
+        'Monitor Startup Program Stage 1 announcement'
       )
       .replace(
         /did she finish and submit, or is it still in progress\?/gi,

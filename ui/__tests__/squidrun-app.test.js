@@ -241,7 +241,7 @@ jest.mock('../scripts/hm-telegram-routing', () => ({
     ok: true,
     chatId: options.chatId ? Number(options.chatId) : 123456789,
     messageId: 42,
-    method: options.chatId === '8754356993' ? 'send-long-telegram' : 'hm-send-telegram',
+    method: options.chatId === '2222222222' ? 'send-long-telegram' : 'hm-send-telegram',
   })),
 }));
 
@@ -705,19 +705,19 @@ describe('SquidRunApp', () => {
       await app.createWindow();
       const primaryWindow = app.ctx.mainWindow;
 
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
 
       expect(app.ctx.mainWindow).toBe(primaryWindow);
-      expect(app.ctx.setWindow).toHaveBeenCalledWith('private-profile', expect.any(Object));
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      expect(app.ctx.setWindow).toHaveBeenCalledWith('scoped', expect.any(Object));
+      const secondaryWindow = app.ctx.getWindow('scoped');
       expect(secondaryWindow).toBeTruthy();
       expect(secondaryWindow).not.toBe(primaryWindow);
       expect(secondaryWindow.loadFile).toHaveBeenCalledWith(
         expect.stringContaining('index.html'),
         expect.objectContaining({
           query: expect.objectContaining({
-            windowKey: 'private-profile',
-            windowTeam: 'private-profile',
+            windowKey: 'scoped',
+            windowTeam: 'scoped',
           }),
         })
       );
@@ -726,8 +726,8 @@ describe('SquidRunApp', () => {
     it('routes visible-window sends to the requested secondary window without clobbering main', async () => {
       await app.createWindow();
       const primaryWindow = app.ctx.mainWindow;
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
 
       primaryWindow.webContents.send.mockClear();
       secondaryWindow.webContents.send.mockClear();
@@ -736,7 +736,7 @@ describe('SquidRunApp', () => {
         panes: ['1'],
         message: 'case-only message',
         meta: {
-          windowKey: 'private-profile',
+          windowKey: 'scoped',
         },
       });
 
@@ -754,8 +754,8 @@ describe('SquidRunApp', () => {
       app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
       await app.createWindow();
       const primaryWindow = app.ctx.mainWindow;
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
       const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
 
       app.paneHostReady = new Set(['1']);
@@ -773,7 +773,7 @@ describe('SquidRunApp', () => {
         panes: ['1'],
         message: '[Telegram from scoped]: hello',
         meta: {
-          windowKey: 'private-profile',
+          windowKey: 'scoped',
         },
       });
 
@@ -785,30 +785,30 @@ describe('SquidRunApp', () => {
         expect.objectContaining({
           message: '[Telegram from scoped]: hello',
           meta: expect.objectContaining({
-            windowKey: 'private-profile',
+            windowKey: 'scoped',
           }),
         })
       );
       expect(primaryWindow.webContents.send).not.toHaveBeenCalled();
     });
 
-    it('launches only [private-profile] for standalone launch intent', async () => {
+    it('launches only Scoped for standalone launch intent', async () => {
       await app.launchWindowsForProfile({
-        windowKey: 'private-profile',
+        windowKey: 'scoped',
         includeMainWindow: false,
       });
 
-      const private-profileWindow = app.ctx.getWindow('private-profile');
-      expect(private-profileWindow).toBeTruthy();
-      expect(app.ctx.getWindow('main')).toBe(private-profileWindow);
-      expect(private-profileWindow.focus).toHaveBeenCalled();
+      const scopedWindow = app.ctx.getWindow('scoped');
+      expect(scopedWindow).toBeTruthy();
+      expect(app.ctx.getWindow('main')).toBe(scopedWindow);
+      expect(scopedWindow.focus).toHaveBeenCalled();
     });
 
     it('broadcasts daemon lifecycle events to every open top-level window', async () => {
       await app.createWindow();
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
       const primaryWindow = app.ctx.getWindow('main');
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      const secondaryWindow = app.ctx.getWindow('scoped');
 
       primaryWindow.webContents.send.mockClear();
       secondaryWindow.webContents.send.mockClear();
@@ -830,14 +830,14 @@ describe('SquidRunApp', () => {
       );
     });
 
-    it('closing the [private-profile] window does not trigger full shutdown while main stays alive', async () => {
+    it('closing the Scoped window does not trigger full shutdown while main stays alive', async () => {
       app.setupWindowListeners.mockRestore();
       const shutdownSpy = jest.spyOn(app, 'performFullShutdown').mockResolvedValue({ success: true });
 
       await app.createWindow();
       const primaryWindow = app.ctx.mainWindow;
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
       const closeHandler = secondaryWindow.on.mock.calls.find(([eventName]) => eventName === 'close')?.[1];
       const closedHandler = secondaryWindow.on.mock.calls.find(([eventName]) => eventName === 'closed')?.[1];
 
@@ -852,24 +852,24 @@ describe('SquidRunApp', () => {
 
       closedHandler();
 
-      expect(app.ctx.deleteWindow).toHaveBeenCalledWith('private-profile');
+      expect(app.ctx.deleteWindow).toHaveBeenCalledWith('scoped');
       expect(app.ctx.mainWindow).toBe(primaryWindow);
     });
 
-    it('replays daemon state to the [private-profile] window after load so the renderer can mount existing terminals', async () => {
+    it('replays daemon state to the Scoped window after load so the renderer can mount existing terminals', async () => {
       app.setupWindowListeners.mockRestore();
       mockAppContext.daemonClient = {
         connected: true,
         getTerminals: jest.fn(() => [{ paneId: '1', alive: true, scrollback: 'ready' }]),
       };
-      jest.spyOn(app, 'inject[private-profile]StartupBundle').mockResolvedValue({
-        bundlePath: '/tmp/private-profile-startup-bundle.md',
+      jest.spyOn(app, 'injectScopedStartupBundle').mockResolvedValue({
+        bundlePath: '/tmp/scoped-startup-bundle.md',
         sourcePaths: ['/tmp/case-operations.md'],
       });
 
       await app.createWindow();
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
       const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
 
       expect(typeof didFinishLoad).toBe('function');
@@ -880,22 +880,22 @@ describe('SquidRunApp', () => {
         'daemon-connected',
         expect.objectContaining({
           terminals: [{ paneId: '1', alive: true, scrollback: 'ready' }],
-          windowKey: 'private-profile',
+          windowKey: 'scoped',
         })
       );
     });
 
-    it('still seeds [private-profile] runtime state when startup bundle materialization fails', async () => {
+    it('still seeds Scoped runtime state when startup bundle materialization fails', async () => {
       app.setupWindowListeners.mockRestore();
       mockAppContext.daemonClient = {
         connected: true,
         getTerminals: jest.fn(() => [{ paneId: '1', alive: true, scrollback: 'ready' }]),
       };
-      jest.spyOn(app, 'inject[private-profile]StartupBundle').mockRejectedValue(new Error('bundle_missing'));
+      jest.spyOn(app, 'injectScopedStartupBundle').mockRejectedValue(new Error('bundle_missing'));
 
       await app.createWindow();
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
       const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
 
       expect(typeof didFinishLoad).toBe('function');
@@ -905,7 +905,7 @@ describe('SquidRunApp', () => {
       expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
         'window-context',
         expect.objectContaining({
-          windowKey: 'private-profile',
+          windowKey: 'scoped',
           startupBundlePath: null,
           startupSourceFiles: [],
         })
@@ -914,20 +914,20 @@ describe('SquidRunApp', () => {
         'daemon-connected',
         expect.objectContaining({
           terminals: [{ paneId: '1', alive: true, scrollback: 'ready' }],
-          windowKey: 'private-profile',
+          windowKey: 'scoped',
         })
       );
     });
 
-    it('can register [private-profile] as the lifecycle root for standalone launch mode', async () => {
+    it('can register Scoped as the lifecycle root for standalone launch mode', async () => {
       await app.createWindow({
-        windowKey: 'private-profile',
-        title: 'SquidRun - [private-profile]',
+        windowKey: 'scoped',
+        title: 'SquidRun - Scoped',
         lifecycleRoot: true,
       });
 
       expect(app.ctx.setMainWindow).toHaveBeenCalledWith(expect.any(Object));
-      expect(app.ctx.mainWindow).toBe(app.ctx.getWindow('private-profile'));
+      expect(app.ctx.mainWindow).toBe(app.ctx.getWindow('scoped'));
     });
   });
 
@@ -995,7 +995,7 @@ describe('SquidRunApp', () => {
     });
   });
 
-  describe('[private-profile] window startup bundle', () => {
+  describe('Scoped window startup bundle', () => {
     let app;
 
     beforeEach(() => {
@@ -1007,17 +1007,17 @@ describe('SquidRunApp', () => {
       jest.spyOn(app, 'initPostLoad').mockResolvedValue();
     });
 
-    it('injects the [private-profile] startup bundle only into the [private-profile] window panes with a scoped session id', async () => {
+    it('injects the Scoped startup bundle only into the Scoped window panes with a scoped session id', async () => {
       const routeSpy = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
-      const bundleSpy = jest.spyOn(app, 'write[private-profile]StartupBundle').mockReturnValue({
-        bundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\private-profile\\startup-bundle.md',
+      const bundleSpy = jest.spyOn(app, 'writeScopedStartupBundle').mockReturnValue({
+        bundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\scoped\\startup-bundle.md',
         sourcePaths: ['D:\\projects\\squidrun\\workspace\\knowledge\\case-operations.md'],
-        text: '[private-profile] startup bundle',
-        sessionScopeId: 'app-test:private-profile',
+        text: 'Scoped startup bundle',
+        sessionScopeId: 'app-test:scoped',
       });
 
-      await app.createWindow({ windowKey: 'private-profile', title: 'SquidRun - [private-profile]' });
-      const secondaryWindow = app.ctx.getWindow('private-profile');
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
       const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
 
       expect(typeof didFinishLoad).toBe('function');
@@ -1030,9 +1030,9 @@ describe('SquidRunApp', () => {
         panes: ['1'],
         startupInjection: true,
         meta: expect.objectContaining({
-          windowKey: 'private-profile',
-          session_id: 'app-test:private-profile',
-          contextBundle: 'private-profile',
+          windowKey: 'scoped',
+          session_id: 'app-test:scoped',
+          contextBundle: 'scoped',
         }),
       }));
       expect(routeSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({ panes: ['2'] }));
@@ -1040,16 +1040,16 @@ describe('SquidRunApp', () => {
       expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
         'window-context',
         expect.objectContaining({
-          windowKey: 'private-profile',
-          sessionScopeId: app.getWindowSessionScopeId('private-profile'),
-          startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\private-profile\\startup-bundle.md',
+          windowKey: 'scoped',
+          sessionScopeId: app.getWindowSessionScopeId('scoped'),
+          startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\scoped\\startup-bundle.md',
           autoBootAgents: true,
         })
       );
     });
 
-    it('does not inject the [private-profile] startup bundle on the main window load path', async () => {
-      const bundleSpy = jest.spyOn(app, 'write[private-profile]StartupBundle').mockReturnValue({
+    it('does not inject the Scoped startup bundle on the main window load path', async () => {
+      const bundleSpy = jest.spyOn(app, 'writeScopedStartupBundle').mockReturnValue({
         bundlePath: 'ignored',
         sourcePaths: [],
         text: 'ignored',
@@ -3019,7 +3019,7 @@ describe('SquidRunApp', () => {
 
     it('does not start Telegram polling from a secondary profile', () => {
       const telegramPoller = require('../modules/telegram-poller');
-      app.activeProfileName = 'private-profile';
+      app.activeProfileName = 'scoped';
 
       app.startTelegramPoller();
 
@@ -3036,7 +3036,7 @@ describe('SquidRunApp', () => {
       expect(options.env).toEqual(expect.objectContaining({
         SQUIDRUN_PROFILE: 'main',
         SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
-        TELEGRAM_EUNBYEOL_CHAT_IDS: '8754356993',
+        TELEGRAM_SCOPED_CHAT_IDS: '2222222222',
       }));
     });
 
@@ -3044,7 +3044,7 @@ describe('SquidRunApp', () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
 
-      app.registerAppWindow('private-profile', {
+      app.registerAppWindow('scoped', {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
           isDestroyed: jest.fn().mockReturnValue(false),
@@ -3054,13 +3054,13 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('hi there', 'private-profile', { chatId: 8754356993 });
+      options.onMessage('hi there', 'scoped', { chatId: 2222222222 });
 
       expect(app.telegramInboundContext).toEqual(
         expect.objectContaining({
-          sender: 'private-profile',
-          chatId: '8754356993',
-          windowKey: 'private-profile',
+          sender: 'scoped',
+          chatId: '2222222222',
+          windowKey: 'scoped',
         })
       );
     });
@@ -3105,7 +3105,7 @@ describe('SquidRunApp', () => {
         verified: true,
       });
 
-      app.registerAppWindow('private-profile', {
+      app.registerAppWindow('scoped', {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
           isDestroyed: jest.fn().mockReturnValue(false),
@@ -3115,7 +3115,7 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('side hello', 'scoped', { chatId: 8754356993, updateId: 102 });
+      options.onMessage('side hello', 'scoped', { chatId: 2222222222, updateId: 102 });
 
       await new Promise((resolve) => setImmediate(resolve));
       expect(deliverySpy).toHaveBeenCalledWith(
@@ -3123,18 +3123,18 @@ describe('SquidRunApp', () => {
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
-          windowKey: 'private-profile',
-          chatId: 8754356993,
+          windowKey: 'scoped',
+          chatId: 2222222222,
           metadata: expect.objectContaining({
-            chatId: 8754356993,
-            windowKey: 'private-profile',
+            chatId: 2222222222,
+            windowKey: 'scoped',
           }),
         }),
         'Telegram'
       );
     });
 
-    it('forwards scoped Telegram chat inbound to [private-profile] profile triggers when side window is standalone', async () => {
+    it('forwards scoped Telegram chat inbound to Scoped profile triggers when side window is standalone', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -3147,11 +3147,11 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('standalone hello', 'scoped', { chatId: 8754356993, updateId: 103 });
+      options.onMessage('standalone hello', 'scoped', { chatId: 2222222222, updateId: 103 });
 
       await new Promise((resolve) => setImmediate(resolve));
       expect(forwardSpy).toHaveBeenCalledWith(
-        'private-profile',
+        'scoped',
         '[Telegram from scoped]: standalone hello'
       );
       expect(deliverySpy).not.toHaveBeenCalled();
@@ -3159,36 +3159,36 @@ describe('SquidRunApp', () => {
 
     it('writes standalone scoped Telegram forwarding into the scoped profile trigger root', () => {
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-root-'));
-      const previousRoot = process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT;
-      process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT = tempRoot;
+      const previousRoot = process.env.SQUIDRUN_SCOPED_PROJECT_ROOT;
+      process.env.SQUIDRUN_SCOPED_PROJECT_ROOT = tempRoot;
 
       try {
         const forwarded = app.forwardScopedTelegramInboundToProfileWindow(
-          'private-profile',
+          'scoped',
           '[Telegram from scoped]: root test'
         );
         const scopedTriggerPath = path.join(
           tempRoot,
           '.squidrun',
-          'triggers-private-profile',
+          'triggers-scoped',
           'architect.txt'
         );
         const mainTriggerPath = path.join(
           require('../config').getProjectRoot(),
           '.squidrun',
-          'triggers-private-profile',
+          'triggers-scoped',
           'architect.txt'
         );
 
-        expect(app.getScopedTelegramTriggerPaths('private-profile')).toEqual([scopedTriggerPath]);
+        expect(app.getScopedTelegramTriggerPaths('scoped')).toEqual([scopedTriggerPath]);
         expect(forwarded).toBe(true);
         expect(fs.readFileSync(scopedTriggerPath, 'utf8')).toBe('[Telegram from scoped]: root test');
-        expect(app.getScopedTelegramTriggerPaths('private-profile')).not.toContain(mainTriggerPath);
+        expect(app.getScopedTelegramTriggerPaths('scoped')).not.toContain(mainTriggerPath);
       } finally {
         if (previousRoot === undefined) {
-          delete process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT;
+          delete process.env.SQUIDRUN_SCOPED_PROJECT_ROOT;
         } else {
-          process.env.SQUIDRUN_EUNBYEOL_PROJECT_ROOT = previousRoot;
+          process.env.SQUIDRUN_SCOPED_PROJECT_ROOT = previousRoot;
         }
         fs.rmSync(tempRoot, { recursive: true, force: true });
       }
@@ -3203,7 +3203,7 @@ describe('SquidRunApp', () => {
         verified: true,
       });
 
-      app.registerAppWindow('private-profile', {
+      app.registerAppWindow('scoped', {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
           isDestroyed: jest.fn().mockReturnValue(false),
@@ -3213,26 +3213,26 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('[Photo received]', '@Rachelchoi', {
-        chatId: 8754356993,
+      options.onMessage('[Photo received]', '@ScopedContact', {
+        chatId: 2222222222,
         media: {
           kind: 'photo',
-          localPath: 'D:\\projects\\Korean Fraud\\telegram-photos\\photo-11.jpg',
+          localPath: 'D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
           latestScreenshotPath: 'D:\\projects\\squidrun\\.squidrun\\screenshots\\latest.png',
         },
       });
 
       await new Promise((resolve) => setImmediate(resolve));
       expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from @Rachelchoi]: [Photo received] | saved: D:\\projects\\Korean Fraud\\telegram-photos\\photo-11.jpg',
+        '[Telegram from @ScopedContact]: [Photo received] | saved: D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
-          windowKey: 'private-profile',
+          windowKey: 'scoped',
           channel: 'telegram',
-          sender: '@Rachelchoi',
+          sender: '@ScopedContact',
           metadata: expect.objectContaining({
-            windowKey: 'private-profile',
+            windowKey: 'scoped',
           }),
         }),
         'Telegram'
@@ -3248,7 +3248,7 @@ describe('SquidRunApp', () => {
         verified: true,
       });
 
-      app.registerAppWindow('private-profile', {
+      app.registerAppWindow('scoped', {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
           isDestroyed: jest.fn().mockReturnValue(false),
@@ -3258,10 +3258,10 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('', '@Rachelchoi', {
+      options.onMessage('', '@ScopedContact', {
         updateId: 808489706,
         messageId: 555,
-        chatId: 8754356993,
+        chatId: 2222222222,
         photo: {
           file_id: 'photo-xyz',
         },
@@ -3269,12 +3269,12 @@ describe('SquidRunApp', () => {
 
       await new Promise((resolve) => setImmediate(resolve));
       expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from @Rachelchoi]: [Photo received]',
+        '[Telegram from @ScopedContact]: [Photo received]',
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
           channel: 'telegram',
-          sender: '@Rachelchoi',
+          sender: '@ScopedContact',
         }),
         'Telegram'
       );
@@ -3294,11 +3294,11 @@ describe('SquidRunApp', () => {
 
       try {
         const result = await app.deliverHumanMessageWithRecall(
-          '[Telegram from private-profile]: hello',
+          '[Telegram from scoped]: hello',
           {
             paneId: '1',
             channel: 'telegram',
-            sender: 'private-profile',
+            sender: 'scoped',
             messageId: 'telegram-in-123',
           },
           'Telegram'
@@ -3313,7 +3313,7 @@ describe('SquidRunApp', () => {
             messageId: 'telegram-in-123',
             paneId: '1',
             channel: 'telegram',
-            sender: 'private-profile',
+            sender: 'scoped',
           }),
         ]);
       } finally {
@@ -3343,11 +3343,11 @@ describe('SquidRunApp', () => {
 
       try {
         const result = await app.deliverHumanMessageWithRecall(
-          '[Telegram from private-profile]: hello',
+          '[Telegram from scoped]: hello',
           {
             paneId: '1',
             channel: 'telegram',
-            sender: 'private-profile',
+            sender: 'scoped',
             messageId: 'telegram-in-123',
           },
           'Telegram'
@@ -3404,10 +3404,10 @@ describe('SquidRunApp', () => {
           {
             queueKey: 'telegram-in-123',
             paneId: '1',
-            message: '[Telegram from private-profile]: hello',
+            message: '[Telegram from scoped]: hello',
             messageId: 'telegram-in-123',
             channel: 'telegram',
-            sender: 'private-profile',
+            sender: 'scoped',
           },
         ],
       }));
@@ -3542,9 +3542,9 @@ describe('SquidRunApp', () => {
     it('does not inherit recent inbound chat context for explicit telegram target', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.telegramInboundContext = {
-        sender: '@Rachelchoi',
+        sender: '@ScopedContact',
         lastInboundAtMs: Date.now(),
-        chatId: '8754356993',
+        chatId: '2222222222',
       };
 
       const result = await app.routeTelegramReply({
@@ -3580,17 +3580,17 @@ describe('SquidRunApp', () => {
 
       const result = await app.routeTelegramReply({
         target: 'telegram',
-        content: 'Direct ping to [private-profile].',
+        content: 'Direct ping to Scoped.',
         messageId: 'telegram-route-3',
-        chatId: '8754356993',
+        chatId: '2222222222',
       });
 
       expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
-        'Direct ping to [private-profile].',
+        'Direct ping to Scoped.',
         process.env,
         expect.objectContaining({
           messageId: 'telegram-route-3',
-          chatId: '8754356993',
+          chatId: '2222222222',
         })
       );
       expect(result).toEqual(
@@ -3845,7 +3845,7 @@ describe('SquidRunApp', () => {
       app.bridgeDeviceId = 'LOCAL';
     });
 
-    it('uses profile-specific bridge IDs so [private-profile] cannot replace the main relay identity', () => {
+    it('uses profile-specific bridge IDs so Scoped cannot replace the main relay identity', () => {
       const envKeys = [
         'SQUIDRUN_CROSS_DEVICE',
         'SQUIDRUN_RELAY_URL',
@@ -3859,13 +3859,13 @@ describe('SquidRunApp', () => {
         process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
         process.env.SQUIDRUN_RELAY_SECRET = 'shared';
         process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
-        process.env.SQUIDRUN_PROFILE = 'private-profile';
+        process.env.SQUIDRUN_PROFILE = 'scoped';
 
         const config = app.resolveEnvBridgeRuntimeConfig();
 
         expect(config).toEqual(expect.objectContaining({
           source: 'env',
-          deviceId: 'VIGIL-EUNBYEOL',
+          deviceId: 'VIGIL-SCOPED',
           relayUrl: 'wss://relay.example.test',
         }));
       } finally {
@@ -3882,11 +3882,11 @@ describe('SquidRunApp', () => {
     it('does not start the cross-device bridge from scoped side profiles', () => {
       const { createBridgeClient } = require('../modules/bridge-client');
       createBridgeClient.mockClear();
-      app.activeProfileName = 'private-profile';
+      app.activeProfileName = 'scoped';
       app.bridgeEnabled = true;
       app.bridgeRuntimeConfig = {
         relayUrl: 'wss://relay.example.test',
-        deviceId: 'VIGIL-EUNBYEOL',
+        deviceId: 'VIGIL-SCOPED',
         sharedSecret: 'shared',
       };
 

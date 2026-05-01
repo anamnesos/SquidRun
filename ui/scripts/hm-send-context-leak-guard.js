@@ -16,19 +16,17 @@ const DEFAULT_CONTEXT_LEAK_BYPASSES_PATH = resolveCoordPath(
 );
 
 const SCOPED_PROFILE_REFERENCE_PATTERNS = Object.freeze([
-  /은별/i,
-  /private-profile/i,
-  /private-profile/i,
+  /\bscoped[-\s]?profile\b/i,
+  /\bscoped[-\s]?window\b/i,
+  /\bprivate[-\s]?profile\b/i,
 ]);
 
 const CASE_CONTENT_PATTERNS = Object.freeze([
-  /NurseCura/i,
-  /힐스테이트/i,
-  /Hillstate/i,
-  /전명삼/i,
-  /Jeon Myeongsam/i,
-  /Qeline/i,
-  /큐라인/i,
+  /PrivateCase/i,
+  /ExampleProperty/i,
+  /Example Contact/i,
+  /ExampleShop/i,
+  /private[-\s]?case/i,
   /case-operations/i,
 ]);
 
@@ -116,7 +114,7 @@ function shouldEnforceContextLeakGuard(input = {}) {
   const bypass = String(input.bypass || '').trim() === '1';
   if (bypass) return false;
   const profile = normalizeProfileName(input.profile || process.env.SQUIDRUN_PROFILE || 'main');
-  if (profile === 'private-profile') return false;
+  if (profile === 'scoped') return false;
   return Boolean(toText(input.content, ''));
 }
 

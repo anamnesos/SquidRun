@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DISABLED: races with supervisor-daemon getUpdates, causes 은별 messages to be lost.
+// DISABLED: races with supervisor-daemon getUpdates, causes Scoped messages to be lost.
 // Do not re-enable unless supervisor Telegram polling is fully removed.
 process.exit(0);
 /**

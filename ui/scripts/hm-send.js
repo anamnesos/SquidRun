@@ -562,7 +562,7 @@ function runOutputGuards({ messageId, targetRole } = {}) {
       { logPath: resolveGuardLogPath('context-leak-violations.jsonl') }
     );
     writeGuardBlock([
-      'BLOCKED: [private-profile]/case context in main pane. This belongs in the [private-profile] window.',
+      'BLOCKED: Scoped/case context in main pane. This belongs in the Scoped window.',
       `Phrase: '${contextViolation.phrase}'`,
       `Log: ${logResult.path}`,
     ]);

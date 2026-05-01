@@ -41,10 +41,10 @@ describe('recall feedback service', () => {
     });
     const unusedIdentity = buildRecallIdentityKey({
       store: 'memory_search',
-      sourcePath: 'workspace/knowledge/customs.md',
+      sourcePath: 'workspace/knowledge/evidence.md',
       citation: 'doc-2',
-      title: 'Customs packet',
-      excerpt: 'Korean customs invoice trail and shipping label chain.',
+      title: 'Evidence packet',
+      excerpt: 'Korean evidence invoice trail and shipping label chain.',
     });
 
     expect(service.recordRecallSet({
@@ -73,10 +73,10 @@ describe('recall feedback service', () => {
           rankIndex: 1,
           store: 'memory_search',
           sourceRole: 'corpus',
-          sourcePath: 'workspace/knowledge/customs.md',
+          sourcePath: 'workspace/knowledge/evidence.md',
           citation: 'doc-2',
-          title: 'Customs packet',
-          excerpt: 'Korean customs invoice trail and shipping label chain.',
+          title: 'Evidence packet',
+          excerpt: 'Korean evidence invoice trail and shipping label chain.',
           score: 3,
           rankScore: 3,
         },
@@ -179,7 +179,7 @@ describe('recall feedback service', () => {
       sourcePath: 'evidence-ledger/comms_journal',
       citation: 'msg-1',
       title: 'Telegram note',
-      excerpt: 'Hillstate customs packet summary.',
+      excerpt: 'ExampleProperty evidence packet summary.',
     });
     const secondIdentity = buildRecallIdentityKey({
       store: 'memory_search',
@@ -194,7 +194,7 @@ describe('recall feedback service', () => {
       paneId: '1',
       agentRole: 'architect',
       channel: 'user_prompt',
-      query: 'customs statement',
+      query: 'evidence statement',
       items: [
         {
           resultItemId: 'item-a',
@@ -205,7 +205,7 @@ describe('recall feedback service', () => {
           sourcePath: 'evidence-ledger/comms_journal',
           citation: 'msg-1',
           title: 'Telegram note',
-          excerpt: 'Hillstate customs packet summary.',
+          excerpt: 'ExampleProperty evidence packet summary.',
           score: 2,
           rankScore: 2,
         },

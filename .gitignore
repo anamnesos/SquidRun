@@ -104,15 +104,15 @@ ui/coverage/
 ui/coverage-output.txt
 
 # Temp scripts and debug artifacts
-CLAUDE.private-profile.md
-ROLES.private-profile.md
-ui/workspace-template/CLAUDE.private-profile.md
-ui/workspace-template/ROLES.private-profile.md
-workspace/drafts/private-profile-*
+CLAUDE.scoped.md
+ROLES.scoped.md
+ui/workspace-template/CLAUDE.scoped.md
+ui/workspace-template/ROLES.scoped.md
+workspace/drafts/scoped-*
 workspace/drafts/builder-memory-gc-plan.md
-workspace/temp-private-profile-*
-workspace/temp-oracle-review-private-profile*
-workspace/은별_*
+workspace/temp-scoped-*
+workspace/temp-oracle-review-scoped*
+workspace/Scoped_*
 workspace/tmp-session*
 temp-oracle-consultation-*.json
 .tmp_*.png
@@ -132,9 +132,9 @@ workspace/all_claims.json
 workspace/capture.ps1
 workspace/oracle-qa.js
 workspace/oracle-test.js
-tools/check-private-profile-photos.js
+tools/check-scoped-photos.js
 tools/check-telegram-updates.js
-tools/download-private-profile-photos.js
+tools/download-scoped-photos.js
 tools/download-gmail-attachments.js
 tools/get-recent-photos.js
 tools/grab-telegram-files.js

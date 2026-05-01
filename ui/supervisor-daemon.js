@@ -59,12 +59,12 @@ try {
   require('dotenv').config({ path: path.join(getProjectRoot(), '.env'), quiet: true, override: true });
 } catch {}
 
-// [private-profile] profile MUST NOT spawn wallet-touching trading lanes. The dotenv.config
+// Scoped profile MUST NOT spawn wallet-touching trading lanes. The dotenv.config
 // call above uses override:true and would clobber any pre-set process.env values
-// that ui/profile.js applyProfileEnv tried to inject. So we re-apply the private-profile
+// that ui/profile.js applyProfileEnv tried to inject. So we re-apply the scoped
 // disable AFTER the .env load. Belt + suspenders: kill all SQUIDRUN_* trading flags
 // AND blank the HL credentials so even if a lane slipped through, has[private-live-ops]Credentials returns false.
-if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'private-profile') {
+if (String(process.env.SQUIDRUN_PROFILE || '').toLowerCase() === 'scoped') {
   process.env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
   process.env.SQUIDRUN_ORACLE_WATCH = '0';
   process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION = '0';
@@ -2617,7 +2617,7 @@ class SupervisorDaemon {
 
   isCoordHeartbeatActive() {
     const profile = String(this.runtimeEnv?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase();
-    return Boolean(this.coordHeartbeatEnabled && this.cryptoTradingEnabled && profile !== 'private-profile');
+    return Boolean(this.coordHeartbeatEnabled && this.cryptoTradingEnabled && profile !== 'scoped');
   }
 
   async recordCoordHeartbeatFailure(result = {}, summary = {}) {

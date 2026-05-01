@@ -132,16 +132,16 @@ function deriveTags(text, speaker = '') {
   if (/(^|\b)(?:decision:|priority:|must\b|need to\b|ship\b|blocker\b|critical\b|urgent\b)/i.test(value)) {
     tags.push('decision');
   }
-  if (/(^|\b)(?:qeline|quejada|michelle aviso|counterfeit|customs|관세청|큐라인)/i.test(value)) {
-    tags.push('qeline_case');
+  if (/(^|\b)(?:example shop|counterfeit|evidence|ExampleShop)/i.test(value)) {
+    tags.push('example_shop_case');
   }
-  if (/(^|\b)(?:hillstate|dongin|힐스테이트|내용증명|김양미|김송규|이창현)/i.test(value)) {
-    tags.push('hillstate_case');
+  if (/(^|\b)(?:ExampleProperty|property notice)/i.test(value)) {
+    tags.push('example_property_case');
   }
-  if (/(^|\b)(?:jeon myeongsam|전명삼|고소장|카톡)/i.test(value)) {
-    tags.push('jeon_case');
+  if (/(^|\b)(?:Example Contact|case contact)/i.test(value)) {
+    tags.push('example_contact_case');
   }
-  if (/(^|\b)(?:telegram|chat\s*8754356993|8754356993|은별|private-profile|rachelchoi)/i.test(value)) {
+  if (/(^|\b)(?:telegram|chat\s*2222222222|2222222222|Scoped|scoped|scoped-contact)/i.test(value)) {
     tags.push('telegram');
   }
   if (/(^|\b)(?:[private-live-ops]|macro regime|consultation|btc\/usd|eth\/usd)/i.test(value)) {

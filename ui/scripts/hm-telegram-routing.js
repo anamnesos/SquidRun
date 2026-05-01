@@ -1,16 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveCoordPath } = require('../config');
-const { EUNBYEOL_CHAT_ID, getActiveProfileName } = require('../profile');
+const { SCOPED_PROFILE_CHAT_ID, getActiveProfileName } = require('../profile');
 const { sendTelegram, normalizeChatId } = require('./hm-telegram');
 
 const TELEGRAM_ROUTING_RELATIVE_PATH = path.join('runtime', 'telegram-routing.json');
 const TELEGRAM_LONG_MESSAGE_MAX_CHARS = 4000;
 
 const DEFAULT_TELEGRAM_ROUTING = Object.freeze({
-  '8754356993': {
+  '2222222222': {
     method: 'send-long-telegram',
-    name: '[private-profile]',
+    name: 'Scoped',
     language: 'ko',
   },
   default: {
@@ -99,7 +99,7 @@ function readTelegramRoutingConfig() {
 }
 
 function getProfileDefaultRouteKey(env = process.env) {
-  return getActiveProfileName(env) === 'private-profile' ? EUNBYEOL_CHAT_ID : 'default';
+  return getActiveProfileName(env) === 'scoped' ? SCOPED_PROFILE_CHAT_ID : 'default';
 }
 
 function resolveTelegramRoute({ chatId = null, env = process.env } = {}) {

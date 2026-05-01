@@ -53,12 +53,12 @@ function getTelegramConfig(env = process.env) {
   // by chatId/windowKey; secondary profiles must not run competing pollers.
   // Fail-safe: without the central-owner flag, main rejects scoped chat IDs.
   const profile = String(env.SQUIDRUN_PROFILE || '').trim().toLowerCase();
-  const private-profileRaw = typeof env.TELEGRAM_EUNBYEOL_CHAT_IDS === 'string'
-    ? env.TELEGRAM_EUNBYEOL_CHAT_IDS.trim()
+  const scopedRaw = typeof env.TELEGRAM_SCOPED_CHAT_IDS === 'string'
+    ? env.TELEGRAM_SCOPED_CHAT_IDS.trim()
     : '';
-  const private-profileChatIds = Array.from(new Set(
-    private-profileRaw
-      ? private-profileRaw.split(',').map(s => Number.parseInt(s.trim(), 10)).filter(Number.isFinite)
+  const scopedChatIds = Array.from(new Set(
+    scopedRaw
+      ? scopedRaw.split(',').map(s => Number.parseInt(s.trim(), 10)).filter(Number.isFinite)
       : []
   ));
 
@@ -67,7 +67,7 @@ function getTelegramConfig(env = process.env) {
     chatId,
     authorizedChatIds,
     profile,
-    private-profileChatIds,
+    scopedChatIds,
     acceptScopedChatIds: env.SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS === '1',
   };
 }
@@ -150,17 +150,17 @@ function isAuthorizedChat(message, currentConfig) {
   const chatId = getAuthorizedChatId(message);
   if (chatId === null) return false;
 
-  const private-profileIds = Array.isArray(currentConfig.private-profileChatIds) ? currentConfig.private-profileChatIds : [];
+  const scopedIds = Array.isArray(currentConfig.scopedChatIds) ? currentConfig.scopedChatIds : [];
   const profile = typeof currentConfig.profile === 'string' ? currentConfig.profile : '';
 
-  if (profile === 'private-profile') {
-    // [private-profile] window: accept ONLY chats declared as private-profile-scoped.
-    return private-profileIds.includes(chatId);
+  if (profile === 'scoped') {
+    // Scoped window: accept ONLY chats declared as scoped-scoped.
+    return scopedIds.includes(chatId);
   }
 
   // Main window (profile unset or anything else): accept the normal allowlist
-  // but REJECT any chat declared as private-profile-scoped so case-work does not leak in.
-  if (private-profileIds.includes(chatId)) {
+  // but REJECT any chat declared as scoped-scoped so case-work does not leak in.
+  if (scopedIds.includes(chatId)) {
     return currentConfig.acceptScopedChatIds === true;
   }
   if (chatId === currentConfig.chatId) return true;
@@ -476,7 +476,7 @@ async function pollNow() {
       if (!isAuthorizedChat(message, config)) {
         log.warn(
           'Telegram',
-          `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — profile=${config.profile || 'main'} config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} private-profileChatIds=${JSON.stringify(config.private-profileChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
+          `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — profile=${config.profile || 'main'} config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} scopedChatIds=${JSON.stringify(config.scopedChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
         );
         continue;
       }

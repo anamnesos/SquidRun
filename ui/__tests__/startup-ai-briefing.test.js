@@ -50,7 +50,7 @@ describe('startup-ai-briefing', () => {
       fs.mkdirSync(path.join(tempRoot, 'workspace', 'knowledge'), { recursive: true });
       fs.writeFileSync(path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md'), [
         '## Hard Error Rules',
-        '- 사업자등록 must happen **before 2026-06-03** (the 조기재취업 기준시점), not after.',
+        '- registration must happen **before 2026-06-03** (the eligibility 기준시점), not after.',
       ].join('\n'));
       const transcriptPath = path.join(tempRoot, 'session-1.jsonl');
       fs.writeFileSync(transcriptPath, [
@@ -219,7 +219,7 @@ describe('startup-ai-briefing', () => {
     expect(prompt).toContain('Use the verified live snapshot');
   });
 
-  test('uses canonical case files to override stale [private-profile] transcript summaries', async () => {
+  test('uses canonical case files to override stale Scoped transcript summaries', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-canonical-'));
     const outputPath = path.join(tempRoot, 'ai-briefing.md');
     const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
@@ -228,9 +228,9 @@ describe('startup-ai-briefing', () => {
       fs.mkdirSync(path.join(tempRoot, 'workspace', 'knowledge'), { recursive: true });
       fs.writeFileSync(path.join(tempRoot, 'workspace', 'knowledge', 'case-operations.md'), [
         '## Hard Error Rules',
-        '- 사업자등록 must happen **before 2026-06-03** (the 조기재취업 기준시점), not after.',
+        '- registration must happen **before 2026-06-03** (the eligibility 기준시점), not after.',
         '',
-        '| 모두의 창업 2026 1기 | **Submitted 2026-04-29** ([private-profile] confirmed via Telegram). | Selection result. |',
+        '| Startup Program 2026 1기 | **Submitted 2026-04-29** (Scoped confirmed via Telegram). | Selection result. |',
       ].join('\n'));
       fs.writeFileSync(path.join(tempRoot, 'workspace', 'knowledge', 'handoff-corrections.md'), [
         '## Fast Use',
@@ -246,7 +246,7 @@ describe('startup-ai-briefing', () => {
           content: [
             {
               type: 'text',
-              text: '사업자등록 timing Must be after 6/3. 모두의 창업 status uncertain.',
+              text: 'registration timing Must be after 6/3. Startup Program status uncertain.',
             },
           ],
         },
@@ -260,10 +260,10 @@ describe('startup-ai-briefing', () => {
               type: 'text',
               text: [
                 '## Key Dates & Numbers',
-                '| 사업자등록 timing | Must be **after 6/3** to preserve 조기재취업수당 eligibility |',
+                '| registration timing | Must be **after 6/3** to preserve eligibility benefit eligibility |',
                 '',
                 '## Immediate Priorities',
-                '1. Confirm 모두의 창업 submission status — did she finish and submit, or is it still in progress?',
+                '1. Confirm Startup Program submission status — did she finish and submit, or is it still in progress?',
               ].join('\n'),
             },
           ],
@@ -284,12 +284,12 @@ describe('startup-ai-briefing', () => {
 
       expect(result.ok).toBe(true);
       expect(prompt).toContain('Canonical source-of-truth (highest priority):');
-      expect(prompt).toContain('사업자등록 must happen **before 2026-06-03**');
+      expect(prompt).toContain('registration must happen **before 2026-06-03**');
       expect(briefing).toContain('Canonical Source-Of-Truth Overrides');
       expect(briefing).toContain('Must be **on or before 2026-06-03**');
-      expect(briefing).toContain('Monitor 모두의 창업 Stage 1 announcement');
+      expect(briefing).toContain('Monitor Startup Program Stage 1 announcement');
       expect(briefing).not.toContain('Must be **after 6/3**');
-      expect(briefing).not.toContain('Confirm 모두의 창업 submission status');
+      expect(briefing).not.toContain('Confirm Startup Program submission status');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

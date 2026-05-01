@@ -225,10 +225,10 @@ describe('telegram-poller', () => {
     expect(telegramPoller._internals.getTelegramConfig({
       TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
       TELEGRAM_CHAT_ID: '5613428850',
-      TELEGRAM_CHAT_ALLOWLIST: '8754356993',
+      TELEGRAM_CHAT_ALLOWLIST: '2222222222',
     })).toEqual(expect.objectContaining({
       chatId: 5613428850,
-      authorizedChatIds: [8754356993],
+      authorizedChatIds: [2222222222],
     }));
   });
 
@@ -259,7 +259,7 @@ describe('telegram-poller', () => {
               message: {
                 message_id: 99,
                 chat: { id: 123456 },
-                from: { username: 'rachelchoi' },
+                from: { username: 'scoped-contact' },
                 caption: 'receipt',
                 photo: [
                   { file_id: 'small-photo', file_unique_id: 'small-unique' },
@@ -289,7 +289,7 @@ describe('telegram-poller', () => {
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(onMessage).toHaveBeenCalledWith(
         '[Photo] receipt',
-        '@rachelchoi',
+        '@scoped-contact',
         expect.objectContaining({
           updateId: 21,
           updateKind: 'message',
@@ -328,7 +328,7 @@ describe('telegram-poller', () => {
       env: {
         TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
         TELEGRAM_CHAT_ID: '5613428850',
-        TELEGRAM_CHAT_ALLOWLIST: '8754356993',
+        TELEGRAM_CHAT_ALLOWLIST: '2222222222',
       },
       onMessage,
       downloadMedia: false,
@@ -339,8 +339,8 @@ describe('telegram-poller', () => {
         update_id: 31,
         edited_message: {
           message_id: 77,
-          chat: { id: 8754356993 },
-          from: { username: 'rachelchoi' },
+          chat: { id: 2222222222 },
+          from: { username: 'scoped-contact' },
           photo: [
             { file_id: 'photo-1' },
           ],
@@ -352,7 +352,7 @@ describe('telegram-poller', () => {
 
     expect(onMessage).toHaveBeenCalledWith(
       '[Photo received]',
-      '@rachelchoi',
+      '@scoped-contact',
       expect.objectContaining({
         updateId: 31,
         updateKind: 'edited_message',
@@ -372,7 +372,7 @@ describe('telegram-poller', () => {
     const normalized = root.replace(/\\/g, '/');
 
     expect(normalized).toContain('/.squidrun/runtime/telegram-inbound-media');
-    expect(normalized).not.toContain('Korean Fraud');
+    expect(normalized).not.toContain('Example Case');
   });
 
   test('explicit Telegram inbound media directory override still wins', () => {
@@ -385,15 +385,15 @@ describe('telegram-poller', () => {
 
   describe('profile-scoped chat routing', () => {
     const JAMES_CHAT_ID = 111111111;
-    const EUNBYEOL_CHAT_ID = 8754356993;
+    const SCOPED_PROFILE_CHAT_ID = 2222222222;
     const STRAY_CHAT_ID = 222222222;
 
     function buildConfig(envOverrides) {
       return telegramPoller._internals.getTelegramConfig({
         TELEGRAM_BOT_TOKEN: 'test-token',
         TELEGRAM_CHAT_ID: String(JAMES_CHAT_ID),
-        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${EUNBYEOL_CHAT_ID}`,
-        TELEGRAM_EUNBYEOL_CHAT_IDS: String(EUNBYEOL_CHAT_ID),
+        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${SCOPED_PROFILE_CHAT_ID}`,
+        TELEGRAM_SCOPED_CHAT_IDS: String(SCOPED_PROFILE_CHAT_ID),
         ...envOverrides,
       });
     }
@@ -402,9 +402,9 @@ describe('telegram-poller', () => {
       return { chat: { id: chatId } };
     }
 
-    test('main profile rejects [private-profile] chat so case messages do not leak', () => {
+    test('main profile rejects Scoped chat so case messages do not leak', () => {
       const config = buildConfig({ SQUIDRUN_PROFILE: '' });
-      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(false);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(false);
     });
 
     test('central main-profile owner accepts scoped chat ids for window routing', () => {
@@ -412,7 +412,7 @@ describe('telegram-poller', () => {
         SQUIDRUN_PROFILE: '',
         SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
       });
-      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(true);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
     });
 
     test('main profile accepts the user chat', () => {
@@ -420,32 +420,32 @@ describe('telegram-poller', () => {
       expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);
     });
 
-    test('private-profile profile accepts [private-profile] chat', () => {
-      const config = buildConfig({ SQUIDRUN_PROFILE: 'private-profile' });
-      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(true);
+    test('scoped profile accepts Scoped chat', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'scoped' });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
     });
 
-    test('private-profile profile rejects the user chat so trading talk does not leak in', () => {
-      const config = buildConfig({ SQUIDRUN_PROFILE: 'private-profile' });
+    test('scoped profile rejects the user chat so trading talk does not leak in', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'scoped' });
       expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(false);
     });
 
-    test('private-profile profile rejects any chat not in the private-profile allowlist', () => {
-      const config = buildConfig({ SQUIDRUN_PROFILE: 'private-profile' });
+    test('scoped profile rejects any chat not in the scoped allowlist', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'scoped' });
       expect(telegramPoller._internals.isAuthorizedChat(msg(STRAY_CHAT_ID), config)).toBe(false);
     });
 
-    test('fail-safe: empty TELEGRAM_EUNBYEOL_CHAT_IDS preserves legacy main-profile behavior', () => {
+    test('fail-safe: empty TELEGRAM_SCOPED_CHAT_IDS preserves legacy main-profile behavior', () => {
       const config = telegramPoller._internals.getTelegramConfig({
         TELEGRAM_BOT_TOKEN: 'test-token',
         TELEGRAM_CHAT_ID: String(JAMES_CHAT_ID),
-        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${EUNBYEOL_CHAT_ID}`,
-        // No TELEGRAM_EUNBYEOL_CHAT_IDS set
+        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${SCOPED_PROFILE_CHAT_ID}`,
+        // No TELEGRAM_SCOPED_CHAT_IDS set
         SQUIDRUN_PROFILE: '',
       });
-      // Both IDs should be accepted when no private-profile scope is declared — matches pre-patch behavior.
+      // Both IDs should be accepted when no scoped scope is declared — matches pre-patch behavior.
       expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);
-      expect(telegramPoller._internals.isAuthorizedChat(msg(EUNBYEOL_CHAT_ID), config)).toBe(true);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
     });
   });
 });

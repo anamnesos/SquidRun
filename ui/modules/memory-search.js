@@ -49,11 +49,7 @@ const SUPPORTED_EVIDENCE_METADATA_EXTENSIONS = new Set([
   '.pdf',
   '.zip',
 ]);
-const DEFAULT_CASE_EVIDENCE_FOLDERS = [
-  'Jeon Myeongsam Case',
-  'Hillstate Case',
-  'Korean Fraud',
-];
+const DEFAULT_CASE_EVIDENCE_FOLDERS = [];
 
 function resolveWorkspacePaths(options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));

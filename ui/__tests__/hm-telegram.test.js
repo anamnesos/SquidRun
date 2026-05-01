@@ -53,17 +53,17 @@ describe('hm-telegram', () => {
   });
 
   test('parseCliArgs extracts --chat-id and photo mode arguments', () => {
-    expect(hmTelegram.parseCliArgs(['--chat-id', '8754356993', 'reply now'])).toEqual({
+    expect(hmTelegram.parseCliArgs(['--chat-id', '2222222222', 'reply now'])).toEqual({
       ok: true,
       photoPath: null,
-      chatId: '8754356993',
+      chatId: '2222222222',
       message: 'reply now',
     });
 
-    expect(hmTelegram.parseCliArgs(['--photo', 'captcha.png', '--chat-id', '8754356993', 'caption text'])).toEqual({
+    expect(hmTelegram.parseCliArgs(['--photo', 'captcha.png', '--chat-id', '2222222222', 'caption text'])).toEqual({
       ok: true,
       photoPath: 'captcha.png',
-      chatId: '8754356993',
+      chatId: '2222222222',
       message: 'caption text',
     });
   });
@@ -233,16 +233,16 @@ describe('hm-telegram', () => {
 
     expect(hmTelegram.resolveOutboundChatId(config, {
       replyContext: {
-        chatId: '8754356993',
+        chatId: '2222222222',
       },
     })).toBe('111111');
 
     expect(hmTelegram.resolveOutboundChatId(config, {
       useReplyContext: true,
       replyContext: {
-        chatId: '8754356993',
+        chatId: '2222222222',
       },
-    })).toBe('8754356993');
+    })).toBe('2222222222');
 
     expect(hmTelegram.resolveOutboundChatId(config, {
       useReplyContext: true,

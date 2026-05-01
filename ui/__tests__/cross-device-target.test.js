@@ -55,20 +55,20 @@ describe('cross-device-target parser', () => {
 
   test('derives profile-specific bridge device IDs without colliding with main', () => {
     expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'main')).toBe('VIGIL');
-    expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'private-profile')).toBe('VIGIL-EUNBYEOL');
-    expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'private-profile', {
+    expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'scoped')).toBe('VIGIL-SCOPED');
+    expect(getProfileDeviceId({ SQUIDRUN_DEVICE_ID: 'VIGIL' }, 'scoped', {
       baseDeviceId: 'PAIR_A',
-    })).toBe('PAIR_A-EUNBYEOL');
+    })).toBe('PAIR_A-SCOPED');
   });
 
   test('honors explicit profile-specific bridge IDs', () => {
     const env = {
       SQUIDRUN_DEVICE_ID: 'VIGIL',
-      SQUIDRUN_DEVICE_ID_EUNBYEOL: 'case-pane',
+      SQUIDRUN_DEVICE_ID_SCOPED: 'case-pane',
       SQUIDRUN_MAIN_DEVICE_ID: 'main-pane',
     };
-    expect(getProfileSpecificDeviceId(env, 'private-profile')).toBe('CASE-PANE');
-    expect(getProfileDeviceId(env, 'private-profile')).toBe('CASE-PANE');
+    expect(getProfileSpecificDeviceId(env, 'scoped')).toBe('CASE-PANE');
+    expect(getProfileDeviceId(env, 'scoped')).toBe('CASE-PANE');
     expect(getProfileDeviceId(env, 'main')).toBe('MAIN-PANE');
   });
 });

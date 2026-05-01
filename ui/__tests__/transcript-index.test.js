@@ -30,7 +30,7 @@ describe('transcript-index', () => {
       timestamp: '2026-03-28T23:00:00.000Z',
       message: {
         role: 'user',
-        content: 'Actually that is not why Qeline affects me. It had to do with my wife\'s brother and Michelle Aviso at 8754356993.',
+        content: 'Actually that is not why ExampleShop affects me. It had to do with my wife\'s brother and Example Person at 2222222222.',
       },
     }, {
       sourceFile,
@@ -42,8 +42,8 @@ describe('transcript-index', () => {
       sessionId: 'session-1',
       sourceCitation: `${path.resolve(sourceFile)}:7`,
     }));
-    expect(record.tags).toEqual(expect.arrayContaining(['correction', 'qeline_case', 'telegram']));
-    expect(record.entities).toEqual(expect.arrayContaining(['Michelle Aviso', '8754356993']));
+    expect(record.tags).toEqual(expect.arrayContaining(['correction', 'example_shop_case', 'telegram']));
+    expect(record.entities).toEqual(expect.arrayContaining(['Example Person', '2222222222']));
   });
 
   test('ignores tool-result only user records', () => {
@@ -80,7 +80,7 @@ describe('transcript-index', () => {
         timestamp: '2026-03-28T22:00:00.000Z',
         message: {
           role: 'user',
-          content: 'the user said Qeline first mattered because of his wife\'s brother and Michelle Aviso.',
+          content: 'the user said ExampleShop first mattered because of his wife\'s brother and Example Person.',
         },
       }),
       JSON.stringify({
@@ -116,7 +116,7 @@ describe('transcript-index', () => {
     expect(fs.existsSync(indexPath)).toBe(true);
     expect(fs.existsSync(metaPath)).toBe(true);
 
-    const searchResult = searchTranscriptIndex('wife brother Michelle Aviso', {
+    const searchResult = searchTranscriptIndex('wife brother Example Person', {
       indexPath,
       metaPath,
       limit: 3,
@@ -126,7 +126,7 @@ describe('transcript-index', () => {
     expect(searchResult.results[0]).toEqual(expect.objectContaining({
       speaker: 'user',
     }));
-    expect(searchResult.results[0].excerpt).toContain('Michelle Aviso');
+    expect(searchResult.results[0].excerpt).toContain('Example Person');
   });
 
   test('parses a transcript file and reports malformed lines separately', () => {

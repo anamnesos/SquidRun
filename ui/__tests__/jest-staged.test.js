@@ -32,7 +32,7 @@ describe('jest-staged helper', () => {
       ],
       (filePath) => (
         filePath.endsWith('startup-ai-briefing.test.js')
-          ? "+  test('builds an [private-profile]-scoped prompt without trading state blocks', () => {"
+          ? "+  test('builds an Scoped-scoped prompt without trading state blocks', () => {"
           : ''
       )
     );
@@ -40,7 +40,7 @@ describe('jest-staged helper', () => {
     expect(plan.targetedRuns).toEqual([
       expect.objectContaining({
         uiPath: '__tests__/startup-ai-briefing.test.js',
-        testNames: ['builds an [private-profile]-scoped prompt without trading state blocks'],
+        testNames: ['builds an Scoped-scoped prompt without trading state blocks'],
       }),
     ]);
     expect(plan.relatedFiles).toEqual([]);

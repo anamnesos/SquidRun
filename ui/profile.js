@@ -5,7 +5,7 @@ const os = require('os');
 const fs = require('fs');
 
 const DEFAULT_PROFILE = 'main';
-const EUNBYEOL_CHAT_ID = '8754356993';
+const SCOPED_PROFILE_CHAT_ID = '2222222222';
 const DEFAULT_MAIN_TELEGRAM_CHAT_ID = '5613428850';
 const PROFILE_SCOPED_DIRS = new Set([
   'runtime',
@@ -27,7 +27,7 @@ const PROFILE_SCOPED_FILES = new Set([
 ]);
 const PROFILE_PORT_OFFSETS = Object.freeze({
   main: 0,
-  private-profile: 1,
+  scoped: 1,
 });
 
 function toNonEmptyString(value) {
@@ -39,9 +39,7 @@ function toNonEmptyString(value) {
 function normalizeProfileName(value) {
   const normalized = toNonEmptyString(String(value || '').toLowerCase());
   if (!normalized) return DEFAULT_PROFILE;
-  if (normalized === 'private-profile' || normalized === '은별' || normalized === 'private-profile') {
-    return 'private-profile';
-  }
+  if (normalized === 'scoped') return 'scoped';
   return normalized.replace(/[^a-z0-9_-]+/g, '-');
 }
 
@@ -72,12 +70,12 @@ function parseProfileArg(argv = []) {
 function applyProfileEnv(profileName, env = process.env) {
   const normalized = normalizeProfileName(profileName);
   env.SQUIDRUN_PROFILE = normalized;
-  // [private-profile] profile MUST NOT spawn wallet-touching trading lanes — it shares the
+  // Scoped profile MUST NOT spawn wallet-touching trading lanes — it shares the
   // same .env wallet with the main profile and would cause duplicate HL polling
   // (root cause of the 429 wall during live betting). Force every wallet-touching
   // lane to disabled at supervisor construction time, and blank out HL credentials
   // as defense in depth so any lane that slips through cannot reach the wallet.
-  if (normalized === 'private-profile') {
+  if (normalized === 'scoped') {
     env.SQUIDRUN_LIVE_OPS_AUTOMATION = '0';
     env.SQUIDRUN_ORACLE_WATCH = '0';
     env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION = '0';
@@ -156,13 +154,6 @@ function getProfileProjectRootOverride(profileName = null, env = process.env) {
     return path.resolve(explicitRoot);
   }
 
-  if (normalizedProfile === 'private-profile') {
-    const siblingCaseworkRoot = path.resolve(__dirname, '..', '..', 'private-profile-casework');
-    if (fs.existsSync(siblingCaseworkRoot)) {
-      return siblingCaseworkRoot;
-    }
-  }
-
   return null;
 }
 
@@ -197,20 +188,20 @@ function buildProfileTelegramEnv(env = process.env, profileName = null) {
     ...env,
     SQUIDRUN_PROFILE: normalizedProfile,
   };
-  nextEnv.TELEGRAM_EUNBYEOL_CHAT_IDS = sanitizeChatList(
-    `${env?.TELEGRAM_EUNBYEOL_CHAT_IDS || ''},${EUNBYEOL_CHAT_ID}`
+  nextEnv.TELEGRAM_SCOPED_CHAT_IDS = sanitizeChatList(
+    `${env?.TELEGRAM_SCOPED_CHAT_IDS || ''},${SCOPED_PROFILE_CHAT_ID}`
   );
-  if (normalizedProfile === 'private-profile') {
-    nextEnv.TELEGRAM_CHAT_ID = EUNBYEOL_CHAT_ID;
+  if (normalizedProfile === 'scoped') {
+    nextEnv.TELEGRAM_CHAT_ID = SCOPED_PROFILE_CHAT_ID;
     nextEnv.TELEGRAM_AUTHORIZED_CHAT_IDS = '';
     nextEnv.TELEGRAM_CHAT_ALLOWLIST = '';
     return nextEnv;
   }
 
-  const denySet = new Set([EUNBYEOL_CHAT_ID]);
+  const denySet = new Set([SCOPED_PROFILE_CHAT_ID]);
   nextEnv.TELEGRAM_AUTHORIZED_CHAT_IDS = sanitizeChatList(env?.TELEGRAM_AUTHORIZED_CHAT_IDS, denySet);
   nextEnv.TELEGRAM_CHAT_ALLOWLIST = sanitizeChatList(env?.TELEGRAM_CHAT_ALLOWLIST, denySet);
-  if (String(nextEnv.TELEGRAM_CHAT_ID || '').trim() === EUNBYEOL_CHAT_ID) {
+  if (String(nextEnv.TELEGRAM_CHAT_ID || '').trim() === SCOPED_PROFILE_CHAT_ID) {
     nextEnv.TELEGRAM_CHAT_ID = DEFAULT_MAIN_TELEGRAM_CHAT_ID;
   }
   return nextEnv;
@@ -218,7 +209,7 @@ function buildProfileTelegramEnv(env = process.env, profileName = null) {
 
 module.exports = {
   DEFAULT_PROFILE,
-  EUNBYEOL_CHAT_ID,
+  SCOPED_PROFILE_CHAT_ID,
   PROFILE_SCOPED_DIRS,
   PROFILE_SCOPED_FILES,
   normalizeProfileName,

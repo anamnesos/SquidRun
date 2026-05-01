@@ -11,17 +11,17 @@ jest.mock('../modules/terminal', () => ({
 const { getCommandPaletteCommands } = require('../modules/command-palette');
 
 describe('command-palette', () => {
-  test('includes the [private-profile] window command and routes it to the window opener', () => {
+  test('includes the Scoped window command and routes it to the window opener', () => {
     const openAppWindow = jest.fn();
     const commands = getCommandPaletteCommands({ openAppWindow });
-    const private-profileCommand = commands.find((entry) => entry.id === 'open-private-profile-window');
+    const scopedCommand = commands.find((entry) => entry.id === 'open-scoped-window');
 
-    expect(private-profileCommand).toEqual(expect.objectContaining({
-      label: 'Open [private-profile] Window',
+    expect(scopedCommand).toEqual(expect.objectContaining({
+      label: 'Open Scoped Window',
       category: 'Windows',
     }));
-    private-profileCommand.action();
-    expect(openAppWindow).toHaveBeenCalledWith('private-profile');
+    scopedCommand.action();
+    expect(openAppWindow).toHaveBeenCalledWith('scoped');
   });
 
   test('labels pane 1 navigation with Mira without changing the pane target', () => {
