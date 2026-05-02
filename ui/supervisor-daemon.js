@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const chokidar = require('chokidar');
 const { spawn } = require('child_process');
@@ -147,6 +148,10 @@ const DEFAULT_PENDING_TASK_TTL_MS = parseOptionalDurationMs(
 );
 const DEFAULT_STDIO_TAIL_BYTES = Math.max(2048, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STDIO_TAIL_BYTES || '16384', 10) || 16384);
 const DEFAULT_MEMORY_INDEX_DEBOUNCE_MS = Math.max(500, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_DEBOUNCE_MS || '2000', 10) || 2000);
+const DEFAULT_SCOPED_MEMORY_INDEX_MIN_REFRESH_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.SQUIDRUN_SCOPED_MEMORY_INDEX_MIN_REFRESH_MS || '300000', 10) || 300000
+);
 const DEFAULT_MEMORY_CONSISTENCY_POLL_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_CONSISTENCY_POLL_MS || '300000', 10) || 300000);
 const DEFAULT_SUPERVISOR_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_REPEAT_LOG_MS || '900000', 10) || 900000);
 const DEFAULT_MEMORY_INDEX_REPEAT_LOG_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_REPEAT_LOG_MS || '900000', 10) || 900000);
@@ -457,6 +462,31 @@ function shouldSuppressMainTelegramForHangul(message = '', env = process.env) {
     .toLowerCase();
   const isMainProfile = !profile || profile === 'main';
   return isMainProfile && containsHangulSyllables(message);
+}
+
+function sha256Buffer(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function isScopedProfileEnv(env = process.env) {
+  return String(env?.SQUIDRUN_PROFILE || process.env.SQUIDRUN_PROFILE || 'main')
+    .trim()
+    .toLowerCase() === 'scoped';
+}
+
+function isScopedRuntimePath(targetPath = '') {
+  const normalized = String(targetPath || '').replace(/\\/g, '/').toLowerCase();
+  return normalized.includes('/runtime-eunbyeol/')
+    || normalized.includes('/runtime-scoped/')
+    || normalized.includes('/triggers-scoped/')
+    || normalized.includes('/window-teams/scoped/');
+}
+
+function parseOptionalNonNegativeMs(value, fallback = 0) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return numeric;
 }
 
 function tailText(value, maxChars = 4000) {
@@ -1246,8 +1276,11 @@ class SupervisorDaemon {
     this.memoryIndexWatcher = null;
     this.wakeSignalWatcher = null;
     this.memoryIndexDebounceTimer = null;
+    this.memoryIndexDeferredTimer = null;
     this.memoryIndexRefreshPromise = null;
     this.pendingMemoryIndexReason = null;
+    this.memoryIndexWatchFingerprints = new Map();
+    this.lastMemoryIndexRefreshAtMs = 0;
     this.memoryIndexDebounceMs = Math.max(
       500,
       Number.parseInt(options.memoryIndexDebounceMs || DEFAULT_MEMORY_INDEX_DEBOUNCE_MS, 10)
@@ -1263,6 +1296,18 @@ class SupervisorDaemon {
     this.lastMemoryConsistencyCheckAtMs = 0;
     this.memoryIndexEnabled = options.memoryIndexEnabled !== false
       && process.env.SQUIDRUN_MEMORY_INDEX_WATCHER !== '0';
+    const scopedMemoryIndexDefaultMs = (
+      isScopedProfileEnv(this.runtimeEnv)
+      || isScopedRuntimePath(this.logPath)
+      || isScopedRuntimePath(this.statusPath)
+      || isScopedRuntimePath(this.pidPath)
+    )
+      ? DEFAULT_SCOPED_MEMORY_INDEX_MIN_REFRESH_MS
+      : 0;
+    this.memoryIndexMinRefreshIntervalMs = parseOptionalNonNegativeMs(
+      options.memoryIndexMinRefreshIntervalMs ?? process.env.SQUIDRUN_MEMORY_INDEX_MIN_REFRESH_MS,
+      scopedMemoryIndexDefaultMs
+    );
     this.memorySearchIndex = this.memoryIndexEnabled
       ? (options.memorySearchIndex || new MemorySearchIndex())
       : null;
@@ -5741,9 +5786,109 @@ class SupervisorDaemon {
     return Array.from(new Set(targets));
   }
 
-  scheduleMemoryIndexRefresh(reason = 'manual') {
-    if (!this.memoryIndexEnabled || this.stopping) return;
-    this.pendingMemoryIndexReason = String(reason || 'manual');
+  getMemoryIndexPathFingerprint(changedPath) {
+    const targetPath = path.resolve(String(changedPath || ''));
+    if (!targetPath) return null;
+    let stat = null;
+    try {
+      stat = fs.statSync(targetPath);
+    } catch {
+      return { exists: false, key: 'missing' };
+    }
+    if (!stat.isFile()) {
+      return null;
+    }
+
+    const size = Number(stat.size || 0);
+    const mtimeMs = Math.floor(Number(stat.mtimeMs || 0));
+    if (size <= 1024 * 1024) {
+      try {
+        const contentHash = sha256Buffer(fs.readFileSync(targetPath));
+        return { exists: true, key: `hash:${size}:${contentHash}` };
+      } catch {}
+    }
+    return { exists: true, key: `stat:${size}:${mtimeMs}` };
+  }
+
+  shouldScheduleMemoryIndexRefreshForChange(eventName, changedPath) {
+    const normalizedEvent = String(eventName || '').trim().toLowerCase();
+    if (!changedPath || normalizedEvent === 'unlink' || normalizedEvent === 'unlinkdir') {
+      return { schedule: true, reason: normalizedEvent || 'unknown' };
+    }
+
+    const resolvedPath = path.resolve(String(changedPath));
+    const fingerprint = this.getMemoryIndexPathFingerprint(resolvedPath);
+    if (!fingerprint) {
+      return { schedule: true, reason: normalizedEvent || 'unknown' };
+    }
+
+    const previous = this.memoryIndexWatchFingerprints.get(resolvedPath);
+    this.memoryIndexWatchFingerprints.set(resolvedPath, fingerprint.key);
+    if (previous && previous === fingerprint.key) {
+      return {
+        schedule: false,
+        reason: 'unchanged_file',
+        path: resolvedPath,
+      };
+    }
+
+    return {
+      schedule: true,
+      reason: normalizedEvent || 'unknown',
+      path: resolvedPath,
+    };
+  }
+
+  deferMemoryIndexRefresh(reason, delayMs) {
+    this.pendingMemoryIndexReason = String(reason || this.pendingMemoryIndexReason || 'manual');
+    if (this.memoryIndexDeferredTimer) {
+      this.requestTick(`memory-index-deferred:${this.pendingMemoryIndexReason}`);
+      return {
+        ok: true,
+        deferred: true,
+        reason: 'memory_index_min_interval_active',
+        delayMs: Math.max(0, Number(delayMs || 0)),
+      };
+    }
+
+    const safeDelayMs = Math.max(0, Number.parseInt(delayMs, 10) || 0);
+    this.memoryIndexDeferredTimer = setTimeout(() => {
+      this.memoryIndexDeferredTimer = null;
+      const nextReason = this.pendingMemoryIndexReason || 'manual';
+      this.pendingMemoryIndexReason = null;
+      this.scheduleMemoryIndexRefresh(nextReason, { forceInterval: true });
+    }, safeDelayMs);
+    if (typeof this.memoryIndexDeferredTimer.unref === 'function') {
+      this.memoryIndexDeferredTimer.unref();
+    }
+    this.requestTick(`memory-index-deferred:${this.pendingMemoryIndexReason}`);
+    return {
+      ok: true,
+      deferred: true,
+      reason: 'memory_index_min_interval_active',
+      delayMs: safeDelayMs,
+    };
+  }
+
+  scheduleMemoryIndexRefresh(reason = 'manual', options = {}) {
+    if (!this.memoryIndexEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'memory_index_disabled' };
+    }
+    const normalizedReason = String(reason || 'manual');
+    const nowMs = Number(options.nowMs || Date.now());
+    const forceInterval = options.forceInterval === true || normalizedReason === 'startup' || normalizedReason === 'manual-force';
+    if (
+      !forceInterval
+      && this.memoryIndexMinRefreshIntervalMs > 0
+      && this.lastMemoryIndexRefreshAtMs > 0
+    ) {
+      const elapsedMs = Math.max(0, nowMs - this.lastMemoryIndexRefreshAtMs);
+      if (elapsedMs < this.memoryIndexMinRefreshIntervalMs) {
+        return this.deferMemoryIndexRefresh(normalizedReason, this.memoryIndexMinRefreshIntervalMs - elapsedMs);
+      }
+    }
+
+    this.pendingMemoryIndexReason = normalizedReason;
     if (this.memoryIndexDebounceTimer) clearTimeout(this.memoryIndexDebounceTimer);
     this.memoryIndexDebounceTimer = setTimeout(() => {
       const nextReason = this.pendingMemoryIndexReason || 'manual';
@@ -5762,6 +5907,7 @@ class SupervisorDaemon {
     if (typeof this.memoryIndexDebounceTimer.unref === 'function') {
       this.memoryIndexDebounceTimer.unref();
     }
+    return { ok: true, scheduled: true };
   }
 
   async runMemoryIndexRefresh(reason = 'manual') {
@@ -5773,6 +5919,7 @@ class SupervisorDaemon {
       return this.memoryIndexRefreshPromise;
     }
 
+    this.lastMemoryIndexRefreshAtMs = Date.now();
     this.memoryIndexRefreshPromise = this.memorySearchIndex.indexAll()
       .then((result) => {
         this.emitMemoryIndexRefreshLog(reason, result);
@@ -5818,6 +5965,10 @@ class SupervisorDaemon {
 
     this.memoryIndexWatcher.on('all', (eventName, changedPath) => {
       const relPath = String(changedPath || '');
+      const changeDecision = this.shouldScheduleMemoryIndexRefreshForChange(eventName, changedPath);
+      if (!changeDecision.schedule) {
+        return;
+      }
       // Per-file event logs were noisy in the pane when a burst of memory
       // files saved. The aggregate "Memory index refresh complete: ..." line
       // still fires once per debounced batch and is the useful signal.
@@ -5846,6 +5997,8 @@ class SupervisorDaemon {
   async stopMemoryIndexWatcher() {
     if (this.memoryIndexDebounceTimer) clearTimeout(this.memoryIndexDebounceTimer);
     this.memoryIndexDebounceTimer = null;
+    if (this.memoryIndexDeferredTimer) clearTimeout(this.memoryIndexDeferredTimer);
+    this.memoryIndexDeferredTimer = null;
 
     if (this.memoryIndexWatcher) {
       try {
