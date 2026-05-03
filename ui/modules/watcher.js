@@ -27,11 +27,17 @@ function resolveCoordFile(relPath, options = {}) {
 }
 
 function getCoordWatchPaths(relPath) {
-  if (typeof getCoordRoots === 'function') {
-    return getCoordRoots({ includeLegacy: false, includeMissing: false })
-      .map((root) => path.join(root, relPath));
+  const paths = [];
+  const resolvedPath = resolveCoordFile(relPath, { forWrite: true });
+  if (resolvedPath) paths.push(resolvedPath);
+
+  if (paths.length === 0 && typeof getCoordRoots === 'function') {
+    paths.push(...getCoordRoots({ includeLegacy: false, includeMissing: false })
+      .map((root) => path.join(root, relPath)));
   }
-  return [path.join(WORKSPACE_PATH, relPath)];
+
+  if (paths.length === 0) paths.push(path.join(WORKSPACE_PATH, relPath));
+  return Array.from(new Set(paths.map((targetPath) => path.resolve(targetPath))));
 }
 
 // Message queue directory
@@ -1568,5 +1574,6 @@ module.exports = {
   _internals: {
     getQueueMutationChainSize: () => queueMutationChains.size,
     clearQueueMutationChains: () => queueMutationChains.clear(),
+    getTriggerPaths: () => [...TRIGGER_PATHS],
   },
 };

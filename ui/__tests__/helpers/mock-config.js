@@ -118,6 +118,7 @@ const mockDefaultConfig = {
   },
   resolveCoordRoot: () => mockDefaultConfig.WORKSPACE_PATH,
   getProjectRoot: () => mockDefaultConfig.PROJECT_ROOT,
+  getActiveProfile: () => process.env.SQUIDRUN_PROFILE || 'main',
   setProjectRoot: (value) => {
     mockDefaultConfig.PROJECT_ROOT = typeof value === 'string' && value.trim()
       ? value.trim()

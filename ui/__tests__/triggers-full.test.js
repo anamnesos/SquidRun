@@ -370,6 +370,32 @@ describe('triggers.js module', () => {
       }));
     });
 
+    test('sendDirectMessage defaults to active profile window scope when routed by profile app', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      process.env.SQUIDRUN_PROFILE = 'client-profile';
+      let routedPayload = null;
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      triggers.setInjectMessageRouter((payload) => {
+        routedPayload = payload;
+        return true;
+      });
+
+      const result = triggers.sendDirectMessage(['1'], 'Profile lane message', 'builder');
+
+      if (previousProfile === undefined) delete process.env.SQUIDRUN_PROFILE;
+      else process.env.SQUIDRUN_PROFILE = previousProfile;
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        queued: true,
+        notified: ['1'],
+      }));
+      expect(routedPayload).toEqual(expect.objectContaining({
+        panes: ['1'],
+        meta: expect.objectContaining({ windowKey: 'client-profile' }),
+      }));
+    });
+
     test('sendDirectMessage returns queued false when main window is unavailable', () => {
       triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
       global.window.isDestroyed.mockReturnValue(true);

@@ -237,6 +237,19 @@ jest.mock('../scripts/hm-telegram', () => ({
 }));
 
 jest.mock('../scripts/hm-telegram-routing', () => ({
+  resolveTelegramInboundRoute: jest.fn(({ chatId } = {}) => {
+    const text = chatId === null || chatId === undefined ? null : String(chatId).trim();
+    if (!text || text === '1111111111' || (text !== '2222222222' && text !== '3333333333' && text !== '9999999999')) {
+      return { ok: true, chatId: text, windowKey: 'main', profile: 'main', reason: 'owner_chat' };
+    }
+    if (text === '2222222222') {
+      return { ok: true, chatId: text, windowKey: 'scoped', profile: 'scoped', reason: 'explicit_non_owner_route' };
+    }
+    if (text === '3333333333') {
+      return { ok: true, chatId: text, windowKey: 'client-profile', profile: 'client-profile', reason: 'explicit_non_owner_route' };
+    }
+    return { ok: false, blocked: true, chatId: text, reason: 'unknown_non_owner_chat' };
+  }),
   sendRoutedTelegramMessage: jest.fn(async (_message, _env, options = {}) => ({
     ok: true,
     chatId: options.chatId ? Number(options.chatId) : 123456789,
@@ -556,6 +569,8 @@ describe('SquidRunApp', () => {
       expect(reconstructed).toBe(message);
       for (const payload of payloads) {
         expect(payload.messageBytes).toBe(Buffer.byteLength(payload.message, 'utf8'));
+        expect(payload._ipcPacketized).toBe(true);
+        expect(payload._routerAttempted).toBe(true);
         expect(payload.meta).toEqual(expect.objectContaining({
           ipcChunked: true,
           ipcOriginalBytes: Buffer.byteLength(message, 'utf8'),
@@ -784,6 +799,8 @@ describe('SquidRunApp', () => {
         'inject-message',
         expect.objectContaining({
           message: '[Telegram from scoped]: hello',
+          _ipcPacketized: true,
+          _routerAttempted: true,
           meta: expect.objectContaining({
             windowKey: 'scoped',
           }),
@@ -3155,6 +3172,58 @@ describe('SquidRunApp', () => {
         '[Telegram from scoped]: standalone hello'
       );
       expect(deliverySpy).not.toHaveBeenCalled();
+    });
+
+    it('routes configured non-owner Telegram inbound to profile triggers instead of main Architect', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('hello client lane', '@ClientProfile', { chatId: 3333333333, updateId: 104 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(forwardSpy).toHaveBeenCalledWith(
+        'client-profile',
+        '[Telegram from @ClientProfile]: hello client lane'
+      );
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expect(app.telegramInboundContext).toEqual(
+        expect.objectContaining({
+          sender: '@ClientProfile',
+          chatId: '3333333333',
+          windowKey: 'client-profile',
+        })
+      );
+    });
+
+    it('fails closed for unknown non-owner Telegram chats before updating reply context', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const previousContext = app.telegramInboundContext;
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('private message', '@Unknown', { chatId: 9999999999, updateId: 105 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expect(app.telegramInboundContext).toEqual(previousContext);
     });
 
     it('writes standalone scoped Telegram forwarding into the scoped profile trigger root', () => {

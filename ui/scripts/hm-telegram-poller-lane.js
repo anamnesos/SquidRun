@@ -6,8 +6,9 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const { getProjectRoot, resolveCoordPath } = require('../config');
-const { buildProfileTelegramEnv } = require('../profile');
+const { buildProfileTelegramEnv, getProfileProjectRootOverride } = require('../profile');
 const telegramPoller = require('../modules/telegram-poller');
+const { resolveTelegramInboundRoute } = require('./hm-telegram-routing');
 
 const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
@@ -70,6 +71,105 @@ function sendToArchitect(message) {
   }
 }
 
+function getProfileTelegramTriggerPaths(windowKey = '', env = process.env) {
+  const normalizedWindowKey = typeof windowKey === 'string' && windowKey.trim()
+    ? windowKey.trim()
+    : '';
+  if (!normalizedWindowKey || normalizedWindowKey === 'main') return [];
+
+  const profileRoot = getProfileProjectRootOverride(normalizedWindowKey, env);
+  const roots = profileRoot
+    ? [profileRoot]
+    : [getProjectRoot()].filter(Boolean);
+
+  return Array.from(new Set(roots.map((root) => path.resolve(root))))
+    .map((root) => path.join(root, '.squidrun', `triggers-${normalizedWindowKey}`, 'architect.txt'));
+}
+
+function forwardToProfileTrigger(windowKey, message, env = process.env) {
+  const normalizedMessage = typeof message === 'string' && message.trim() ? message : '';
+  if (!normalizedMessage) return { ok: false, reason: 'empty_message' };
+
+  const triggerPaths = getProfileTelegramTriggerPaths(windowKey, env);
+  if (triggerPaths.length === 0) {
+    return { ok: false, reason: 'missing_profile_trigger_path' };
+  }
+
+  const written = [];
+  const errors = [];
+  for (const triggerPath of triggerPaths) {
+    try {
+      fs.mkdirSync(path.dirname(triggerPath), { recursive: true });
+      fs.writeFileSync(triggerPath, normalizedMessage, 'utf8');
+      written.push(triggerPath);
+    } catch (err) {
+      errors.push({ path: triggerPath, error: err.message });
+    }
+  }
+
+  return {
+    ok: written.length > 0,
+    written,
+    errors,
+    reason: written.length > 0 ? null : 'profile_trigger_write_failed',
+  };
+}
+
+function dispatchInboundTelegramMessage(message, metadata = {}, options = {}) {
+  const env = options.env || process.env;
+  const resolver = typeof options.resolveInboundRoute === 'function'
+    ? options.resolveInboundRoute
+    : resolveTelegramInboundRoute;
+  const route = resolver({ chatId: metadata?.chatId, env });
+  const updateId = metadata?.updateId ?? 'unknown';
+  const logEvent = typeof options.writeLog === 'function' ? options.writeLog : writeLog;
+
+  if (!route?.ok) {
+    const reason = route?.reason || 'telegram_inbound_route_blocked';
+    logEvent(`[privacy-block] inbound update=${updateId} chat=${route?.chatId || 'unknown'} reason=${reason}`);
+    return {
+      ok: false,
+      blocked: true,
+      reason,
+      route,
+    };
+  }
+
+  const windowKey = route.windowKey || 'main';
+  if (windowKey !== 'main') {
+    const forward = typeof options.forwardToProfileTrigger === 'function'
+      ? options.forwardToProfileTrigger(windowKey, message, env)
+      : forwardToProfileTrigger(windowKey, message, env);
+    if (forward?.ok) {
+      logEvent(`[routed] inbound update=${updateId} chat=${route.chatId || 'unknown'} window=${windowKey}`);
+      return {
+        ok: true,
+        target: 'profile-trigger',
+        windowKey,
+        route,
+        forward,
+      };
+    }
+    logEvent(`[privacy-block] inbound update=${updateId} chat=${route.chatId || 'unknown'} window=${windowKey} reason=${forward?.reason || 'profile_trigger_failed'}`);
+    return {
+      ok: false,
+      blocked: true,
+      reason: forward?.reason || 'profile_trigger_failed',
+      route,
+      forward,
+    };
+  }
+
+  const send = typeof options.sendToArchitect === 'function' ? options.sendToArchitect : sendToArchitect;
+  send(message);
+  return {
+    ok: true,
+    target: 'architect',
+    windowKey: 'main',
+    route,
+  };
+}
+
 function formatInbound(text, from, metadata = {}) {
   const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
   const media = metadata?.media && typeof metadata.media === 'object' ? metadata.media : null;
@@ -98,11 +198,12 @@ function runLane() {
   writeLog(`[start] pid=${process.pid}`);
   const keepAliveTimer = setInterval(() => {}, KEEPALIVE_INTERVAL_MS);
 
+  const ownerEnv = {
+    ...buildProfileTelegramEnv(process.env, 'main'),
+    SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+  };
   const started = telegramPoller.start({
-    env: {
-      ...buildProfileTelegramEnv(process.env, 'main'),
-      SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
-    },
+    env: ownerEnv,
     onMessage: (text, from, metadata = {}) => {
       const formatted = formatInbound(text, from, metadata);
       if (!formatted) {
@@ -110,7 +211,7 @@ function runLane() {
         return;
       }
       writeLog(`[inbound] update=${metadata?.updateId ?? 'unknown'} media=${metadata?.media?.kind || 'none'}`);
-      sendToArchitect(formatted);
+      dispatchInboundTelegramMessage(formatted, metadata, { env: ownerEnv });
     },
   });
 
@@ -195,7 +296,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  dispatchInboundTelegramMessage,
+  forwardToProfileTrigger,
   formatInbound,
+  getProfileTelegramTriggerPaths,
   isPidAlive,
   status,
   startLane,
