@@ -31,7 +31,7 @@ function getCommandPaletteCommands(options = {}) {
     { id: 'select-project', label: 'Select Project Folder', icon: '📁', category: 'Project', action: () => document.getElementById('selectProjectBtn')?.click() },
 
     // System
-    { id: 'shutdown', label: 'Shutdown SquidRun', icon: '🔌', category: 'System', action: () => document.getElementById('fullRestartBtn')?.click() },
+    { id: 'shutdown', label: 'Quit SquidRun', icon: '🔌', category: 'System', action: () => document.getElementById('fullRestartBtn')?.click() },
   ];
 }
 

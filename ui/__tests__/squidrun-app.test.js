@@ -873,6 +873,37 @@ describe('SquidRunApp', () => {
       expect(app.ctx.mainWindow).toBe(primaryWindow);
     });
 
+    it('closing a standalone Scoped profile window quits that profile process cleanly', async () => {
+      app.setupWindowListeners.mockRestore();
+      const shutdownSpy = jest.spyOn(app, 'performFullShutdown').mockResolvedValue({ success: true });
+
+      await app.launchWindowsForProfile({
+        windowKey: 'scoped',
+        includeMainWindow: false,
+      });
+      const scopedWindow = app.ctx.getWindow('scoped');
+      const closeHandler = scopedWindow.on.mock.calls.find(([eventName]) => eventName === 'close')?.[1];
+
+      expect(app.isStandaloneProfileWindow('scoped')).toBe(true);
+      expect(typeof closeHandler).toBe('function');
+
+      const event = { preventDefault: jest.fn() };
+      closeHandler(event);
+
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(shutdownSpy).toHaveBeenCalledWith('profile-window-close:scoped');
+    });
+
+    it('refuses close-window IPC for main so callers use the quit flow', async () => {
+      await app.createWindow();
+
+      await expect(app.closeAppWindow('main')).resolves.toEqual({
+        ok: false,
+        reason: 'main_window_requires_quit',
+        windowKey: 'main',
+      });
+    });
+
     it('replays daemon state to the Scoped window after load so the renderer can mount existing terminals', async () => {
       app.setupWindowListeners.mockRestore();
       mockAppContext.daemonClient = {
@@ -925,6 +956,8 @@ describe('SquidRunApp', () => {
           windowKey: 'scoped',
           startupBundlePath: null,
           startupSourceFiles: [],
+          standaloneWindow: false,
+          lifecycleMode: 'secondary-window',
         })
       );
       expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(

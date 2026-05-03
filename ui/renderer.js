@@ -500,12 +500,20 @@ function isSecondaryWindow(windowContext = getCurrentWindowContext()) {
   return String(windowContext?.windowKey || 'main').trim() !== 'main';
 }
 
+function getWindowLifecycleMode(windowContext = getCurrentWindowContext()) {
+  const mode = String(windowContext?.lifecycleMode || '').trim();
+  if (mode) return mode;
+  if (windowContext?.standaloneWindow === true) return 'standalone-profile-app';
+  return isSecondaryWindow(windowContext) ? 'secondary-window' : 'main-app';
+}
+
 function applyWindowChrome(windowContext = getCurrentWindowContext()) {
   const normalized = windowContext && typeof windowContext === 'object'
     ? windowContext
     : getCurrentWindowContext();
   const windowKey = String(normalized?.windowKey || 'main').trim() || 'main';
   const profileName = String(normalized?.profileName || 'main').trim() || 'main';
+  const lifecycleMode = getWindowLifecycleMode(normalized);
   if (document.body) {
     document.body.dataset.windowKey = windowKey;
     document.body.dataset.profileName = profileName;
@@ -523,15 +531,19 @@ function applyWindowChrome(windowContext = getCurrentWindowContext()) {
     if (!fullRestartBtn.dataset.defaultHtml) {
       fullRestartBtn.dataset.defaultHtml = fullRestartBtn.innerHTML;
     }
-    if (windowKey === 'main' && profileName === 'main') {
+    if (lifecycleMode === 'main-app') {
       fullRestartBtn.innerHTML = fullRestartBtn.dataset.defaultHtml;
-      fullRestartBtn.title = 'Shutdown cleanly (run \'npm start\' to restart)';
+      fullRestartBtn.title = 'Quit SquidRun: stop panes, daemon, pollers, and background services.';
       fullRestartBtn.dataset.windowAction = 'shutdown-app';
+    } else if (lifecycleMode === 'standalone-profile-app') {
+      fullRestartBtn.innerHTML = 'Quit Profile App';
+      fullRestartBtn.title = `Quit this ${windowKey} profile app; main SquidRun keeps running.`;
+      fullRestartBtn.dataset.windowAction = 'quit-profile-app';
     } else {
-      fullRestartBtn.innerHTML = 'Close Window';
+      fullRestartBtn.innerHTML = 'Close This Window';
       fullRestartBtn.title = profileName === 'scoped'
-        ? 'Close the Scoped profile window only'
-        : `Close the ${windowKey} window only`;
+        ? 'Close only this Scoped window; main SquidRun and daemon keep running.'
+        : `Close only the ${windowKey} window; main SquidRun and daemon keep running.`;
       fullRestartBtn.dataset.windowAction = 'close-window';
     }
   }
@@ -2153,11 +2165,19 @@ function setupEventListeners() {
   if (fullRestartBtn) {
     fullRestartBtn.addEventListener('click', async () => {
       const windowContext = getCurrentWindowContext();
-      if (isSecondaryWindow(windowContext)) {
-        if (confirm(`Close the ${windowContext.windowKey} window?\n\nMain SquidRun and the shared daemon will keep running.\n\nContinue?`)) {
-          updateConnectionStatus('Closing window...');
+      const lifecycleMode = getWindowLifecycleMode(windowContext);
+      if (lifecycleMode === 'secondary-window' || lifecycleMode === 'standalone-profile-app') {
+        const isStandaloneProfile = lifecycleMode === 'standalone-profile-app';
+        const prompt = isStandaloneProfile
+          ? `Quit the ${windowContext.windowKey} profile app?\n\nThis closes the profile process and its local panes/daemon/pollers. Main SquidRun keeps running.\n\nContinue?`
+          : `Close the ${windowContext.windowKey} window?\n\nMain SquidRun and the shared daemon will keep running.\n\nContinue?`;
+        if (confirm(prompt)) {
+          updateConnectionStatus(isStandaloneProfile ? 'Quitting profile app...' : 'Closing window...');
           try {
-            await ipcRenderer.invoke('close-app-window', { windowKey: windowContext.windowKey });
+            const result = await ipcRenderer.invoke('close-app-window', { windowKey: windowContext.windowKey });
+            if (result?.ok === false) {
+              updateConnectionStatus(`Close failed: ${result.reason || 'unknown error'}`);
+            }
           } catch (err) {
             log.error('Window', 'Scoped close failed:', err);
             updateConnectionStatus('Window close failed - try manually');
@@ -2166,8 +2186,8 @@ function setupEventListeners() {
         return;
       }
 
-      if (confirm('Shutdown SquidRun and stop the daemon?\n\nAll active agent sessions will be terminated.\n\nContinue?')) {
-        updateConnectionStatus('Shutting down...');
+      if (confirm('Quit SquidRun?\n\nThis stops panes, daemon, pollers, and background services.\n\nContinue?')) {
+        updateConnectionStatus('Quitting SquidRun...');
         try {
           await ipcRenderer.invoke('full-restart');
         } catch (err) {
