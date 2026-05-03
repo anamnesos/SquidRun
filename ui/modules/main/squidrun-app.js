@@ -219,7 +219,7 @@ const SUPERVISOR_STATUS_STALE_MIN_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MIN_MS || '15000', 10) || 15000
 );
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
-const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
+const SHUTDOWN_CONFIRM_MESSAGE = 'This stops panes, daemon, pollers, and background services.\n\nContinue?';
 const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
 const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
@@ -3828,6 +3828,13 @@ class SquidRunApp {
 
   async closeAppWindow(rawWindowKey = 'main') {
     const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    if (windowKey === 'main') {
+      return {
+        ok: false,
+        reason: 'main_window_requires_quit',
+        windowKey,
+      };
+    }
     const window = this.getAppWindow(windowKey);
     if (!window) {
       return {
@@ -3836,11 +3843,83 @@ class SquidRunApp {
         windowKey,
       };
     }
-    window.close();
-    return {
-      ok: true,
-      windowKey,
-    };
+    if (this.isStandaloneProfileWindow(windowKey)) {
+      void this.performFullShutdown(`profile-app-close:${windowKey}`).catch((err) => {
+        log.error('Shutdown', `Profile app close failed for ${windowKey}: ${err.message}`);
+      });
+      return {
+        ok: true,
+        windowKey,
+        status: 'profile_app_shutdown_started',
+      };
+    }
+    return this.requestWindowClose(window, windowKey);
+  }
+
+  requestWindowClose(window, windowKey = 'main') {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const finish = (result) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(result);
+      };
+      const onClosed = () => finish({
+        ok: true,
+        windowKey,
+        status: 'closed',
+      });
+
+      if (typeof window.once === 'function') {
+        window.once('closed', onClosed);
+      }
+
+      setTimeout(() => {
+        if (typeof window.off === 'function') {
+          window.off('closed', onClosed);
+        } else if (typeof window.removeListener === 'function') {
+          window.removeListener('closed', onClosed);
+        }
+        const stillOpen = this.canSendToWindow(window);
+        finish({
+          ok: !stillOpen,
+          windowKey,
+          status: stillOpen ? 'close_pending' : 'closed',
+          reason: stillOpen ? 'window_close_not_completed' : null,
+        });
+      }, 750);
+
+      try {
+        window.close();
+      } catch (err) {
+        finish({
+          ok: false,
+          windowKey,
+          reason: 'window_close_failed',
+          error: err.message,
+        });
+      }
+    });
+  }
+
+  isStandaloneProfileWindow(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    if (windowKey === 'main') return false;
+    const launchProfile = this.getLaunchWindowProfile();
+    const window = this.getAppWindow(windowKey);
+    const mainWindow = this.getAppWindow('main');
+    const mainWindowIsAlias = mainWindow && mainWindow === window;
+    return launchProfile?.standaloneWindow === true
+      && String(launchProfile.windowKey || '').trim() === windowKey
+      && (!this.canSendToWindow(mainWindow) || mainWindowIsAlias);
+  }
+
+  getWindowLifecycleMode(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    if (windowKey === 'main') return 'main-app';
+    return this.isStandaloneProfileWindow(windowKey)
+      ? 'standalone-profile-app'
+      : 'secondary-window';
   }
 
   formatWindowKeyLabel(windowKey) {
@@ -4751,7 +4830,18 @@ class SquidRunApp {
     if (!window) return;
 
     window.on('close', (event) => {
-      if (!isPrimaryWindow || this.getOpenAppWindowCount(windowKey) > 0) {
+      if (!isPrimaryWindow) {
+        if (!this.isStandaloneProfileWindow(windowKey)) {
+          return;
+        }
+        if (this.shuttingDown || this.fullShutdownPromise) return;
+        event.preventDefault();
+        void this.performFullShutdown(`profile-window-close:${windowKey}`).catch((err) => {
+          log.error('Shutdown', `Standalone profile close flow failed for ${windowKey}: ${err.message}`);
+        });
+        return;
+      }
+      if (this.getOpenAppWindowCount(windowKey) > 0) {
         return;
       }
       if (this.shuttingDown || this.fullShutdownPromise) return;
@@ -4803,6 +4893,8 @@ class SquidRunApp {
           startupBundlePath: scopedBundle?.bundlePath || null,
           startupSourceFiles: scopedBundle?.sourcePaths || [],
           autoBootAgents: this.activeProfileName === 'scoped' || windowKey === 'scoped',
+          standaloneWindow: this.isStandaloneProfileWindow(windowKey),
+          lifecycleMode: this.getWindowLifecycleMode(windowKey),
         });
       } catch (err) {
         log.warn('Window', `Failed to seed window context for ${windowKey}: ${err.message}`);
@@ -4866,12 +4958,12 @@ class SquidRunApp {
     if (!window || window.isDestroyed()) return true;
     const result = await dialog.showMessageBox(window, {
       type: 'warning',
-      buttons: ['Cancel', 'Shutdown'],
+      buttons: ['Cancel', 'Quit SquidRun'],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
-      title: 'Shutdown SquidRun',
-      message: 'Shutdown SquidRun?',
+      title: 'Quit SquidRun',
+      message: 'Quit SquidRun?',
       detail: SHUTDOWN_CONFIRM_MESSAGE,
     });
     return result.response === 1;

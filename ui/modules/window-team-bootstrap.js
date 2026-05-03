@@ -17,6 +17,8 @@ function normalizeWindowContext(payload = {}) {
     startupBundlePath: toText(payload.startupBundlePath, ''),
     startupSourceFiles: Array.isArray(payload.startupSourceFiles) ? payload.startupSourceFiles.slice() : [],
     autoBootAgents: payload.autoBootAgents === true,
+    standaloneWindow: payload.standaloneWindow === true,
+    lifecycleMode: toText(payload.lifecycleMode, ''),
   };
 }
 
@@ -34,6 +36,8 @@ function readInitialWindowContextFromLocation(search = '') {
       startupBundlePath: '',
       startupSourceFiles: [],
       autoBootAgents: false,
+      standaloneWindow: false,
+      lifecycleMode: '',
     };
   } catch {
     return {
@@ -47,6 +51,8 @@ function readInitialWindowContextFromLocation(search = '') {
       startupBundlePath: '',
       startupSourceFiles: [],
       autoBootAgents: false,
+      standaloneWindow: false,
+      lifecycleMode: '',
     };
   }
 }

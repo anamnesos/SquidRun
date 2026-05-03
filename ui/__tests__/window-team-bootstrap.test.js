@@ -2,6 +2,7 @@
 
 const {
   createWindowTeamBootstrap,
+  normalizeWindowContext,
   readInitialWindowContextFromLocation,
 } = require('../modules/window-team-bootstrap');
 
@@ -87,5 +88,19 @@ describe('window-team-bootstrap', () => {
       })
     );
     expect(settings.checkAutoSpawn).not.toHaveBeenCalled();
+  });
+
+  test('carries standalone lifecycle metadata for profile window controls', () => {
+    expect(normalizeWindowContext({
+      windowKey: 'scoped',
+      profileName: 'scoped',
+      standaloneWindow: true,
+      lifecycleMode: 'standalone-profile-app',
+    })).toEqual(expect.objectContaining({
+      windowKey: 'scoped',
+      profileName: 'scoped',
+      standaloneWindow: true,
+      lifecycleMode: 'standalone-profile-app',
+    }));
   });
 });
