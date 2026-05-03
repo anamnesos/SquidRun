@@ -5,7 +5,7 @@
 
 const path = require('path');
 const chokidar = require('chokidar');
-const { WORKSPACE_PATH, getCoordRoots } = require('../config');
+const { WORKSPACE_PATH, getCoordRoots, resolveCoordPath } = require('../config');
 
 function getCoordWatchRoots() {
   if (typeof getCoordRoots === 'function') {
@@ -17,9 +17,18 @@ function getCoordWatchRoots() {
   return [WORKSPACE_PATH];
 }
 
-const TRIGGER_PATHS = Array.from(new Set(
-  getCoordWatchRoots().map((root) => path.join(root, 'triggers'))
-));
+function getTriggerWatchPaths() {
+  const paths = [];
+  if (typeof resolveCoordPath === 'function') {
+    paths.push(resolveCoordPath('triggers', { forWrite: true }));
+  }
+  if (paths.length === 0) {
+    paths.push(...getCoordWatchRoots().map((root) => path.join(root, 'triggers')));
+  }
+  return Array.from(new Set(paths.filter(Boolean).map((targetPath) => path.resolve(targetPath))));
+}
+
+const TRIGGER_PATHS = getTriggerWatchPaths();
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
 
@@ -46,7 +55,7 @@ function buildWatcherConfigs() {
           /context-snapshots[\\/]/,
           /logs[\\/]/,
           /state\.json$/,
-          /triggers[\\/]/,
+          /triggers(?:-[^\\/]+)?[\\/]/,
         ],
       },
     },
@@ -78,59 +87,71 @@ function buildWatcherConfigs() {
   };
 }
 
-const watcherConfigs = buildWatcherConfigs();
-const requestedWatcherName = String(process.env.SQUIDRUN_WATCHER_NAME || 'all').toLowerCase();
-const watcherNames = requestedWatcherName === 'all'
-  ? Object.keys(watcherConfigs)
-  : [requestedWatcherName].filter((name) => watcherConfigs[name]);
+function main() {
+  const watcherConfigs = buildWatcherConfigs();
+  const requestedWatcherName = String(process.env.SQUIDRUN_WATCHER_NAME || 'all').toLowerCase();
+  const watcherNames = requestedWatcherName === 'all'
+    ? Object.keys(watcherConfigs)
+    : [requestedWatcherName].filter((name) => watcherConfigs[name]);
 
-if (watcherNames.length === 0) {
-  emit({
-    type: 'error',
-    watcherName: requestedWatcherName,
-    error: `Unknown watcher name: ${requestedWatcherName}`,
-  });
-  process.exit(1);
+  if (watcherNames.length === 0) {
+    emit({
+      type: 'error',
+      watcherName: requestedWatcherName,
+      error: `Unknown watcher name: ${requestedWatcherName}`,
+    });
+    process.exit(1);
+  }
+
+  const activeWatchers = [];
+  let shuttingDown = false;
+
+  function registerWatcher(watcherName) {
+    const cfg = watcherConfigs[watcherName];
+    const watcher = chokidar.watch(cfg.targetPath, cfg.options);
+
+    watcher.on('add', (filePath) => emit({ type: 'add', path: filePath, watcherName }));
+    watcher.on('change', (filePath) => emit({ type: 'change', path: filePath, watcherName }));
+    watcher.on('unlink', (filePath) => emit({ type: 'unlink', path: filePath, watcherName }));
+    watcher.on('error', (err) => emit({
+      type: 'error',
+      watcherName,
+      error: err?.message || String(err),
+    }));
+
+    activeWatchers.push(watcher);
+  }
+
+  async function shutdown(exitCode = 0) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    await Promise.all(activeWatchers.map(async (watcher) => {
+      try {
+        await watcher.close();
+      } catch {
+        // Best effort close only.
+      }
+    }));
+
+    process.exit(exitCode);
+  }
+
+  for (const watcherName of watcherNames) {
+    registerWatcher(watcherName);
+  }
+
+  process.on('disconnect', () => shutdown(0));
+  process.on('SIGTERM', () => shutdown(0));
+  process.on('SIGINT', () => shutdown(0));
 }
 
-const activeWatchers = [];
-let shuttingDown = false;
-
-function registerWatcher(watcherName) {
-  const cfg = watcherConfigs[watcherName];
-  const watcher = chokidar.watch(cfg.targetPath, cfg.options);
-
-  watcher.on('add', (filePath) => emit({ type: 'add', path: filePath, watcherName }));
-  watcher.on('change', (filePath) => emit({ type: 'change', path: filePath, watcherName }));
-  watcher.on('unlink', (filePath) => emit({ type: 'unlink', path: filePath, watcherName }));
-  watcher.on('error', (err) => emit({
-    type: 'error',
-    watcherName,
-    error: err?.message || String(err),
-  }));
-
-  activeWatchers.push(watcher);
+if (require.main === module) {
+  main();
 }
 
-async function shutdown(exitCode = 0) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-
-  await Promise.all(activeWatchers.map(async (watcher) => {
-    try {
-      await watcher.close();
-    } catch {
-      // Best effort close only.
-    }
-  }));
-
-  process.exit(exitCode);
-}
-
-for (const watcherName of watcherNames) {
-  registerWatcher(watcherName);
-}
-
-process.on('disconnect', () => shutdown(0));
-process.on('SIGTERM', () => shutdown(0));
-process.on('SIGINT', () => shutdown(0));
+module.exports = {
+  buildWatcherConfigs,
+  getTriggerWatchPaths,
+  main,
+};

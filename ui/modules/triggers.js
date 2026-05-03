@@ -15,6 +15,7 @@ const {
   PANE_IDS,
   ROLE_ID_MAP,
   BACKWARD_COMPAT_ROLE_ALIASES,
+  getActiveProfile,
 } = require('../config');
 const log = require('./logger');
 const organicUI = require('./ipc/organic-ui-handlers');
@@ -142,6 +143,22 @@ function setInjectMessageRouter(routerFn) {
 function normalizeWindowScope(value) {
   const text = String(value ?? '').trim();
   return text || null;
+}
+
+function getActiveProfileWindowKey() {
+  if (typeof getActiveProfile !== 'function') return null;
+  const profileName = normalizeWindowScope(getActiveProfile());
+  if (!profileName || profileName === 'main') return null;
+  return profileName;
+}
+
+function withDefaultProfileWindowMeta(meta = null) {
+  const payloadMeta = (meta && typeof meta === 'object') ? { ...meta } : {};
+  if (!normalizeWindowScope(payloadMeta.windowKey)) {
+    const profileWindowKey = getActiveProfileWindowKey();
+    if (profileWindowKey) payloadMeta.windowKey = profileWindowKey;
+  }
+  return Object.keys(payloadMeta).length > 0 ? payloadMeta : undefined;
 }
 
 function payloadHasNonMainWindowScope(payload = {}) {
@@ -631,9 +648,7 @@ function sendStaggered(panes, message, meta = {}) {
     traceId: meta?.deliveryId || null,
     parentEventId: meta?.parentEventId || null,
   });
-  const payloadMeta = (meta?.meta && typeof meta.meta === 'object')
-    ? { ...meta.meta }
-    : undefined;
+  const payloadMeta = withDefaultProfileWindowMeta(meta?.meta);
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   const deliveryId = meta?.deliveryId;
   let immediateDispatchCount = 0;

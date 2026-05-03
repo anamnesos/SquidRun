@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveCoordPath } = require('../config');
-const { SCOPED_PROFILE_CHAT_ID, getActiveProfileName } = require('../profile');
+const { SCOPED_PROFILE_CHAT_ID, getActiveProfileName, normalizeProfileName } = require('../profile');
 const { sendTelegram, normalizeChatId } = require('./hm-telegram');
 
 const TELEGRAM_ROUTING_RELATIVE_PATH = path.join('runtime', 'telegram-routing.json');
@@ -12,6 +12,8 @@ const DEFAULT_TELEGRAM_ROUTING = Object.freeze({
     method: 'send-long-telegram',
     name: 'Scoped',
     language: 'ko',
+    profile: 'scoped',
+    windowKey: 'scoped',
   },
   default: {
     method: 'hm-send-telegram',
@@ -24,11 +26,29 @@ function cloneRoute(route = {}) {
   if (!route || typeof route !== 'object' || Array.isArray(route)) return null;
   const method = typeof route.method === 'string' ? route.method.trim().toLowerCase() : '';
   if (!method) return null;
-  return {
+  const cloned = {
     method,
     name: typeof route.name === 'string' && route.name.trim() ? route.name.trim() : null,
     language: typeof route.language === 'string' && route.language.trim() ? route.language.trim().toLowerCase() : null,
   };
+  const profile = normalizeRouteKey(route.profile);
+  const windowKey = normalizeRouteKey(route.windowKey || route.inboundWindowKey);
+  const target = normalizeRouteKey(route.target || route.inboundTarget);
+  if (profile) cloned.profile = profile;
+  if (windowKey) cloned.windowKey = windowKey;
+  if (target) cloned.target = target;
+  return cloned;
+}
+
+function normalizeRouteKey(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || null;
+}
+
+function getOwnerTelegramChatId(env = process.env) {
+  return normalizeChatId(env?.TELEGRAM_CHAT_ID || '');
 }
 
 function getTelegramRoutingPath() {
@@ -117,6 +137,68 @@ function resolveTelegramRoute({ chatId = null, env = process.env } = {}) {
     route,
     routingPath,
     source,
+  };
+}
+
+function resolveTelegramInboundRoute({ chatId = null, env = process.env } = {}) {
+  const normalizedChatId = normalizeChatId(chatId);
+  const { routes, routingPath, source } = readTelegramRoutingConfig();
+  const ownerChatId = getOwnerTelegramChatId(env);
+  const route = normalizedChatId && routes[normalizedChatId]
+    ? cloneRoute(routes[normalizedChatId])
+    : null;
+
+  if (!normalizedChatId) {
+    return {
+      ok: true,
+      chatId: null,
+      windowKey: 'main',
+      profile: 'main',
+      route: cloneRoute(routes.default) || cloneRoute(DEFAULT_TELEGRAM_ROUTING.default),
+      routingPath,
+      source,
+      reason: 'missing_chat_id_default_main',
+    };
+  }
+
+  if (ownerChatId && normalizedChatId === ownerChatId) {
+    return {
+      ok: true,
+      chatId: normalizedChatId,
+      windowKey: 'main',
+      profile: 'main',
+      route: route || cloneRoute(routes.default) || cloneRoute(DEFAULT_TELEGRAM_ROUTING.default),
+      routingPath,
+      source,
+      reason: 'owner_chat',
+    };
+  }
+
+  const explicitProfile = normalizeProfileName(route?.profile || route?.windowKey || '');
+  const explicitWindowKey = normalizeRouteKey(route?.windowKey || route?.profile || '');
+  if (route && explicitWindowKey && explicitWindowKey !== 'main') {
+    return {
+      ok: true,
+      chatId: normalizedChatId,
+      windowKey: explicitWindowKey,
+      profile: explicitProfile || explicitWindowKey,
+      route,
+      routingPath,
+      source,
+      reason: 'explicit_non_owner_route',
+    };
+  }
+
+  return {
+    ok: false,
+    blocked: true,
+    chatId: normalizedChatId,
+    windowKey: null,
+    profile: null,
+    route,
+    routingPath,
+    source,
+    reason: route ? 'missing_inbound_window_route' : 'unknown_non_owner_chat',
   };
 }
 
@@ -231,6 +313,7 @@ module.exports = {
   getTelegramRoutingPath,
   readTelegramRoutingConfig,
   resolveTelegramRoute,
+  resolveTelegramInboundRoute,
   splitLongTelegramMessage,
   sendLongTelegramMessage,
   sendRoutedTelegramMessage,

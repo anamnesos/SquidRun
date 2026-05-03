@@ -53,7 +53,10 @@ const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
 const { normalizeChatId } = require('../../scripts/hm-telegram');
 const { sendTelegram } = require('../../scripts/hm-telegram');
-const { sendRoutedTelegramMessage } = require('../../scripts/hm-telegram-routing');
+const {
+  resolveTelegramInboundRoute: resolveTelegramInboundRouteConfig,
+  sendRoutedTelegramMessage,
+} = require('../../scripts/hm-telegram-routing');
 const { createInboundPollerService } = require('./inbound-poller-service');
 const {
   shouldTriggerAutonomousSmoke,
@@ -2278,6 +2281,8 @@ class SquidRunApp {
         const delivered = this.sendToVisibleWindow('inject-message', {
           ...packet,
           startupInjection,
+          _ipcPacketized: true,
+          _routerAttempted: true,
         }, {
           windowKey: targetWindowKey,
         });
@@ -2351,6 +2356,8 @@ class SquidRunApp {
         ...packet,
         panes: [paneId],
         meta: fallbackMeta,
+        _ipcPacketized: true,
+        _routerAttempted: true,
       }, {
         windowKey: packet?.windowKey || fallbackMeta?.windowKey || 'main',
       });
@@ -6904,7 +6911,7 @@ class SquidRunApp {
 
   markTelegramInboundContext(sender = 'unknown', metadata = {}) {
     const chatId = normalizeChatId(metadata?.chatId);
-    const windowKey = toNonEmptyString(metadata?.windowKey) || this.resolveTelegramInboundWindowKey(chatId);
+    const windowKey = toNonEmptyString(metadata?.windowKey) || this.resolveTelegramInboundWindowKey(chatId) || 'main';
     this.telegramInboundContext = {
       lastInboundAtMs: Date.now(),
       sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
@@ -6916,11 +6923,28 @@ class SquidRunApp {
   }
 
   resolveTelegramInboundWindowKey(chatId = null) {
+    const route = this.resolveTelegramInboundRoute(chatId);
+    if (route?.ok) return route.windowKey || 'main';
+    return null;
+  }
+
+  resolveTelegramInboundRoute(chatId = null) {
     if (!isMainProfile(this.activeProfileName)) {
-      return 'main';
+      return {
+        ok: true,
+        chatId: normalizeChatId(chatId),
+        windowKey: 'main',
+        profile: 'main',
+        reason: 'secondary_profile_local_main',
+      };
     }
-    const normalizedChatId = normalizeChatId(chatId);
-    return normalizedChatId === '2222222222' ? 'scoped' : 'main';
+    return resolveTelegramInboundRouteConfig({
+      chatId,
+      env: {
+        ...buildProfileTelegramEnv(process.env, 'main'),
+        SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+      },
+    });
   }
 
   getScopedTelegramTriggerPaths(windowKey = '') {
@@ -7002,6 +7026,30 @@ class SquidRunApp {
     try {
       const replyChatId = normalizeChatId(chatId)
         || (requiresRecentInbound ? normalizeChatId(this.telegramInboundContext?.chatId) : null);
+      if (requiresRecentInbound && replyChatId) {
+        const replyRoute = this.resolveTelegramInboundRoute(replyChatId);
+        if (!replyRoute?.ok) {
+          return {
+            handled: true,
+            ok: false,
+            accepted: false,
+            queued: false,
+            verified: false,
+            status: 'telegram_privacy_route_blocked',
+            error: replyRoute?.reason || 'telegram_inbound_route_blocked',
+          };
+        }
+      }
+      if (requiresRecentInbound && !replyChatId && toNonEmptyString(this.telegramInboundContext?.windowKey) !== 'main') {
+        return {
+          handled: true,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'telegram_privacy_route_missing_chat',
+        };
+      }
       const result = await sendRoutedTelegramMessage(message, process.env, {
         messageId,
         senderRole: fromRole,
@@ -8271,7 +8319,15 @@ class SquidRunApp {
         const archivePath = typeof media?.localPath === 'string' && media.localPath.trim()
           ? media.localPath.trim()
           : null;
-        const inboundWindowKey = this.resolveTelegramInboundWindowKey(metadata?.chatId);
+        const inboundRoute = this.resolveTelegramInboundRoute(metadata?.chatId);
+        if (!inboundRoute?.ok) {
+          log.warn(
+            'Telegram',
+            `Blocked inbound Telegram callback before pane delivery (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} chat=${inboundRoute?.chatId || 'unknown'} reason=${inboundRoute?.reason || 'telegram_inbound_route_blocked'})`
+          );
+          return;
+        }
+        const inboundWindowKey = inboundRoute.windowKey || 'main';
         const inboundSessionScopeId = this.getWindowSessionScopeId(inboundWindowKey);
 
         log.info(

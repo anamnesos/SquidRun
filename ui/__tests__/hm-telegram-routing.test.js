@@ -20,17 +20,21 @@ jest.mock('../scripts/hm-telegram', () => ({
 
 describe('hm-telegram-routing', () => {
   const originalWorkspacePath = mockDefaultConfig.WORKSPACE_PATH;
+  let activeMockConfig;
   let tempRoot;
 
   beforeEach(() => {
     jest.resetModules();
+    activeMockConfig = require('./helpers/mock-config').mockDefaultConfig;
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-telegram-routing-'));
-    mockDefaultConfig.WORKSPACE_PATH = tempRoot;
+    activeMockConfig.WORKSPACE_PATH = tempRoot;
     fs.mkdirSync(path.join(tempRoot, 'runtime'), { recursive: true });
   });
 
   afterEach(() => {
-    mockDefaultConfig.WORKSPACE_PATH = originalWorkspacePath;
+    if (activeMockConfig) {
+      activeMockConfig.WORKSPACE_PATH = originalWorkspacePath;
+    }
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
@@ -127,6 +131,84 @@ describe('hm-telegram-routing', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       method: 'hm-send-telegram',
+    }));
+  });
+
+  it('resolves explicit non-owner inbound chats to their configured window/profile', () => {
+    fs.writeFileSync(
+      path.join(tempRoot, 'runtime', 'telegram-routing.json'),
+      JSON.stringify({
+        '3333333333': {
+          method: 'send-long-telegram',
+          name: 'Client Profile',
+          language: 'en',
+          profile: 'client-profile',
+          windowKey: 'client-profile',
+        },
+        default: {
+          method: 'hm-send-telegram',
+          name: 'Owner',
+          language: 'en',
+        },
+      }),
+      'utf8'
+    );
+    const routing = require('../scripts/hm-telegram-routing');
+
+    expect(routing.resolveTelegramInboundRoute({
+      chatId: '3333333333',
+      env: { TELEGRAM_CHAT_ID: '1111111111' },
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      chatId: '3333333333',
+      windowKey: 'client-profile',
+      profile: 'client-profile',
+      reason: 'explicit_non_owner_route',
+    }));
+  });
+
+  it('keeps the owner chat on main inbound routing', () => {
+    const routing = require('../scripts/hm-telegram-routing');
+
+    expect(routing.resolveTelegramInboundRoute({
+      chatId: '1111111111',
+      env: { TELEGRAM_CHAT_ID: '1111111111' },
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      chatId: '1111111111',
+      windowKey: 'main',
+      profile: 'main',
+      reason: 'owner_chat',
+    }));
+  });
+
+  it('fails closed for non-owner inbound chats without explicit window/profile routing', () => {
+    fs.writeFileSync(
+      path.join(tempRoot, 'runtime', 'telegram-routing.json'),
+      JSON.stringify({
+        '3333333333': {
+          method: 'send-long-telegram',
+          name: 'Client Profile',
+          language: 'en',
+        },
+        default: {
+          method: 'hm-send-telegram',
+          name: 'Owner',
+          language: 'en',
+        },
+      }),
+      'utf8'
+    );
+    const routing = require('../scripts/hm-telegram-routing');
+
+    expect(routing.resolveTelegramInboundRoute({
+      chatId: '3333333333',
+      env: { TELEGRAM_CHAT_ID: '1111111111' },
+    })).toEqual(expect.objectContaining({
+      ok: false,
+      blocked: true,
+      chatId: '3333333333',
+      reason: 'missing_inbound_window_route',
     }));
   });
 });

@@ -360,6 +360,38 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
+  test('profile trigger routing watches only the namespaced trigger root', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, triggers } = setupWatcher({
+      configOverrides: (workspacePath) => ({
+        resolveCoordPath: (relPath) => path.join(workspacePath, '.squidrun', `${relPath}-client-profile`),
+        getCoordRoots: () => [path.join(workspacePath, '.squidrun')],
+      }),
+    });
+
+    const namespacedTriggerPath = path.join(tempDir, '.squidrun', 'triggers-client-profile');
+    const sharedTriggerPath = path.join(tempDir, '.squidrun', 'triggers');
+    fs.mkdirSync(namespacedTriggerPath, { recursive: true });
+    fs.mkdirSync(sharedTriggerPath, { recursive: true });
+    const namespacedTriggerFile = path.join(namespacedTriggerPath, 'architect.txt');
+    const sharedTriggerFile = path.join(sharedTriggerPath, 'architect.txt');
+    fs.writeFileSync(namespacedTriggerFile, 'Profile ping', 'utf-8');
+    fs.writeFileSync(sharedTriggerFile, 'Shared ping', 'utf-8');
+
+    expect(watcher.TRIGGER_PATH).toBe(namespacedTriggerPath);
+    expect(watcher._internals.getTriggerPaths()).toEqual([path.resolve(namespacedTriggerPath)]);
+
+    watcher.handleFileChange(sharedTriggerFile);
+    jest.advanceTimersByTime(250);
+    expect(triggers.handleTriggerFile).not.toHaveBeenCalled();
+
+    watcher.handleFileChange(namespacedTriggerFile);
+    jest.advanceTimersByTime(250);
+    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(namespacedTriggerFile, 'architect.txt');
+
+    cleanupDir(tempDir);
+  });
+
   test('trigger files wait for stable size before routing', () => {
     jest.useFakeTimers();
     const { watcher, tempDir, triggers } = setupWatcher();
