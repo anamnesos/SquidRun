@@ -47,4 +47,22 @@ describe('watcher-worker.js', () => {
     expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/triggers/architect.txt'))).toBe(true);
     expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/triggers-client-profile/architect.txt'))).toBe(true);
   });
+
+  test('workspace watcher ignores runtime files that only create log churn', () => {
+    const workspacePath = path.join('D:', 'tmp', 'squidrun-test');
+    const worker = loadWorkerWithConfig({
+      WORKSPACE_PATH: workspacePath,
+      resolveCoordPath: () => path.join(workspacePath, '.squidrun', 'triggers-client-profile'),
+      getCoordRoots: () => [path.join(workspacePath, '.squidrun')],
+    });
+    const ignored = worker.buildWatcherConfigs().workspace.options.ignored;
+
+    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/logs/app.log'))).toBe(true);
+    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/runtime/daemon.log'))).toBe(true);
+    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/runtime-eunbyeol/session.md'))).toBe(true);
+    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/perf-profile.json'))).toBe(true);
+    expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/logs/app.log')).toBe(true);
+    expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/perf-profile.json')).toBe(true);
+    expect(worker.isRuntimeNoopPath('D:/repo/workspace/plan.md')).toBe(false);
+  });
 });

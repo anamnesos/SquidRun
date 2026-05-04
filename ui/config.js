@@ -12,6 +12,7 @@ const {
   isMainProfile,
   namespaceCoordRelPath,
   getProfilePipePath,
+  getProfileProjectRootOverride,
 } = require('./profile');
 
 function envFlagEnabled(name, defaultValue = true) {
@@ -46,6 +47,11 @@ function isPackagedRuntimePath(targetPath = '') {
 }
 
 function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
+  const profileRoot = getProfileProjectRootOverride(ACTIVE_PROFILE);
+  if (profileRoot) {
+    return profileRoot;
+  }
+
   // Explicit env var takes priority — set by .squidrun/bin/ shell launchers.
   const envRoot = process.env.SQUIDRUN_PROJECT_ROOT;
   if (envRoot) {

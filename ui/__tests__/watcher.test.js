@@ -164,6 +164,30 @@ describe('watcher module', () => {
   });
 
 
+  test('runtime self-change files are ignored before watcher logging', () => {
+    jest.useFakeTimers();
+    const { watcher, logMock } = setupWatcher();
+    logMock.info.mockClear();
+
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'logs', 'app.log'));
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'daemon.log'));
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime-eunbyeol', 'session.md'));
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'perf-profile.json'));
+    jest.runOnlyPendingTimers();
+
+    expect(logMock.info).not.toHaveBeenCalledWith(
+      'Watcher',
+      expect.stringContaining('Processing')
+    );
+    expect(logMock.info).not.toHaveBeenCalledWith(
+      'Watcher',
+      expect.stringContaining('File changed:')
+    );
+    expect(watcher._internals.isRuntimeNoopFileChange('D:/repo/.squidrun/logs/app.log')).toBe(true);
+    expect(watcher._internals.isRuntimeNoopFileChange('D:/repo/.squidrun/perf-profile.json')).toBe(true);
+    expect(watcher._internals.isRuntimeNoopFileChange(path.join('D:', 'repo', 'workspace', 'plan.md'))).toBe(false);
+  });
+
   test('readState returns defaults when state file missing', () => {
     const { watcher, tempDir } = setupWatcher();
 

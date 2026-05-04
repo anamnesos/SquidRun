@@ -151,6 +151,11 @@ function getProfileProjectRootOverride(profileName = null, env = process.env) {
     return path.resolve(explicitRoot);
   }
 
+  const bundledProfileRoot = path.resolve(__dirname, '..', '.squidrun', 'profiles', normalizedProfile, 'workspace');
+  if (fs.existsSync(bundledProfileRoot)) {
+    return bundledProfileRoot;
+  }
+
   return null;
 }
 

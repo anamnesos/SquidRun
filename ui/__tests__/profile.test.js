@@ -47,6 +47,16 @@ describe('profile helpers', () => {
     }
   });
 
+  test('resolves bundled side-profile workspaces when no explicit root is set', () => {
+    const profileRoot = path.resolve(__dirname, '..', '..', '.squidrun', 'profiles', 'unit-profile', 'workspace');
+    try {
+      fs.mkdirSync(profileRoot, { recursive: true });
+      expect(getProfileProjectRootOverride('unit-profile', {})).toBe(profileRoot);
+    } finally {
+      fs.rmSync(path.dirname(profileRoot), { recursive: true, force: true });
+    }
+  });
+
   test('filters Telegram env so Scoped traffic stays out of the main profile', () => {
     const mainEnv = buildProfileTelegramEnv({
       TELEGRAM_CHAT_ID: '5613428850',

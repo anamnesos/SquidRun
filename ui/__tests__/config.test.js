@@ -77,6 +77,35 @@ describe('config.js', () => {
       expect(resolvePaneCwd('3')).toBe(expected);
     });
 
+    test('discovers bundled side-profile workspace as the active project root', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousProjectRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+      const profileRoot = path.resolve(__dirname, '..', '..', '.squidrun', 'profiles', 'unit-config-profile', 'workspace');
+      try {
+        fs.mkdirSync(profileRoot, { recursive: true });
+        process.env.SQUIDRUN_PROFILE = 'unit-config-profile';
+        process.env.SQUIDRUN_PROJECT_ROOT = path.resolve('/tmp/generic-project-root');
+
+        jest.isolateModules(() => {
+          const isolatedConfig = require('../config');
+          expect(isolatedConfig.getProjectRoot()).toBe(profileRoot);
+          expect(isolatedConfig.resolvePaneCwd('1')).toBe(profileRoot);
+        });
+      } finally {
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        if (previousProjectRoot === undefined) {
+          delete process.env.SQUIDRUN_PROJECT_ROOT;
+        } else {
+          process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
+        }
+        fs.rmSync(path.dirname(profileRoot), { recursive: true, force: true });
+      }
+    });
+
     test('resolvePaneCwd should prefer state project fallback when no pane override exists', () => {
       const expected = path.resolve('/tmp/state-project');
       expect(resolvePaneCwd('2', { projectRoot: '/tmp/state-project' })).toBe(expected);

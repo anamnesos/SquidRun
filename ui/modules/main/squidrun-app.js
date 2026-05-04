@@ -412,6 +412,10 @@ function toNonEmptyString(value) {
   return normalized || null;
 }
 
+function normalizeToPosixPath(value) {
+  return String(value || '').replace(/\\/g, '/');
+}
+
 function formatLocalClockTime(value = Date.now()) {
   const date = value instanceof Date ? value : new Date(value);
   const hours = String(date.getHours()).padStart(2, '0');
@@ -3686,11 +3690,24 @@ class SquidRunApp {
       || (isPrimaryWindow
         ? (this.activeProfileName === 'scoped' ? 'SquidRun - Scoped' : 'SquidRun')
         : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
+    const shouldAutoBootWindowAgents = this.activeProfileName !== 'main'
+      || windowKey !== 'main'
+      || this.isStandaloneProfileWindow(windowKey);
+    const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
+    const lifecycleMode = this.getWindowLifecycleMode(windowKey);
+    const startupBundlePath = this.getProfileStartupBundlePath(windowKey);
     const query = {
       windowKey,
       windowTeam: String(rawOptions.windowTeam || windowKey).trim() || windowKey,
       profileName: this.activeProfileName,
       profileLabel: this.activeProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(this.activeProfileName),
+      roleLayout: 'standard',
+      sessionScopeId: this.getWindowSessionScopeId(windowKey),
+      startupBundlePath: startupBundlePath || '',
+      autoBootAgents: String(shouldAutoBootWindowAgents),
+      standaloneWindow: String(standaloneWindow),
+      lifecycleMode,
+      contextReady: 'true',
     };
 
     const windowRef = new BrowserWindow({
@@ -4057,7 +4074,16 @@ class SquidRunApp {
   }
 
   getScopedStartupBundlePath() {
-    return resolveCoordPath(path.join('runtime', 'window-teams', 'scoped', 'startup-bundle.md'), { forWrite: true });
+    return this.getProfileStartupBundlePath('scoped');
+  }
+
+  getProfileStartupBundlePath(rawWindowKey = null) {
+    const windowKey = toNonEmptyString(rawWindowKey)
+      || (isMainProfile(this.activeProfileName) ? 'main' : this.activeProfileName);
+    if (windowKey === 'main' && isMainProfile(this.activeProfileName)) return null;
+    const profileKey = windowKey === 'main' ? this.activeProfileName : windowKey;
+    if (isMainProfile(profileKey)) return null;
+    return resolveCoordPath(path.join('runtime', 'window-teams', profileKey, 'startup-bundle.md'), { forWrite: true });
   }
 
   getScopedStartupSourcePaths() {
@@ -4239,6 +4265,82 @@ class SquidRunApp {
         },
       });
     }
+    return bundle;
+  }
+
+  buildProfileStartupBundle(profileKey = this.activeProfileName) {
+    const normalizedProfile = toNonEmptyString(profileKey) || this.activeProfileName;
+    const profileRoot = getProfileProjectRootOverride(normalizedProfile, process.env) || getProjectRoot() || process.cwd();
+    this.ensureProfileWorkspaceLink(normalizedProfile, profileRoot);
+    const sourcePaths = [
+      path.join(profileRoot, 'AGENTS.md'),
+      path.join(profileRoot, 'CLAUDE.md'),
+      path.join(profileRoot, 'ROLES.md'),
+    ];
+    const lines = [
+      `# ${this.formatWindowKeyLabel(normalizedProfile)} Startup Bundle`,
+      '',
+      `Generated: ${new Date().toISOString()}`,
+      `Session Scope: ${this.getWindowSessionScopeId(normalizedProfile)}`,
+      '',
+      'Profile identity:',
+      `- Profile: ${normalizedProfile}`,
+      `- Workspace: ${profileRoot}`,
+      '- Follow the profile-local AGENTS.md, CLAUDE.md, and ROLES.md files before acting.',
+      '',
+      'Authoritative source files:',
+      ...sourcePaths.map((filePath) => `- ${filePath}`),
+    ];
+
+    return {
+      ok: true,
+      sessionScopeId: this.getWindowSessionScopeId(normalizedProfile),
+      sourcePaths,
+      bundlePath: this.getProfileStartupBundlePath(normalizedProfile),
+      text: lines.join('\n'),
+    };
+  }
+
+  ensureProfileWorkspaceLink(profileKey, profileRoot) {
+    const normalizedProfile = toNonEmptyString(profileKey);
+    const resolvedProfileRoot = toNonEmptyString(profileRoot);
+    if (!normalizedProfile || !resolvedProfileRoot || isMainProfile(normalizedProfile)) return null;
+    const coordRoot = path.join(resolvedProfileRoot, '.squidrun');
+    const linkPath = path.join(coordRoot, 'link.json');
+    const squidrunRoot = path.resolve(path.join(__dirname, '..', '..', '..'));
+    const payload = {
+      squidrun_root: normalizeToPosixPath(squidrunRoot),
+      comms: {
+        hm_send: normalizeToPosixPath(path.join(squidrunRoot, 'ui', 'scripts', 'hm-send.js')),
+        hm_comms: normalizeToPosixPath(path.join(squidrunRoot, 'ui', 'scripts', 'hm-comms.js')),
+      },
+      workspace: normalizeToPosixPath(path.resolve(resolvedProfileRoot)),
+      session_id: this.getWindowSessionScopeId(normalizedProfile),
+      role_targets: {
+        architect: 'architect',
+        builder: 'builder',
+        oracle: 'oracle',
+      },
+      version: 1,
+      profile: normalizedProfile,
+    };
+    try {
+      fs.mkdirSync(coordRoot, { recursive: true });
+      fs.writeFileSync(linkPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+      return linkPath;
+    } catch (err) {
+      log.warn('Profile', `Failed to write ${normalizedProfile} profile link.json: ${err.message}`);
+      return null;
+    }
+  }
+
+  async writeProfileStartupBundle(profileKey = this.activeProfileName) {
+    const normalizedProfile = toNonEmptyString(profileKey) || this.activeProfileName;
+    if (normalizedProfile === 'scoped') return this.writeScopedStartupBundle();
+    const bundle = this.buildProfileStartupBundle(normalizedProfile);
+    if (!bundle?.bundlePath || !bundle?.text) return bundle;
+    fs.mkdirSync(path.dirname(bundle.bundlePath), { recursive: true });
+    fs.writeFileSync(bundle.bundlePath, `${bundle.text}\n`, 'utf8');
     return bundle;
   }
 
@@ -4826,6 +4928,12 @@ class SquidRunApp {
     const windowKey = String(options.windowKey || 'main').trim() || 'main';
     const isPrimaryWindow = windowKey === 'main';
     const lifecycleRoot = options.lifecycleRoot === true;
+    const shouldAutoBootWindowAgents = this.activeProfileName !== 'main'
+      || windowKey !== 'main'
+      || this.isStandaloneProfileWindow(windowKey);
+    const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
+    const lifecycleMode = this.getWindowLifecycleMode(windowKey);
+    const startupBundlePath = this.getProfileStartupBundlePath(windowKey);
 
     if (!window) return;
 
@@ -4874,12 +4982,18 @@ class SquidRunApp {
       if (lifecycleRoot) {
         await this.initPostLoad();
       }
-      let scopedBundle = null;
+      let startupBundle = null;
       if (this.activeProfileName === 'scoped' || windowKey === 'scoped') {
         try {
-          scopedBundle = await this.injectScopedStartupBundle();
+          startupBundle = await this.injectScopedStartupBundle();
         } catch (err) {
           log.warn('Window', `Failed to build Scoped startup bundle: ${err.message}`);
+        }
+      } else if (this.activeProfileName !== 'main' || windowKey !== 'main') {
+        try {
+          startupBundle = await this.writeProfileStartupBundle(windowKey === 'main' ? this.activeProfileName : windowKey);
+        } catch (err) {
+          log.warn('Window', `Failed to build ${windowKey} startup bundle: ${err.message}`);
         }
       }
       try {
@@ -4890,11 +5004,11 @@ class SquidRunApp {
           profileLabel: this.activeProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(this.activeProfileName),
           roleLayout: 'standard',
           sessionScopeId: this.getWindowSessionScopeId(windowKey),
-          startupBundlePath: scopedBundle?.bundlePath || null,
-          startupSourceFiles: scopedBundle?.sourcePaths || [],
-          autoBootAgents: this.activeProfileName === 'scoped' || windowKey === 'scoped',
-          standaloneWindow: this.isStandaloneProfileWindow(windowKey),
-          lifecycleMode: this.getWindowLifecycleMode(windowKey),
+          startupBundlePath: startupBundle?.bundlePath || startupBundlePath || null,
+          startupSourceFiles: startupBundle?.sourcePaths || [],
+          autoBootAgents: shouldAutoBootWindowAgents,
+          standaloneWindow,
+          lifecycleMode,
         });
       } catch (err) {
         log.warn('Window', `Failed to seed window context for ${windowKey}: ${err.message}`);

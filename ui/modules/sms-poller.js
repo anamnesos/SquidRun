@@ -359,6 +359,14 @@ function formatSkipReasonCounts(skipReasonCounts) {
     .join(',');
 }
 
+function isDuplicateOnlyCycle(cycle) {
+  const reasons = Object.keys(cycle.skippedReasons || {});
+  return cycle.deliveredCount === 0
+    && cycle.skippedCount > 0
+    && reasons.length === 1
+    && reasons[0] === 'duplicate_sid';
+}
+
 async function pollNow() {
   if (!running || !config) {
     log.info(
@@ -469,13 +477,16 @@ async function pollNow() {
         }
       }
 
-      log.info(
-        'SMS',
-        `Twilio message eval sid=${summary.sid} from=${summary.from} direction=${summary.direction} `
-          + `checks={inbound:${directionInbound},timestampOlderThanCursor:${timestampOlderThanCursor},sid:${sidAccepted},body:${hasText},callback:${callbackConfigured}} `
-          + `callbackInvoked=${callbackInvoked} callbackSucceeded=${callbackSucceeded} `
-          + `decision=${decision} reason=${reason}`
-      );
+      const messageEvalLog = `Twilio message eval sid=${summary.sid} from=${summary.from} direction=${summary.direction} `
+        + `checks={inbound:${directionInbound},timestampOlderThanCursor:${timestampOlderThanCursor},sid:${sidAccepted},body:${hasText},callback:${callbackConfigured}} `
+        + `callbackInvoked=${callbackInvoked} callbackSucceeded=${callbackSucceeded} `
+        + `decision=${decision} reason=${reason}`;
+
+      if (decision === 'delivered' || reason === 'callback_error') {
+        log.info('SMS', messageEvalLog);
+      } else {
+        log.debug('SMS', messageEvalLog);
+      }
 
       if (decision !== 'delivered') {
         cycle.skippedCount += 1;
@@ -501,7 +512,8 @@ async function pollNow() {
         .map((entry) => `sid=${entry.sid}|from=${entry.from}|direction=${entry.direction}`)
         .join('; ')
       : 'none';
-    log.info(
+    const cycleLogLevel = isDuplicateOnlyCycle(cycle) ? 'debug' : 'info';
+    log[cycleLogLevel](
       'SMS',
       `Twilio poll cycle status=${cycle.status} fetched=${cycle.fetchedCount} processed=${cycle.processedCount} `
         + `delivered=${cycle.deliveredCount} skipped=${cycle.skippedCount} skipReasons=${formatSkipReasonCounts(cycle.skippedReasons)} `
