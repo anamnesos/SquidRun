@@ -10,9 +10,12 @@ const DEFAULT_HISTORY_LIMIT = 50;
 const QUEUE_SCHEMA_VERSION = 2;
 const VALID_STATES = new Set(['queued', 'active', 'blocked', 'waiting', 'done', 'failed']);
 const VALID_RISK_CLASSES = new Set(['safe', 'caution', 'approval_required']);
+const WAKE_DISPATCH_STATES = new Set(['queued', 'blocked', 'waiting']);
+const WAKE_DISPATCH_RISKS = new Set(['safe', 'caution']);
 const APPROVAL_REQUIRED_PATTERN = /\b(customer|client|invoice|payment|refund|charge|bank|money|cash|trading|trade|crypto|stock|position|wallet|auth|token|credential|password|secret|api key|email customer|send email|customer-facing)\b/i;
 const SAFE_PATTERN = /\b(doc|docs|documentation|test|tests|unit test|lint|typecheck|format|static|read-only|inspect|investigate|report)\b/i;
 const CAUTION_PATTERN = /\b(infra|debug|diagnose|fix|patch|code|refactor|restartless|routing|watcher|queue|schema|migration)\b/i;
+const DEFAULT_APPROVAL_HOLD_REASON = 'Approval required before owned-work resume';
 
 function getQueuePath() {
   try {
@@ -96,6 +99,13 @@ function normalizeContinueAfter(value) {
   if (!text) return null;
   const parsed = Date.parse(text);
   if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  return text;
+}
+
+function normalizeWakeTrigger(value) {
+  const text = trimText(value)?.toLowerCase() || null;
+  if (!text) return null;
+  if (text === 'restart' || text === 'post_restart' || text === 'post-restart') return 'post-wake';
   return text;
 }
 
@@ -278,6 +288,204 @@ function listQueue(options = {}) {
   };
 }
 
+function parseDueTime(value) {
+  const text = trimText(value);
+  if (!text) return null;
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isContinueAfterDue(task, nowMs) {
+  const dueAtMs = parseDueTime(task.continueAfter);
+  return !dueAtMs || dueAtMs <= nowMs;
+}
+
+function wakeTriggerMatches(task, trigger) {
+  const taskTrigger = normalizeWakeTrigger(task.wakeTrigger);
+  const requestedTrigger = normalizeWakeTrigger(trigger);
+  if (!requestedTrigger) return true;
+  if (!taskTrigger) return true;
+  return taskTrigger === requestedTrigger;
+}
+
+function isWakeEligible(task, options = {}) {
+  const nowMs = toTimestampMs(options.nowMs || options.now, Date.now());
+  if (!task || task.restartPersistence === false) return false;
+  if (!WAKE_DISPATCH_STATES.has(normalizeState(task.state, 'queued'))) return false;
+  if (!isContinueAfterDue(task, nowMs)) return false;
+  if (!wakeTriggerMatches(task, options.wakeTrigger || options.trigger)) return false;
+  return true;
+}
+
+function buildWakeCandidate(agent, task, details = {}) {
+  const candidate = {
+    agent,
+    taskId: task.taskId,
+    title: task.title || null,
+    message: task.message || null,
+    state: normalizeState(task.state, 'queued'),
+    riskClass: normalizeRiskClass(task.riskClass, 'caution'),
+    nextStep: task.nextStep || null,
+    blockedReason: task.blockedReason || null,
+    wakeTrigger: task.wakeTrigger || null,
+    continueAfter: task.continueAfter || null,
+    restartPersistence: task.restartPersistence !== false,
+    source: task.source || null,
+    handoffSummary: task.handoffSummary || null,
+    dispatchReady: details.dispatchReady !== false,
+    holdReason: details.holdReason || null,
+  };
+  candidate.prompt = buildContinuePrompt(candidate);
+  return candidate;
+}
+
+function collectWakeCandidates(options = {}) {
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const nowMs = toTimestampMs(options.nowMs || options.now, Date.now());
+  const trigger = normalizeWakeTrigger(options.wakeTrigger || options.trigger) || 'post-wake';
+  const agentFilter = normalizeAgent(options.agent);
+  const candidates = [];
+  const held = [];
+
+  for (const agent of VALID_AGENTS) {
+    if (agentFilter && agent !== agentFilter) continue;
+    const bucket = state.agents[agent] || createEmptyBucket();
+    for (const task of bucket.pending) {
+      if (!isWakeEligible(task, { nowMs, wakeTrigger: trigger })) continue;
+      if (normalizeRiskClass(task.riskClass, 'caution') === 'approval_required') {
+        held.push(buildWakeCandidate(agent, {
+          ...task,
+          state: 'blocked',
+          blockedReason: task.blockedReason || DEFAULT_APPROVAL_HOLD_REASON,
+        }, {
+          dispatchReady: false,
+          holdReason: 'approval_required',
+        }));
+        continue;
+      }
+      if (!WAKE_DISPATCH_RISKS.has(normalizeRiskClass(task.riskClass, 'caution'))) continue;
+      candidates.push(buildWakeCandidate(agent, task, {
+        dispatchReady: !bucket.active,
+        holdReason: bucket.active ? 'active_task_exists' : null,
+      }));
+    }
+  }
+
+  return {
+    ok: true,
+    queuePath,
+    trigger,
+    generatedAtMs: nowMs,
+    candidates,
+    held,
+  };
+}
+
+function buildContinuePrompt(candidate = {}) {
+  const lines = [
+    '[OWNED-WORK CONTINUE]',
+    `Agent: ${candidate.agent || 'agent'}`,
+    `Task: ${candidate.title || candidate.taskId || 'owned work'}`,
+    `Risk: ${candidate.riskClass || 'caution'}`,
+  ];
+  if (candidate.nextStep) lines.push(`Next: ${candidate.nextStep}`);
+  if (candidate.handoffSummary) lines.push(`Handoff: ${candidate.handoffSummary}`);
+  if (candidate.blockedReason) lines.push(`Previous block: ${candidate.blockedReason}`);
+  if (candidate.wakeTrigger) lines.push(`Wake trigger: ${candidate.wakeTrigger}`);
+  lines.push('Resume only the bounded safe/caution next step from the owned-work queue.');
+  lines.push('If the work becomes customer-facing, trading, money, auth, or otherwise approval-required, block it instead of continuing.');
+  return lines.join('\n');
+}
+
+function ensureApprovalHolds(state, options = {}) {
+  const nowMs = toTimestampMs(options.nowMs || options.now, Date.now());
+  const trigger = normalizeWakeTrigger(options.wakeTrigger || options.trigger) || 'post-wake';
+  const agentFilter = normalizeAgent(options.agent);
+  let changed = false;
+
+  for (const agent of VALID_AGENTS) {
+    if (agentFilter && agent !== agentFilter) continue;
+    const bucket = state.agents[agent] || createEmptyBucket();
+    for (let index = 0; index < bucket.pending.length; index += 1) {
+      const task = bucket.pending[index];
+      if (!isWakeEligible(task, { nowMs, wakeTrigger: trigger })) continue;
+      if (normalizeRiskClass(task.riskClass, 'caution') !== 'approval_required') continue;
+      const heldTask = updateTaskAdvanced(task, {
+        state: 'blocked',
+        blockedReason: task.blockedReason || DEFAULT_APPROVAL_HOLD_REASON,
+        wakeTrigger: task.wakeTrigger || trigger,
+      });
+      bucket.pending[index] = heldTask;
+      changed = true;
+    }
+    state.agents[agent] = bucket;
+  }
+
+  return changed;
+}
+
+async function dispatchWakeCandidates(options = {}) {
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const nowMs = toTimestampMs(options.nowMs || options.now, Date.now());
+  const trigger = normalizeWakeTrigger(options.wakeTrigger || options.trigger) || 'post-wake';
+  const approvalHoldsChanged = ensureApprovalHolds(state, { ...options, nowMs, wakeTrigger: trigger });
+  if (approvalHoldsChanged) {
+    writeQueue(state, queuePath);
+  }
+
+  const scan = collectWakeCandidates({ ...options, queuePath, nowMs, wakeTrigger: trigger });
+  const dispatcher = typeof options.dispatcher === 'function' ? options.dispatcher : null;
+  if (!dispatcher) {
+    return {
+      ...scan,
+      dispatched: [],
+      skipped: scan.candidates
+        .filter((candidate) => !candidate.dispatchReady)
+        .map((candidate) => ({ ...candidate, reason: candidate.holdReason || 'not_dispatch_ready' })),
+      dryRun: true,
+    };
+  }
+
+  const dispatched = [];
+  const skipped = [];
+  for (const candidate of scan.candidates) {
+    if (!candidate.dispatchReady) {
+      skipped.push({ ...candidate, reason: candidate.holdReason || 'not_dispatch_ready' });
+      continue;
+    }
+    const dispatchResult = await dispatcher(candidate);
+    if (dispatchResult && dispatchResult.ok === false) {
+      skipped.push({ ...candidate, reason: dispatchResult.reason || 'dispatch_failed' });
+      continue;
+    }
+    const continued = continueTask({
+      agent: candidate.agent,
+      taskId: candidate.taskId,
+      nextStep: candidate.nextStep,
+      handoffSummary: candidate.handoffSummary,
+      lastDispatchAtMs: nowMs,
+    }, { queuePath });
+    if (!continued.ok) {
+      skipped.push({ ...candidate, reason: continued.reason || 'continue_failed' });
+      continue;
+    }
+    dispatched.push({
+      ...candidate,
+      dispatchResult: dispatchResult || { ok: true },
+      task: continued.task,
+    });
+  }
+
+  return {
+    ...scan,
+    dispatched,
+    skipped,
+    dryRun: false,
+  };
+}
+
 function findTaskInBucket(bucket, taskId = null) {
   if (!bucket) return { task: null, location: null, index: -1 };
   const id = trimText(taskId);
@@ -397,6 +605,7 @@ function continueTask(input = {}, options = {}) {
     blockedReason: null,
     nextStep: input.nextStep || found.task.nextStep,
     handoffSummary: input.handoffSummary || found.task.handoffSummary,
+    lastDispatchAtMs: input.lastDispatchAtMs || found.task.lastDispatchAtMs,
   });
   if (found.location === 'pending') {
     bucket.pending.splice(found.index, 1);
@@ -485,6 +694,7 @@ function usage() {
   console.log('  block --agent <architect|builder|oracle> [--task-id <id>] --reason <text> [--wake-trigger <text>] [--continue-after <time>]');
   console.log('  unblock --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
   console.log('  continue --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
+  console.log('  wake [--trigger <post-wake>] [--agent <architect|builder|oracle>] [--now <iso/ms>] [--dispatch]');
   console.log('  complete --agent <architect|builder|oracle> [--reason <text>]');
   console.log('  fail --agent <architect|builder|oracle> [--reason <text>]');
   console.log('  clear [--agent <architect|builder|oracle>]');
@@ -512,6 +722,10 @@ function getOption(options, key, fallback = null) {
   return options.has(key) ? options.get(key) : fallback;
 }
 
+function isOptionEnabled(value) {
+  return value === true || value === 'true' || value === '1' || value === 'yes';
+}
+
 function formatListResult(result) {
   const lines = [
     `queuePath=${result.queuePath}`,
@@ -527,6 +741,25 @@ function formatListResult(result) {
         `  carrying=${summary.active.title || summary.active.taskId} risk=${summary.active.riskClass} next=${summary.active.nextStep || 'n/a'} blocked=${summary.active.blockedReason || 'none'}`
       );
     }
+  }
+  return lines.join('\n');
+}
+
+function formatWakeResult(result) {
+  const lines = [
+    `queuePath=${result.queuePath}`,
+    `trigger=${result.trigger}`,
+    `candidates=${result.candidates.length} held=${result.held.length} dispatched=${result.dispatched?.length || 0} skipped=${result.skipped?.length || 0}`,
+  ];
+  for (const candidate of result.candidates) {
+    lines.push(
+      `${candidate.agent}: ${candidate.taskId} risk=${candidate.riskClass} state=${candidate.state} ready=${candidate.dispatchReady ? 'yes' : 'no'} next=${candidate.nextStep || 'n/a'}`
+    );
+  }
+  for (const held of result.held) {
+    lines.push(
+      `held ${held.agent}: ${held.taskId} reason=${held.holdReason || held.blockedReason || 'held'}`
+    );
   }
   return lines.join('\n');
 }
@@ -617,6 +850,28 @@ function main(argv = process.argv.slice(2)) {
     return result.ok ? 0 : 1;
   }
 
+  if (command === 'wake') {
+    const sharedOptions = {
+      agent: getOption(options, 'agent'),
+      wakeTrigger: getOption(options, 'trigger') || getOption(options, 'wake-trigger') || 'post-wake',
+      nowMs: getOption(options, 'now'),
+    };
+    if (isOptionEnabled(getOption(options, 'dispatch'))) {
+      return dispatchWakeCandidates({
+        ...sharedOptions,
+        dispatcher: async (candidate) => ({ ok: true, emittedPrompt: candidate.prompt }),
+      }).then((result) => {
+        console.log(JSON.stringify(result, null, 2));
+        return result.skipped?.length ? 1 : 0;
+      });
+    }
+    const result = collectWakeCandidates(sharedOptions);
+    console.log(isOptionEnabled(getOption(options, 'json'))
+      ? JSON.stringify(result, null, 2)
+      : formatWakeResult({ ...result, dispatched: [], skipped: [] }));
+    return 0;
+  }
+
   if (command === 'complete') {
     const result = completeActiveTask({
       agent: getOption(options, 'agent'),
@@ -651,7 +906,17 @@ function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) {
   try {
-    process.exitCode = main();
+    const result = main();
+    if (result && typeof result.then === 'function') {
+      result
+        .then((code) => { process.exitCode = code; })
+        .catch((err) => {
+          process.stderr.write(`${err.message}\n`);
+          process.exitCode = 1;
+        });
+    } else {
+      process.exitCode = result;
+    }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
     process.exitCode = 1;
@@ -660,6 +925,7 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_QUEUE_RELATIVE_PATH,
+  DEFAULT_APPROVAL_HOLD_REASON,
   QUEUE_SCHEMA_VERSION,
   VALID_AGENTS,
   VALID_STATES,
@@ -669,6 +935,9 @@ module.exports = {
   normalizeQueueState,
   normalizeTask,
   inferRiskClass,
+  buildContinuePrompt,
+  collectWakeCandidates,
+  dispatchWakeCandidates,
   readQueue,
   writeQueue,
   enqueueTask,
@@ -682,5 +951,6 @@ module.exports = {
   clearQueue,
   parseArgs,
   formatListResult,
+  formatWakeResult,
   main,
 };
