@@ -286,6 +286,8 @@ describe('voice-broker tab', () => {
     }));
     expect(dataChannel.sent[0].session.audio.input.turn_detection).toEqual(expect.objectContaining({
       type: 'server_vad',
+      prefix_padding_ms: 500,
+      silence_duration_ms: 1400,
       create_response: false,
     }));
   });
