@@ -431,4 +431,274 @@ describe('hm-task-queue', () => {
       logSpy.mockRestore();
     }
   });
+
+  it('collects due post-wake candidates and holds approval-required work', () => {
+    const now = Date.parse('2026-05-04T12:00:00Z');
+    queue.writeQueue({
+      version: 2,
+      agents: {
+        architect: {
+          pending: [
+            {
+              taskId: 'architect-approval',
+              owner: 'architect',
+              state: 'queued',
+              riskClass: 'approval_required',
+              message: 'Send customer invoice update',
+              wakeTrigger: 'post-wake',
+              restartPersistence: true,
+            },
+          ],
+        },
+        builder: {
+          pending: [
+            {
+              taskId: 'builder-due',
+              owner: 'builder',
+              state: 'queued',
+              riskClass: 'safe',
+              title: 'Wake hook tests',
+              message: 'Run restartless unit tests',
+              nextStep: 'Run focused tests',
+              wakeTrigger: 'post-wake',
+              continueAfter: '2026-05-04T11:59:00Z',
+              restartPersistence: true,
+            },
+            {
+              taskId: 'builder-future',
+              owner: 'builder',
+              state: 'queued',
+              riskClass: 'safe',
+              message: 'Future task',
+              wakeTrigger: 'post-wake',
+              continueAfter: '2026-05-04T13:00:00Z',
+              restartPersistence: true,
+            },
+            {
+              taskId: 'builder-nonpersistent',
+              owner: 'builder',
+              state: 'queued',
+              riskClass: 'caution',
+              message: 'Do not resume',
+              wakeTrigger: 'post-wake',
+              restartPersistence: false,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+        oracle: {
+          pending: [
+            {
+              taskId: 'oracle-due',
+              owner: 'oracle',
+              state: 'blocked',
+              riskClass: 'caution',
+              message: 'Investigate restart boundary',
+              blockedReason: 'Waiting for restart',
+              wakeTrigger: 'restart',
+              restartPersistence: true,
+            },
+            {
+              taskId: 'oracle-manual',
+              owner: 'oracle',
+              state: 'waiting',
+              riskClass: 'safe',
+              message: 'Manual-only task',
+              wakeTrigger: 'manual',
+              restartPersistence: true,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+      },
+    });
+
+    const result = queue.collectWakeCandidates({
+      wakeTrigger: 'post-wake',
+      nowMs: now,
+    });
+
+    expect(result.candidates.map((candidate) => candidate.taskId)).toEqual([
+      'builder-due',
+      'oracle-due',
+    ]);
+    expect(result.candidates[0]).toEqual(expect.objectContaining({
+      agent: 'builder',
+      riskClass: 'safe',
+      dispatchReady: true,
+      nextStep: 'Run focused tests',
+    }));
+    expect(result.candidates[0].prompt).toContain('[OWNED-WORK CONTINUE]');
+    expect(result.candidates[0].prompt).toContain('Resume only the bounded safe/caution next step');
+    expect(result.held).toEqual([
+      expect.objectContaining({
+        agent: 'architect',
+        taskId: 'architect-approval',
+        riskClass: 'approval_required',
+        dispatchReady: false,
+        holdReason: 'approval_required',
+        blockedReason: queue.DEFAULT_APPROVAL_HOLD_REASON,
+      }),
+    ]);
+  });
+
+  it('dispatches due safe/caution work and persists approval-required holds', async () => {
+    const now = Date.parse('2026-05-04T12:00:00Z');
+    queue.writeQueue({
+      version: 2,
+      agents: {
+        architect: {
+          pending: [
+            {
+              taskId: 'architect-approval',
+              owner: 'architect',
+              state: 'queued',
+              riskClass: 'approval_required',
+              message: 'Customer-facing approval item',
+              wakeTrigger: 'post-wake',
+              restartPersistence: true,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+        builder: {
+          pending: [
+            {
+              taskId: 'builder-due',
+              owner: 'builder',
+              state: 'queued',
+              riskClass: 'safe',
+              title: 'Wake hook tests',
+              message: 'Run restartless unit tests',
+              nextStep: 'Run focused tests',
+              wakeTrigger: 'post-wake',
+              restartPersistence: true,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+        oracle: {
+          pending: [
+            {
+              taskId: 'oracle-due',
+              owner: 'oracle',
+              state: 'blocked',
+              riskClass: 'caution',
+              message: 'Investigate restart boundary',
+              blockedReason: 'Waiting for restart',
+              wakeTrigger: 'post-wake',
+              restartPersistence: true,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+      },
+    });
+    const dispatcher = jest.fn(async (candidate) => ({
+      ok: true,
+      emittedPrompt: candidate.prompt,
+    }));
+
+    const result = await queue.dispatchWakeCandidates({
+      wakeTrigger: 'post-wake',
+      nowMs: now,
+      dispatcher,
+    });
+
+    expect(dispatcher).toHaveBeenCalledTimes(2);
+    expect(dispatcher.mock.calls[0][0]).toEqual(expect.objectContaining({
+      agent: 'builder',
+      taskId: 'builder-due',
+      prompt: expect.stringContaining('Risk: safe'),
+    }));
+    expect(result.dispatched.map((candidate) => candidate.taskId)).toEqual([
+      'builder-due',
+      'oracle-due',
+    ]);
+    expect(result.held).toEqual([
+      expect.objectContaining({
+        taskId: 'architect-approval',
+        holdReason: 'approval_required',
+      }),
+    ]);
+
+    const saved = queue.readQueue().state;
+    expect(saved.agents.builder.active).toEqual(expect.objectContaining({
+      taskId: 'builder-due',
+      state: 'active',
+      blockedReason: null,
+      lastDispatchAtMs: now,
+    }));
+    expect(saved.agents.oracle.active).toEqual(expect.objectContaining({
+      taskId: 'oracle-due',
+      state: 'active',
+      blockedReason: null,
+    }));
+    expect(saved.agents.architect.pending[0]).toEqual(expect.objectContaining({
+      taskId: 'architect-approval',
+      state: 'blocked',
+      blockedReason: queue.DEFAULT_APPROVAL_HOLD_REASON,
+      riskClass: 'approval_required',
+    }));
+  });
+
+  it('runs wake dry-run and dispatch through the CLI entrypoint', async () => {
+    const now = Date.parse('2026-05-04T12:00:00Z');
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      queue.writeQueue({
+        version: 2,
+        agents: {
+          builder: {
+            pending: [
+              {
+                taskId: 'builder-cli-wake',
+                owner: 'builder',
+                state: 'waiting',
+                riskClass: 'caution',
+                message: 'Patch restartless wake hook',
+                nextStep: 'Run CLI dispatch test',
+                wakeTrigger: 'post-wake',
+                restartPersistence: true,
+              },
+            ],
+            active: null,
+            history: [],
+          },
+        },
+      });
+
+      expect(queue.main([
+        'wake',
+        '--trigger', 'post-wake',
+        '--now', String(now),
+      ])).toBe(0);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('candidates=1 held=0 dispatched=0 skipped=0'));
+
+      const dispatchExit = await queue.main([
+        'wake',
+        '--dispatch',
+        '--trigger', 'post-wake',
+        '--now', String(now),
+      ]);
+
+      expect(dispatchExit).toBe(0);
+      const saved = queue.readQueue().state;
+      expect(saved.agents.builder.active).toEqual(expect.objectContaining({
+        taskId: 'builder-cli-wake',
+        state: 'active',
+        nextStep: 'Run CLI dispatch test',
+        lastDispatchAtMs: now,
+      }));
+      expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('"dispatched"'));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 });
