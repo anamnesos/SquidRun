@@ -7,6 +7,8 @@ const OPENAI_REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 const VOICE_DATA_CHANNEL_CONTRACT = Object.freeze({
   channelName: 'oai-events',
   clientEvents: Object.freeze({
+    conversationItemCreate: 'conversation.item.create',
+    responseCreate: 'response.create',
     sessionUpdate: 'session.update',
     responseCancel: 'response.cancel',
     outputAudioClear: 'output_audio_buffer.clear',
@@ -95,6 +97,12 @@ function getClientSecretUrl(status) {
 function getTranscriptUrl(status) {
   const base = getBrokerBaseUrl(status);
   const path = status?.config?.endpointShape?.transcript?.path || '/v1/voice/transcripts';
+  return base ? `${base}${path}` : null;
+}
+
+function getEgressUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  const path = status?.config?.endpointShape?.egress?.path || '/v1/voice/egress';
   return base ? `${base}${path}` : null;
 }
 
@@ -287,6 +295,42 @@ function sendDataChannelEvent(channel, event) {
   return true;
 }
 
+function buildSpeakMiraReplyEvents(text) {
+  const reply = String(text || '').trim();
+  if (!reply) return [];
+  return [
+    {
+      type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.conversationItemCreate,
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [{
+          type: 'input_text',
+          text: `Speak this Mira/Architect reply aloud exactly. Do not add anything:\n${reply}`,
+        }],
+      },
+    },
+    {
+      type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.responseCreate,
+      response: {
+        modalities: ['audio', 'text'],
+        instructions: `Say exactly this Mira/Architect reply and nothing else:\n${reply}`,
+      },
+    },
+  ];
+}
+
+function speakMiraReply(session, text) {
+  const events = buildSpeakMiraReplyEvents(text);
+  if (!events.length) return false;
+  let sent = false;
+  for (const event of events) {
+    sent = sendDataChannelEvent(session?.dataChannel, event) || sent;
+  }
+  if (sent) appendSessionLog('Mira reply spoken');
+  return sent;
+}
+
 function setTrackEnabled(session, enabled) {
   const tracks = session?.stream?.getAudioTracks?.() || [];
   tracks.forEach((track) => {
@@ -302,6 +346,10 @@ function stopVoiceSession() {
   }
   const session = activeSession;
   activeSession = null;
+  if (session.egressPollTimer) {
+    clearInterval(session.egressPollTimer);
+    session.egressPollTimer = null;
+  }
   try { session.dataChannel?.close?.(); } catch (_) {}
   try { session.peerConnection?.close?.(); } catch (_) {}
   const tracks = session.stream?.getTracks?.() || [];
@@ -311,6 +359,58 @@ function stopVoiceSession() {
   if (session.remoteAudio) session.remoteAudio.srcObject = null;
   setSessionStatus('Stopped', 'idle');
   setSessionButtonState();
+}
+
+async function pollVoiceEgressOnce(session, status = lastStatus, fetchImpl = globalThis.fetch) {
+  const egressUrl = getEgressUrl(status);
+  if (!session || !egressUrl || typeof fetchImpl !== 'function') {
+    return { ok: false, reason: 'voice_egress_endpoint_unavailable' };
+  }
+  const sinceMs = Number.isFinite(Number(session.egressSinceMs))
+    ? Math.floor(Number(session.egressSinceMs))
+    : Date.now();
+  const url = `${egressUrl}?sinceMs=${encodeURIComponent(String(sinceMs))}&limit=10`;
+  const response = await fetchImpl(url, { method: 'GET' });
+  let body = null;
+  try {
+    body = await response.json();
+  } catch (_) {
+    body = null;
+  }
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  if (!session.spokenMessageIds) session.spokenMessageIds = new Set();
+  for (const message of messages) {
+    const messageId = String(message.messageId || '');
+    if (messageId && session.spokenMessageIds.has(messageId)) continue;
+    if (messageId) session.spokenMessageIds.add(messageId);
+    speakMiraReply(session, message.text);
+    const timestampMs = Number(message.timestampMs || 0);
+    if (Number.isFinite(timestampMs) && timestampMs >= sinceMs) {
+      session.egressSinceMs = timestampMs + 1;
+    }
+  }
+  return {
+    ok: response.ok,
+    statusCode: response.status,
+    messages,
+  };
+}
+
+function startVoiceEgressPolling(session, options = {}) {
+  if (!session || session.egressPollTimer) return session;
+  const status = options.status || session.status || lastStatus;
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  session.egressSinceMs = Number.isFinite(Number(options.sinceMs))
+    ? Math.floor(Number(options.sinceMs))
+    : Date.now();
+  session.spokenMessageIds = session.spokenMessageIds || new Set();
+  const intervalMs = Math.max(500, Number(options.intervalMs) || 1200);
+  session.egressPollTimer = setInterval(() => {
+    void pollVoiceEgressOnce(session, status, fetchImpl).catch((err) => {
+      appendSessionLog(`Voice egress unavailable: ${err.message}`);
+    });
+  }, intervalMs);
+  return session;
 }
 
 async function postTranscriptToBroker(transcript, status = lastStatus, fetchImpl = globalThis.fetch) {
@@ -412,6 +512,15 @@ async function createVoiceRealtimeSession(options = {}) {
     appendSessionLog(payload.type || 'voice event');
     const transcript = normalizeRealtimeTranscriptEvent(payload);
     if (transcript) {
+      if (transcript.speaker === 'user') {
+        const nowMs = Date.now();
+        if (activeSession) {
+          activeSession.egressSinceMs = Math.min(
+            Number(activeSession.egressSinceMs || nowMs),
+            Math.max(0, nowMs - 2000)
+          );
+        }
+      }
       void postTranscriptToBroker(transcript, status, fetchImpl);
     }
   });
@@ -440,8 +549,10 @@ async function createVoiceRealtimeSession(options = {}) {
 
   return {
     dataChannel,
+    egressSinceMs: Date.now(),
     peerConnection,
     remoteAudio,
+    spokenMessageIds: new Set(),
     stream,
     status,
   };
@@ -457,6 +568,11 @@ async function startVoiceSession(options = {}) {
       sessionOptions.status = await refreshVoiceBrokerStatus();
     }
     activeSession = await createVoiceRealtimeSession(sessionOptions);
+    startVoiceEgressPolling(activeSession, {
+      status: sessionOptions.status,
+      fetchImpl: sessionOptions.fetchImpl,
+      intervalMs: sessionOptions.egressPollIntervalMs,
+    });
     setSessionStatus('Connected', 'connected');
     appendSessionLog('Realtime session connected');
     setSessionButtonState();
@@ -532,9 +648,11 @@ function destroyVoiceBrokerTab() {
 
 module.exports = {
   controlVoiceBroker,
+  buildSpeakMiraReplyEvents,
   createVoiceRealtimeSession,
   destroyVoiceBrokerTab,
   extractEphemeralKey,
+  getEgressUrl,
   getReadinessLabel,
   getStateLabel,
   getClientSecretUrl,
@@ -542,12 +660,15 @@ module.exports = {
   interruptVoiceSession,
   muteVoiceSession,
   normalizeRealtimeTranscriptEvent,
+  pollVoiceEgressOnce,
   postTranscriptToBroker,
   refreshVoiceBrokerStatus,
   renderVoiceBrokerPanelHtml,
   renderVoiceBrokerStatus,
   setPushToTalk,
+  speakMiraReply,
   startVoiceSession,
+  startVoiceEgressPolling,
   stopVoiceSession,
   setupVoiceBrokerTab,
   VOICE_DATA_CHANNEL_CONTRACT,

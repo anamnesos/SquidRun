@@ -452,6 +452,79 @@ describe('voice-broker tab', () => {
     }));
   });
 
+  test('speaks Architect replies through the Realtime data channel', () => {
+    const dataChannel = {
+      readyState: 'open',
+      sent: [],
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+    };
+
+    expect(tab.speakMiraReply({ dataChannel }, 'This is Mira speaking through the voice mouth.')).toBe(true);
+
+    expect(dataChannel.sent).toEqual([
+      expect.objectContaining({
+        type: 'conversation.item.create',
+        item: expect.objectContaining({
+          role: 'user',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'response.create',
+        response: expect.objectContaining({
+          modalities: ['audio', 'text'],
+          instructions: expect.stringContaining('This is Mira speaking through the voice mouth.'),
+        }),
+      }),
+    ]);
+  });
+
+  test('polls voice egress and speaks new Architect messages once', async () => {
+    const dataChannel = {
+      readyState: 'open',
+      sent: [],
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+    };
+    const session = {
+      dataChannel,
+      egressSinceMs: 1777883000000,
+      spokenMessageIds: new Set(),
+    };
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        messages: [{
+          messageId: 'mira-reply-1',
+          text: 'I am answering as Mira now.',
+          timestampMs: 1777883000123,
+        }],
+      }),
+    }));
+    const status = {
+      lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+      config: {
+        endpointShape: {
+          egress: { path: '/v1/voice/egress' },
+        },
+      },
+    };
+
+    await tab.pollVoiceEgressOnce(session, status, fetchImpl);
+    await tab.pollVoiceEgressOnce(session, status, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/v1/voice/egress?sinceMs=1777883000000&limit=10',
+      { method: 'GET' }
+    );
+    expect(dataChannel.sent.filter((event) => event.type === 'response.create')).toHaveLength(1);
+    expect(session.egressSinceMs).toBe(1777883000124);
+  });
+
   test('exports data-channel contract for future voice tools without pane writes', () => {
     expect(tab.VOICE_DATA_CHANNEL_CONTRACT).toEqual(expect.objectContaining({
       channelName: 'oai-events',

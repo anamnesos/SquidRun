@@ -23,6 +23,7 @@ const DEFAULT_MIRA_VOICE_INSTRUCTIONS = [
   'For concrete work, say what you are carrying or what will be routed through SquidRun; do not claim you personally completed app changes unless the SquidRun lane reports it.',
   'Never execute customer-facing, trading, money, auth, or irreversible actions from voice alone.',
   'User speech is also routed to the Architect lane. Do not write directly to terminal panes.',
+  'Do not answer user speech as a separate assistant. Wait for SquidRun to provide Mira/Architect replies, then speak those replies as Mira\'s mouth.',
 ].join(' ');
 
 function safeReadJson(filePath) {
@@ -231,6 +232,10 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
       transcript: {
         method: 'POST',
         path: '/v1/voice/transcripts',
+      },
+      egress: {
+        method: 'GET',
+        path: '/v1/voice/egress',
       },
       futureSdpSession: {
         method: 'POST',
@@ -456,6 +461,62 @@ function ingestVoiceTranscript(payload = {}, options = {}) {
   };
 }
 
+function normalizeVoiceEgressMessage(row = {}) {
+  const sender = trimText(row.senderRole || row.sender_role || row.sender);
+  const target = trimText(row.targetRole || row.target_role || row.target);
+  if (sender !== 'architect' || target !== 'user') return null;
+  const text = trimText(row.rawBody || row.raw_body || row.body || row.message || row.excerpt);
+  if (!text) return null;
+  const timestampMs = Number(
+    row.brokeredAtMs
+    || row.brokered_at_ms
+    || row.sentAtMs
+    || row.sent_at_ms
+    || row.updatedAtMs
+    || row.updated_at_ms
+    || row.timestampMs
+    || 0
+  );
+  return {
+    messageId: trimText(row.messageId || row.message_id) || `voice-egress-${timestampMs}-${text.slice(0, 16)}`,
+    speaker: 'Mira',
+    text,
+    timestampMs: Number.isFinite(timestampMs) && timestampMs > 0 ? timestampMs : Date.now(),
+    source: 'architect',
+    target: 'user',
+  };
+}
+
+function queryVoiceEgressMessages(options = {}) {
+  const sinceMs = Number.isFinite(Number(options.sinceMs))
+    ? Math.floor(Number(options.sinceMs))
+    : Date.now();
+  const limit = Math.max(1, Math.min(50, Number(options.limit) || 10));
+  const filters = {
+    senderRole: 'architect',
+    targetRole: 'user',
+    sinceMs,
+    order: 'asc',
+    limit,
+  };
+  let rows = [];
+  if (typeof options.queryCommsJournalEntries === 'function') {
+    rows = options.queryCommsJournalEntries(filters) || [];
+  } else {
+    try {
+      const { queryCommsJournalEntries } = require('./main/comms-journal');
+      rows = queryCommsJournalEntries(filters) || [];
+    } catch (_) {
+      rows = [];
+    }
+  }
+  return rows
+    .map((row) => normalizeVoiceEgressMessage(row))
+    .filter(Boolean)
+    .filter((message) => message.timestampMs >= sinceMs)
+    .slice(0, limit);
+}
+
 function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
   setCorsHeaders(res);
@@ -500,6 +561,7 @@ class VoiceBrokerService {
     this.bus = options.bus || null;
     this.enqueueTask = options.enqueueTask || null;
     this.routeVoiceMessage = options.routeVoiceMessage || null;
+    this.queryCommsJournalEntries = options.queryCommsJournalEntries || null;
     this.routeToArchitect = options.routeToArchitect;
     this.server = null;
     this.startedAtMs = null;
@@ -563,6 +625,19 @@ class VoiceBrokerService {
           routeToArchitect: this.routeToArchitect,
         });
         sendJson(res, result.ok ? 202 : 400, result);
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/v1/voice/egress') {
+        const messages = queryVoiceEgressMessages({
+          sinceMs: Number(url.searchParams.get('sinceMs') || 0),
+          limit: Number(url.searchParams.get('limit') || 10),
+          queryCommsJournalEntries: this.queryCommsJournalEntries || undefined,
+        });
+        sendJson(res, 200, {
+          ok: true,
+          messages,
+        });
         return;
       }
 
@@ -641,6 +716,7 @@ module.exports = {
   ingestVoiceTranscript,
   mintRealtimeClientSecret,
   normalizeTranscriptPayload,
+  queryVoiceEgressMessages,
   routeVoiceTranscriptToArchitect,
   summarizeRecentComms,
 };
