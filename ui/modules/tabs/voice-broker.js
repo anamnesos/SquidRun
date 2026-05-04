@@ -735,6 +735,8 @@ async function createVoiceRealtimeSession(options = {}) {
             transcription: { model: getTranscriptionModel(status) },
             turn_detection: {
               type: 'server_vad',
+              prefix_padding_ms: 500,
+              silence_duration_ms: 1400,
               create_response: false,
             },
           },
