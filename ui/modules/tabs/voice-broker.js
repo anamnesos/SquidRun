@@ -123,7 +123,12 @@ function getDiagnosticsUrl(status) {
 function getModelLabel(status) {
   const model = status?.config?.model || 'gpt-realtime-1.5';
   const voice = status?.config?.voice || 'marin';
-  return `${model} / ${voice}`;
+  const transcription = status?.config?.transcriptionModel || 'gpt-4o-transcribe';
+  return `${model} / ${voice} / STT ${transcription}`;
+}
+
+function getTranscriptionModel(status) {
+  return status?.config?.transcriptionModel || 'gpt-4o-transcribe';
 }
 
 function renderText(id, text) {
@@ -715,7 +720,8 @@ async function createVoiceRealtimeSession(options = {}) {
     sendDataChannelEvent(dataChannel, {
       type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.sessionUpdate,
       session: {
-        input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
+        type: 'realtime',
+        input_audio_transcription: { model: getTranscriptionModel(status) },
         turn_detection: {
           type: 'server_vad',
           create_response: false,
