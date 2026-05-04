@@ -52,6 +52,7 @@ const MESSAGE_DELAY = 100; // ms between messages per pane (reduced from 150ms â
 const DEFAULT_THROTTLE_QUEUE_MAX_ITEMS = 200;
 const DEFAULT_THROTTLE_QUEUE_MAX_BYTES = 512 * 1024;
 const DAEMON_RUNTIME_CONFIG_REFRESH_TTL_MS = 2000;
+const LIVE_REATTACH_EMPTY_SCROLLBACK_GRACE_MS = 60000;
 let throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
 let throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
 let daemonRuntimeConfigPromise = null;
@@ -438,6 +439,10 @@ function tailMatches(regexes, text) {
 async function hasCliContent(scrollback = '', meta = {}) {
   const alive = Boolean(meta?.alive);
   const mode = String(meta?.mode || '').toLowerCase();
+  const createdAtMs = Number(meta?.createdAt || 0);
+  const terminalAgeMs = Number.isFinite(createdAtMs) && createdAtMs > 0
+    ? Date.now() - createdAtMs
+    : 0;
 
   // Dry-run mode has no real PTY process and is tracked by alive status only.
   if (alive && mode === 'dry-run') {
@@ -445,7 +450,21 @@ async function hasCliContent(scrollback = '', meta = {}) {
   }
 
   const text = String(scrollback || '');
-  if (!text) return false;
+  if (!text) {
+    if (
+      alive
+      && mode === 'pty'
+      && terminalAgeMs >= LIVE_REATTACH_EMPTY_SCROLLBACK_GRACE_MS
+      && await isProcessRunning(meta?.pid)
+    ) {
+      log.info(
+        'Daemon Handlers',
+        'Treating old live PTY with empty scrollback as existing CLI session'
+      );
+      return true;
+    }
+    return false;
+  }
 
       const tail = stripAnsi(text.slice(-CLI_TAIL_CHARS));
       if (tailMatches(CLI_PROMPT_REGEXES, tail)) return true;
