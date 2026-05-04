@@ -29,10 +29,14 @@ describe('voice-broker', () => {
 
   afterEach(async () => {
     jest.dontMock('../config');
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    try {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    } catch (err) {
+      if (!['EPERM', 'EBUSY'].includes(err.code)) throw err;
+    }
   });
 
-  function postJson(port, requestPath, payload) {
+  function postJson(port, requestPath, payload, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
       const body = JSON.stringify(payload || {});
       const req = http.request({
@@ -43,6 +47,7 @@ describe('voice-broker', () => {
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
+          ...extraHeaders,
         },
       }, (res) => {
         let text = '';
@@ -60,9 +65,9 @@ describe('voice-broker', () => {
     });
   }
 
-  function getJson(port, requestPath) {
+  function getJson(port, requestPath, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
-      http.get({ hostname: '127.0.0.1', port, path: requestPath }, (res) => {
+      http.get({ hostname: '127.0.0.1', port, path: requestPath, headers: extraHeaders }, (res) => {
         let text = '';
         res.setEncoding('utf8');
         res.on('data', (chunk) => { text += chunk; });
@@ -450,7 +455,7 @@ describe('voice-broker', () => {
       expect(page.statusCode).toBe(200);
       expect(page.headers['content-type']).toContain('text/html');
       expect(page.text).toContain('Mira Voice');
-      expect(page.text).toContain('/v1/voice/realtime/client-secret');
+      expect(page.text).toContain('/v1/voice/phone/realtime/client-secret');
       expect(page.text).not.toContain('sk-test-secret');
 
       const config = await getJson(port, '/v1/voice/phone/config');
@@ -459,7 +464,7 @@ describe('voice-broker', () => {
         ok: true,
         client: 'squidrun-phone-voice',
         endpoints: expect.objectContaining({
-          clientSecret: '/v1/voice/realtime/client-secret',
+            clientSecret: '/v1/voice/phone/realtime/client-secret',
         }),
         safety: expect.objectContaining({
           directPaneWrites: false,
@@ -500,6 +505,73 @@ describe('voice-broker', () => {
         channel: 'phone-voice',
         target: 'architect',
       });
+    } finally {
+      await broker.stop();
+    }
+  });
+
+  test('phone voice endpoints require a valid pairing token', async () => {
+    const phonePairingPath = path.join(tempRoot, 'runtime', 'voice-phone-pairing.json');
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ value: 'eph_phone_test' }),
+    }));
+    const routeVoiceMessage = jest.fn(() => ({ ok: true, routed: true, target: 'architect' }));
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, {
+        port: 0,
+        openaiApiKey: 'sk-test',
+        phonePairingPath,
+      }),
+      fetchImpl,
+      routeVoiceMessage,
+      queryCommsJournalEntries: jest.fn(() => [
+        {
+          messageId: 'phone-egress-1',
+          senderRole: 'architect',
+          targetRole: 'user',
+          rawBody: 'Phone reply',
+          brokeredAtMs: 1000,
+        },
+      ]),
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const missing = await postJson(port, '/v1/voice/phone/realtime/client-secret', {});
+      expect(missing.statusCode).toBe(401);
+      expect(missing.body.reason).toBe('phone_pairing_token_required');
+
+      const pairing = await postJson(port, '/v1/voice/phone/pairing', { ttlMs: 60000 });
+      const auth = { Authorization: `Bearer ${pairing.body.token}` };
+      const secret = await postJson(port, '/v1/voice/phone/realtime/client-secret', {}, auth);
+      expect(secret.statusCode).toBe(200);
+      expect(secret.body).toEqual(expect.objectContaining({
+        ok: true,
+        body: expect.objectContaining({ value: 'eph_phone_test' }),
+      }));
+
+      const transcript = await postJson(port, '/v1/voice/phone/transcripts', {
+        eventId: 'phone-transcript-1',
+        text: 'Hello from iPhone',
+      }, auth);
+      expect(transcript.statusCode).toBe(202);
+      expect(routeVoiceMessage).toHaveBeenCalledWith(expect.objectContaining({
+        text: 'Hello from iPhone',
+        metadata: expect.objectContaining({
+          source: 'phone-web-client',
+        }),
+      }));
+
+      const egress = await getJson(port, '/v1/voice/phone/egress?sinceMs=0', auth);
+      expect(egress.statusCode).toBe(200);
+      expect(egress.body.messages).toEqual([
+        expect.objectContaining({
+          text: 'Phone reply',
+        }),
+      ]);
     } finally {
       await broker.stop();
     }
