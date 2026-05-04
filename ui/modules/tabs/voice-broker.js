@@ -102,6 +102,12 @@ function getTranscriptUrl(status) {
   return base ? `${base}${path}` : null;
 }
 
+function getAudioTranscriptionUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  const path = status?.config?.endpointShape?.audioTranscription?.path || '/v1/voice/audio-transcriptions';
+  return base ? `${base}${path}` : null;
+}
+
 function getEgressUrl(status) {
   const base = getBrokerBaseUrl(status);
   const path = status?.config?.endpointShape?.egress?.path || '/v1/voice/egress';
@@ -371,6 +377,7 @@ function stopVoiceSession() {
     clearInterval(session.egressPollTimer);
     session.egressPollTimer = null;
   }
+  try { session.audioRecorder?.stop?.(); } catch (_) {}
   try { session.dataChannel?.close?.(); } catch (_) {}
   try { session.peerConnection?.close?.(); } catch (_) {}
   const tracks = session.stream?.getTracks?.() || [];
@@ -380,6 +387,80 @@ function stopVoiceSession() {
   if (session.remoteAudio) session.remoteAudio.srcObject = null;
   setSessionStatus('Stopped', 'idle');
   setSessionButtonState();
+}
+
+async function blobToBase64(blob) {
+  const buffer = await blob.arrayBuffer();
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(buffer).toString('base64');
+  }
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function postAudioChunkToBroker(blob, status = lastStatus, fetchImpl = globalThis.fetch) {
+  const audioUrl = getAudioTranscriptionUrl(status);
+  if (!audioUrl || typeof fetchImpl !== 'function' || !blob || Number(blob.size || 0) <= 0) {
+    return { ok: false, reason: 'voice_audio_transcription_endpoint_unavailable' };
+  }
+  const audioBase64 = await blobToBase64(blob);
+  const response = await fetchImpl(audioUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      audioBase64,
+      mimeType: blob.type || 'audio/webm',
+      speaker: 'James',
+      metadata: {
+        source: 'renderer-media-recorder',
+      },
+    }),
+  });
+  let body = null;
+  try {
+    body = await response.json();
+  } catch (_) {
+    body = null;
+  }
+  if (body?.text) appendSessionLog(`Mic transcript: ${body.text}`);
+  return {
+    ok: response.ok,
+    statusCode: response.status,
+    body,
+  };
+}
+
+function startAudioTranscriptionFallback(session, options = {}) {
+  const Recorder = options.MediaRecorder
+    || (typeof MediaRecorder !== 'undefined' ? MediaRecorder : null);
+  if (!session?.stream || typeof Recorder !== 'function') {
+    appendSessionLog('Mic fallback unavailable');
+    return null;
+  }
+  let recorder = null;
+  try {
+    recorder = new Recorder(session.stream, { mimeType: options.mimeType || 'audio/webm' });
+  } catch (_) {
+    recorder = new Recorder(session.stream);
+  }
+  recorder.addEventListener?.('dataavailable', (event) => {
+    const blob = event.data;
+    if (!blob || Number(blob.size || 0) <= 0) return;
+    void postAudioChunkToBroker(blob, options.status || session.status || lastStatus, options.fetchImpl || globalThis.fetch)
+      .catch((err) => appendSessionLog(`Mic transcription failed: ${err.message}`));
+  });
+  recorder.addEventListener?.('error', (event) => {
+    appendSessionLog(`Mic recorder error: ${event.error?.message || 'unknown'}`);
+  });
+  recorder.start?.(Math.max(1000, Number(options.timesliceMs) || 4000));
+  session.audioRecorder = recorder;
+  appendSessionLog('Mic fallback recording');
+  return recorder;
 }
 
 async function pollVoiceEgressOnce(session, status = lastStatus, fetchImpl = globalThis.fetch) {
@@ -528,6 +609,12 @@ async function createVoiceRealtimeSession(options = {}) {
     stream,
     status,
   };
+  startAudioTranscriptionFallback(session, {
+    status,
+    fetchImpl,
+    MediaRecorder: options.MediaRecorder,
+    timesliceMs: options.audioChunkMs,
+  });
   dataChannel.addEventListener?.('open', () => {
     appendSessionLog('Data channel open');
     sendDataChannelEvent(dataChannel, {
@@ -692,10 +779,12 @@ function destroyVoiceBrokerTab() {
 module.exports = {
   controlVoiceBroker,
   buildSpeakMiraReplyEvents,
+  blobToBase64,
   createVoiceRealtimeSession,
   destroyVoiceBrokerTab,
   extractEphemeralKey,
   getEgressUrl,
+  getAudioTranscriptionUrl,
   getReadinessLabel,
   getStateLabel,
   getClientSecretUrl,
@@ -706,12 +795,14 @@ module.exports = {
   normalizeRealtimeTranscriptEvent,
   pollVoiceEgressOnce,
   postTranscriptToBroker,
+  postAudioChunkToBroker,
   refreshVoiceBrokerStatus,
   renderVoiceBrokerPanelHtml,
   renderVoiceBrokerStatus,
   setPushToTalk,
   speakMiraReply,
   startVoiceSession,
+  startAudioTranscriptionFallback,
   startVoiceEgressPolling,
   stopVoiceSession,
   setupVoiceBrokerTab,

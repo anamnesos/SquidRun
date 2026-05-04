@@ -15,6 +15,7 @@ const DEFAULT_VOICE = 'marin';
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
 const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 const OPENAI_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
+const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const DEFAULT_MIRA_VOICE_INSTRUCTIONS = [
   'You are Mira, the SquidRun Architect voice companion for James.',
   'You are not a generic AI assistant and you should not introduce yourself that way.',
@@ -235,6 +236,11 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
         method: 'POST',
         path: '/v1/voice/transcripts',
       },
+      audioTranscription: {
+        method: 'POST',
+        path: '/v1/voice/audio-transcriptions',
+        upstream: OPENAI_TRANSCRIPTIONS_URL,
+      },
       egress: {
         method: 'GET',
         path: '/v1/voice/egress',
@@ -323,6 +329,115 @@ async function mintRealtimeClientSecret(options = {}) {
     statusCode: response.status,
     body: sanitizeTokenResponse(body),
     endpointShape: config.endpointShape.clientSecret,
+  };
+}
+
+function normalizeAudioTranscriptionPayload(payload = {}) {
+  const audioBase64 = trimText(payload.audioBase64 || payload.audio_base64);
+  if (!audioBase64) {
+    return { ok: false, reason: 'audio_base64_required' };
+  }
+  const mimeType = trimText(payload.mimeType || payload.mime_type) || 'audio/webm';
+  const speaker = trimText(payload.speaker) || 'James';
+  return {
+    ok: true,
+    audioBase64,
+    mimeType,
+    speaker,
+    eventId: trimText(payload.eventId || payload.event_id),
+    sessionId: trimText(payload.sessionId || payload.session_id),
+    metadata: payload.metadata && typeof payload.metadata === 'object'
+      ? { ...payload.metadata }
+      : {},
+  };
+}
+
+async function transcribeVoiceAudio(payload = {}, options = {}) {
+  const config = options.config || getVoiceBrokerConfig(options.env || process.env, options);
+  if (!config.openaiApiKey) {
+    return {
+      ok: false,
+      reason: 'openai_api_key_missing',
+      endpointShape: config.endpointShape.audioTranscription,
+    };
+  }
+  const normalized = normalizeAudioTranscriptionPayload(payload);
+  if (!normalized.ok) return normalized;
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== 'function') {
+    return {
+      ok: false,
+      reason: 'fetch_unavailable',
+      endpointShape: config.endpointShape.audioTranscription,
+    };
+  }
+  if (typeof FormData !== 'function' || typeof Blob !== 'function') {
+    return {
+      ok: false,
+      reason: 'formdata_unavailable',
+      endpointShape: config.endpointShape.audioTranscription,
+    };
+  }
+
+  const buffer = Buffer.from(normalized.audioBase64, 'base64');
+  const form = new FormData();
+  form.append('model', trimText(options.transcriptionModel) || 'gpt-4o-mini-transcribe');
+  form.append('file', new Blob([buffer], { type: normalized.mimeType }), 'voice.webm');
+
+  const response = await fetchImpl(OPENAI_TRANSCRIPTIONS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.openaiApiKey}`,
+    },
+    body: form,
+  });
+  const responseText = await response.text();
+  let body = responseText;
+  try {
+    body = JSON.parse(responseText);
+  } catch (_) {
+    // Keep text body.
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: 'openai_audio_transcription_failed',
+      statusCode: response.status,
+      body,
+      endpointShape: config.endpointShape.audioTranscription,
+    };
+  }
+  const text = trimText(body?.text || body?.transcript || body);
+  if (!text) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'empty_transcript',
+      statusCode: response.status,
+      body,
+    };
+  }
+  const ingest = ingestVoiceTranscript({
+    eventId: normalized.eventId || `voice-audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    speaker: normalized.speaker,
+    text,
+    sessionId: normalized.sessionId,
+    metadata: {
+      ...normalized.metadata,
+      source: 'audio-transcription-fallback',
+      mimeType: normalized.mimeType,
+    },
+  }, {
+    ...options,
+    config,
+  });
+  return {
+    ok: true,
+    statusCode: response.status,
+    text,
+    body,
+    ingest,
+    endpointShape: config.endpointShape.audioTranscription,
   };
 }
 
@@ -630,6 +745,20 @@ class VoiceBrokerService {
         return;
       }
 
+      if (req.method === 'POST' && url.pathname === '/v1/voice/audio-transcriptions') {
+        const body = parseJsonBody(await readRequestBody(req, 12 * 1024 * 1024));
+        const result = await transcribeVoiceAudio(body, {
+          config: this.config,
+          fetchImpl: this.fetchImpl,
+          bus: this.bus,
+          enqueueTask: this.enqueueTask || undefined,
+          routeVoiceMessage: this.routeVoiceMessage || undefined,
+          routeToArchitect: this.routeToArchitect,
+        });
+        sendJson(res, result.ok ? 202 : 400, result);
+        return;
+      }
+
       if (req.method === 'GET' && url.pathname === '/v1/voice/egress') {
         const messages = queryVoiceEgressMessages({
           sinceMs: Number(url.searchParams.get('sinceMs') || 0),
@@ -710,6 +839,7 @@ module.exports = {
   DEFAULT_VOICE,
   OPENAI_CALLS_URL,
   OPENAI_CLIENT_SECRETS_URL,
+  OPENAI_TRANSCRIPTIONS_URL,
   VoiceBrokerService,
   buildMiraVoiceInstructions,
   buildRealtimeSessionPayload,
@@ -717,8 +847,10 @@ module.exports = {
   getVoiceBrokerConfig,
   ingestVoiceTranscript,
   mintRealtimeClientSecret,
+  normalizeAudioTranscriptionPayload,
   normalizeTranscriptPayload,
   queryVoiceEgressMessages,
   routeVoiceTranscriptToArchitect,
   summarizeRecentComms,
+  transcribeVoiceAudio,
 };
