@@ -2554,6 +2554,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPaneVisibilityControls({
     bus,
     profileName: document.body?.dataset?.profileName || initialWindowContext?.profileName || 'main',
+    forceRebind: true,
     onVisibilityChanged: ({ paneId, visible }) => {
       if (!visible && expandedPaneId === paneId) {
         toggleExpandPane(paneId);

@@ -336,4 +336,50 @@ describe('pane-visibility', () => {
     focusButton.click();
     expect(api.getHiddenPaneIds()).toEqual([]);
   });
+
+  test('force rebind replaces stale controls after renderer reload', () => {
+    const documentRef = createFakeDocument();
+    const storage = createStorage();
+
+    initPaneVisibilityControls({ documentRef, storage, profileName: 'main' });
+    const firstButton = documentRef
+      .querySelector('.pane[data-pane-id="1"]')
+      .querySelector('.team-focus-btn[data-pane-id="team"]');
+    expect(firstButton).toBeTruthy();
+
+    const api = initPaneVisibilityControls({
+      documentRef,
+      storage,
+      profileName: 'main',
+      forceRebind: true,
+    });
+    const buttons = documentRef.querySelectorAll('.team-focus-btn[data-pane-id="team"]');
+    const secondButton = buttons[0];
+
+    expect(api).toBeTruthy();
+    expect(buttons).toHaveLength(1);
+    expect(secondButton).not.toBe(firstButton);
+    secondButton.click();
+    expect(api.getHiddenPaneIds()).toEqual(['2', '3']);
+  });
+
+  test('keyboard shortcut toggles Focus Mira and Show Team', () => {
+    const listeners = new Map();
+    const windowRef = {
+      addEventListener: jest.fn((type, listener) => listeners.set(type, listener)),
+      removeEventListener: jest.fn((type, listener) => {
+        if (listeners.get(type) === listener) listeners.delete(type);
+      }),
+    };
+    const documentRef = createFakeDocument();
+    const api = initPaneVisibilityControls({ documentRef, windowRef, profileName: 'main' });
+    const preventDefault = jest.fn();
+
+    listeners.get('keydown')({ key: 'm', ctrlKey: true, shiftKey: true, preventDefault });
+    expect(preventDefault).toHaveBeenCalled();
+    expect(api.getHiddenPaneIds()).toEqual(['2', '3']);
+
+    listeners.get('keydown')({ key: 'M', ctrlKey: true, shiftKey: true, preventDefault });
+    expect(api.getHiddenPaneIds()).toEqual([]);
+  });
 });

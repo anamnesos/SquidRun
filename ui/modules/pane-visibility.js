@@ -304,15 +304,56 @@ function installFocusButton(state) {
   const actions = pane?.querySelector?.('.pane-actions');
   if (!actions || actions.querySelector?.('.team-focus-btn')) return;
   const button = createHideButton(state.document, 'team');
-  button.addEventListener('click', () => {
-    if (state.hiddenPaneIds.size > 0) {
-      showTeam(state);
-    } else {
-      focusMira(state);
-    }
-  });
+  button.addEventListener('click', () => toggleTeamFocus(state));
   actions.appendChild(button);
   state.focusButton = button;
+}
+
+function toggleTeamFocus(state) {
+  return state.hiddenPaneIds.size > 0 ? showTeam(state) : focusMira(state);
+}
+
+function installKeyboardShortcut(state) {
+  const windowRef = state.windowRef;
+  if (!windowRef || typeof windowRef.addEventListener !== 'function') return;
+  if (typeof windowRef.__squidrunPaneVisibilityKeydownCleanup === 'function') {
+    try {
+      windowRef.__squidrunPaneVisibilityKeydownCleanup();
+    } catch (_) {}
+  }
+  const handler = (event) => {
+    const key = String(event?.key || '').toLowerCase();
+    if (!event?.ctrlKey || !event?.shiftKey || key !== 'm') return;
+    event.preventDefault?.();
+    toggleTeamFocus(state);
+  };
+  windowRef.addEventListener('keydown', handler);
+  const cleanup = () => windowRef.removeEventListener?.('keydown', handler);
+  windowRef.__squidrunPaneVisibilityKeydownCleanup = cleanup;
+  state.cleanupFns.push(cleanup);
+}
+
+function resetExistingControls(documentRef, sideContainer) {
+  sideContainer.dataset.paneVisibilityInitialized = 'false';
+  const existingButtons = typeof documentRef.querySelectorAll === 'function'
+    ? documentRef.querySelectorAll('.team-focus-btn')
+    : [];
+  for (const button of Array.from(existingButtons || [])) {
+    if (typeof button.remove === 'function') {
+      button.remove();
+    } else if (button.parentNode?.removeChild) {
+      button.parentNode.removeChild(button);
+    } else if (Array.isArray(button.parentNode?.children)) {
+      button.parentNode.children = button.parentNode.children.filter((child) => child !== button);
+      button.parentNode = null;
+    }
+  }
+  const shelf = documentRef.getElementById?.('paneVisibilityRestoreShelf') || null;
+  if (shelf) {
+    shelf.innerHTML = '';
+    shelf.hidden = true;
+    shelf.classList.remove('has-hidden-panes');
+  }
 }
 
 function initPaneVisibilityControls(options = {}) {
@@ -320,7 +361,10 @@ function initPaneVisibilityControls(options = {}) {
   if (!documentRef) return null;
   const sideContainer = getSidePanesContainer(documentRef);
   if (!sideContainer) return null;
-  if (sideContainer.dataset.paneVisibilityInitialized === 'true') return null;
+  if (sideContainer.dataset.paneVisibilityInitialized === 'true') {
+    if (!options.forceRebind) return null;
+    resetExistingControls(documentRef, sideContainer);
+  }
   sideContainer.dataset.paneVisibilityInitialized = 'true';
 
   const state = {
@@ -338,6 +382,7 @@ function initPaneVisibilityControls(options = {}) {
   };
   state.restoreShelf = ensureRestoreShelf(documentRef);
   installFocusButton(state);
+  installKeyboardShortcut(state);
   for (const paneId of HIDEABLE_PANE_IDS) {
     observePaneSignals(state, paneId);
   }
