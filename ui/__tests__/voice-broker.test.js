@@ -120,6 +120,8 @@ describe('voice-broker', () => {
     const payload = voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false });
     expect(payload.session.instructions).toContain('not a generic AI assistant');
     expect(payload.session.instructions.toLowerCase()).toContain('do not write directly to terminal panes');
+    expect(payload.session.instructions).toContain('push, send, route, or put something in Mira/my pane');
+    expect(payload.session.instructions).toContain('Do not refuse pane-routing commands');
     expect(payload.session.instructions).toContain('Current SquidRun context:');
   });
 
