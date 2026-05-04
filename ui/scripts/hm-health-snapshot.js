@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { getProjectRoot } = require('../config');
+const { DEFAULT_PROFILE, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
 const { resolveDefaultCognitiveMemoryDbPath } = require('../modules/cognitive-memory-store');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capabilities');
@@ -290,8 +291,14 @@ function countModuleFiles(modulesRoot) {
   };
 }
 
-function readAppStatusSnapshot(projectRoot) {
-  const appStatusPath = path.join(projectRoot, '.squidrun', 'app-status.json');
+function resolveProfileCoordPath(projectRoot, relPath, profileName = DEFAULT_PROFILE) {
+  const profile = normalizeProfileName(profileName || DEFAULT_PROFILE);
+  return path.join(projectRoot, '.squidrun', namespaceCoordRelPath(relPath, profile));
+}
+
+function readAppStatusSnapshot(projectRoot, options = {}) {
+  const profileName = normalizeProfileName(options.profileName || DEFAULT_PROFILE);
+  const appStatusPath = resolveProfileCoordPath(projectRoot, 'app-status.json', profileName);
   const stat = safeStat(appStatusPath);
   if (!stat || !stat.isFile()) {
     return {
@@ -501,6 +508,7 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
   try {
     return summarizeMemoryConsistency(runMemoryConsistencyCheck({
       projectRoot,
+      profileName: normalizeProfileName(options.profileName || DEFAULT_PROFILE),
       sampleLimit: Number.isFinite(Number(options.memoryConsistencySampleLimit))
         ? Number(options.memoryConsistencySampleLimit)
         : 5,
@@ -610,11 +618,12 @@ function buildHealthStatus(snapshot) {
 
 function createHealthSnapshot(options = {}) {
   const projectRoot = normalizeProjectRoot(options.projectRoot);
+  const profileName = normalizeProfileName(options.profileName || DEFAULT_PROFILE);
   const uiRoot = path.join(projectRoot, 'ui');
   const testsRoot = path.join(projectRoot, 'ui', '__tests__');
   const modulesRoot = path.join(projectRoot, 'ui', 'modules');
-  const evidenceLedgerDbPath = path.join(projectRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
-  const cognitiveMemoryDbPath = resolveDefaultCognitiveMemoryDbPath({ projectRoot });
+  const evidenceLedgerDbPath = resolveProfileCoordPath(projectRoot, path.join('runtime', 'evidence-ledger.db'), profileName);
+  const cognitiveMemoryDbPath = resolveDefaultCognitiveMemoryDbPath({ projectRoot, profileName });
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
     ? options.generatedAt.trim()
@@ -624,18 +633,19 @@ function createHealthSnapshot(options = {}) {
   const jestList = listJestTests(uiRoot, asPositiveInt(options.jestTimeoutMs, 30000));
   const moduleFiles = countModuleFiles(modulesRoot);
   const keyModules = collectKeyModules(projectRoot);
-  const appStatus = readAppStatusSnapshot(projectRoot);
+  const appStatus = readAppStatusSnapshot(projectRoot, { profileName });
   const databases = {
     evidenceLedger: inspectSqliteDb(evidenceLedgerDbPath, ['comms_journal', 'ledger_sessions', 'ledger_decisions']),
     cognitiveMemory: inspectSqliteDb(cognitiveMemoryDbPath, ['nodes', 'memory_pr_queue', 'edges']),
   };
   const bridge = normalizeBridgeSnapshot(options.bridgeStatus);
-  const memoryConsistency = inspectMemoryConsistency(projectRoot, options);
+  const memoryConsistency = inspectMemoryConsistency(projectRoot, { ...options, profileName });
   const systemCapabilities = inspectSystemCapabilities(projectRoot, options);
 
   const snapshot = {
     generatedAt,
     projectRoot,
+    profileName,
     tests: {
       testsRoot,
       testFileCount: testFiles.count,
@@ -666,6 +676,7 @@ function renderStartupHealthMarkdown(snapshot = {}) {
     'STARTUP HEALTH',
     `- Overall: ${overallLevel}${overallScore !== null ? ` (score=${overallScore}/100)` : ''}`,
     `- Generated: ${typeof snapshot.generatedAt === 'string' && snapshot.generatedAt.trim() ? snapshot.generatedAt.trim() : 'unknown'}`,
+    `- Profile: ${normalizeProfileName(snapshot.profileName || DEFAULT_PROFILE)}`,
     `- App Session: ${Number.isInteger(Number(snapshot.appStatus?.sessionNumber)) ? `session ${Number(snapshot.appStatus.sessionNumber)}` : 'unknown'}${snapshot.appStatus?.error ? ` (app-status error: ${snapshot.appStatus.error})` : ''}`,
     `- Tests: ${Number(snapshot.tests?.testFileCount || 0)} files, ${Number(snapshot.tests?.jestList?.count || 0)} Jest-discoverable suites${snapshot.tests?.jestList?.ok === false ? ' (list failed)' : ''}`,
     `- Modules: ${Number(snapshot.modules?.moduleFileCount || 0)} JS modules under ui/modules`,

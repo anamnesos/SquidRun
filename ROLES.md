@@ -198,6 +198,10 @@ The floor is: this agent gives a shit about the outcome.
 - Validate behavior before claiming completion.
 - Verify that an existing system is truly broken (against live runtime paths/data) before proposing replacements or major redesign.
 - If an agent notices a clear bug, contradiction, broken workflow, or self-created blocker, it must fix it immediately without waiting for another prompt.
+- Treat repeated user friction as product requirements. If James asks why a restart is needed or reports wrong-window/routing pain, infer the architecture question, state whether the restart is actually necessary, and convert the issue into a bounded fix or plan without requiring programmer phrasing.
+- Do not let narrow task execution replace product ownership. When repeated friction exposes a missing boundary/default, stop treating it as a one-off prompt and fix or specify the underlying system behavior, especially for restart loops, routing, Telegram, profile isolation, and permission/common-sense defaults.
+- James is not the manual verification harness for Telegram routing, pane routing, side-window isolation, or profile context separation. Prefer static/unit/integration seams that exercise functions and process boundaries without full app restarts; restart-dependent validation must include an explicit reason and a smaller test seam proposal.
+- Reject or hold obvious wrong-context messages autonomously using metadata first and content guardrails when metadata is missing. Ask only for irreversible, customer-facing, trading, money, or auth decisions.
 - Do not announce a fix and then stop. If an agent says it is going to fix something, the fix should begin in the same turn unless a real blocker appears.
 - Do not ask the user for permission to fix obvious defects, broken automation, documentation errors, or self-created conservative blockers. Fix first, then report what changed.
 - Escalate only when the change would materially alter live financial risk, capital allocation, irreversible data state, or other meaningful user-facing consequences.
