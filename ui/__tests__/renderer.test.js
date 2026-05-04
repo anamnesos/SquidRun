@@ -202,6 +202,11 @@ jest.mock('../modules/model-selector', () => ({
   setupModelChangeListener: jest.fn(),
 }));
 
+// Mock pane visibility controls
+jest.mock('../modules/pane-visibility', () => ({
+  initPaneVisibilityControls: jest.fn(),
+}));
+
 // Mock renderer-ipc-registry
 jest.mock('../modules/renderer-ipc-registry', () => ({
   clearScopedIpcListeners: jest.fn(),
@@ -222,6 +227,7 @@ describe('renderer.js smoke tests', () => {
       utils: require('../modules/utils'),
       commandPalette: require('../modules/command-palette'),
       statusStrip: require('../modules/status-strip'),
+      paneVisibility: require('../modules/pane-visibility'),
       windowTeamBootstrap: require('../modules/window-team-bootstrap'),
       modelSelector: require('../modules/model-selector'),
       config: require('../config'),
