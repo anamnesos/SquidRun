@@ -53,6 +53,7 @@ const DEFAULT_THROTTLE_QUEUE_MAX_ITEMS = 200;
 const DEFAULT_THROTTLE_QUEUE_MAX_BYTES = 512 * 1024;
 const DAEMON_RUNTIME_CONFIG_REFRESH_TTL_MS = 2000;
 const LIVE_REATTACH_EMPTY_SCROLLBACK_GRACE_MS = 60000;
+const SPAWN_GUARD_SNAPSHOT_TIMEOUT_MS = 1500;
 let throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
 let throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
 let daemonRuntimeConfigPromise = null;
@@ -490,6 +491,57 @@ async function hasCliContent(scrollback = '', meta = {}) {
   return false;
 }
 
+async function requestDirectTerminalSnapshotForSpawnGuard() {
+  const root = typeof globalThis !== 'undefined' ? globalThis : {};
+  const win = root.window && typeof root.window === 'object' ? root.window : {};
+  const directSnapshotFn = win?.squidrun?.daemon?.terminalSnapshot
+    || win?.squidrunAPI?.daemon?.terminalSnapshot;
+
+  if (typeof directSnapshotFn !== 'function') {
+    return null;
+  }
+
+  try {
+    const snapshot = await directSnapshotFn({ timeoutMs: SPAWN_GUARD_SNAPSHOT_TIMEOUT_MS });
+    if (snapshot?.ok && Array.isArray(snapshot.terminals)) {
+      return snapshot.terminals;
+    }
+    log.warn('Daemon', `Spawn guard snapshot unavailable: ${snapshot?.reason || 'unknown'}`);
+  } catch (err) {
+    log.warn('Daemon', `Spawn guard snapshot failed: ${err?.message || err}`);
+  }
+  return null;
+}
+
+async function removePanesSatisfiedByDirectSnapshot(panesNeedingSpawn) {
+  if (!panesNeedingSpawn || panesNeedingSpawn.size === 0) return panesNeedingSpawn;
+
+  const snapshotTerminals = await requestDirectTerminalSnapshotForSpawnGuard();
+  if (!snapshotTerminals || snapshotTerminals.length === 0) {
+    return panesNeedingSpawn;
+  }
+
+  const snapshotByPane = new Map();
+  for (const term of snapshotTerminals) {
+    if (!term || !term.alive) continue;
+    snapshotByPane.set(String(term.paneId), term);
+  }
+
+  for (const paneId of Array.from(panesNeedingSpawn)) {
+    const snapshotTerm = snapshotByPane.get(String(paneId));
+    if (!snapshotTerm) continue;
+    if (await hasCliContent(snapshotTerm.scrollback, snapshotTerm)) {
+      panesNeedingSpawn.delete(String(paneId));
+      log.info(
+        'Daemon',
+        `Spawn guard suppressed pane ${paneId}; direct daemon snapshot has live CLI content`
+      );
+    }
+  }
+
+  return panesNeedingSpawn;
+}
+
 // ============================================================
 // SYNC STATE MANAGEMENT
 // ============================================================
@@ -570,6 +622,10 @@ async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattach
       } else {
         panesNeedingSpawn.add(paneId);
       }
+    }
+
+    if (panesNeedingSpawn.size > 0 && data?.replayed !== true) {
+      await removePanesSatisfiedByDirectSnapshot(panesNeedingSpawn);
     }
 
     setReconnectedFn(true);
