@@ -110,7 +110,7 @@ describe('WebSocket Delivery Audit', () => {
 
   beforeEach(() => {
     activeClients = new Set();
-    onMessageSpy.mockClear();
+    onMessageSpy.mockReset();
   });
 
   afterEach(async () => {
@@ -201,10 +201,136 @@ describe('WebSocket Delivery Audit', () => {
     const ack = await ackPromise;
     await sleep(100);
     expect(ack.ok).toBe(false);
-    expect(ack.status).toBe('scope_route_unavailable');
+    expect(ack.status).toBe('scoped_route_not_ready');
     expect(ack.failClosed).toBe(true);
     expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'eunbyeol' }));
     expect(leakedToMain).toBe(false);
+  });
+
+  test('routes side-profile canonical target through same-profile local handler when no scoped WebSocket client is registered', async () => {
+    const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainReceiver);
+    const scopedSender = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedSender);
+
+    let leakedToMain = false;
+    mainReceiver.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'local-handler-scope-delivery') leakedToMain = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'scope-handler-route-1') {
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+          paneId: '2',
+          mode: 'local-terminal',
+        };
+      }
+      return undefined;
+    });
+
+    const messageId = 'scope-handler-route-1';
+    const ackPromise = waitForMessage(
+      scopedSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'local-handler-scope-delivery',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.verified');
+    expect(ack.wsDeliveryCount).toBe(0);
+    expect(ack.handlerResult).toEqual(expect.objectContaining({
+      mode: 'local-terminal',
+      paneId: '2',
+    }));
+    expect(onMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'architect',
+      paneId: '1',
+      message: expect.objectContaining({
+        target: 'builder',
+        messageId,
+      }),
+    }));
+    expect(leakedToMain).toBe(false);
+  });
+
+  test('routes side-profile pane target through same-profile local handler when no scoped WebSocket client is registered', async () => {
+    const scopedSender = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedSender);
+
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'scope-pane-handler-route-1') {
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+          paneId: '2',
+          mode: 'local-terminal',
+        };
+      }
+      return undefined;
+    });
+
+    const messageId = 'scope-pane-handler-route-1';
+    const ackPromise = waitForMessage(
+      scopedSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedSender.send(JSON.stringify({
+      type: 'send',
+      target: '2',
+      content: 'local-handler-pane-scope-delivery',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.verified');
+    expect(ack.wsDeliveryCount).toBe(0);
+    expect(onMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({
+        target: '2',
+        messageId,
+      }),
+    }));
   });
 
   test('delivers scoped canonical target only to matching profile client', async () => {
@@ -441,6 +567,66 @@ describe('WebSocket Delivery Audit', () => {
     expect(ack.ok).toBe(false);
     expect(ack.status).toBe('unrouted');
     expect(leakedToScoped).toBe(false);
+  });
+
+  test('main explicit scoped route fails closed when the scoped profile has no registered route', async () => {
+    const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainSender);
+    const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainReceiver);
+
+    let leakedToMain = false;
+    mainReceiver.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'explicit-scope-no-main-handler') leakedToMain = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'main-explicit-scope-missing-1') {
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+        };
+      }
+      return undefined;
+    });
+
+    const messageId = 'main-explicit-scope-missing-1';
+    const ackPromise = waitForMessage(
+      mainSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'explicit-scope-no-main-handler',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+      },
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('scope_route_unavailable');
+    expect(ack.failClosed).toBe(true);
+    expect(onMessageSpy).not.toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ messageId }),
+    }));
+    expect(leakedToMain).toBe(false);
   });
 
   test('rejects Eunbyeol/Rachel context aimed at main Builder and notifies main Architect', async () => {
@@ -1099,6 +1285,38 @@ describe('WebSocket Delivery Audit', () => {
     expect(health.status).toBe('no_route');
     expect(health.paneId).toBe('2');
     expect(health.role).toBe('builder');
+  });
+
+  test('side-profile health exposes local handler route readiness before scoped terminal delivery', async () => {
+    const scopedProbe = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedProbe);
+
+    const requestId = 'health-side-handler-route-1';
+    const healthPromise = waitForMessage(
+      scopedProbe,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === requestId
+    );
+    scopedProbe.send(JSON.stringify({
+      type: 'health-check',
+      target: 'builder',
+      requestId,
+    }));
+
+    const health = await healthPromise;
+    expect(health.healthy).toBe(true);
+    expect(health.status).toBe('handler_route_available');
+    expect(health.source).toBe('local_message_handler');
+    expect(health.routeScope).toEqual(expect.objectContaining({
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+    }));
   });
 
   test('treats background alias targets as valid for health checks', async () => {

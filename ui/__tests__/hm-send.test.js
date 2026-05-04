@@ -371,6 +371,141 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('allows side-profile --no-fallback delivery when health reports same-profile handler route', async () => {
+    const sendAttempts = [];
+    const registerAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          registerAttempts.push(msg);
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'handler_route_available',
+            source: 'local_message_handler',
+            routeScope: {
+              profileName: 'eunbyeol',
+              windowKey: 'eunbyeol',
+            },
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: true,
+            status: 'delivered.verified',
+            wsDeliveryCount: 0,
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(EUNBYEOL #1): same profile handler route', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'eunbyeol' }
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Delivered to builder');
+      expect(registerAttempts[0]).toEqual(expect.objectContaining({
+        role: 'architect',
+        profileName: 'eunbyeol',
+        windowKey: 'eunbyeol',
+      }));
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].target).toBe('builder');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('blocks side-profile --no-fallback delivery when no same-profile route is available', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: false,
+            status: 'scope_route_unavailable',
+            failClosed: true,
+            routeScope: {
+              profileName: 'eunbyeol',
+              windowKey: 'eunbyeol',
+            },
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(EUNBYEOL #2): should fail closed', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'eunbyeol' }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Send blocked by profile isolation (scope_route_unavailable)');
+      expect(sendAttempts).toHaveLength(0);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('applies exponential backoff between retries before succeeding', async () => {
     const attempts = [];
     let server;
