@@ -344,6 +344,53 @@ describe('voice-broker tab', () => {
     expect(peer.close).toHaveBeenCalled();
   });
 
+  test('connect refreshes broker status so stale dynamic ports are not reused', async () => {
+    invokeBridge.mockResolvedValueOnce({
+      ok: true,
+      state: 'running',
+      ready: true,
+      running: true,
+      notReadyReasons: [],
+      lane: { broker: { address: { address: '127.0.0.1', port: 56207 } } },
+      config: {
+        endpointShape: {
+          clientSecret: { path: '/v1/voice/realtime/client-secret' },
+          transcript: { path: '/v1/voice/transcripts' },
+        },
+      },
+    });
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' });
+    const track = { enabled: false, stop: jest.fn() };
+
+    await tab.startVoiceSession({
+      fetchImpl,
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [track],
+          getTracks: () => [track],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => ({
+          addEventListener: jest.fn(),
+          readyState: 'open',
+          send: jest.fn(),
+          close: jest.fn(),
+        }),
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: jest.fn(),
+      })),
+    });
+
+    expect(invokeBridge).toHaveBeenCalledWith('voice-broker:status');
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:56207/v1/voice/realtime/client-secret', expect.any(Object));
+  });
+
   test('data channel transcript events post to broker transcript endpoint', async () => {
     const dataChannel = {
       readyState: 'open',
