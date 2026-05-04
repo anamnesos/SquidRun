@@ -131,8 +131,12 @@ class FakeElement {
 
 function matchesSelector(node, selector) {
   if (selector === '.side-panes-container') return node.classList.contains('side-panes-container');
+  if (selector === '.pane-layout') return node.classList.contains('pane-layout');
+  if (selector === '.main-pane-container') return node.classList.contains('main-pane-container');
+  if (selector === '.command-bar') return node.classList.contains('command-bar');
   if (selector === '.pane-actions') return node.classList.contains('pane-actions');
   if (selector === '.pane-hide-btn') return node.classList.contains('pane-hide-btn');
+  if (selector === '.team-focus-btn') return node.classList.contains('team-focus-btn');
   if (selector === '.pane-restore-shelf') return node.classList.contains('pane-restore-shelf');
   const paneMatch = selector.match(/^\.pane\[data-pane-id="(\d+)"\]$/);
   if (paneMatch) {
@@ -142,6 +146,10 @@ function matchesSelector(node, selector) {
   if (hideMatch) {
     return node.classList.contains('pane-hide-btn') && node.dataset.paneId === hideMatch[1];
   }
+  const focusMatch = selector.match(/^\.team-focus-btn\[data-pane-id="([^"]+)"\]$/);
+  if (focusMatch) {
+    return node.classList.contains('team-focus-btn') && node.dataset.paneId === focusMatch[1];
+  }
   return false;
 }
 
@@ -149,9 +157,26 @@ function createFakeDocument() {
   const elementsById = new Map();
   const body = new FakeElement('body');
   body.dataset.profileName = 'main';
+  const layout = new FakeElement('div');
+  layout.className = 'pane-layout';
+  body.appendChild(layout);
+  const mainContainer = new FakeElement('div');
+  mainContainer.className = 'main-pane-container';
+  layout.appendChild(mainContainer);
+  const miraPane = new FakeElement('div');
+  miraPane.className = 'pane';
+  miraPane.dataset.paneId = '1';
+  const miraHeader = new FakeElement('div');
+  miraHeader.className = 'pane-header';
+  const miraActions = new FakeElement('div');
+  miraActions.className = 'pane-actions';
+  miraHeader.appendChild(miraActions);
+  miraPane.appendChild(miraHeader);
+  mainContainer.appendChild(miraPane);
+
   const sideContainer = new FakeElement('div');
   sideContainer.className = 'side-panes-container';
-  body.appendChild(sideContainer);
+  layout.appendChild(sideContainer);
 
   for (const paneId of ['2', '3']) {
     const pane = new FakeElement('div');
@@ -210,27 +235,35 @@ describe('pane-visibility', () => {
     expect(normalizePaneIds(['1', '2', '3', '2', 'x'])).toEqual(['2', '3']);
     expect(writeHiddenPaneIds(['1', '2'], { storage, profileName: 'eunbyeol' })).toBe(true);
     expect(getStorageKey({ profileName: 'eunbyeol' })).toBe('squidrun:pane-visibility:eunbyeol');
-    expect(readHiddenPaneIds({ storage, profileName: 'eunbyeol' })).toEqual(['2']);
+    expect(readHiddenPaneIds({ storage, profileName: 'eunbyeol' })).toEqual(['2', '3']);
     expect(readHiddenPaneIds({ storage, profileName: 'main' })).toEqual([]);
   });
 
-  test('hides and restores Builder visually without removing pane state', () => {
+  test('focuses Mira and restores team visually without removing pane state', () => {
     const documentRef = createFakeDocument();
     const storage = createStorage();
     const emitted = [];
     const bus = { emit: jest.fn((type, payload) => emitted.push({ type, payload })) };
     const api = initPaneVisibilityControls({ documentRef, storage, bus, profileName: 'main' });
+    const layout = documentRef.querySelector('.pane-layout');
+    const sideContainer = documentRef.querySelector('.side-panes-container');
+    const miraPane = documentRef.querySelector('.pane[data-pane-id="1"]');
+    const miraActions = miraPane.querySelector('.pane-actions');
     const builderPane = documentRef.querySelector('.pane[data-pane-id="2"]');
-    const builderActions = builderPane.querySelector('.pane-actions');
-    const hideButton = builderActions.querySelector('.pane-hide-btn[data-pane-id="2"]');
+    const oraclePane = documentRef.querySelector('.pane[data-pane-id="3"]');
+    const focusButton = miraActions.querySelector('.team-focus-btn[data-pane-id="team"]');
 
-    expect(hideButton).toBeTruthy();
-    hideButton.click();
+    expect(focusButton).toBeTruthy();
+    focusButton.click();
 
     expect(builderPane.hidden).toBe(true);
+    expect(oraclePane.hidden).toBe(true);
     expect(builderPane.classList.contains('pane-hidden-by-user')).toBe(true);
-    expect(api.getHiddenPaneIds()).toEqual(['2']);
-    expect(readHiddenPaneIds({ storage, profileName: 'main' })).toEqual(['2']);
+    expect(oraclePane.classList.contains('pane-hidden-by-user')).toBe(true);
+    expect(layout.classList.contains('team-focus-mode')).toBe(true);
+    expect(sideContainer.hidden).toBe(true);
+    expect(api.getHiddenPaneIds()).toEqual(['2', '3']);
+    expect(readHiddenPaneIds({ storage, profileName: 'main' })).toEqual(['2', '3']);
     expect(emitted).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'pane.visibility.changed',
@@ -242,12 +275,16 @@ describe('pane-visibility', () => {
     ]));
 
     const shelf = documentRef.getElementById('paneVisibilityRestoreShelf');
-    expect(shelf.hidden).toBe(false);
-    expect(shelf.children[0].textContent).toBe('Show Builder');
-    shelf.children[0].click();
+    expect(shelf.hidden).toBe(true);
+    expect(shelf.children).toHaveLength(0);
+    focusButton.click();
 
     expect(builderPane.hidden).toBe(false);
+    expect(oraclePane.hidden).toBe(false);
     expect(builderPane.classList.contains('pane-hidden-by-user')).toBe(false);
+    expect(oraclePane.classList.contains('pane-hidden-by-user')).toBe(false);
+    expect(layout.classList.contains('team-focus-mode')).toBe(false);
+    expect(sideContainer.hidden).toBe(false);
     expect(readHiddenPaneIds({ storage, profileName: 'main' })).toEqual([]);
   });
 
@@ -262,11 +299,14 @@ describe('pane-visibility', () => {
     initPaneVisibilityControls({ documentRef, storage, profileName: 'main' });
 
     const oraclePane = documentRef.querySelector('.pane[data-pane-id="3"]');
+    const sideContainer = documentRef.querySelector('.side-panes-container');
     const shelf = documentRef.getElementById('paneVisibilityRestoreShelf');
 
     expect(oraclePane.hidden).toBe(true);
-    expect(shelf.children[0].classList.contains('active')).toBe(true);
-    expect(shelf.children[0].textContent).toBe('Show Oracle - Reading evidence');
+    expect(documentRef.querySelector('.pane[data-pane-id="2"]').hidden).toBe(true);
+    expect(sideContainer.hidden).toBe(true);
+    expect(shelf.hidden).toBe(true);
+    expect(shelf.children).toHaveLength(0);
   });
 
   test('marks hidden restore control when existing pane signals change', () => {
@@ -288,10 +328,12 @@ describe('pane-visibility', () => {
     api.hidePane('2');
     observers[0].callback();
 
-    const shelf = documentRef.getElementById('paneVisibilityRestoreShelf');
-    expect(shelf.children[0].classList.contains('has-activity')).toBe(true);
+    const focusButton = documentRef
+      .querySelector('.pane[data-pane-id="1"]')
+      .querySelector('.team-focus-btn[data-pane-id="team"]');
+    expect(focusButton.classList.contains('has-activity')).toBe(true);
 
-    shelf.children[0].click();
+    focusButton.click();
     expect(api.getHiddenPaneIds()).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ const PANE_LABELS = Object.freeze({
   3: 'Oracle',
 });
 const STORAGE_PREFIX = 'squidrun:pane-visibility';
+const TEAM_RESTORE_LABEL = 'Show Team';
 
 function normalizePaneId(value) {
   const paneId = String(value || '').trim();
@@ -14,7 +15,8 @@ function normalizePaneId(value) {
 
 function normalizePaneIds(values) {
   const source = Array.isArray(values) ? values : [];
-  return Array.from(new Set(source.map(normalizePaneId).filter(Boolean)));
+  const hasHiddenTeamPane = source.map(normalizePaneId).some(Boolean);
+  return hasHiddenTeamPane ? [...HIDEABLE_PANE_IDS] : [];
 }
 
 function getProfileName(options = {}) {
@@ -93,17 +95,28 @@ function createButton(documentRef, className, paneId, label, title) {
 }
 
 function createHideButton(documentRef, paneId) {
-  const title = `Hide ${getPaneLabel(paneId)}`;
+  const title = 'Focus Mira';
   const { button } = createButton(
     documentRef,
-    'pane-action-btn pane-hide-btn',
+    'pane-action-btn team-focus-btn',
     paneId,
-    getPaneLabel(paneId),
+    'Focus Mira',
     title
   );
   button.dataset.tooltip = title;
   button.innerHTML = '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6"/><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c5 0 8.5 4.2 10 8a14.3 14.3 0 0 1-3.2 4.7"/><path d="M6.6 6.6A14.5 14.5 0 0 0 2 12c1.5 3.8 5 8 10 8 1.7 0 3.2-.4 4.5-1.1"/></svg>';
   return button;
+}
+
+function getPaneLayout(documentRef, sideContainer = null) {
+  if (sideContainer && typeof sideContainer.closest === 'function') {
+    const layout = sideContainer.closest('.pane-layout');
+    if (layout) return layout;
+  }
+  if (documentRef && typeof documentRef.querySelector === 'function') {
+    return documentRef.querySelector('.pane-layout');
+  }
+  return sideContainer?.parentNode || null;
 }
 
 function ensureRestoreShelf(documentRef) {
@@ -115,11 +128,13 @@ function ensureRestoreShelf(documentRef) {
   shelf.id = 'paneVisibilityRestoreShelf';
   shelf.className = 'pane-restore-shelf';
   shelf.setAttribute('aria-label', 'Hidden panes');
-  const firstPane = HIDEABLE_PANE_IDS.map((paneId) => getPane(documentRef, paneId)).find(Boolean);
-  if (typeof container.insertBefore === 'function' && firstPane) {
-    container.insertBefore(shelf, firstPane);
+  const mainContainer = documentRef.querySelector?.('.main-pane-container') || null;
+  const host = mainContainer || container;
+  const commandBar = mainContainer?.querySelector?.('.command-bar') || null;
+  if (typeof host.insertBefore === 'function' && commandBar) {
+    host.insertBefore(shelf, commandBar);
   } else {
-    container.appendChild(shelf);
+    host.appendChild(shelf);
   }
   return shelf;
 }
@@ -144,33 +159,46 @@ function buildRestoreButtonText(signal, paneId) {
   return `Show ${label}`;
 }
 
+function buildTeamRestoreButtonText(state) {
+  for (const paneId of HIDEABLE_PANE_IDS) {
+    const signal = readPaneSignal(state.document, paneId);
+    const label = getPaneLabel(paneId);
+    if (signal.taskText) return `${TEAM_RESTORE_LABEL} - ${label}: ${signal.taskText}`;
+    if (signal.healthText && signal.healthText !== '-') {
+      return `${TEAM_RESTORE_LABEL} - ${label}: ${signal.healthText}`;
+    }
+  }
+  return TEAM_RESTORE_LABEL;
+}
+
+function updateFocusButton(state) {
+  if (!state.focusButton) return;
+  const focused = state.hiddenPaneIds.size > 0;
+  const hasActivity = HIDEABLE_PANE_IDS.some((paneId) => state.activityPaneIds.has(paneId));
+  const title = focused ? TEAM_RESTORE_LABEL : 'Focus Mira';
+  state.focusButton.classList.toggle('active', focused);
+  state.focusButton.classList.toggle('has-activity', focused && hasActivity);
+  state.focusButton.dataset.tooltip = title;
+  state.focusButton.setAttribute('title', title);
+  state.focusButton.setAttribute('aria-label', title);
+}
+
 function renderRestoreShelf(state) {
   const shelf = state.restoreShelf;
   if (!shelf) return;
   shelf.innerHTML = '';
-  shelf.hidden = state.hiddenPaneIds.size === 0;
-  shelf.classList.toggle('has-hidden-panes', state.hiddenPaneIds.size > 0);
+  shelf.hidden = true;
+  shelf.classList.toggle('has-hidden-panes', false);
   const container = getSidePanesContainer(state.document);
   if (container) {
     container.classList.toggle('has-hidden-side-pane', state.hiddenPaneIds.size > 0);
+    container.hidden = state.hiddenPaneIds.size > 0;
+    const layout = getPaneLayout(state.document, container);
+    if (layout?.classList) {
+      layout.classList.toggle('team-focus-mode', state.hiddenPaneIds.size > 0);
+    }
   }
-
-  for (const paneId of HIDEABLE_PANE_IDS) {
-    if (!state.hiddenPaneIds.has(paneId)) continue;
-    const signal = readPaneSignal(state.document, paneId);
-    const button = state.document.createElement('button');
-    button.type = 'button';
-    button.className = 'pane-restore-btn';
-    button.dataset.paneId = paneId;
-    button.classList.toggle('active', signal.active);
-    button.classList.toggle('has-activity', state.activityPaneIds.has(paneId));
-    const title = `Restore ${getPaneLabel(paneId)} pane`;
-    button.setAttribute('title', title);
-    button.setAttribute('aria-label', title);
-    button.textContent = buildRestoreButtonText(signal, paneId);
-    button.addEventListener('click', () => showPane(state, paneId));
-    shelf.appendChild(button);
-  }
+  updateFocusButton(state);
 }
 
 function emitVisibilityChanged(state, paneId, visible) {
@@ -194,7 +222,7 @@ function requestLayoutResize(state) {
   }
 }
 
-function applyPaneVisibility(state, paneId, hidden, options = {}) {
+function applySinglePaneVisibility(state, paneId, hidden) {
   const normalizedPaneId = normalizePaneId(paneId);
   if (!normalizedPaneId) return false;
   const pane = getPane(state.document, normalizedPaneId);
@@ -208,21 +236,40 @@ function applyPaneVisibility(state, paneId, hidden, options = {}) {
     state.hiddenPaneIds.delete(normalizedPaneId);
     state.activityPaneIds.delete(normalizedPaneId);
   }
+  return true;
+}
+
+function applyTeamVisibility(state, hidden, options = {}) {
+  let changed = false;
+  for (const paneId of HIDEABLE_PANE_IDS) {
+    changed = applySinglePaneVisibility(state, paneId, hidden) || changed;
+  }
+  if (!changed) return false;
   writeHiddenPaneIds(Array.from(state.hiddenPaneIds), state);
   renderRestoreShelf(state);
   requestLayoutResize(state);
   if (!options.silent) {
-    emitVisibilityChanged(state, normalizedPaneId, !hidden);
+    for (const paneId of HIDEABLE_PANE_IDS) {
+      emitVisibilityChanged(state, paneId, !hidden);
+    }
   }
   return true;
 }
 
 function hidePane(state, paneId) {
-  return applyPaneVisibility(state, paneId, true);
+  return normalizePaneId(paneId) ? applyTeamVisibility(state, true) : false;
 }
 
 function showPane(state, paneId) {
-  return applyPaneVisibility(state, paneId, false);
+  return normalizePaneId(paneId) ? applyTeamVisibility(state, false) : false;
+}
+
+function focusMira(state) {
+  return applyTeamVisibility(state, true);
+}
+
+function showTeam(state) {
+  return applyTeamVisibility(state, false);
 }
 
 function markPaneActivity(state, paneId) {
@@ -252,15 +299,20 @@ function observePaneSignals(state, paneId) {
   }
 }
 
-function installHideButtons(state) {
-  for (const paneId of HIDEABLE_PANE_IDS) {
-    const pane = getPane(state.document, paneId);
-    const actions = pane?.querySelector?.('.pane-actions');
-    if (!actions || actions.querySelector?.(`.pane-hide-btn[data-pane-id="${paneId}"]`)) continue;
-    const button = createHideButton(state.document, paneId);
-    button.addEventListener('click', () => hidePane(state, paneId));
-    actions.appendChild(button);
-  }
+function installFocusButton(state) {
+  const pane = getPane(state.document, '1');
+  const actions = pane?.querySelector?.('.pane-actions');
+  if (!actions || actions.querySelector?.('.team-focus-btn')) return;
+  const button = createHideButton(state.document, 'team');
+  button.addEventListener('click', () => {
+    if (state.hiddenPaneIds.size > 0) {
+      showTeam(state);
+    } else {
+      focusMira(state);
+    }
+  });
+  actions.appendChild(button);
+  state.focusButton = button;
 }
 
 function initPaneVisibilityControls(options = {}) {
@@ -282,18 +334,21 @@ function initPaneVisibilityControls(options = {}) {
     activityPaneIds: new Set(),
     cleanupFns: [],
     restoreShelf: null,
+    focusButton: null,
   };
   state.restoreShelf = ensureRestoreShelf(documentRef);
-  installHideButtons(state);
+  installFocusButton(state);
   for (const paneId of HIDEABLE_PANE_IDS) {
     observePaneSignals(state, paneId);
-    applyPaneVisibility(state, paneId, state.hiddenPaneIds.has(paneId), { silent: true });
   }
+  applyTeamVisibility(state, state.hiddenPaneIds.size > 0, { silent: true });
   renderRestoreShelf(state);
 
   return {
     hidePane: (paneId) => hidePane(state, paneId),
     showPane: (paneId) => showPane(state, paneId),
+    focusMira: () => focusMira(state),
+    showTeam: () => showTeam(state),
     getHiddenPaneIds: () => Array.from(state.hiddenPaneIds),
     dispose: () => {
       for (const cleanup of state.cleanupFns.splice(0)) {

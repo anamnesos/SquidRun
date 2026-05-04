@@ -411,6 +411,15 @@
   overflow: hidden;
 }
 
+.pane-layout.team-focus-mode .main-pane-container {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.pane-layout.team-focus-mode .side-panes-container {
+  display: none;
+}
+
 .pane-restore-shelf {
   display: none;
   flex: 0 0 auto;
@@ -451,6 +460,12 @@
 .pane-restore-btn.has-activity {
   color: var(--color-primary);
   border-color: rgba(0, 240, 255, 0.42);
+}
+
+.team-focus-btn.active {
+  color: var(--color-primary);
+  border-color: rgba(0, 240, 255, 0.42);
+  background: rgba(0, 240, 255, 0.08);
 }
 
 .pane-hidden-by-user {
