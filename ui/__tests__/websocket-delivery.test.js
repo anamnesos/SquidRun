@@ -251,6 +251,155 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
   });
 
+  test('sideprofile restart-readiness handshake proves scoped back-and-forth without main leak', async () => {
+    const mainBuilder = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainBuilder);
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+    const sideprofileArchitect = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'sideprofile',
+      windowKey: 'sideprofile',
+      sessionScopeId: 'app-test:sideprofile',
+    });
+    activeClients.add(sideprofileArchitect);
+    const sideprofileBuilder = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'sideprofile',
+      windowKey: 'sideprofile',
+      sessionScopeId: 'app-test:sideprofile',
+    });
+    activeClients.add(sideprofileBuilder);
+
+    const leakedToMain = [];
+    mainBuilder.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && /sideprofile restart handshake/.test(msg.content || '')) {
+          leakedToMain.push(msg);
+        }
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const helloMessageId = 'sideprofile-handshake-builder-1';
+    const builderDelivery = waitForMessage(
+      sideprofileBuilder,
+      (msg) => msg.type === 'message' && /profile=sideprofile window=sideprofile/.test(msg.content || '')
+    );
+    const helloAck = waitForMessage(
+      sideprofileArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === helloMessageId
+    );
+
+    sideprofileArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'sideprofile restart handshake: profile=sideprofile window=sideprofile context=sideprofile/Rachel; plain builder/oracle targets stay same-profile only.',
+      messageId: helloMessageId,
+      ackRequired: true,
+      metadata: {
+        sender: {
+          profileName: 'sideprofile',
+          windowKey: 'sideprofile',
+        },
+        handshake: {
+          profileName: 'sideprofile',
+          windowKey: 'sideprofile',
+          notMainContext: true,
+          sameProfileTargetsOnly: true,
+        },
+      },
+    }));
+
+    const [helloAckMsg, builderMsg] = await Promise.all([helloAck, builderDelivery]);
+    expect(helloAckMsg.ok).toBe(true);
+    expect(helloAckMsg.status).toBe('delivered.websocket');
+    expect(builderMsg.metadata).toEqual(expect.objectContaining({
+      sender: expect.objectContaining({ profileName: 'sideprofile', windowKey: 'sideprofile' }),
+      handshake: expect.objectContaining({ notMainContext: true, sameProfileTargetsOnly: true }),
+    }));
+
+    const replyMessageId = 'sideprofile-handshake-architect-1';
+    const architectReplyDelivery = waitForMessage(
+      sideprofileArchitect,
+      (msg) => msg.type === 'message' && /same-profile canonical reply path confirmed/.test(msg.content || '')
+    );
+    const replyAck = waitForMessage(
+      sideprofileBuilder,
+      (msg) => msg.type === 'send-ack' && msg.messageId === replyMessageId
+    );
+
+    sideprofileBuilder.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'sideprofile restart handshake received: same-profile canonical reply path confirmed.',
+      messageId: replyMessageId,
+      ackRequired: true,
+      metadata: {
+        sender: {
+          profileName: 'sideprofile',
+          windowKey: 'sideprofile',
+        },
+        handshake: {
+          received: true,
+          sameProfileReply: true,
+        },
+      },
+    }));
+
+    const [replyAckMsg, replyMsg] = await Promise.all([replyAck, architectReplyDelivery]);
+    expect(replyAckMsg.ok).toBe(true);
+    expect(replyAckMsg.status).toBe('delivered.websocket');
+    expect(replyMsg.metadata).toEqual(expect.objectContaining({
+      sender: expect.objectContaining({ profileName: 'sideprofile', windowKey: 'sideprofile' }),
+      handshake: expect.objectContaining({ received: true, sameProfileReply: true }),
+    }));
+
+    const diagnosticMessageId = 'sideprofile-handshake-diagnostic-1';
+    const diagnosticDelivery = waitForMessage(
+      sideprofileArchitect,
+      (msg) => msg.type === 'message' && /diagnostic path from main Architect/.test(msg.content || '')
+    );
+    const diagnosticAck = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === diagnosticMessageId
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'sideprofile restart handshake diagnostic path from main Architect.',
+      messageId: diagnosticMessageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'sideprofile',
+          windowKey: 'sideprofile',
+          channel: 'scoped-diagnostic',
+        },
+      },
+    }));
+
+    const [diagnosticAckMsg, diagnosticMsg] = await Promise.all([diagnosticAck, diagnosticDelivery]);
+    expect(diagnosticAckMsg.ok).toBe(true);
+    expect(diagnosticMsg.metadata).toEqual(expect.objectContaining({
+      routing: expect.objectContaining({
+        profileName: 'sideprofile',
+        windowKey: 'sideprofile',
+        channel: 'scoped-diagnostic',
+      }),
+    }));
+
+    await sleep(100);
+    expect(leakedToMain).toHaveLength(0);
+  });
+
   test('main plain canonical target does not route into scoped profile', async () => {
     const scopedReceiver = await connectAndRegister({
       port,

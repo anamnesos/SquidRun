@@ -206,6 +206,14 @@ const DAEMON_CONNECT_TIMEOUT_MS = Math.max(
   1000,
   Number.parseInt(process.env.SQUIDRUN_DAEMON_CONNECT_TIMEOUT_MS || '15000', 10) || 15000
 );
+const VISIBLE_INJECT_DELIVERY_DEDUPE_TTL_MS = Math.max(
+  10000,
+  Number.parseInt(process.env.SQUIDRUN_VISIBLE_INJECT_DEDUPE_TTL_MS || '300000', 10) || 300000
+);
+const VISIBLE_INJECT_DELIVERY_DEDUPE_MAX = Math.max(
+  100,
+  Number.parseInt(process.env.SQUIDRUN_VISIBLE_INJECT_DEDUPE_MAX || '2000', 10) || 2000
+);
 const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
 const SUPERVISOR_DAEMON_SCRIPT = path.join(__dirname, '..', '..', 'supervisor-daemon.js');
 const SUPERVISOR_PID_FILE = resolveCoordPath('runtime/supervisor.pid', { forWrite: true });
@@ -652,6 +660,7 @@ class SquidRunApp {
     this.paneHostRecoveryTimer = null;
     this.paneHostReadyIpcRegistered = false;
     this.paneHostReadyListener = null;
+    this.visibleInjectDeliveryCache = new Map();
     this.mainWindowSendRaw = null;
     this.mainWindowSendInterceptInstalled = false;
     this.websocketStartRetryTimer = null;
@@ -2233,6 +2242,66 @@ class SquidRunApp {
     }
   }
 
+  pruneVisibleInjectDeliveryCache(now = Date.now()) {
+    if (!this.visibleInjectDeliveryCache || this.visibleInjectDeliveryCache.size === 0) return;
+    for (const [key, entry] of this.visibleInjectDeliveryCache.entries()) {
+      if (!entry || Number(entry.expiresAt) <= now) {
+        this.visibleInjectDeliveryCache.delete(key);
+      }
+    }
+    while (this.visibleInjectDeliveryCache.size > VISIBLE_INJECT_DELIVERY_DEDUPE_MAX) {
+      const oldestKey = this.visibleInjectDeliveryCache.keys().next().value;
+      if (!oldestKey) break;
+      this.visibleInjectDeliveryCache.delete(oldestKey);
+    }
+  }
+
+  buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = '', windowKey = 'main', messageId = null) {
+    const stableMessageId = toNonEmptyString(messageId)
+      || toNonEmptyString(packet?.traceContext?.messageId)
+      || toNonEmptyString(packet?.traceContext?.traceId)
+      || toNonEmptyString(packet?.traceContext?.correlationId)
+      || toNonEmptyString(packet?.deliveryId);
+    if (!stableMessageId) return null;
+
+    const normalizedWindowKey = toNonEmptyString(windowKey) || 'main';
+    const normalizedPaneId = toNonEmptyString(paneId);
+    if (!normalizedPaneId) return null;
+    const chunkIndex = packet?.ipcChunk ? Number(packet.ipcChunk.index) : 0;
+    const chunkCount = packet?.ipcChunk ? Number(packet.ipcChunk.count) : 1;
+    return [
+      normalizedWindowKey,
+      normalizedPaneId,
+      stableMessageId,
+      Number.isFinite(chunkIndex) ? chunkIndex : 0,
+      Number.isFinite(chunkCount) ? chunkCount : 1,
+    ].join('|');
+  }
+
+  hasVisibleInjectDelivery(packet = {}, paneId = '', windowKey = 'main', messageId = null, now = Date.now()) {
+    const dedupeKey = this.buildVisibleInjectDeliveryDedupeKey(packet, paneId, windowKey, messageId);
+    if (!dedupeKey) return { duplicate: false, dedupeKey: null };
+    this.pruneVisibleInjectDeliveryCache(now);
+    const entry = this.visibleInjectDeliveryCache.get(dedupeKey);
+    if (entry && Number(entry.expiresAt) > now) {
+      return { duplicate: true, dedupeKey };
+    }
+    if (entry) {
+      this.visibleInjectDeliveryCache.delete(dedupeKey);
+    }
+    return { duplicate: false, dedupeKey };
+  }
+
+  recordVisibleInjectDelivery(dedupeKey, now = Date.now()) {
+    if (!dedupeKey) return;
+    this.pruneVisibleInjectDeliveryCache(now);
+    this.visibleInjectDeliveryCache.set(dedupeKey, {
+      deliveredAt: now,
+      expiresAt: now + VISIBLE_INJECT_DELIVERY_DEDUPE_TTL_MS,
+    });
+    this.pruneVisibleInjectDeliveryCache(now);
+  }
+
   routeInjectMessage(payload = {}) {
     if (!payload || typeof payload !== 'object') return false;
     const panes = Array.isArray(payload.panes)
@@ -2295,6 +2364,26 @@ class SquidRunApp {
         || String(targetWindowKey || 'main').trim() !== 'main'
       );
       if (routeToVisibleWindow) {
+        const deliveryPath = String(targetWindowKey || 'main').trim() === 'main'
+          ? 'visible_window'
+          : 'visible_window_scoped';
+        const dedupe = this.hasVisibleInjectDelivery(packet, paneId, targetWindowKey, messageId);
+        if (dedupe.duplicate) {
+          appendBusTraceEvent({
+            eventType: 'pane_ipc_handoff_deduped',
+            messageId: messageId || null,
+            deliveryId: packet.deliveryId || null,
+            paneId,
+            deliveryPath,
+            success: true,
+            dedupeKey: dedupe.dedupeKey,
+            packetBytes,
+            chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+            chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          });
+          routed = true;
+          continue;
+        }
         const delivered = this.sendToVisibleWindow('inject-message', {
           ...packet,
           startupInjection,
@@ -2308,15 +2397,16 @@ class SquidRunApp {
           messageId: messageId || null,
           deliveryId: packet.deliveryId || null,
           paneId,
-          deliveryPath: String(targetWindowKey || 'main').trim() === 'main'
-            ? 'visible_window'
-            : 'visible_window_scoped',
+          deliveryPath,
           success: Boolean(delivered),
           packetBytes,
           chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
           chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
         });
-        if (delivered) routed = true;
+        if (delivered) {
+          this.recordVisibleInjectDelivery(dedupe.dedupeKey);
+          routed = true;
+        }
         continue;
       }
 
