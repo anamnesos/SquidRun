@@ -109,7 +109,7 @@ describe('voice-broker', () => {
       session: expect.objectContaining({
         type: 'realtime',
         model: 'gpt-realtime',
-        instructions: expect.stringContaining('do not write directly to terminal panes'),
+        instructions: expect.stringContaining('You are Mira, the SquidRun Architect voice companion for James.'),
         audio: {
           output: {
             voice: 'marin',
@@ -117,6 +117,50 @@ describe('voice-broker', () => {
         },
       }),
     });
+    const payload = voiceBroker.buildRealtimeSessionPayload(config);
+    expect(payload.session.instructions).toContain('not a generic AI assistant');
+    expect(payload.session.instructions.toLowerCase()).toContain('do not write directly to terminal panes');
+    expect(payload.session.instructions).toContain('Current SquidRun context:');
+  });
+
+  test('adds compact live SquidRun context to default voice instructions', () => {
+    fs.mkdirSync(path.join(tempRoot, 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(tempRoot, 'app-status.json'), JSON.stringify({
+      session: 312,
+      mode: 'pty',
+      paneHost: {
+        degraded: false,
+        readyPanes: ['1', '2', '3'],
+      },
+    }), 'utf8');
+    fs.writeFileSync(path.join(tempRoot, 'runtime', 'agent-task-queue.json'), JSON.stringify({
+      version: 2,
+      agents: {
+        architect: {
+          pending: [],
+          active: {
+            title: 'Make voice feel like Mira',
+          },
+        },
+        builder: {
+          pending: [{ title: 'Wire voice context' }],
+          active: null,
+        },
+        oracle: {
+          pending: [],
+          active: null,
+        },
+      },
+    }), 'utf8');
+
+    const instructions = voiceBroker.buildMiraVoiceInstructions();
+
+    expect(instructions).toContain('You are Mira');
+    expect(instructions).toContain('session 312');
+    expect(instructions).toContain('ready panes 1/2/3');
+    expect(instructions).toContain('Mira/Architect: active=1');
+    expect(instructions).toContain('Make voice feel like Mira');
+    expect(instructions).toContain('Builder: active=0, pending=1');
   });
 
   test('mints Realtime client secret through injected fetch without exposing server API key', async () => {
