@@ -412,6 +412,13 @@ function clientMatchesRouteScope(info, routeScope = {}) {
   return true;
 }
 
+function canUseScopedLocalHandlerRoute(routeScope = {}) {
+  if (!routeScope?.failClosed || !messageHandler) return false;
+  const senderProfile = normalizeScopeProfile(routeScope?.senderScope?.profileName || DEFAULT_PROFILE);
+  const targetProfile = normalizeScopeProfile(routeScope?.targetScope?.profileName || DEFAULT_PROFILE);
+  return !isMainProfile(senderProfile) && senderProfile === targetProfile;
+}
+
 function markClientSeen(clientId, source = 'message', now = Date.now()) {
   const clientInfo = clients.get(clientId);
   if (!clientInfo) return null;
@@ -490,6 +497,7 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
     };
   }
 
+  const hasLocalHandlerRoute = canUseScopedLocalHandlerRoute(routeScope);
   let route = null;
   for (const info of clients.values()) {
     if (!info) continue;
@@ -505,6 +513,19 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
   }
 
   if (!route || !Number.isFinite(route.lastSeen)) {
+    if (hasLocalHandlerRoute) {
+      return {
+        healthy: true,
+        status: 'handler_route_available',
+        role: identity.role || null,
+        paneId: identity.paneId || null,
+        lastSeen: null,
+        ageMs: null,
+        staleThresholdMs,
+        source: 'local_message_handler',
+        routeScope: routeScope?.targetScope || routeScope || null,
+      };
+    }
     return {
       healthy: false,
       status: 'no_route',
@@ -1733,7 +1754,7 @@ async function handleMessage(clientId, rawData) {
       return;
     }
     const matched = matchClientsForTarget(target, routeScope);
-    if (routeScope.failClosed && matched.length === 0) {
+    if (routeScope.failClosed && matched.length === 0 && !canUseScopedLocalHandlerRoute(routeScope)) {
       const ackPayload = buildRoutingErrorAck(
         message,
         ingressTraceContext,
@@ -1844,10 +1865,22 @@ async function handleMessage(clientId, rawData) {
     const queued = websocketDelivered || Boolean(handlerAck?.queued || handlerAck?.accepted || handlerAck?.ok);
     const verified = websocketDelivered || Boolean(handlerAck?.verified);
     const ok = accepted || verified;
+    const routeScope = message.type === 'send'
+      ? resolveRouteScope(clientInfo, message)
+      : { failClosed: false, targetScope: null };
+    const scopedHandlerMiss = message.type === 'send'
+      && routeScope.ok
+      && routeScope.failClosed
+      && !websocketDelivered
+      && !accepted
+      && !verified;
 
     let status = verified
       ? (websocketDelivered ? 'delivered.websocket' : 'delivered.verified')
       : (accepted ? 'accepted.unverified' : 'unrouted');
+    if (scopedHandlerMiss) {
+      status = 'scoped_route_not_ready';
+    }
     if (handlerAck?.status) {
       status = handlerAck.status;
       if (websocketDelivered && handlerAck.verified === false) {
@@ -1865,6 +1898,11 @@ async function handleMessage(clientId, rawData) {
       status,
       wsDeliveryCount,
       handlerResult: handlerAck?.details || null,
+      failClosed: scopedHandlerMiss ? true : undefined,
+      routeScope: scopedHandlerMiss ? routeScope.targetScope : undefined,
+      error: scopedHandlerMiss
+        ? `No ready ${routeScope.targetScope.profileName} profile terminal route for target '${message.target}'`
+        : undefined,
       traceId: ingressTraceContext?.traceId || null,
       parentEventId: ingressTraceContext?.parentEventId || null,
       timestamp: Date.now(),
