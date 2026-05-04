@@ -7,6 +7,12 @@ const { resolveCoordPath } = require('../config');
 const VALID_AGENTS = new Set(['architect', 'builder', 'oracle']);
 const DEFAULT_QUEUE_RELATIVE_PATH = path.join('runtime', 'agent-task-queue.json');
 const DEFAULT_HISTORY_LIMIT = 50;
+const QUEUE_SCHEMA_VERSION = 2;
+const VALID_STATES = new Set(['queued', 'active', 'blocked', 'waiting', 'done', 'failed']);
+const VALID_RISK_CLASSES = new Set(['safe', 'caution', 'approval_required']);
+const APPROVAL_REQUIRED_PATTERN = /\b(customer|client|invoice|payment|refund|charge|bank|money|cash|trading|trade|crypto|stock|position|wallet|auth|token|credential|password|secret|api key|email customer|send email|customer-facing)\b/i;
+const SAFE_PATTERN = /\b(doc|docs|documentation|test|tests|unit test|lint|typecheck|format|static|read-only|inspect|investigate|report)\b/i;
+const CAUTION_PATTERN = /\b(infra|debug|diagnose|fix|patch|code|refactor|restartless|routing|watcher|queue|schema|migration)\b/i;
 
 function getQueuePath() {
   try {
@@ -37,6 +43,62 @@ function toPositiveMs(value, fallback = 0) {
   return numeric;
 }
 
+function toTimestampMs(value, fallback = Date.now()) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function normalizeState(value, fallback = 'queued') {
+  const normalized = trimText(value)?.toLowerCase() || null;
+  if (!normalized) return fallback;
+  if (normalized === 'pending' || normalized === 'open') return 'queued';
+  if (normalized === 'running' || normalized === 'in_progress') return 'active';
+  if (normalized === 'needs_input') return 'blocked';
+  if (normalized === 'completed') return 'done';
+  return VALID_STATES.has(normalized) ? normalized : fallback;
+}
+
+function normalizeRiskClass(value, fallback = null) {
+  const normalized = trimText(value)?.toLowerCase() || null;
+  return VALID_RISK_CLASSES.has(normalized) ? normalized : fallback;
+}
+
+function taskSearchText(input = {}) {
+  const parts = [
+    input.title,
+    input.message,
+    input.nextStep,
+    input.blockedReason,
+    input.handoffSummary,
+    input.source,
+  ];
+  if (input.metadata && typeof input.metadata === 'object') {
+    parts.push(JSON.stringify(input.metadata));
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
+function inferRiskClass(input = {}) {
+  const text = taskSearchText(input);
+  if (APPROVAL_REQUIRED_PATTERN.test(text)) return 'approval_required';
+  if (SAFE_PATTERN.test(text)) return 'safe';
+  if (CAUTION_PATTERN.test(text)) return 'caution';
+  return 'caution';
+}
+
+function normalizeContinueAfter(value) {
+  const text = trimText(value);
+  if (!text) return null;
+  const parsed = Date.parse(text);
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  return text;
+}
+
 function createTaskId(agent = 'agent') {
   return `${agent}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -51,7 +113,7 @@ function createEmptyBucket() {
 
 function buildDefaultQueueState() {
   return {
-    version: 1,
+    version: QUEUE_SCHEMA_VERSION,
     updatedAt: new Date().toISOString(),
     agents: {
       architect: createEmptyBucket(),
@@ -65,18 +127,33 @@ function normalizeTask(task, agent) {
   if (!task || typeof task !== 'object') return null;
   const message = trimText(task.message);
   if (!message) return null;
+  const state = normalizeState(task.state || task.status, 'queued');
+  const owner = normalizeAgent(task.owner) || normalizeAgent(task.agent) || agent || null;
+  const riskClass = normalizeRiskClass(task.riskClass) || inferRiskClass(task);
+  const now = Date.now();
+  const lastAdvancedAt = toTimestampMs(task.lastAdvancedAt || task.updatedAt || task.enqueuedAtMs, now);
   return {
     taskId: trimText(task.taskId) || trimText(task.id) || createTaskId(agent),
+    owner,
+    state,
+    status: state,
+    riskClass,
     title: trimText(task.title),
     message,
     source: trimText(task.source),
+    nextStep: trimText(task.nextStep),
+    blockedReason: trimText(task.blockedReason),
+    wakeTrigger: trimText(task.wakeTrigger),
+    continueAfter: normalizeContinueAfter(task.continueAfter),
+    restartPersistence: task.restartPersistence === false ? false : true,
+    handoffSummary: trimText(task.handoffSummary),
     priority: trimText(task.priority) || 'normal',
     completionSentinel: trimText(task.completionSentinel),
     idleCompletionMs: toPositiveMs(task.idleCompletionMs, 0),
     responseTimeoutMs: toPositiveMs(task.responseTimeoutMs, 0),
     metadata: task.metadata && typeof task.metadata === 'object' ? { ...task.metadata } : {},
-    status: trimText(task.status) || 'pending',
-    enqueuedAtMs: Number(task.enqueuedAtMs || Date.now()),
+    enqueuedAtMs: toTimestampMs(task.enqueuedAtMs, now),
+    lastAdvancedAt,
     lastDispatchAtMs: toPositiveMs(task.lastDispatchAtMs, 0),
     firstActivityAtMs: toPositiveMs(task.firstActivityAtMs, 0),
     completedAtMs: toPositiveMs(task.completedAtMs, 0),
@@ -107,6 +184,7 @@ function normalizeQueueState(raw) {
   if (trimText(state.updatedAt)) {
     normalized.updatedAt = state.updatedAt;
   }
+  normalized.version = QUEUE_SCHEMA_VERSION;
   return normalized;
 }
 
@@ -156,8 +234,9 @@ function enqueueTask(input = {}, options = {}) {
     ...input,
     agent,
     message,
-    status: 'pending',
+    state: 'queued',
     enqueuedAtMs: Date.now(),
+    lastAdvancedAt: Date.now(),
   }, agent);
   bucket.pending.push(task);
   state.agents[agent] = bucket;
@@ -181,7 +260,11 @@ function listQueue(options = {}) {
       active: bucket.active ? {
         taskId: bucket.active.taskId,
         title: bucket.active.title || null,
-        status: bucket.active.status || 'active',
+        state: bucket.active.state || 'active',
+        status: bucket.active.status || bucket.active.state || 'active',
+        riskClass: bucket.active.riskClass || 'caution',
+        nextStep: bucket.active.nextStep || null,
+        blockedReason: bucket.active.blockedReason || null,
       } : null,
       history: bucket.history.length,
     };
@@ -195,7 +278,136 @@ function listQueue(options = {}) {
   };
 }
 
-function completeActiveTask(input = {}, options = {}) {
+function findTaskInBucket(bucket, taskId = null) {
+  if (!bucket) return { task: null, location: null, index: -1 };
+  const id = trimText(taskId);
+  if (bucket.active && (!id || bucket.active.taskId === id)) {
+    return { task: bucket.active, location: 'active', index: -1 };
+  }
+  if (id) {
+    const pendingIndex = bucket.pending.findIndex((task) => task.taskId === id);
+    if (pendingIndex >= 0) {
+      return { task: bucket.pending[pendingIndex], location: 'pending', index: pendingIndex };
+    }
+  }
+  return { task: null, location: null, index: -1 };
+}
+
+function updateTaskAdvanced(task, patch = {}) {
+  const nextState = patch.state ? normalizeState(patch.state, task.state || 'queued') : (task.state || 'queued');
+  const nextTask = normalizeTask({
+    ...task,
+    ...patch,
+    state: nextState,
+    status: nextState,
+    lastAdvancedAt: Date.now(),
+  }, task.owner || patch.owner || 'agent');
+  return nextTask;
+}
+
+function activateTask(input = {}, options = {}) {
+  const agent = normalizeAgent(input.agent || options.agent);
+  if (!agent) throw new Error('invalid_agent');
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const bucket = state.agents[agent] || createEmptyBucket();
+  if (bucket.active) {
+    return { ok: false, queuePath, reason: 'active_task_exists', task: bucket.active };
+  }
+  const taskId = trimText(input.taskId);
+  const index = taskId ? bucket.pending.findIndex((task) => task.taskId === taskId) : 0;
+  if (index < 0 || !bucket.pending[index]) {
+    return { ok: false, queuePath, reason: 'no_pending_task' };
+  }
+  const [task] = bucket.pending.splice(index, 1);
+  bucket.active = updateTaskAdvanced(task, {
+    state: 'active',
+    nextStep: input.nextStep || task.nextStep,
+    handoffSummary: input.handoffSummary || task.handoffSummary,
+  });
+  state.agents[agent] = bucket;
+  writeQueue(state, queuePath);
+  return { ok: true, queuePath, task: bucket.active };
+}
+
+function blockTask(input = {}, options = {}) {
+  const agent = normalizeAgent(input.agent || options.agent);
+  if (!agent) throw new Error('invalid_agent');
+  const blockedReason = trimText(input.blockedReason || input.reason);
+  if (!blockedReason) throw new Error('blocked_reason_required');
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const bucket = state.agents[agent] || createEmptyBucket();
+  const found = findTaskInBucket(bucket, input.taskId);
+  if (!found.task) return { ok: false, queuePath, reason: 'task_not_found' };
+  const blocked = updateTaskAdvanced(found.task, {
+    state: 'blocked',
+    blockedReason,
+    wakeTrigger: input.wakeTrigger || found.task.wakeTrigger,
+    continueAfter: input.continueAfter || found.task.continueAfter,
+    nextStep: input.nextStep || found.task.nextStep,
+    handoffSummary: input.handoffSummary || found.task.handoffSummary,
+  });
+  if (found.location === 'active') bucket.active = blocked;
+  else bucket.pending[found.index] = blocked;
+  state.agents[agent] = bucket;
+  writeQueue(state, queuePath);
+  return { ok: true, queuePath, task: blocked };
+}
+
+function unblockTask(input = {}, options = {}) {
+  const agent = normalizeAgent(input.agent || options.agent);
+  if (!agent) throw new Error('invalid_agent');
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const bucket = state.agents[agent] || createEmptyBucket();
+  const found = findTaskInBucket(bucket, input.taskId);
+  if (!found.task) return { ok: false, queuePath, reason: 'task_not_found' };
+  const unblocked = updateTaskAdvanced(found.task, {
+    state: found.location === 'active' ? 'active' : 'queued',
+    blockedReason: null,
+    wakeTrigger: input.wakeTrigger || found.task.wakeTrigger,
+    continueAfter: input.continueAfter || found.task.continueAfter,
+    nextStep: input.nextStep || found.task.nextStep,
+    handoffSummary: input.handoffSummary || found.task.handoffSummary,
+  });
+  if (found.location === 'active') bucket.active = unblocked;
+  else bucket.pending[found.index] = unblocked;
+  state.agents[agent] = bucket;
+  writeQueue(state, queuePath);
+  return { ok: true, queuePath, task: unblocked };
+}
+
+function continueTask(input = {}, options = {}) {
+  const agent = normalizeAgent(input.agent || options.agent);
+  if (!agent) throw new Error('invalid_agent');
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const bucket = state.agents[agent] || createEmptyBucket();
+  const found = findTaskInBucket(bucket, input.taskId);
+  if (!found.task) return { ok: false, queuePath, reason: 'task_not_found' };
+  if (found.task.riskClass === 'approval_required') {
+    return { ok: false, queuePath, reason: 'approval_required', task: found.task };
+  }
+  if (bucket.active && found.location !== 'active') {
+    return { ok: false, queuePath, reason: 'active_task_exists', task: bucket.active };
+  }
+  const continued = updateTaskAdvanced(found.task, {
+    state: 'active',
+    blockedReason: null,
+    nextStep: input.nextStep || found.task.nextStep,
+    handoffSummary: input.handoffSummary || found.task.handoffSummary,
+  });
+  if (found.location === 'pending') {
+    bucket.pending.splice(found.index, 1);
+  }
+  bucket.active = continued;
+  state.agents[agent] = bucket;
+  writeQueue(state, queuePath);
+  return { ok: true, queuePath, task: continued };
+}
+
+function closeActiveTask(input = {}, options = {}, closeState = 'done') {
   const agent = normalizeAgent(input.agent || options.agent);
   if (!agent) {
     throw new Error('invalid_agent');
@@ -210,22 +422,30 @@ function completeActiveTask(input = {}, options = {}) {
       reason: 'no_active_task',
     };
   }
-  const completedTask = {
-    ...bucket.active,
-    status: 'completed',
-    completionReason: trimText(input.reason) || 'manual_complete',
-    completedAtMs: Date.now(),
-  };
+  const closedTask = updateTaskAdvanced(bucket.active, {
+    state: closeState,
+    completionReason: trimText(input.reason) || (closeState === 'failed' ? 'manual_fail' : 'manual_complete'),
+    handoffSummary: input.handoffSummary || bucket.active.handoffSummary,
+  });
+  closedTask.completedAtMs = Date.now();
   bucket.active = null;
-  bucket.history.push(completedTask);
+  bucket.history.push(closedTask);
   bucket.history = bucket.history.slice(-DEFAULT_HISTORY_LIMIT);
   state.agents[agent] = bucket;
   writeQueue(state, queuePath);
   return {
     ok: true,
     queuePath,
-    task: completedTask,
+    task: closedTask,
   };
+}
+
+function completeActiveTask(input = {}, options = {}) {
+  return closeActiveTask(input, options, 'done');
+}
+
+function failActiveTask(input = {}, options = {}) {
+  return closeActiveTask(input, options, 'failed');
 }
 
 function clearQueue(input = {}, options = {}) {
@@ -257,9 +477,16 @@ function usage() {
   console.log('Usage: node ui/scripts/hm-task-queue.js <command> [options]');
   console.log('Commands:');
   console.log('  enqueue --agent <architect|builder|oracle> --message <text> [--title <text>] [--priority <level>]');
-  console.log('          [--source <role>] [--completion-sentinel <text>] [--idle-completion-ms <ms>] [--response-timeout-ms <ms>]');
+  console.log('          [--source <role>] [--risk-class <safe|caution|approval_required>] [--next-step <text>]');
+  console.log('          [--blocked-reason <text>] [--wake-trigger <text>] [--continue-after <time>] [--handoff-summary <text>]');
+  console.log('          [--completion-sentinel <text>] [--idle-completion-ms <ms>] [--response-timeout-ms <ms>]');
   console.log('  list');
+  console.log('  activate --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
+  console.log('  block --agent <architect|builder|oracle> [--task-id <id>] --reason <text> [--wake-trigger <text>] [--continue-after <time>]');
+  console.log('  unblock --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
+  console.log('  continue --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
   console.log('  complete --agent <architect|builder|oracle> [--reason <text>]');
+  console.log('  fail --agent <architect|builder|oracle> [--reason <text>]');
   console.log('  clear [--agent <architect|builder|oracle>]');
 }
 
@@ -293,8 +520,13 @@ function formatListResult(result) {
   for (const agent of ['architect', 'builder', 'oracle']) {
     const summary = result.summary[agent];
     lines.push(
-      `${agent}: pending=${summary.pending} active=${summary.active ? `${summary.active.taskId}:${summary.active.status}` : 'none'} history=${summary.history}`
+      `${agent}: pending=${summary.pending} active=${summary.active ? `${summary.active.taskId}:${summary.active.state}` : 'none'} history=${summary.history}`
     );
+    if (summary.active) {
+      lines.push(
+        `  carrying=${summary.active.title || summary.active.taskId} risk=${summary.active.riskClass} next=${summary.active.nextStep || 'n/a'} blocked=${summary.active.blockedReason || 'none'}`
+      );
+    }
   }
   return lines.join('\n');
 }
@@ -314,6 +546,13 @@ function main(argv = process.argv.slice(2)) {
       message: getOption(options, 'message'),
       source: getOption(options, 'source'),
       priority: getOption(options, 'priority'),
+      riskClass: getOption(options, 'risk-class'),
+      nextStep: getOption(options, 'next-step'),
+      blockedReason: getOption(options, 'blocked-reason'),
+      wakeTrigger: getOption(options, 'wake-trigger'),
+      continueAfter: getOption(options, 'continue-after'),
+      restartPersistence: getOption(options, 'restart-persistence') === 'false' ? false : true,
+      handoffSummary: getOption(options, 'handoff-summary'),
       completionSentinel: getOption(options, 'completion-sentinel'),
       idleCompletionMs: getOption(options, 'idle-completion-ms'),
       responseTimeoutMs: getOption(options, 'response-timeout-ms'),
@@ -328,10 +567,71 @@ function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
+  if (command === 'activate') {
+    const result = activateTask({
+      agent: getOption(options, 'agent'),
+      taskId: getOption(options, 'task-id'),
+      nextStep: getOption(options, 'next-step'),
+      handoffSummary: getOption(options, 'handoff-summary'),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+
+  if (command === 'block') {
+    const result = blockTask({
+      agent: getOption(options, 'agent'),
+      taskId: getOption(options, 'task-id'),
+      reason: getOption(options, 'reason'),
+      blockedReason: getOption(options, 'blocked-reason'),
+      nextStep: getOption(options, 'next-step'),
+      wakeTrigger: getOption(options, 'wake-trigger'),
+      continueAfter: getOption(options, 'continue-after'),
+      handoffSummary: getOption(options, 'handoff-summary'),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+
+  if (command === 'unblock') {
+    const result = unblockTask({
+      agent: getOption(options, 'agent'),
+      taskId: getOption(options, 'task-id'),
+      nextStep: getOption(options, 'next-step'),
+      wakeTrigger: getOption(options, 'wake-trigger'),
+      continueAfter: getOption(options, 'continue-after'),
+      handoffSummary: getOption(options, 'handoff-summary'),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+
+  if (command === 'continue') {
+    const result = continueTask({
+      agent: getOption(options, 'agent'),
+      taskId: getOption(options, 'task-id'),
+      nextStep: getOption(options, 'next-step'),
+      handoffSummary: getOption(options, 'handoff-summary'),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+
   if (command === 'complete') {
     const result = completeActiveTask({
       agent: getOption(options, 'agent'),
       reason: getOption(options, 'reason'),
+      handoffSummary: getOption(options, 'handoff-summary'),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+
+  if (command === 'fail') {
+    const result = failActiveTask({
+      agent: getOption(options, 'agent'),
+      reason: getOption(options, 'reason'),
+      handoffSummary: getOption(options, 'handoff-summary'),
     });
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
@@ -360,15 +660,25 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_QUEUE_RELATIVE_PATH,
+  QUEUE_SCHEMA_VERSION,
   VALID_AGENTS,
+  VALID_STATES,
+  VALID_RISK_CLASSES,
   getQueuePath,
   buildDefaultQueueState,
   normalizeQueueState,
+  normalizeTask,
+  inferRiskClass,
   readQueue,
   writeQueue,
   enqueueTask,
   listQueue,
+  activateTask,
+  blockTask,
+  unblockTask,
+  continueTask,
   completeActiveTask,
+  failActiveTask,
   clearQueue,
   parseArgs,
   formatListResult,
