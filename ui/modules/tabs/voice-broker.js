@@ -348,20 +348,10 @@ function buildSpeakMiraReplyEvents(text) {
   if (!reply) return [];
   return [
     {
-      type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.conversationItemCreate,
-      item: {
-        type: 'message',
-        role: 'user',
-        content: [{
-          type: 'input_text',
-          text: `Speak this Mira/Architect reply aloud exactly. Do not add anything:\n${reply}`,
-        }],
-      },
-    },
-    {
       type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.responseCreate,
       response: {
-        modalities: ['audio', 'text'],
+        input: [],
+        output_modalities: ['audio'],
         instructions: `Say exactly this Mira/Architect reply and nothing else:\n${reply}`,
       },
     },
@@ -503,11 +493,24 @@ function startAudioTranscriptionFallback(session, options = {}) {
   }
   recorder.addEventListener?.('dataavailable', (event) => {
     const blob = event.data;
+    const nowMs = Date.now();
     void postVoiceDiagnostic('voice.media_recorder.dataavailable', {
       blobSize: Number(blob?.size || 0),
       mimeType: blob?.type || null,
     }, { status: options.status || session.status || lastStatus, fetchImpl: options.fetchImpl });
     if (!blob || Number(blob.size || 0) <= 0) return;
+    const speechRecentlyActive = session.fallbackSpeechActive === true
+      || (
+        Number.isFinite(Number(session.lastSpeechActivityMs))
+        && (nowMs - Number(session.lastSpeechActivityMs)) <= 2500
+      );
+    if (!speechRecentlyActive) {
+      void postVoiceDiagnostic('voice.audio_chunk.silence_skipped', {
+        blobSize: Number(blob.size || 0),
+        mimeType: blob.type || null,
+      }, { status: options.status || session.status || lastStatus, fetchImpl: options.fetchImpl });
+      return;
+    }
     void postAudioChunkToBroker(blob, options.status || session.status || lastStatus, options.fetchImpl || globalThis.fetch)
       .catch((err) => appendSessionLog(`Mic transcription failed: ${err.message}`));
   });
@@ -691,6 +694,8 @@ async function createVoiceRealtimeSession(options = {}) {
   const session = {
     dataChannel,
     egressSinceMs: Date.now(),
+    fallbackSpeechActive: false,
+    lastSpeechActivityMs: 0,
     peerConnection,
     remoteAudio,
     speakingMiraReply: false,
@@ -727,19 +732,34 @@ async function createVoiceRealtimeSession(options = {}) {
       eventType,
       hasTranscript: Boolean(payload.transcript || payload.text || payload.delta),
       itemRole: payload.item?.role || null,
+      errorCode: payload.error?.code || null,
+      errorMessage: payload.error?.message || null,
+      errorType: payload.error?.type || null,
     }, { status, fetchImpl });
+    if (eventType === 'input_audio_buffer.speech_started') {
+      session.fallbackSpeechActive = true;
+      session.lastSpeechActivityMs = Date.now();
+    }
+    if (eventType === 'input_audio_buffer.speech_stopped') {
+      session.fallbackSpeechActive = false;
+      session.lastSpeechActivityMs = Date.now();
+    }
     if (
       eventType === 'response.created'
       || eventType === 'response.output_item.added'
       || eventType === 'response.audio.delta'
+      || eventType === 'response.output_audio.delta'
       || eventType === 'response.audio_transcript.delta'
+      || eventType === 'response.output_audio_transcript.delta'
     ) {
       cancelGenericRealtimeResponse(session, eventType);
     }
     if (
       eventType === 'response.done'
       || eventType === 'response.audio.done'
+      || eventType === 'response.output_audio.done'
       || eventType === 'response.audio_transcript.done'
+      || eventType === 'response.output_audio_transcript.done'
     ) {
       session.speakingMiraReply = false;
     }

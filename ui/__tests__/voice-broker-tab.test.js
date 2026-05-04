@@ -304,6 +304,15 @@ describe('voice-broker tab', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' })
       .mockResolvedValue({ ok: true, status: 202, json: async () => ({ ok: true, text: 'fallback heard me' }) });
+    const dataChannel = {
+      handlers: {},
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      readyState: 'open',
+      send: jest.fn(),
+      close: jest.fn(),
+    };
 
     await tab.createVoiceRealtimeSession({
       status: {
@@ -328,7 +337,7 @@ describe('voice-broker tab', () => {
       },
       RTCPeerConnection: jest.fn(() => ({
         addTrack: jest.fn(),
-        createDataChannel: () => ({ addEventListener: jest.fn(), readyState: 'open', send: jest.fn(), close: jest.fn() }),
+        createDataChannel: () => dataChannel,
         createOffer: async () => ({ sdp: 'offer-sdp' }),
         setLocalDescription: jest.fn(),
         setRemoteDescription: jest.fn(),
@@ -337,6 +346,9 @@ describe('voice-broker tab', () => {
     });
 
     expect(recorder.start).toHaveBeenCalledWith(4000);
+    dataChannel.handlers.message({
+      data: JSON.stringify({ type: 'input_audio_buffer.speech_started' }),
+    });
     recorder.handlers.dataavailable({ data: blob });
     await Promise.resolve();
     await Promise.resolve();
@@ -636,15 +648,10 @@ describe('voice-broker tab', () => {
 
     expect(dataChannel.sent).toEqual([
       expect.objectContaining({
-        type: 'conversation.item.create',
-        item: expect.objectContaining({
-          role: 'user',
-        }),
-      }),
-      expect.objectContaining({
         type: 'response.create',
         response: expect.objectContaining({
-          modalities: ['audio', 'text'],
+          input: [],
+          output_modalities: ['audio'],
           instructions: expect.stringContaining('This is Mira speaking through the voice mouth.'),
         }),
       }),
