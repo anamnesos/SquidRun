@@ -606,6 +606,43 @@ describe('daemon-handlers.js module', () => {
         }));
         expect(terminal.spawnAgent).not.toHaveBeenCalledWith('2');
       });
+
+      test('does not respawn live PTYs when main resend omits createdAt and scrollback', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+
+        const data = {
+          terminals: [
+            {
+              paneId: '2',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: '',
+              cwd: '/project/instances/builder',
+            },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(reattachTerminalFn).toHaveBeenCalledWith('2', '', expect.objectContaining({
+          createdAt: null,
+        }));
+        expect(terminal.spawnAgent).not.toHaveBeenCalledWith('2');
+      });
     });
 
     describe('claude-state-changed handler', () => {
