@@ -361,11 +361,16 @@ async function createVoiceRealtimeSession(options = {}) {
     throw new Error('RTCPeerConnection is unavailable.');
   }
 
-  const tokenResponse = await fetchImpl(clientSecretUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  });
+  let tokenResponse;
+  try {
+    tokenResponse = await fetchImpl(clientSecretUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+  } catch (err) {
+    throw new Error(`Voice broker fetch failed at ${clientSecretUrl}: ${err.message}`);
+  }
   const tokenPayload = await tokenResponse.json();
   if (!tokenResponse.ok || tokenPayload?.ok === false) {
     throw new Error(tokenPayload?.reason || 'Realtime client secret request failed.');
@@ -413,14 +418,20 @@ async function createVoiceRealtimeSession(options = {}) {
 
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
-  const sdpResponse = await fetchImpl(options.callsUrl || OPENAI_REALTIME_CALLS_URL, {
-    method: 'POST',
-    body: offer.sdp,
-    headers: {
-      Authorization: `Bearer ${ephemeralKey}`,
-      'Content-Type': 'application/sdp',
-    },
-  });
+  const callsUrl = options.callsUrl || OPENAI_REALTIME_CALLS_URL;
+  let sdpResponse;
+  try {
+    sdpResponse = await fetchImpl(callsUrl, {
+      method: 'POST',
+      body: offer.sdp,
+      headers: {
+        Authorization: `Bearer ${ephemeralKey}`,
+        'Content-Type': 'application/sdp',
+      },
+    });
+  } catch (err) {
+    throw new Error(`Realtime SDP fetch failed at ${callsUrl}: ${err.message}`);
+  }
   if (!sdpResponse.ok) {
     throw new Error('Realtime SDP exchange failed.');
   }
@@ -441,7 +452,11 @@ async function startVoiceSession(options = {}) {
   setSessionStatus('Connecting', 'connecting');
   setSessionButtonState();
   try {
-    activeSession = await createVoiceRealtimeSession(options);
+    const sessionOptions = { ...options };
+    if (!sessionOptions.status) {
+      sessionOptions.status = await refreshVoiceBrokerStatus();
+    }
+    activeSession = await createVoiceRealtimeSession(sessionOptions);
     setSessionStatus('Connected', 'connected');
     appendSessionLog('Realtime session connected');
     setSessionButtonState();
