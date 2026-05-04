@@ -140,6 +140,23 @@ jest.mock('../modules/daemon-handlers', () => ({
   setStatusCallbacks: jest.fn(),
   setDeliveryAckCallback: jest.fn(),
   setDeliveryStatusCallback: jest.fn(),
+  selectProject: jest.fn(),
+  teardownDaemonListeners: jest.fn(),
+  setupClaudeStateListener: jest.fn(),
+  handleSessionTimerState: jest.fn(),
+  setupCostAlertListener: jest.fn(),
+  setupRefreshButtons: jest.fn(),
+  setupSyncIndicator: jest.fn(),
+  setupProjectListener: jest.fn(),
+  setupAutoTriggerListener: jest.fn(),
+  setupHandoffListener: jest.fn(),
+  setupConflictResolutionListener: jest.fn(),
+  setupRollbackListener: jest.fn(),
+  setupDaemonListeners: jest.fn(() => ({ replayDaemonConnected: jest.fn().mockResolvedValue() })),
+  loadInitialProject: jest.fn().mockResolvedValue(),
+  loadInitialAgentTasks: jest.fn().mockResolvedValue(),
+  setupPaneProjectClicks: jest.fn(),
+  loadPaneProjects: jest.fn().mockResolvedValue(),
 }));
 
 // Mock notifications

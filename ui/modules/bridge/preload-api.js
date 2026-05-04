@@ -1,6 +1,7 @@
 'use strict';
 
 const { createSafeIpc } = require('./safe-ipc');
+const { requestDaemonTerminalSnapshot } = require('../daemon-snapshot');
 
 function toPaneChannel(prefix, paneId) {
   const normalizedPaneId = String(paneId || '').trim();
@@ -161,6 +162,10 @@ function createPreloadApi(ipcRenderer) {
       list: () => ipc.invoke('list-processes'),
       kill: (processId) => ipc.invoke('kill-process', processId),
       getOutput: (processId) => ipc.invoke('get-process-output', processId),
+    },
+
+    daemon: {
+      terminalSnapshot: (options = {}) => requestDaemonTerminalSnapshot(options),
     },
   };
 

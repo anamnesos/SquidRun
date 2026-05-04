@@ -803,6 +803,68 @@ function markTerminalsReady() {
   checkInitComplete();
 }
 
+async function requestDaemonTerminalSnapshotAfterReload(timeoutMs = 1500) {
+  const directSnapshotFn = bridgeApi?.daemon?.terminalSnapshot
+    || window?.squidrun?.daemon?.terminalSnapshot
+    || window?.squidrunAPI?.daemon?.terminalSnapshot;
+
+  if (typeof directSnapshotFn === 'function') {
+    try {
+      const snapshot = await directSnapshotFn({ timeoutMs });
+      if (snapshot?.ok && Array.isArray(snapshot.terminals)) {
+        return snapshot;
+      }
+      log.warn('Init', `Direct daemon snapshot unavailable: ${snapshot?.reason || 'unknown'}`);
+    } catch (err) {
+      log.warn('Init', `Direct daemon snapshot failed: ${err?.message || err}`);
+    }
+  }
+
+  try {
+    const snapshot = await ipcRenderer.invoke('get-daemon-terminal-snapshot');
+    if (snapshot?.ok && Array.isArray(snapshot.terminals)) {
+      return snapshot;
+    }
+    log.warn('Init', `Main daemon snapshot unavailable: ${snapshot?.reason || 'unknown'}`);
+  } catch (err) {
+    log.warn('Init', `Main daemon snapshot IPC unavailable: ${err?.message || err}`);
+  }
+
+  return null;
+}
+
+async function recoverMissedDaemonConnectedAfterReload(daemonListenerController) {
+  if (initState.terminalsReady) {
+    return { ok: true, skipped: true, reason: 'terminals_ready' };
+  }
+  if (
+    !daemonListenerController
+    || typeof daemonListenerController.replayDaemonConnected !== 'function'
+  ) {
+    log.warn('Init', 'Daemon replay control unavailable after listener attach');
+    return { ok: false, reason: 'replay_unavailable' };
+  }
+
+  const snapshot = await requestDaemonTerminalSnapshotAfterReload();
+  if (initState.terminalsReady) {
+    return { ok: true, skipped: true, reason: 'terminals_ready_after_snapshot' };
+  }
+  if (!snapshot || !Array.isArray(snapshot.terminals) || snapshot.terminals.length === 0) {
+    return { ok: false, reason: 'snapshot_unavailable' };
+  }
+
+  log.info(
+    'Init',
+    `Replaying daemon-connected from ${snapshot.source || 'snapshot'} after listener attach (${snapshot.terminals.length} terminal(s))`
+  );
+  await daemonListenerController.replayDaemonConnected({
+    terminals: snapshot.terminals,
+    replayed: true,
+    source: snapshot.source || 'snapshot',
+  });
+  return { ok: true, replayed: true, terminalCount: snapshot.terminals.length };
+}
+
 function dismissStartupLoadingOverlay() {
   const overlay = document.getElementById('startupLoadingOverlay');
   if (!overlay || overlay.dataset.dismissed === 'true') return;
@@ -2768,12 +2830,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupRightPanel(terminal.handleResize, bus);  // All tab setup now handled internally
   // Setup daemon listeners (for terminal reconnection)
   // Pass markTerminalsReady callback to fix auto-spawn race condition
-  daemonHandlers.setupDaemonListeners(
+  const daemonListenerController = daemonHandlers.setupDaemonListeners(
     terminal.initTerminals,
     terminal.reattachTerminal,
     terminal.setReconnectedToExisting,
     markTerminalsReady
   );
+  await recoverMissedDaemonConnectedAfterReload(daemonListenerController);
 
   // Load initial project path
   await daemonHandlers.loadInitialProject();

@@ -161,6 +161,44 @@ describe('daemon-handlers.js module', () => {
     });
   });
 
+  describe('daemon-connected replay control', () => {
+    test('setupDaemonListeners returns idempotent replay function for terminal snapshots', async () => {
+      const initTerminals = jest.fn().mockResolvedValue();
+      const reattachTerminal = jest.fn().mockResolvedValue();
+      const setReconnected = jest.fn();
+      const onTerminalsReady = jest.fn();
+
+      const controller = daemonHandlers.setupDaemonListeners(
+        initTerminals,
+        reattachTerminal,
+        setReconnected,
+        onTerminalsReady
+      );
+
+      expect(controller).toBeDefined();
+      expect(typeof controller.replayDaemonConnected).toBe('function');
+
+      await controller.replayDaemonConnected({
+        terminals: [
+          {
+            paneId: '1',
+            alive: true,
+            mode: 'dry-run',
+            scrollback: 'Architect ready',
+            createdAt: 123,
+          },
+        ],
+      });
+
+      expect(setReconnected).toHaveBeenCalledWith(true);
+      expect(reattachTerminal).toHaveBeenCalledWith('1', 'Architect ready', { createdAt: 123 });
+      expect(terminal.initTerminal).toHaveBeenCalledWith('2');
+      expect(terminal.initTerminal).toHaveBeenCalledWith('3');
+      expect(onTerminalsReady).toHaveBeenCalledWith(false);
+      expect(initTerminals).not.toHaveBeenCalled();
+    });
+  });
+
   describe('showToast', () => {
     test('should delegate to notifications.showToast', () => {
       daemonHandlers.showToast('Test message', 'info');

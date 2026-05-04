@@ -216,6 +216,17 @@ function registerProcessHandlers(ctx) {
       toPositiveInt(process.env.SQUIDRUN_AGENT_RESPONSE_WATCHDOG_MS, 15 * 60 * 1000)
     ),
   }));
+
+  ipcMain.handle('get-daemon-terminal-snapshot', () => {
+    const terminals = typeof ctx.daemonClient?.getTerminals === 'function'
+      ? ctx.daemonClient.getTerminals()
+      : [];
+    return {
+      ok: ctx.daemonClient?.connected === true,
+      source: 'main-daemon-client',
+      terminals: Array.isArray(terminals) ? terminals : [],
+    };
+  });
 }
 
 
@@ -228,6 +239,7 @@ function unregisterProcessHandlers(ctx) {
     ipcMain.removeHandler('get-process-output');
     ipcMain.removeHandler('daemon-is-process-running');
     ipcMain.removeHandler('get-daemon-runtime-config');
+    ipcMain.removeHandler('get-daemon-terminal-snapshot');
 }
 
 registerProcessHandlers.unregister = unregisterProcessHandlers;

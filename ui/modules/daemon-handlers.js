@@ -523,7 +523,118 @@ function setupSyncIndicator() {
 // DAEMON LISTENERS
 // ============================================================
 
-function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {       
+async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {
+  const { terminals: existingTerminals } = data || {};
+  const terminalList = Array.isArray(existingTerminals) ? existingTerminals : [];
+  const aliveCount = terminalList.filter((term) => term?.alive).length;
+  const paneSummary = terminalList
+    .map((term) => `${String(term?.paneId ?? '?')}:${term?.alive ? 'up' : 'down'}`)
+    .join(', ');
+  log.info(
+    'Daemon',
+    `Connected: terminals=${terminalList.length}, alive=${aliveCount}, panes=[${paneSummary || 'none'}]`
+  );
+
+  if (existingTerminals && existingTerminals.length > 0) {
+    updateConnectionStatus('Reconnecting to existing sessions...');
+    const panesWithCli = new Set();
+    const panesNeedingSpawn = new Set();
+
+    for (const term of existingTerminals) {
+      if (!term || !term.alive) continue;
+      const paneId = String(term.paneId);
+      if (await hasCliContent(term.scrollback, term)) {
+        panesWithCli.add(paneId);
+      } else {
+        panesNeedingSpawn.add(paneId);
+      }
+    }
+
+    setReconnectedFn(true);
+    if (panesNeedingSpawn.size > 0) {
+      log.info('Daemon', `Detected empty CLI shells, will spawn for panes: ${[...panesNeedingSpawn].join(', ')}`);
+    } else {
+      log.info('Daemon', 'All alive terminals have CLI content, skipping auto-spawn');
+    }
+
+    const existingPaneIds = new Set();
+    for (const term of existingTerminals) {
+      if (term.alive) {
+        const paneId = String(term.paneId);
+        const expectedDir = resolvePaneCwd(paneId);
+        const cwd = term.cwd;
+        const hasMismatch = expectedDir && cwd &&
+          normalizePath(expectedDir) !== normalizePath(cwd);
+
+        if (hasMismatch) {
+          log.warn('Reattach', `Pane ${paneId} cwd mismatch (expected: ${expectedDir}, got: ${cwd}) - updating session state to correct cwd`);
+          term.cwd = expectedDir;
+        }
+
+        existingPaneIds.add(paneId);
+        await reattachTerminalFn(paneId, term.scrollback, { createdAt: term.createdAt || null });
+      }
+    }
+
+    const missingPanes = PANE_IDS.filter(id => !existingPaneIds.has(id));
+    if (missingPanes.length > 0) {
+      log.info('Daemon', 'Creating missing terminals for panes:', missingPanes);
+      for (const paneId of missingPanes) {
+        const terminal = require('./terminal');
+        await terminal.initTerminal(paneId);
+      }
+    }
+
+    if (missingPanes.length > 0) {
+      for (const paneId of missingPanes) {
+        panesNeedingSpawn.add(String(paneId));
+      }
+    }
+
+    if (panesNeedingSpawn.size > 0) {
+      let autoSpawnEnabled = true;
+      try {
+        const settings = await invokeBridge('get-settings');
+        if (settings && settings.autoSpawn === false) {
+          autoSpawnEnabled = false;
+        }
+        if (settings && settings.autonomyConsentGiven !== true) {
+          autoSpawnEnabled = false;
+          log.info('Daemon', 'Auto-spawn blocked pending autonomy consent');
+        }
+      } catch (err) {
+        log.warn('Daemon', `Failed to read settings for auto-spawn: ${err.message}`);
+      }
+
+      if (autoSpawnEnabled) {
+        updateConnectionStatus(`Spawning agents in panes: ${[...panesNeedingSpawn].join(', ')}`);
+        const terminal = require('./terminal');
+        for (const paneId of panesNeedingSpawn) {
+          try {
+            await terminal.spawnAgent(paneId);
+          } catch (err) {
+            log.error('Daemon', `Failed to spawn CLI for pane ${paneId}`, err);
+          }
+        }
+      } else {
+        log.info('Daemon', `Auto-spawn disabled; leaving panes empty: ${[...panesNeedingSpawn].join(', ')}`);
+      }
+    }
+
+    updateConnectionStatus(`Restored ${existingTerminals.length} terminal(s)${missingPanes.length > 0 ? `, created ${missingPanes.length} new` : ''}`);
+  } else {
+    log.info('Daemon', 'No existing terminals, creating new ones...');
+    updateConnectionStatus('Creating terminals...');
+    await initTerminalsFn();
+    updateConnectionStatus('Ready');
+  }
+
+  if (onTerminalsReadyFn) {
+    onTerminalsReadyFn(false);
+  }
+}
+
+function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {
   clearScopedIpcListeners('daemon-core');
   ensureDaemonRuntimeConfigLoaded();
 
@@ -539,114 +650,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
   // Handle initial daemon connection with existing terminals
   registerScopedIpcListener('daemon-core', 'daemon-connected', async (event, data) => {
-    const { terminals: existingTerminals } = data || {};
-    const terminalList = Array.isArray(existingTerminals) ? existingTerminals : [];
-    const aliveCount = terminalList.filter((term) => term?.alive).length;
-    const paneSummary = terminalList
-      .map((term) => `${String(term?.paneId ?? '?')}:${term?.alive ? 'up' : 'down'}`)
-      .join(', ');
-    log.info(
-      'Daemon',
-      `Connected: terminals=${terminalList.length}, alive=${aliveCount}, panes=[${paneSummary || 'none'}]`
-    );
-
-    if (existingTerminals && existingTerminals.length > 0) {
-      updateConnectionStatus('Reconnecting to existing sessions...');
-      const panesWithCli = new Set();
-      const panesNeedingSpawn = new Set();
-
-      for (const term of existingTerminals) {
-        if (!term || !term.alive) continue;
-        const paneId = String(term.paneId);
-        if (await hasCliContent(term.scrollback, term)) {
-          panesWithCli.add(paneId);
-        } else {
-          panesNeedingSpawn.add(paneId);
-        }
-      }
-
-      setReconnectedFn(true);
-      if (panesNeedingSpawn.size > 0) {
-        log.info('Daemon', `Detected empty CLI shells, will spawn for panes: ${[...panesNeedingSpawn].join(', ')}`);
-      } else {
-        log.info('Daemon', 'All alive terminals have CLI content, skipping auto-spawn');
-      }
-
-      const existingPaneIds = new Set();
-      for (const term of existingTerminals) {
-        if (term.alive) {
-          const paneId = String(term.paneId);
-          const expectedDir = resolvePaneCwd(paneId);
-          const cwd = term.cwd;
-          const hasMismatch = expectedDir && cwd &&
-            normalizePath(expectedDir) !== normalizePath(cwd);
-
-          if (hasMismatch) {
-            log.warn('Reattach', `Pane ${paneId} cwd mismatch (expected: ${expectedDir}, got: ${cwd}) - updating session state to correct cwd`);
-            term.cwd = expectedDir;
-          }
-
-          existingPaneIds.add(paneId);
-          await reattachTerminalFn(paneId, term.scrollback, { createdAt: term.createdAt || null });
-        }
-      }
-
-      const missingPanes = PANE_IDS.filter(id => !existingPaneIds.has(id));
-      if (missingPanes.length > 0) {
-        log.info('Daemon', 'Creating missing terminals for panes:', missingPanes);
-        for (const paneId of missingPanes) {
-          const terminal = require('./terminal');
-          await terminal.initTerminal(paneId);
-        }
-      }
-
-      if (missingPanes.length > 0) {
-        for (const paneId of missingPanes) {
-          panesNeedingSpawn.add(String(paneId));
-        }
-      }
-
-      if (panesNeedingSpawn.size > 0) {
-        let autoSpawnEnabled = true;
-        try {
-          const settings = await invokeBridge('get-settings');
-          if (settings && settings.autoSpawn === false) {
-            autoSpawnEnabled = false;
-          }
-          if (settings && settings.autonomyConsentGiven !== true) {
-            autoSpawnEnabled = false;
-            log.info('Daemon', 'Auto-spawn blocked pending autonomy consent');
-          }
-        } catch (err) {
-          log.warn('Daemon', `Failed to read settings for auto-spawn: ${err.message}`);
-        }
-
-        if (autoSpawnEnabled) {
-          updateConnectionStatus(`Spawning agents in panes: ${[...panesNeedingSpawn].join(', ')}`);
-          const terminal = require('./terminal');
-          for (const paneId of panesNeedingSpawn) {
-            try {
-              await terminal.spawnAgent(paneId);
-            } catch (err) {
-              log.error('Daemon', `Failed to spawn CLI for pane ${paneId}`, err);
-            }
-          }
-        } else {
-          log.info('Daemon', `Auto-spawn disabled; leaving panes empty: ${[...panesNeedingSpawn].join(', ')}`);
-        }
-      }
-
-      updateConnectionStatus(`Restored ${existingTerminals.length} terminal(s)${missingPanes.length > 0 ? `, created ${missingPanes.length} new` : ''}`);
-    } else {
-      log.info('Daemon', 'No existing terminals, creating new ones...');
-      updateConnectionStatus('Creating terminals...');
-      await initTerminalsFn();
-      updateConnectionStatus('Ready');
-    }
-
-    if (onTerminalsReadyFn) {
-      onTerminalsReadyFn(false);
-    }
+    await handleDaemonConnectedPayload(data, initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn);
   });
 
   registerScopedIpcListener('daemon-core', 'daemon-reconnected', (_event) => {
@@ -724,6 +728,16 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       term.freshStartAll();
     }
   });
+
+  return {
+    replayDaemonConnected: (data = {}) => handleDaemonConnectedPayload(
+      data,
+      initTerminalsFn,
+      reattachTerminalFn,
+      setReconnectedFn,
+      onTerminalsReadyFn
+    ),
+  };
 }
 
 function setupRollbackListener() {
@@ -1226,6 +1240,7 @@ module.exports = {
   setStatusCallbacks,
   teardownDaemonListeners,
   setupDaemonListeners,
+  handleDaemonConnectedPayload,
   setupSyncIndicator,
   handleSessionTimerState,
   getTotalSessionTime,
