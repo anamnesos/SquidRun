@@ -453,6 +453,54 @@ describe('voice-broker', () => {
     expect(routeVoiceMessage).toHaveBeenCalledTimes(1);
   });
 
+  test('voice egress exposes Architect replies for Mira mouth playback', async () => {
+    const queryCommsJournalEntries = jest.fn(() => [
+      {
+        messageId: 'mira-reply-1',
+        senderRole: 'architect',
+        targetRole: 'user',
+        rawBody: 'Yep, I am here through voice now.',
+        brokeredAtMs: 1777883000000,
+      },
+      {
+        messageId: 'builder-noise-1',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        rawBody: 'Not for voice playback.',
+        brokeredAtMs: 1777883000001,
+      },
+    ]);
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
+      queryCommsJournalEntries,
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const response = await getJson(port, '/v1/voice/egress?sinceMs=1777882999000');
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toEqual(expect.objectContaining({
+        ok: true,
+        messages: [
+          expect.objectContaining({
+            messageId: 'mira-reply-1',
+            speaker: 'Mira',
+            text: 'Yep, I am here through voice now.',
+          }),
+        ],
+      }));
+      expect(queryCommsJournalEntries).toHaveBeenCalledWith(expect.objectContaining({
+        senderRole: 'architect',
+        targetRole: 'user',
+        order: 'asc',
+      }));
+    } finally {
+      await broker.stop();
+    }
+  });
+
   test('transcript endpoint does not write directly to terminal panes', async () => {
     const bus = { emit: jest.fn() };
     const broker = new voiceBroker.VoiceBrokerService({
