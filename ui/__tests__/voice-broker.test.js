@@ -261,6 +261,8 @@ describe('voice-broker', () => {
     }, {
       bus,
       queuePath,
+      routeToArchitect: false,
+      enqueueOwnedWork: true,
     });
 
     expect(result).toEqual(expect.objectContaining({
@@ -300,11 +302,74 @@ describe('voice-broker', () => {
     ]);
   });
 
+  test('user transcript routes to Architect through the existing bus lane', () => {
+    const routeVoiceMessage = jest.fn(() => ({ ok: true, routed: true, target: 'architect' }));
+    const result = voiceBroker.ingestVoiceTranscript({
+      eventId: 'voice-route-1',
+      speaker: 'user',
+      text: 'Can you hear me',
+    }, {
+      routeVoiceMessage,
+      enqueueOwnedWork: false,
+    });
+
+    expect(result.route).toEqual(expect.objectContaining({
+      ok: true,
+      routed: true,
+      target: 'architect',
+    }));
+    expect(routeVoiceMessage).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'voice-route-1',
+      text: 'Can you hear me',
+    }));
+  });
+
+  test('assistant transcript is journaled but not routed back to Architect', () => {
+    const routeVoiceMessage = jest.fn();
+    const result = voiceBroker.ingestVoiceTranscript({
+      eventId: 'voice-assistant-1',
+      speaker: 'assistant',
+      text: 'I heard you',
+    }, {
+      routeVoiceMessage,
+      enqueueOwnedWork: false,
+    });
+
+    expect(result.route).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: true,
+      reason: 'non_user_speaker',
+    }));
+    expect(routeVoiceMessage).not.toHaveBeenCalled();
+  });
+
+  test('direct voice route does not enqueue a duplicate owned-work dispatch by default', () => {
+    const enqueueTask = jest.fn();
+    const routeVoiceMessage = jest.fn(() => ({ ok: true, routed: true, target: 'architect' }));
+    const result = voiceBroker.ingestVoiceTranscript({
+      eventId: 'voice-no-duplicate-1',
+      speaker: 'user',
+      text: 'Please only send this once',
+    }, {
+      enqueueTask,
+      routeVoiceMessage,
+    });
+
+    expect(result.ownedWork).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: true,
+      reason: 'disabled',
+    }));
+    expect(enqueueTask).not.toHaveBeenCalled();
+    expect(routeVoiceMessage).toHaveBeenCalledTimes(1);
+  });
+
   test('transcript endpoint does not write directly to terminal panes', async () => {
     const bus = { emit: jest.fn() };
     const broker = new voiceBroker.VoiceBrokerService({
       config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
       bus,
+      routeToArchitect: false,
     });
     await broker.start();
     const port = broker.getStatus().address.port;

@@ -3,6 +3,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const { resolveCoordPath } = require('../config');
 const taskQueue = require('../scripts/hm-task-queue');
@@ -245,6 +246,37 @@ function enqueueVoiceOwnedWork(event, options = {}) {
   }, options.queuePath ? { queuePath: options.queuePath } : {});
 }
 
+function routeVoiceTranscriptToArchitect(event, options = {}) {
+  if (options.routeToArchitect === false) {
+    return { ok: true, skipped: true, reason: 'disabled' };
+  }
+  if (event.speaker === 'assistant') {
+    return { ok: true, skipped: true, reason: 'non_user_speaker' };
+  }
+  if (typeof options.routeVoiceMessage === 'function') {
+    return options.routeVoiceMessage(event);
+  }
+
+  const scriptPath = path.resolve(__dirname, '..', 'scripts', 'hm-send.js');
+  const child = spawn(process.execPath, [scriptPath, 'architect', '--stdin', '--role', 'voice'], {
+    cwd: path.resolve(__dirname, '..', '..'),
+    windowsHide: true,
+    stdio: ['pipe', 'ignore', 'ignore'],
+    env: {
+      ...process.env,
+      SQUIDRUN_PROJECT_ROOT: path.resolve(__dirname, '..', '..'),
+    },
+  });
+  child.stdin.end(`[Voice from James]: ${event.text}`);
+  child.unref?.();
+  return {
+    ok: true,
+    routed: true,
+    target: 'architect',
+    method: 'hm-send',
+  };
+}
+
 function ingestVoiceTranscript(payload = {}, options = {}) {
   const config = options.config || getVoiceBrokerConfig(options.env || process.env, options);
   const normalized = normalizeTranscriptPayload(payload);
@@ -254,15 +286,28 @@ function ingestVoiceTranscript(payload = {}, options = {}) {
   emitVoiceIngress(options.bus, event);
   let ownedWork = null;
   try {
-    ownedWork = enqueueVoiceOwnedWork(event, options);
+    const shouldEnqueueOwnedWork = options.enqueueOwnedWork !== undefined
+      ? options.enqueueOwnedWork
+      : options.routeToArchitect === false;
+    ownedWork = enqueueVoiceOwnedWork(event, {
+      ...options,
+      enqueueOwnedWork: shouldEnqueueOwnedWork,
+    });
   } catch (err) {
     ownedWork = { ok: false, reason: 'owned_work_enqueue_failed', error: err.message };
+  }
+  let route = null;
+  try {
+    route = routeVoiceTranscriptToArchitect(event, options);
+  } catch (err) {
+    route = { ok: false, reason: 'voice_route_failed', error: err.message };
   }
   return {
     ok: true,
     event,
     journalPath,
     ownedWork,
+    route,
   };
 }
 
@@ -309,6 +354,8 @@ class VoiceBrokerService {
     this.fetchImpl = options.fetchImpl || globalThis.fetch;
     this.bus = options.bus || null;
     this.enqueueTask = options.enqueueTask || null;
+    this.routeVoiceMessage = options.routeVoiceMessage || null;
+    this.routeToArchitect = options.routeToArchitect;
     this.server = null;
     this.startedAtMs = null;
     this.lastError = null;
@@ -367,6 +414,8 @@ class VoiceBrokerService {
           config: this.config,
           bus: this.bus,
           enqueueTask: this.enqueueTask || undefined,
+          routeVoiceMessage: this.routeVoiceMessage || undefined,
+          routeToArchitect: this.routeToArchitect,
         });
         sendJson(res, result.ok ? 202 : 400, result);
         return;
@@ -444,4 +493,5 @@ module.exports = {
   ingestVoiceTranscript,
   mintRealtimeClientSecret,
   normalizeTranscriptPayload,
+  routeVoiceTranscriptToArchitect,
 };

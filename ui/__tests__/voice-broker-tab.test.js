@@ -71,6 +71,7 @@ describe('voice-broker tab', () => {
     tab.destroyVoiceBrokerTab();
     jest.dontMock('../modules/renderer-bridge');
     delete global.document;
+    delete global.window;
   });
 
   test('renders missing OPENAI_API_KEY as visible not-ready state', () => {
@@ -164,6 +165,40 @@ describe('voice-broker tab', () => {
     expect(invokeBridge).toHaveBeenCalledWith('voice-broker:status');
     expect(invokeBridge).toHaveBeenCalledWith('voice-broker:control', { action: 'restart' });
     expect(elements.voiceBrokerState.textContent).toBe('Running');
+  });
+
+  test('falls back to preload broker status when main IPC handler is unavailable', async () => {
+    invokeBridge.mockRejectedValueOnce(new Error("No handler registered for 'voice-broker:status'"));
+    global.window = {
+      squidrun: {
+        voice: {
+          brokerStatusLocal: jest.fn(() => ({
+            ok: true,
+            state: 'running',
+            ready: true,
+            running: true,
+            notReadyReasons: [],
+            source: 'preload-status-file',
+            lane: { broker: { address: { address: '127.0.0.1', port: 60817 } } },
+            config: {
+              model: 'gpt-realtime',
+              voice: 'marin',
+              transcriptJournalPath: 'voice-transcripts.jsonl',
+              endpointShape: {
+                clientSecret: { method: 'POST', path: '/v1/voice/realtime/client-secret' },
+                transcript: { method: 'POST', path: '/v1/voice/transcripts' },
+              },
+            },
+          })),
+        },
+      },
+    };
+
+    const status = await tab.refreshVoiceBrokerStatus();
+
+    expect(status.source).toBe('preload-status-file');
+    expect(elements.voiceBrokerState.textContent).toBe('Running');
+    expect(elements.voiceSessionStartBtn.disabled).toBe(false);
   });
 
   test('creates Realtime WebRTC session through broker client-secret endpoint', async () => {
