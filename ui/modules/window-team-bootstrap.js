@@ -5,6 +5,25 @@ function toText(value, fallback = '') {
   return text || fallback;
 }
 
+function toBoolean(value, fallback = false) {
+  if (value === true || value === false) return value;
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function parseList(value) {
+  if (Array.isArray(value)) return value.slice();
+  const raw = toText(value, '');
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return raw.split('|').map((entry) => entry.trim()).filter(Boolean);
+}
+
 function normalizeWindowContext(payload = {}) {
   return {
     loaded: true,
@@ -25,19 +44,26 @@ function normalizeWindowContext(payload = {}) {
 function readInitialWindowContextFromLocation(search = '') {
   try {
     const params = new URLSearchParams(String(search || ''));
+    const windowKey = toText(params.get('windowKey'), 'main');
+    const windowTeam = toText(params.get('windowTeam'), windowKey);
+    const hasReadyContext = toBoolean(params.get('contextReady'), false)
+      || params.has('autoBootAgents')
+      || params.has('standaloneWindow')
+      || params.has('lifecycleMode')
+      || params.has('startupBundlePath');
     return {
-      loaded: false,
-      windowKey: toText(params.get('windowKey'), 'main'),
-      windowTeam: toText(params.get('windowTeam'), toText(params.get('windowKey'), 'main')),
+      loaded: hasReadyContext,
+      windowKey,
+      windowTeam,
       profileName: toText(params.get('profileName'), 'main'),
       profileLabel: toText(params.get('profileLabel'), 'Main'),
       roleLayout: 'standard',
-      sessionScopeId: '',
-      startupBundlePath: '',
-      startupSourceFiles: [],
-      autoBootAgents: false,
-      standaloneWindow: false,
-      lifecycleMode: '',
+      sessionScopeId: toText(params.get('sessionScopeId'), ''),
+      startupBundlePath: toText(params.get('startupBundlePath'), ''),
+      startupSourceFiles: parseList(params.get('startupSourceFiles')),
+      autoBootAgents: toBoolean(params.get('autoBootAgents'), false),
+      standaloneWindow: toBoolean(params.get('standaloneWindow'), false),
+      lifecycleMode: toText(params.get('lifecycleMode'), ''),
     };
   } catch {
     return {

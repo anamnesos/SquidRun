@@ -464,6 +464,13 @@ function transition(newState) {
 // WATCHER_DEBOUNCE_MS imported from constants.js
 let debounceTimer = null;
 let pendingFileChanges = new Set();
+const RUNTIME_NOOP_FILE_RE = /[\\/](?:logs(?:-[^\\/]+)?|runtime(?:-[^\\/]+)?)[\\/](?:app\.log|daemon\.log|supervisor\.log|supervisor-status\.json|session\.md|last-session\.md|user-input-shadow\.jsonl|bus-reliability-trace\.jsonl|team-memory-pattern-spool\.jsonl|evidence-ledger\.db-(?:wal|shm))$/;
+const ROOT_RUNTIME_NOOP_FILE_RE = /[\\/]\.squidrun[\\/](?:app-status\.json|perf-profile\.json|supervisor-status\.json|session\.md|last-session\.md)$/;
+
+function isRuntimeNoopFileChange(filePath = '') {
+  const normalized = String(filePath || '');
+  return RUNTIME_NOOP_FILE_RE.test(normalized) || ROOT_RUNTIME_NOOP_FILE_RE.test(normalized);
+}
 
 function notifySyncFileChanged(filename) {
   if (!SYNC_FILES.has(filename)) return;
@@ -481,6 +488,10 @@ function notifySyncFileChanged(filename) {
  * @param {string} filePath - Path to changed file
  */
 function handleFileChangeDebounced(filePath) {
+  if (isRuntimeNoopFileChange(filePath)) {
+    return;
+  }
+
   // Add to pending set (dedupes multiple changes to same file)
   pendingFileChanges.add(filePath);
 
@@ -510,6 +521,10 @@ function handleFileChangeDebounced(filePath) {
  * @param {string} filePath - Path to changed file
  */
 function handleFileChangeCore(filePath) {
+  if (isRuntimeNoopFileChange(filePath)) {
+    return;
+  }
+
   const filename = path.basename(filePath);
   const state = readState();
   const currentState = state.state;
@@ -1575,5 +1590,6 @@ module.exports = {
     getQueueMutationChainSize: () => queueMutationChains.size,
     clearQueueMutationChains: () => queueMutationChains.clear(),
     getTriggerPaths: () => [...TRIGGER_PATHS],
+    isRuntimeNoopFileChange,
   },
 };

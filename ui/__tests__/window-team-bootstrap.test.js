@@ -103,4 +103,30 @@ describe('window-team-bootstrap', () => {
       lifecycleMode: 'standalone-profile-app',
     }));
   });
+
+  test('treats rich loadFile query context as ready for side-profile auto-boot fallback', () => {
+    const initialContext = readInitialWindowContextFromLocation(
+      '?windowKey=sideprofile&windowTeam=sideprofile&profileName=sideprofile&profileLabel=sideprofile&sessionScopeId=app-test%3Asideprofile&startupBundlePath=D%3A%5Cbundle.md&autoBootAgents=true&standaloneWindow=true&lifecycleMode=standalone-profile-app&contextReady=true'
+    );
+
+    expect(initialContext).toEqual(expect.objectContaining({
+      loaded: true,
+      windowKey: 'sideprofile',
+      windowTeam: 'sideprofile',
+      profileName: 'sideprofile',
+      profileLabel: 'sideprofile',
+      sessionScopeId: 'app-test:sideprofile',
+      startupBundlePath: 'D:\\bundle.md',
+      autoBootAgents: true,
+      standaloneWindow: true,
+      lifecycleMode: 'standalone-profile-app',
+    }));
+
+    const bootstrap = createWindowTeamBootstrap({
+      settings: { checkAutoSpawn: jest.fn() },
+      terminal: { spawnAllAgents: jest.fn() },
+      initialContext,
+    });
+    expect(bootstrap.shouldDeferAutoSpawn()).toBe(false);
+  });
 });

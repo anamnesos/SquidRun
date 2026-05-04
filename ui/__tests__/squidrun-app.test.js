@@ -954,7 +954,7 @@ describe('SquidRunApp', () => {
         'window-context',
         expect.objectContaining({
           windowKey: 'scoped',
-          startupBundlePath: null,
+          startupBundlePath: '/test/workspace/runtime/window-teams/scoped/startup-bundle.md',
           startupSourceFiles: [],
           standaloneWindow: false,
           lifecycleMode: 'secondary-window',
@@ -967,6 +967,79 @@ describe('SquidRunApp', () => {
           windowKey: 'scoped',
         })
       );
+    });
+
+    it('auto-boots agents for standalone non-main profile windows', async () => {
+      app.setupWindowListeners.mockRestore();
+      jest.spyOn(app, 'initPostLoad').mockResolvedValue();
+      const bundleSpy = jest.spyOn(app, 'writeProfileStartupBundle').mockResolvedValue({
+        bundlePath: '/test/workspace/runtime/window-teams/sideprofile/startup-bundle.md',
+        sourcePaths: ['/test/profile/AGENTS.md', '/test/profile/CLAUDE.md', '/test/profile/ROLES.md'],
+        text: 'sideprofile startup bundle',
+        sessionScopeId: 'app-test:sideprofile',
+      });
+      app.activeProfileName = 'sideprofile';
+
+      await app.launchWindowsForProfile({
+        profileName: 'sideprofile',
+        windowKey: 'sideprofile',
+        includeMainWindow: false,
+      });
+      const profileWindow = app.ctx.getWindow('sideprofile');
+      const didFinishLoad = profileWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+      expect(profileWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'sideprofile',
+            windowTeam: 'sideprofile',
+            profileName: 'sideprofile',
+            profileLabel: 'sideprofile',
+            autoBootAgents: 'true',
+            standaloneWindow: 'true',
+            lifecycleMode: 'standalone-profile-app',
+            contextReady: 'true',
+          }),
+        })
+      );
+
+      await didFinishLoad();
+
+      expect(bundleSpy).toHaveBeenCalledWith('sideprofile');
+      expect(profileWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'sideprofile',
+          windowTeam: 'sideprofile',
+          profileName: 'sideprofile',
+          profileLabel: 'sideprofile',
+          startupBundlePath: '/test/workspace/runtime/window-teams/sideprofile/startup-bundle.md',
+          autoBootAgents: true,
+          standaloneWindow: true,
+          lifecycleMode: 'standalone-profile-app',
+        })
+      );
+    });
+
+    it('writes profile-local link metadata so side agents keep the profile workspace identity', () => {
+      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-sideprofile-profile-'));
+      try {
+        app.commsSessionScopeId = 'app-test';
+        const linkPath = app.ensureProfileWorkspaceLink('sideprofile', profileRoot);
+        const payload = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
+
+        expect(payload).toEqual(expect.objectContaining({
+          workspace: profileRoot.replace(/\\/g, '/'),
+          session_id: 'app-test:sideprofile',
+          profile: 'sideprofile',
+          version: 1,
+        }));
+        expect(payload.comms.hm_send).toContain('/ui/scripts/hm-send.js');
+      } finally {
+        fs.rmSync(profileRoot, { recursive: true, force: true });
+      }
     });
 
     it('can register Scoped as the lifecycle root for standalone launch mode', async () => {

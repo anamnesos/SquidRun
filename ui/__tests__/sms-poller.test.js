@@ -12,6 +12,7 @@ jest.mock('../modules/logger', () => ({
 }));
 
 const https = require('https');
+const log = require('../modules/logger');
 const smsPoller = require('../modules/sms-poller');
 
 function mockTwilioMessages(messages, statusCode = 200) {
@@ -239,5 +240,42 @@ describe('sms-poller', () => {
     await smsPoller._internals.pollNow();
 
     expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test('duplicate-only polls stay out of INFO logs', async () => {
+    const onMessage = jest.fn();
+    const nowSpy = jest.spyOn(Date, 'now');
+    nowSpy.mockReturnValue(1000);
+
+    smsPoller.start({
+      env: {
+        TWILIO_ACCOUNT_SID: 'AC_TEST_FAKE_ACCOUNT_SID_DO_NOT_USE',
+        TWILIO_AUTH_TOKEN: 'twilio_auth_token_fake_do_not_USE',
+        TWILIO_PHONE_NUMBER: '+15550001111',
+        SMS_RECIPIENT: '+15551234567',
+      },
+      onMessage,
+    });
+
+    mockTwilioMessages([
+      {
+        sid: 'SM_DUP_ONLY',
+        direction: 'inbound',
+        from: '+15557654321',
+        body: 'first delivery',
+        date_sent: '1970-01-01T00:00:02.500Z',
+      },
+    ]);
+
+    nowSpy.mockReturnValue(2000);
+    await smsPoller._internals.pollNow();
+    log.info.mockClear();
+    log.debug.mockClear();
+
+    await smsPoller._internals.pollNow();
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(log.info).not.toHaveBeenCalledWith('SMS', expect.stringContaining('duplicate_sid'));
+    expect(log.debug).toHaveBeenCalledWith('SMS', expect.stringContaining('duplicate_sid'));
   });
 });

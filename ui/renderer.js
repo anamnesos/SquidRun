@@ -496,6 +496,19 @@ function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
 }
 
+function handleRendererWindowContext(payload = {}) {
+  const windowContext = windowTeamBootstrap.handleWindowContext(payload || {});
+  applyWindowChrome(windowContext);
+  if (!initState.autoSpawnChecked) {
+    checkInitComplete();
+  }
+  return windowContext;
+}
+
+const disposeEarlyWindowContextListener = ipcRenderer.on('window-context', (_event, payload) => {
+  handleRendererWindowContext(payload || {});
+});
+
 function isSecondaryWindow(windowContext = getCurrentWindowContext()) {
   return String(windowContext?.windowKey || 'main').trim() !== 'main';
 }
@@ -2651,12 +2664,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  if (typeof disposeEarlyWindowContextListener === 'function') {
+    disposeEarlyWindowContextListener();
+  }
   ipcRenderer.on('window-context', (_event, payload) => {
-    const windowContext = windowTeamBootstrap.handleWindowContext(payload || {});
-    applyWindowChrome(windowContext);
-    if (!initState.autoSpawnChecked) {
-      checkInitComplete();
-    }
+    handleRendererWindowContext(payload || {});
   });
 
   // Task list updates handled by status-strip.js (SSOT for task-list-updated IPC)

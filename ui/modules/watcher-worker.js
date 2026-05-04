@@ -31,6 +31,13 @@ function getTriggerWatchPaths() {
 const TRIGGER_PATHS = getTriggerWatchPaths();
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
+const RUNTIME_NOOP_FILE_RE = /[\\/](?:logs(?:-[^\\/]+)?|runtime(?:-[^\\/]+)?)[\\/](?:app\.log|daemon\.log|supervisor\.log|supervisor-status\.json|session\.md|last-session\.md|user-input-shadow\.jsonl|bus-reliability-trace\.jsonl|team-memory-pattern-spool\.jsonl|evidence-ledger\.db-(?:wal|shm))$/;
+const ROOT_RUNTIME_NOOP_FILE_RE = /[\\/]\.squidrun[\\/](?:app-status\.json|perf-profile\.json|supervisor-status\.json|session\.md|last-session\.md)$/;
+
+function isRuntimeNoopPath(filePath = '') {
+  const normalized = String(filePath || '');
+  return RUNTIME_NOOP_FILE_RE.test(normalized) || ROOT_RUNTIME_NOOP_FILE_RE.test(normalized);
+}
 
 function emit(payload) {
   if (typeof process.send === 'function') {
@@ -54,6 +61,8 @@ function buildWatcherConfigs() {
           /backups[\\/]/,
           /context-snapshots[\\/]/,
           /logs[\\/]/,
+          RUNTIME_NOOP_FILE_RE,
+          ROOT_RUNTIME_NOOP_FILE_RE,
           /state\.json$/,
           /triggers(?:-[^\\/]+)?[\\/]/,
         ],
@@ -110,9 +119,14 @@ function main() {
     const cfg = watcherConfigs[watcherName];
     const watcher = chokidar.watch(cfg.targetPath, cfg.options);
 
-    watcher.on('add', (filePath) => emit({ type: 'add', path: filePath, watcherName }));
-    watcher.on('change', (filePath) => emit({ type: 'change', path: filePath, watcherName }));
-    watcher.on('unlink', (filePath) => emit({ type: 'unlink', path: filePath, watcherName }));
+    function emitFileEvent(type, filePath) {
+      if (watcherName === 'workspace' && isRuntimeNoopPath(filePath)) return;
+      emit({ type, path: filePath, watcherName });
+    }
+
+    watcher.on('add', (filePath) => emitFileEvent('add', filePath));
+    watcher.on('change', (filePath) => emitFileEvent('change', filePath));
+    watcher.on('unlink', (filePath) => emitFileEvent('unlink', filePath));
     watcher.on('error', (err) => emit({
       type: 'error',
       watcherName,
@@ -153,5 +167,6 @@ if (require.main === module) {
 module.exports = {
   buildWatcherConfigs,
   getTriggerWatchPaths,
+  isRuntimeNoopPath,
   main,
 };

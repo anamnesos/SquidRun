@@ -439,12 +439,6 @@ async function hasCliContent(scrollback = '', meta = {}) {
   const alive = Boolean(meta?.alive);
   const mode = String(meta?.mode || '').toLowerCase();
 
-  // Primary signal: if an alive PTY process still exists, treat as an active
-  // session regardless of prompt/content heuristics.
-  if (alive && mode === 'pty') {
-    return isProcessRunning(meta?.pid);
-  }
-
   // Dry-run mode has no real PTY process and is tracked by alive status only.
   if (alive && mode === 'dry-run') {
     return true;
@@ -459,6 +453,13 @@ async function hasCliContent(scrollback = '', meta = {}) {
         log.info('Daemon Handlers', 'Detected shell prompt in tail, treating as empty CLI');    
         return false;
       }
+
+  // If the tail does not prove we are sitting at a shell prompt, a live PTY is
+  // still a reasonable active-session signal for CLIs with unfamiliar output.
+  if (alive && mode === 'pty') {
+    return isProcessRunning(meta?.pid);
+  }
+
   const lastActivity = Number(meta?.lastActivity || 0);
   if (lastActivity > 0 && (Date.now() - lastActivity) <= CLI_RECENT_ACTIVITY_MS) {
     return true;
