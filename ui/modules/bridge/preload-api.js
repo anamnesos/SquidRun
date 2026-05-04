@@ -90,6 +90,8 @@ function createPreloadApi(ipcRenderer) {
 
     voice: {
       transcribe: (audioBuffer) => ipc.invoke('voice:transcribe', audioBuffer),
+      brokerStatus: () => ipc.invoke('voice-broker:status'),
+      brokerControl: (action) => ipc.invoke('voice-broker:control', { action }),
     },
 
     broadcast: null,

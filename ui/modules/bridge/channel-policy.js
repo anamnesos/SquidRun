@@ -93,6 +93,8 @@ const INVOKE_CHANNELS = Object.freeze([
   'update-task-status',
   'save-user-profile',
   'voice:transcribe',
+  'voice-broker:control',
+  'voice-broker:status',
   'workflow-apply-template',
   'workflow-delete',
   'workflow-duplicate',

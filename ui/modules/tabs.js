@@ -1,7 +1,7 @@
 /**
  * Tabs and panels module
  * Refactored to modular architecture (Session 72)
- * Active tabs: bridge, screenshots, comms, oracle, api-keys
+ * Active tabs: bridge, screenshots, comms, oracle, voice, api-keys
  */
 
 // Sub-modules
@@ -9,6 +9,7 @@
 const screenshots = require('./tabs/screenshots');
 const oracle = require('./tabs/oracle');
 const commsConsole = require('./tabs/comms-console');
+const voiceBroker = require('./tabs/voice-broker');
 
 const apiKeys = require('./tabs/api-keys');
 const bridge = require('./tabs/bridge');
@@ -96,6 +97,7 @@ function destroyAllTabs() {
   if (typeof screenshots.destroyScreenshots === 'function') screenshots.destroyScreenshots();
   if (typeof oracle.destroyOracleTab === 'function') oracle.destroyOracleTab();
   if (typeof commsConsole.destroy === 'function') commsConsole.destroy();
+  if (typeof voiceBroker.destroyVoiceBrokerTab === 'function') voiceBroker.destroyVoiceBrokerTab();
 
   if (typeof apiKeys.destroyApiKeysTab === 'function') apiKeys.destroyApiKeysTab();
   if (typeof bridge.destroy === 'function') bridge.destroy();
@@ -125,6 +127,7 @@ function setupRightPanel(handleResizeFn, busInstance) {
   screenshots.setupScreenshots(updateConnectionStatus);
   oracle.setupOracleTab(updateConnectionStatus);
   if (busInstance) commsConsole.setupCommsConsoleTab(busInstance);
+  voiceBroker.setupVoiceBrokerTab();
 
   apiKeys.setupApiKeysTab();
   if (busInstance) bridge.setupBridgeTab(busInstance);
