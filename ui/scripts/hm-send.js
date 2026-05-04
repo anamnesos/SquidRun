@@ -16,7 +16,9 @@ const {
 } = require('../config');
 const {
   getActiveProfileName,
+  isMainProfile,
   namespaceCoordRelPath,
+  normalizeProfileName,
 } = require('../profile');
 const {
   appendCommsJournalEntry,
@@ -60,11 +62,30 @@ try {
   }
 }
 
+function inferProfileNameFromPathValue(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return null;
+  const normalized = text.replace(/\\/g, '/');
+  const match = normalized.match(/\/\.squidrun\/profiles\/([^/]+)\/workspace(?:\/|$)/i);
+  if (!match || !match[1]) return null;
+  return normalizeProfileName(match[1]);
+}
+
+function resolveEffectiveProfileName(env = process.env, cwd = process.cwd(), context = null) {
+  const envProfile = normalizeProfileName(env?.SQUIDRUN_PROFILE || '');
+  if (!isMainProfile(envProfile)) return envProfile;
+  const contextProfile = inferProfileNameFromPathValue(context?.projectPath);
+  if (contextProfile && !isMainProfile(contextProfile)) return contextProfile;
+  const cwdProfile = inferProfileNameFromPathValue(cwd);
+  if (cwdProfile && !isMainProfile(cwdProfile)) return cwdProfile;
+  return envProfile || 'main';
+}
+
 function resolveDefaultPort() {
   if (process.env.HM_SEND_PORT) return process.env.HM_SEND_PORT;
   try {
     const { getProfileWebSocketPort } = require('../profile');
-    const profilePort = getProfileWebSocketPort(process.env.SQUIDRUN_PROFILE || 'main');
+    const profilePort = getProfileWebSocketPort(resolveEffectiveProfileName(process.env, process.cwd()));
     if (Number.isFinite(profilePort)) return String(profilePort);
   } catch {}
   return '9900';
@@ -450,6 +471,7 @@ function applyProjectContext(projectContext = null) {
 }
 
 const localProjectContext = applyProjectContext(resolveLocalProjectContext(process.cwd()));
+const effectiveProfileName = resolveEffectiveProfileName(process.env, process.cwd(), localProjectContext);
 
 function getLocalCoordRoot(context = localProjectContext) {
   if (context?.projectPath) {
@@ -461,7 +483,7 @@ function getLocalCoordRoot(context = localProjectContext) {
 function resolveLocalCoordPath(relativePath, options = {}) {
   const relPath = String(relativePath || '').trim();
   if (!relPath) return getLocalCoordRoot();
-  const scopedRelPath = namespaceCoordRelPath(relPath, getActiveProfileName());
+  const scopedRelPath = namespaceCoordRelPath(relPath, effectiveProfileName);
   const localCoordRoot = getLocalCoordRoot();
   const preferLocal = options.preferLocal !== false;
   if (preferLocal && localCoordRoot) {
@@ -493,7 +515,7 @@ function runOutputGuards({ messageId, targetRole } = {}) {
     senderRole: role || 'cli',
     targetRole,
     targetRaw: target,
-    profile: getActiveProfileName(process.env),
+    profile: effectiveProfileName,
   };
 
   if (bypassGuard) {
@@ -669,6 +691,16 @@ function buildProjectMetadata(context = localProjectContext) {
 }
 
 const projectMetadata = buildProjectMetadata(localProjectContext);
+
+function buildRegisterPayload(envelope = null) {
+  return {
+    type: 'register',
+    role,
+    profileName: effectiveProfileName,
+    windowKey: effectiveProfileName,
+    sessionScopeId: envelope?.session_id || projectMetadata?.session_id || null,
+  };
+}
 
 function writeJsonAtomic(filePath, payload) {
   try {
@@ -881,7 +913,7 @@ async function runListDevicesViaRuntimeBridge() {
     ws = new WebSocket(socketUrl);
     await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
 
-    ws.send(JSON.stringify({ type: 'register', role }));
+    ws.send(JSON.stringify(buildRegisterPayload()));
     await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
     ws.send(JSON.stringify({
@@ -1411,6 +1443,34 @@ function isTargetHealthBlocking(health, targetInput = target) {
     }
     return true;
   }
+  if (status === 'scope_route_unavailable' || status === 'cross_profile_scope_mismatch') {
+    return true;
+  }
+  return false;
+}
+
+function isProfileScopedCanonicalTarget(targetInput) {
+  if (isMainProfile(effectiveProfileName)) return false;
+  return Boolean(normalizeRole(targetInput));
+}
+
+function getIsolationFailureStatus(result = null) {
+  const status = String(
+    result?.ack?.status
+    || result?.health?.status
+    || result?.deliveryCheck?.ack?.status
+    || result?.deliveryCheck?.status
+    || ''
+  ).toLowerCase();
+  if (status === 'scope_route_unavailable' || status === 'cross_profile_scope_mismatch') {
+    return status;
+  }
+  return null;
+}
+
+function shouldFailClosedWithoutFallback(result = null, error = null) {
+  if (getIsolationFailureStatus(result)) return true;
+  if (isProfileScopedCanonicalTarget(target) && (error || !result?.ok)) return true;
   return false;
 }
 
@@ -1421,7 +1481,7 @@ async function emitCommsEventBestEffort(eventType, payload = {}) {
     ws = new WebSocket(socketUrl);
     await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
 
-    ws.send(JSON.stringify({ type: 'register', role }));
+    ws.send(JSON.stringify(buildRegisterPayload()));
     await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
     ws.send(JSON.stringify({
@@ -1478,7 +1538,7 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
 
   await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
 
-  ws.send(JSON.stringify({ type: 'register', role }));
+  ws.send(JSON.stringify(buildRegisterPayload(envelope)));
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
   if (!skipHealthCheck) {
@@ -1805,6 +1865,21 @@ async function main() {
     }
     closeCommsJournalStores();
     process.exit(0);
+  }
+
+  if (shouldFailClosedWithoutFallback(sendResult, wsError)) {
+    const status = getIsolationFailureStatus(sendResult)
+      || sendResult?.health?.status
+      || sendResult?.ack?.status
+      || sendResult?.error
+      || wsError?.message
+      || 'profile_route_unavailable';
+    console.error(
+      `Send blocked by profile isolation (${status}). `
+      + `Profile '${effectiveProfileName}' cannot fall back to main target '${target}'.`
+    );
+    closeCommsJournalStores();
+    process.exit(1);
   }
 
   if (enableFallback) {

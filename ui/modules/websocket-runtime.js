@@ -16,7 +16,12 @@ const {
   resolveBackgroundBuilderAlias,
   resolveBackgroundBuilderPaneId,
 } = require('../config');
-const { getProfileWebSocketPort } = require('../profile');
+const {
+  DEFAULT_PROFILE,
+  getProfileWebSocketPort,
+  isMainProfile,
+  normalizeProfileName,
+} = require('../profile');
 
 const DEFAULT_PORT = getProfileWebSocketPort(process.env.SQUIDRUN_PROFILE || 'main');
 const MESSAGE_ACK_TTL_MS = 60000;
@@ -42,6 +47,8 @@ const CANONICAL_ROLE_TO_PANE = new Map(
 const PANE_TO_CANONICAL_ROLE = new Map(
   Array.from(CANONICAL_ROLE_TO_PANE.entries()).map(([role, paneId]) => [paneId, role])
 );
+const SIDE_CONTEXT_PATTERN = /\b(eunbyeol|eunby[e]?ol|rachel|side-window|case\s+(?:file|folder|context)|scoped\s+case)\b/i;
+const MAIN_CONTEXT_PATTERN = /\b(squidrun|main\s+builder|main\s+architect|main\s+oracle|trading|trade|hood|hyperliquid|ci\s+fix|worktree|fixture)\b/i;
 let wss = null;
 let clients = new Map(); // clientId -> { ws, paneId, role }
 let clientIdCounter = 0;
@@ -116,6 +123,295 @@ function getRoleForPaneId(paneId) {
   return PANE_TO_CANONICAL_ROLE.get(String(paneId)) || null;
 }
 
+function normalizeScopeProfile(value) {
+  return normalizeProfileName(value || DEFAULT_PROFILE);
+}
+
+function normalizeWindowKey(value, fallbackProfile = DEFAULT_PROFILE) {
+  const normalized = toNonEmptyString(value);
+  return normalized ? normalizeProfileName(normalized) : normalizeScopeProfile(fallbackProfile);
+}
+
+function normalizeScopeString(value) {
+  return toNonEmptyString(value);
+}
+
+function normalizeClientScope(input = {}, fallback = {}) {
+  const profileName = normalizeScopeProfile(
+    input.profileName
+    || input.profile
+    || input.windowProfile
+    || fallback.profileName
+    || DEFAULT_PROFILE
+  );
+  return {
+    profileName,
+    windowKey: normalizeWindowKey(input.windowKey || input.window || fallback.windowKey, profileName),
+    sessionScopeId: normalizeScopeString(
+      input.sessionScopeId
+      || input.sessionScope
+      || input.scopeId
+      || fallback.sessionScopeId
+    ),
+  };
+}
+
+function getObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function extractExplicitRouteScope(message = {}) {
+  const metadata = getObject(message.metadata);
+  const envelope = getObject(metadata.envelope);
+  const routing = getObject(metadata.routing || metadata.route || metadata.scope || envelope.routing);
+  const targetMeta = getObject(metadata.target || envelope.target);
+  const explicitProfile = routing.profileName
+    || routing.profile
+    || routing.windowProfile
+    || targetMeta.profileName
+    || targetMeta.profile
+    || targetMeta.windowProfile
+    || message.targetProfile
+    || message.profileName;
+  if (!toNonEmptyString(explicitProfile)) return null;
+  const profileName = normalizeScopeProfile(explicitProfile);
+  return {
+    explicit: true,
+    profileName,
+    windowKey: normalizeWindowKey(
+      routing.windowKey || routing.window || targetMeta.windowKey || targetMeta.window,
+      profileName
+    ),
+    sessionScopeId: normalizeScopeString(
+      routing.sessionScopeId
+      || routing.sessionScope
+      || routing.scopeId
+      || targetMeta.sessionScopeId
+      || targetMeta.sessionScope
+    ),
+  };
+}
+
+function inferProfileFromPathHint(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return null;
+  const normalized = text.replace(/\\/g, '/');
+  const match = normalized.match(/\/\.squidrun\/profiles\/([^/]+)\/workspace(?:\/|$)/i);
+  if (!match || !match[1]) return null;
+  return normalizeScopeProfile(match[1]);
+}
+
+function extractMessageProfileHints(message = {}) {
+  const metadata = getObject(message.metadata);
+  const envelope = getObject(metadata.envelope);
+  const senderMeta = getObject(metadata.sender || envelope.sender);
+  const targetMeta = getObject(metadata.target || envelope.target);
+  const routing = getObject(metadata.routing || metadata.route || metadata.scope || envelope.routing);
+  const project = getObject(metadata.project || envelope.project);
+  const hints = [];
+  const add = (value) => {
+    const text = toNonEmptyString(value);
+    if (text) hints.push(normalizeScopeProfile(text));
+  };
+
+  add(metadata.profileName || metadata.profile || metadata.windowProfile);
+  add(senderMeta.profileName || senderMeta.profile || senderMeta.windowProfile);
+  add(targetMeta.profileName || targetMeta.profile || targetMeta.windowProfile);
+  add(routing.profileName || routing.profile || routing.windowProfile);
+  add(inferProfileFromPathHint(project.path));
+  add(inferProfileFromPathHint(metadata.projectPath));
+
+  return Array.from(new Set(hints));
+}
+
+function getTargetRole(target) {
+  const identity = resolveTargetIdentity(target);
+  return identity.role || null;
+}
+
+function isScopedDiagnosticMessage(message = {}) {
+  const metadata = getObject(message.metadata);
+  const routing = getObject(metadata.routing || metadata.route || metadata.scope);
+  const channel = String(
+    routing.channel
+    || routing.diagnosticChannel
+    || metadata.channel
+    || metadata.diagnosticChannel
+    || ''
+  ).trim().toLowerCase();
+  return channel === 'scoped-diagnostic' || channel === 'profile-diagnostic';
+}
+
+function buildRoutingErrorAck(message, traceContext, status, error, details = {}) {
+  return {
+    type: 'send-ack',
+    messageId: message.messageId || null,
+    ok: false,
+    accepted: false,
+    queued: false,
+    verified: false,
+    status,
+    error,
+    routingError: true,
+    failClosed: true,
+    ...details,
+    traceId: traceContext?.traceId || null,
+    parentEventId: traceContext?.parentEventId || null,
+    timestamp: Date.now(),
+  };
+}
+
+function notifyMainArchitectRoutingError(sourceInfo = {}, message = {}, status, error, details = {}) {
+  const payload = JSON.stringify({
+    type: 'routing_error',
+    from: 'routing-guard',
+    status,
+    error,
+    source: {
+      role: sourceInfo.role || null,
+      paneId: sourceInfo.paneId || null,
+      profileName: sourceInfo.profileName || DEFAULT_PROFILE,
+      windowKey: sourceInfo.windowKey || sourceInfo.profileName || DEFAULT_PROFILE,
+    },
+    target: message.target || null,
+    details,
+    timestamp: Date.now(),
+  });
+
+  for (const info of clients.values()) {
+    if (!info || info.ws?.readyState !== 1) continue;
+    if (info.role !== 'architect') continue;
+    if (!clientMatchesRouteScope(info, { profileName: DEFAULT_PROFILE, windowKey: DEFAULT_PROFILE })) continue;
+    try {
+      info.ws.send(payload);
+    } catch (err) {
+      log.warn('WebSocket', `Failed to notify main Architect about routing error: ${err.message}`);
+    }
+  }
+}
+
+function detectWrongContextRoute(clientInfo = {}, message = {}, routeScope = {}) {
+  const targetRole = getTargetRole(message.target);
+  const senderRole = normalizeRoleId(clientInfo.role) || clientInfo.role || null;
+  const targetProfile = normalizeScopeProfile(routeScope?.targetScope?.profileName || DEFAULT_PROFILE);
+  const content = String(message.content || '');
+  const profileHints = extractMessageProfileHints(message);
+  const hasNonMainHint = profileHints.some((profileName) => !isMainProfile(profileName));
+  const hasMainHint = profileHints.some((profileName) => isMainProfile(profileName));
+  const hasSideContent = SIDE_CONTEXT_PATTERN.test(content);
+  const hasMainContent = MAIN_CONTEXT_PATTERN.test(content);
+  const scopedDiagnostic = isScopedDiagnosticMessage(message);
+
+  if (scopedDiagnostic && (senderRole !== 'architect' || targetRole !== 'architect')) {
+    return {
+      status: 'routing_error',
+      error: 'Scoped diagnostic channel is architect-to-architect only',
+      details: { reason: 'invalid_scoped_diagnostic_target', targetRole, senderRole },
+    };
+  }
+
+  if (scopedDiagnostic && senderRole === 'architect' && targetRole === 'architect') {
+    return null;
+  }
+
+  if (isMainProfile(targetProfile) && (hasNonMainHint || hasSideContent) && targetRole !== 'architect') {
+    return {
+      status: 'routing_error',
+      error: 'Side-profile/case context cannot be delivered to main Builder or Oracle',
+      details: {
+        reason: hasNonMainHint ? 'profile_metadata_mismatch' : 'content_context_mismatch',
+        targetRole,
+        targetProfile,
+        profileHints,
+      },
+    };
+  }
+
+  if (!isMainProfile(targetProfile) && (hasMainHint || hasMainContent) && targetRole !== 'architect') {
+    return {
+      status: 'routing_error',
+      error: 'Main SquidRun context cannot be delivered to a side-profile Builder or Oracle',
+      details: {
+        reason: hasMainHint ? 'profile_metadata_mismatch' : 'content_context_mismatch',
+        targetRole,
+        targetProfile,
+        profileHints,
+      },
+    };
+  }
+
+  return null;
+}
+
+function resolveRouteScope(clientInfo = {}, message = {}) {
+  const senderScope = normalizeClientScope(clientInfo);
+  const explicitScope = extractExplicitRouteScope(message);
+
+  if (!isMainProfile(senderScope.profileName)) {
+    if (explicitScope && explicitScope.profileName !== senderScope.profileName) {
+      return {
+        ok: false,
+        status: 'cross_profile_scope_mismatch',
+        error: `Sender profile '${senderScope.profileName}' cannot target profile '${explicitScope.profileName}'`,
+        senderScope,
+        targetScope: explicitScope,
+        failClosed: true,
+      };
+    }
+    return {
+      ok: true,
+      senderScope,
+      targetScope: {
+        profileName: senderScope.profileName,
+        windowKey: senderScope.windowKey,
+        sessionScopeId: senderScope.sessionScopeId,
+      },
+      failClosed: true,
+    };
+  }
+
+  if (explicitScope && !isMainProfile(explicitScope.profileName)) {
+    return {
+      ok: true,
+      senderScope,
+      targetScope: explicitScope,
+      failClosed: true,
+    };
+  }
+
+  return {
+    ok: true,
+    senderScope,
+    targetScope: {
+      profileName: DEFAULT_PROFILE,
+      windowKey: DEFAULT_PROFILE,
+      sessionScopeId: null,
+    },
+    failClosed: false,
+  };
+}
+
+function clientMatchesRouteScope(info, routeScope = {}) {
+  const targetScope = routeScope?.targetScope || routeScope;
+  const requiredProfile = normalizeScopeProfile(targetScope?.profileName || DEFAULT_PROFILE);
+  const clientProfile = normalizeScopeProfile(info?.profileName || DEFAULT_PROFILE);
+  if (clientProfile !== requiredProfile) return false;
+
+  const requiredWindowKey = toNonEmptyString(targetScope?.windowKey);
+  if (requiredWindowKey) {
+    const clientWindowKey = normalizeWindowKey(info?.windowKey, clientProfile);
+    if (clientWindowKey !== normalizeWindowKey(requiredWindowKey, requiredProfile)) return false;
+  }
+
+  const requiredSessionScopeId = toNonEmptyString(targetScope?.sessionScopeId);
+  if (requiredSessionScopeId) {
+    const clientSessionScopeId = toNonEmptyString(info?.sessionScopeId);
+    if (clientSessionScopeId !== requiredSessionScopeId) return false;
+  }
+
+  return true;
+}
+
 function markClientSeen(clientId, source = 'message', now = Date.now()) {
   const clientInfo = clients.get(clientId);
   if (!clientInfo) return null;
@@ -178,7 +474,7 @@ function resolveTargetIdentity(target) {
   };
 }
 
-function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.now()) {
+function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.now(), routeScope = null) {
   const staleThresholdMs = coerceStaleAfterMs(staleAfterMs);
   const identity = resolveTargetIdentity(target);
   if (!identity.role && !identity.paneId) {
@@ -197,6 +493,7 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
   let route = null;
   for (const info of clients.values()) {
     if (!info) continue;
+    if (routeScope && !clientMatchesRouteScope(info, routeScope)) continue;
     if (identity.role && info.role === identity.role) {
       route = info;
       break;
@@ -217,6 +514,7 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
       ageMs: null,
       staleThresholdMs,
       source: null,
+      routeScope: routeScope?.targetScope || routeScope || null,
     };
   }
 
@@ -232,6 +530,7 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
     ageMs,
     staleThresholdMs,
     source: 'client_activity',
+    routeScope: routeScope?.targetScope || routeScope || null,
   };
 }
 
@@ -492,11 +791,12 @@ function buildOutboundPayload(content, meta = {}) {
   });
 }
 
-function matchClientsForTarget(target) {
+function matchClientsForTarget(target, routeScope = null) {
   const targetStr = String(target);
   const targetRole = targetStr.toLowerCase();
   const matched = [];
   for (const [clientId, info] of clients) {
+    if (routeScope && !clientMatchesRouteScope(info, routeScope)) continue;
     const paneMatch = info.paneId !== null && String(info.paneId) === targetStr;
     const roleMatch = typeof info.role === 'string' && info.role.toLowerCase() === targetRole;
     if (paneMatch || roleMatch) {
@@ -509,7 +809,7 @@ function matchClientsForTarget(target) {
 function deliverToTargetNow(target, content, meta = {}) {
   const payload = buildOutboundPayload(content, meta);
   let sent = false;
-  const matched = matchClientsForTarget(target);
+  const matched = matchClientsForTarget(target, meta.routeScope || null);
   for (const [clientId, info] of matched) {
     if (info.ws.readyState !== 1) continue;
     try {
@@ -523,7 +823,8 @@ function deliverToTargetNow(target, content, meta = {}) {
   return sent;
 }
 
-function targetMatchesClient(target, info) {
+function targetMatchesClient(target, info, routeScope = null) {
+  if (routeScope && !clientMatchesRouteScope(info, routeScope)) return false;
   const targetStr = String(target);
   const targetRole = targetStr.toLowerCase();
   const paneMatch = info.paneId !== null && String(info.paneId) === targetStr;
@@ -544,7 +845,7 @@ function flushOutboundQueueForClient(clientId, source = 'register') {
   try {
     const retained = [];
     for (const entry of outboundQueue) {
-      if (!targetMatchesClient(entry.target, info)) {
+      if (!targetMatchesClient(entry.target, info, entry.meta?.routeScope || null)) {
         retained.push(entry);
         continue;
       }
@@ -1013,7 +1314,16 @@ function start(options = {}) {
       server.on('connection', (ws, req) => {
         const clientId = ++clientIdCounter;
         const now = Date.now();
-        const clientInfo = { ws, paneId: null, role: null, connectedAt: now, lastSeen: now };
+        const clientInfo = {
+          ws,
+          paneId: null,
+          role: null,
+          profileName: DEFAULT_PROFILE,
+          windowKey: DEFAULT_PROFILE,
+          sessionScopeId: null,
+          connectedAt: now,
+          lastSeen: now,
+        };
         clients.set(clientId, clientInfo);
 
         log.info('WebSocket', `Client ${clientId} connected from ${req.socket.remoteAddress}`);
@@ -1108,17 +1418,51 @@ async function handleMessage(clientId, rawData) {
   if (message.type === 'register') {
     const normalizedRole = normalizeRoleId(message.role) || message.role || null;
     const normalizedPaneId = normalizePaneId(message.paneId) || getPaneIdForRole(normalizeRoleId(message.role));
+    const scope = normalizeClientScope(message);
     clientInfo.paneId = normalizedPaneId || null;
     clientInfo.role = normalizedRole || null;
+    clientInfo.profileName = scope.profileName;
+    clientInfo.windowKey = scope.windowKey;
+    clientInfo.sessionScopeId = scope.sessionScopeId;
     markClientSeen(clientId, 'register');
-    log.info('WebSocket', `Client ${clientId} registered as pane=${clientInfo.paneId} role=${clientInfo.role}`);
-    sendJson(clientInfo.ws, { type: 'registered', paneId: clientInfo.paneId, role: clientInfo.role });
+    log.info(
+      'WebSocket',
+      `Client ${clientId} registered as pane=${clientInfo.paneId} role=${clientInfo.role} profile=${clientInfo.profileName}`
+    );
+    sendJson(clientInfo.ws, {
+      type: 'registered',
+      paneId: clientInfo.paneId,
+      role: clientInfo.role,
+      profileName: clientInfo.profileName,
+      windowKey: clientInfo.windowKey,
+      sessionScopeId: clientInfo.sessionScopeId,
+    });
     flushOutboundQueueForClient(clientId, 'register');
     return;
   }
 
   if (message.type === 'health-check') {
-    const health = getRoutingHealth(message.target, message.staleAfterMs);
+    const routeScope = resolveRouteScope(clientInfo, message);
+    if (!routeScope.ok) {
+      sendJson(clientInfo.ws, {
+        type: 'health-check-result',
+        requestId: typeof message.requestId === 'string' ? message.requestId : null,
+        target: message.target || null,
+        timestamp: Date.now(),
+        healthy: false,
+        status: routeScope.status,
+        error: routeScope.error,
+        failClosed: true,
+        routeScope: routeScope.targetScope || null,
+      });
+      return;
+    }
+    const health = getRoutingHealth(message.target, message.staleAfterMs, Date.now(), routeScope);
+    if (routeScope.failClosed && health.status === 'no_route') {
+      health.status = 'scope_route_unavailable';
+      health.failClosed = true;
+      health.error = `No ${routeScope.targetScope.profileName} profile route for target '${message.target}'`;
+    }
     sendJson(clientInfo.ws, {
       type: 'health-check-result',
       requestId: typeof message.requestId === 'string' ? message.requestId : null,
@@ -1348,12 +1692,72 @@ async function handleMessage(clientId, rawData) {
   // Handle agent-to-agent messages
   if (message.type === 'send') {
     const { target, content, priority, metadata } = message;
+    const routeScope = resolveRouteScope(clientInfo, message);
+    if (!routeScope.ok) {
+      const ackPayload = buildRoutingErrorAck(
+        message,
+        ingressTraceContext,
+        routeScope.status,
+        routeScope.error,
+        {
+          routeScope: routeScope.targetScope || null,
+          wsDeliveryCount: 0,
+        }
+      );
+      notifyMainArchitectRoutingError(clientInfo, message, routeScope.status, routeScope.error, {
+        routeScope: routeScope.targetScope || null,
+      });
+      sendJson(clientInfo.ws, ackPayload);
+      finalizeAckTracking(ackPayload);
+      return;
+    }
+    const wrongContext = detectWrongContextRoute(clientInfo, message, routeScope);
+    if (wrongContext) {
+      const ackPayload = buildRoutingErrorAck(
+        message,
+        ingressTraceContext,
+        wrongContext.status,
+        wrongContext.error,
+        {
+          routeScope: routeScope.targetScope || null,
+          contextGuard: wrongContext.details || null,
+          wsDeliveryCount: 0,
+        }
+      );
+      notifyMainArchitectRoutingError(clientInfo, message, wrongContext.status, wrongContext.error, {
+        routeScope: routeScope.targetScope || null,
+        contextGuard: wrongContext.details || null,
+      });
+      sendJson(clientInfo.ws, ackPayload);
+      finalizeAckTracking(ackPayload);
+      return;
+    }
+    const matched = matchClientsForTarget(target, routeScope);
+    if (routeScope.failClosed && matched.length === 0) {
+      const ackPayload = buildRoutingErrorAck(
+        message,
+        ingressTraceContext,
+        'scope_route_unavailable',
+        `No ${routeScope.targetScope.profileName} profile route for target '${target}'`,
+        {
+          routeScope: routeScope.targetScope,
+          wsDeliveryCount: 0,
+        }
+      );
+      notifyMainArchitectRoutingError(clientInfo, message, 'scope_route_unavailable', ackPayload.error, {
+        routeScope: routeScope.targetScope,
+      });
+      sendJson(clientInfo.ws, ackPayload);
+      finalizeAckTracking(ackPayload);
+      return;
+    }
     // Try WebSocket clients first (for future direct agent-to-agent)
     if (sendToTarget(target, content, {
       from: clientInfo.role || clientId,
       priority,
       metadata: (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) ? metadata : null,
       traceContext: dispatchTraceContext,
+      routeScope,
       persistIfOffline: false,
     })) {
       wsDeliveryCount = 1;
@@ -1551,6 +1955,9 @@ function getClients() {
     clientId: id,
     paneId: info.paneId,
     role: info.role,
+    profileName: info.profileName || DEFAULT_PROFILE,
+    windowKey: info.windowKey || info.profileName || DEFAULT_PROFILE,
+    sessionScopeId: info.sessionScopeId || null,
     connectedAt: info.connectedAt,
     lastSeen: info.lastSeen || null,
     ready: info.ws.readyState === 1,

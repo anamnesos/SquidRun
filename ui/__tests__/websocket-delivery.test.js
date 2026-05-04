@@ -12,7 +12,7 @@ jest.mock('../modules/logger', () => ({
 const WebSocket = require('ws');
 const websocketServer = require('../modules/websocket-server');
 
-function connectAndRegister({ port, role, paneId }) {
+function connectAndRegister({ port, role, paneId, profileName = 'main', windowKey = profileName, sessionScopeId = null }) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
 
@@ -27,7 +27,14 @@ function connectAndRegister({ port, role, paneId }) {
       }
 
       if (msg.type === 'welcome') {
-        ws.send(JSON.stringify({ type: 'register', role, paneId }));
+        ws.send(JSON.stringify({
+          type: 'register',
+          role,
+          paneId,
+          profileName,
+          windowKey,
+          sessionScopeId,
+        }));
         return;
       }
 
@@ -78,6 +85,10 @@ function closeClient(ws) {
 
     ws.close();
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe('WebSocket Delivery Audit', () => {
@@ -147,6 +158,415 @@ describe('WebSocket Delivery Audit', () => {
     }));
 
     const received = await delivery;
+    expect(received.from).toBe('architect');
+  });
+
+  test('blocks non-main canonical target from falling back to main profile', async () => {
+    const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainReceiver);
+    const scopedSender = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedSender);
+
+    let leakedToMain = false;
+    mainReceiver.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'no-main-leak') leakedToMain = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'scope-block-1';
+    const ackPromise = waitForMessage(
+      scopedSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'no-main-leak',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('scope_route_unavailable');
+    expect(ack.failClosed).toBe(true);
+    expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'eunbyeol' }));
+    expect(leakedToMain).toBe(false);
+  });
+
+  test('delivers scoped canonical target only to matching profile client', async () => {
+    const scopedReceiver = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedReceiver);
+    const scopedSender = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedSender);
+
+    const delivery = waitForMessage(
+      scopedReceiver,
+      (msg) => msg.type === 'message' && msg.content === 'scoped-ping'
+    );
+    const messageId = 'scope-deliver-1';
+    const ackPromise = waitForMessage(
+      scopedSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'scoped-ping',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const [ack, received] = await Promise.all([ackPromise, delivery]);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.websocket');
+    expect(received.from).toBe('architect');
+  });
+
+  test('main plain canonical target does not route into scoped profile', async () => {
+    const scopedReceiver = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedReceiver);
+    const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainSender);
+
+    let leakedToScoped = false;
+    scopedReceiver.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'plain-main-target') leakedToScoped = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'main-plain-no-scope-1';
+    const ackPromise = waitForMessage(
+      mainSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'plain-main-target',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('unrouted');
+    expect(leakedToScoped).toBe(false);
+  });
+
+  test('rejects Eunbyeol/Rachel context aimed at main Builder and notifies main Architect', async () => {
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+    const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainReceiver);
+
+    let executedByMainBuilder = false;
+    mainReceiver.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content.includes('Rachel')) executedByMainBuilder = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'wrong-context-metadata-1';
+    const ackPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+    const routingErrorPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'routing_error' && msg.status === 'routing_error'
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'Eunbyeol Rachel case follow-up belongs in the side window',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        sender: {
+          profileName: 'eunbyeol',
+        },
+      },
+    }));
+
+    const [ack, routingError] = await Promise.all([ackPromise, routingErrorPromise]);
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('routing_error');
+    expect(ack.contextGuard).toEqual(expect.objectContaining({
+      reason: 'profile_metadata_mismatch',
+      targetRole: 'builder',
+    }));
+    expect(routingError.error).toContain('Side-profile/case context');
+    expect(executedByMainBuilder).toBe(false);
+  });
+
+  test('rejects missing-scope side-window content aimed at main Builder', async () => {
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+    const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainReceiver);
+
+    let executedByMainBuilder = false;
+    mainReceiver.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content.includes('Eunbyeol')) executedByMainBuilder = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'wrong-context-content-1';
+    const ackPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'Eunbyeol side-window case context with no scope metadata',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('routing_error');
+    expect(ack.contextGuard).toEqual(expect.objectContaining({
+      reason: 'content_context_mismatch',
+      targetRole: 'builder',
+    }));
+    expect(executedByMainBuilder).toBe(false);
+  });
+
+  test('rejects main SquidRun context aimed at side Builder', async () => {
+    const scopedReceiver = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedReceiver);
+    const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainSender);
+
+    let executedByScopedBuilder = false;
+    scopedReceiver.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content.includes('SquidRun trading')) executedByScopedBuilder = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'wrong-context-main-to-side-1';
+    const ackPromise = waitForMessage(
+      mainSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'SquidRun trading/HOOD task belongs in main',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+      },
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('routing_error');
+    expect(ack.contextGuard).toEqual(expect.objectContaining({
+      reason: 'content_context_mismatch',
+      targetRole: 'builder',
+    }));
+    expect(executedByScopedBuilder).toBe(false);
+  });
+
+  test('allows scoped diagnostic channel only between architects', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+    const scopedBuilder = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedBuilder);
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+
+    const delivery = waitForMessage(
+      scopedArchitect,
+      (msg) => msg.type === 'message' && msg.content === 'diagnostic-only'
+    );
+    const architectAckPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === 'scoped-diagnostic-ok'
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'diagnostic-only',
+      messageId: 'scoped-diagnostic-ok',
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+          channel: 'scoped-diagnostic',
+        },
+      },
+    }));
+
+    const [architectAck, received] = await Promise.all([architectAckPromise, delivery]);
+    expect(architectAck.ok).toBe(true);
+    expect(received.from).toBe('architect');
+
+    let leakedToScopedBuilder = false;
+    scopedBuilder.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'diagnostic-to-builder') leakedToScopedBuilder = true;
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const builderAckPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === 'scoped-diagnostic-blocked'
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'diagnostic-to-builder',
+      messageId: 'scoped-diagnostic-blocked',
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+          channel: 'scoped-diagnostic',
+        },
+      },
+    }));
+
+    const builderAck = await builderAckPromise;
+    await sleep(100);
+    expect(builderAck.ok).toBe(false);
+    expect(builderAck.status).toBe('routing_error');
+    expect(builderAck.contextGuard).toEqual(expect.objectContaining({
+      reason: 'invalid_scoped_diagnostic_target',
+      targetRole: 'builder',
+    }));
+    expect(leakedToScopedBuilder).toBe(false);
+  });
+
+  test('main can route to scoped profile only with explicit routing metadata', async () => {
+    const scopedReceiver = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedReceiver);
+    const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainSender);
+
+    const delivery = waitForMessage(
+      scopedReceiver,
+      (msg) => msg.type === 'message' && msg.content === 'explicit-scoped-route'
+    );
+    const messageId = 'main-explicit-scope-1';
+    const ackPromise = waitForMessage(
+      mainSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'explicit-scoped-route',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+      },
+    }));
+
+    const [ack, received] = await Promise.all([ackPromise, delivery]);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.websocket');
     expect(received.from).toBe('architect');
   });
 
