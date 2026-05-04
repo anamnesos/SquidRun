@@ -516,6 +516,13 @@ function startAudioTranscriptionFallback(session, options = {}) {
       }, { status: options.status || session.status || lastStatus, fetchImpl: options.fetchImpl });
       return;
     }
+    if (session.nativeRealtimeTranscriptionActive === true) {
+      void postVoiceDiagnostic('voice.audio_chunk.native_transcription_active_skipped', {
+        blobSize: Number(blob.size || 0),
+        mimeType: blob.type || null,
+      }, { status: options.status || session.status || lastStatus, fetchImpl: options.fetchImpl });
+      return;
+    }
     void postAudioChunkToBroker(blob, options.status || session.status || lastStatus, options.fetchImpl || globalThis.fetch)
       .catch((err) => appendSessionLog(`Mic transcription failed: ${err.message}`));
   });
@@ -704,6 +711,7 @@ async function createVoiceRealtimeSession(options = {}) {
     peerConnection,
     remoteAudio,
     speakingMiraReply: false,
+    nativeRealtimeTranscriptionActive: false,
     spokenMessageIds: new Set(),
     stream,
     status,
@@ -754,6 +762,15 @@ async function createVoiceRealtimeSession(options = {}) {
     if (eventType === 'input_audio_buffer.speech_stopped') {
       session.fallbackSpeechActive = false;
       session.lastSpeechActivityMs = Date.now();
+    }
+    if (eventType === 'session.updated') {
+      session.nativeRealtimeTranscriptionActive = true;
+    }
+    if (
+      eventType === 'conversation.item.input_audio_transcription.delta'
+      || eventType === 'conversation.item.input_audio_transcription.completed'
+    ) {
+      session.nativeRealtimeTranscriptionActive = true;
     }
     if (
       eventType === 'response.created'
