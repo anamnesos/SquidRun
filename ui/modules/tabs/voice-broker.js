@@ -513,7 +513,7 @@ async function createVoiceRealtimeSession(options = {}) {
 
   const tracks = stream.getAudioTracks?.() || stream.getTracks?.() || [];
   tracks.forEach((track) => {
-    track.enabled = false;
+    track.enabled = true;
     peerConnection.addTrack(track, stream);
   });
 
@@ -615,8 +615,9 @@ async function startVoiceSession(options = {}) {
       fetchImpl: sessionOptions.fetchImpl,
       intervalMs: sessionOptions.egressPollIntervalMs,
     });
-    setSessionStatus('Connected', 'connected');
+    setSessionStatus('Listening', 'talking');
     appendSessionLog('Realtime session connected');
+    appendSessionLog('Mic listening');
     setSessionButtonState();
     return activeSession;
   } catch (err) {

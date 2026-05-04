@@ -269,7 +269,7 @@ describe('voice-broker tab', () => {
       }),
     }));
     expect(peer.setRemoteDescription).toHaveBeenCalledWith({ type: 'answer', sdp: 'answer-sdp' });
-    expect(track.enabled).toBe(false);
+    expect(track.enabled).toBe(true);
     dataChannel.handlers.open();
     expect(dataChannel.sent).toContainEqual(expect.objectContaining({
       type: 'session.update',
@@ -286,7 +286,7 @@ describe('voice-broker tab', () => {
   });
 
   test('push-to-talk, mute, interrupt, and stop use WebRTC state only', async () => {
-    const track = { enabled: false, stop: jest.fn() };
+    const track = { enabled: true, stop: jest.fn() };
     const dataChannel = {
       readyState: 'open',
       sent: [],
@@ -365,7 +365,7 @@ describe('voice-broker tab', () => {
     const fetchImpl = jest.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' });
-    const track = { enabled: false, stop: jest.fn() };
+    const track = { enabled: true, stop: jest.fn() };
 
     await tab.startVoiceSession({
       fetchImpl,
@@ -425,7 +425,7 @@ describe('voice-broker tab', () => {
       fetchImpl,
       mediaDevices: {
         getUserMedia: jest.fn(async () => ({
-          getAudioTracks: () => [{ enabled: false, stop: jest.fn() }],
+          getAudioTracks: () => [{ enabled: true, stop: jest.fn() }],
           getTracks: () => [],
         })),
       },
@@ -489,7 +489,7 @@ describe('voice-broker tab', () => {
       fetchImpl,
       mediaDevices: {
         getUserMedia: jest.fn(async () => ({
-          getAudioTracks: () => [{ enabled: false, stop: jest.fn() }],
+          getAudioTracks: () => [{ enabled: true, stop: jest.fn() }],
           getTracks: () => [],
         })),
       },
