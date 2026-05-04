@@ -31,6 +31,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'get-startup-services-status',
   'get-api-keys',
   'get-onboarding-state',
+  'get-owned-work-summary',
   'get-claims',
   'get-daemon-runtime-config',
   'get-feature-capabilities',
