@@ -721,10 +721,15 @@ async function createVoiceRealtimeSession(options = {}) {
       type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.sessionUpdate,
       session: {
         type: 'realtime',
-        input_audio_transcription: { model: getTranscriptionModel(status) },
-        turn_detection: {
-          type: 'server_vad',
-          create_response: false,
+        output_modalities: ['audio'],
+        audio: {
+          input: {
+            transcription: { model: getTranscriptionModel(status) },
+            turn_detection: {
+              type: 'server_vad',
+              create_response: false,
+            },
+          },
         },
       },
     });

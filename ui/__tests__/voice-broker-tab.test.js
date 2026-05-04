@@ -275,12 +275,16 @@ describe('voice-broker tab', () => {
       type: 'session.update',
       session: expect.objectContaining({
         type: 'realtime',
-        input_audio_transcription: expect.objectContaining({
-          model: 'gpt-4o-transcribe',
+        audio: expect.objectContaining({
+          input: expect.objectContaining({
+            transcription: expect.objectContaining({
+              model: 'gpt-4o-transcribe',
+            }),
+          }),
         }),
       }),
     }));
-    expect(dataChannel.sent[0].session.turn_detection).toEqual(expect.objectContaining({
+    expect(dataChannel.sent[0].session.audio.input.turn_detection).toEqual(expect.objectContaining({
       type: 'server_vad',
       create_response: false,
     }));
