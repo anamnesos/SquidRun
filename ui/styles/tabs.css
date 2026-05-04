@@ -9,6 +9,7 @@
 @import "./tabs/screenshots.css";
 @import "./tabs/oracle.css";
 @import "./tabs/api-keys.css";
+@import "./tabs/voice-broker.css";
 
 /* Shared common styles for all tabs */
 [title] {

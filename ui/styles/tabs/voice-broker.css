@@ -1,0 +1,78 @@
+.voice-broker-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.voice-broker-card {
+  border: 1px solid rgba(117, 138, 165, 0.24);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 36, 0.46);
+  padding: var(--space-3);
+}
+
+.voice-broker-status-grid {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.voice-broker-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.36fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  min-height: 28px;
+}
+
+.voice-broker-label {
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+}
+
+.voice-broker-value {
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.voice-broker-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(117, 138, 165, 0.28);
+  background: rgba(33, 46, 69, 0.58);
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.voice-broker-panel[data-state="running"] .voice-broker-pill {
+  border-color: rgba(77, 216, 135, 0.42);
+  background: rgba(25, 81, 54, 0.36);
+  color: #9af0bd;
+}
+
+.voice-broker-panel[data-state="not_ready"] .voice-broker-pill {
+  border-color: rgba(255, 183, 77, 0.46);
+  background: rgba(92, 60, 20, 0.34);
+  color: #ffd08a;
+}
+
+.voice-broker-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.voice-broker-error {
+  border: 1px solid rgba(255, 91, 91, 0.32);
+  border-radius: var(--radius-sm);
+  background: rgba(94, 28, 36, 0.28);
+  color: #ffb4b4;
+  padding: var(--space-2);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}

@@ -523,6 +523,7 @@
         </button>
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Screenshots</button>
         <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image Gen</button>
+        <button class="panel-tab" data-tab="voice" data-tab-group="primary" title="Voice broker status and controls">Voice</button>
 
         <button class="panel-tab" data-tab="api-keys" data-tab-group="primary" title="Secrets management">Secrets</button>
       </div>
@@ -600,6 +601,43 @@
             <div class="oracle-gallery-list" id="oracleGalleryList">
               <div class="oracle-gallery-empty">No images yet</div>
             </div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-voice">
+          <div class="tab-title">Voice Broker</div>
+          <div class="tab-description">Realtime voice ingress boundary status and controls.</div>
+          <div class="voice-broker-panel" id="voiceBrokerPanel" data-state="unavailable">
+            <div class="voice-broker-card">
+              <div class="voice-broker-status-grid">
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">State</span>
+                  <span class="voice-broker-value voice-broker-pill" id="voiceBrokerState">Unavailable</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Readiness</span>
+                  <span class="voice-broker-value" id="voiceBrokerReadiness">Checking</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Endpoint</span>
+                  <span class="voice-broker-value" id="voiceBrokerEndpoint">Checking</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Model</span>
+                  <span class="voice-broker-value" id="voiceBrokerModel">Checking</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Journal</span>
+                  <span class="voice-broker-value" id="voiceBrokerJournal">Checking</span>
+                </div>
+              </div>
+            </div>
+            <div class="voice-broker-controls">
+              <button type="button" class="btn btn-secondary" id="voiceBrokerRefreshBtn" title="Refresh voice broker status">Refresh</button>
+              <button type="button" class="btn btn-secondary" id="voiceBrokerStartBtn" title="Start voice broker">Start</button>
+              <button type="button" class="btn btn-secondary" id="voiceBrokerStopBtn" title="Stop voice broker">Stop</button>
+              <button type="button" class="btn btn-secondary" id="voiceBrokerRestartBtn" title="Restart voice broker">Restart</button>
+            </div>
+            <div class="voice-broker-error" id="voiceBrokerError" hidden></div>
           </div>
         </div>
         <div class="tab-pane" id="tab-api-keys">
