@@ -256,6 +256,10 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
         method: 'GET',
         path: '/v1/voice/egress',
       },
+      egressSay: {
+        method: 'POST',
+        path: '/v1/voice/egress',
+      },
       diagnostics: {
         method: 'POST',
         path: '/v1/voice/diagnostics',
@@ -685,6 +689,58 @@ function queryVoiceEgressMessages(options = {}) {
     .slice(0, limit);
 }
 
+function appendVoiceEgressMessage(input = {}, options = {}) {
+  const text = trimText(input.text || input.rawBody || input.message || input.body);
+  if (!text) {
+    return { ok: false, reason: 'voice_egress_text_required' };
+  }
+  const nowMs = Number.isFinite(Number(options.nowMs || input.nowMs))
+    ? Math.floor(Number(options.nowMs || input.nowMs))
+    : Date.now();
+  const messageId = trimText(input.messageId)
+    || `voice-egress-${nowMs}-${Math.random().toString(36).slice(2, 8)}`;
+  const entry = {
+    messageId,
+    sessionId: trimText(input.sessionId) || null,
+    senderRole: 'architect',
+    targetRole: 'user',
+    channel: 'voice',
+    direction: 'outbound',
+    sentAtMs: nowMs,
+    brokeredAtMs: nowMs,
+    rawBody: text,
+    status: 'recorded',
+    attempt: 1,
+    metadata: {
+      source: trimText(input.source) || 'voice-egress-api',
+      ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    },
+  };
+  let result = null;
+  if (typeof options.appendCommsJournalEntry === 'function') {
+    result = options.appendCommsJournalEntry(entry) || {};
+  } else {
+    try {
+      const { appendCommsJournalEntry } = require('./main/comms-journal');
+      result = appendCommsJournalEntry(entry) || {};
+    } catch (err) {
+      return { ok: false, reason: 'voice_egress_journal_unavailable', error: err.message };
+    }
+  }
+  if (result.ok === false) {
+    return {
+      ok: false,
+      reason: result.reason || 'voice_egress_journal_failed',
+      journal: result,
+    };
+  }
+  return {
+    ok: true,
+    message: normalizeVoiceEgressMessage(entry),
+    journal: result,
+  };
+}
+
 function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
   setCorsHeaders(res);
@@ -730,6 +786,7 @@ class VoiceBrokerService {
     this.enqueueTask = options.enqueueTask || null;
     this.routeVoiceMessage = options.routeVoiceMessage || null;
     this.queryCommsJournalEntries = options.queryCommsJournalEntries || null;
+    this.appendCommsJournalEntry = options.appendCommsJournalEntry || null;
     this.routeToArchitect = options.routeToArchitect;
     this.server = null;
     this.startedAtMs = null;
@@ -832,6 +889,15 @@ class VoiceBrokerService {
         return;
       }
 
+      if (req.method === 'POST' && url.pathname === '/v1/voice/egress') {
+        const body = parseJsonBody(await readRequestBody(req));
+        const result = appendVoiceEgressMessage(body, {
+          appendCommsJournalEntry: this.appendCommsJournalEntry || undefined,
+        });
+        sendJson(res, result.ok ? 202 : 400, result);
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === '/v1/voice/realtime/session') {
         sendJson(res, 501, {
           ok: false,
@@ -903,6 +969,7 @@ module.exports = {
   OPENAI_CLIENT_SECRETS_URL,
   OPENAI_TRANSCRIPTIONS_URL,
   VoiceBrokerService,
+  appendVoiceEgressMessage,
   appendVoiceDiagnostic,
   buildMiraVoiceInstructions,
   buildRealtimeSessionPayload,

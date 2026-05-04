@@ -607,6 +607,43 @@ describe('voice-broker', () => {
     }
   });
 
+  test('voice egress POST queues Architect replies for Mira mouth playback', async () => {
+    const appendCommsJournalEntry = jest.fn(() => ({ ok: true, status: 'inserted' }));
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
+      appendCommsJournalEntry,
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const response = await postJson(port, '/v1/voice/egress', {
+        text: 'I can speak this as Mira.',
+        messageId: 'voice-egress-post-1',
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(response.body).toEqual(expect.objectContaining({
+        ok: true,
+        message: expect.objectContaining({
+          messageId: 'voice-egress-post-1',
+          speaker: 'Mira',
+          text: 'I can speak this as Mira.',
+        }),
+      }));
+      expect(appendCommsJournalEntry).toHaveBeenCalledWith(expect.objectContaining({
+        messageId: 'voice-egress-post-1',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'voice',
+        direction: 'outbound',
+        rawBody: 'I can speak this as Mira.',
+      }));
+    } finally {
+      await broker.stop();
+    }
+  });
+
   test('transcript endpoint does not write directly to terminal panes', async () => {
     const bus = { emit: jest.fn() };
     const broker = new voiceBroker.VoiceBrokerService({
