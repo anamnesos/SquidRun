@@ -90,6 +90,7 @@ describe('voice-broker', () => {
       port: 43123,
       model: 'gpt-realtime',
       voice: 'marin',
+      transcriptionModel: 'gpt-4o-transcribe',
       openaiApiKeyPresent: true,
       transcriptJournalPath: path.join(tempRoot, 'runtime', 'voice-transcripts.jsonl'),
     }));

@@ -12,6 +12,7 @@ const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 0;
 const DEFAULT_MODEL = 'gpt-realtime-1.5';
 const DEFAULT_VOICE = 'marin';
+const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe';
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
 const DEFAULT_DIAGNOSTICS_RELATIVE_PATH = path.join('runtime', 'voice-diagnostics.jsonl');
 const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
@@ -210,6 +211,10 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     || trimText(env.SQUIDRUN_REALTIME_VOICE)
     || trimText(env.OPENAI_REALTIME_VOICE)
     || DEFAULT_VOICE;
+  const transcriptionModel = trimText(overrides.transcriptionModel)
+    || trimText(env.SQUIDRUN_VOICE_TRANSCRIPTION_MODEL)
+    || trimText(env.OPENAI_TRANSCRIPTION_MODEL)
+    || DEFAULT_TRANSCRIPTION_MODEL;
   const apiKey = trimText(overrides.openaiApiKey)
     || trimText(env.OPENAI_API_KEY)
     || null;
@@ -226,6 +231,7 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     port,
     model,
     voice,
+    transcriptionModel,
     openaiApiKey: apiKey,
     openaiApiKeyPresent: Boolean(apiKey),
     transcriptJournalPath,
@@ -390,7 +396,10 @@ async function transcribeVoiceAudio(payload = {}, options = {}) {
 
   const buffer = Buffer.from(normalized.audioBase64, 'base64');
   const form = new FormData();
-  form.append('model', trimText(options.transcriptionModel) || 'gpt-4o-mini-transcribe');
+  form.append(
+    'model',
+    trimText(options.transcriptionModel) || config.transcriptionModel || DEFAULT_TRANSCRIPTION_MODEL
+  );
   form.append('file', new Blob([buffer], { type: normalized.mimeType }), 'voice.webm');
 
   const response = await fetchImpl(OPENAI_TRANSCRIPTIONS_URL, {
@@ -740,6 +749,7 @@ class VoiceBrokerService {
         port: this.config.port,
         model: this.config.model,
         voice: this.config.voice,
+        transcriptionModel: this.config.transcriptionModel,
         openaiApiKeyPresent: this.config.openaiApiKeyPresent,
         transcriptJournalPath: this.config.transcriptJournalPath,
         diagnosticsJournalPath: this.config.diagnosticsJournalPath,
@@ -886,6 +896,7 @@ module.exports = {
   DEFAULT_DIAGNOSTICS_RELATIVE_PATH,
   DEFAULT_MODEL,
   DEFAULT_MIRA_VOICE_INSTRUCTIONS,
+  DEFAULT_TRANSCRIPTION_MODEL,
   DEFAULT_TRANSCRIPT_RELATIVE_PATH,
   DEFAULT_VOICE,
   OPENAI_CALLS_URL,

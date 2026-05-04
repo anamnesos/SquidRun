@@ -274,8 +274,9 @@ describe('voice-broker tab', () => {
     expect(dataChannel.sent).toContainEqual(expect.objectContaining({
       type: 'session.update',
       session: expect.objectContaining({
+        type: 'realtime',
         input_audio_transcription: expect.objectContaining({
-          model: 'gpt-4o-mini-transcribe',
+          model: 'gpt-4o-transcribe',
         }),
       }),
     }));
