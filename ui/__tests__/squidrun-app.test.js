@@ -239,7 +239,7 @@ jest.mock('../scripts/hm-telegram', () => ({
 jest.mock('../scripts/hm-telegram-routing', () => ({
   resolveTelegramInboundRoute: jest.fn(({ chatId } = {}) => {
     const text = chatId === null || chatId === undefined ? null : String(chatId).trim();
-    if (!text || text === '1111111111' || (text !== '2222222222' && text !== '3333333333' && text !== '9999999999')) {
+    if (!text || text === '1111111111' || (text !== '2222222222' && text !== '3333333333' && text !== '4444444444' && text !== '9999999999')) {
       return { ok: true, chatId: text, windowKey: 'main', profile: 'main', reason: 'owner_chat' };
     }
     if (text === '2222222222') {
@@ -247,6 +247,9 @@ jest.mock('../scripts/hm-telegram-routing', () => ({
     }
     if (text === '3333333333') {
       return { ok: true, chatId: text, windowKey: 'client-profile', profile: 'client-profile', reason: 'explicit_non_owner_route' };
+    }
+    if (text === '4444444444') {
+      return { ok: true, chatId: text, windowKey: 'eunbyeol', profile: 'eunbyeol', reason: 'explicit_non_owner_route' };
     }
     return { ok: false, blocked: true, chatId: text, reason: 'unknown_non_owner_chat' };
   }),
@@ -541,6 +544,67 @@ describe('SquidRunApp', () => {
   });
 
   describe('routeInjectMessage', () => {
+    it('dedupes repeated side-profile visible-window injections by messageId', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      const payload = {
+        panes: ['2'],
+        message: 'Eunbyeol scoped Architect -> Builder message',
+        deliveryId: 'delivery-eunbyeol-replay-1',
+        traceContext: {
+          messageId: 'hm-eunbyeol-visible-replay-1',
+        },
+        meta: {
+          windowKey: 'eunbyeol',
+          profileName: 'eunbyeol',
+        },
+      };
+
+      expect(app.routeInjectMessage(payload)).toBe(true);
+      expect(app.routeInjectMessage(payload)).toBe(true);
+
+      const injectCalls = sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls).toHaveLength(1);
+      expect(injectCalls[0][2]).toEqual(expect.objectContaining({ windowKey: 'eunbyeol' }));
+      expect(injectCalls[0][1]).toEqual(expect.objectContaining({
+        panes: ['2'],
+        message: payload.message,
+        _ipcPacketized: true,
+        _routerAttempted: true,
+        meta: expect.objectContaining({
+          windowKey: 'eunbyeol',
+          profileName: 'eunbyeol',
+        }),
+      }));
+      expect(app.visibleInjectDeliveryCache.size).toBe(1);
+    });
+
+    it('does not cache failed side-profile visible-window handoffs', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const sendToVisibleWindow = jest
+        .spyOn(app, 'sendToVisibleWindow')
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true);
+
+      const payload = {
+        panes: ['2'],
+        message: 'retry after failed scoped visible handoff',
+        traceContext: {
+          messageId: 'hm-eunbyeol-visible-retry-1',
+        },
+        meta: {
+          windowKey: 'eunbyeol',
+          profileName: 'eunbyeol',
+        },
+      };
+
+      expect(app.routeInjectMessage(payload)).toBe(false);
+      expect(app.routeInjectMessage(payload)).toBe(true);
+      expect(sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message')).toHaveLength(2);
+      expect(app.visibleInjectDeliveryCache.size).toBe(1);
+    });
+
     it('pre-chunks oversized inject messages before visible-window delivery', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
@@ -3452,6 +3516,48 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('routes Eunbyeol Telegram inbound to the Eunbyeol side-window scope without relaunching it', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
+      app.registerAppWindow('eunbyeol', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('hello Eunbyeol lane', '@Eunbyeol', { chatId: 4444444444, updateId: 106 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from @Eunbyeol]: hello Eunbyeol lane',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'eunbyeol',
+          chatId: 4444444444,
+          metadata: expect.objectContaining({
+            chatId: 4444444444,
+            windowKey: 'eunbyeol',
+          }),
+        }),
+        'Telegram'
+      );
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(launchSpy).not.toHaveBeenCalled();
+    });
+
     it('fails closed for unknown non-owner Telegram chats before updating reply context', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
@@ -3648,6 +3754,17 @@ describe('SquidRunApp', () => {
     it('restarts the Telegram poller without reloading app panes', () => {
       app.inboundPollerService.stopTelegram = jest.fn();
       app.startTelegramPoller = jest.fn(() => true);
+      const reloadEunbyeol = jest.fn();
+      const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
+      const createWindowSpy = jest.spyOn(app, 'createWindow').mockResolvedValue();
+      app.registerAppWindow('eunbyeol', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          reloadIgnoringCache: reloadEunbyeol,
+          send: jest.fn(),
+        },
+      });
 
       const result = app.restartTelegramPoller({ reason: 'test-reload' });
 
@@ -3658,6 +3775,9 @@ describe('SquidRunApp', () => {
       }));
       expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
       expect(app.startTelegramPoller).toHaveBeenCalledTimes(1);
+      expect(reloadEunbyeol).not.toHaveBeenCalled();
+      expect(launchSpy).not.toHaveBeenCalled();
+      expect(createWindowSpy).not.toHaveBeenCalled();
     });
 
     it('queues inbound human delivery for replay when pane delivery stays unverified', async () => {

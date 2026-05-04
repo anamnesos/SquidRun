@@ -251,6 +251,155 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
   });
 
+  test('Eunbyeol restart-readiness handshake proves scoped back-and-forth without main leak', async () => {
+    const mainBuilder = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainBuilder);
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+    const eunbyeolArchitect = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(eunbyeolArchitect);
+    const eunbyeolBuilder = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(eunbyeolBuilder);
+
+    const leakedToMain = [];
+    mainBuilder.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && /Eunbyeol restart handshake/.test(msg.content || '')) {
+          leakedToMain.push(msg);
+        }
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const helloMessageId = 'eunbyeol-handshake-builder-1';
+    const builderDelivery = waitForMessage(
+      eunbyeolBuilder,
+      (msg) => msg.type === 'message' && /profile=eunbyeol window=eunbyeol/.test(msg.content || '')
+    );
+    const helloAck = waitForMessage(
+      eunbyeolArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === helloMessageId
+    );
+
+    eunbyeolArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'Eunbyeol restart handshake: profile=eunbyeol window=eunbyeol context=Eunbyeol/Rachel; plain builder/oracle targets stay same-profile only.',
+      messageId: helloMessageId,
+      ackRequired: true,
+      metadata: {
+        sender: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+        handshake: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+          notMainContext: true,
+          sameProfileTargetsOnly: true,
+        },
+      },
+    }));
+
+    const [helloAckMsg, builderMsg] = await Promise.all([helloAck, builderDelivery]);
+    expect(helloAckMsg.ok).toBe(true);
+    expect(helloAckMsg.status).toBe('delivered.websocket');
+    expect(builderMsg.metadata).toEqual(expect.objectContaining({
+      sender: expect.objectContaining({ profileName: 'eunbyeol', windowKey: 'eunbyeol' }),
+      handshake: expect.objectContaining({ notMainContext: true, sameProfileTargetsOnly: true }),
+    }));
+
+    const replyMessageId = 'eunbyeol-handshake-architect-1';
+    const architectReplyDelivery = waitForMessage(
+      eunbyeolArchitect,
+      (msg) => msg.type === 'message' && /same-profile canonical reply path confirmed/.test(msg.content || '')
+    );
+    const replyAck = waitForMessage(
+      eunbyeolBuilder,
+      (msg) => msg.type === 'send-ack' && msg.messageId === replyMessageId
+    );
+
+    eunbyeolBuilder.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'Eunbyeol restart handshake received: same-profile canonical reply path confirmed.',
+      messageId: replyMessageId,
+      ackRequired: true,
+      metadata: {
+        sender: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+        handshake: {
+          received: true,
+          sameProfileReply: true,
+        },
+      },
+    }));
+
+    const [replyAckMsg, replyMsg] = await Promise.all([replyAck, architectReplyDelivery]);
+    expect(replyAckMsg.ok).toBe(true);
+    expect(replyAckMsg.status).toBe('delivered.websocket');
+    expect(replyMsg.metadata).toEqual(expect.objectContaining({
+      sender: expect.objectContaining({ profileName: 'eunbyeol', windowKey: 'eunbyeol' }),
+      handshake: expect.objectContaining({ received: true, sameProfileReply: true }),
+    }));
+
+    const diagnosticMessageId = 'eunbyeol-handshake-diagnostic-1';
+    const diagnosticDelivery = waitForMessage(
+      eunbyeolArchitect,
+      (msg) => msg.type === 'message' && /diagnostic path from main Architect/.test(msg.content || '')
+    );
+    const diagnosticAck = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === diagnosticMessageId
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'Eunbyeol restart handshake diagnostic path from main Architect.',
+      messageId: diagnosticMessageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+          channel: 'scoped-diagnostic',
+        },
+      },
+    }));
+
+    const [diagnosticAckMsg, diagnosticMsg] = await Promise.all([diagnosticAck, diagnosticDelivery]);
+    expect(diagnosticAckMsg.ok).toBe(true);
+    expect(diagnosticMsg.metadata).toEqual(expect.objectContaining({
+      routing: expect.objectContaining({
+        profileName: 'eunbyeol',
+        windowKey: 'eunbyeol',
+        channel: 'scoped-diagnostic',
+      }),
+    }));
+
+    await sleep(100);
+    expect(leakedToMain).toHaveLength(0);
+  });
+
   test('main plain canonical target does not route into scoped profile', async () => {
     const scopedReceiver = await connectAndRegister({
       port,

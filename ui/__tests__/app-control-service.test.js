@@ -76,6 +76,36 @@ describe('app-control-service', () => {
     expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'test' });
   });
 
+  test('restart-telegram-poller does not inspect or reload side-profile windows', () => {
+    const restartTelegramPoller = jest.fn(() => ({
+      success: true,
+      started: true,
+      reason: 'eunbyeol-router-boundary',
+    }));
+    const getAppWindows = jest.fn(() => {
+      throw new Error('window reload path must not be used for Telegram restart');
+    });
+    const getPaneHostWindows = jest.fn(() => {
+      throw new Error('pane-host reload path must not be used for Telegram restart');
+    });
+
+    const result = executeAppControlAction({
+      restartTelegramPoller,
+      getAppWindows,
+      getPaneHostWindows,
+    }, 'restart-telegram-poller', { reason: 'eunbyeol-router-boundary' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'restart-telegram-poller',
+      started: true,
+      reason: 'eunbyeol-router-boundary',
+    }));
+    expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'eunbyeol-router-boundary' });
+    expect(getAppWindows).not.toHaveBeenCalled();
+    expect(getPaneHostWindows).not.toHaveBeenCalled();
+  });
+
   test('restart-telegram-poller reports unavailable when the app lacks a restart hook', () => {
     expect(executeAppControlAction({}, 'restart-telegram-poller')).toEqual(expect.objectContaining({
       success: false,

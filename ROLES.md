@@ -236,3 +236,5 @@ Use this order before any restart approval:
 4. Oracle performs documentation pass for session learnings and changed behavior (paths, session semantics, operational workflow).
 
 Restart is blocked until all four steps are complete.
+
+For side-profile windows such as Eunbyeol, restart readiness also requires an automated scoped handshake before any live relaunch is treated as ready: the side Architect identifies profile/window/context, confirms it is not main SquidRun/trading context, confirms plain Builder/Oracle targets stay same-profile only, confirms the Architect-to-Architect diagnostic channel when needed, and completes a scoped send/receive test without main leakage or replay. The proof must come from a harness/test first; the user must not be asked to watch panes as the verifier.
