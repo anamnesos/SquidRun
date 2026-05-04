@@ -510,6 +510,28 @@ describe('voice-broker', () => {
     }
   });
 
+  test('phone pairing endpoint is local-host only', async () => {
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const response = await postJson(port, '/v1/voice/phone/pairing', {}, {
+        Host: 'public-tunnel.example',
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.body).toEqual({
+        ok: false,
+        reason: 'phone_pairing_local_only',
+      });
+    } finally {
+      await broker.stop();
+    }
+  });
+
   test('phone voice endpoints require a valid pairing token', async () => {
     const phonePairingPath = path.join(tempRoot, 'runtime', 'voice-phone-pairing.json');
     const fetchImpl = jest.fn(async () => ({
