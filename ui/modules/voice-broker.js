@@ -10,7 +10,7 @@ const taskQueue = require('../scripts/hm-task-queue');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 0;
-const DEFAULT_MODEL = 'gpt-realtime';
+const DEFAULT_MODEL = 'gpt-realtime-1.5';
 const DEFAULT_VOICE = 'marin';
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
 const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
@@ -97,8 +97,62 @@ function buildVoiceContextSnapshot(options = {}) {
   }
 
   lines.push('Builder and Oracle may be visually hidden in Focus Mira mode, but routing and terminal processes can still be alive.');
+  const commsRows = Array.isArray(options.commsRows)
+    ? options.commsRows
+    : queryRecentCommsRows(options);
+  const recentSession = summarizeRecentComms(commsRows, {
+    limit: options.recentCommsLimit,
+  });
+  if (recentSession) {
+    lines.push(`Recent session context: ${recentSession}`);
+  } else {
+    lines.push('Recent session message history is unavailable right now.');
+  }
   lines.push('Use this context when James asks what is happening; when exact action status is uncertain, say you are routing/checking through Mira.');
   return lines.join(' ');
+}
+
+function queryRecentCommsRows(options = {}) {
+  if (options.includeRecentComms === false) return [];
+  if (typeof options.queryCommsJournalEntries === 'function') {
+    return options.queryCommsJournalEntries({
+      limit: options.recentCommsQueryLimit || 18,
+      order: 'desc',
+    }) || [];
+  }
+  try {
+    const { queryCommsJournalEntries } = require('./main/comms-journal');
+    return queryCommsJournalEntries({
+      limit: options.recentCommsQueryLimit || 18,
+      order: 'desc',
+    }) || [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function normalizeCommsBody(body) {
+  return String(body || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\[[^\]]*CURRENT PROJECT[^\]]*\]/gi, '')
+    .trim();
+}
+
+function summarizeRecentComms(rows = [], options = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+  const limit = Math.max(1, Math.min(24, Number(options.limit) || 12));
+  return rows
+    .slice(0, limit)
+    .reverse()
+    .map((row) => {
+      const sender = trimText(row.senderRole || row.sender || row.source) || 'unknown';
+      const target = trimText(row.targetRole || row.target) || 'unknown';
+      const body = normalizeCommsBody(row.rawBody || row.body || row.message || row.excerpt);
+      if (!body) return null;
+      return `${sender}->${target}: ${body.slice(0, 240)}`;
+    })
+    .filter(Boolean)
+    .join(' | ');
 }
 
 function buildMiraVoiceInstructions(options = {}) {
@@ -588,4 +642,5 @@ module.exports = {
   mintRealtimeClientSecret,
   normalizeTranscriptPayload,
   routeVoiceTranscriptToArchitect,
+  summarizeRecentComms,
 };

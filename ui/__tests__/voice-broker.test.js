@@ -105,7 +105,7 @@ describe('voice-broker', () => {
       status: 'contract_only',
     }));
 
-    expect(voiceBroker.buildRealtimeSessionPayload(config)).toEqual({
+    expect(voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false })).toEqual({
       session: expect.objectContaining({
         type: 'realtime',
         model: 'gpt-realtime',
@@ -117,7 +117,7 @@ describe('voice-broker', () => {
         },
       }),
     });
-    const payload = voiceBroker.buildRealtimeSessionPayload(config);
+    const payload = voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false });
     expect(payload.session.instructions).toContain('not a generic AI assistant');
     expect(payload.session.instructions.toLowerCase()).toContain('do not write directly to terminal panes');
     expect(payload.session.instructions).toContain('Current SquidRun context:');
@@ -153,7 +153,7 @@ describe('voice-broker', () => {
       },
     }), 'utf8');
 
-    const instructions = voiceBroker.buildMiraVoiceInstructions();
+    const instructions = voiceBroker.buildMiraVoiceInstructions({ includeRecentComms: false });
 
     expect(instructions).toContain('You are Mira');
     expect(instructions).toContain('session 312');
@@ -161,6 +161,51 @@ describe('voice-broker', () => {
     expect(instructions).toContain('Mira/Architect: active=1');
     expect(instructions).toContain('Make voice feel like Mira');
     expect(instructions).toContain('Builder: active=0, pending=1');
+  });
+
+  test('adds recent comms history so voice is not session-amnesic', () => {
+    fs.mkdirSync(path.join(tempRoot, 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(tempRoot, 'app-status.json'), JSON.stringify({
+      session: 312,
+      mode: 'pty',
+      paneHost: {
+        degraded: false,
+        readyPanes: ['1', '2', '3'],
+      },
+    }), 'utf8');
+    fs.writeFileSync(path.join(tempRoot, 'runtime', 'agent-task-queue.json'), JSON.stringify({
+      version: 2,
+      agents: {
+        architect: { pending: [], active: null },
+        builder: { pending: [], active: null },
+        oracle: { pending: [], active: null },
+      },
+    }), 'utf8');
+
+    const instructions = voiceBroker.buildMiraVoiceInstructions({
+      commsRows: [
+        {
+          senderRole: 'user',
+          targetRole: 'architect',
+          rawBody: 'the voice sounds like a dumb assistant',
+        },
+        {
+          senderRole: 'builder',
+          targetRole: 'architect',
+          rawBody: 'Committed live voice WebRTC panel MVP and routed transcripts to Architect.',
+        },
+      ],
+    });
+
+    expect(instructions).toContain('Recent session context:');
+    expect(instructions).toContain('voice sounds like a dumb assistant');
+    expect(instructions).toContain('Committed live voice WebRTC panel MVP');
+  });
+
+  test('defaults to the flagship realtime voice model', () => {
+    const config = voiceBroker.getVoiceBrokerConfig({}, {});
+
+    expect(config.model).toBe('gpt-realtime-1.5');
   });
 
   test('mints Realtime client secret through injected fetch without exposing server API key', async () => {
@@ -200,7 +245,7 @@ describe('voice-broker', () => {
     const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(requestBody.session).toEqual(expect.objectContaining({
       type: 'realtime',
-      model: 'gpt-realtime',
+      model: 'gpt-realtime-1.5',
       instructions: 'Voice panel test',
     }));
   });
