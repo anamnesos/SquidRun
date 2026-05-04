@@ -35,6 +35,13 @@ describe('voice-broker tab', () => {
       'voiceBrokerStartBtn',
       'voiceBrokerStopBtn',
       'voiceBrokerRestartBtn',
+      'voiceSessionStatus',
+      'voiceSessionStartBtn',
+      'voicePushToTalkBtn',
+      'voiceMuteBtn',
+      'voiceInterruptBtn',
+      'voiceSessionStopBtn',
+      'voiceSessionLog',
     ].forEach((id) => {
       elements[id] = makeElement(id);
     });
@@ -157,6 +164,222 @@ describe('voice-broker tab', () => {
     expect(invokeBridge).toHaveBeenCalledWith('voice-broker:status');
     expect(invokeBridge).toHaveBeenCalledWith('voice-broker:control', { action: 'restart' });
     expect(elements.voiceBrokerState.textContent).toBe('Running');
+  });
+
+  test('creates Realtime WebRTC session through broker client-secret endpoint', async () => {
+    const track = { enabled: true, stop: jest.fn() };
+    const stream = {
+      getAudioTracks: jest.fn(() => [track]),
+      getTracks: jest.fn(() => [track]),
+    };
+    const dataChannel = {
+      readyState: 'open',
+      sent: [],
+      handlers: {},
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+      close: jest.fn(),
+    };
+    const peer = {
+      addTrack: jest.fn(),
+      createDataChannel: jest.fn(() => dataChannel),
+      createOffer: jest.fn(async () => ({ type: 'offer', sdp: 'offer-sdp' })),
+      setLocalDescription: jest.fn(),
+      setRemoteDescription: jest.fn(),
+      close: jest.fn(),
+    };
+    const PeerConnection = jest.fn(() => peer);
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, body: { value: 'eph_test' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => 'answer-sdp',
+      });
+
+    const session = await tab.createVoiceRealtimeSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: {
+          endpointShape: {
+            clientSecret: { path: '/v1/voice/realtime/client-secret' },
+            transcript: { path: '/v1/voice/transcripts' },
+          },
+        },
+      },
+      fetchImpl,
+      mediaDevices: { getUserMedia: jest.fn(async () => stream) },
+      RTCPeerConnection: PeerConnection,
+    });
+
+    expect(session.peerConnection).toBe(peer);
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:43123/v1/voice/realtime/client-secret', expect.objectContaining({
+      method: 'POST',
+    }));
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, 'https://api.openai.com/v1/realtime/calls', expect.objectContaining({
+      method: 'POST',
+      body: 'offer-sdp',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer eph_test',
+        'Content-Type': 'application/sdp',
+      }),
+    }));
+    expect(peer.setRemoteDescription).toHaveBeenCalledWith({ type: 'answer', sdp: 'answer-sdp' });
+    expect(track.enabled).toBe(false);
+    dataChannel.handlers.open();
+    expect(dataChannel.sent).toContainEqual(expect.objectContaining({
+      type: 'session.update',
+      session: expect.objectContaining({
+        input_audio_transcription: expect.objectContaining({
+          model: 'gpt-4o-mini-transcribe',
+        }),
+      }),
+    }));
+    expect(dataChannel.sent[0].session).not.toHaveProperty('turn_detection');
+  });
+
+  test('push-to-talk, mute, interrupt, and stop use WebRTC state only', async () => {
+    const track = { enabled: false, stop: jest.fn() };
+    const dataChannel = {
+      readyState: 'open',
+      sent: [],
+      addEventListener: jest.fn(),
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+      close: jest.fn(),
+    };
+    const peer = { close: jest.fn() };
+    tab.renderVoiceBrokerStatus({
+      ok: true,
+      ready: true,
+      running: true,
+      state: 'running',
+      lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+      config: {
+        endpointShape: {
+          clientSecret: { path: '/v1/voice/realtime/client-secret' },
+        },
+      },
+    });
+    await tab.startVoiceSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: { endpointShape: { clientSecret: { path: '/token' } } },
+      },
+      fetchImpl: jest.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
+        .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' }),
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [track],
+          getTracks: () => [track],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => dataChannel,
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: peer.close,
+      })),
+    });
+
+    expect(tab.setPushToTalk(true)).toBe(true);
+    expect(track.enabled).toBe(true);
+    expect(tab.muteVoiceSession()).toBe(true);
+    expect(track.enabled).toBe(false);
+    expect(tab.interruptVoiceSession()).toBe(true);
+    expect(dataChannel.sent).toContainEqual({ type: 'response.cancel' });
+    tab.stopVoiceSession();
+    expect(track.stop).toHaveBeenCalled();
+    expect(peer.close).toHaveBeenCalled();
+  });
+
+  test('data channel transcript events post to broker transcript endpoint', async () => {
+    const dataChannel = {
+      readyState: 'open',
+      handlers: {},
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      send: jest.fn(),
+      close: jest.fn(),
+    };
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' })
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ ok: true }) });
+
+    await tab.createVoiceRealtimeSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: {
+          endpointShape: {
+            clientSecret: { path: '/v1/voice/realtime/client-secret' },
+            transcript: { path: '/v1/voice/transcripts' },
+          },
+        },
+      },
+      fetchImpl,
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [{ enabled: false, stop: jest.fn() }],
+          getTracks: () => [],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => dataChannel,
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: jest.fn(),
+      })),
+    });
+
+    dataChannel.handlers.message({
+      data: JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        event_id: 'evt_1',
+        transcript: 'queue this as voice ingress',
+      }),
+    });
+    await Promise.resolve();
+
+    expect(fetchImpl).toHaveBeenLastCalledWith('http://127.0.0.1:43123/v1/voice/transcripts', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: expect.stringContaining('queue this as voice ingress'),
+    }));
+  });
+
+  test('exports data-channel contract for future voice tools without pane writes', () => {
+    expect(tab.VOICE_DATA_CHANNEL_CONTRACT).toEqual(expect.objectContaining({
+      channelName: 'oai-events',
+      clientEvents: expect.objectContaining({
+        responseCancel: 'response.cancel',
+      }),
+      futureToolIngress: expect.arrayContaining([
+        'response.function_call_arguments.done',
+      ]),
+    }));
   });
 
   test('html helper escapes rendered status text', () => {

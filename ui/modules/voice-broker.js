@@ -268,8 +268,15 @@ function ingestVoiceTranscript(payload = {}, options = {}) {
 
 function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
+  setCorsHeaders(res);
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(payload, null, 2));
+}
+
+function setCorsHeaders(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
 function readRequestBody(req, limitBytes = 1024 * 1024) {
@@ -331,6 +338,13 @@ class VoiceBrokerService {
   async handleRequest(req, res) {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     try {
+      if (req.method === 'OPTIONS') {
+        setCorsHeaders(res);
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
+
       if (req.method === 'GET' && (url.pathname === '/status' || url.pathname === '/health')) {
         sendJson(res, 200, this.getStatus());
         return;

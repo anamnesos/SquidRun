@@ -637,6 +637,20 @@
               <button type="button" class="btn btn-secondary" id="voiceBrokerStopBtn" title="Stop voice broker">Stop</button>
               <button type="button" class="btn btn-secondary" id="voiceBrokerRestartBtn" title="Restart voice broker">Restart</button>
             </div>
+            <div class="voice-broker-session">
+              <div class="voice-broker-row">
+                <span class="voice-broker-label">Session</span>
+                <span class="voice-broker-value voice-session-status" id="voiceSessionStatus" data-state="idle">Idle</span>
+              </div>
+              <div class="voice-broker-controls">
+                <button type="button" class="btn btn-secondary" id="voiceSessionStartBtn" title="Connect live voice session">Connect</button>
+                <button type="button" class="btn btn-secondary" id="voicePushToTalkBtn" title="Toggle push-to-talk">Talk</button>
+                <button type="button" class="btn btn-secondary" id="voiceMuteBtn" title="Mute microphone">Mute</button>
+                <button type="button" class="btn btn-secondary" id="voiceInterruptBtn" title="Interrupt voice response">Interrupt</button>
+                <button type="button" class="btn btn-secondary" id="voiceSessionStopBtn" title="Stop live voice session">End</button>
+              </div>
+              <pre class="voice-session-log" id="voiceSessionLog" aria-live="polite"></pre>
+            </div>
             <div class="voice-broker-error" id="voiceBrokerError" hidden></div>
           </div>
         </div>

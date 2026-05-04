@@ -217,6 +217,39 @@ describe('voice-broker', () => {
     expect(broker.getStatus().running).toBe(false);
   });
 
+  test('broker answers browser CORS preflight for renderer voice session fetches', async () => {
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: '127.0.0.1',
+          port,
+          path: '/v1/voice/realtime/client-secret',
+          method: 'OPTIONS',
+          headers: {
+            Origin: 'file://squidrun',
+            'Access-Control-Request-Method': 'POST',
+          },
+        }, (res) => {
+          resolve(res);
+        });
+        req.on('error', reject);
+        req.end();
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers['access-control-allow-origin']).toBe('*');
+      expect(response.headers['access-control-allow-methods']).toContain('POST');
+    } finally {
+      await broker.stop();
+    }
+  });
+
   test('transcript ingress journals voice event, emits bus event, and enqueues owned work', () => {
     const bus = { emit: jest.fn() };
     const queuePath = path.join(tempRoot, 'runtime', 'agent-task-queue.json');

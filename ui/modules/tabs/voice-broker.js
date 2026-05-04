@@ -3,6 +3,25 @@
 const { invokeBridge } = require('../renderer-bridge');
 const { escapeHtml } = require('./utils');
 
+const OPENAI_REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
+const VOICE_DATA_CHANNEL_CONTRACT = Object.freeze({
+  channelName: 'oai-events',
+  clientEvents: Object.freeze({
+    sessionUpdate: 'session.update',
+    responseCancel: 'response.cancel',
+    outputAudioClear: 'output_audio_buffer.clear',
+  }),
+  serverIngressEvents: Object.freeze([
+    'conversation.item.input_audio_transcription.completed',
+    'response.audio_transcript.done',
+    'response.output_text.done',
+  ]),
+  futureToolIngress: Object.freeze([
+    'response.function_call_arguments.done',
+    'conversation.item.created',
+  ]),
+});
+
 const IDS = Object.freeze({
   panel: 'voiceBrokerPanel',
   state: 'voiceBrokerState',
@@ -15,10 +34,19 @@ const IDS = Object.freeze({
   start: 'voiceBrokerStartBtn',
   stop: 'voiceBrokerStopBtn',
   restart: 'voiceBrokerRestartBtn',
+  sessionStatus: 'voiceSessionStatus',
+  sessionStart: 'voiceSessionStartBtn',
+  sessionPush: 'voicePushToTalkBtn',
+  sessionMute: 'voiceMuteBtn',
+  sessionInterrupt: 'voiceInterruptBtn',
+  sessionStop: 'voiceSessionStopBtn',
+  sessionLog: 'voiceSessionLog',
 });
 
 let cleanupFns = [];
 let lastStatus = null;
+let activeSession = null;
+let sessionState = 'idle';
 
 function getEl(id) {
   if (typeof document === 'undefined') return null;
@@ -51,6 +79,25 @@ function getEndpointLabel(status) {
   return `${shape.method} ${base}${shape.path}`;
 }
 
+function getBrokerBaseUrl(status) {
+  const address = status?.lane?.broker?.address || status?.lane?.address || null;
+  const host = address?.address || status?.config?.host || '127.0.0.1';
+  const port = address?.port || status?.config?.port || 0;
+  return port ? `http://${host}:${port}` : null;
+}
+
+function getClientSecretUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  const path = status?.config?.endpointShape?.clientSecret?.path || '/v1/voice/realtime/client-secret';
+  return base ? `${base}${path}` : null;
+}
+
+function getTranscriptUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  const path = status?.config?.endpointShape?.transcript?.path || '/v1/voice/transcripts';
+  return base ? `${base}${path}` : null;
+}
+
 function getModelLabel(status) {
   const model = status?.config?.model || 'gpt-realtime';
   const voice = status?.config?.voice || 'marin';
@@ -74,6 +121,23 @@ function setError(message) {
   el.textContent = message;
 }
 
+function setSessionStatus(text, state = sessionState) {
+  sessionState = state;
+  const el = getEl(IDS.sessionStatus);
+  if (el) {
+    el.textContent = text;
+    el.dataset.state = state;
+  }
+}
+
+function appendSessionLog(text) {
+  const el = getEl(IDS.sessionLog);
+  if (!el || !text) return;
+  const current = String(el.textContent || '').trim();
+  const next = current ? `${current}\n${text}` : text;
+  el.textContent = next.split('\n').slice(-6).join('\n');
+}
+
 function setButtonState(status) {
   const ready = Boolean(status?.ready);
   const running = Boolean(status?.running);
@@ -83,6 +147,22 @@ function setButtonState(status) {
   if (start) start.disabled = running || !ready;
   if (stop) stop.disabled = !running;
   if (restart) restart.disabled = !ready;
+  setSessionButtonState();
+}
+
+function setSessionButtonState() {
+  const sessionActive = Boolean(activeSession);
+  const ready = Boolean(lastStatus?.ready && lastStatus?.running && getClientSecretUrl(lastStatus));
+  const start = getEl(IDS.sessionStart);
+  const push = getEl(IDS.sessionPush);
+  const mute = getEl(IDS.sessionMute);
+  const interrupt = getEl(IDS.sessionInterrupt);
+  const stop = getEl(IDS.sessionStop);
+  if (start) start.disabled = sessionActive || !ready;
+  if (push) push.disabled = !sessionActive;
+  if (mute) mute.disabled = !sessionActive;
+  if (interrupt) interrupt.disabled = !sessionActive;
+  if (stop) stop.disabled = !sessionActive;
 }
 
 function renderVoiceBrokerStatus(status) {
@@ -143,6 +223,250 @@ async function controlVoiceBroker(action) {
   }
 }
 
+function extractEphemeralKey(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  return payload.value
+    || payload.client_secret?.value
+    || payload.clientSecret?.value
+    || payload.body?.value
+    || payload.body?.client_secret?.value
+    || payload.body?.clientSecret?.value
+    || null;
+}
+
+function normalizeRealtimeTranscriptEvent(event) {
+  if (!event || typeof event !== 'object') return null;
+  const type = String(event.type || '');
+  const text = event.transcript || event.text || event.delta || event.item?.content?.[0]?.text || null;
+  if (!text) return null;
+  if (
+    type === 'conversation.item.input_audio_transcription.completed'
+    || type === 'response.audio_transcript.done'
+    || type === 'response.output_text.done'
+    || type.endsWith('.transcript.done')
+  ) {
+    return {
+      eventId: event.event_id || event.eventId || event.item_id || undefined,
+      speaker: type.startsWith('response.') ? 'assistant' : 'user',
+      text,
+      sessionId: event.response_id || event.item_id || undefined,
+      metadata: {
+        realtimeType: type,
+      },
+    };
+  }
+  return null;
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+function sendDataChannelEvent(channel, event) {
+  if (!channel || channel.readyState !== 'open') return false;
+  channel.send(JSON.stringify(event));
+  return true;
+}
+
+function setTrackEnabled(session, enabled) {
+  const tracks = session?.stream?.getAudioTracks?.() || [];
+  tracks.forEach((track) => {
+    track.enabled = enabled;
+  });
+}
+
+function stopVoiceSession() {
+  if (!activeSession) {
+    setSessionStatus('Idle', 'idle');
+    setSessionButtonState();
+    return;
+  }
+  const session = activeSession;
+  activeSession = null;
+  try { session.dataChannel?.close?.(); } catch (_) {}
+  try { session.peerConnection?.close?.(); } catch (_) {}
+  const tracks = session.stream?.getTracks?.() || [];
+  tracks.forEach((track) => {
+    try { track.stop?.(); } catch (_) {}
+  });
+  if (session.remoteAudio) session.remoteAudio.srcObject = null;
+  setSessionStatus('Stopped', 'idle');
+  setSessionButtonState();
+}
+
+async function postTranscriptToBroker(transcript, status = lastStatus, fetchImpl = globalThis.fetch) {
+  const transcriptUrl = getTranscriptUrl(status);
+  if (!transcriptUrl || typeof fetchImpl !== 'function') {
+    return { ok: false, reason: 'voice_transcript_endpoint_unavailable' };
+  }
+  const response = await fetchImpl(transcriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(transcript),
+  });
+  let body = null;
+  try {
+    body = await response.json();
+  } catch (_) {
+    body = null;
+  }
+  return {
+    ok: response.ok,
+    statusCode: response.status,
+    body,
+  };
+}
+
+async function createVoiceRealtimeSession(options = {}) {
+  const status = options.status || lastStatus;
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const mediaDevices = options.mediaDevices
+    || (typeof navigator !== 'undefined' ? navigator.mediaDevices : null);
+  const PeerConnection = options.RTCPeerConnection
+    || (typeof RTCPeerConnection !== 'undefined' ? RTCPeerConnection : null);
+  const clientSecretUrl = getClientSecretUrl(status);
+
+  if (!status?.ready || !status?.running) {
+    throw new Error('Voice broker is not running and ready.');
+  }
+  if (!clientSecretUrl) {
+    throw new Error('Voice broker client-secret endpoint is unavailable.');
+  }
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('fetch is unavailable for voice session.');
+  }
+  if (!mediaDevices || typeof mediaDevices.getUserMedia !== 'function') {
+    throw new Error('Microphone capture is unavailable.');
+  }
+  if (typeof PeerConnection !== 'function') {
+    throw new Error('RTCPeerConnection is unavailable.');
+  }
+
+  const tokenResponse = await fetchImpl(clientSecretUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const tokenPayload = await tokenResponse.json();
+  if (!tokenResponse.ok || tokenPayload?.ok === false) {
+    throw new Error(tokenPayload?.reason || 'Realtime client secret request failed.');
+  }
+  const ephemeralKey = extractEphemeralKey(tokenPayload);
+  if (!ephemeralKey) {
+    throw new Error('Realtime client secret response did not include an ephemeral key.');
+  }
+
+  const stream = await mediaDevices.getUserMedia({ audio: true });
+  const peerConnection = new PeerConnection();
+  const remoteAudio = options.audioElement || (typeof document !== 'undefined' ? document.createElement('audio') : null);
+  if (remoteAudio) {
+    remoteAudio.autoplay = true;
+    peerConnection.ontrack = (event) => {
+      remoteAudio.srcObject = event.streams?.[0] || null;
+    };
+  }
+
+  const tracks = stream.getAudioTracks?.() || stream.getTracks?.() || [];
+  tracks.forEach((track) => {
+    track.enabled = false;
+    peerConnection.addTrack(track, stream);
+  });
+
+  const dataChannel = peerConnection.createDataChannel(VOICE_DATA_CHANNEL_CONTRACT.channelName);
+  dataChannel.addEventListener?.('open', () => {
+    appendSessionLog('Data channel open');
+    sendDataChannelEvent(dataChannel, {
+      type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.sessionUpdate,
+      session: {
+        input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
+      },
+    });
+  });
+  dataChannel.addEventListener?.('message', (event) => {
+    const payload = safeJsonParse(event.data);
+    if (!payload) return;
+    appendSessionLog(payload.type || 'voice event');
+    const transcript = normalizeRealtimeTranscriptEvent(payload);
+    if (transcript) {
+      void postTranscriptToBroker(transcript, status, fetchImpl);
+    }
+  });
+
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+  const sdpResponse = await fetchImpl(options.callsUrl || OPENAI_REALTIME_CALLS_URL, {
+    method: 'POST',
+    body: offer.sdp,
+    headers: {
+      Authorization: `Bearer ${ephemeralKey}`,
+      'Content-Type': 'application/sdp',
+    },
+  });
+  if (!sdpResponse.ok) {
+    throw new Error('Realtime SDP exchange failed.');
+  }
+  const answerSdp = await sdpResponse.text();
+  await peerConnection.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+  return {
+    dataChannel,
+    peerConnection,
+    remoteAudio,
+    stream,
+    status,
+  };
+}
+
+async function startVoiceSession(options = {}) {
+  setError(null);
+  setSessionStatus('Connecting', 'connecting');
+  setSessionButtonState();
+  try {
+    activeSession = await createVoiceRealtimeSession(options);
+    setSessionStatus('Connected', 'connected');
+    appendSessionLog('Realtime session connected');
+    setSessionButtonState();
+    return activeSession;
+  } catch (err) {
+    stopVoiceSession();
+    setError(err.message);
+    setSessionStatus('Error', 'error');
+    throw err;
+  }
+}
+
+function setPushToTalk(active) {
+  if (!activeSession) return false;
+  setTrackEnabled(activeSession, Boolean(active));
+  setSessionStatus(active ? 'Talking' : 'Connected', active ? 'talking' : 'connected');
+  const button = getEl(IDS.sessionPush);
+  if (button) button.dataset.active = active ? 'true' : 'false';
+  return true;
+}
+
+function muteVoiceSession() {
+  if (!activeSession) return false;
+  setTrackEnabled(activeSession, false);
+  setSessionStatus('Muted', 'muted');
+  return true;
+}
+
+function interruptVoiceSession() {
+  if (!activeSession) return false;
+  const sent = sendDataChannelEvent(activeSession.dataChannel, {
+    type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.responseCancel,
+  });
+  sendDataChannelEvent(activeSession.dataChannel, {
+    type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.outputAudioClear,
+  });
+  appendSessionLog(sent ? 'Interrupt sent' : 'Interrupt unavailable');
+  return sent;
+}
+
 function bindButton(id, handler) {
   const button = getEl(id);
   if (!button) return;
@@ -156,10 +480,20 @@ function setupVoiceBrokerTab() {
   bindButton(IDS.start, () => { void controlVoiceBroker('start'); });
   bindButton(IDS.stop, () => { void controlVoiceBroker('stop'); });
   bindButton(IDS.restart, () => { void controlVoiceBroker('restart'); });
+  bindButton(IDS.sessionStart, () => { void startVoiceSession(); });
+  bindButton(IDS.sessionPush, () => {
+    const isActive = getEl(IDS.sessionPush)?.dataset.active === 'true';
+    setPushToTalk(!isActive);
+  });
+  bindButton(IDS.sessionMute, () => { muteVoiceSession(); });
+  bindButton(IDS.sessionInterrupt, () => { interruptVoiceSession(); });
+  bindButton(IDS.sessionStop, () => { stopVoiceSession(); });
+  setSessionStatus('Idle', 'idle');
   void refreshVoiceBrokerStatus();
 }
 
 function destroyVoiceBrokerTab() {
+  stopVoiceSession();
   for (const fn of cleanupFns) {
     try { fn(); } catch (_) {}
   }
@@ -168,11 +502,23 @@ function destroyVoiceBrokerTab() {
 
 module.exports = {
   controlVoiceBroker,
+  createVoiceRealtimeSession,
   destroyVoiceBrokerTab,
+  extractEphemeralKey,
   getReadinessLabel,
   getStateLabel,
+  getClientSecretUrl,
+  getTranscriptUrl,
+  interruptVoiceSession,
+  muteVoiceSession,
+  normalizeRealtimeTranscriptEvent,
+  postTranscriptToBroker,
   refreshVoiceBrokerStatus,
   renderVoiceBrokerPanelHtml,
   renderVoiceBrokerStatus,
+  setPushToTalk,
+  startVoiceSession,
+  stopVoiceSession,
   setupVoiceBrokerTab,
+  VOICE_DATA_CHANNEL_CONTRACT,
 };
