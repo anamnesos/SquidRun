@@ -3,7 +3,9 @@
 const {
   buildPhoneClientConfig,
   createPhonePairingToken,
+  extractPhoneAuthToken,
   renderPhoneVoiceClientPage,
+  validatePhonePairingToken,
 } = require('../modules/phone-voice-client');
 
 describe('phone-voice-client', () => {
@@ -48,6 +50,7 @@ describe('phone-voice-client', () => {
       routesTo: 'architect',
       directPaneWrites: false,
     });
+    expect(config.endpoints.clientSecret).toBe('/v1/voice/phone/realtime/client-secret');
   });
 
   test('renders a phone client shell with broker endpoints embedded', () => {
@@ -62,11 +65,44 @@ describe('phone-voice-client', () => {
     });
 
     expect(html).toContain('Mira Voice');
-    expect(html).toContain('/v1/voice/realtime/client-secret');
+    expect(html).toContain('/v1/voice/phone/realtime/client-secret');
     expect(html).toContain('Hold to Talk');
     expect(html).toContain('SQUIDRUN_PHONE_VOICE');
     expect(html).toContain('RTCPeerConnection');
     expect(html).toContain('navigator.mediaDevices.getUserMedia');
     expect(html).toContain('phone-web-client');
+    expect(html).toContain('Missing phone pairing token');
+  });
+
+  test('extracts and validates bearer pairing tokens', () => {
+    expect(extractPhoneAuthToken({
+      headers: { authorization: 'Bearer phone_abc' },
+    })).toBe('phone_abc');
+
+    expect(validatePhonePairingToken({
+      ok: true,
+      token: 'phone_abc',
+      expiresAtMs: 2000,
+    }, {
+      headers: { authorization: 'Bearer phone_abc' },
+    }, {
+      nowMs: 1000,
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      token: 'phone_abc',
+    }));
+
+    expect(validatePhonePairingToken({
+      ok: true,
+      token: 'phone_abc',
+      expiresAtMs: 2000,
+    }, {
+      headers: { authorization: 'Bearer phone_abc' },
+    }, {
+      nowMs: 3000,
+    })).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'phone_pairing_token_expired',
+    }));
   });
 });

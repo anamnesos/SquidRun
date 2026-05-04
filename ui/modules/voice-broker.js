@@ -11,6 +11,7 @@ const {
   buildPhoneClientConfig,
   createPhonePairingToken,
   renderPhoneVoiceClientPage,
+  validatePhonePairingToken,
 } = require('./phone-voice-client');
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -807,6 +808,28 @@ function parseJsonBody(text) {
   return JSON.parse(text);
 }
 
+function readPhonePairingFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function getRequestAuthInput(req, url) {
+  return {
+    headers: req.headers || {},
+    token: url.searchParams.get('token') || '',
+  };
+}
+
+function requirePhonePairing(req, url, config) {
+  return validatePhonePairingToken(
+    readPhonePairingFile(config.phonePairingPath),
+    getRequestAuthInput(req, url)
+  );
+}
+
 class VoiceBrokerService {
   constructor(options = {}) {
     this.config = options.config || getVoiceBrokerConfig(options.env || process.env, options);
@@ -886,6 +909,82 @@ class VoiceBrokerService {
           ...pairing,
           pairingPath: this.config.phonePairingPath,
           phonePath: this.config.endpointShape.phoneClient.path,
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/phone/realtime/client-secret') {
+        const auth = requirePhonePairing(req, url, this.config);
+        if (!auth.ok) {
+          sendJson(res, 401, auth);
+          return;
+        }
+        const body = parseJsonBody(await readRequestBody(req));
+        const result = await mintRealtimeClientSecret({
+          config: this.config,
+          fetchImpl: this.fetchImpl,
+          session: body.session || body,
+        });
+        sendJson(res, result.ok ? 200 : 503, result);
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/phone/transcripts') {
+        const auth = requirePhonePairing(req, url, this.config);
+        if (!auth.ok) {
+          sendJson(res, 401, auth);
+          return;
+        }
+        const body = parseJsonBody(await readRequestBody(req));
+        const result = ingestVoiceTranscript({
+          ...body,
+          metadata: {
+            ...(body.metadata && typeof body.metadata === 'object' ? body.metadata : {}),
+            source: 'phone-web-client',
+          },
+        }, {
+          config: this.config,
+          bus: this.bus,
+          enqueueTask: this.enqueueTask || undefined,
+          routeVoiceMessage: this.routeVoiceMessage || undefined,
+          routeToArchitect: this.routeToArchitect,
+        });
+        sendJson(res, result.ok ? 202 : 400, result);
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/phone/diagnostics') {
+        const auth = requirePhonePairing(req, url, this.config);
+        if (!auth.ok) {
+          sendJson(res, 401, auth);
+          return;
+        }
+        const body = parseJsonBody(await readRequestBody(req));
+        const result = appendVoiceDiagnostic({
+          ...body,
+          detail: {
+            ...(body.detail && typeof body.detail === 'object' ? body.detail : {}),
+            source: 'phone-web-client',
+          },
+        }, this.config.diagnosticsJournalPath);
+        sendJson(res, 202, result);
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/v1/voice/phone/egress') {
+        const auth = requirePhonePairing(req, url, this.config);
+        if (!auth.ok) {
+          sendJson(res, 401, auth);
+          return;
+        }
+        const messages = queryVoiceEgressMessages({
+          sinceMs: Number(url.searchParams.get('sinceMs') || 0),
+          limit: Number(url.searchParams.get('limit') || 10),
+          queryCommsJournalEntries: this.queryCommsJournalEntries || undefined,
+        });
+        sendJson(res, 200, {
+          ok: true,
+          messages,
         });
         return;
       }

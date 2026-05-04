@@ -55,10 +55,10 @@ function buildPhoneClientConfig(input = {}) {
     status: sanitizePublicStatus(input.status || {}),
     endpoints: {
       status: `${basePath}/status`,
-      clientSecret: `${basePath}/v1/voice/realtime/client-secret`,
-      transcripts: `${basePath}/v1/voice/transcripts`,
-      egress: `${basePath}/v1/voice/egress`,
-      diagnostics: `${basePath}/v1/voice/diagnostics`,
+      clientSecret: `${basePath}/v1/voice/phone/realtime/client-secret`,
+      transcripts: `${basePath}/v1/voice/phone/transcripts`,
+      egress: `${basePath}/v1/voice/phone/egress`,
+      diagnostics: `${basePath}/v1/voice/phone/diagnostics`,
     },
     controls: {
       pushToTalk: true,
@@ -71,6 +71,40 @@ function buildPhoneClientConfig(input = {}) {
       directPaneWrites: false,
       approvalRequiredFor: ['customer', 'trading', 'money', 'auth', 'irreversible'],
     },
+  };
+}
+
+function extractPhoneAuthToken(input = {}) {
+  const headers = input.headers || {};
+  const authorization = toNonEmptyString(headers.authorization || headers.Authorization);
+  if (authorization.toLowerCase().startsWith('bearer ')) {
+    return authorization.slice(7).trim();
+  }
+  return toNonEmptyString(headers['x-squidrun-phone-token'])
+    || toNonEmptyString(headers['X-SquidRun-Phone-Token'])
+    || toNonEmptyString(input.token);
+}
+
+function validatePhonePairingToken(pairing = {}, input = {}, options = {}) {
+  const token = extractPhoneAuthToken(input);
+  if (!token) {
+    return { ok: false, reason: 'phone_pairing_token_required' };
+  }
+  if (!pairing || pairing.ok !== true || !toNonEmptyString(pairing.token)) {
+    return { ok: false, reason: 'phone_pairing_not_available' };
+  }
+  if (token !== pairing.token) {
+    return { ok: false, reason: 'phone_pairing_token_invalid' };
+  }
+  const nowMs = toPositiveInt(options.nowMs, Date.now());
+  const expiresAtMs = toPositiveInt(pairing.expiresAtMs, 0);
+  if (expiresAtMs && nowMs > expiresAtMs) {
+    return { ok: false, reason: 'phone_pairing_token_expired' };
+  }
+  return {
+    ok: true,
+    token,
+    pairing,
   };
 }
 
@@ -122,6 +156,8 @@ function renderPhoneVoiceClientPage(input = {}) {
   <script>
     window.SQUIDRUN_PHONE_VOICE = ${serialized};
     const OPENAI_REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
+    const urlParams = new URLSearchParams(window.location.search);
+    const phoneToken = urlParams.get('token') || '';
     const status = document.getElementById('status');
     const log = document.getElementById('log');
     const connectBtn = document.getElementById('connect');
@@ -151,7 +187,10 @@ function renderPhoneVoiceClientPage(input = {}) {
     async function postTranscript(payload) {
       await fetch(window.SQUIDRUN_PHONE_VOICE.endpoints.transcripts, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + phoneToken,
+        },
         body: JSON.stringify(Object.assign({}, payload, {
           metadata: Object.assign({}, payload.metadata || {}, { source: 'phone-web-client' }),
         })),
@@ -183,7 +222,10 @@ function renderPhoneVoiceClientPage(input = {}) {
     async function pollEgressOnce() {
       if (!session) return;
       const sinceMs = session.egressSinceMs || Date.now();
-      const response = await fetch(window.SQUIDRUN_PHONE_VOICE.endpoints.egress + '?sinceMs=' + encodeURIComponent(String(sinceMs)) + '&limit=10');
+      const response = await fetch(
+        window.SQUIDRUN_PHONE_VOICE.endpoints.egress + '?sinceMs=' + encodeURIComponent(String(sinceMs)) + '&limit=10',
+        { headers: { Authorization: 'Bearer ' + phoneToken } }
+      );
       const body = await response.json().catch(() => null);
       const messages = Array.isArray(body && body.messages) ? body.messages : [];
       for (const message of messages) {
@@ -227,7 +269,10 @@ function renderPhoneVoiceClientPage(input = {}) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const tokenResponse = await fetch(window.SQUIDRUN_PHONE_VOICE.endpoints.clientSecret, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + phoneToken,
+        },
         body: JSON.stringify({}),
       });
       const tokenPayload = await tokenResponse.json();
@@ -290,6 +335,10 @@ function renderPhoneVoiceClientPage(input = {}) {
     }
     status.textContent = 'Broker model: ' + window.SQUIDRUN_PHONE_VOICE.status.model
       + ' / voice: ' + window.SQUIDRUN_PHONE_VOICE.status.voice;
+    if (!phoneToken) {
+      setLog('Missing phone pairing token. Open the paired link from Telegram.');
+      connectBtn.disabled = true;
+    }
     connectBtn.addEventListener('click', () => { connect().catch((err) => { stopSession(); setLog(err.message); }); });
     talkBtn.addEventListener('pointerdown', () => { setTracksEnabled(true); talkBtn.dataset.active = 'true'; setLog('Talking...'); });
     talkBtn.addEventListener('pointerup', () => { setTracksEnabled(false); talkBtn.dataset.active = 'false'; setLog('Connected.'); });
@@ -309,6 +358,8 @@ module.exports = {
   DEFAULT_PHONE_PAIRING_TTL_MS,
   buildPhoneClientConfig,
   createPhonePairingToken,
+  extractPhoneAuthToken,
   renderPhoneVoiceClientPage,
   sanitizePublicStatus,
+  validatePhonePairingToken,
 };
