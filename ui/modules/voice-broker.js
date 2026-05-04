@@ -830,6 +830,11 @@ function requirePhonePairing(req, url, config) {
   );
 }
 
+function isLocalHostHeader(hostHeader) {
+  const host = trimText(String(hostHeader || '').split(':')[0]) || '';
+  return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host.toLowerCase());
+}
+
 class VoiceBrokerService {
   constructor(options = {}) {
     this.config = options.config || getVoiceBrokerConfig(options.env || process.env, options);
@@ -899,6 +904,13 @@ class VoiceBrokerService {
       }
 
       if (req.method === 'POST' && url.pathname === '/v1/voice/phone/pairing') {
+        if (!isLocalHostHeader(req.headers.host)) {
+          sendJson(res, 403, {
+            ok: false,
+            reason: 'phone_pairing_local_only',
+          });
+          return;
+        }
         const body = parseJsonBody(await readRequestBody(req));
         const pairing = createPhonePairingToken({
           ttlMs: body.ttlMs,
