@@ -364,6 +364,96 @@ describe('voice-broker tab', () => {
     }));
   });
 
+  test('skips fallback mic chunks once native realtime transcription is active', async () => {
+    const blob = {
+      size: 10,
+      type: 'audio/webm',
+      arrayBuffer: async () => Buffer.from('fake-audio'),
+    };
+    const recorder = {
+      handlers: {},
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      start: jest.fn(),
+      stop: jest.fn(),
+    };
+    const MediaRecorder = jest.fn(() => recorder);
+    const fetchImpl = jest.fn(async (url) => {
+      const target = String(url || '');
+      if (target.includes('/v1/voice/realtime/client-secret')) {
+        return { ok: true, json: async () => ({ value: 'eph_test' }) };
+      }
+      if (target.includes('/v1/realtime/calls')) {
+        return { ok: true, text: async () => 'answer-sdp' };
+      }
+      return { ok: true, status: 202, json: async () => ({ ok: true }) };
+    });
+    const dataChannel = {
+      handlers: {},
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      readyState: 'open',
+      send: jest.fn(),
+      close: jest.fn(),
+    };
+
+    await tab.createVoiceRealtimeSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: {
+          endpointShape: {
+            clientSecret: { path: '/v1/voice/realtime/client-secret' },
+            audioTranscription: { path: '/v1/voice/audio-transcriptions' },
+            diagnostics: { path: '/v1/voice/diagnostics' },
+          },
+        },
+      },
+      fetchImpl,
+      MediaRecorder,
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [{ enabled: true, stop: jest.fn() }],
+          getTracks: () => [],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => dataChannel,
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: jest.fn(),
+      })),
+    });
+
+    dataChannel.handlers.message({
+      data: JSON.stringify({ type: 'session.updated' }),
+    });
+    dataChannel.handlers.message({
+      data: JSON.stringify({ type: 'input_audio_buffer.speech_started' }),
+    });
+    recorder.handlers.dataavailable({ data: blob });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/v1/voice/audio-transcriptions',
+      expect.any(Object)
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/v1/voice/diagnostics',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('native_transcription_active_skipped'),
+      })
+    );
+  });
+
   test('posts voice diagnostics to broker endpoint', async () => {
     const fetchImpl = jest.fn(async () => ({
       ok: true,
