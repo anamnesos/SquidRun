@@ -26,6 +26,7 @@ const {
 const {
   getActiveProfileName,
   isMainProfile,
+  normalizeProfileName,
   buildProfileTelegramEnv,
   getProfileProjectRootOverride,
   resolveProfileInstructionPath,
@@ -743,8 +744,12 @@ class SquidRunApp {
     return true;
   }
 
-  getStartupHealthPath() {
-    return resolveCoordPath(path.join('build', 'startup-health.md'), { forWrite: true });
+  getStartupHealthPath(profileName = null) {
+    const normalizedProfile = normalizeProfileName(profileName || getActiveProfileName());
+    const fileName = isMainProfile(normalizedProfile)
+      ? 'startup-health.md'
+      : `startup-health-${normalizedProfile}.md`;
+    return resolveCoordPath(path.join('build', fileName), { forWrite: true });
   }
 
   buildStartupHealthInventoryContent(snapshot = {}, sessionNumber = null) {
@@ -820,8 +825,9 @@ class SquidRunApp {
     const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
       ? options.generatedAt.trim()
       : new Date(nowMs).toISOString();
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
     const canonicalSessionNumber = asPositiveInt(
-      sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+      sessionNumber ?? (isMainProfile(profileName) ? this.getCurrentAppStatusSessionNumber() : null),
       null
     );
     const sessionLabel = canonicalSessionNumber !== null
@@ -901,24 +907,29 @@ class SquidRunApp {
 
   async refreshStartupHealthArtifacts(options = {}) {
     const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
+    const mainProfile = isMainProfile(profileName);
+    const explicitSessionNumber = asPositiveInt(options.sessionNumber, null);
     const canonicalSessionNumber = asPositiveInt(
-      options.sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+      explicitSessionNumber ?? (mainProfile ? this.getCurrentAppStatusSessionNumber() : null),
       null
     );
     const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
       ? options.generatedAt.trim()
       : new Date(nowMs).toISOString();
-    const outputPath = this.getStartupHealthPath();
+    const outputPath = this.getStartupHealthPath(profileName);
     this.writeFileAtomic(
       outputPath,
       this.buildStartupHealthPlaceholderReport(canonicalSessionNumber, {
         nowMs,
         generatedAt,
+        profileName,
       })
     );
 
     const snapshot = createHealthSnapshot({
       projectRoot: options.projectRoot || getProjectRoot(),
+      profileName,
       jestTimeoutMs: options.jestTimeoutMs,
       bridgeStatus: this.getBridgeStatus(),
       systemCapabilities: this.lastSystemCapabilities,
@@ -928,7 +939,7 @@ class SquidRunApp {
     const resolvedSessionNumber = asPositiveInt(
       canonicalSessionNumber
       ?? snapshot.appStatus?.sessionNumber
-      ?? this.getCurrentAppStatusSessionNumber(),
+      ?? (mainProfile ? this.getCurrentAppStatusSessionNumber() : null),
       null
     );
     const ledgerContext = await executeEvidenceLedgerOperation(
@@ -937,6 +948,7 @@ class SquidRunApp {
       {
         source: {
           via: 'startup-health',
+          profileName,
           role: 'system',
           paneId: null,
         },
@@ -961,6 +973,7 @@ class SquidRunApp {
         {
           nowMs,
           sessionNumber: resolvedSessionNumber,
+          profileName,
         }
       );
     }

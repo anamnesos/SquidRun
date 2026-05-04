@@ -1358,6 +1358,148 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('writes side-profile startup health to scoped artifact without overwriting main report', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        profileName: 'eunbyeol',
+        appStatus: {
+          sessionNumber: 777,
+          sessionId: 'app-session-777-eunbyeol',
+        },
+        tests: {
+          testFileCount: 194,
+          jestList: { ok: true, count: 195 },
+        },
+        modules: {
+          moduleFileCount: 300,
+          keyModules: {
+            recovery_manager: { exists: true },
+          },
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 7 },
+          cognitiveMemory: { exists: true, rowCount: 11 },
+        },
+        bridge: {
+          enabled: true,
+          configured: true,
+          mode: 'connected',
+          running: true,
+          relayUrl: 'wss://relay.example.test',
+          deviceId: 'EUNBYEOL',
+          state: 'connected',
+        },
+        memoryConsistency: {
+          status: 'in_sync',
+          synced: true,
+          summary: {},
+        },
+        status: { level: 'ok', warnings: [] },
+      });
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 999,
+        status: 'ACTIVE',
+        mode: 'APP',
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        profileName: 'eunbyeol',
+      });
+
+      expect(result.outputPath).toContain('startup-health-eunbyeol.md');
+      expect(result.outputPath).not.toContain('startup-health.md');
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('startup-health-eunbyeol.md'),
+        expect.stringContaining('App Session: unknown')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('startup-health-eunbyeol.md'),
+        expect.stringContaining('Session context: session 777 ACTIVE (APP)')
+      );
+      expect(createHealthSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        profileName: 'eunbyeol',
+      }));
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'get-context',
+        { sessionNumber: 777 },
+        expect.objectContaining({
+          source: expect.objectContaining({
+            via: 'startup-health',
+            profileName: 'eunbyeol',
+          }),
+        })
+      );
+    });
+
+    it('keeps explicit side-profile session fields consistent across placeholder, snapshot, and ledger', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        profileName: 'eunbyeol',
+        appStatus: {
+          sessionNumber: 777,
+          sessionId: 'app-session-777-eunbyeol',
+        },
+        tests: {
+          testFileCount: 1,
+          jestList: { ok: true, count: 1 },
+        },
+        modules: {
+          moduleFileCount: 1,
+          keyModules: {},
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 7 },
+          cognitiveMemory: { exists: true, rowCount: 11 },
+        },
+        bridge: {
+          enabled: false,
+          configured: false,
+          mode: 'disabled',
+          running: false,
+        },
+        memoryConsistency: {
+          status: 'in_sync',
+          synced: true,
+          summary: {},
+        },
+        status: { level: 'ok', warnings: [] },
+      });
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 312,
+        status: 'ACTIVE',
+        mode: 'APP',
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      await app.refreshStartupHealthArtifacts({
+        profileName: 'eunbyeol',
+        sessionNumber: 777,
+      });
+
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('startup-health-eunbyeol.md'),
+        expect.stringContaining('App Session: session 777')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('startup-health-eunbyeol.md'),
+        expect.stringContaining('Session context: session 777 ACTIVE (APP)')
+      );
+      const writeTargets = writeFileAtomic.mock.calls.map(([targetPath]) => String(targetPath).replace(/\\/g, '/'));
+      expect(writeTargets.some((targetPath) => targetPath.endsWith('/build/startup-health.md'))).toBe(false);
+    });
+
     it('writes a fresh current-session placeholder before probing startup health', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');

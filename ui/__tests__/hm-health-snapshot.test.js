@@ -162,8 +162,73 @@ describe('hm-health-snapshot', () => {
     }));
     expect(runMemoryConsistencyCheck).toHaveBeenCalledWith(expect.objectContaining({
       projectRoot: tempDir,
+      profileName: 'main',
       sampleLimit: 5,
     }));
+  });
+
+  test('uses profile-scoped app-status and runtime databases for side snapshots', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    const { runMemoryConsistencyCheck: currentRunMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'app-status.json'), JSON.stringify({
+      session: 300,
+      session_id: 'app-session-300',
+    }));
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'app-status-eunbyeol.json'), JSON.stringify({
+      session: 777,
+      session_id: 'app-session-777-eunbyeol',
+    }));
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'runtime-eunbyeol'), { recursive: true });
+    const evidenceDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime-eunbyeol', 'evidence-ledger.db'));
+    evidenceDb.exec(`
+      CREATE TABLE comms_journal (
+        id INTEGER PRIMARY KEY,
+        message TEXT
+      );
+      INSERT INTO comms_journal (message) VALUES ('side only');
+    `);
+    evidenceDb.close();
+    const cognitiveDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime-eunbyeol', 'cognitive-memory.db'));
+    cognitiveDb.exec(`
+      CREATE TABLE nodes (
+        node_id TEXT PRIMARY KEY,
+        content TEXT
+      );
+      INSERT INTO nodes (node_id, content) VALUES ('side-a', 'memory'), ('side-b', 'memory');
+    `);
+    cognitiveDb.close();
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      profileName: 'eunbyeol',
+      jestTimeoutMs: 1000,
+    });
+
+    expect(snapshot.profileName).toBe('eunbyeol');
+    expect(snapshot.appStatus).toEqual(expect.objectContaining({
+      sessionNumber: 777,
+      sessionId: 'app-session-777-eunbyeol',
+      path: expect.stringContaining('app-status-eunbyeol.json'),
+    }));
+    expect(snapshot.databases.evidenceLedger).toEqual(expect.objectContaining({
+      path: expect.stringContaining(path.join('.squidrun', 'runtime-eunbyeol', 'evidence-ledger.db')),
+      rowCount: 1,
+    }));
+    expect(snapshot.databases.cognitiveMemory).toEqual(expect.objectContaining({
+      path: expect.stringContaining(path.join('.squidrun', 'runtime-eunbyeol', 'cognitive-memory.db')),
+      rowCount: 2,
+    }));
+    expect(currentRunMemoryConsistencyCheck).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: tempDir,
+      profileName: 'eunbyeol',
+    }));
+    expect(renderStartupHealthMarkdown(snapshot)).toContain('Profile: eunbyeol');
+    expect(renderStartupHealthMarkdown(snapshot)).toContain('App Session: session 777');
   });
 
   test('normalizes ui and .squidrun roots back to the project root', () => {

@@ -159,6 +159,10 @@ Responsibilities:
 - Report command/tool failures promptly to Architect via `hm-send`.
 - Avoid content-free acknowledgments.
 - Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
+- Treat repeated user friction as product requirements. If the user asks why a restart is needed or reports wrong-window/routing pain, infer the architecture question and convert it into a bounded fix or plan without requiring programmer phrasing.
+- Do not let narrow task execution replace product ownership. When repeated friction exposes a missing boundary/default, stop treating it as a one-off prompt and fix or specify the underlying system behavior, especially for restart loops, routing, Telegram, profile isolation, and permission/common-sense defaults.
+- The user is not the manual verification harness for Telegram routing, pane routing, side-window isolation, or profile context separation. Prefer static/unit/integration seams that exercise functions and process boundaries without full app restarts; restart-dependent validation must include an explicit reason and a smaller test seam proposal.
+- Reject or hold obvious wrong-context messages autonomously using metadata first and content guardrails when metadata is missing. Ask only for irreversible, customer-facing, trading, money, or auth decisions.
 - Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal.
 - When adding, removing, or renaming modules or files, update `ARCHITECTURE.md` in the same commit. Stale architecture docs are a defect.
 - Before deleting files in cleanup passes, check .squidrun/protected-files.json — never delete listed files.
