@@ -643,6 +643,65 @@ describe('daemon-handlers.js module', () => {
         }));
         expect(terminal.spawnAgent).not.toHaveBeenCalledWith('2');
       });
+
+      test('suppresses main resend spawn when direct daemon snapshot has CLI content', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+        const terminalSnapshot = jest.fn().mockResolvedValue({
+          ok: true,
+          terminals: [
+            {
+              paneId: '1',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: 'codex> ready',
+            },
+            {
+              paneId: '2',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: 'codex> ready',
+            },
+            {
+              paneId: '3',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: 'codex> ready',
+            },
+          ],
+        });
+
+        global.window.squidrun.daemon = { terminalSnapshot };
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        const data = {
+          terminals: [
+            { paneId: '1', alive: true, scrollback: '', cwd: '/project/instances/architect' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/builder' },
+            { paneId: '3', alive: true, scrollback: '', cwd: '/project/instances/oracle' },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(terminalSnapshot).toHaveBeenCalledWith({ timeoutMs: expect.any(Number) });
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+        expect(reattachTerminalFn).toHaveBeenCalledTimes(3);
+
+        delete global.window.squidrun.daemon;
+      });
     });
 
     describe('claude-state-changed handler', () => {
