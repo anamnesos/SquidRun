@@ -67,6 +67,49 @@
   gap: var(--space-2);
 }
 
+.voice-broker-session {
+  display: grid;
+  gap: var(--space-2);
+  border-top: 1px solid rgba(117, 138, 165, 0.18);
+  padding-top: var(--space-3);
+}
+
+.voice-session-status {
+  font-weight: 700;
+}
+
+.voice-session-status[data-state="connected"],
+.voice-session-status[data-state="talking"] {
+  color: #9af0bd;
+}
+
+.voice-session-status[data-state="muted"] {
+  color: #ffd08a;
+}
+
+.voice-session-status[data-state="error"] {
+  color: #ffb4b4;
+}
+
+#voicePushToTalkBtn[data-active="true"] {
+  border-color: rgba(77, 216, 135, 0.46);
+  color: #9af0bd;
+}
+
+.voice-session-log {
+  min-height: 44px;
+  max-height: 96px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid rgba(117, 138, 165, 0.18);
+  border-radius: var(--radius-sm);
+  background: rgba(7, 12, 20, 0.42);
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+}
+
 .voice-broker-error {
   border: 1px solid rgba(255, 91, 91, 0.32);
   border-radius: var(--radius-sm);
