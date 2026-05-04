@@ -279,7 +279,10 @@ describe('voice-broker tab', () => {
         }),
       }),
     }));
-    expect(dataChannel.sent[0].session).not.toHaveProperty('turn_detection');
+    expect(dataChannel.sent[0].session.turn_detection).toEqual(expect.objectContaining({
+      type: 'server_vad',
+      create_response: false,
+    }));
   });
 
   test('push-to-talk, mute, interrupt, and stop use WebRTC state only', async () => {
@@ -450,6 +453,85 @@ describe('voice-broker tab', () => {
       headers: { 'Content-Type': 'application/json' },
       body: expect.stringContaining('queue this as voice ingress'),
     }));
+  });
+
+  test('user transcript cancels generic voice response and still routes to broker', async () => {
+    const dataChannel = {
+      readyState: 'open',
+      handlers: {},
+      sent: [],
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+      close: jest.fn(),
+    };
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' })
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ ok: true }) });
+
+    await tab.createVoiceRealtimeSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: {
+          endpointShape: {
+            clientSecret: { path: '/v1/voice/realtime/client-secret' },
+            transcript: { path: '/v1/voice/transcripts' },
+          },
+        },
+      },
+      fetchImpl,
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [{ enabled: false, stop: jest.fn() }],
+          getTracks: () => [],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => dataChannel,
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: jest.fn(),
+      })),
+    });
+
+    dataChannel.handlers.message({
+      data: JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        event_id: 'evt_1',
+        transcript: 'push this to Mira pane',
+      }),
+    });
+    await Promise.resolve();
+
+    expect(dataChannel.sent).toContainEqual({ type: 'response.cancel' });
+    expect(dataChannel.sent).toContainEqual({ type: 'output_audio_buffer.clear' });
+    expect(fetchImpl).toHaveBeenLastCalledWith('http://127.0.0.1:43123/v1/voice/transcripts', expect.objectContaining({
+      body: expect.stringContaining('push this to Mira pane'),
+    }));
+  });
+
+  test('does not cancel Realtime response while speaking a Mira egress reply', () => {
+    const dataChannel = {
+      readyState: 'open',
+      sent: [],
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+    };
+    const session = { dataChannel };
+
+    tab.speakMiraReply(session, 'This is the actual Mira reply.');
+    expect(tab.cancelGenericRealtimeResponse(session, 'response.created')).toBe(false);
+    expect(dataChannel.sent.filter((event) => event.type === 'response.cancel')).toHaveLength(0);
   });
 
   test('speaks Architect replies through the Realtime data channel', () => {

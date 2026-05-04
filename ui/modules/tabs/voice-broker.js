@@ -14,7 +14,9 @@ const VOICE_DATA_CHANNEL_CONTRACT = Object.freeze({
     outputAudioClear: 'output_audio_buffer.clear',
   }),
   serverIngressEvents: Object.freeze([
+    'response.created',
     'conversation.item.input_audio_transcription.completed',
+    'conversation.item.created',
     'response.audio_transcript.done',
     'response.output_text.done',
   ]),
@@ -260,10 +262,16 @@ function extractEphemeralKey(payload) {
 function normalizeRealtimeTranscriptEvent(event) {
   if (!event || typeof event !== 'object') return null;
   const type = String(event.type || '');
-  const text = event.transcript || event.text || event.delta || event.item?.content?.[0]?.text || null;
+  const content = Array.isArray(event.item?.content) ? event.item.content : [];
+  const contentText = content
+    .map((part) => part?.transcript || part?.text || part?.input_text || '')
+    .filter(Boolean)
+    .join(' ');
+  const text = event.transcript || event.text || event.delta || contentText || null;
   if (!text) return null;
   if (
     type === 'conversation.item.input_audio_transcription.completed'
+    || (type === 'conversation.item.created' && event.item?.role === 'user')
     || type === 'response.audio_transcript.done'
     || type === 'response.output_text.done'
     || type.endsWith('.transcript.done')
@@ -323,12 +331,25 @@ function buildSpeakMiraReplyEvents(text) {
 function speakMiraReply(session, text) {
   const events = buildSpeakMiraReplyEvents(text);
   if (!events.length) return false;
+  if (session) session.speakingMiraReply = true;
   let sent = false;
   for (const event of events) {
     sent = sendDataChannelEvent(session?.dataChannel, event) || sent;
   }
   if (sent) appendSessionLog('Mira reply spoken');
   return sent;
+}
+
+function cancelGenericRealtimeResponse(session, reason = 'generic_response') {
+  if (!session || session.speakingMiraReply === true) return false;
+  const canceled = sendDataChannelEvent(session.dataChannel, {
+    type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.responseCancel,
+  });
+  sendDataChannelEvent(session.dataChannel, {
+    type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.outputAudioClear,
+  });
+  if (canceled) appendSessionLog(`Generic voice response canceled: ${reason}`);
+  return canceled;
 }
 
 function setTrackEnabled(session, enabled) {
@@ -497,12 +518,26 @@ async function createVoiceRealtimeSession(options = {}) {
   });
 
   const dataChannel = peerConnection.createDataChannel(VOICE_DATA_CHANNEL_CONTRACT.channelName);
+  const session = {
+    dataChannel,
+    egressSinceMs: Date.now(),
+    peerConnection,
+    remoteAudio,
+    speakingMiraReply: false,
+    spokenMessageIds: new Set(),
+    stream,
+    status,
+  };
   dataChannel.addEventListener?.('open', () => {
     appendSessionLog('Data channel open');
     sendDataChannelEvent(dataChannel, {
       type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.sessionUpdate,
       session: {
         input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
+        turn_detection: {
+          type: 'server_vad',
+          create_response: false,
+        },
       },
     });
   });
@@ -510,16 +545,31 @@ async function createVoiceRealtimeSession(options = {}) {
     const payload = safeJsonParse(event.data);
     if (!payload) return;
     appendSessionLog(payload.type || 'voice event');
+    const eventType = String(payload.type || '');
+    if (
+      eventType === 'response.created'
+      || eventType === 'response.output_item.added'
+      || eventType === 'response.audio.delta'
+      || eventType === 'response.audio_transcript.delta'
+    ) {
+      cancelGenericRealtimeResponse(session, eventType);
+    }
+    if (
+      eventType === 'response.done'
+      || eventType === 'response.audio.done'
+      || eventType === 'response.audio_transcript.done'
+    ) {
+      session.speakingMiraReply = false;
+    }
     const transcript = normalizeRealtimeTranscriptEvent(payload);
     if (transcript) {
       if (transcript.speaker === 'user') {
         const nowMs = Date.now();
-        if (activeSession) {
-          activeSession.egressSinceMs = Math.min(
-            Number(activeSession.egressSinceMs || nowMs),
-            Math.max(0, nowMs - 2000)
-          );
-        }
+        cancelGenericRealtimeResponse(session, 'user_transcript_routed');
+        session.egressSinceMs = Math.min(
+          Number(session.egressSinceMs || nowMs),
+          Math.max(0, nowMs - 2000)
+        );
       }
       void postTranscriptToBroker(transcript, status, fetchImpl);
     }
@@ -547,15 +597,7 @@ async function createVoiceRealtimeSession(options = {}) {
   const answerSdp = await sdpResponse.text();
   await peerConnection.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-  return {
-    dataChannel,
-    egressSinceMs: Date.now(),
-    peerConnection,
-    remoteAudio,
-    spokenMessageIds: new Set(),
-    stream,
-    status,
-  };
+  return session;
 }
 
 async function startVoiceSession(options = {}) {
@@ -659,6 +701,7 @@ module.exports = {
   getTranscriptUrl,
   interruptVoiceSession,
   muteVoiceSession,
+  cancelGenericRealtimeResponse,
   normalizeRealtimeTranscriptEvent,
   pollVoiceEgressOnce,
   postTranscriptToBroker,
