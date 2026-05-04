@@ -252,6 +252,77 @@ describe('voice-broker', () => {
     }));
   });
 
+  test('transcribes audio fallback and routes resulting text to Architect', async () => {
+    const routeVoiceMessage = jest.fn(() => ({ ok: true, routed: true, target: 'architect' }));
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ text: 'Push this to Mira from fallback audio.' }),
+    }));
+    const result = await voiceBroker.transcribeVoiceAudio({
+      audioBase64: Buffer.from('fake-audio').toString('base64'),
+      mimeType: 'audio/webm',
+      speaker: 'James',
+    }, {
+      config: voiceBroker.getVoiceBrokerConfig({}, { openaiApiKey: 'sk-test' }),
+      fetchImpl,
+      routeVoiceMessage,
+      enqueueOwnedWork: false,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      text: 'Push this to Mira from fallback audio.',
+      ingest: expect.objectContaining({ ok: true }),
+    }));
+    expect(fetchImpl).toHaveBeenCalledWith(
+      voiceBroker.OPENAI_TRANSCRIPTIONS_URL,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk-test',
+        }),
+      })
+    );
+    expect(routeVoiceMessage).toHaveBeenCalledWith(expect.objectContaining({
+      speaker: 'James',
+      text: 'Push this to Mira from fallback audio.',
+    }));
+  });
+
+  test('audio transcription endpoint ingests fallback mic chunks', async () => {
+    const routeVoiceMessage = jest.fn(() => ({ ok: true, routed: true, target: 'architect' }));
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0, openaiApiKey: 'sk-test' }),
+      fetchImpl: jest.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ text: 'Fallback endpoint voice text.' }),
+      })),
+      routeVoiceMessage,
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const response = await postJson(port, '/v1/voice/audio-transcriptions', {
+        audioBase64: Buffer.from('fake-audio').toString('base64'),
+        mimeType: 'audio/webm',
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(response.body).toEqual(expect.objectContaining({
+        ok: true,
+        text: 'Fallback endpoint voice text.',
+      }));
+      expect(routeVoiceMessage).toHaveBeenCalledWith(expect.objectContaining({
+        text: 'Fallback endpoint voice text.',
+      }));
+    } finally {
+      await broker.stop();
+    }
+  });
+
   test('client-secret endpoint fails closed when OpenAI API key is missing', async () => {
     const broker = new voiceBroker.VoiceBrokerService({
       config: voiceBroker.getVoiceBrokerConfig({}, { port: 0, openaiApiKey: null }),

@@ -285,6 +285,68 @@ describe('voice-broker tab', () => {
     }));
   });
 
+  test('records mic chunks as fallback transcription route', async () => {
+    const blob = {
+      size: 10,
+      type: 'audio/webm',
+      arrayBuffer: async () => Buffer.from('fake-audio'),
+    };
+    const recorder = {
+      handlers: {},
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      start: jest.fn(),
+      stop: jest.fn(),
+    };
+    const MediaRecorder = jest.fn(() => recorder);
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' })
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ ok: true, text: 'fallback heard me' }) });
+
+    await tab.createVoiceRealtimeSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: {
+          endpointShape: {
+            clientSecret: { path: '/v1/voice/realtime/client-secret' },
+            audioTranscription: { path: '/v1/voice/audio-transcriptions' },
+          },
+        },
+      },
+      fetchImpl,
+      MediaRecorder,
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [{ enabled: true, stop: jest.fn() }],
+          getTracks: () => [],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => ({ addEventListener: jest.fn(), readyState: 'open', send: jest.fn(), close: jest.fn() }),
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: jest.fn(),
+      })),
+    });
+
+    expect(recorder.start).toHaveBeenCalledWith(4000);
+    recorder.handlers.dataavailable({ data: blob });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchImpl).toHaveBeenLastCalledWith('http://127.0.0.1:43123/v1/voice/audio-transcriptions', expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('audioBase64'),
+    }));
+  });
+
   test('push-to-talk, mute, interrupt, and stop use WebRTC state only', async () => {
     const track = { enabled: true, stop: jest.fn() };
     const dataChannel = {
