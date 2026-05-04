@@ -567,6 +567,45 @@ describe('daemon-handlers.js module', () => {
 
         expect(terminal.spawnAgent).toHaveBeenCalledWith('1');
       });
+
+      test('does not respawn old live PTYs when renderer reload snapshot has empty scrollback', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+        const now = Date.now();
+
+        const data = {
+          terminals: [
+            {
+              paneId: '2',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              createdAt: now - 5 * 60 * 1000,
+              scrollback: '',
+              cwd: '/project/instances/builder',
+            },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(reattachTerminalFn).toHaveBeenCalledWith('2', '', expect.objectContaining({
+          createdAt: data.terminals[0].createdAt,
+        }));
+        expect(terminal.spawnAgent).not.toHaveBeenCalledWith('2');
+      });
     });
 
     describe('claude-state-changed handler', () => {
