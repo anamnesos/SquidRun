@@ -187,12 +187,27 @@ function renderVoiceBrokerPanelHtml(status) {
   ].join('');
 }
 
+function getLocalVoiceBrokerStatus() {
+  const host = typeof window !== 'undefined' ? window : globalThis;
+  const reader = host?.squidrun?.voice?.brokerStatusLocal
+    || host?.squidrunAPI?.voice?.brokerStatusLocal
+    || null;
+  if (typeof reader !== 'function') return null;
+  return Promise.resolve(reader());
+}
+
 async function refreshVoiceBrokerStatus() {
   try {
     const status = await invokeBridge('voice-broker:status');
     renderVoiceBrokerStatus(status);
     return status;
   } catch (err) {
+    const localStatus = await getLocalVoiceBrokerStatus().catch(() => null);
+    if (localStatus?.ok) {
+      renderVoiceBrokerStatus(localStatus);
+      setError(null);
+      return localStatus;
+    }
     const status = {
       ok: false,
       state: 'unavailable',

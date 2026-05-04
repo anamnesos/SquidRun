@@ -1,7 +1,32 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const { createSafeIpc } = require('./safe-ipc');
 const { requestDaemonTerminalSnapshot } = require('../daemon-snapshot');
+
+function readVoiceBrokerStatusSnapshot() {
+  const projectRoot = path.resolve(__dirname, '..', '..', '..');
+  const statusPath = path.join(projectRoot, '.squidrun', 'runtime', 'voice-broker-status.json');
+  const raw = fs.readFileSync(statusPath, 'utf8');
+  const broker = JSON.parse(raw);
+  const running = Boolean(broker?.running && broker?.address?.port);
+  const ready = Boolean(broker?.config?.openaiApiKeyPresent);
+  return {
+    ok: true,
+    state: ready ? (running ? 'running' : 'stopped') : 'not_ready',
+    ready,
+    running,
+    notReadyReasons: ready ? [] : ['openai_api_key_missing'],
+    lane: {
+      running,
+      broker,
+    },
+    config: broker?.config || {},
+    source: 'preload-status-file',
+  };
+}
 
 function toPaneChannel(prefix, paneId) {
   const normalizedPaneId = String(paneId || '').trim();
@@ -93,6 +118,7 @@ function createPreloadApi(ipcRenderer) {
       transcribe: (audioBuffer) => ipc.invoke('voice:transcribe', audioBuffer),
       brokerStatus: () => ipc.invoke('voice-broker:status'),
       brokerControl: (action) => ipc.invoke('voice-broker:control', { action }),
+      brokerStatusLocal: () => readVoiceBrokerStatusSnapshot(),
     },
 
     broadcast: null,
