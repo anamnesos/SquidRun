@@ -99,7 +99,7 @@ function getTranscriptUrl(status) {
 }
 
 function getModelLabel(status) {
-  const model = status?.config?.model || 'gpt-realtime';
+  const model = status?.config?.model || 'gpt-realtime-1.5';
   const voice = status?.config?.voice || 'marin';
   return `${model} / ${voice}`;
 }
