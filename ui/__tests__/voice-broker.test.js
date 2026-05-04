@@ -527,6 +527,18 @@ describe('voice-broker', () => {
         ok: false,
         reason: 'phone_pairing_local_only',
       });
+
+      const forwarded = await postJson(port, '/v1/voice/phone/pairing', {}, {
+        Host: `127.0.0.1:${port}`,
+        'X-Forwarded-Host': 'public-tunnel.example',
+        'X-Forwarded-For': '203.0.113.10',
+      });
+
+      expect(forwarded.statusCode).toBe(403);
+      expect(forwarded.body).toEqual({
+        ok: false,
+        reason: 'phone_pairing_local_only',
+      });
     } finally {
       await broker.stop();
     }

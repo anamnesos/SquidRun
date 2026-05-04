@@ -835,6 +835,15 @@ function isLocalHostHeader(hostHeader) {
   return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host.toLowerCase());
 }
 
+function hasForwardedRequestHeaders(headers = {}) {
+  return Boolean(
+    headers.forwarded
+    || headers['x-forwarded-for']
+    || headers['x-forwarded-host']
+    || headers['x-real-ip']
+  );
+}
+
 class VoiceBrokerService {
   constructor(options = {}) {
     this.config = options.config || getVoiceBrokerConfig(options.env || process.env, options);
@@ -904,7 +913,7 @@ class VoiceBrokerService {
       }
 
       if (req.method === 'POST' && url.pathname === '/v1/voice/phone/pairing') {
-        if (!isLocalHostHeader(req.headers.host)) {
+        if (!isLocalHostHeader(req.headers.host) || hasForwardedRequestHeaders(req.headers)) {
           sendJson(res, 403, {
             ok: false,
             reason: 'phone_pairing_local_only',
