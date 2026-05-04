@@ -124,6 +124,7 @@ const { showStatusNotice } = rendererModules.notifications;
 const { debounceButton, applyShortcutTooltips } = rendererModules.utils;
 const { initCommandPalette } = rendererModules.commandPalette;
 const { initStatusStrip } = rendererModules.statusStrip;
+const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
@@ -2488,6 +2489,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Status Strip - task counts at a glance
   initStatusStrip();
+  initPaneVisibilityControls({
+    bus,
+    profileName: document.body?.dataset?.profileName || initialWindowContext?.profileName || 'main',
+    onVisibilityChanged: ({ paneId, visible }) => {
+      if (!visible && expandedPaneId === paneId) {
+        toggleExpandPane(paneId);
+      }
+    },
+  });
   await refreshHeaderSessionBadge();
 
   try {
