@@ -42,6 +42,7 @@ const { registerBackupHandlers } = require('./backup-handlers');
 const { registerResourceHandlers } = require('./resource-handlers');
 const { registerWorkflowHandlers } = require('./workflow-handlers');
 const { registerTaskPoolHandlers } = require('./task-pool-handlers');
+const { registerOwnedWorkHandlers } = require('./owned-work-handlers');
 const { registerOracleHandlers } = require('./oracle-handlers');
 const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
@@ -100,6 +101,7 @@ const DEFAULT_HANDLERS = [
   registerResourceHandlers,
   registerWorkflowHandlers,
   registerTaskPoolHandlers,
+  registerOwnedWorkHandlers,
   registerOracleHandlers,
   registerModelSwitchHandlers,
   registerOrganicUIHandlers,
