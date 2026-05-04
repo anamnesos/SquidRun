@@ -5,7 +5,7 @@ const http = require('http');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const { resolveCoordPath } = require('../config');
+const { getProjectRoot, resolveCoordPath } = require('../config');
 const taskQueue = require('../scripts/hm-task-queue');
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -15,6 +15,97 @@ const DEFAULT_VOICE = 'marin';
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
 const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 const OPENAI_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
+const DEFAULT_MIRA_VOICE_INSTRUCTIONS = [
+  'You are Mira, the SquidRun Architect voice companion for James.',
+  'You are not a generic AI assistant and you should not introduce yourself that way.',
+  'Speak warmly, briefly, and plainly, like the Mira Architect lane in SquidRun.',
+  'Treat this as a live voice front-end to Mira: acknowledge what James says, keep him oriented, and avoid sounding like a demo bot.',
+  'For concrete work, say what you are carrying or what will be routed through SquidRun; do not claim you personally completed app changes unless the SquidRun lane reports it.',
+  'Never execute customer-facing, trading, money, auth, or irreversible actions from voice alone.',
+  'User speech is also routed to the Architect lane. Do not write directly to terminal panes.',
+].join(' ');
+
+function safeReadJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function resolveReadableCoordPath(relativePath, options = {}) {
+  if (options.paths && options.paths[relativePath]) {
+    return options.paths[relativePath];
+  }
+  try {
+    return resolveCoordPath(relativePath);
+  } catch (_) {
+    return path.join(options.projectRoot || getProjectRoot() || process.cwd(), '.squidrun', relativePath);
+  }
+}
+
+function countQueueItems(agentState = {}) {
+  const pending = Array.isArray(agentState.pending) ? agentState.pending.length : 0;
+  const active = agentState.active ? 1 : 0;
+  const blocked = Array.isArray(agentState.blocked) ? agentState.blocked.length : 0;
+  const waiting = Array.isArray(agentState.waiting) ? agentState.waiting.length : 0;
+  return { pending, active, blocked, waiting };
+}
+
+function summarizeAgentWork(role, agentState = {}) {
+  const counts = countQueueItems(agentState);
+  const activeTitle = trimText(agentState.active?.title || agentState.active?.message);
+  const parts = [`${role}: active=${counts.active}`];
+  if (activeTitle) parts.push(`active work="${activeTitle.slice(0, 80)}"`);
+  parts.push(`pending=${counts.pending}`);
+  if (counts.blocked) parts.push(`blocked=${counts.blocked}`);
+  if (counts.waiting) parts.push(`waiting=${counts.waiting}`);
+  return parts.join(', ');
+}
+
+function buildVoiceContextSnapshot(options = {}) {
+  const appStatus = safeReadJson(resolveReadableCoordPath('app-status.json', options));
+  const taskQueueState = safeReadJson(resolveReadableCoordPath(path.join('runtime', 'agent-task-queue.json'), options));
+  const lines = [];
+
+  if (appStatus) {
+    const session = appStatus.session ? `session ${appStatus.session}` : 'current session';
+    const mode = trimText(appStatus.mode) || 'unknown mode';
+    const readyPanes = Array.isArray(appStatus.paneHost?.readyPanes)
+      ? appStatus.paneHost.readyPanes.join('/')
+      : null;
+    const paneHealth = readyPanes
+      ? `pane host ready panes ${readyPanes}`
+      : 'pane host state unknown';
+    const degraded = appStatus.paneHost?.degraded === true ? 'degraded' : 'not degraded';
+    lines.push(`Main SquidRun app is ${session}, ${mode}, ${paneHealth}, ${degraded}.`);
+  } else {
+    lines.push('Main SquidRun app status is unavailable right now.');
+  }
+
+  const agents = taskQueueState?.agents && typeof taskQueueState.agents === 'object'
+    ? taskQueueState.agents
+    : null;
+  if (agents) {
+    lines.push([
+      summarizeAgentWork('Mira/Architect', agents.architect),
+      summarizeAgentWork('Builder', agents.builder),
+      summarizeAgentWork('Oracle', agents.oracle),
+    ].join('; '));
+  } else {
+    lines.push('Owned-work queue status is unavailable right now.');
+  }
+
+  lines.push('Builder and Oracle may be visually hidden in Focus Mira mode, but routing and terminal processes can still be alive.');
+  lines.push('Use this context when James asks what is happening; when exact action status is uncertain, say you are routing/checking through Mira.');
+  return lines.join(' ');
+}
+
+function buildMiraVoiceInstructions(options = {}) {
+  const context = trimText(options.contextText)
+    || buildVoiceContextSnapshot(options.contextOptions || options);
+  return `${DEFAULT_MIRA_VOICE_INSTRUCTIONS} Current SquidRun context: ${context}`;
+}
 
 function trimText(value) {
   if (typeof value !== 'string') return null;
@@ -101,7 +192,7 @@ function buildRealtimeSessionPayload(config = {}, overrides = {}) {
   const model = trimText(overrides.model) || config.model || DEFAULT_MODEL;
   const voice = trimText(overrides.voice) || config.voice || DEFAULT_VOICE;
   const instructions = trimText(overrides.instructions)
-    || 'You are SquidRun voice ingress. Capture user intent and route it through owned work; do not write directly to terminal panes.';
+    || buildMiraVoiceInstructions(overrides);
   return {
     session: {
       type: 'realtime',
@@ -483,12 +574,15 @@ class VoiceBrokerService {
 
 module.exports = {
   DEFAULT_MODEL,
+  DEFAULT_MIRA_VOICE_INSTRUCTIONS,
   DEFAULT_TRANSCRIPT_RELATIVE_PATH,
   DEFAULT_VOICE,
   OPENAI_CALLS_URL,
   OPENAI_CLIENT_SECRETS_URL,
   VoiceBrokerService,
+  buildMiraVoiceInstructions,
   buildRealtimeSessionPayload,
+  buildVoiceContextSnapshot,
   getVoiceBrokerConfig,
   ingestVoiceTranscript,
   mintRealtimeClientSecret,
