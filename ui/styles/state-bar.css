@@ -44,6 +44,30 @@
   display: none;
 }
 
+.owned-work-summary {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  max-width: min(34vw, 420px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owned-work-summary.active {
+  color: var(--color-text);
+}
+
+.owned-work-summary.warn {
+  color: var(--color-warning);
+}
+
+.owned-work-summary.idle,
+.owned-work-summary.unavailable {
+  color: var(--color-text-dim);
+}
+
 .session-timer {
   font-family: var(--font-mono);
   color: var(--color-text-muted);
