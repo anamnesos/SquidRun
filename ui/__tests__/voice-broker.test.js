@@ -76,6 +76,23 @@ describe('voice-broker', () => {
     });
   }
 
+  function getText(port, requestPath) {
+    return new Promise((resolve, reject) => {
+      http.get({ hostname: '127.0.0.1', port, path: requestPath }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { text += chunk; });
+        res.on('end', () => {
+          resolve({
+            statusCode: res.statusCode,
+            headers: res.headers,
+            text,
+          });
+        });
+      }).on('error', reject);
+    });
+  }
+
   test('builds restartless broker config and Realtime client-secret session payload shape', () => {
     const config = voiceBroker.getVoiceBrokerConfig({
       OPENAI_API_KEY: 'sk-test',
@@ -400,6 +417,12 @@ describe('voice-broker', () => {
             clientSecret: expect.objectContaining({
               path: '/v1/voice/realtime/client-secret',
             }),
+            phoneClient: expect.objectContaining({
+              path: '/phone',
+            }),
+            phonePairing: expect.objectContaining({
+              path: '/v1/voice/phone/pairing',
+            }),
             transcript: expect.objectContaining({
               path: '/v1/voice/transcripts',
             }),
@@ -410,6 +433,76 @@ describe('voice-broker', () => {
       await broker.stop();
     }
     expect(broker.getStatus().running).toBe(false);
+  });
+
+  test('serves phone voice shell and public phone config without exposing API key', async () => {
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, {
+        port: 0,
+        openaiApiKey: 'sk-test-secret',
+      }),
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const page = await getText(port, '/phone');
+      expect(page.statusCode).toBe(200);
+      expect(page.headers['content-type']).toContain('text/html');
+      expect(page.text).toContain('Mira Voice');
+      expect(page.text).toContain('/v1/voice/realtime/client-secret');
+      expect(page.text).not.toContain('sk-test-secret');
+
+      const config = await getJson(port, '/v1/voice/phone/config');
+      expect(config.statusCode).toBe(200);
+      expect(config.body).toEqual(expect.objectContaining({
+        ok: true,
+        client: 'squidrun-phone-voice',
+        endpoints: expect.objectContaining({
+          clientSecret: '/v1/voice/realtime/client-secret',
+        }),
+        safety: expect.objectContaining({
+          directPaneWrites: false,
+        }),
+      }));
+      expect(JSON.stringify(config.body)).not.toContain('sk-test-secret');
+    } finally {
+      await broker.stop();
+    }
+  });
+
+  test('phone pairing endpoint writes a short-lived pairing token', async () => {
+    const phonePairingPath = path.join(tempRoot, 'runtime', 'voice-phone-pairing.json');
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, {
+        port: 0,
+        phonePairingPath,
+      }),
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const response = await postJson(port, '/v1/voice/phone/pairing', {
+        ttlMs: 60000,
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.body).toEqual(expect.objectContaining({
+        ok: true,
+        token: expect.stringMatching(/^phone_/),
+        pairingPath: phonePairingPath,
+        phonePath: '/phone',
+      }));
+      const saved = JSON.parse(fs.readFileSync(phonePairingPath, 'utf8'));
+      expect(saved.token).toBe(response.body.token);
+      expect(saved.scope).toEqual({
+        channel: 'phone-voice',
+        target: 'architect',
+      });
+    } finally {
+      await broker.stop();
+    }
   });
 
   test('broker answers browser CORS preflight for renderer voice session fetches', async () => {

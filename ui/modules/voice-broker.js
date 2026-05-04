@@ -7,6 +7,11 @@ const { spawn } = require('child_process');
 
 const { getProjectRoot, resolveCoordPath } = require('../config');
 const taskQueue = require('../scripts/hm-task-queue');
+const {
+  buildPhoneClientConfig,
+  createPhonePairingToken,
+  renderPhoneVoiceClientPage,
+} = require('./phone-voice-client');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 0;
@@ -15,6 +20,7 @@ const DEFAULT_VOICE = 'marin';
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe';
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
 const DEFAULT_DIAGNOSTICS_RELATIVE_PATH = path.join('runtime', 'voice-diagnostics.jsonl');
+const DEFAULT_PHONE_PAIRING_RELATIVE_PATH = path.join('runtime', 'voice-phone-pairing.json');
 const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 const OPENAI_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
@@ -224,6 +230,9 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
   const diagnosticsJournalPath = trimText(overrides.diagnosticsJournalPath)
     || trimText(env.SQUIDRUN_VOICE_DIAGNOSTICS_JOURNAL)
     || resolveWritableCoordPath(DEFAULT_DIAGNOSTICS_RELATIVE_PATH);
+  const phonePairingPath = trimText(overrides.phonePairingPath)
+    || trimText(env.SQUIDRUN_VOICE_PHONE_PAIRING_PATH)
+    || resolveWritableCoordPath(DEFAULT_PHONE_PAIRING_RELATIVE_PATH);
 
   return {
     enabled: toBoolean(overrides.enabled ?? env.SQUIDRUN_VOICE_BROKER_ENABLED, true),
@@ -236,8 +245,21 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     openaiApiKeyPresent: Boolean(apiKey),
     transcriptJournalPath,
     diagnosticsJournalPath,
+    phonePairingPath,
     endpointShape: {
       status: { method: 'GET', path: '/status' },
+      phoneClient: {
+        method: 'GET',
+        path: '/phone',
+      },
+      phoneConfig: {
+        method: 'GET',
+        path: '/v1/voice/phone/config',
+      },
+      phonePairing: {
+        method: 'POST',
+        path: '/v1/voice/phone/pairing',
+      },
       clientSecret: {
         method: 'POST',
         path: '/v1/voice/realtime/client-secret',
@@ -748,6 +770,13 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload, null, 2));
 }
 
+function sendHtml(res, statusCode, html) {
+  res.statusCode = statusCode;
+  setCorsHeaders(res);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(html);
+}
+
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -810,6 +839,7 @@ class VoiceBrokerService {
         openaiApiKeyPresent: this.config.openaiApiKeyPresent,
         transcriptJournalPath: this.config.transcriptJournalPath,
         diagnosticsJournalPath: this.config.diagnosticsJournalPath,
+        phonePairingPath: this.config.phonePairingPath,
         endpointShape: this.config.endpointShape,
       },
       lastError: this.lastError,
@@ -828,6 +858,35 @@ class VoiceBrokerService {
 
       if (req.method === 'GET' && (url.pathname === '/status' || url.pathname === '/health')) {
         sendJson(res, 200, this.getStatus());
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/phone') {
+        sendHtml(res, 200, renderPhoneVoiceClientPage({
+          status: this.getStatus(),
+        }));
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/v1/voice/phone/config') {
+        sendJson(res, 200, buildPhoneClientConfig({
+          status: this.getStatus(),
+        }));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/phone/pairing') {
+        const body = parseJsonBody(await readRequestBody(req));
+        const pairing = createPhonePairingToken({
+          ttlMs: body.ttlMs,
+        });
+        ensureDirForFile(this.config.phonePairingPath);
+        fs.writeFileSync(this.config.phonePairingPath, `${JSON.stringify(pairing, null, 2)}\n`, 'utf8');
+        sendJson(res, 201, {
+          ...pairing,
+          pairingPath: this.config.phonePairingPath,
+          phonePath: this.config.endpointShape.phoneClient.path,
+        });
         return;
       }
 
@@ -962,6 +1021,7 @@ module.exports = {
   DEFAULT_DIAGNOSTICS_RELATIVE_PATH,
   DEFAULT_MODEL,
   DEFAULT_MIRA_VOICE_INSTRUCTIONS,
+  DEFAULT_PHONE_PAIRING_RELATIVE_PATH,
   DEFAULT_TRANSCRIPTION_MODEL,
   DEFAULT_TRANSCRIPT_RELATIVE_PATH,
   DEFAULT_VOICE,
