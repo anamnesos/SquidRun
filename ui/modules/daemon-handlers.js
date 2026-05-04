@@ -454,7 +454,10 @@ async function hasCliContent(scrollback = '', meta = {}) {
     if (
       alive
       && mode === 'pty'
-      && terminalAgeMs >= LIVE_REATTACH_EMPTY_SCROLLBACK_GRACE_MS
+      && (
+        terminalAgeMs >= LIVE_REATTACH_EMPTY_SCROLLBACK_GRACE_MS
+        || createdAtMs <= 0
+      )
       && await isProcessRunning(meta?.pid)
     ) {
       log.info(
