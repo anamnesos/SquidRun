@@ -323,6 +323,38 @@ describe('voice-broker', () => {
     }
   });
 
+  test('voice diagnostics endpoint journals renderer events', async () => {
+    const diagnosticsJournalPath = path.join(tempRoot, 'runtime', 'voice-diagnostics.jsonl');
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, {
+        port: 0,
+        diagnosticsJournalPath,
+      }),
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+
+    try {
+      const response = await postJson(port, '/v1/voice/diagnostics', {
+        eventType: 'voice.mic.granted',
+        detail: { audioTrackCount: 1 },
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(response.body).toEqual(expect.objectContaining({
+        ok: true,
+        journalPath: diagnosticsJournalPath,
+      }));
+      const line = fs.readFileSync(diagnosticsJournalPath, 'utf8').trim();
+      expect(JSON.parse(line)).toEqual(expect.objectContaining({
+        eventType: 'voice.mic.granted',
+        detail: { audioTrackCount: 1 },
+      }));
+    } finally {
+      await broker.stop();
+    }
+  });
+
   test('client-secret endpoint fails closed when OpenAI API key is missing', async () => {
     const broker = new voiceBroker.VoiceBrokerService({
       config: voiceBroker.getVoiceBrokerConfig({}, { port: 0, openaiApiKey: null }),

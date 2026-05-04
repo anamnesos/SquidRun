@@ -13,6 +13,7 @@ const DEFAULT_PORT = 0;
 const DEFAULT_MODEL = 'gpt-realtime-1.5';
 const DEFAULT_VOICE = 'marin';
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
+const DEFAULT_DIAGNOSTICS_RELATIVE_PATH = path.join('runtime', 'voice-diagnostics.jsonl');
 const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 const OPENAI_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
@@ -215,6 +216,9 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
   const transcriptJournalPath = trimText(overrides.transcriptJournalPath)
     || trimText(env.SQUIDRUN_VOICE_TRANSCRIPT_JOURNAL)
     || resolveWritableCoordPath(DEFAULT_TRANSCRIPT_RELATIVE_PATH);
+  const diagnosticsJournalPath = trimText(overrides.diagnosticsJournalPath)
+    || trimText(env.SQUIDRUN_VOICE_DIAGNOSTICS_JOURNAL)
+    || resolveWritableCoordPath(DEFAULT_DIAGNOSTICS_RELATIVE_PATH);
 
   return {
     enabled: toBoolean(overrides.enabled ?? env.SQUIDRUN_VOICE_BROKER_ENABLED, true),
@@ -225,6 +229,7 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     openaiApiKey: apiKey,
     openaiApiKeyPresent: Boolean(apiKey),
     transcriptJournalPath,
+    diagnosticsJournalPath,
     endpointShape: {
       status: { method: 'GET', path: '/status' },
       clientSecret: {
@@ -244,6 +249,10 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
       egress: {
         method: 'GET',
         path: '/v1/voice/egress',
+      },
+      diagnostics: {
+        method: 'POST',
+        path: '/v1/voice/diagnostics',
       },
       futureSdpSession: {
         method: 'POST',
@@ -479,6 +488,39 @@ function appendTranscriptJournal(event, journalPath) {
   return journalPath;
 }
 
+function normalizeVoiceDiagnosticPayload(payload = {}) {
+  const eventType = trimText(payload.eventType || payload.type) || 'voice.diagnostic';
+  const nowMs = Number.isFinite(Number(payload.tsMs || payload.timestampMs))
+    ? Math.floor(Number(payload.tsMs || payload.timestampMs))
+    : Date.now();
+  return {
+    ok: true,
+    event: {
+      eventId: trimText(payload.eventId) || `voice-diag-${nowMs}-${Math.random().toString(36).slice(2, 8)}`,
+      eventType,
+      tsMs: nowMs,
+      sessionId: trimText(payload.sessionId),
+      ok: payload.ok !== false,
+      reason: trimText(payload.reason),
+      detail: payload.detail && typeof payload.detail === 'object'
+        ? { ...payload.detail }
+        : {},
+    },
+  };
+}
+
+function appendVoiceDiagnostic(payload = {}, journalPath) {
+  const normalized = normalizeVoiceDiagnosticPayload(payload);
+  const targetPath = journalPath || resolveWritableCoordPath(DEFAULT_DIAGNOSTICS_RELATIVE_PATH);
+  ensureDirForFile(targetPath);
+  fs.appendFileSync(targetPath, `${JSON.stringify(normalized.event)}\n`, 'utf8');
+  return {
+    ok: true,
+    event: normalized.event,
+    journalPath: targetPath,
+  };
+}
+
 function emitVoiceIngress(bus, event) {
   if (bus && typeof bus.emit === 'function') {
     bus.emit('voice.ingress', {
@@ -700,6 +742,7 @@ class VoiceBrokerService {
         voice: this.config.voice,
         openaiApiKeyPresent: this.config.openaiApiKeyPresent,
         transcriptJournalPath: this.config.transcriptJournalPath,
+        diagnosticsJournalPath: this.config.diagnosticsJournalPath,
         endpointShape: this.config.endpointShape,
       },
       lastError: this.lastError,
@@ -756,6 +799,13 @@ class VoiceBrokerService {
           routeToArchitect: this.routeToArchitect,
         });
         sendJson(res, result.ok ? 202 : 400, result);
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/diagnostics') {
+        const body = parseJsonBody(await readRequestBody(req));
+        const result = appendVoiceDiagnostic(body, this.config.diagnosticsJournalPath);
+        sendJson(res, 202, result);
         return;
       }
 
@@ -833,6 +883,7 @@ class VoiceBrokerService {
 }
 
 module.exports = {
+  DEFAULT_DIAGNOSTICS_RELATIVE_PATH,
   DEFAULT_MODEL,
   DEFAULT_MIRA_VOICE_INSTRUCTIONS,
   DEFAULT_TRANSCRIPT_RELATIVE_PATH,
@@ -841,6 +892,7 @@ module.exports = {
   OPENAI_CLIENT_SECRETS_URL,
   OPENAI_TRANSCRIPTIONS_URL,
   VoiceBrokerService,
+  appendVoiceDiagnostic,
   buildMiraVoiceInstructions,
   buildRealtimeSessionPayload,
   buildVoiceContextSnapshot,
@@ -849,6 +901,7 @@ module.exports = {
   mintRealtimeClientSecret,
   normalizeAudioTranscriptionPayload,
   normalizeTranscriptPayload,
+  normalizeVoiceDiagnosticPayload,
   queryVoiceEgressMessages,
   routeVoiceTranscriptToArchitect,
   summarizeRecentComms,

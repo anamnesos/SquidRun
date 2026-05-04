@@ -303,7 +303,7 @@ describe('voice-broker tab', () => {
     const fetchImpl = jest.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' })
-      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ ok: true, text: 'fallback heard me' }) });
+      .mockResolvedValue({ ok: true, status: 202, json: async () => ({ ok: true, text: 'fallback heard me' }) });
 
     await tab.createVoiceRealtimeSession({
       status: {
@@ -344,6 +344,33 @@ describe('voice-broker tab', () => {
     expect(fetchImpl).toHaveBeenLastCalledWith('http://127.0.0.1:43123/v1/voice/audio-transcriptions', expect.objectContaining({
       method: 'POST',
       body: expect.stringContaining('audioBase64'),
+    }));
+  });
+
+  test('posts voice diagnostics to broker endpoint', async () => {
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 202,
+      json: async () => ({ ok: true }),
+    }));
+    const result = await tab.postVoiceDiagnostic('voice.mic.granted', {
+      audioTrackCount: 1,
+    }, {
+      fetchImpl,
+      status: {
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: {
+          endpointShape: {
+            diagnostics: { path: '/v1/voice/diagnostics' },
+          },
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:43123/v1/voice/diagnostics', expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('voice.mic.granted'),
     }));
   });
 

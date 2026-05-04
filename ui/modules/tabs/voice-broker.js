@@ -114,6 +114,12 @@ function getEgressUrl(status) {
   return base ? `${base}${path}` : null;
 }
 
+function getDiagnosticsUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  const path = status?.config?.endpointShape?.diagnostics?.path || null;
+  return base && path ? `${base}${path}` : null;
+}
+
 function getModelLabel(status) {
   const model = status?.config?.model || 'gpt-realtime-1.5';
   const voice = status?.config?.voice || 'marin';
@@ -152,6 +158,34 @@ function appendSessionLog(text) {
   const current = String(el.textContent || '').trim();
   const next = current ? `${current}\n${text}` : text;
   el.textContent = next.split('\n').slice(-6).join('\n');
+}
+
+function postVoiceDiagnostic(eventType, detail = {}, options = {}) {
+  const status = options.status || lastStatus;
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const diagnosticsUrl = getDiagnosticsUrl(status);
+  if (!diagnosticsUrl || typeof fetchImpl !== 'function') {
+    return Promise.resolve({ ok: false, reason: 'voice_diagnostics_endpoint_unavailable' });
+  }
+  return fetchImpl(diagnosticsUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      eventType,
+      ok: options.ok !== false,
+      reason: options.reason || null,
+      detail,
+      tsMs: Date.now(),
+    }),
+  }).then(async (response) => {
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (_) {
+      body = null;
+    }
+    return { ok: response.ok, statusCode: response.status, body };
+  }).catch((err) => ({ ok: false, reason: err.message }));
 }
 
 function setButtonState(status) {
@@ -406,8 +440,17 @@ async function blobToBase64(blob) {
 async function postAudioChunkToBroker(blob, status = lastStatus, fetchImpl = globalThis.fetch) {
   const audioUrl = getAudioTranscriptionUrl(status);
   if (!audioUrl || typeof fetchImpl !== 'function' || !blob || Number(blob.size || 0) <= 0) {
+    void postVoiceDiagnostic('voice.audio_chunk.skipped', {
+      hasAudioUrl: Boolean(audioUrl),
+      hasFetch: typeof fetchImpl === 'function',
+      blobSize: Number(blob?.size || 0),
+    }, { status, fetchImpl, ok: false, reason: 'audio_chunk_unavailable' });
     return { ok: false, reason: 'voice_audio_transcription_endpoint_unavailable' };
   }
+  void postVoiceDiagnostic('voice.audio_chunk.posting', {
+    blobSize: Number(blob.size || 0),
+    mimeType: blob.type || 'audio/webm',
+  }, { status, fetchImpl });
   const audioBase64 = await blobToBase64(blob);
   const response = await fetchImpl(audioUrl, {
     method: 'POST',
@@ -428,6 +471,12 @@ async function postAudioChunkToBroker(blob, status = lastStatus, fetchImpl = glo
     body = null;
   }
   if (body?.text) appendSessionLog(`Mic transcript: ${body.text}`);
+  void postVoiceDiagnostic('voice.audio_chunk.result', {
+    statusCode: response.status,
+    responseOk: response.ok,
+    text: body?.text || null,
+    reason: body?.reason || null,
+  }, { status, fetchImpl, ok: response.ok, reason: body?.reason });
   return {
     ok: response.ok,
     statusCode: response.status,
@@ -440,6 +489,10 @@ function startAudioTranscriptionFallback(session, options = {}) {
     || (typeof MediaRecorder !== 'undefined' ? MediaRecorder : null);
   if (!session?.stream || typeof Recorder !== 'function') {
     appendSessionLog('Mic fallback unavailable');
+    void postVoiceDiagnostic('voice.media_recorder.unavailable', {
+      hasStream: Boolean(session?.stream),
+      hasMediaRecorder: typeof Recorder === 'function',
+    }, { status: options.status || session?.status || lastStatus, fetchImpl: options.fetchImpl, ok: false });
     return null;
   }
   let recorder = null;
@@ -450,16 +503,26 @@ function startAudioTranscriptionFallback(session, options = {}) {
   }
   recorder.addEventListener?.('dataavailable', (event) => {
     const blob = event.data;
+    void postVoiceDiagnostic('voice.media_recorder.dataavailable', {
+      blobSize: Number(blob?.size || 0),
+      mimeType: blob?.type || null,
+    }, { status: options.status || session.status || lastStatus, fetchImpl: options.fetchImpl });
     if (!blob || Number(blob.size || 0) <= 0) return;
     void postAudioChunkToBroker(blob, options.status || session.status || lastStatus, options.fetchImpl || globalThis.fetch)
       .catch((err) => appendSessionLog(`Mic transcription failed: ${err.message}`));
   });
   recorder.addEventListener?.('error', (event) => {
     appendSessionLog(`Mic recorder error: ${event.error?.message || 'unknown'}`);
+    void postVoiceDiagnostic('voice.media_recorder.error', {
+      error: event.error?.message || 'unknown',
+    }, { status: options.status || session.status || lastStatus, fetchImpl: options.fetchImpl, ok: false });
   });
   recorder.start?.(Math.max(1000, Number(options.timesliceMs) || 4000));
   session.audioRecorder = recorder;
   appendSessionLog('Mic fallback recording');
+  void postVoiceDiagnostic('voice.media_recorder.started', {
+    timesliceMs: Math.max(1000, Number(options.timesliceMs) || 4000),
+  }, { status: options.status || session.status || lastStatus, fetchImpl: options.fetchImpl });
   return recorder;
 }
 
@@ -518,8 +581,17 @@ function startVoiceEgressPolling(session, options = {}) {
 async function postTranscriptToBroker(transcript, status = lastStatus, fetchImpl = globalThis.fetch) {
   const transcriptUrl = getTranscriptUrl(status);
   if (!transcriptUrl || typeof fetchImpl !== 'function') {
+    void postVoiceDiagnostic('voice.transcript.skipped', {
+      hasTranscriptUrl: Boolean(transcriptUrl),
+      hasFetch: typeof fetchImpl === 'function',
+      text: transcript?.text || null,
+    }, { status, fetchImpl, ok: false });
     return { ok: false, reason: 'voice_transcript_endpoint_unavailable' };
   }
+  void postVoiceDiagnostic('voice.transcript.posting', {
+    speaker: transcript?.speaker || null,
+    text: transcript?.text || null,
+  }, { status, fetchImpl });
   const response = await fetchImpl(transcriptUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -565,6 +637,9 @@ async function createVoiceRealtimeSession(options = {}) {
 
   let tokenResponse;
   try {
+    void postVoiceDiagnostic('voice.session.client_secret.request', {
+      clientSecretUrl,
+    }, { status, fetchImpl });
     tokenResponse = await fetchImpl(clientSecretUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -583,6 +658,16 @@ async function createVoiceRealtimeSession(options = {}) {
   }
 
   const stream = await mediaDevices.getUserMedia({ audio: true });
+  const initialTracks = stream.getAudioTracks?.() || stream.getTracks?.() || [];
+  void postVoiceDiagnostic('voice.mic.granted', {
+    audioTrackCount: initialTracks.length,
+    tracks: initialTracks.map((track) => ({
+      enabled: Boolean(track.enabled),
+      muted: Boolean(track.muted),
+      readyState: track.readyState || null,
+      label: track.label || null,
+    })),
+  }, { status, fetchImpl });
   const peerConnection = new PeerConnection();
   const remoteAudio = options.audioElement || (typeof document !== 'undefined' ? document.createElement('audio') : null);
   if (remoteAudio) {
@@ -597,6 +682,10 @@ async function createVoiceRealtimeSession(options = {}) {
     track.enabled = true;
     peerConnection.addTrack(track, stream);
   });
+  void postVoiceDiagnostic('voice.mic.tracks_enabled', {
+    audioTrackCount: tracks.length,
+    enabledCount: tracks.filter((track) => track.enabled !== false).length,
+  }, { status, fetchImpl });
 
   const dataChannel = peerConnection.createDataChannel(VOICE_DATA_CHANNEL_CONTRACT.channelName);
   const session = {
@@ -617,6 +706,7 @@ async function createVoiceRealtimeSession(options = {}) {
   });
   dataChannel.addEventListener?.('open', () => {
     appendSessionLog('Data channel open');
+    void postVoiceDiagnostic('voice.data_channel.open', {}, { status, fetchImpl });
     sendDataChannelEvent(dataChannel, {
       type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.sessionUpdate,
       session: {
@@ -633,6 +723,11 @@ async function createVoiceRealtimeSession(options = {}) {
     if (!payload) return;
     appendSessionLog(payload.type || 'voice event');
     const eventType = String(payload.type || '');
+    void postVoiceDiagnostic('voice.data_channel.event', {
+      eventType,
+      hasTranscript: Boolean(payload.transcript || payload.text || payload.delta),
+      itemRole: payload.item?.role || null,
+    }, { status, fetchImpl });
     if (
       eventType === 'response.created'
       || eventType === 'response.output_item.added'
@@ -784,6 +879,7 @@ module.exports = {
   destroyVoiceBrokerTab,
   extractEphemeralKey,
   getEgressUrl,
+  getDiagnosticsUrl,
   getAudioTranscriptionUrl,
   getReadinessLabel,
   getStateLabel,
@@ -796,6 +892,7 @@ module.exports = {
   pollVoiceEgressOnce,
   postTranscriptToBroker,
   postAudioChunkToBroker,
+  postVoiceDiagnostic,
   refreshVoiceBrokerStatus,
   renderVoiceBrokerPanelHtml,
   renderVoiceBrokerStatus,
