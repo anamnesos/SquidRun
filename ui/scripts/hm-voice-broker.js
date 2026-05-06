@@ -12,6 +12,7 @@ const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'voice-broker.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'voice-broker.log');
 const STATUS_PATH = path.join(RUNTIME_DIR, 'voice-broker-status.json');
+const CHILD_START_GRACE_MS = 10000;
 
 function usage() {
   console.log('Usage: node ui/scripts/hm-voice-broker.js <start|stop|restart|status|run>');
@@ -29,11 +30,86 @@ function isPidAlive(pid) {
   }
 }
 
+function trimText(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function isNodeExecutablePath(value) {
+  const execPath = trimText(value);
+  if (!execPath) return false;
+  const candidates = [
+    path.basename(execPath),
+    path.win32.basename(execPath),
+    path.posix.basename(execPath),
+  ].map((item) => String(item || '').toLowerCase());
+  return candidates.includes('node') || candidates.includes('node.exe');
+}
+
+function cleanNodeChildEnv(env = process.env) {
+  const childEnv = { ...env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  return childEnv;
+}
+
+function resolveBrokerLaunchCommand(options = {}) {
+  const env = options.env || process.env;
+  const execPath = trimText(options.execPath) || process.execPath;
+  const versions = options.versions || process.versions || {};
+  const platform = options.platform || process.platform;
+  const override = trimText(env.SQUIDRUN_VOICE_BROKER_NODE_PATH)
+    || trimText(env.SQUIDRUN_NODE_PATH);
+  if (override) {
+    return {
+      executable: override,
+      env: cleanNodeChildEnv(env),
+      source: 'override',
+    };
+  }
+
+  const npmNodeExecPath = trimText(env.npm_node_execpath);
+  if (isNodeExecutablePath(npmNodeExecPath)) {
+    return {
+      executable: npmNodeExecPath,
+      env: cleanNodeChildEnv(env),
+      source: 'npm_node_execpath',
+    };
+  }
+
+  const runningInsideElectron = Boolean(versions.electron);
+  if (!runningInsideElectron && isNodeExecutablePath(execPath)) {
+    return {
+      executable: execPath,
+      env: cleanNodeChildEnv(env),
+      source: 'process_exec_path',
+    };
+  }
+
+  return {
+    executable: platform === 'win32' ? 'node.exe' : 'node',
+    env: cleanNodeChildEnv(env),
+    source: runningInsideElectron ? 'electron_node_fallback' : 'path_node_fallback',
+  };
+}
+
 function readPid() {
   try {
     return Number.parseInt(fs.readFileSync(PID_PATH, 'utf8').trim(), 10);
   } catch {
     return null;
+  }
+}
+
+function readPidInfo() {
+  try {
+    const stat = fs.statSync(PID_PATH);
+    return {
+      pid: Number.parseInt(fs.readFileSync(PID_PATH, 'utf8').trim(), 10),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
+  } catch {
+    return { pid: null, mtimeMs: 0 };
   }
 }
 
@@ -55,18 +131,53 @@ function readStatusFile() {
   }
 }
 
-function status() {
-  const pid = readPid();
-  const running = isPidAlive(pid);
+function buildStatusSnapshot({
+  pid = null,
+  pidAlive = false,
+  pidMtimeMs = 0,
+  statusFile = null,
+  nowMs = Date.now(),
+} = {}) {
+  const numericPid = Number(pid);
+  const validPid = Number.isInteger(numericPid) && numericPid > 0 ? numericPid : null;
+  const statusPid = Number(statusFile?.pid);
+  const statusMatchesPid = Boolean(
+    validPid
+    && statusFile
+    && Number.isInteger(statusPid)
+    && statusPid === validPid
+  );
+  const pidAgeMs = pidMtimeMs > 0 ? Math.max(0, nowMs - pidMtimeMs) : Infinity;
+  const starting = Boolean(pidAlive && !statusMatchesPid && pidAgeMs <= CHILD_START_GRACE_MS);
+  const running = Boolean(pidAlive && statusMatchesPid && statusFile?.running !== false);
+  const stalePid = Boolean(pidAlive && !running && !starting);
+  const staleStatus = Boolean(statusFile && !statusMatchesPid);
+
   return {
     ok: true,
     running,
-    pid: running ? pid : null,
+    starting,
+    pid: running || starting ? validPid : null,
+    stalePid: stalePid ? validPid : null,
+    staleStatus,
+    reason: running
+      ? null
+      : (starting ? 'broker_starting' : (stalePid ? 'stale_voice_broker_pid' : 'not_running')),
     pidPath: PID_PATH,
     logPath: LOG_PATH,
     statusPath: STATUS_PATH,
-    broker: running ? readStatusFile() : null,
+    broker: running ? statusFile : null,
   };
+}
+
+function status() {
+  const pidInfo = readPidInfo();
+  return buildStatusSnapshot({
+    pid: pidInfo.pid,
+    pidAlive: isPidAlive(pidInfo.pid),
+    pidMtimeMs: pidInfo.mtimeMs,
+    statusFile: readStatusFile(),
+  });
 }
 
 async function runBroker() {
@@ -124,18 +235,49 @@ async function runBroker() {
 function start() {
   const current = status();
   if (current.running) return { ok: true, alreadyRunning: true, ...current };
+  if (current.starting) return { ok: true, alreadyStarting: true, ...current };
+  if (current.stalePid) {
+    try {
+      process.kill(current.stalePid, 'SIGTERM');
+    } catch {
+      // Best effort stale child cleanup.
+    }
+    try {
+      fs.rmSync(PID_PATH, { force: true });
+      fs.rmSync(STATUS_PATH, { force: true });
+    } catch {
+      // Best effort stale metadata cleanup.
+    }
+  } else if (current.staleStatus) {
+    try {
+      fs.rmSync(PID_PATH, { force: true });
+      fs.rmSync(STATUS_PATH, { force: true });
+    } catch {
+      // Best effort stale metadata cleanup.
+    }
+  }
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
   const out = fs.openSync(LOG_PATH, 'a');
-  const child = spawn(process.execPath, [__filename, 'run'], {
+  const launch = resolveBrokerLaunchCommand();
+  const child = spawn(launch.executable, [__filename, 'run'], {
     cwd: getProjectRoot(),
     detached: true,
     stdio: ['ignore', out, out],
-    env: { ...process.env, SQUIDRUN_PROJECT_ROOT: getProjectRoot() },
+    env: { ...launch.env, SQUIDRUN_PROJECT_ROOT: getProjectRoot() },
     windowsHide: true,
   });
   child.unref();
   fs.writeFileSync(PID_PATH, String(child.pid), 'utf8');
-  return { ok: true, started: true, pid: child.pid, pidPath: PID_PATH, logPath: LOG_PATH, statusPath: STATUS_PATH };
+  return {
+    ok: true,
+    started: true,
+    pid: child.pid,
+    pidPath: PID_PATH,
+    logPath: LOG_PATH,
+    statusPath: STATUS_PATH,
+    executable: launch.executable,
+    launchSource: launch.source,
+  };
 }
 
 function stop() {
@@ -207,7 +349,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildStatusSnapshot,
   isPidAlive,
+  isNodeExecutablePath,
+  resolveBrokerLaunchCommand,
   start,
   status,
   stop,

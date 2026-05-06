@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 
 const { getProjectRoot, resolveCoordPath } = require('../config');
 const taskQueue = require('../scripts/hm-task-queue');
+const { normalizeIngressEnvelope } = require('./ingress-envelope');
 const {
   buildPhoneClientConfig,
   createPhonePairingToken,
@@ -19,6 +20,8 @@ const DEFAULT_PORT = 0;
 const DEFAULT_MODEL = 'gpt-realtime-1.5';
 const DEFAULT_VOICE = 'marin';
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe';
+const DEFAULT_VAD_PREFIX_PADDING_MS = 700;
+const DEFAULT_VAD_SILENCE_DURATION_MS = 2200;
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
 const DEFAULT_DIAGNOSTICS_RELATIVE_PATH = path.join('runtime', 'voice-diagnostics.jsonl');
 const DEFAULT_PHONE_PAIRING_RELATIVE_PATH = path.join('runtime', 'voice-phone-pairing.json');
@@ -36,7 +39,10 @@ const DEFAULT_MIRA_VOICE_INSTRUCTIONS = [
   'Do not refuse pane-routing commands just because they mention a pane; only refuse direct OS/terminal control or irreversible actions.',
   'Do not write directly to terminal panes yourself.',
   'Do not answer user speech as a separate assistant. Wait for SquidRun to provide Mira/Architect replies, then speak those replies as Mira\'s mouth.',
+  'Give James room to finish thoughts; do not rush into a response after a short pause.',
 ].join(' ');
+const AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
+const BARE_AGENT_SEQUENCE_PREFIX_RE = /^\s*(?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\s*:?\s*/i;
 
 function safeReadJson(filePath) {
   try {
@@ -180,6 +186,19 @@ function trimText(value) {
   return trimmed ? trimmed : null;
 }
 
+function stripAgentSequencePrefix(value) {
+  let text = String(value || '').trim();
+  for (let i = 0; i < 3; i += 1) {
+    const next = text
+      .replace(AGENT_SEQUENCE_PREFIX_RE, '')
+      .replace(BARE_AGENT_SEQUENCE_PREFIX_RE, '')
+      .trim();
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
 function toPositiveInt(value, fallback) {
   const numeric = Number.parseInt(String(value ?? ''), 10);
   return Number.isInteger(numeric) && numeric >= 0 ? numeric : fallback;
@@ -222,6 +241,18 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     || trimText(env.SQUIDRUN_VOICE_TRANSCRIPTION_MODEL)
     || trimText(env.OPENAI_TRANSCRIPTION_MODEL)
     || DEFAULT_TRANSCRIPTION_MODEL;
+  const vadPrefixPaddingMs = toPositiveInt(
+    overrides.vadPrefixPaddingMs
+      ?? overrides.vadPrefixMs
+      ?? env.SQUIDRUN_VOICE_VAD_PREFIX_MS,
+    DEFAULT_VAD_PREFIX_PADDING_MS
+  );
+  const vadSilenceDurationMs = toPositiveInt(
+    overrides.vadSilenceDurationMs
+      ?? overrides.vadSilenceMs
+      ?? env.SQUIDRUN_VOICE_VAD_SILENCE_MS,
+    DEFAULT_VAD_SILENCE_DURATION_MS
+  );
   const apiKey = trimText(overrides.openaiApiKey)
     || trimText(env.OPENAI_API_KEY)
     || null;
@@ -242,6 +273,8 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     model,
     voice,
     transcriptionModel,
+    vadPrefixPaddingMs,
+    vadSilenceDurationMs,
     openaiApiKey: apiKey,
     openaiApiKeyPresent: Boolean(apiKey),
     transcriptJournalPath,
@@ -500,6 +533,26 @@ function normalizeTranscriptPayload(payload = {}) {
     : Date.now();
   const eventId = trimText(payload.eventId)
     || `voice-${nowMs}-${Math.random().toString(36).slice(2, 8)}`;
+  const metadata = payload.metadata && typeof payload.metadata === 'object'
+    ? { ...payload.metadata }
+    : {};
+  const ingressEnvelope = normalizeIngressEnvelope({
+    source: 'voice',
+    transcript: text,
+    speaker: trimText(payload.speaker) || 'user',
+    receivedAtMs: nowMs,
+    sessionId: trimText(payload.sessionId),
+    channelMessageId: eventId,
+    riskClass: payload.riskClass,
+    target: 'architect',
+    scope: metadata.scope || {
+      profileName: metadata.profileName,
+      windowKey: metadata.windowKey,
+      sessionId: metadata.sessionId,
+      projectPath: metadata.projectPath,
+    },
+    metadata,
+  });
   return {
     ok: true,
     event: {
@@ -511,9 +564,9 @@ function normalizeTranscriptPayload(payload = {}) {
       text,
       receivedAtMs: nowMs,
       sessionId: trimText(payload.sessionId),
-      metadata: payload.metadata && typeof payload.metadata === 'object'
-        ? { ...payload.metadata }
-        : {},
+      riskClass: ingressEnvelope.riskClass,
+      ingressEnvelope,
+      metadata,
     },
   };
 }
@@ -579,7 +632,7 @@ function enqueueVoiceOwnedWork(event, options = {}) {
     title: 'Voice ingress',
     message: `[Voice from ${event.speaker}]: ${event.text}`,
     source: 'voice-broker',
-    riskClass: options.riskClass || undefined,
+    riskClass: options.riskClass || event.riskClass || undefined,
     nextStep: 'Classify and route this voice request through SquidRun owned work.',
     wakeTrigger: 'voice-ingress',
     restartPersistence: true,
@@ -587,6 +640,7 @@ function enqueueVoiceOwnedWork(event, options = {}) {
       voiceEventId: event.eventId,
       channel: 'voice',
       sessionId: event.sessionId || null,
+      ingressEnvelope: event.ingressEnvelope || null,
     },
   }, options.queuePath ? { queuePath: options.queuePath } : {});
 }
@@ -660,7 +714,7 @@ function normalizeVoiceEgressMessage(row = {}) {
   const sender = trimText(row.senderRole || row.sender_role || row.sender);
   const target = trimText(row.targetRole || row.target_role || row.target);
   if (sender !== 'architect' || target !== 'user') return null;
-  const text = trimText(row.rawBody || row.raw_body || row.body || row.message || row.excerpt);
+  const text = trimText(stripAgentSequencePrefix(row.rawBody || row.raw_body || row.body || row.message || row.excerpt));
   if (!text) return null;
   const timestampMs = Number(
     row.brokeredAtMs
@@ -1162,6 +1216,7 @@ module.exports = {
   normalizeVoiceDiagnosticPayload,
   queryVoiceEgressMessages,
   routeVoiceTranscriptToArchitect,
+  stripAgentSequencePrefix,
   summarizeRecentComms,
   transcribeVoiceAudio,
 };
