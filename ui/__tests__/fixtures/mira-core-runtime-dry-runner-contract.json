@@ -1,0 +1,865 @@
+{
+  "schema": "squidrun.mira_core.runtime_dry_runner_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_32_disabled_local_dry_run_runner_contract",
+  "baseline": {
+    "commit": "83963ab",
+    "subject": "Add Mira Core Phase 31 runtime milestone refresh validation",
+    "baseline_status": "phase_31_runtime_milestone_refresh_validation_green",
+    "baseline_boundary": "Phase 31 is committed as validation-only readiness registry refresh. No disabled dry-run runner, real runtime, runner execution, server, listener, route, network path, database, store, file write, migration, queue, lease, auth, key, secret, local execution, shell, PTY, send, deploy, trade, output-file, durable memory/profile commit, capture, or external side effect exists at this baseline."
+  },
+  "sourceSpecs": [
+    "ui/__tests__/fixtures/mira-core-runtime-milestone-refresh-contract.json",
+    "ui/modules/mira-core/runtime-milestone-refresh.js",
+    "ui/scripts/hm-mira-core-runtime-milestone-refresh.js",
+    "ui/__tests__/mira-core-runtime-milestone-refresh.test.js",
+    "ui/__tests__/fixtures/mira-core-runtime-control-path-contract.json"
+  ],
+  "purpose": [
+    "Define the future disabled local dry-run runner contract recommended by Phase 31.",
+    "Specify a local in-process dry-run runner request/response shape without implementing or enabling a runner.",
+    "Keep disabled-by-default flag dependency, kill-switch dependency, operator-visible status, redacted telemetry/audit preview, idempotency/replay rules, result enums, rollback boundaries, proof truth, target boundaries, and unsafe-action drift gates explicit.",
+    "Carry Phase 31 baseline and registry truth forward while keeping all eligibility non-authorizing."
+  ],
+  "nonGoals": [
+    "No runtime implementation.",
+    "No real runner execution.",
+    "No real server, listener, route, HTTP, WebSocket, network, database, store, file, migration, queue, lease, auth, key, secret, env secret read, local execution, shell, PTY, browser, screenshot, OCR, send, deploy, trade, memory/profile commit, audit write, telemetry sink write, or output-file behavior.",
+    "No source-store writes and no mutation of Phase 31 artifacts.",
+    "No live local-arm execution, model-processing proof, bridge-green proof, runtime proof, or direct server targeting of Builder/Oracle."
+  ],
+  "builderPatchMustSatisfy": [
+    "Consume this Oracle fixture directly.",
+    "Emit runtime_dry_runner_contract_report plus validation_report only.",
+    "Keep the default decision remain_disabled_dry_runner_contract_only.",
+    "Treat eligible_for_future_disabled_local_dry_runner_validation_slice as non-authorizing and not runtime proof.",
+    "Reject stale baseline 83963ab or stale Phase 31 dependency.",
+    "Carry Phase 31 registry counts and commit-chain truth forward: phases=30, schemas=30, CLIs=30, Phase 23 stale, Phase 30 ORACLE #115 closure present.",
+    "Define request and response contracts for a future local in-process dry-run runner; do not run requests.",
+    "Require disabled-by-default runtime flag and fail-closed kill switch dependencies.",
+    "Require result enums to remain dry-run/status-only and to block disabled flag, kill switch, replay, stale request, unsafe action, target, proof, and side-effect conditions.",
+    "Preserve no queue/lease/execution/file/db/audit writes and no output-file behavior.",
+    "Scan unsafe-action drift across runner request/response summaries, operator status, telemetry/audit preview, validation reasons, and next recommendations.",
+    "CLI, if implemented later, must be stdout-only and ignore output-file flags."
+  ],
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "runtime_dry_runner_contract_report",
+      "validation_report"
+    ],
+    "runtimeDryRunnerContractReportSchema": "squidrun.mira_core.runtime_dry_runner_contract_report.v0",
+    "validationReportSchema": "squidrun.mira_core.runtime_dry_runner_validation_report.v0"
+  },
+  "expectedRuntimeDryRunnerContractReportShape": {
+    "requiredFields": [
+      "schema",
+      "version",
+      "runner_contract_id",
+      "idempotency_key",
+      "generated_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "baseline_commit",
+      "phase_31_dependency",
+      "runner_id",
+      "runner_status",
+      "runner_decision",
+      "runner_decision_allowed_values",
+      "eligible_is_authorization",
+      "eligible_is_runtime_proof",
+      "runtime_available_now",
+      "runtime_started",
+      "runner_available_now",
+      "runner_executed",
+      "runtime_mode_flag_dependency",
+      "kill_switch_dependency",
+      "runner_request_contract",
+      "runner_response_contract",
+      "dry_run_result_enums",
+      "idempotency_replay_rules",
+      "local_in_process_boundary",
+      "operator_visible_status",
+      "telemetry_audit_preview",
+      "rollback_disable_boundaries",
+      "proof_boundaries",
+      "target_boundaries",
+      "unsafe_action_policy",
+      "blocked_side_effects",
+      "phase31_registry_carry_forward",
+      "next_phase_recommendations",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_dry_runner_contract_report.v0",
+      "version": "v0",
+      "baseline_commit": "83963ab",
+      "phase_31_dependency.commit": "83963ab",
+      "phase_31_dependency.phase": "phase_31_runtime_control_path_readiness_milestone_refresh_contract",
+      "phase_31_dependency.status": "committed_validation_only",
+      "phase_31_dependency.default_decision": "accepted_validation_only",
+      "phase_31_dependency.phase_registry_count": 30,
+      "phase_31_dependency.schema_registry_count": 30,
+      "phase_31_dependency.cli_registry_count": 30,
+      "phase_31_dependency.commit_chain_count": 19,
+      "phase_31_dependency.phase23_stale_superseded": true,
+      "phase_31_dependency.phase30_oracle_115_closure": true,
+      "runner_id": "runtime_slice_0_disabled_local_dry_runner_contract",
+      "runner_status": "contract_ready_validation_only",
+      "runner_decision": "remain_disabled_dry_runner_contract_only",
+      "eligible_is_authorization": false,
+      "eligible_is_runtime_proof": false,
+      "runtime_available_now": false,
+      "runtime_started": false,
+      "runner_available_now": false,
+      "runner_executed": false,
+      "runtime_mode_flag_dependency.flag_id": "MIRA_CORE_RUNTIME_DRY_RUN_MODE",
+      "runtime_mode_flag_dependency.required": true,
+      "runtime_mode_flag_dependency.default_state": "disabled",
+      "runtime_mode_flag_dependency.default_enabled": false,
+      "runtime_mode_flag_dependency.dev_only": true,
+      "runtime_mode_flag_dependency.local_only": true,
+      "runtime_mode_flag_dependency.non_authorizing": true,
+      "runtime_mode_flag_dependency.runner_starts_when_present": false,
+      "kill_switch_dependency.required": true,
+      "kill_switch_dependency.default_state": "engaged",
+      "kill_switch_dependency.fail_closed": true,
+      "kill_switch_dependency.testable": true,
+      "kill_switch_dependency.ignored_allowed": false,
+      "kill_switch_dependency.authorizes_runtime": false,
+      "runner_request_contract.schema": "squidrun.mira_core.runtime_dry_runner_request.v0",
+      "runner_request_contract.validation_only": true,
+      "runner_request_contract.local_in_process_only": true,
+      "runner_request_contract.requires_idempotency_key": true,
+      "runner_request_contract.requires_replay_key": true,
+      "runner_request_contract.redacted_payload_only": true,
+      "runner_request_contract.allows_raw_payload": false,
+      "runner_request_contract.allows_queue_or_lease": false,
+      "runner_request_contract.allows_local_execution": false,
+      "runner_response_contract.schema": "squidrun.mira_core.runtime_dry_runner_response.v0",
+      "runner_response_contract.status_preview_only": true,
+      "runner_response_contract.executes_request": false,
+      "runner_response_contract.starts_runtime": false,
+      "runner_response_contract.creates_queue_or_lease": false,
+      "runner_response_contract.writes_store_file_db_or_audit": false,
+      "runner_response_contract.authorizes_runtime": false,
+      "dry_run_result_enums.default_result": "blocked_disabled_contract_only",
+      "dry_run_result_enums.result_values_authorize_runtime": false,
+      "idempotency_replay_rules.idempotency_required": true,
+      "idempotency_replay_rules.replay_key_required": true,
+      "idempotency_replay_rules.same_request_same_key": true,
+      "idempotency_replay_rules.payload_or_scope_change_changes_key": true,
+      "idempotency_replay_rules.replay_executes_side_effects": false,
+      "idempotency_replay_rules.stale_request_rejected": true,
+      "local_in_process_boundary.in_process_only": true,
+      "local_in_process_boundary.loopback_only_if_future_transport": true,
+      "local_in_process_boundary.public_interface_allowed": false,
+      "local_in_process_boundary.remote_interface_allowed": false,
+      "local_in_process_boundary.listener_opened_now": false,
+      "local_in_process_boundary.network_performed_now": false,
+      "operator_visible_status.visible": true,
+      "operator_visible_status.status_only": true,
+      "operator_visible_status.includes_disabled_flag": true,
+      "operator_visible_status.includes_kill_switch": true,
+      "operator_visible_status.includes_proof_truth": true,
+      "operator_visible_status.authorizes_runtime": false,
+      "telemetry_audit_preview.redacted_preview_only": true,
+      "telemetry_audit_preview.raw_payload_allowed": false,
+      "telemetry_audit_preview.telemetry_sink_reference_only": true,
+      "telemetry_audit_preview.audit_sink_reference_only": true,
+      "telemetry_audit_preview.telemetry_write_now": false,
+      "telemetry_audit_preview.audit_write_now": false,
+      "telemetry_audit_preview.file_write_now": false,
+      "telemetry_audit_preview.db_write_now": false,
+      "rollback_disable_boundaries.disable_idempotent": true,
+      "rollback_disable_boundaries.rollback_preview_only": true,
+      "rollback_disable_boundaries.rollback_executed_now": false,
+      "rollback_disable_boundaries.deletes_data": false,
+      "rollback_disable_boundaries.resurrects_blocked_state": false,
+      "rollback_disable_boundaries.authorizes_runtime": false,
+      "proof_boundaries.runtime_flag_is_runtime_proof": false,
+      "proof_boundaries.kill_switch_check_is_runtime_proof": false,
+      "proof_boundaries.runner_contract_is_runtime_proof": false,
+      "proof_boundaries.dry_run_response_is_execution_proof": false,
+      "proof_boundaries.socket_is_bridge_green_proof": false,
+      "proof_boundaries.delivery_acceptance_is_model_processing_proof": false,
+      "proof_boundaries.serverCanExecuteLocal": false,
+      "proof_boundaries.server_can_execute_local_arms": false,
+      "target_boundaries.allowed_server_originated_target": "architect",
+      "target_boundaries.builder_direct_server_target_allowed": false,
+      "target_boundaries.oracle_direct_server_target_allowed": false,
+      "target_boundaries.local_architect_acceptance_required": true,
+      "phase31_registry_carry_forward.phase_inventory_count": 30,
+      "phase31_registry_carry_forward.schema_registry_count": 30,
+      "phase31_registry_carry_forward.cli_registry_count": 30,
+      "phase31_registry_carry_forward.commit_chain_count": 19,
+      "phase31_registry_carry_forward.phase23_stale_superseded": true,
+      "phase31_registry_carry_forward.phase30_oracle_115_closure": true,
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_runner_executed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_audit_write_performed": true,
+      "side_effect_result.no_telemetry_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_shell_or_pty_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    },
+    "phase31DependencyRequiredFields": [
+      "phase",
+      "commit",
+      "fixture_path",
+      "module_path",
+      "cli_path",
+      "test_path",
+      "status",
+      "default_decision",
+      "phase_registry_count",
+      "schema_registry_count",
+      "cli_registry_count",
+      "commit_chain_count",
+      "phase23_stale_superseded",
+      "phase30_oracle_115_closure",
+      "commit_chain_through_phase31",
+      "evidenceRefs"
+    ],
+    "phase31DependencyRequiredValues": {
+      "phase": "phase_31_runtime_control_path_readiness_milestone_refresh_contract",
+      "commit": "83963ab",
+      "status": "committed_validation_only",
+      "default_decision": "accepted_validation_only",
+      "phase_registry_count": 30,
+      "schema_registry_count": 30,
+      "cli_registry_count": 30,
+      "commit_chain_count": 19,
+      "phase23_stale_superseded": true,
+      "phase30_oracle_115_closure": true
+    },
+    "phase31CommitChainExpected": [
+      "785dbec",
+      "f41b02a",
+      "3904697",
+      "6f97287",
+      "afabea1",
+      "3742ab7",
+      "8a8ccf0",
+      "ce9e55d",
+      "ffe130c",
+      "b7e2106",
+      "3ce041c",
+      "e062d16",
+      "3efa9c5",
+      "b125eee",
+      "e7a8dbc",
+      "d4aa1a5",
+      "8084b29",
+      "679e018",
+      "83963ab"
+    ],
+    "runnerDecisionAllowedValues": [
+      "remain_disabled_dry_runner_contract_only",
+      "blocked",
+      "eligible_for_future_disabled_local_dry_runner_validation_slice"
+    ],
+    "requiredDefaultDecision": "remain_disabled_dry_runner_contract_only",
+    "eligibleDecisionRequiredValues": {
+      "eligible_is_authorization": false,
+      "eligible_is_runtime_proof": false,
+      "runtime_available_now": false,
+      "runtime_started": false,
+      "runner_available_now": false,
+      "runner_executed": false,
+      "requires_future_review": true,
+      "requires_operator_review": true
+    },
+    "runnerRequestRequiredFields": [
+      "schema",
+      "request_id",
+      "idempotency_key",
+      "replay_key",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "risk_tier",
+      "action_class",
+      "payload_summary",
+      "payload_hash",
+      "payload_redaction_status",
+      "source_refs",
+      "evidenceRefs",
+      "expires_at"
+    ],
+    "runnerRequestAllowedRiskTiers": [
+      "Tier0",
+      "Tier1"
+    ],
+    "runnerResponseRequiredFields": [
+      "schema",
+      "request_id",
+      "runner_id",
+      "decision",
+      "result",
+      "result_reason",
+      "status_preview",
+      "side_effect_result",
+      "proof_boundaries",
+      "evidenceRefs"
+    ],
+    "dryRunResultAllowedValues": [
+      "accepted_validation_preview",
+      "blocked_disabled_contract_only",
+      "blocked_by_disabled_flag",
+      "blocked_by_kill_switch",
+      "replay_rejected",
+      "stale_request_rejected",
+      "unsafe_action_rejected",
+      "target_blocked",
+      "proof_boundary_blocked",
+      "side_effect_blocked",
+      "raw_payload_rejected",
+      "scope_mismatch_rejected"
+    ],
+    "blockedSideEffectsExpected": [
+      "runtime",
+      "runner-execution",
+      "server-listener-route-network",
+      "database-store-file-audit-telemetry-write",
+      "queue-lease",
+      "auth-key-secret",
+      "local-execution-shell-pty-browser",
+      "send-deploy-trade-customer-money",
+      "output-file"
+    ],
+    "unsafeActionPolicyRequiredValues": {
+      "customer_send_allowed": false,
+      "external_send_allowed": false,
+      "deploy_allowed": false,
+      "trade_allowed": false,
+      "financial_action_allowed": false,
+      "local_execution_allowed": false,
+      "shell_pty_allowed": false,
+      "capture_allowed": false,
+      "durable_memory_profile_commit_allowed": false,
+      "unsafe_action_drift_blocks_runner_contract": true
+    },
+    "unsafeActionScanSurfaces": [
+      "runner_request_contract",
+      "runner_response_contract",
+      "dry_run_result_enums",
+      "operator_visible_status",
+      "telemetry_audit_preview",
+      "rollback_disable_boundaries",
+      "next_phase_recommendations",
+      "validation_report.reasons"
+    ],
+    "nextRecommendationAllowedTiers": [
+      "Tier0",
+      "Tier1"
+    ],
+    "nextRecommendationExpectedCandidates": [
+      {
+        "recommendation_id": "phase33_disabled_dry_runner_validation_implementation_review",
+        "tier": "Tier1",
+        "title": "Implement validation-only disabled dry-run runner contract",
+        "does_not_authorize_runtime": true
+      },
+      {
+        "recommendation_id": "phase33_operator_status_ui_contract",
+        "tier": "Tier0",
+        "title": "Create fixture-only operator status UI contract",
+        "does_not_authorize_runtime": true
+      }
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_runtime_performed",
+      "no_runner_executed",
+      "no_server_performed",
+      "no_listener_or_route_bound",
+      "no_network_performed",
+      "no_database_write_performed",
+      "no_store_write_performed",
+      "no_file_write_performed",
+      "no_audit_write_performed",
+      "no_telemetry_write_performed",
+      "no_migration_executed",
+      "no_queue_created",
+      "no_lease_created",
+      "no_auth_change_performed",
+      "no_key_secret_operation_performed",
+      "no_local_execution_performed",
+      "no_shell_or_pty_performed",
+      "no_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_output_file_written",
+      "runtimeStarted",
+      "runnerExecuted",
+      "serverStarted",
+      "listenersBound",
+      "networkCallsMade",
+      "filesWritten",
+      "auditWrites",
+      "telemetryWrites",
+      "outputFilesWritten"
+    ],
+    "sideEffectResultRequiredValues": {
+      "runtimeStarted": false,
+      "runnerExecuted": false,
+      "serverStarted": false,
+      "listenersBound": 0,
+      "networkCallsMade": 0,
+      "filesWritten": 0,
+      "auditWrites": 0,
+      "telemetryWrites": 0,
+      "outputFilesWritten": 0
+    }
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.runtime_dry_runner_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "fixture_ref",
+      "baseline_commit",
+      "accepted",
+      "decision",
+      "reasons",
+      "checks",
+      "phase31_dependency_result",
+      "runner_contract_result",
+      "request_response_contract_result",
+      "result_enum_result",
+      "idempotency_replay_result",
+      "side_effect_result",
+      "proof_boundary_result",
+      "unsafe_action_result",
+      "evidenceRefs"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_dry_runner_validation_report.v0",
+      "baseline_commit": "83963ab",
+      "accepted": true,
+      "decision": "accepted_validation_only",
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_runner_executed": true,
+      "side_effect_result.no_output_file_written": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "baseline-83963ab-pinned",
+      "description": "Phase 32 contract output pins baseline 83963ab.",
+      "failClosedWhen": "Baseline is missing, stale, or not 83963ab."
+    },
+    {
+      "id": "phase31-dependency-carried-forward",
+      "description": "Phase 31 dependency is committed validation-only and carries registry counts and closure truth.",
+      "failClosedWhen": "Phase 31 commit, counts, Phase 23 stale marker, Phase 30 ORACLE #115 closure, or commit chain through 83963ab is missing."
+    },
+    {
+      "id": "runner-remains-contract-only",
+      "description": "The dry-run runner is defined as a future contract only and is not available or executed now.",
+      "failClosedWhen": "Output claims runner availability, runner execution, runtime start, or runtime availability."
+    },
+    {
+      "id": "eligibility-non-authorizing",
+      "description": "Eligible states are future validation hints only and cannot authorize runtime.",
+      "failClosedWhen": "eligible_is_authorization or eligible_is_runtime_proof is true."
+    },
+    {
+      "id": "disabled-flag-and-kill-switch-required",
+      "description": "Runner contract requires disabled-by-default flag and fail-closed kill switch dependencies.",
+      "failClosedWhen": "Runtime flag defaults on, kill switch is missing/ignored, or either dependency authorizes runtime."
+    },
+    {
+      "id": "request-contract-redacted-local-only",
+      "description": "Runner requests are local in-process, idempotent, replay-keyed, redacted, Tier0/Tier1 only, and validation-only.",
+      "failClosedWhen": "Raw payload, Tier2+, queue/lease, local execution, missing idempotency, stale expiry, or scope mismatch is accepted."
+    },
+    {
+      "id": "response-contract-status-preview-only",
+      "description": "Runner responses are status previews only and cannot execute, start runtime, create queue/lease, write store/file/db/audit, or authorize runtime.",
+      "failClosedWhen": "Response records imply work was executed or side effects happened."
+    },
+    {
+      "id": "dry-run-result-enums-complete",
+      "description": "Dry-run result enum set includes accepted preview plus disabled, kill switch, replay, stale, unsafe, target, proof, side-effect, raw payload, and scope-mismatch blocked results.",
+      "failClosedWhen": "A required result enum is missing or enum values authorize runtime."
+    },
+    {
+      "id": "idempotency-replay-rules-fail-closed",
+      "description": "Same request has stable keys, changed payload/scope changes keys, replay cannot execute side effects, and stale requests reject.",
+      "failClosedWhen": "Replay or stale requests can execute or mutate state."
+    },
+    {
+      "id": "local-boundary-no-listener-network",
+      "description": "Runner contract is local in-process only, with loopback reserved for future gated transport and no listener/network now.",
+      "failClosedWhen": "Public/remote interface, listener, route, network, or transport claim appears."
+    },
+    {
+      "id": "telemetry-audit-preview-only",
+      "description": "Telemetry and audit are redacted previews with reference-only sinks and no writes.",
+      "failClosedWhen": "Raw telemetry, raw audit payload, telemetry write, audit write, file write, or DB write is allowed."
+    },
+    {
+      "id": "rollback-disable-boundaries-safe",
+      "description": "Disable/rollback are idempotent preview boundaries that do not delete data, resurrect state, execute rollback, or authorize runtime.",
+      "failClosedWhen": "Rollback/disable is treated as execution, mutation, or authorization."
+    },
+    {
+      "id": "proof-boundaries-false",
+      "description": "Flag, kill-switch check, runner contract, dry-run response, socket, and delivery acceptance are not runtime/model/bridge/local-arm proof.",
+      "failClosedWhen": "Any proof boundary is promoted to true."
+    },
+    {
+      "id": "direct-builder-oracle-targets-blocked",
+      "description": "Server-originated target remains Architect only; direct Builder/Oracle targets stay blocked.",
+      "failClosedWhen": "Builder or Oracle direct server target is allowed."
+    },
+    {
+      "id": "side-effects-blocked-now",
+      "description": "No runtime, runner execution, server, network, db/store/file/audit/telemetry, queue/lease, auth/key/secret, local execution, shell/PTY, send, deploy, trade, or output-file behavior occurs.",
+      "failClosedWhen": "Any side-effect truth field is false or any side-effect counter is nonzero."
+    },
+    {
+      "id": "unsafe-action-drift-blocked",
+      "description": "Runner contract text, request/response shapes, telemetry/audit preview, operator status, validation reasons, and next recommendations cannot drift into customer send, deploy, trade, money, capture, local execution, shell, PTY, or durable commit work.",
+      "failClosedWhen": "Unsafe action wording or outbound/customer/client wording appears on scanned surfaces."
+    },
+    {
+      "id": "next-recommendations-tier0-tier1-only",
+      "description": "Next recommendations are Tier0/Tier1 only and explicitly non-authorizing.",
+      "failClosedWhen": "A recommendation is Tier2+, live runtime, network/server work, external side effect, or lacks does_not_authorize_runtime=true."
+    },
+    {
+      "id": "no-raw-private-secret-output",
+      "description": "Output does not expose raw comms, raw terminal, OCR/browser state, raw paths, secrets, tokens, keys, customer private data, side-profile content, or decrypted payloads.",
+      "failClosedWhen": "Forbidden private or secret content appears in output values."
+    },
+    {
+      "id": "idempotency-sensitive-to-runner-contract-inputs",
+      "description": "Equivalent runner contract inputs produce stable idempotency; baseline, dependency, request/response contract, result enums, side-effect truth, or recommendations change the key.",
+      "failClosedWhen": "Idempotency ignores contract-shape or baseline changes."
+    },
+    {
+      "id": "validation-report-matches-contract",
+      "description": "Validation report check results, decision, dependency result, runner result, side-effect truth, proof result, and unsafe action result match the contract report.",
+      "failClosedWhen": "Validation report says accepted while contract report violates required values."
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "baseline_83963ab_pinned",
+      "expected": "83963ab",
+      "protected": true
+    },
+    {
+      "id": "phase31_dependency_current",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "phase31_registry_counts_carried",
+      "expected": {
+        "phases": 30,
+        "schemas": 30,
+        "clis": 30,
+        "commits": 19
+      },
+      "protected": true
+    },
+    {
+      "id": "runner_decision_default_contract_only",
+      "expected": "remain_disabled_dry_runner_contract_only",
+      "protected": true
+    },
+    {
+      "id": "runtime_started_false",
+      "expected": false,
+      "protected": true
+    },
+    {
+      "id": "runtime_available_now_false",
+      "expected": false,
+      "protected": true
+    },
+    {
+      "id": "runner_available_now_false",
+      "expected": false,
+      "protected": true
+    },
+    {
+      "id": "runner_executed_false",
+      "expected": false,
+      "protected": true
+    },
+    {
+      "id": "eligible_is_authorization_false",
+      "expected": false,
+      "protected": true
+    },
+    {
+      "id": "disabled_flag_dependency_required",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "kill_switch_dependency_fail_closed",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "request_contract_redacted_local_only",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "response_contract_status_preview_only",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "result_enum_count",
+      "expected": 12,
+      "protected": true
+    },
+    {
+      "id": "idempotency_replay_fail_closed",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "proof_boundaries_false",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "server_can_execute_local_false",
+      "expected": false,
+      "protected": true
+    },
+    {
+      "id": "direct_builder_oracle_targets_blocked",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "telemetry_audit_preview_only",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "side_effect_truth_all_blocked",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "unsafe_action_drift_rejected",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "next_recommendations_tier0_tier1_only",
+      "expected": true,
+      "protected": true
+    },
+    {
+      "id": "no_raw_private_secret_content",
+      "expected": true,
+      "protected": true
+    }
+  ],
+  "tamperCases": [
+    {
+      "id": "stale_baseline",
+      "mutate": "Change baseline_commit from 83963ab after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "baseline-83963ab-pinned"
+    },
+    {
+      "id": "stale_phase31_dependency",
+      "mutate": "Change phase_31_dependency.commit from 83963ab after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "phase31-dependency-carried-forward"
+    },
+    {
+      "id": "runner_available_overclaim",
+      "mutate": "Set runner_available_now=true and runner_executed=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "runner-remains-contract-only"
+    },
+    {
+      "id": "eligible_as_authorization",
+      "mutate": "Set eligible_is_authorization=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "eligibility-non-authorizing"
+    },
+    {
+      "id": "default_enabled_flag",
+      "mutate": "Set runtime_mode_flag_dependency.default_enabled=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "disabled-flag-and-kill-switch-required"
+    },
+    {
+      "id": "kill_switch_ignored",
+      "mutate": "Set kill_switch_dependency.ignored_allowed=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "disabled-flag-and-kill-switch-required"
+    },
+    {
+      "id": "raw_payload_allowed",
+      "mutate": "Set runner_request_contract.allows_raw_payload=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "request-contract-redacted-local-only"
+    },
+    {
+      "id": "response_executes_request",
+      "mutate": "Set runner_response_contract.executes_request=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "response-contract-status-preview-only"
+    },
+    {
+      "id": "missing_result_enum",
+      "mutate": "Remove unsafe_action_rejected from dry_run_result_enums.allowed_results after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "dry-run-result-enums-complete"
+    },
+    {
+      "id": "replay_executes_side_effects",
+      "mutate": "Set idempotency_replay_rules.replay_executes_side_effects=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "idempotency-replay-rules-fail-closed"
+    },
+    {
+      "id": "listener_network_overclaim",
+      "mutate": "Set local_in_process_boundary.listener_opened_now=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "local-boundary-no-listener-network"
+    },
+    {
+      "id": "audit_write_overclaim",
+      "mutate": "Set telemetry_audit_preview.audit_write_now=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "telemetry-audit-preview-only"
+    },
+    {
+      "id": "fake_proof",
+      "mutate": "Set proof_boundaries.runner_contract_is_runtime_proof=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "proof-boundaries-false"
+    },
+    {
+      "id": "direct_builder_oracle_target",
+      "mutate": "Set target_boundaries.builder_direct_server_target_allowed=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "direct-builder-oracle-targets-blocked"
+    },
+    {
+      "id": "side_effect_lie",
+      "mutate": "Set no_runner_executed=false and runnerExecuted=true after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "side-effects-blocked-now"
+    },
+    {
+      "id": "customer_send_drift",
+      "mutate": "Change runner_request_contract.payload_summary_example to send email to customer after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "unsafe-action-drift-blocked"
+    },
+    {
+      "id": "tier3_next_recommendation",
+      "mutate": "Change next_phase_recommendations[0].tier to Tier3 after recomputing idempotency.",
+      "expectedDecision": "rejected",
+      "expectedFailedCheck": "next-recommendations-tier0-tier1-only"
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "bearer token",
+    "api key",
+    "private key",
+    "data key",
+    "session secret",
+    "env secret",
+    "raw terminal",
+    "terminal scrollback",
+    "raw screenshot",
+    "raw OCR",
+    "browser cookie",
+    "browser DOM",
+    "customer private",
+    "side profile payload",
+    "decrypted payload",
+    "raw comms body",
+    "runtime started",
+    "runner executed",
+    "server started",
+    "listener bound",
+    "network request sent",
+    "database write",
+    "store write",
+    "file written",
+    "audit write",
+    "telemetry write",
+    "output file written",
+    "queue created",
+    "lease created",
+    "local execution performed",
+    "shell executed",
+    "PTY executed",
+    "customer send performed",
+    "external send performed",
+    "deploy performed",
+    "trade performed",
+    "runtime is available",
+    "runner is available",
+    "socket proves bridge green",
+    "delivery acceptance proves model processing",
+    "Builder direct target allowed",
+    "Oracle direct target allowed"
+  ],
+  "summaryCriteria": {
+    "greenOnlyIf": [
+      "JSON parses.",
+      "Only this Oracle fixture is added for Phase 32 validation.",
+      "Baseline 83963ab is pinned.",
+      "Phase 31 dependency and registry carry-forward counts are present: phases=30, schemas=30, CLIs=30, commits=19.",
+      "Runner remains unavailable, unexecuted, disabled-by-default, and non-authorizing.",
+      "Request and response contracts are local in-process, redacted, status-preview-only, and side-effect-free.",
+      "Dry-run result enum set includes all blocked cases and cannot authorize runtime.",
+      "Idempotency/replay rules fail closed.",
+      "Telemetry/audit are redacted preview only with no writes.",
+      "Proof boundaries stay false and Builder/Oracle direct server targets remain blocked.",
+      "Next recommendations are Tier0/Tier1 only and do not authorize runtime.",
+      "Side-effect truth fields all remain true/zero.",
+      "No forbidden raw/private/secret/runtime/proof/action strings appear in output values.",
+      "git diff --check is clean for the fixture."
+    ],
+    "reportFields": [
+      "path",
+      "baseline",
+      "required_field_count",
+      "phase31_commit_count",
+      "result_enum_count",
+      "static_rule_count",
+      "acceptance_check_count",
+      "tamper_case_count",
+      "forbidden_substring_count",
+      "diff_check",
+      "caveats"
+    ]
+  }
+}
