@@ -1,0 +1,836 @@
+{
+  "schema": "squidrun.mira_core.runtime_controls_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_26_runtime_slice_0_operator_controls_config_gates",
+  "baseline": {
+    "commit": "3efa9c5",
+    "commit_subject": "Add Mira Core Phase 25 runtime slice candidate validation",
+    "baseline_status": "phase_25_runtime_slice_candidate_green",
+    "baseline_boundary": "Phase 25 defines runtime_slice_0_local_in_process_status_only as a candidate only. It does not satisfy Phase 24 prerequisites, authorize runtime, enable runtime, create a listener, perform network activity, write stores/files/databases, create queues/leases, perform auth/key/secret work, execute locally, send, deploy, trade, or write output files."
+  },
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-runtime-slice-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-promotion-gate-contract.json",
+    "ui/__tests__/fixtures/mira-core-milestone-readiness-contract.json",
+    "ui/__tests__/fixtures/mira-core-auth-binding-contract.json",
+    "ui/__tests__/fixtures/mira-core-identity-signing-contract.json",
+    "ui/__tests__/fixtures/mira-core-encryption-key-contract.json",
+    "ui/__tests__/fixtures/mira-core-storage-retention-contract.json",
+    "ui/__tests__/fixtures/mira-core-persistence-audit-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-api-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-handler-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-harness-contract.json"
+  ],
+  "purpose": "Define the operator-visible controls and configuration gates that must exist before the future runtime_slice_0_local_in_process_status_only candidate could ever be eligible. Phase 26 starts satisfying safe missing-gate specifications from Phase 25 but still does not implement, enable, authorize, or run any runtime.",
+  "nonGoals": [
+    "No runtime implementation in this Oracle fixture.",
+    "No source-store writes.",
+    "No real server, daemon, listener, route, HTTP, WebSocket, or network behavior.",
+    "No database, store, file, migration, queue, lease, or output-file writes.",
+    "No auth, token, session, signing, key, encryption, KMS, secret, env-secret, or credential operation.",
+    "No port binding or port probing.",
+    "No local execution, shell, PTY, browser, screenshot, OCR, or window access.",
+    "No customer sends, external sends, deploys, trades, financial actions, export, delete, restore, capture, raw-content storage, memory/profile commits, or durable state changes.",
+    "No claim that config presence satisfies Phase 24/25 runtime prerequisites.",
+    "No claim that config eligibility authorizes runtime implementation.",
+    "No claim that socket connection, delivery acceptance, handler response, candidate status, control config, or this fixture proves bridge green or model processing."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build a local validation-only runtime_controls_report and validation_report against this Oracle fixture.",
+      "Pin baseline commit 3efa9c5 and depend on Phase 25 runtime_slice_0_local_in_process_status_only candidate at baseline 3efa9c5.",
+      "Define explicit runtime mode flag shape with default disabled/off, dev-only, local-only, visible, and non-authorizing semantics.",
+      "Define local-only binding plan as loopback-only with no public interface, no remote interface, no listener opened, and no network performed in Phase 26.",
+      "Define operator kill switch as visible, fail-closed, testable, and side-effect-free now.",
+      "Define dry-run fallback where all requests become validation/status previews when runtime flag is missing, false, invalid, or blocked.",
+      "Define rollback/disable plan where disable is idempotent, does not delete data, and cannot resurrect blocked state.",
+      "Define telemetry/audit plan as redacted audit preview only with no store/file/db writes now.",
+      "Define port-binding/config refs as reference-only placeholders with no port opened, no env secret read, and no network.",
+      "Relate to Phase 15-24 refs by reference existence only; do not perform real auth, signing, key, storage, API, handler, harness, promotion, or runtime behavior.",
+      "Preserve proof boundaries: config present is not runtime proof; socket is not bridge green; delivery acceptance is not model-processing proof; server cannot execute local arms; Builder/Oracle direct server targets are blocked.",
+      "Reject default-on overclaim, non-loopback binding, hidden network/listener behavior, missing or ignored kill switch, dry-run bypass, telemetry write, raw secret leakage, config eligibility as authorization, and stale Phase 25 baseline.",
+      "Emit side_effect_result showing no runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior."
+    ],
+    "hardRejects": [
+      "Any real runtime, server, daemon, listener, route, HTTP/WebSocket, network, database/store/file write, migration, queue, lease, auth/session/key/secret/env-secret operation, port bind, local execution, shell/PTY, browser/window access, send, deploy, trade, export, delete, restore, raw-content storage, source-store write, memory/profile commit, durable state change, or output-file behavior occurs.",
+      "Runtime mode flag defaults on, permits production, permits remote operation, or authorizes runtime.",
+      "Binding plan allows a public interface, remote interface, non-loopback host, actual listener, actual port open, or network in Phase 26.",
+      "Kill switch is missing, not operator-visible, not fail-closed, not testable, or can be ignored.",
+      "Dry-run fallback can be bypassed when runtime flag is missing, false, invalid, or blocked.",
+      "Rollback/disable deletes data, is not idempotent, or resurrects blocked state.",
+      "Telemetry/audit writes to store, file, database, queue, network, or raw logs instead of redacted preview only.",
+      "Config refs include raw env secrets, raw local paths, tokens, cookies, private keys, data keys, plaintext, ciphertext, decrypted payloads, or secret values.",
+      "Phase 15-24 references are treated as real auth/signing/key/storage/API/handler/harness/promotion/runtime behavior.",
+      "Config present or eligible is treated as runtime proof or runtime authorization.",
+      "Socket is treated as bridge green, delivery acceptance is treated as model-processing proof, server can execute local arms, or Builder/Oracle direct server targets are allowed.",
+      "Phase 25 dependency is absent, stale, not baseline 3efa9c5, not runtime_slice_0_local_in_process_status_only, or no longer non-authorizing."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "runtime_controls_report",
+      "validation_report"
+    ],
+    "runtimeControlsReportSchema": "squidrun.mira_core.runtime_controls_report.v0",
+    "validationReportSchema": "squidrun.mira_core.runtime_controls_validation_report.v0"
+  },
+  "expectedRuntimeControlsReportShape": {
+    "schema": "squidrun.mira_core.runtime_controls_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "controls_report_id",
+      "idempotency_key",
+      "generated_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "baseline_commit",
+      "phase_25_dependency",
+      "runtime_mode_flag",
+      "local_binding_plan",
+      "operator_kill_switch",
+      "dry_run_fallback",
+      "rollback_disable_plan",
+      "telemetry_audit_plan",
+      "port_config_refs",
+      "phase_ref_map",
+      "proof_boundaries",
+      "hard_out_of_scope",
+      "tamper_case_coverage",
+      "next_safe_actions",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_controls_report.v0",
+      "baseline_commit": "3efa9c5",
+      "phase_25_dependency.baseline_commit": "3efa9c5",
+      "phase_25_dependency.candidate_slice_id": "runtime_slice_0_local_in_process_status_only",
+      "phase_25_dependency.runtime_available_now": false,
+      "phase_25_dependency.does_not_authorize_runtime": true,
+      "runtime_mode_flag.default_enabled": false,
+      "runtime_mode_flag.default_state": "disabled",
+      "runtime_mode_flag.dev_only": true,
+      "runtime_mode_flag.local_only": true,
+      "runtime_mode_flag.operator_visible": true,
+      "runtime_mode_flag.non_authorizing": true,
+      "runtime_mode_flag.runtime_started": false,
+      "local_binding_plan.loopback_only": true,
+      "local_binding_plan.public_interface_allowed": false,
+      "local_binding_plan.remote_interface_allowed": false,
+      "local_binding_plan.listener_opened": false,
+      "local_binding_plan.network_performed": false,
+      "operator_kill_switch.operator_visible": true,
+      "operator_kill_switch.fail_closed": true,
+      "operator_kill_switch.testable": true,
+      "operator_kill_switch.runtime_side_effects_now": false,
+      "dry_run_fallback.all_requests_preview_only_when_flag_missing_false_invalid": true,
+      "dry_run_fallback.bypass_allowed": false,
+      "rollback_disable_plan.disable_idempotent": true,
+      "rollback_disable_plan.deletes_data": false,
+      "rollback_disable_plan.resurrects_blocked_state": false,
+      "telemetry_audit_plan.redacted_audit_preview_only": true,
+      "telemetry_audit_plan.store_write_now": false,
+      "telemetry_audit_plan.file_write_now": false,
+      "telemetry_audit_plan.db_write_now": false,
+      "port_config_refs.reference_only": true,
+      "port_config_refs.port_opened": false,
+      "port_config_refs.env_secret_read": false,
+      "port_config_refs.network_performed": false,
+      "proof_boundaries.config_present_is_runtime_proof": false,
+      "proof_boundaries.socket_is_bridge_green_proof": false,
+      "proof_boundaries.delivery_acceptance_is_model_processing_proof": false,
+      "proof_boundaries.server_can_execute_local_arms": false,
+      "proof_boundaries.builder_direct_server_target_allowed": false,
+      "proof_boundaries.oracle_direct_server_target_allowed": false,
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    },
+    "phase25DependencyRequiredFields": [
+      "dependency_id",
+      "fixture_path",
+      "module_path",
+      "cli_path",
+      "test_path",
+      "baseline_commit",
+      "status",
+      "candidate_slice_id",
+      "runtime_available_now",
+      "does_not_authorize_runtime",
+      "missing_gate_count",
+      "evidenceRefs"
+    ],
+    "phase25DependencyRequiredValues": {
+      "dependency_id": "phase_25_runtime_slice_candidate",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-slice-contract.json",
+      "module_path": "ui/modules/mira-core/runtime-slice.js",
+      "cli_path": "ui/scripts/hm-mira-core-runtime-slice.js",
+      "test_path": "ui/__tests__/mira-core-runtime-slice.test.js",
+      "baseline_commit": "3efa9c5",
+      "status": "candidate_green_validation_only",
+      "candidate_slice_id": "runtime_slice_0_local_in_process_status_only",
+      "runtime_available_now": false,
+      "does_not_authorize_runtime": true,
+      "missing_gate_count": 20
+    },
+    "runtimeModeFlagRequiredFields": [
+      "flag_id",
+      "default_state",
+      "default_enabled",
+      "allowed_values",
+      "dev_only",
+      "local_only",
+      "operator_visible",
+      "non_authorizing",
+      "runtime_started",
+      "invalid_value_behavior",
+      "evidenceRefs"
+    ],
+    "localBindingPlanRequiredFields": [
+      "binding_id",
+      "loopback_only",
+      "allowed_hosts",
+      "blocked_hosts",
+      "public_interface_allowed",
+      "remote_interface_allowed",
+      "listener_opened",
+      "network_performed",
+      "port_ref",
+      "evidenceRefs"
+    ],
+    "operatorKillSwitchRequiredFields": [
+      "control_id",
+      "operator_visible",
+      "fail_closed",
+      "testable",
+      "ignored_allowed",
+      "runtime_side_effects_now",
+      "default_when_unknown",
+      "evidenceRefs"
+    ],
+    "dryRunFallbackRequiredFields": [
+      "fallback_id",
+      "all_requests_preview_only_when_flag_missing_false_invalid",
+      "invalid_flag_behavior",
+      "false_flag_behavior",
+      "missing_flag_behavior",
+      "bypass_allowed",
+      "response_mode",
+      "evidenceRefs"
+    ],
+    "rollbackDisablePlanRequiredFields": [
+      "plan_id",
+      "disable_idempotent",
+      "deletes_data",
+      "resurrects_blocked_state",
+      "rollback_requires_runtime_stop_first",
+      "safe_repeat_behavior",
+      "evidenceRefs"
+    ],
+    "telemetryAuditPlanRequiredFields": [
+      "plan_id",
+      "redacted_audit_preview_only",
+      "store_write_now",
+      "file_write_now",
+      "db_write_now",
+      "network_write_now",
+      "raw_payload_allowed",
+      "evidenceRefs"
+    ],
+    "portConfigRefsRequiredFields": [
+      "config_id",
+      "reference_only",
+      "port_ref",
+      "binding_host_ref",
+      "storage_path_ref",
+      "auth_secret_presence_ref",
+      "port_opened",
+      "env_secret_read",
+      "network_performed",
+      "raw_secret_allowed",
+      "raw_path_allowed",
+      "evidenceRefs"
+    ],
+    "phaseRefMapRequiredIds": [
+      "phase15-identity-signing-reference-only",
+      "phase16-auth-binding-reference-only",
+      "phase17-storage-retention-reference-only",
+      "phase18-persistence-audit-reference-only",
+      "phase19-encryption-key-reference-only",
+      "phase20-server-api-reference-only",
+      "phase21-server-handler-reference-only",
+      "phase22-runtime-harness-reference-only",
+      "phase23-milestone-readiness-reference-only",
+      "phase24-runtime-promotion-gate-reference-only",
+      "phase25-runtime-slice-candidate-reference-only"
+    ],
+    "proofBoundaryRequiredFields": [
+      "config_present_is_runtime_proof",
+      "socket_is_bridge_green_proof",
+      "delivery_acceptance_is_model_processing_proof",
+      "server_can_execute_local_arms",
+      "builder_direct_server_target_allowed",
+      "oracle_direct_server_target_allowed",
+      "evidenceRefs"
+    ],
+    "hardOutOfScopeRequiredIds": [
+      "real-runtime",
+      "server-listener-routes",
+      "network",
+      "db-store-file-migration",
+      "queue-lease",
+      "auth-key-secret",
+      "local-execution-shell-pty-browser",
+      "send-deploy-trade-customer",
+      "output-file"
+    ],
+    "nextSafeActionRequiredIds": [
+      "implement-phase26-validator-only",
+      "review-controls-before-runtime-eligibility"
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_runtime_performed",
+      "no_server_performed",
+      "no_listener_or_route_bound",
+      "no_network_performed",
+      "no_database_write_performed",
+      "no_store_write_performed",
+      "no_file_write_performed",
+      "no_migration_executed",
+      "no_queue_created",
+      "no_lease_created",
+      "no_auth_change_performed",
+      "no_key_secret_operation_performed",
+      "no_local_execution_performed",
+      "no_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_output_file_written"
+    ]
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.runtime_controls_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "report_id",
+      "generated_at",
+      "baseline_commit",
+      "decision",
+      "reasons",
+      "phase_25_dependency_result",
+      "runtime_mode_flag_result",
+      "local_binding_result",
+      "kill_switch_result",
+      "dry_run_result",
+      "rollback_disable_result",
+      "telemetry_audit_result",
+      "port_config_result",
+      "phase_ref_result",
+      "proof_boundary_result",
+      "side_effect_result",
+      "acceptance_checks",
+      "failed_checks",
+      "evidenceRefs"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_controls_validation_report.v0",
+      "baseline_commit": "3efa9c5",
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "baseline-3efa9c5-pinned",
+      "rule": "Runtime controls report and validation report must pin baseline_commit to 3efa9c5."
+    },
+    {
+      "id": "phase25-runtime-slice-candidate-required",
+      "rule": "Phase 25 dependency must be baseline 3efa9c5 with candidate runtime_slice_0_local_in_process_status_only, runtime_available_now=false, and does_not_authorize_runtime=true."
+    },
+    {
+      "id": "runtime-mode-flag-disabled-local-dev-nonauthorizing",
+      "rule": "Runtime mode flag must default disabled/off, dev-only, local-only, operator-visible, non-authorizing, and runtime_started=false."
+    },
+    {
+      "id": "local-binding-loopback-only-no-listener",
+      "rule": "Binding plan must be loopback only and must not allow public/remote interfaces, open listeners, bind ports, or perform network behavior."
+    },
+    {
+      "id": "operator-kill-switch-visible-fail-closed",
+      "rule": "Kill switch must be visible, fail-closed, testable, not ignorable, and side-effect-free now."
+    },
+    {
+      "id": "dry-run-fallback-cannot-be-bypassed",
+      "rule": "Missing, false, invalid, or blocked runtime flag must route every request to validation/status preview only."
+    },
+    {
+      "id": "rollback-disable-idempotent-no-resurrection",
+      "rule": "Disable must be idempotent, delete no data, and never resurrect blocked state."
+    },
+    {
+      "id": "telemetry-audit-preview-only-no-writes",
+      "rule": "Telemetry/audit must be redacted preview only with no store/file/db/network writes and no raw payload."
+    },
+    {
+      "id": "port-config-reference-only-no-secret-read",
+      "rule": "Port/config refs must be reference-only with no port opened, no env secret read, no network, no raw secret, and no raw path."
+    },
+    {
+      "id": "phase15-through-25-refs-reference-only",
+      "rule": "Phase 15-25 refs are reference existence only and do not perform real auth/signing/key/storage/API/handler/harness/promotion/runtime behavior."
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "rule": "Config present is not runtime proof, socket is not bridge green, delivery acceptance is not model-processing proof, server cannot execute local arms, and Builder/Oracle direct targets are blocked."
+    },
+    {
+      "id": "hard-out-of-scope-side-effects-blocked",
+      "rule": "Real runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior remains out of scope and side-effect truth stays safe."
+    },
+    {
+      "id": "default-on-overclaim-rejected",
+      "rule": "Runtime flag default-on, enabled, production, remote, or authorizing overclaims must be rejected."
+    },
+    {
+      "id": "non-loopback-binding-rejected",
+      "rule": "Non-loopback, public, remote, listener-opened, port-opened, or network-performed binding must be rejected."
+    },
+    {
+      "id": "raw-private-secret-leakage-rejected",
+      "rule": "Output must not contain raw private content, raw comms, terminal scrollback, screenshot/OCR/browser state, customer private content, side-profile content, tokens, cookies, keys, secrets, plaintext, ciphertext, or decrypted payloads."
+    },
+    {
+      "id": "config-eligibility-not-authorization",
+      "rule": "Config existence or eligibility must not authorize runtime, satisfy Phase 24/25 runtime gates, or prove runtime."
+    },
+    {
+      "id": "stale-phase25-baseline-rejected",
+      "rule": "Missing or stale Phase 25 baseline, candidate id, or non-authorizing state must be rejected."
+    },
+    {
+      "id": "idempotency-sensitive-to-control-gates",
+      "rule": "Equivalent inputs should produce stable idempotency keys; dependency, runtime flag, binding, kill switch, dry-run, rollback, telemetry, port config, phase refs, proof, out-of-scope, or side-effect changes must reject or change idempotency."
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "phase25-dependency-current",
+      "focus": "Phase 26 depends on Phase 25 baseline 3efa9c5 and runtime_slice_0_local_in_process_status_only.",
+      "expected": {
+        "baseline_commit": "3efa9c5",
+        "candidate_slice_id": "runtime_slice_0_local_in_process_status_only",
+        "runtime_available_now": false,
+        "does_not_authorize_runtime": true
+      }
+    },
+    {
+      "id": "runtime-mode-flag-default-disabled",
+      "focus": "Runtime mode flag defaults disabled/off and is dev-only/local-only/non-authorizing.",
+      "expected": {
+        "default_enabled": false,
+        "default_state": "disabled",
+        "dev_only": true,
+        "local_only": true,
+        "operator_visible": true,
+        "non_authorizing": true,
+        "runtime_started": false
+      }
+    },
+    {
+      "id": "local-binding-loopback-only",
+      "focus": "Binding plan is loopback-only with no public/remote interface, no listener opened, and no network.",
+      "expected": {
+        "loopback_only": true,
+        "allowed_hosts": [
+          "127.0.0.1",
+          "::1",
+          "localhost"
+        ],
+        "public_interface_allowed": false,
+        "remote_interface_allowed": false,
+        "listener_opened": false,
+        "network_performed": false
+      }
+    },
+    {
+      "id": "kill-switch-visible-fail-closed",
+      "focus": "Operator kill switch is visible, fail-closed, testable, and cannot be ignored.",
+      "expected": {
+        "operator_visible": true,
+        "fail_closed": true,
+        "testable": true,
+        "ignored_allowed": false,
+        "runtime_side_effects_now": false
+      }
+    },
+    {
+      "id": "dry-run-fallback-preview-only",
+      "focus": "Missing/false/invalid runtime flag makes every request a validation/status preview only.",
+      "expected": {
+        "all_requests_preview_only_when_flag_missing_false_invalid": true,
+        "bypass_allowed": false,
+        "response_mode": "validation_status_preview_only"
+      }
+    },
+    {
+      "id": "rollback-disable-idempotent",
+      "focus": "Rollback/disable is idempotent, deletes no data, and cannot resurrect blocked state.",
+      "expected": {
+        "disable_idempotent": true,
+        "deletes_data": false,
+        "resurrects_blocked_state": false
+      }
+    },
+    {
+      "id": "telemetry-audit-preview-only",
+      "focus": "Telemetry/audit is redacted preview only with no store/file/db/network writes.",
+      "expected": {
+        "redacted_audit_preview_only": true,
+        "store_write_now": false,
+        "file_write_now": false,
+        "db_write_now": false,
+        "network_write_now": false,
+        "raw_payload_allowed": false
+      }
+    },
+    {
+      "id": "port-config-reference-only",
+      "focus": "Port/config refs are reference-only placeholders with no port opened, env secret read, network, raw secret, or raw path.",
+      "expected": {
+        "reference_only": true,
+        "port_opened": false,
+        "env_secret_read": false,
+        "network_performed": false,
+        "raw_secret_allowed": false,
+        "raw_path_allowed": false
+      }
+    },
+    {
+      "id": "phase15-through-25-reference-only",
+      "focus": "Phase 15-25 refs are existence refs only and do not perform real subsystem behavior.",
+      "expected": {
+        "phase_ref_count": 11,
+        "all_reference_only": true,
+        "all_behavior_performed": false
+      }
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "focus": "Config present/socket/delivery/local arms/Builder/Oracle proof boundaries stay false.",
+      "expected": {
+        "config_present_is_runtime_proof": false,
+        "socket_is_bridge_green_proof": false,
+        "delivery_acceptance_is_model_processing_proof": false,
+        "server_can_execute_local_arms": false,
+        "builder_direct_server_target_allowed": false,
+        "oracle_direct_server_target_allowed": false
+      }
+    },
+    {
+      "id": "hard-out-of-scope-side-effects-blocked",
+      "focus": "Hard out-of-scope side effects and side-effect truth stay blocked/safe.",
+      "expected": {
+        "out_of_scope_count": 9,
+        "all_out_of_scope_now": true,
+        "all_side_effect_truth_fields_true": true,
+        "all_side_effect_counters_zero": true,
+        "output_file_written": false
+      }
+    },
+    {
+      "id": "default-on-overclaim-rejected",
+      "focus": "Default-on/enabled/production/remote/authorizing runtime flag is rejected.",
+      "expected": {
+        "default_enabled": false,
+        "default_state": "disabled",
+        "non_authorizing": true
+      }
+    },
+    {
+      "id": "non-loopback-binding-rejected",
+      "focus": "Non-loopback/public/remote/listener-opened/network binding is rejected.",
+      "expected": {
+        "loopback_only": true,
+        "public_interface_allowed": false,
+        "remote_interface_allowed": false,
+        "listener_opened": false,
+        "network_performed": false
+      }
+    },
+    {
+      "id": "hidden-listener-network-rejected",
+      "focus": "Hidden listener, route, port, network, or side-effect counters are rejected.",
+      "expected": {
+        "listener_opened": false,
+        "port_opened": false,
+        "network_performed": false,
+        "side_effect_counters_zero": true
+      }
+    },
+    {
+      "id": "kill-switch-missing-or-ignored-rejected",
+      "focus": "Missing kill switch or ignored kill switch is rejected.",
+      "expected": {
+        "operator_visible": true,
+        "fail_closed": true,
+        "ignored_allowed": false
+      }
+    },
+    {
+      "id": "dry-run-bypass-rejected",
+      "focus": "Dry-run fallback bypass is rejected.",
+      "expected": {
+        "bypass_allowed": false,
+        "all_requests_preview_only_when_flag_missing_false_invalid": true
+      }
+    },
+    {
+      "id": "telemetry-write-rejected",
+      "focus": "Telemetry store/file/db/network writes are rejected.",
+      "expected": {
+        "store_write_now": false,
+        "file_write_now": false,
+        "db_write_now": false,
+        "network_write_now": false
+      }
+    },
+    {
+      "id": "raw-secret-leak-rejected",
+      "focus": "Raw secrets, paths, keys, tokens, plaintext, ciphertext, and decrypted payloads are rejected.",
+      "expected": {
+        "raw_secret_allowed": false,
+        "raw_path_allowed": false,
+        "no_secret_material": true
+      }
+    },
+    {
+      "id": "config-eligibility-as-authorization-rejected",
+      "focus": "Config present/eligible cannot authorize runtime or prove runtime.",
+      "expected": {
+        "non_authorizing": true,
+        "config_present_is_runtime_proof": false
+      }
+    },
+    {
+      "id": "stale-phase25-baseline-rejected",
+      "focus": "Stale Phase 25 baseline or candidate mismatch is rejected.",
+      "expected": {
+        "baseline_commit": "3efa9c5",
+        "candidate_slice_id": "runtime_slice_0_local_in_process_status_only"
+      }
+    },
+    {
+      "id": "idempotency-sensitive-to-runtime-controls",
+      "focus": "Idempotency is stable for equivalent inputs and sensitive to dependency, flag, binding, kill switch, dry-run, rollback, telemetry, refs, proof, out-of-scope, and side-effect changes.",
+      "expected": {
+        "stable_for_equivalent_inputs": true,
+        "sensitive_to_phase25_dependency": true,
+        "sensitive_to_runtime_mode_flag": true,
+        "sensitive_to_binding_plan": true,
+        "sensitive_to_kill_switch": true,
+        "sensitive_to_dry_run": true,
+        "sensitive_to_rollback_disable": true,
+        "sensitive_to_telemetry_audit": true,
+        "sensitive_to_port_config": true,
+        "sensitive_to_phase_refs": true,
+        "sensitive_to_proof_boundaries": true,
+        "sensitive_to_side_effect_truth": true
+      }
+    }
+  ],
+  "tamperCases": [
+    {
+      "id": "tamper-runtime-flag-default-on",
+      "mutation": "Set runtime_mode_flag.default_enabled=true or default_state=enabled.",
+      "expected_failure_checks": [
+        "runtime-mode-flag-disabled-local-dev-nonauthorizing",
+        "default-on-overclaim-rejected"
+      ]
+    },
+    {
+      "id": "tamper-non-loopback-binding",
+      "mutation": "Set loopback_only=false, public_interface_allowed=true, remote_interface_allowed=true, allowed host 0.0.0.0, listener_opened=true, or network_performed=true.",
+      "expected_failure_checks": [
+        "local-binding-loopback-only-no-listener",
+        "non-loopback-binding-rejected"
+      ]
+    },
+    {
+      "id": "tamper-hidden-network-listener",
+      "mutation": "Set listener/network side-effect counter above zero or listener/network truth false.",
+      "expected_failure_checks": [
+        "hard-out-of-scope-side-effects-blocked",
+        "hidden-listener-network-rejected"
+      ]
+    },
+    {
+      "id": "tamper-missing-kill-switch",
+      "mutation": "Remove operator_kill_switch or set operator_visible=false/fail_closed=false/testable=false.",
+      "expected_failure_checks": [
+        "operator-kill-switch-visible-fail-closed",
+        "kill-switch-missing-or-ignored-rejected"
+      ]
+    },
+    {
+      "id": "tamper-kill-switch-ignored",
+      "mutation": "Set operator_kill_switch.ignored_allowed=true.",
+      "expected_failure_checks": [
+        "operator-kill-switch-visible-fail-closed",
+        "kill-switch-missing-or-ignored-rejected"
+      ]
+    },
+    {
+      "id": "tamper-dry-run-bypass",
+      "mutation": "Set dry_run_fallback.bypass_allowed=true or preview-only false.",
+      "expected_failure_checks": [
+        "dry-run-fallback-cannot-be-bypassed",
+        "dry-run-bypass-rejected"
+      ]
+    },
+    {
+      "id": "tamper-telemetry-write",
+      "mutation": "Set telemetry/audit store_write_now, file_write_now, db_write_now, or network_write_now true.",
+      "expected_failure_checks": [
+        "telemetry-audit-preview-only-no-writes",
+        "telemetry-write-rejected"
+      ]
+    },
+    {
+      "id": "tamper-raw-secret-leak",
+      "mutation": "Insert raw auth secret, bearer token, private key, plaintext payload, ciphertext payload, decrypted payload, or raw path into output string values.",
+      "expected_failure_checks": [
+        "raw-private-secret-leakage-rejected",
+        "raw-secret-leak-rejected"
+      ]
+    },
+    {
+      "id": "tamper-config-eligibility-authorizes-runtime",
+      "mutation": "Set runtime_mode_flag.non_authorizing=false or proof_boundaries.config_present_is_runtime_proof=true.",
+      "expected_failure_checks": [
+        "runtime-mode-flag-disabled-local-dev-nonauthorizing",
+        "proof-boundaries-preserved",
+        "config-eligibility-as-authorization-rejected"
+      ]
+    },
+    {
+      "id": "tamper-stale-phase25-baseline",
+      "mutation": "Set Phase 25 dependency baseline to e062d16 or candidate id to another value.",
+      "expected_failure_checks": [
+        "phase25-runtime-slice-candidate-required",
+        "stale-phase25-baseline-rejected"
+      ]
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "runtime flag enabled",
+    "runtime enabled",
+    "runtime authorized",
+    "runtime started",
+    "config proves runtime",
+    "daemon started",
+    "server started",
+    "listener bound",
+    "route registered",
+    "http server listening",
+    "websocket listening",
+    "network request performed",
+    "port opened",
+    "port bound",
+    "database write performed",
+    "store write performed",
+    "file write performed",
+    "migration executed",
+    "queue created",
+    "lease created",
+    "auth changed",
+    "key generated",
+    "secret read",
+    "env secret read",
+    "local execution performed",
+    "shell executed",
+    "pty executed",
+    "browser state captured",
+    "screenshot captured",
+    "ocr captured",
+    "customer send performed",
+    "external send performed",
+    "deploy performed",
+    "trade performed",
+    "output file written",
+    "socket proves bridge green",
+    "delivery acceptance proves model processing",
+    "server can execute local arms",
+    "direct builder target allowed",
+    "direct oracle target allowed",
+    "kill switch ignored",
+    "dry run bypassed",
+    "telemetry written",
+    "audit written",
+    "raw terminal scrollback",
+    "raw browser state",
+    "raw screenshot",
+    "raw ocr",
+    "raw customer private",
+    "side-profile payload",
+    "source-store payload",
+    "bearer token",
+    "session secret",
+    "auth secret value",
+    "private key",
+    "data key",
+    "plaintext payload",
+    "ciphertext payload",
+    "decrypted payload"
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture is validation/spec-only and pins baseline 3efa9c5.",
+    "Phase 25 dependency is baseline 3efa9c5 and candidate runtime_slice_0_local_in_process_status_only remains non-authorizing and unavailable now.",
+    "Runtime mode flag defaults disabled/off, is dev-only/local-only/operator-visible/non-authorizing, and does not start runtime.",
+    "Local-only binding plan is loopback-only and opens no listener, no port, no public/remote interface, and no network.",
+    "Operator kill switch is visible, fail-closed, testable, cannot be ignored, and has no runtime side effects now.",
+    "Dry-run fallback sends all requests to validation/status preview if the runtime flag is missing, false, invalid, or blocked.",
+    "Rollback/disable is idempotent, does not delete data, and cannot resurrect blocked state.",
+    "Telemetry/audit is redacted preview only with no store/file/db/network writes and no raw payload.",
+    "Port/config refs are reference-only placeholders with no port opened, no env secret read, no network, no raw secret, and no raw path.",
+    "Phase 15-25 references are reference existence only and do not perform real auth/signing/key/storage/API/handler/harness/promotion/runtime behavior.",
+    "Proof boundaries preserve config-not-runtime-proof, socket-not-bridge-green, delivery-not-model-processing-proof, server-cannot-execute-local-arms, and Builder/Oracle direct server targets blocked.",
+    "Hard out-of-scope side effects remain blocked: runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior.",
+    "Tamper coverage rejects default-on overclaim, non-loopback binding, hidden network/listener, missing/ignored kill switch, dry-run bypass, telemetry write, raw secret leak, config eligibility as authorization, and stale Phase 25 baseline."
+  ]
+}
