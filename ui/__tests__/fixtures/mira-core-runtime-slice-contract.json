@@ -1,0 +1,724 @@
+{
+  "schema": "squidrun.mira_core.runtime_slice_candidate_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_25_first_runtime_slice_candidate",
+  "baseline": {
+    "commit": "e062d16",
+    "commit_subject": "Add Mira Core Phase 24 runtime promotion gate validation",
+    "baseline_status": "phase_24_runtime_promotion_gate_green",
+    "baseline_boundary": "Phase 24 defines promotion gates only. Its current safe decision is remain_validation_only; it does not authorize or implement real runtime, server, listener, network, database/store/file write, migration, queue, lease, auth/session/key/secret operation, local execution, send, deploy, trade, memory/profile commit, export, delete, restore, raw-content storage, state persistence, or output-file behavior."
+  },
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-runtime-promotion-gate-contract.json",
+    "ui/__tests__/fixtures/mira-core-milestone-readiness-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-harness-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-handler-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-api-contract.json",
+    "ui/__tests__/fixtures/mira-core-auth-binding-contract.json",
+    "ui/__tests__/fixtures/mira-core-identity-signing-contract.json",
+    "ui/__tests__/fixtures/mira-core-encryption-key-contract.json",
+    "ui/__tests__/fixtures/mira-core-storage-retention-contract.json",
+    "ui/__tests__/fixtures/mira-core-persistence-audit-contract.json"
+  ],
+  "purpose": "Define the first future Mira Core runtime slice candidate after Phase 24 without implementing, enabling, or authorizing it. Phase 25 answers what the smallest honest later runtime slice could be, what exact gates are still missing, and what would make it eligible in a future review while remaining non-authorizing now.",
+  "nonGoals": [
+    "No runtime implementation in this Oracle fixture.",
+    "No source-store writes.",
+    "No real server, daemon, listener, route, HTTP, WebSocket, or network behavior.",
+    "No database, store, file, migration, queue, lease, or output-file writes.",
+    "No auth, token, session, signing, key, encryption, KMS, secret, or env-secret operation.",
+    "No local execution, shell, PTY, browser, screenshot, OCR, or window access.",
+    "No customer sends, external sends, deploys, trades, financial actions, export, delete, restore, capture, raw-content storage, memory/profile commits, or durable state changes.",
+    "No claim that this candidate satisfies Phase 24 runtime prerequisites.",
+    "No claim that candidate eligibility authorizes runtime implementation.",
+    "No claim that socket connection, delivery acceptance, handler response, harness validation, local acceptance, runtime candidate status, or this fixture proves bridge green or model processing."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build a local validation-only runtime_slice_candidate_report and validation_report against this Oracle fixture.",
+      "Pin baseline commit e062d16 and depend on Phase 24 runtime promotion gate at baseline e062d16 with current decision remain_validation_only.",
+      "Represent candidate slice identity as runtime_slice_0_local_in_process_status_only.",
+      "Represent the candidate as local-only, dev-only, disabled by default, operator-visible, and limited to read-only status/control-plane validation path semantics.",
+      "State explicitly that Phase 25 does not satisfy Phase 24 runtime prerequisites and does not authorize runtime.",
+      "Carry forward missing gates: explicit runtime mode flag, local-only dev binding, kill switch, dry-run fallback, auth/signing/key refs, API/handler/harness refs, storage/audit refs, Phase 23/24 current readiness, env/config refs, rollback/disable plan, and telemetry/audit plan.",
+      "Define future eligibility and blocked-now checklists without making anything eligible now.",
+      "Preserve exact out-of-scope behavior now: no real runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior.",
+      "Preserve proof boundaries: socket is not bridge green, delivery acceptance is not model-processing proof, runtime candidate is not runtime proof, server cannot execute local arms, and Builder/Oracle direct server targets are blocked.",
+      "Constrain any future first slice to no external sends, no deploy/trade/customer actions, no raw/private/secret content, no durable store writes, no queue/lease creation, no local PTY/shell/browser, one idempotent request only, deterministic status response, and audit preview only.",
+      "Reject overclaiming runtime availability, treating eligibility as authorization, hidden listener/network/store/queue behavior, unsafe tier/action drift, fake proof, missing kill switch/rollback/audit, raw secret leakage, and stale Phase 24 baseline."
+    ],
+    "hardRejects": [
+      "Any real runtime, server, daemon, listener, route, HTTP/WebSocket, network, database/store/file write, migration, queue, lease, auth/session/key/secret operation, local execution, shell/PTY, browser/window access, send, deploy, trade, export, delete, restore, raw-content storage, source-store write, memory/profile commit, durable state change, or output-file behavior occurs.",
+      "Report claims Phase 25 satisfies Phase 24 runtime prerequisites.",
+      "Report claims Phase 25 authorizes runtime implementation or enables a runtime slice.",
+      "Candidate is not disabled by default, local-only, dev-only, operator-visible, and status/control-plane validation only.",
+      "Candidate allows external sends, deploys, trades, customer actions, durable store writes, queue/lease creation, local PTY/shell/browser access, raw/private/secret content, more than one request, non-idempotent requests, nondeterministic responses, or real audit writes.",
+      "Phase 24 dependency is absent, stale, not baseline e062d16, not remain_validation_only, or treats eligible_for_future_runtime_slice as authorization.",
+      "Missing gates are not carried forward, especially kill switch, dry-run fallback, rollback/disable plan, telemetry/audit plan, Phase 23/24 current readiness, auth/signing/key refs, API/handler/harness refs, storage/audit refs, and env/config refs.",
+      "Socket is treated as bridge green, delivery acceptance is treated as model-processing proof, runtime candidate is treated as runtime proof, server can execute local arms, or Builder/Oracle direct server targets are allowed.",
+      "Runtime availability, candidate eligibility, or first-slice readiness is overclaimed while gates remain missing.",
+      "Raw private content, raw comms, terminal scrollback, screenshot/OCR/browser state, customer private content, side-profile content, source-store payloads, tokens, cookies, keys, private keys, data keys, secrets, plaintext, ciphertext, or decrypted payloads appear in output."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "runtime_slice_candidate_report",
+      "validation_report"
+    ],
+    "runtimeSliceCandidateReportSchema": "squidrun.mira_core.runtime_slice_candidate_report.v0",
+    "validationReportSchema": "squidrun.mira_core.runtime_slice_candidate_validation_report.v0"
+  },
+  "expectedRuntimeSliceCandidateReportShape": {
+    "schema": "squidrun.mira_core.runtime_slice_candidate_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "candidate_report_id",
+      "idempotency_key",
+      "generated_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "baseline_commit",
+      "phase_24_dependency",
+      "candidate_slice_identity",
+      "phase25_non_authorization",
+      "missing_gates_carried_forward",
+      "future_eligibility_checklist",
+      "blocked_now_checklist",
+      "out_of_scope_now",
+      "proof_boundaries",
+      "safe_first_slice_constraints",
+      "tamper_case_coverage",
+      "next_safe_actions",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_slice_candidate_report.v0",
+      "baseline_commit": "e062d16",
+      "phase_24_dependency.baseline_commit": "e062d16",
+      "phase_24_dependency.current_decision": "remain_validation_only",
+      "phase_24_dependency.eligible_is_authorization": false,
+      "phase_24_dependency.runtime_started": false,
+      "phase_24_dependency.no_runtime_performed": true,
+      "candidate_slice_identity.slice_id": "runtime_slice_0_local_in_process_status_only",
+      "candidate_slice_identity.local_only": true,
+      "candidate_slice_identity.dev_only": true,
+      "candidate_slice_identity.disabled_by_default": true,
+      "candidate_slice_identity.operator_visible": true,
+      "candidate_slice_identity.read_only_status_control_plane_validation_only": true,
+      "candidate_slice_identity.runtime_available_now": false,
+      "phase25_non_authorization.does_not_satisfy_phase24_prerequisites": true,
+      "phase25_non_authorization.does_not_authorize_runtime": true,
+      "phase25_non_authorization.does_not_enable_runtime": true,
+      "phase25_non_authorization.eligibility_is_future_review_only": true,
+      "proof_boundaries.socket_is_bridge_green_proof": false,
+      "proof_boundaries.delivery_acceptance_is_model_processing_proof": false,
+      "proof_boundaries.runtime_candidate_is_runtime_proof": false,
+      "proof_boundaries.server_can_execute_local_arms": false,
+      "proof_boundaries.builder_direct_server_target_allowed": false,
+      "proof_boundaries.oracle_direct_server_target_allowed": false,
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    },
+    "phase24DependencyRequiredFields": [
+      "dependency_id",
+      "fixture_path",
+      "module_path",
+      "cli_path",
+      "test_path",
+      "baseline_commit",
+      "status",
+      "current_decision",
+      "eligible_is_authorization",
+      "runtime_started",
+      "no_runtime_performed",
+      "phase23_dependency_current_through_phase",
+      "evidenceRefs"
+    ],
+    "phase24DependencyRequiredValues": {
+      "dependency_id": "phase_24_runtime_promotion_gate",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-promotion-gate-contract.json",
+      "module_path": "ui/modules/mira-core/runtime-promotion-gate.js",
+      "cli_path": "ui/scripts/hm-mira-core-runtime-promotion-gate.js",
+      "test_path": "ui/__tests__/mira-core-runtime-promotion-gate.test.js",
+      "baseline_commit": "e062d16",
+      "status": "promotion_gate_green_remain_validation_only",
+      "current_decision": "remain_validation_only",
+      "eligible_is_authorization": false,
+      "runtime_started": false,
+      "no_runtime_performed": true,
+      "phase23_dependency_current_through_phase": 22
+    },
+    "candidateSliceIdentityRequiredFields": [
+      "slice_id",
+      "title",
+      "local_only",
+      "dev_only",
+      "disabled_by_default",
+      "operator_visible",
+      "read_only_status_control_plane_validation_only",
+      "runtime_available_now",
+      "allowed_future_request_count",
+      "future_request_semantics",
+      "future_response_semantics",
+      "evidenceRefs"
+    ],
+    "phase25NonAuthorizationRequiredFields": [
+      "does_not_satisfy_phase24_prerequisites",
+      "does_not_authorize_runtime",
+      "does_not_enable_runtime",
+      "eligibility_is_future_review_only",
+      "missing_gate_count",
+      "safe_next_action",
+      "evidenceRefs"
+    ],
+    "missingGateRequiredFields": [
+      "gate_id",
+      "source_phase",
+      "status",
+      "required_before_future_eligibility",
+      "blocks_runtime_now",
+      "reference_only",
+      "evidenceRefs"
+    ],
+    "requiredMissingGateIds": [
+      "explicit-runtime-mode-flag",
+      "local-only-dev-binding",
+      "operator-kill-switch",
+      "dry-run-fallback",
+      "phase15-identity-signing-ref",
+      "phase16-auth-binding-ref",
+      "phase17-storage-retention-boundary-ref",
+      "phase18-persistence-audit-boundary-ref",
+      "phase19-encryption-key-ref",
+      "phase20-server-api-ref",
+      "phase21-server-handler-ref",
+      "phase22-runtime-harness-ref",
+      "phase23-milestone-readiness-current",
+      "phase24-runtime-promotion-gate-current",
+      "port-binding-plan-ref",
+      "auth-secret-presence-ref",
+      "storage-path-ref",
+      "migration-plan-ref",
+      "telemetry-audit-plan-ref",
+      "rollback-disable-plan-ref"
+    ],
+    "futureEligibilityChecklistRequiredIds": [
+      "phase24-remains-current-and-reviewed",
+      "all-missing-gates-satisfied-by-reference",
+      "candidate-still-disabled-by-default",
+      "operator-kill-switch-tested",
+      "dry-run-fallback-tested",
+      "rollback-disable-plan-reviewed",
+      "telemetry-audit-plan-reviewed",
+      "single-idempotent-status-request-only",
+      "deterministic-status-response-only",
+      "audit-preview-only-no-write",
+      "no-raw-private-secret-content",
+      "no-external-or-local-execution-side-effects"
+    ],
+    "blockedNowChecklistRequiredIds": [
+      "runtime-availability-blocked-now",
+      "server-listener-network-blocked-now",
+      "store-queue-lease-blocked-now",
+      "auth-key-secret-blocked-now",
+      "local-execution-blocked-now",
+      "send-deploy-trade-customer-blocked-now",
+      "output-file-blocked-now",
+      "eligibility-authorization-blocked-now"
+    ],
+    "outOfScopeNowRequiredIds": [
+      "real-runtime",
+      "server-listener-routes",
+      "network",
+      "db-store-file-migration",
+      "queue-lease",
+      "auth-key-secret",
+      "local-execution-shell-pty-browser",
+      "send-deploy-trade-customer",
+      "output-file"
+    ],
+    "proofBoundaryRequiredFields": [
+      "socket_is_bridge_green_proof",
+      "delivery_acceptance_is_model_processing_proof",
+      "runtime_candidate_is_runtime_proof",
+      "server_can_execute_local_arms",
+      "builder_direct_server_target_allowed",
+      "oracle_direct_server_target_allowed",
+      "evidenceRefs"
+    ],
+    "safeFirstSliceConstraintRequiredIds": [
+      "no-external-sends",
+      "no-deploy-trade-customer-actions",
+      "no-raw-private-secret-content",
+      "no-durable-store-writes",
+      "no-queue-lease-creation",
+      "no-local-pty-shell-browser",
+      "single-idempotent-request-only",
+      "deterministic-status-response-only",
+      "audit-preview-only"
+    ],
+    "nextSafeActionRequiredIds": [
+      "implement-phase25-validator-only",
+      "review-runtime-slice-0-spec-before-runtime"
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_runtime_performed",
+      "no_server_performed",
+      "no_listener_or_route_bound",
+      "no_network_performed",
+      "no_database_write_performed",
+      "no_store_write_performed",
+      "no_file_write_performed",
+      "no_migration_executed",
+      "no_queue_created",
+      "no_lease_created",
+      "no_auth_change_performed",
+      "no_key_secret_operation_performed",
+      "no_local_execution_performed",
+      "no_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_output_file_written"
+    ]
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.runtime_slice_candidate_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "report_id",
+      "generated_at",
+      "baseline_commit",
+      "decision",
+      "reasons",
+      "phase_24_dependency_result",
+      "candidate_identity_result",
+      "non_authorization_result",
+      "missing_gate_result",
+      "future_eligibility_result",
+      "blocked_now_result",
+      "proof_boundary_result",
+      "safe_constraint_result",
+      "side_effect_result",
+      "acceptance_checks",
+      "failed_checks",
+      "evidenceRefs"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_slice_candidate_validation_report.v0",
+      "baseline_commit": "e062d16",
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "baseline-e062d16-pinned",
+      "rule": "Runtime slice candidate report and validation report must pin baseline_commit to e062d16."
+    },
+    {
+      "id": "phase24-remain-validation-only-required",
+      "rule": "Phase 24 dependency must be baseline e062d16 with current_decision remain_validation_only, eligible_is_authorization=false, runtime_started=false, and no runtime performed."
+    },
+    {
+      "id": "candidate-identity-status-only",
+      "rule": "Candidate identity must be runtime_slice_0_local_in_process_status_only, local-only, dev-only, disabled by default, operator-visible, and read-only status/control-plane validation only."
+    },
+    {
+      "id": "phase25-non-authorization-explicit",
+      "rule": "Phase 25 must state it does not satisfy Phase 24 prerequisites, authorize runtime, enable runtime, or convert eligibility into authorization."
+    },
+    {
+      "id": "missing-gates-carried-forward-complete",
+      "rule": "All required missing gates from Phase 24 and Phase 23/24 readiness are carried forward as blocking, reference-only, not satisfied."
+    },
+    {
+      "id": "future-eligibility-checklist-complete",
+      "rule": "Future eligibility checklist must include current Phase 24 review, all gates satisfied by reference, disabled-by-default, kill switch, dry-run, rollback, audit, single idempotent request, deterministic response, audit preview, no raw content, and no side effects."
+    },
+    {
+      "id": "blocked-now-checklist-complete",
+      "rule": "Blocked-now checklist must include runtime availability, server/listener/network, store/queue/lease, auth/key/secret, local execution, send/deploy/trade/customer, output file, and authorization blocks."
+    },
+    {
+      "id": "out-of-scope-side-effects-blocked",
+      "rule": "All real runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior is out of scope now."
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "rule": "Socket is not bridge green, delivery acceptance is not model-processing proof, runtime candidate is not runtime proof, server cannot execute local arms, and Builder/Oracle direct targets are blocked."
+    },
+    {
+      "id": "safe-first-slice-constraints-complete",
+      "rule": "Future first-slice constraints must be no external sends, no deploy/trade/customer actions, no raw/private/secret content, no durable store writes, no queue/lease, no PTY/shell/browser, single idempotent request, deterministic status response, and audit preview only."
+    },
+    {
+      "id": "unsafe-tier-action-drift-rejected",
+      "rule": "Tier2/Tier3/Tier4, customer-send, deploy, trade, financial, and local execution action drift must be rejected."
+    },
+    {
+      "id": "raw-private-secret-leakage-rejected",
+      "rule": "Output must not contain raw private content, raw comms, terminal scrollback, screenshot/OCR/browser state, customer private content, side-profile content, tokens, cookies, keys, secrets, plaintext, ciphertext, or decrypted payloads."
+    },
+    {
+      "id": "fake-proof-rejected",
+      "rule": "Output must not claim bridge green, model-processing proof, runtime proof, command proof, or authorization proof from candidate status."
+    },
+    {
+      "id": "kill-switch-rollback-audit-required",
+      "rule": "Missing kill switch, dry-run fallback, rollback/disable plan, or telemetry/audit plan blocks future eligibility."
+    },
+    {
+      "id": "idempotency-sensitive-to-candidate-gates",
+      "rule": "Equivalent inputs should produce stable idempotency keys; dependency, identity, non-authorization, missing gate, eligibility, blocked-now, proof, constraint, or side-effect changes must reject or change idempotency."
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "phase24-dependency-remain-validation-only",
+      "focus": "Phase 25 depends on Phase 24 at baseline e062d16 with remain_validation_only and no runtime.",
+      "expected": {
+        "baseline_commit": "e062d16",
+        "dependency_id": "phase_24_runtime_promotion_gate",
+        "current_decision": "remain_validation_only",
+        "eligible_is_authorization": false,
+        "runtime_started": false,
+        "no_runtime_performed": true
+      }
+    },
+    {
+      "id": "candidate-slice-identity-safe",
+      "focus": "Candidate slice is local in-process status-only, disabled by default, dev-only, and operator-visible.",
+      "expected": {
+        "slice_id": "runtime_slice_0_local_in_process_status_only",
+        "local_only": true,
+        "dev_only": true,
+        "disabled_by_default": true,
+        "operator_visible": true,
+        "read_only_status_control_plane_validation_only": true,
+        "runtime_available_now": false
+      }
+    },
+    {
+      "id": "phase25-does-not-authorize-runtime",
+      "focus": "Phase 25 does not satisfy Phase 24 prerequisites and does not authorize or enable runtime.",
+      "expected": {
+        "does_not_satisfy_phase24_prerequisites": true,
+        "does_not_authorize_runtime": true,
+        "does_not_enable_runtime": true,
+        "eligibility_is_future_review_only": true
+      }
+    },
+    {
+      "id": "missing-gates-carried-forward",
+      "focus": "All required missing Phase 24 gates are carried forward as blocking, reference-only gates.",
+      "expected": {
+        "missing_gate_count": 20,
+        "all_blocks_runtime_now": true,
+        "all_reference_only": true
+      }
+    },
+    {
+      "id": "future-eligibility-checklist-present",
+      "focus": "Future eligibility checklist contains the exact constraints that would be needed before review.",
+      "expected": {
+        "required_check_count": 12,
+        "all_future_only": true,
+        "all_non_authorizing": true
+      }
+    },
+    {
+      "id": "blocked-now-checklist-present",
+      "focus": "Blocked-now checklist includes runtime/server/network/store/queue/auth/local execution/send/deploy/trade/output-file/authorization blocks.",
+      "expected": {
+        "required_block_count": 8,
+        "all_blocked_now": true
+      }
+    },
+    {
+      "id": "out-of-scope-now-enforced",
+      "focus": "Exact out-of-scope behavior now remains blocked.",
+      "expected": {
+        "out_of_scope_count": 9,
+        "all_out_of_scope_now": true
+      }
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "focus": "Socket, delivery, runtime candidate, local arms, and Builder/Oracle direct-target proofs remain false.",
+      "expected": {
+        "socket_is_bridge_green_proof": false,
+        "delivery_acceptance_is_model_processing_proof": false,
+        "runtime_candidate_is_runtime_proof": false,
+        "server_can_execute_local_arms": false,
+        "builder_direct_server_target_allowed": false,
+        "oracle_direct_server_target_allowed": false
+      }
+    },
+    {
+      "id": "safe-first-slice-constraints-present",
+      "focus": "Future first slice constraints are complete and non-side-effecting.",
+      "expected": {
+        "constraint_count": 9,
+        "single_idempotent_request_only": true,
+        "deterministic_status_response_only": true,
+        "audit_preview_only": true
+      }
+    },
+    {
+      "id": "side-effects-blocked-now",
+      "focus": "No runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior occurs now.",
+      "expected": {
+        "all_side_effect_truth_fields_true": true,
+        "all_side_effect_counters_zero": true,
+        "output_file_written": false
+      }
+    },
+    {
+      "id": "overclaiming-runtime-availability-rejected",
+      "focus": "Reject runtime_available_now=true, disabled_by_default=false, or candidate treated as runtime proof.",
+      "expected": {
+        "runtime_available_now": false,
+        "disabled_by_default": true,
+        "runtime_candidate_is_runtime_proof": false
+      }
+    },
+    {
+      "id": "eligibility-as-authorization-rejected",
+      "focus": "Reject eligibility, candidate identity, or future checklist being treated as authorization.",
+      "expected": {
+        "does_not_authorize_runtime": true,
+        "eligibility_is_future_review_only": true
+      }
+    },
+    {
+      "id": "unsafe-tier-action-drift-rejected",
+      "focus": "Reject Tier2/Tier3/Tier4, external/customer/deploy/trade/financial/local-execution action drift.",
+      "expected": {
+        "blocked_tiers": [
+          "tier2_repo_mutation",
+          "tier3_external_side_effect",
+          "tier4_financial_or_irreversible"
+        ],
+        "blocked_actions": [
+          "customer_send",
+          "deploy",
+          "trade",
+          "financial",
+          "local_execution"
+        ]
+      }
+    },
+    {
+      "id": "raw-private-secret-leakage-rejected",
+      "focus": "Reject raw/private/secret/key/token/plaintext/ciphertext/decrypted content.",
+      "expected": {
+        "no_raw_private_content": true,
+        "no_secret_material": true,
+        "no_plaintext_ciphertext_decrypted_payload": true
+      }
+    },
+    {
+      "id": "stale-phase24-baseline-rejected",
+      "focus": "Reject missing or stale Phase 24 baseline and decision.",
+      "expected": {
+        "baseline_commit": "e062d16",
+        "current_decision": "remain_validation_only"
+      }
+    },
+    {
+      "id": "kill-switch-rollback-audit-required",
+      "focus": "Missing kill switch, dry-run fallback, rollback/disable plan, or telemetry/audit plan blocks future eligibility.",
+      "expected": {
+        "operator_kill_switch_required": true,
+        "dry_run_fallback_required": true,
+        "rollback_disable_plan_required": true,
+        "telemetry_audit_plan_required": true
+      }
+    },
+    {
+      "id": "idempotency-sensitive-to-runtime-slice-candidate",
+      "focus": "Idempotency is stable for equivalent inputs and sensitive to dependency, identity, non-authorization, missing gates, proof, constraints, and side-effect truth.",
+      "expected": {
+        "stable_for_equivalent_inputs": true,
+        "sensitive_to_phase24_dependency": true,
+        "sensitive_to_candidate_identity": true,
+        "sensitive_to_non_authorization": true,
+        "sensitive_to_missing_gates": true,
+        "sensitive_to_proof_boundaries": true,
+        "sensitive_to_safe_constraints": true,
+        "sensitive_to_side_effect_truth": true
+      }
+    }
+  ],
+  "tamperCases": [
+    {
+      "id": "tamper-runtime-available-now",
+      "mutation": "Set candidate_slice_identity.runtime_available_now=true or disabled_by_default=false.",
+      "expected_failure_checks": [
+        "candidate-identity-status-only",
+        "overclaiming-runtime-availability-rejected"
+      ]
+    },
+    {
+      "id": "tamper-eligibility-authorizes-runtime",
+      "mutation": "Set phase25_non_authorization.does_not_authorize_runtime=false or eligibility_is_future_review_only=false.",
+      "expected_failure_checks": [
+        "phase25-non-authorization-explicit",
+        "eligibility-as-authorization-rejected"
+      ]
+    },
+    {
+      "id": "tamper-hidden-listener-network-store-queue",
+      "mutation": "Set listener/network/store/queue side-effect counter above zero or side-effect truth false.",
+      "expected_failure_checks": [
+        "out-of-scope-side-effects-blocked",
+        "side-effects-blocked-now"
+      ]
+    },
+    {
+      "id": "tamper-unsafe-tier-or-action",
+      "mutation": "Add Tier2/Tier3/Tier4, customer-send, deploy, trade, financial, or local-execution action drift.",
+      "expected_failure_checks": [
+        "unsafe-tier-action-drift-rejected"
+      ]
+    },
+    {
+      "id": "tamper-fake-proof",
+      "mutation": "Set socket_is_bridge_green_proof=true, delivery_acceptance_is_model_processing_proof=true, or runtime_candidate_is_runtime_proof=true.",
+      "expected_failure_checks": [
+        "proof-boundaries-preserved",
+        "fake-proof-rejected"
+      ]
+    },
+    {
+      "id": "tamper-missing-kill-switch-rollback-audit",
+      "mutation": "Remove operator-kill-switch, dry-run-fallback, rollback-disable-plan, or telemetry-audit-plan from missing gates.",
+      "expected_failure_checks": [
+        "missing-gates-carried-forward-complete",
+        "kill-switch-rollback-audit-required"
+      ]
+    },
+    {
+      "id": "tamper-raw-secret-leak",
+      "mutation": "Insert raw auth secret, bearer token, private key, plaintext payload, ciphertext payload, or decrypted payload into output string values.",
+      "expected_failure_checks": [
+        "raw-private-secret-leakage-rejected"
+      ]
+    },
+    {
+      "id": "tamper-stale-phase24-baseline",
+      "mutation": "Set Phase 24 dependency baseline to 3ce041c or decision to eligible_for_future_runtime_slice.",
+      "expected_failure_checks": [
+        "phase24-remain-validation-only-required",
+        "stale-phase24-baseline-rejected"
+      ]
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "runtime available now",
+    "runtime authorized",
+    "runtime enabled",
+    "phase 25 satisfies phase 24",
+    "candidate proves runtime",
+    "runtime started",
+    "daemon started",
+    "server started",
+    "listener bound",
+    "route registered",
+    "http server listening",
+    "websocket listening",
+    "network request performed",
+    "database write performed",
+    "store write performed",
+    "file write performed",
+    "migration executed",
+    "queue created",
+    "lease created",
+    "auth changed",
+    "key generated",
+    "secret read",
+    "local execution performed",
+    "shell executed",
+    "pty executed",
+    "browser state captured",
+    "screenshot captured",
+    "ocr captured",
+    "customer send performed",
+    "external send performed",
+    "deploy performed",
+    "trade performed",
+    "output file written",
+    "socket proves bridge green",
+    "delivery acceptance proves model processing",
+    "server can execute local arms",
+    "direct builder target allowed",
+    "direct oracle target allowed",
+    "eligible authorizes runtime",
+    "tier3 promoted",
+    "tier4 promoted",
+    "raw terminal scrollback",
+    "raw browser state",
+    "raw screenshot",
+    "raw ocr",
+    "raw customer private",
+    "side-profile payload",
+    "source-store payload",
+    "bearer token",
+    "session secret",
+    "auth secret value",
+    "private key",
+    "data key",
+    "plaintext payload",
+    "ciphertext payload",
+    "decrypted payload"
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture is validation/spec-only and pins baseline e062d16.",
+    "Phase 24 dependency is baseline e062d16 with current decision remain_validation_only, eligible_is_authorization=false, runtime_started=false, and no runtime performed.",
+    "Candidate identity is runtime_slice_0_local_in_process_status_only: local-only, dev-only, disabled by default, operator-visible, and read-only status/control-plane validation only.",
+    "Phase 25 explicitly does not satisfy Phase 24 prerequisites, authorize runtime, enable runtime, or treat eligibility as authorization.",
+    "All Phase 24 missing gates are carried forward, including runtime mode, local-only binding, kill switch, dry-run, auth/signing/key refs, API/handler/harness refs, storage/audit refs, Phase 23/24 readiness, env/config refs, rollback/disable, and telemetry/audit.",
+    "Future eligibility checklist and blocked-now checklist are complete and non-authorizing.",
+    "No real runtime, server, listener, route, network, database/store/file/migration, queue, lease, auth/key/secret, local execution, send, deploy, trade, or output-file behavior occurs.",
+    "Proof boundaries preserve socket-not-bridge-green, delivery-not-model-processing-proof, runtime-candidate-not-runtime-proof, server-cannot-execute-local-arms, and Builder/Oracle direct server targets blocked.",
+    "Future first-slice constraints are no external sends, no deploy/trade/customer actions, no raw/private/secret content, no durable store writes, no queue/lease creation, no PTY/shell/browser, one idempotent request only, deterministic status response, and audit preview only.",
+    "Tamper coverage rejects runtime availability overclaim, eligibility-as-authorization, hidden listener/network/store/queue behavior, unsafe tier/action drift, fake proof, missing kill switch/rollback/audit, raw secret leakage, and stale Phase 24 baseline."
+  ]
+}
