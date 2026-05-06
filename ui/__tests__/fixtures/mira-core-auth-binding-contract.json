@@ -1,0 +1,1204 @@
+{
+  "schema": "squidrun.mira_core.auth_binding_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_16_auth_binding",
+  "baseline": {
+    "commit": "3904697",
+    "commit_subject": "Add Mira Core Phase 15 identity signing validation package",
+    "baseline_status": "phase_15_identity_signing_green",
+    "baseline_boundary": "Phase 15 defines identity/signing validation only. No real Mira Core server, auth path, token generation, session creation, database/store write, queue, local execution, send, deploy, or trade exists at this baseline."
+  },
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json",
+    "ui/__tests__/fixtures/mira-core-identity-signing-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+    "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+    "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+  ],
+  "purpose": "Convert the Phase 14 auth/session/device/profile-binding blocker into an executable validation contract before any real server or auth work exists. Phase 16 specifies record shapes, required literals, scope rules, token-hash-only envelope constraints, fail-closed profile mismatch behavior, verification report shape, revocation and expiry handling, no-secret/no-raw guarantees, and migration gates for future real auth.",
+  "nonGoals": [
+    "No runtime implementation.",
+    "No real server process.",
+    "No network listener or network request.",
+    "No database, source-store, or durable memory write.",
+    "No queue creation or enqueue.",
+    "No auth, token, credential, secret, or session change.",
+    "No real token generation.",
+    "No session creation.",
+    "No device registration mutation.",
+    "No role discovery mutation.",
+    "No local execution.",
+    "No shell or PTY action.",
+    "No browser, window, screenshot, or OCR access.",
+    "No external sends or customer sends.",
+    "No deploys.",
+    "No trades or financial actions.",
+    "No memory/profile commits.",
+    "No claim that valid auth authorizes local execution.",
+    "No claim that valid auth proves model processing.",
+    "No claim that valid auth proves bridge green.",
+    "No permission for Tier 2 or higher actions."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build validation-only auth/session/device/profile-binding assessment records against this fixture, if Builder is later delegated.",
+      "Do not generate tokens, create sessions, store secrets, start a server, write a queue, perform network work, register devices, mutate role discovery, or execute local actions.",
+      "Represent commit 3904697 as the Phase 15 baseline and preserve identity/signing as validation-only.",
+      "Emit auth_binding, scope_rules, token_envelope, authorization_boundary, profile_mismatch_handling, verification_report_contract, revocation_expiry_rules, no_secret_no_raw_guarantees, migration_path, gate summary, blocker summary, evidence refs, and side-effect truth sections.",
+      "Use token_id/hash placeholders only; no raw token or session secret may appear in output.",
+      "Allow only Architect as the server-originated role and require role discovery proof plus target proof before future local acceptance can even be proposed.",
+      "Treat valid auth as permission to validate server-to-local proposals/intents only, never as authorization for execution or Tier 2+ actions."
+    ],
+    "hardRejects": [
+      "Any server process, network request/listener, database/store write, queue write, auth/secret/token/session generation, device registry mutation, role-discovery mutation, local execution, shell/PTY, browser/window access, send, customer send, deploy, trade, financial action, file mutation, durable migration, or memory/profile commit occurs.",
+      "Any fixture or validation output contains raw tokens, session secrets, auth secrets, credential-like material, raw profile content, raw comms, raw terminal, screenshot/OCR, browser state, customer private data, side-profile content, or raw database payload.",
+      "A missing, expired, revoked, stale, replayed, unknown-profile, unknown-device, wrong-session, wrong-device, wrong-profile, side-profile, wrong-role, no-role-proof, or no-target-proof binding is accepted.",
+      "Valid auth is treated as authorization for local execution, shell/PTY, Builder/Oracle direct targeting, Tier 2+ work, customer sends, deploys, trades, memory/profile commits, bridge green, or model-processing proof.",
+      "Profile mismatch handling exposes raw side-profile content or raw mismatch payloads instead of redacted reason codes.",
+      "Phase 16 migration language implies that real auth exists before secret storage policy, session lifecycle, device registry, role discovery proof, deletion/export retention, and audit logging gates are reviewed."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "auth_binding_assessment",
+      "validation_report"
+    ],
+    "authBindingAssessmentSchema": "squidrun.mira_core.auth_binding_assessment.v0",
+    "validationReportSchema": "squidrun.mira_core.auth_binding_validation_report.v0"
+  },
+  "expectedAuthBindingAssessmentShape": {
+    "schema": "squidrun.mira_core.auth_binding_assessment.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "assessment_id",
+      "idempotency_key",
+      "generated_at",
+      "baseline_commit",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "auth_binding",
+      "scope_rules",
+      "token_envelope",
+      "authorization_boundary",
+      "profile_mismatch_handling",
+      "verification_report_contract",
+      "revocation_expiry_rules",
+      "no_secret_no_raw_guarantees",
+      "migration_path",
+      "acceptance_gate_summary",
+      "blocker_summary",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.auth_binding_assessment.v0",
+      "baseline_commit": "3904697",
+      "auth_binding.role": "architect",
+      "auth_binding.status": "validation_only_pending_real_auth",
+      "auth_binding.token_generated_now": false,
+      "auth_binding.session_created_now": false,
+      "scope_rules.main_profile_isolated": true,
+      "scope_rules.side_profile_isolated": true,
+      "scope_rules.current_session_freshness_required": true,
+      "scope_rules.device_registration_status_required": true,
+      "scope_rules.role_discovery_proof_required": true,
+      "scope_rules.target_proof_required": true,
+      "token_envelope.token_hash_only": true,
+      "token_envelope.token_stored": false,
+      "token_envelope.token_exported": false,
+      "token_envelope.raw_token_available": false,
+      "token_envelope.expiry_required": true,
+      "token_envelope.revocation_status_required": true,
+      "authorization_boundary.valid_auth_permits": "server_to_local_proposal_intent_validation_only",
+      "authorization_boundary.local_execution_authorized": false,
+      "authorization_boundary.shell_or_pty_authorized": false,
+      "authorization_boundary.builder_direct_target_authorized": false,
+      "authorization_boundary.oracle_direct_target_authorized": false,
+      "authorization_boundary.tier2_plus_authorized": false,
+      "authorization_boundary.customer_send_authorized": false,
+      "authorization_boundary.deploy_authorized": false,
+      "authorization_boundary.trade_authorized": false,
+      "authorization_boundary.memory_profile_commit_authorized": false,
+      "authorization_boundary.model_processing_proven": false,
+      "authorization_boundary.bridge_green_proven": false,
+      "profile_mismatch_handling.fail_closed": true,
+      "profile_mismatch_handling.side_profile_content_withheld": true,
+      "profile_mismatch_handling.raw_profile_content_exported": false,
+      "verification_report_contract.allowed_decisions": [
+        "accepted",
+        "pending",
+        "blocked",
+        "rejected"
+      ],
+      "revocation_expiry_rules.expired_sessions_blocked": true,
+      "revocation_expiry_rules.revoked_devices_blocked": true,
+      "revocation_expiry_rules.unknown_profiles_blocked": true,
+      "revocation_expiry_rules.unknown_devices_blocked": true,
+      "revocation_expiry_rules.stale_role_discovery_blocked": true,
+      "no_secret_no_raw_guarantees.raw_token_in_output": false,
+      "no_secret_no_raw_guarantees.session_secret_exported": false,
+      "no_secret_no_raw_guarantees.auth_secret_stored": false,
+      "no_secret_no_raw_guarantees.raw_profile_content_exported": false,
+      "migration_path.baseline_commit": "3904697",
+      "migration_path.real_auth_allowed_now": false,
+      "migration_path.no_real_token_generation_now": true,
+      "migration_path.no_session_creation_now": true,
+      "side_effect_result.no_runtime_implementation_performed": true,
+      "side_effect_result.no_server_process_started": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_or_store_write_performed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_auth_secret_or_token_created": true,
+      "side_effect_result.no_real_token_generation_performed": true,
+      "side_effect_result.no_session_created": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_external_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true
+    },
+    "authBindingRequiredFields": [
+      "principal_id",
+      "profile",
+      "device_id",
+      "session_id",
+      "role",
+      "tenant_user_boundary",
+      "issuer",
+      "issued_at",
+      "expires_at",
+      "status",
+      "token_generated_now",
+      "session_created_now",
+      "evidenceRefs"
+    ],
+    "authBindingRequiredValues": {
+      "role": "architect",
+      "tenant_user_boundary": "single_james_profile_scope_only_until_real_auth_exists",
+      "issuer": "mira-core-auth-validation-only",
+      "status": "validation_only_pending_real_auth",
+      "token_generated_now": false,
+      "session_created_now": false
+    },
+    "scopeRulesRequiredFields": [
+      "main_profile_isolated",
+      "side_profile_isolated",
+      "current_session_freshness_required",
+      "device_registration_status_required",
+      "role_discovery_proof_required",
+      "target_proof_required",
+      "profile_mismatch_rejected",
+      "session_mismatch_rejected",
+      "device_mismatch_rejected",
+      "role_mismatch_rejected",
+      "side_profile_access_blocked",
+      "stale_session_rejected",
+      "evidenceRefs"
+    ],
+    "scopeRulesRequiredValues": {
+      "main_profile_isolated": true,
+      "side_profile_isolated": true,
+      "current_session_freshness_required": true,
+      "device_registration_status_required": true,
+      "role_discovery_proof_required": true,
+      "target_proof_required": true,
+      "profile_mismatch_rejected": true,
+      "session_mismatch_rejected": true,
+      "device_mismatch_rejected": true,
+      "role_mismatch_rejected": true,
+      "side_profile_access_blocked": true,
+      "stale_session_rejected": true
+    },
+    "tokenEnvelopeRequiredFields": [
+      "token_id",
+      "token_hash",
+      "token_hash_only",
+      "token_stored",
+      "token_exported",
+      "raw_token_available",
+      "audience",
+      "scope_allowlist",
+      "nonce",
+      "issued_at",
+      "expires_at",
+      "max_clock_skew_ms",
+      "expiry_required",
+      "revocation_status",
+      "revocation_status_required",
+      "replay_window_ms",
+      "nonce_required",
+      "audience_required",
+      "scope_allowlist_required",
+      "evidenceRefs"
+    ],
+    "tokenEnvelopeRequiredValues": {
+      "token_hash_only": true,
+      "token_stored": false,
+      "token_exported": false,
+      "raw_token_available": false,
+      "audience": "squidrun-local-architect",
+      "scope_allowlist": [
+        "proposal:validate",
+        "intent:validate",
+        "status:read"
+      ],
+      "max_clock_skew_ms": 300000,
+      "expiry_required": true,
+      "revocation_status": "validation_only_not_real_token",
+      "revocation_status_required": true,
+      "replay_window_ms": 900000,
+      "nonce_required": true,
+      "audience_required": true,
+      "scope_allowlist_required": true
+    },
+    "authorizationBoundaryRequiredFields": [
+      "valid_auth_permits",
+      "local_execution_authorized",
+      "shell_or_pty_authorized",
+      "builder_direct_target_authorized",
+      "oracle_direct_target_authorized",
+      "tier2_plus_authorized",
+      "customer_send_authorized",
+      "deploy_authorized",
+      "trade_authorized",
+      "memory_profile_commit_authorized",
+      "model_processing_proven",
+      "bridge_green_proven",
+      "allowed_target_role",
+      "local_acceptance_required",
+      "evidenceRefs"
+    ],
+    "authorizationBoundaryRequiredValues": {
+      "valid_auth_permits": "server_to_local_proposal_intent_validation_only",
+      "local_execution_authorized": false,
+      "shell_or_pty_authorized": false,
+      "builder_direct_target_authorized": false,
+      "oracle_direct_target_authorized": false,
+      "tier2_plus_authorized": false,
+      "customer_send_authorized": false,
+      "deploy_authorized": false,
+      "trade_authorized": false,
+      "memory_profile_commit_authorized": false,
+      "model_processing_proven": false,
+      "bridge_green_proven": false,
+      "allowed_target_role": "architect",
+      "local_acceptance_required": true
+    },
+    "profileMismatchHandlingRequiredFields": [
+      "fail_closed",
+      "decision",
+      "mismatch_reason_codes",
+      "withheld_reason_summary_required",
+      "side_profile_content_withheld",
+      "raw_profile_content_exported",
+      "raw_mismatch_payload_exported",
+      "redacted_evidence_refs_only",
+      "safe_next_action",
+      "evidenceRefs"
+    ],
+    "profileMismatchHandlingRequiredValues": {
+      "fail_closed": true,
+      "decision": "blocked",
+      "mismatch_reason_codes": [
+        "profile_mismatch",
+        "session_mismatch",
+        "device_mismatch",
+        "side_profile_blocked"
+      ],
+      "withheld_reason_summary_required": true,
+      "side_profile_content_withheld": true,
+      "raw_profile_content_exported": false,
+      "raw_mismatch_payload_exported": false,
+      "redacted_evidence_refs_only": true
+    },
+    "verificationReportRequiredFields": [
+      "decision",
+      "allowed_decisions",
+      "accepted",
+      "pending",
+      "blocked",
+      "rejected",
+      "reasons",
+      "evidenceRefs",
+      "freshness_result",
+      "profile_device_session_binding_result",
+      "role_proof_result",
+      "replay_idempotency_result",
+      "authorization_granted",
+      "local_execution_authorized",
+      "model_processing_proven",
+      "bridge_green_proven",
+      "side_effect_result"
+    ],
+    "verificationReportRequiredValues": {
+      "allowed_decisions": [
+        "accepted",
+        "pending",
+        "blocked",
+        "rejected"
+      ],
+      "authorization_granted": false,
+      "local_execution_authorized": false,
+      "model_processing_proven": false,
+      "bridge_green_proven": false
+    },
+    "freshnessResultRequiredFields": [
+      "issued_at_required",
+      "expires_at_required",
+      "max_clock_skew_ms",
+      "expired_session_rejected",
+      "future_issued_at_rejected",
+      "stale_session_rejected"
+    ],
+    "freshnessResultRequiredValues": {
+      "issued_at_required": true,
+      "expires_at_required": true,
+      "max_clock_skew_ms": 300000,
+      "expired_session_rejected": true,
+      "future_issued_at_rejected": true,
+      "stale_session_rejected": true
+    },
+    "bindingResultRequiredFields": [
+      "profile_match_required",
+      "session_match_required",
+      "device_match_required",
+      "known_profile_required",
+      "registered_device_required",
+      "unknown_profile_blocked",
+      "unknown_device_blocked",
+      "side_profile_blocked"
+    ],
+    "bindingResultRequiredValues": {
+      "profile_match_required": true,
+      "session_match_required": true,
+      "device_match_required": true,
+      "known_profile_required": true,
+      "registered_device_required": true,
+      "unknown_profile_blocked": true,
+      "unknown_device_blocked": true,
+      "side_profile_blocked": true
+    },
+    "roleProofResultRequiredFields": [
+      "role_discovery_proof_required",
+      "target_proof_required",
+      "architect_role_required",
+      "stale_role_discovery_blocked",
+      "builder_direct_target_blocked",
+      "oracle_direct_target_blocked"
+    ],
+    "roleProofResultRequiredValues": {
+      "role_discovery_proof_required": true,
+      "target_proof_required": true,
+      "architect_role_required": true,
+      "stale_role_discovery_blocked": true,
+      "builder_direct_target_blocked": true,
+      "oracle_direct_target_blocked": true
+    },
+    "replayIdempotencyResultRequiredFields": [
+      "nonce_reuse_rejected",
+      "expired_token_rejected",
+      "revoked_token_rejected",
+      "duplicate_request_returns_same_decision",
+      "idempotency_key_inputs",
+      "scope_or_token_change_changes_idempotency_key"
+    ],
+    "replayIdempotencyResultRequiredValues": {
+      "nonce_reuse_rejected": true,
+      "expired_token_rejected": true,
+      "revoked_token_rejected": true,
+      "duplicate_request_returns_same_decision": true,
+      "scope_or_token_change_changes_idempotency_key": true
+    },
+    "revocationExpiryRulesRequiredFields": [
+      "expired_sessions_blocked",
+      "revoked_devices_blocked",
+      "unknown_profiles_blocked",
+      "unknown_devices_blocked",
+      "stale_role_discovery_blocked",
+      "revoked_token_blocked",
+      "revocation_event_refs_required",
+      "session_lifecycle_required",
+      "device_registry_required",
+      "role_discovery_freshness_required",
+      "evidenceRefs"
+    ],
+    "revocationExpiryRulesRequiredValues": {
+      "expired_sessions_blocked": true,
+      "revoked_devices_blocked": true,
+      "unknown_profiles_blocked": true,
+      "unknown_devices_blocked": true,
+      "stale_role_discovery_blocked": true,
+      "revoked_token_blocked": true,
+      "revocation_event_refs_required": true,
+      "session_lifecycle_required": true,
+      "device_registry_required": true,
+      "role_discovery_freshness_required": true
+    },
+    "noSecretNoRawRequiredFields": [
+      "raw_token_in_output",
+      "session_secret_exported",
+      "auth_secret_stored",
+      "raw_profile_content_exported",
+      "token_hash_only",
+      "profile_mismatch_redacted",
+      "side_profile_content_withheld",
+      "credential_material_allowed",
+      "evidenceRefs"
+    ],
+    "noSecretNoRawRequiredValues": {
+      "raw_token_in_output": false,
+      "session_secret_exported": false,
+      "auth_secret_stored": false,
+      "raw_profile_content_exported": false,
+      "token_hash_only": true,
+      "profile_mismatch_redacted": true,
+      "side_profile_content_withheld": true,
+      "credential_material_allowed": false
+    },
+    "migrationPathRequiredFields": [
+      "baseline_commit",
+      "phase_14_gap_blocker_id",
+      "real_auth_allowed_now",
+      "future_real_auth_allowed_after_gates",
+      "requires_secret_storage_policy_gate",
+      "requires_session_lifecycle_gate",
+      "requires_device_registry_gate",
+      "requires_role_discovery_proof_gate",
+      "requires_deletion_export_retention_gate",
+      "requires_audit_logging_gate",
+      "feature_flag_default",
+      "no_real_token_generation_now",
+      "no_session_creation_now",
+      "rollback_plan_required",
+      "evidenceRefs"
+    ],
+    "migrationPathRequiredValues": {
+      "baseline_commit": "3904697",
+      "phase_14_gap_blocker_id": "auth-session-device-profile-binding-specified",
+      "real_auth_allowed_now": false,
+      "future_real_auth_allowed_after_gates": true,
+      "requires_secret_storage_policy_gate": true,
+      "requires_session_lifecycle_gate": true,
+      "requires_device_registry_gate": true,
+      "requires_role_discovery_proof_gate": true,
+      "requires_deletion_export_retention_gate": true,
+      "requires_audit_logging_gate": true,
+      "feature_flag_default": "off",
+      "no_real_token_generation_now": true,
+      "no_session_creation_now": true,
+      "rollback_plan_required": true
+    },
+    "acceptanceGateSummaryRequiredFields": [
+      "gate_id",
+      "status",
+      "required_before_real_server",
+      "required_before_real_auth",
+      "evidenceRefs",
+      "blocked_until"
+    ],
+    "requiredAcceptanceGateIds": [
+      "auth-binding-record-shape-specified",
+      "session-device-profile-scope-rules-specified",
+      "token-envelope-hash-only-rules-specified",
+      "authorization-boundary-specified",
+      "profile-mismatch-fail-closed-specified",
+      "verification-report-shape-specified",
+      "revocation-expiry-rules-specified",
+      "no-secret-no-raw-guarantees-specified",
+      "migration-path-to-real-auth-gated",
+      "side-effect-free-validation-only"
+    ],
+    "blockerSummaryRequiredFields": [
+      "blocker_id",
+      "severity",
+      "status",
+      "blocked_because",
+      "safe_next_action",
+      "evidenceRefs"
+    ],
+    "requiredBlockerIds": [
+      "real-token-generation-blocked",
+      "session-creation-blocked",
+      "raw-token-secret-storage-blocked",
+      "profile-device-session-mismatch-blocked",
+      "stale-or-missing-role-proof-blocked",
+      "builder-oracle-direct-target-blocked",
+      "authorization-overclaim-blocked",
+      "real-server-auth-runtime-still-blocked"
+    ],
+    "evidenceRefsRequired": true,
+    "sideEffectRequiredFields": [
+      "no_runtime_implementation_performed",
+      "no_server_process_started",
+      "no_network_performed",
+      "no_database_or_store_write_performed",
+      "no_queue_created",
+      "no_auth_secret_or_token_created",
+      "no_real_token_generation_performed",
+      "no_session_created",
+      "no_device_registry_mutation_performed",
+      "no_role_discovery_mutation_performed",
+      "no_local_execution_performed",
+      "no_shell_or_pty_performed",
+      "no_browser_window_access_performed",
+      "no_external_send_performed",
+      "no_customer_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_memory_profile_commit_performed",
+      "no_file_mutation_performed_by_validator",
+      "no_durable_migration_performed"
+    ],
+    "sideEffectRequiredValues": {
+      "no_runtime_implementation_performed": true,
+      "no_server_process_started": true,
+      "no_network_performed": true,
+      "no_database_or_store_write_performed": true,
+      "no_queue_created": true,
+      "no_auth_secret_or_token_created": true,
+      "no_real_token_generation_performed": true,
+      "no_session_created": true,
+      "no_device_registry_mutation_performed": true,
+      "no_role_discovery_mutation_performed": true,
+      "no_local_execution_performed": true,
+      "no_shell_or_pty_performed": true,
+      "no_browser_window_access_performed": true,
+      "no_external_send_performed": true,
+      "no_customer_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_memory_profile_commit_performed": true,
+      "no_file_mutation_performed_by_validator": true,
+      "no_durable_migration_performed": true
+    }
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.auth_binding_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "validation_id",
+      "generated_at",
+      "baseline_commit",
+      "fixture_schema",
+      "assessment_schema",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "decision",
+      "reasons",
+      "auth_binding_result",
+      "scope_rules_result",
+      "token_envelope_result",
+      "authorization_boundary_result",
+      "profile_mismatch_result",
+      "verification_contract_result",
+      "revocation_expiry_result",
+      "no_secret_no_raw_result",
+      "migration_path_result",
+      "static_rule_results",
+      "acceptance_check_results",
+      "forbidden_output_result",
+      "summary_criteria_results",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "allowedDecisions": [
+      "accepted",
+      "pending",
+      "blocked",
+      "rejected"
+    ],
+    "requiredLiteralValues": {
+      "fixture_schema": "squidrun.mira_core.auth_binding_contract_fixture.v0",
+      "assessment_schema": "squidrun.mira_core.auth_binding_assessment.v0",
+      "baseline_commit": "3904697"
+    },
+    "sideEffectRequiredFields": [
+      "no_runtime_implementation_performed",
+      "no_server_process_started",
+      "no_network_performed",
+      "no_database_or_store_write_performed",
+      "no_queue_created",
+      "no_auth_secret_or_token_created",
+      "no_real_token_generation_performed",
+      "no_session_created",
+      "no_device_registry_mutation_performed",
+      "no_role_discovery_mutation_performed",
+      "no_local_execution_performed",
+      "no_shell_or_pty_performed",
+      "no_browser_window_access_performed",
+      "no_external_send_performed",
+      "no_customer_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_memory_profile_commit_performed",
+      "no_file_mutation_performed_by_validator",
+      "no_durable_migration_performed"
+    ],
+    "sideEffectRequiredValues": {
+      "no_runtime_implementation_performed": true,
+      "no_server_process_started": true,
+      "no_network_performed": true,
+      "no_database_or_store_write_performed": true,
+      "no_queue_created": true,
+      "no_auth_secret_or_token_created": true,
+      "no_real_token_generation_performed": true,
+      "no_session_created": true,
+      "no_device_registry_mutation_performed": true,
+      "no_role_discovery_mutation_performed": true,
+      "no_local_execution_performed": true,
+      "no_shell_or_pty_performed": true,
+      "no_browser_window_access_performed": true,
+      "no_external_send_performed": true,
+      "no_customer_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_memory_profile_commit_performed": true,
+      "no_file_mutation_performed_by_validator": true,
+      "no_durable_migration_performed": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "phase-16-baseline-3904697-pinned",
+      "must": "auth_binding_assessment.baseline_commit and validation_report.baseline_commit are exactly 3904697, the Phase 15 identity/signing baseline."
+    },
+    {
+      "id": "validation-only-no-real-auth",
+      "must": "Phase 16 emits validation records only; it does not start a server, perform network work, write stores or queues, generate tokens, create sessions, store auth secrets, mutate devices or role discovery, execute locally, send, deploy, trade, commit memory/profile data, or migrate durable state."
+    },
+    {
+      "id": "auth-binding-record-shape-required",
+      "must": "auth_binding includes principal_id, profile, device_id, session_id, role=architect, tenant/user boundary, issuer, issued_at, expires_at, and status."
+    },
+    {
+      "id": "session-device-profile-scope-rules-required",
+      "must": "Scope rules isolate main and side profiles, require current-session freshness, device registration status, role discovery proof, target proof, and fail closed on profile/session/device/role mismatch."
+    },
+    {
+      "id": "token-envelope-hash-only-required",
+      "must": "Token rules use token_id and token_hash only; tokens are never stored or exported, and audience, scope allowlist, nonce, clock skew, expiry, revocation status, and replay window are required."
+    },
+    {
+      "id": "authorization-boundary-validation-only",
+      "must": "Valid auth permits server-to-local proposal/intent validation only; it does not authorize local execution, shell/PTY, Builder/Oracle direct targeting, Tier 2+ actions, customer sends, deploys, trades, memory/profile commits, model-processing proof, or bridge green."
+    },
+    {
+      "id": "profile-mismatch-fail-closed-redacted",
+      "must": "Profile mismatch fails closed, withholds side-profile content, records redacted mismatch reason codes, and never exports raw profile or mismatch payload content."
+    },
+    {
+      "id": "verification-report-shape-required",
+      "must": "Verification report supports accepted, pending, blocked, and rejected decisions with reasons, evidenceRefs, freshness result, profile/device/session binding result, role proof result, and replay/idempotency result."
+    },
+    {
+      "id": "revocation-expiry-rules-required",
+      "must": "Expired sessions, revoked devices, unknown profiles, unknown devices, revoked tokens, and stale role discovery are blocked."
+    },
+    {
+      "id": "no-secret-no-raw-guarantees-required",
+      "must": "raw_token_in_output=false, session_secret_exported=false, auth_secret_stored=false, raw_profile_content_exported=false, token_hash_only=true, and credential_material_allowed=false are preserved."
+    },
+    {
+      "id": "architect-only-role-proof-required",
+      "must": "Future server-originated validation remains Architect-only and requires fresh role discovery proof plus Architect target proof; Builder and Oracle direct targets are blocked."
+    },
+    {
+      "id": "migration-real-auth-gated",
+      "must": "Real auth remains blocked until secret storage policy, session lifecycle, device registry, role-discovery proof, deletion/export retention, and audit logging gates exist and are reviewed."
+    },
+    {
+      "id": "required-gates-and-blockers-present",
+      "must": "All required Phase 16 acceptance gate IDs and blocker IDs are present and unique."
+    },
+    {
+      "id": "forbidden-output-strings-absent",
+      "must": "Assessment and validation output contain no secret-like strings, raw tokens, session secrets, raw profile content, raw private content, local execution claims, bridge/proof overclaims, direct Builder/Oracle target authorization, Tier 2+ authorization claims, or live side-effect claims."
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "Authorization: Bearer",
+    "access_token",
+    "refresh_token",
+    "raw_token_value",
+    "session_secret",
+    "auth secret",
+    "cookie=",
+    "Set-Cookie",
+    "BEGIN PRIVATE KEY",
+    "raw profile content",
+    "raw side-profile content",
+    "raw comms transcript",
+    "raw terminal scrollback",
+    "raw screenshot OCR",
+    "browser profile",
+    "customer phone",
+    "customer address",
+    "server executed local work",
+    "server can run shell",
+    "server can operate PTY",
+    "server can access browser",
+    "auth authorizes local execution",
+    "auth proves model processing",
+    "auth proves bridge green",
+    "socket alone proves bridge green",
+    "delivery acceptance proves model processing",
+    "builder direct target authorized",
+    "oracle direct target authorized",
+    "tier2 authorized by auth",
+    "tier3 authorized by auth",
+    "customer send authorized by auth",
+    "memory commit authorized by auth",
+    "server deployed",
+    "server placed trade"
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "baseline-3904697-pinned",
+      "focus": "baseline",
+      "input": {
+        "baseline_commit": "3904697"
+      },
+      "expected": {
+        "baseline_commit": "3904697",
+        "phase_14_gap_blocker_id": "auth-session-device-profile-binding-specified",
+        "real_auth_allowed_now": false
+      },
+      "zeroScoreBlockers": [
+        "wrong_baseline_commit",
+        "phase_15_identity_signing_treated_as_real_auth",
+        "real_auth_allowed_without_gates"
+      ],
+      "source_refs": [
+        "commit:3904697",
+        "ui/__tests__/fixtures/mira-core-identity-signing-contract.json"
+      ]
+    },
+    {
+      "id": "auth-binding-record-shape-present",
+      "focus": "auth binding",
+      "input": {
+        "auth_binding": {
+          "principal_id": "principal:james-main-validation",
+          "profile": "main",
+          "device_id": "VIGIL",
+          "session_id": "session-326",
+          "role": "architect",
+          "issuer": "mira-core-auth-validation-only",
+          "status": "validation_only_pending_real_auth"
+        }
+      },
+      "expected": {
+        "required_fields_present": true,
+        "role": "architect",
+        "token_generated_now": false,
+        "session_created_now": false
+      },
+      "zeroScoreBlockers": [
+        "principal_id_missing",
+        "role_not_architect",
+        "token_generated",
+        "session_created"
+      ],
+      "source_refs": [
+        "ARCH #268"
+      ]
+    },
+    {
+      "id": "main-vs-side-profile-isolated",
+      "focus": "profile isolation",
+      "input": {
+        "profile": "main",
+        "payload_profile": "side-profile",
+        "side_profile_content": "withheld"
+      },
+      "expected": {
+        "main_profile_isolated": true,
+        "side_profile_isolated": true,
+        "profile_mismatch_rejected": true,
+        "side_profile_access_blocked": true,
+        "side_profile_content_withheld": true,
+        "raw_profile_content_exported": false
+      },
+      "zeroScoreBlockers": [
+        "side_profile_allowed",
+        "profile_mismatch_allowed",
+        "side_profile_content_leaked",
+        "raw_profile_content_exported"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-profile-contract.json",
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+      ]
+    },
+    {
+      "id": "current-session-device-and-role-proof-required",
+      "focus": "scope proof",
+      "input": {
+        "session_id": "session-326",
+        "device_id": "VIGIL",
+        "role_discovery_proof": "fresh",
+        "target_proof": "architect_to_architect"
+      },
+      "expected": {
+        "current_session_freshness_required": true,
+        "device_registration_status_required": true,
+        "role_discovery_proof_required": true,
+        "target_proof_required": true,
+        "architect_role_required": true,
+        "stale_role_discovery_blocked": true
+      },
+      "zeroScoreBlockers": [
+        "stale_session_allowed",
+        "unknown_device_allowed",
+        "role_discovery_missing_allowed",
+        "target_proof_missing_allowed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "token-envelope-hash-only-no-secret",
+      "focus": "token envelope",
+      "input": {
+        "token_id": "token-validation-001",
+        "token_hash": "sha256:test-vector-token-hash",
+        "raw_token": null
+      },
+      "expected": {
+        "token_hash_only": true,
+        "token_stored": false,
+        "token_exported": false,
+        "raw_token_available": false,
+        "scope_allowlist": [
+          "proposal:validate",
+          "intent:validate",
+          "status:read"
+        ],
+        "nonce_required": true,
+        "expiry_required": true,
+        "revocation_status_required": true
+      },
+      "zeroScoreBlockers": [
+        "raw_token_visible",
+        "token_stored",
+        "token_exported",
+        "scope_allowlist_missing",
+        "nonce_missing",
+        "expiry_missing"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-identity-signing-contract.json"
+      ]
+    },
+    {
+      "id": "authorization-boundary-proposal-validation-only",
+      "focus": "authorization boundary",
+      "input": {
+        "auth_valid": true,
+        "requested_action": "intent_validation"
+      },
+      "expected": {
+        "valid_auth_permits": "server_to_local_proposal_intent_validation_only",
+        "local_execution_authorized": false,
+        "shell_or_pty_authorized": false,
+        "builder_direct_target_authorized": false,
+        "oracle_direct_target_authorized": false,
+        "tier2_plus_authorized": false,
+        "memory_profile_commit_authorized": false
+      },
+      "zeroScoreBlockers": [
+        "auth_authorizes_local_execution",
+        "auth_authorizes_shell_or_pty",
+        "builder_target_authorized",
+        "oracle_target_authorized",
+        "tier2_authorized",
+        "memory_commit_authorized"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "profile-mismatch-fails-closed-with-redacted-reason",
+      "focus": "profile mismatch",
+      "input": {
+        "expected_profile": "main",
+        "actual_profile": "side-profile",
+        "raw_payload": "withheld"
+      },
+      "expected": {
+        "decision": "blocked",
+        "fail_closed": true,
+        "mismatch_reason_codes": [
+          "profile_mismatch",
+          "session_mismatch",
+          "device_mismatch",
+          "side_profile_blocked"
+        ],
+        "raw_mismatch_payload_exported": false,
+        "redacted_evidence_refs_only": true
+      },
+      "zeroScoreBlockers": [
+        "profile_mismatch_allowed",
+        "raw_mismatch_payload_exported",
+        "side_profile_content_visible",
+        "no_mismatch_reason_recorded"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-profile-contract.json"
+      ]
+    },
+    {
+      "id": "verification-report-results-complete",
+      "focus": "verification report",
+      "input": {
+        "decision": "pending",
+        "auth_binding": "validation_only"
+      },
+      "expected": {
+        "allowed_decisions": [
+          "accepted",
+          "pending",
+          "blocked",
+          "rejected"
+        ],
+        "freshness_result_present": true,
+        "profile_device_session_binding_result_present": true,
+        "role_proof_result_present": true,
+        "replay_idempotency_result_present": true
+      },
+      "zeroScoreBlockers": [
+        "verification_decision_not_declared",
+        "freshness_result_missing",
+        "binding_result_missing",
+        "role_proof_result_missing",
+        "replay_result_missing"
+      ],
+      "source_refs": [
+        "ARCH #268"
+      ]
+    },
+    {
+      "id": "expiry-revocation-and-unknown-scope-blocked",
+      "focus": "revocation and expiry",
+      "input": {
+        "expired_session": true,
+        "revoked_device": true,
+        "unknown_profile": true,
+        "unknown_device": true,
+        "stale_role_discovery": true
+      },
+      "expected": {
+        "expired_sessions_blocked": true,
+        "revoked_devices_blocked": true,
+        "unknown_profiles_blocked": true,
+        "unknown_devices_blocked": true,
+        "stale_role_discovery_blocked": true,
+        "revoked_token_blocked": true
+      },
+      "zeroScoreBlockers": [
+        "expired_session_allowed",
+        "revoked_device_allowed",
+        "unknown_profile_allowed",
+        "unknown_device_allowed",
+        "stale_role_discovery_allowed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "replay-and-idempotency-enforced",
+      "focus": "replay and idempotency",
+      "input": {
+        "nonce_reused": true,
+        "expired_token": true,
+        "revoked_token": true,
+        "same_request_retry": true,
+        "scope_changed": true
+      },
+      "expected": {
+        "nonce_reuse_rejected": true,
+        "expired_token_rejected": true,
+        "revoked_token_rejected": true,
+        "duplicate_request_returns_same_decision": true,
+        "scope_or_token_change_changes_idempotency_key": true
+      },
+      "zeroScoreBlockers": [
+        "nonce_reuse_allowed",
+        "expired_token_allowed",
+        "revoked_token_allowed",
+        "duplicate_retry_creates_second_acceptance",
+        "scope_change_keeps_same_idempotency_key"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+      ]
+    },
+    {
+      "id": "no-secret-no-raw-guarantees",
+      "focus": "privacy and secrets",
+      "input": {
+        "raw_token_in_output": false,
+        "session_secret_exported": false,
+        "auth_secret_stored": false,
+        "raw_profile_content_exported": false
+      },
+      "expected": {
+        "raw_token_in_output": false,
+        "session_secret_exported": false,
+        "auth_secret_stored": false,
+        "raw_profile_content_exported": false,
+        "token_hash_only": true,
+        "profile_mismatch_redacted": true,
+        "credential_material_allowed": false
+      },
+      "zeroScoreBlockers": [
+        "raw_token_visible",
+        "session_secret_exported",
+        "auth_secret_stored",
+        "raw_profile_content_exported",
+        "credential_material_allowed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+      ]
+    },
+    {
+      "id": "auth-does-not-prove-bridge-or-model-processing",
+      "focus": "proof boundary",
+      "input": {
+        "auth_valid": true,
+        "socket_connected": true,
+        "delivery_accepted": true,
+        "recipient_quote_back": false
+      },
+      "expected": {
+        "model_processing_proven": false,
+        "bridge_green_proven": false,
+        "local_execution_authorized": false,
+        "valid_auth_permits": "server_to_local_proposal_intent_validation_only"
+      },
+      "zeroScoreBlockers": [
+        "auth_marked_model_processing_proof",
+        "auth_marked_bridge_green",
+        "socket_marked_bridge_green",
+        "delivery_acceptance_marked_model_processed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json",
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "real-auth-migration-stays-gated",
+      "focus": "migration path",
+      "input": {
+        "real_auth_requested": true,
+        "secret_storage_policy_gate": false,
+        "session_lifecycle_gate": false,
+        "device_registry_gate": false,
+        "role_discovery_proof_gate": false,
+        "deletion_export_retention_gate": false,
+        "audit_logging_gate": false
+      },
+      "expected": {
+        "real_auth_allowed_now": false,
+        "future_real_auth_allowed_after_gates": true,
+        "requires_secret_storage_policy_gate": true,
+        "requires_session_lifecycle_gate": true,
+        "requires_device_registry_gate": true,
+        "requires_role_discovery_proof_gate": true,
+        "requires_deletion_export_retention_gate": true,
+        "requires_audit_logging_gate": true,
+        "feature_flag_default": "off"
+      },
+      "zeroScoreBlockers": [
+        "real_auth_enabled_without_secret_policy",
+        "real_auth_enabled_without_session_lifecycle",
+        "real_auth_enabled_without_device_registry",
+        "real_auth_enabled_without_role_proof",
+        "real_auth_enabled_without_audit"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "phase-16-side-effect-truth",
+      "focus": "side effects",
+      "input": {
+        "phase": 16,
+        "artifact": "auth/session/device/profile binding validation contract"
+      },
+      "expected": {
+        "no_runtime_implementation_performed": true,
+        "no_server_process_started": true,
+        "no_network_performed": true,
+        "no_database_or_store_write_performed": true,
+        "no_queue_created": true,
+        "no_auth_secret_or_token_created": true,
+        "no_real_token_generation_performed": true,
+        "no_session_created": true,
+        "no_device_registry_mutation_performed": true,
+        "no_role_discovery_mutation_performed": true,
+        "no_local_execution_performed": true,
+        "no_shell_or_pty_performed": true,
+        "no_browser_window_access_performed": true,
+        "no_external_send_performed": true,
+        "no_customer_send_performed": true,
+        "no_deploy_performed": true,
+        "no_trade_performed": true,
+        "no_memory_profile_commit_performed": true,
+        "no_durable_migration_performed": true
+      },
+      "zeroScoreBlockers": [
+        "server_process_started",
+        "network_or_db_write_seen",
+        "queue_created",
+        "auth_secret_or_token_created",
+        "session_created",
+        "device_or_role_mutated",
+        "local_execution_seen",
+        "send_deploy_or_trade_seen",
+        "memory_profile_commit_seen",
+        "durable_migration_seen"
+      ],
+      "source_refs": [
+        "ARCH #268"
+      ]
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture parses as JSON.",
+    "Baseline commit is pinned to 3904697.",
+    "Phase 16 is validation/spec-only and performs no runtime, server, network, store, queue, auth, secret, token, session, device registry, role discovery, local execution, send, deploy, trade, memory/profile commit, or migration side effect.",
+    "Auth-binding output shape includes auth_binding_assessment and validation_report.",
+    "auth_binding requires principal_id, profile, device_id, session_id, role=architect, tenant/user boundary, issuer, issued_at, expires_at, and status.",
+    "Session/device/profile scope rules isolate main and side profiles and require current session freshness, device registration status, role discovery proof, and target proof.",
+    "Token/envelope rules use token_id and token_hash only; raw tokens are never stored or exported.",
+    "Token/envelope rules require audience, scope allowlist, nonce, clock skew, expiry, revocation status, and replay window.",
+    "Valid auth permits server-to-local proposal/intent validation only.",
+    "Valid auth does not permit local execution, shell/PTY, Builder/Oracle direct targeting, Tier 2+ action, customer send, deploy, trade, memory/profile commit, model-processing proof, or bridge green.",
+    "Profile mismatch fails closed, withholds side-profile content, and records redacted mismatch reason codes without raw content leakage.",
+    "Verification report supports accepted, pending, blocked, and rejected decisions with reasons, evidenceRefs, freshness result, profile/device/session binding result, role proof result, and replay/idempotency result.",
+    "Expired sessions, revoked devices, unknown profiles, unknown devices, stale role discovery, revoked tokens, and replayed tokens are blocked.",
+    "No-secret/no-raw guarantees require raw_token_in_output=false, session_secret_exported=false, auth_secret_stored=false, raw_profile_content_exported=false, token_hash_only=true, and credential_material_allowed=false.",
+    "Any future server-originated target remains Architect-only with local acceptance required.",
+    "Real auth can become buildable later only after secret storage policy, session lifecycle, device registry, role-discovery proof, deletion/export retention, and audit logging gates exist.",
+    "Acceptance gate IDs and blocker IDs are complete and unique.",
+    "Forbidden output substrings cover secrets, raw tokens, session secrets, raw profile content, raw private content, execution overclaims, bridge/proof overclaims, direct Builder/Oracle target authorization, Tier 2+ authorization overclaims, and live side-effect claims."
+  ]
+}
