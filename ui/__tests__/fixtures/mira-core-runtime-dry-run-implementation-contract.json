@@ -1,0 +1,872 @@
+{
+  "schema": "squidrun.mira_core.runtime_dry_run_implementation_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_29_disabled_local_dry_run_implementation_slice_contract",
+  "baseline": {
+    "commit": "d4aa1a5",
+    "subject": "Add Mira Core Phase 28 runtime dry-run review validation"
+  },
+  "sourceSpecs": [
+    "ui/__tests__/fixtures/mira-core-runtime-dry-run-review-contract.json",
+    "ui/modules/mira-core/runtime-dry-run-review.js",
+    "ui/scripts/hm-mira-core-runtime-dry-run-review.js",
+    "ui/__tests__/mira-core-runtime-dry-run-review.test.js"
+  ],
+  "purpose": [
+    "Define the first disabled, local-only, in-process dry-run implementation slice contract after Phase 28.",
+    "Begin converting Phase 28 prerequisites into concrete validation gates without enabling or authorizing live runtime.",
+    "Preserve operator-visible dry-run status, fail-closed controls, local-only boundaries, redacted telemetry preview, and proof truth before any runtime work exists."
+  ],
+  "nonGoals": [
+    "No runtime implementation.",
+    "No runtime authorization.",
+    "No real server, listener, route, HTTP, WebSocket, network, database, store, file, migration, queue, lease, auth, key, secret, env secret read, local execution, shell, PTY, browser, screenshot, OCR, send, deploy, trade, memory/profile commit, or output-file behavior.",
+    "No source-store writes and no mutation of Phase 28 artifacts.",
+    "No live local-arm execution, model-processing proof, bridge-green proof, or direct server targeting of Builder/Oracle."
+  ],
+  "builderPatchMustSatisfy": [
+    "Consume this Oracle fixture directly.",
+    "Emit runtime_dry_run_implementation_report plus validation_report only.",
+    "Keep the default implementation decision remain_disabled_dry_run_contract_only.",
+    "Treat eligible_for_future_disabled_local_dry_run_validation_slice as non-authorizing and not runtime proof.",
+    "Reject stale baseline d4aa1a5 or stale Phase 28 dependency.",
+    "Require explicit disabled-by-default runtime mode flag semantics.",
+    "Require live fail-closed kill switch wiring as a future gate without claiming live runtime.",
+    "Require dry-run path shape, local-only binding boundaries, redacted telemetry/audit preview, operator-visible status, and rollback/disable plan.",
+    "Keep config/auth/key/storage refs reference-only with no raw path, token, key, secret, or env secret read.",
+    "Reject runtime/listener/network/store/queue/lease/local-execution/external-action/proof overclaims.",
+    "CLI, if implemented later, must be stdout-only and ignore output-file flags."
+  ],
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "runtime_dry_run_implementation_report",
+      "validation_report"
+    ],
+    "runtimeDryRunImplementationReportSchema": "squidrun.mira_core.runtime_dry_run_implementation_report.v0",
+    "validationReportSchema": "squidrun.mira_core.runtime_dry_run_implementation_validation_report.v0"
+  },
+  "expectedRuntimeDryRunImplementationReportShape": {
+    "requiredFields": [
+      "schema",
+      "version",
+      "implementation_report_id",
+      "idempotency_key",
+      "generated_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "baseline_commit",
+      "phase_28_dependency",
+      "slice_id",
+      "slice_status",
+      "implementation_decision",
+      "implementation_decision_allowed_values",
+      "eligible_is_authorization",
+      "eligible_is_runtime_proof",
+      "runtime_available_now",
+      "runtime_started",
+      "runtime_mode_flag",
+      "kill_switch",
+      "dry_run_path",
+      "local_binding",
+      "telemetry_audit_preview",
+      "operator_status",
+      "rollback_disable_plan",
+      "reference_only_dependencies",
+      "phase28_prerequisite_status",
+      "proof_boundaries",
+      "target_boundaries",
+      "unsafe_action_policy",
+      "blocked_side_effects",
+      "tamper_case_coverage",
+      "next_safe_actions",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_dry_run_implementation_report.v0",
+      "version": "v0",
+      "baseline_commit": "d4aa1a5",
+      "phase_28_dependency.commit": "d4aa1a5",
+      "phase_28_dependency.phase": "phase_28_local_dry_run_preflight_review",
+      "phase_28_dependency.status": "committed_validation_only",
+      "phase_28_dependency.default_decision": "remain_pre_runtime_review",
+      "phase_28_dependency.eligible_state": "eligible_for_phase29_disabled_local_dry_run_implementation",
+      "phase_28_dependency.eligible_is_authorization": false,
+      "phase_28_dependency.eligible_is_runtime_proof": false,
+      "phase_28_dependency.phase29_prerequisite_count": 9,
+      "slice_id": "runtime_slice_0_disabled_local_dry_run_implementation",
+      "slice_status": "contract_ready_validation_only",
+      "implementation_decision": "remain_disabled_dry_run_contract_only",
+      "eligible_is_authorization": false,
+      "eligible_is_runtime_proof": false,
+      "runtime_available_now": false,
+      "runtime_started": false,
+      "runtime_mode_flag.flag_id": "MIRA_CORE_RUNTIME_DRY_RUN_MODE",
+      "runtime_mode_flag.default_state": "disabled",
+      "runtime_mode_flag.default_enabled": false,
+      "runtime_mode_flag.dev_only": true,
+      "runtime_mode_flag.local_only": true,
+      "runtime_mode_flag.operator_visible": true,
+      "runtime_mode_flag.non_authorizing": true,
+      "runtime_mode_flag.invalid_value_behavior": "fail_closed_to_status_preview",
+      "runtime_mode_flag.runtime_started_when_present": false,
+      "kill_switch.required": true,
+      "kill_switch.default_state": "engaged",
+      "kill_switch.visible": true,
+      "kill_switch.fail_closed": true,
+      "kill_switch.testable": true,
+      "kill_switch.ignored_allowed": false,
+      "kill_switch.side_effect_on_toggle": false,
+      "dry_run_path.path_type": "in_process_status_preview_only",
+      "dry_run_path.deterministic": true,
+      "dry_run_path.idempotent": true,
+      "dry_run_path.preview_only": true,
+      "dry_run_path.executes_local_work": false,
+      "dry_run_path.creates_queue_or_lease": false,
+      "dry_run_path.writes_store_or_file": false,
+      "local_binding.binding_mode": "in_process_or_loopback_only",
+      "local_binding.loopback_only": true,
+      "local_binding.public_interface_allowed": false,
+      "local_binding.remote_interface_allowed": false,
+      "local_binding.listener_opened_now": false,
+      "local_binding.network_performed_now": false,
+      "local_binding.no_listener_unless_separately_gated": true,
+      "telemetry_audit_preview.redacted_preview_only": true,
+      "telemetry_audit_preview.raw_payload_allowed": false,
+      "telemetry_audit_preview.sink_reference_only": true,
+      "telemetry_audit_preview.store_write_now": false,
+      "telemetry_audit_preview.file_write_now": false,
+      "telemetry_audit_preview.db_write_now": false,
+      "operator_status.visible": true,
+      "operator_status.status_only": true,
+      "operator_status.authorizes_runtime": false,
+      "rollback_disable_plan.disable_idempotent": true,
+      "rollback_disable_plan.deletes_data": false,
+      "rollback_disable_plan.resurrects_blocked_state": false,
+      "rollback_disable_plan.rollback_executed_now": false,
+      "reference_only_dependencies.config_ref.reference_only": true,
+      "reference_only_dependencies.auth_ref.reference_only": true,
+      "reference_only_dependencies.key_ref.reference_only": true,
+      "reference_only_dependencies.storage_ref.reference_only": true,
+      "reference_only_dependencies.raw_path_allowed": false,
+      "reference_only_dependencies.raw_secret_allowed": false,
+      "reference_only_dependencies.env_secret_read": false,
+      "proof_boundaries.runtime_mode_flag_is_runtime_proof": false,
+      "proof_boundaries.kill_switch_wired_is_runtime_proof": false,
+      "proof_boundaries.dry_run_response_is_live_execution_proof": false,
+      "proof_boundaries.socket_is_bridge_green_proof": false,
+      "proof_boundaries.delivery_acceptance_is_model_processing_proof": false,
+      "proof_boundaries.serverCanExecuteLocal": false,
+      "proof_boundaries.server_can_execute_local_arms": false,
+      "target_boundaries.allowed_server_originated_target": "architect",
+      "target_boundaries.builder_direct_server_target_allowed": false,
+      "target_boundaries.oracle_direct_server_target_allowed": false,
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    },
+    "phase28DependencyRequiredFields": [
+      "phase",
+      "commit",
+      "fixture_path",
+      "module_path",
+      "cli_path",
+      "test_path",
+      "status",
+      "default_decision",
+      "eligible_state",
+      "eligible_is_authorization",
+      "eligible_is_runtime_proof",
+      "phase29_prerequisite_count",
+      "evidenceRefs"
+    ],
+    "phase28DependencyRequiredValues": {
+      "phase": "phase_28_local_dry_run_preflight_review",
+      "commit": "d4aa1a5",
+      "default_decision": "remain_pre_runtime_review",
+      "eligible_state": "eligible_for_phase29_disabled_local_dry_run_implementation",
+      "eligible_is_authorization": false,
+      "eligible_is_runtime_proof": false,
+      "phase29_prerequisite_count": 9
+    },
+    "implementationDecisionAllowedValues": [
+      "remain_disabled_dry_run_contract_only",
+      "blocked",
+      "eligible_for_future_disabled_local_dry_run_validation_slice"
+    ],
+    "requiredDefaultDecision": "remain_disabled_dry_run_contract_only",
+    "eligibleDecisionRequiredValues": {
+      "eligible_is_authorization": false,
+      "eligible_is_runtime_proof": false,
+      "runtime_available_now": false,
+      "runtime_started": false,
+      "requires_future_review": true,
+      "requires_operator_review": true
+    },
+    "runtimeModeFlagRequiredFields": [
+      "flag_id",
+      "default_state",
+      "default_enabled",
+      "dev_only",
+      "local_only",
+      "operator_visible",
+      "non_authorizing",
+      "invalid_value_behavior",
+      "runtime_started_when_present",
+      "evidenceRefs"
+    ],
+    "killSwitchRequiredFields": [
+      "required",
+      "default_state",
+      "visible",
+      "fail_closed",
+      "testable",
+      "ignored_allowed",
+      "side_effect_on_toggle",
+      "evidenceRefs"
+    ],
+    "dryRunPathRequiredFields": [
+      "path_type",
+      "request_shape_ref",
+      "response_shape_ref",
+      "deterministic",
+      "idempotent",
+      "preview_only",
+      "executes_local_work",
+      "creates_queue_or_lease",
+      "writes_store_or_file",
+      "evidenceRefs"
+    ],
+    "localBindingRequiredFields": [
+      "binding_mode",
+      "allowed_hosts",
+      "loopback_only",
+      "public_interface_allowed",
+      "remote_interface_allowed",
+      "listener_opened_now",
+      "network_performed_now",
+      "no_listener_unless_separately_gated",
+      "evidenceRefs"
+    ],
+    "telemetryAuditPreviewRequiredFields": [
+      "redacted_preview_only",
+      "raw_payload_allowed",
+      "sink_reference_only",
+      "store_write_now",
+      "file_write_now",
+      "db_write_now",
+      "audit_event_shape_ref",
+      "evidenceRefs"
+    ],
+    "operatorStatusRequiredFields": [
+      "visible",
+      "status_only",
+      "authorizes_runtime",
+      "fields",
+      "evidenceRefs"
+    ],
+    "rollbackDisablePlanRequiredFields": [
+      "disable_idempotent",
+      "deletes_data",
+      "resurrects_blocked_state",
+      "rollback_executed_now",
+      "evidenceRefs"
+    ],
+    "referenceOnlyDependencyRequiredFields": [
+      "config_ref",
+      "auth_ref",
+      "key_ref",
+      "storage_ref",
+      "raw_path_allowed",
+      "raw_secret_allowed",
+      "env_secret_read",
+      "evidenceRefs"
+    ],
+    "phase28PrerequisiteRequiredIds": [
+      "runtime-mode-flag-implementation",
+      "live-kill-switch-wiring",
+      "tested-dry-run-runtime-path",
+      "actual-local-only-binding",
+      "telemetry-audit-sink",
+      "storage-env-config-key-auth-refs",
+      "operator-ui-status-surface",
+      "rollback-exercise",
+      "end-to-end-runtime-proof"
+    ],
+    "phase28PrerequisiteStatusRequiredFields": [
+      "prerequisite_id",
+      "phase29_contract_gate",
+      "status",
+      "satisfies_phase28_now",
+      "authorizes_runtime",
+      "requires_builder_implementation_test",
+      "evidenceRefs"
+    ],
+    "phase28PrerequisiteStatusRequiredValues": {
+      "status": "defined_for_future_validation",
+      "satisfies_phase28_now": false,
+      "authorizes_runtime": false,
+      "requires_builder_implementation_test": true
+    },
+    "proofBoundaryRequiredFields": [
+      "runtime_mode_flag_is_runtime_proof",
+      "kill_switch_wired_is_runtime_proof",
+      "dry_run_response_is_live_execution_proof",
+      "socket_is_bridge_green_proof",
+      "delivery_acceptance_is_model_processing_proof",
+      "serverCanExecuteLocal",
+      "server_can_execute_local_arms"
+    ],
+    "targetBoundaryRequiredFields": [
+      "allowed_server_originated_target",
+      "builder_direct_server_target_allowed",
+      "oracle_direct_server_target_allowed",
+      "local_architect_acceptance_required"
+    ],
+    "blockedSideEffectRequiredIds": [
+      "runtime",
+      "server-listener-routes",
+      "network",
+      "db-store-file-migration",
+      "queue-lease",
+      "auth-key-secret-env",
+      "local-execution-shell-pty-browser",
+      "send-deploy-trade-customer-money",
+      "output-file"
+    ],
+    "nextSafeActionRequiredIds": [
+      "implement-phase29-validator-only",
+      "review-phase29-before-any-runtime-enable-or-dry-run"
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_runtime_performed",
+      "no_server_performed",
+      "no_listener_or_route_bound",
+      "no_network_performed",
+      "no_database_write_performed",
+      "no_store_write_performed",
+      "no_file_write_performed",
+      "no_migration_executed",
+      "no_queue_created",
+      "no_lease_created",
+      "no_auth_change_performed",
+      "no_key_secret_operation_performed",
+      "no_local_execution_performed",
+      "no_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_output_file_written"
+    ]
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.runtime_dry_run_implementation_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "report_id",
+      "generated_at",
+      "baseline_commit",
+      "decision",
+      "reasons",
+      "phase28_dependency_result",
+      "implementation_decision_result",
+      "runtime_mode_flag_result",
+      "kill_switch_result",
+      "dry_run_path_result",
+      "local_binding_result",
+      "telemetry_audit_result",
+      "operator_status_result",
+      "rollback_disable_result",
+      "reference_only_dependency_result",
+      "phase28_prerequisite_result",
+      "proof_boundary_result",
+      "target_boundary_result",
+      "unsafe_action_result",
+      "side_effect_result",
+      "acceptance_checks",
+      "failed_checks",
+      "evidenceRefs"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_dry_run_implementation_validation_report.v0",
+      "version": "v0",
+      "baseline_commit": "d4aa1a5",
+      "decision": "accepted",
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "baseline-d4aa1a5-pinned",
+      "description": "Phase 29 contract baseline must stay pinned to d4aa1a5.",
+      "failClosedWhen": "Baseline commit changes or is missing."
+    },
+    {
+      "id": "phase28-dependency-d4aa1a5-pinned",
+      "description": "Phase 28 runtime-dry-run-review dependency must point to commit d4aa1a5 and remain validation-only.",
+      "failClosedWhen": "Phase 28 dependency commit, fixture path, module path, status, default decision, or non-authorizing eligible flags are stale."
+    },
+    {
+      "id": "decision-default-remain-contract-only",
+      "description": "Default implementation decision remains disabled dry-run contract-only.",
+      "failClosedWhen": "Default decision is eligible, runtime-ready, runtime-started, authorized, or live."
+    },
+    {
+      "id": "eligible-future-validation-slice-non-authorizing",
+      "description": "Eligible for future disabled local dry-run validation slice is a future review state only.",
+      "failClosedWhen": "Eligible is treated as authorization, runtime proof, execution permission, or side-effect permission."
+    },
+    {
+      "id": "runtime-mode-flag-disabled-local-dev-visible",
+      "description": "Runtime mode flag defaults disabled/off and remains dev-only, local-only, operator-visible, and non-authorizing.",
+      "failClosedWhen": "Flag is default-on, hidden, non-local, non-dev, authorizing, runtime-starting, or not fail-closed for invalid values."
+    },
+    {
+      "id": "kill-switch-live-gate-fail-closed",
+      "description": "Kill switch is required, visible, fail-closed, testable, and cannot be ignored.",
+      "failClosedWhen": "Kill switch is missing, default-open, ignored, not visible, not testable, or toggling it performs side effects."
+    },
+    {
+      "id": "dry-run-path-in-process-preview-only",
+      "description": "Dry-run path is in-process status preview only, deterministic, idempotent, and side-effect free.",
+      "failClosedWhen": "Dry-run path executes local work, creates queue/lease, writes store/file, sends/deploys/trades, or claims live processing proof."
+    },
+    {
+      "id": "local-binding-loopback-only-no-listener-now",
+      "description": "Local binding remains in-process or loopback-only and opens no listener/network in this phase.",
+      "failClosedWhen": "Allowed hosts include public interfaces or the report claims listener, route, port, remote interface, or network activity."
+    },
+    {
+      "id": "telemetry-audit-redacted-preview-only",
+      "description": "Telemetry/audit is redacted preview only, with sink references only and no writes/raw payload.",
+      "failClosedWhen": "Telemetry writes to store/file/db, emits raw payload, or claims a real sink."
+    },
+    {
+      "id": "operator-status-visible-non-authorizing",
+      "description": "Operator status surface is visible and status-only.",
+      "failClosedWhen": "Operator status authorizes runtime, hides kill switch/mode/boundary state, or reports proof not actually available."
+    },
+    {
+      "id": "rollback-disable-idempotent-no-delete-no-resurrection",
+      "description": "Rollback/disable is idempotent, non-destructive, and cannot resurrect blocked state.",
+      "failClosedWhen": "Rollback deletes data, revives blocked runtime/action state, or claims execution now."
+    },
+    {
+      "id": "config-auth-key-storage-refs-reference-only",
+      "description": "Config/auth/key/storage refs remain reference-only with no raw path/secret and no env secret read.",
+      "failClosedWhen": "Output includes raw path, raw secret, token, private/data key, env secret read, or real auth/key/storage operation."
+    },
+    {
+      "id": "phase28-prerequisites-carried-as-future-gates",
+      "description": "All nine Phase 28 prerequisites remain visible as future validation gates and do not satisfy or authorize runtime now.",
+      "failClosedWhen": "Any prerequisite is missing, marked satisfied now, marked authorizing, or not tied to a Phase 29 contract gate."
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "description": "Runtime flag, kill switch, dry-run response, socket, and delivery acceptance are not runtime/model/bridge/local-arms proof.",
+      "failClosedWhen": "Any proof boundary is flipped true or used to authorize runtime/local execution."
+    },
+    {
+      "id": "direct-builder-oracle-targets-blocked",
+      "description": "Server-originated direct Builder/Oracle targets remain blocked; local Architect acceptance remains required.",
+      "failClosedWhen": "Builder or Oracle are allowed as direct server targets or local Architect acceptance is bypassed."
+    },
+    {
+      "id": "unsafe-action-drift-rejected",
+      "description": "Dry-run implementation planning may not drift into customer sends, deploys, trades, money movement, external sends, captures, memory commits, Tier2+, or local execution.",
+      "failClosedWhen": "Next safe actions, statuses, decisions, or payload summaries authorize unsafe work."
+    },
+    {
+      "id": "side-effects-blocked-now",
+      "description": "No runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior.",
+      "failClosedWhen": "Any side-effect truth field is false or any side-effect counter is non-zero."
+    },
+    {
+      "id": "forbidden-output-strings-absent",
+      "description": "Raw private content, raw paths, secrets, tokens, keys, terminal scrollback, browser state, screenshots, OCR, customer private content, plaintext, ciphertext, decrypted payloads, and proof-overclaim strings are blocked.",
+      "failClosedWhen": "Forbidden raw/private/secret/runtime proof substrings appear in output values."
+    },
+    {
+      "id": "idempotency-sensitive-to-dry-run-implementation-inputs",
+      "description": "Idempotency is stable for equivalent inputs and sensitive to baseline, Phase 28 dependency, controls, gates, proof boundaries, and decision changes.",
+      "failClosedWhen": "Equivalent inputs produce different keys or changed inputs reuse a key."
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "baseline-d4aa1a5-current",
+      "expects": "baseline_commit is d4aa1a5."
+    },
+    {
+      "id": "phase28-dependency-current",
+      "expects": "phase_28_dependency commit is d4aa1a5 and status is committed_validation_only."
+    },
+    {
+      "id": "phase28-review-non-authorizing",
+      "expects": "Phase 28 eligible state remains non-authorizing and not runtime proof."
+    },
+    {
+      "id": "decision-default-contract-only",
+      "expects": "Default implementation_decision is remain_disabled_dry_run_contract_only."
+    },
+    {
+      "id": "eligible-future-validation-non-authorizing",
+      "expects": "eligible_for_future_disabled_local_dry_run_validation_slice does not authorize runtime or prove runtime."
+    },
+    {
+      "id": "runtime-mode-flag-disabled-local-dev-visible",
+      "expects": "Runtime mode flag is disabled by default, dev-only, local-only, operator-visible, and non-authorizing."
+    },
+    {
+      "id": "runtime-mode-invalid-values-fail-closed",
+      "expects": "Invalid flag values fail closed to status preview."
+    },
+    {
+      "id": "kill-switch-visible-fail-closed-testable",
+      "expects": "Kill switch is required, visible, fail-closed, testable, default engaged, and cannot be ignored."
+    },
+    {
+      "id": "dry-run-path-preview-only",
+      "expects": "Dry-run path is deterministic in-process status preview only and performs no work."
+    },
+    {
+      "id": "local-binding-in-process-or-loopback-only",
+      "expects": "Binding is in-process or loopback-only, with no public/remote interface, listener, route, port, or network now."
+    },
+    {
+      "id": "telemetry-audit-redacted-preview-only",
+      "expects": "Telemetry/audit preview is redacted, sink-reference-only, and writes no store/file/db."
+    },
+    {
+      "id": "operator-status-visible-status-only",
+      "expects": "Operator status is visible, status-only, and does not authorize runtime."
+    },
+    {
+      "id": "rollback-disable-idempotent",
+      "expects": "Rollback/disable is idempotent, non-destructive, and cannot resurrect blocked state."
+    },
+    {
+      "id": "reference-only-dependencies-safe",
+      "expects": "Config/auth/key/storage refs are reference-only, with no raw path/secret/env secret read."
+    },
+    {
+      "id": "phase28-prerequisite-gates-complete",
+      "expects": "All nine Phase 28 prerequisite IDs are present as future Phase 29 validation gates."
+    },
+    {
+      "id": "phase28-prerequisites-not-satisfied-now",
+      "expects": "Each Phase 28 prerequisite has satisfies_phase28_now=false and authorizes_runtime=false."
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "expects": "Runtime flag, kill switch, dry-run response, socket, and delivery acceptance are not runtime/model/bridge/local-arms proof."
+    },
+    {
+      "id": "direct-builder-oracle-targets-blocked",
+      "expects": "Direct Builder/Oracle server target flags remain false and local Architect acceptance is required."
+    },
+    {
+      "id": "side-effect-truth-all-blocked",
+      "expects": "All no_* side-effect truth fields are true and counters are zero."
+    },
+    {
+      "id": "stale-baseline-rejected",
+      "expects": "Changing baseline d4aa1a5 fails validation."
+    },
+    {
+      "id": "stale-phase28-dependency-rejected",
+      "expects": "Changing Phase 28 dependency commit, status, or default decision fails validation."
+    },
+    {
+      "id": "eligible-as-authorization-rejected",
+      "expects": "Eligible decision with authorization/proof/runtime flags fails validation."
+    },
+    {
+      "id": "default-on-runtime-flag-rejected",
+      "expects": "Default-on runtime flag, runtime_started=true, or authorizing flag fails validation."
+    },
+    {
+      "id": "missing-kill-switch-rejected",
+      "expects": "Missing or ignored kill switch fails validation."
+    },
+    {
+      "id": "dry-run-execution-overclaim-rejected",
+      "expects": "Dry-run path that executes local work or writes/queues/leases fails validation."
+    },
+    {
+      "id": "non-loopback-binding-rejected",
+      "expects": "Public/remote interface, listener, route, port, or network overclaim fails validation."
+    },
+    {
+      "id": "telemetry-write-or-raw-payload-rejected",
+      "expects": "Telemetry/audit store/file/db write or raw payload fails validation."
+    },
+    {
+      "id": "raw-secret-path-leak-rejected",
+      "expects": "Raw secret/path/private/token/key/payload leakage fails validation."
+    },
+    {
+      "id": "unsafe-action-drift-rejected",
+      "expects": "Customer send, deploy, trade, money movement, external send, memory commit, capture, or local execution drift fails validation."
+    },
+    {
+      "id": "fake-proof-rejected",
+      "expects": "Runtime flag, kill switch, dry-run response, socket, delivery, model-processing, or bridge-green proof overclaim fails validation."
+    },
+    {
+      "id": "missing-phase28-prerequisite-gate-rejected",
+      "expects": "Omitting any Phase 28 prerequisite gate fails validation."
+    },
+    {
+      "id": "phase28-prerequisite-satisfied-now-rejected",
+      "expects": "Marking a Phase 28 prerequisite satisfied now or authorizing runtime fails validation."
+    },
+    {
+      "id": "idempotency-sensitive-to-implementation-inputs",
+      "expects": "Idempotency changes when baseline, dependency, flag, kill switch, path, binding, proof, or prerequisite gates change."
+    }
+  ],
+  "tamperCases": [
+    {
+      "id": "tamper-stale-baseline",
+      "mutation": "Change baseline_commit from d4aa1a5 to e7a8dbc.",
+      "expected_failure_checks": [
+        "baseline-d4aa1a5-current",
+        "stale-baseline-rejected"
+      ]
+    },
+    {
+      "id": "tamper-stale-phase28-dependency",
+      "mutation": "Change phase_28_dependency.commit from d4aa1a5 to e7a8dbc or status away from committed_validation_only.",
+      "expected_failure_checks": [
+        "phase28-dependency-current",
+        "stale-phase28-dependency-rejected"
+      ]
+    },
+    {
+      "id": "tamper-eligible-as-authorization",
+      "mutation": "Set implementation_decision=eligible_for_future_disabled_local_dry_run_validation_slice and eligible_is_authorization=true or eligible_is_runtime_proof=true.",
+      "expected_failure_checks": [
+        "eligible-future-validation-non-authorizing",
+        "eligible-as-authorization-rejected"
+      ]
+    },
+    {
+      "id": "tamper-default-on-runtime-flag",
+      "mutation": "Set runtime_mode_flag.default_enabled=true, runtime_started_when_present=true, or runtime_started=true.",
+      "expected_failure_checks": [
+        "runtime-mode-flag-disabled-local-dev-visible",
+        "default-on-runtime-flag-rejected"
+      ]
+    },
+    {
+      "id": "tamper-missing-kill-switch",
+      "mutation": "Remove kill_switch or set kill_switch.ignored_allowed=true.",
+      "expected_failure_checks": [
+        "kill-switch-visible-fail-closed-testable",
+        "missing-kill-switch-rejected"
+      ]
+    },
+    {
+      "id": "tamper-dry-run-executes-work",
+      "mutation": "Set dry_run_path.executes_local_work=true or dry_run_path.creates_queue_or_lease=true.",
+      "expected_failure_checks": [
+        "dry-run-path-preview-only",
+        "dry-run-execution-overclaim-rejected"
+      ]
+    },
+    {
+      "id": "tamper-non-loopback-binding",
+      "mutation": "Set local_binding.allowed_hosts=['0.0.0.0'], public_interface_allowed=true, listener_opened_now=true, or network_performed_now=true.",
+      "expected_failure_checks": [
+        "local-binding-in-process-or-loopback-only",
+        "non-loopback-binding-rejected"
+      ]
+    },
+    {
+      "id": "tamper-telemetry-write",
+      "mutation": "Set telemetry_audit_preview.store_write_now=true or raw_payload_allowed=true.",
+      "expected_failure_checks": [
+        "telemetry-audit-redacted-preview-only",
+        "telemetry-write-or-raw-payload-rejected"
+      ]
+    },
+    {
+      "id": "tamper-raw-secret-path-leak",
+      "mutation": "Insert bearer token, env secret read, raw path, private key, customer private content, plaintext, ciphertext, or decrypted payload into output string values.",
+      "expected_failure_checks": [
+        "raw-secret-path-leak-rejected",
+        "forbidden-output-strings-absent"
+      ]
+    },
+    {
+      "id": "tamper-unsafe-action-drift",
+      "mutation": "Add next safe action that says send email to customer, message the client, approve deploy, move money, external send, capture screen, commit memory, or execute shell.",
+      "expected_failure_checks": [
+        "unsafe-action-drift-rejected"
+      ]
+    },
+    {
+      "id": "tamper-fake-proof",
+      "mutation": "Set runtime_mode_flag_is_runtime_proof=true, dry_run_response_is_live_execution_proof=true, socket_is_bridge_green_proof=true, or delivery_acceptance_is_model_processing_proof=true.",
+      "expected_failure_checks": [
+        "proof-boundaries-preserved",
+        "fake-proof-rejected"
+      ]
+    },
+    {
+      "id": "tamper-direct-builder-oracle-target",
+      "mutation": "Set builder_direct_server_target_allowed=true or oracle_direct_server_target_allowed=true.",
+      "expected_failure_checks": [
+        "direct-builder-oracle-targets-blocked"
+      ]
+    },
+    {
+      "id": "tamper-missing-phase28-gate",
+      "mutation": "Remove runtime-mode-flag-implementation or end-to-end-runtime-proof from phase28_prerequisite_status.",
+      "expected_failure_checks": [
+        "phase28-prerequisite-gates-complete",
+        "missing-phase28-prerequisite-gate-rejected"
+      ]
+    },
+    {
+      "id": "tamper-prerequisite-satisfied-now",
+      "mutation": "Set any phase28_prerequisite_status.satisfies_phase28_now=true or authorizes_runtime=true.",
+      "expected_failure_checks": [
+        "phase28-prerequisites-not-satisfied-now",
+        "phase28-prerequisite-satisfied-now-rejected"
+      ]
+    },
+    {
+      "id": "tamper-side-effect-lie",
+      "mutation": "Set any side_effect_result no_* field false or a side-effect counter above zero.",
+      "expected_failure_checks": [
+        "side-effect-truth-all-blocked",
+        "side-effects-blocked-now"
+      ]
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "runtime authorized",
+    "runtime available now",
+    "runtime started",
+    "live runtime",
+    "implementation authorizes runtime",
+    "eligible authorizes runtime",
+    "eligible proves runtime",
+    "server started",
+    "listener bound",
+    "route registered",
+    "http server listening",
+    "websocket listening",
+    "network request performed",
+    "public interface allowed",
+    "remote interface allowed",
+    "0.0.0.0",
+    "port opened",
+    "port bound",
+    "database write performed",
+    "store write performed",
+    "file write performed",
+    "migration executed",
+    "queue created",
+    "lease created",
+    "auth changed",
+    "key generated",
+    "secret read",
+    "env secret read",
+    "raw path",
+    "local execution performed",
+    "shell executed",
+    "pty executed",
+    "browser state captured",
+    "screenshot captured",
+    "ocr captured",
+    "memory committed",
+    "profile committed",
+    "customer send performed",
+    "customer email sent",
+    "client message sent",
+    "external send performed",
+    "deploy performed",
+    "trade performed",
+    "money moved",
+    "output file written",
+    "runtime flag proves runtime",
+    "kill switch proves runtime",
+    "dry run response proves execution",
+    "socket proves bridge green",
+    "delivery acceptance proves model processing",
+    "server can execute local arms",
+    "direct builder target allowed",
+    "direct oracle target allowed",
+    "kill switch ignored",
+    "dry run bypassed",
+    "telemetry written",
+    "audit written",
+    "raw terminal scrollback",
+    "raw browser state",
+    "raw screenshot",
+    "raw ocr",
+    "raw customer private",
+    "side-profile payload",
+    "source-store payload",
+    "bearer token",
+    "session secret",
+    "auth secret value",
+    "private key",
+    "data key",
+    "plaintext payload",
+    "ciphertext payload",
+    "decrypted payload"
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture pins Phase 29 baseline d4aa1a5 and Phase 28 dependency d4aa1a5.",
+    "Fixture defines runtime_dry_run_implementation_report plus validation_report output shapes.",
+    "Default decision is remain_disabled_dry_run_contract_only; eligible_for_future_disabled_local_dry_run_validation_slice is non-authorizing and not runtime proof.",
+    "Runtime mode flag semantics are disabled-by-default, dev-only, local-only, operator-visible, non-authorizing, and fail-closed on invalid values.",
+    "Kill switch is required, visible, fail-closed, testable, default engaged, and cannot be ignored.",
+    "Dry-run path is deterministic, idempotent, in-process status preview only, and executes no local work.",
+    "Local binding is in-process or loopback-only with no public/remote interface, listener, route, port, or network now.",
+    "Telemetry/audit preview is redacted and sink-reference-only with no raw payload or store/file/db writes.",
+    "Operator status is visible and status-only; rollback/disable is idempotent, non-destructive, and cannot resurrect blocked state.",
+    "Config/auth/key/storage refs remain reference-only with no raw path, token, key, secret, or env secret read.",
+    "All nine Phase 28 prerequisites appear as future gates; none are satisfied now or runtime-authorizing.",
+    "Proof boundaries preserve that runtime flag, kill switch, dry-run response, socket, and delivery acceptance are not runtime/model/bridge/local-arms proof.",
+    "Direct Builder/Oracle server targets remain blocked and local Architect acceptance remains required.",
+    "Static rules and tamper cases cover stale baseline/dependency, eligible-as-authorization, default-on flag, missing kill switch, dry-run execution, non-loopback binding, telemetry writes, raw leaks, unsafe action drift, fake proof, direct target bypass, missing/satisfied prerequisites, and side-effect lies.",
+    "Fixture forbids runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/shell/PTY/send/deploy/trade/output-file behavior."
+  ]
+}
