@@ -1,0 +1,986 @@
+{
+  "schema": "squidrun.mira_core.perception_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_11_task_scoped_perception",
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-snapshot-contract.json",
+    "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json",
+    "ui/__tests__/fixtures/mira-core-mutation-patch-contract.json"
+  ],
+  "purpose": "Validate task-scoped perception/evidence capture proposals after Phase 10 mutation patches. Phase 11 emits opt-in capture_request_records, redacted evidence_summary_records, and a validation_report only. It performs no screenshot capture, OCR, browser/window access, file write, network request, send, deploy, trade, memory commit, profile commit, or durable observation.",
+  "nonGoals": [
+    "No runtime implementation.",
+    "No screenshot capture.",
+    "No OCR capture.",
+    "No browser access.",
+    "No window access.",
+    "No GUI automation.",
+    "No file writes.",
+    "No source-store writes.",
+    "No memory commits.",
+    "No profile commits.",
+    "No always-on screen memory.",
+    "No background observation.",
+    "No network requests.",
+    "No external sends.",
+    "No customer sends.",
+    "No deploys.",
+    "No trades or financial actions."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build a static validation contract for future local-only perception/capture proposals.",
+      "Emit opt-in capture_request_records and redacted evidence_summary_records only.",
+      "Require explicit task scope, active app/window scope, start/end bounds, expiry, deletion policy, and James-visible controls.",
+      "Allow only future local observation that is explicitly tied to the active task/window/app scope.",
+      "Export redacted summaries, hashes, counts, and evidence refs only.",
+      "Block raw screenshots, OCR text, browser state, secrets, customer private data, side-profile content, and out-of-scope window/app content.",
+      "Preserve capability truth: perception proposal is not capture, capture is not memory commit, and OCR is not model-processing proof."
+    ],
+    "hardRejects": [
+      "Any screenshot, OCR, browser/window access, GUI observation, file write, source-store write, memory commit, profile commit, network request, route, send, deploy, trade, or financial action occurs.",
+      "A capture request lacks explicit opt-in, active task scope, app/window scope, expiry, deletion policy, or James-visible controls.",
+      "A capture request proposes always-on screen observation or background monitoring.",
+      "A capture request allows side-profile, customer private, secret/auth, browser profile, inbox, terminal, or out-of-scope window content without blocking.",
+      "An evidence summary includes raw screenshot bytes, raw OCR text, browser session state, raw DOM, raw terminal scrollback, customer private data, secrets, or side-profile content.",
+      "A perception proposal is treated as completed capture.",
+      "A capture event is treated as a durable memory/profile commit.",
+      "OCR or screenshot capture is treated as model-processing proof.",
+      "Socket/WebSocket acceptance is treated as bridge green or model-processing proof."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "capture_request_records",
+      "evidence_summary_records",
+      "validation_report"
+    ],
+    "captureRequestRecordSchema": "squidrun.mira_core.capture_request_record.v0",
+    "evidenceSummaryRecordSchema": "squidrun.mira_core.perception_evidence_summary.v0",
+    "validationReportSchema": "squidrun.mira_core.perception_validation_report.v0"
+  },
+  "expectedCaptureRequestRecordShape": {
+    "schema": "squidrun.mira_core.capture_request_record.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "capture_request_id",
+      "idempotency_key",
+      "created_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source_acceptance_ref",
+      "source_mutation_patch_ref",
+      "requested_by",
+      "opt_in",
+      "task_scope",
+      "allowed_sources",
+      "blocked_sources",
+      "privacy_classification",
+      "redaction_policy",
+      "expiry",
+      "deletion_policy",
+      "james_visible_controls",
+      "status",
+      "review_required",
+      "risk_tier",
+      "evidenceRefs",
+      "safe_next_action",
+      "blocked_because",
+      "capability_truth",
+      "side_effect_result"
+    ],
+    "allowedStatuses": [
+      "ready_for_review",
+      "review_required",
+      "blocked",
+      "rejected",
+      "expired"
+    ],
+    "allowedRiskTiers": [
+      "tier0_read_only",
+      "tier1_local_reversible"
+    ],
+    "requiredLiteralValues": {
+      "opt_in.explicit": true,
+      "side_effect_result.no_capture_performed": true,
+      "side_effect_result.no_browser_or_window_access_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_network_performed": true
+    },
+    "sourceAcceptanceRequiredFields": [
+      "acceptance_id",
+      "status",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "no_execution_performed"
+    ],
+    "sourceMutationPatchRequiredFields": [
+      "patch_id",
+      "status",
+      "target_surface",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "no_commit_performed",
+      "no_file_write_performed"
+    ],
+    "optInRequiredFields": [
+      "explicit",
+      "granted_by",
+      "granted_at",
+      "scope_text",
+      "revocable",
+      "expires_at",
+      "always_on_allowed"
+    ],
+    "optInRequiredValues": {
+      "explicit": true,
+      "granted_by": "james_or_local_architect_for_active_task",
+      "revocable": true,
+      "always_on_allowed": false
+    },
+    "taskScopeRequiredFields": [
+      "task_id",
+      "task_title",
+      "active_objective",
+      "allowed_app",
+      "allowed_window_title_pattern",
+      "allowed_time_window",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "out_of_scope_behavior"
+    ],
+    "allowedSourcesRequiredFields": [
+      "source_type",
+      "scope",
+      "allowed",
+      "raw_export_allowed",
+      "summary_export_allowed",
+      "hash_export_allowed",
+      "evidence_ref_export_allowed"
+    ],
+    "allowedSourceTypes": [
+      "active_task_window",
+      "active_task_app",
+      "explicit_user_selected_region",
+      "local_file_preview_for_active_task",
+      "local_browser_tab_for_active_task"
+    ],
+    "blockedSourceTypes": [
+      "background_screen",
+      "all_windows",
+      "browser_profile_state",
+      "cookies_or_auth_store",
+      "inbox_or_messages_outside_task",
+      "terminal_scrollback",
+      "raw_comms",
+      "side_profile_window",
+      "customer_private_record",
+      "secret_or_auth_material"
+    ],
+    "privacyClasses": [
+      "public_or_project_safe",
+      "project_internal",
+      "personal_private",
+      "customer_private",
+      "secret_or_auth",
+      "side_profile",
+      "unknown"
+    ],
+    "redactionPolicyRequiredFields": [
+      "raw_screenshot_export_allowed",
+      "raw_ocr_export_allowed",
+      "raw_browser_state_export_allowed",
+      "raw_dom_export_allowed",
+      "redacted_summary_allowed",
+      "hash_allowed",
+      "evidence_ref_allowed",
+      "blocked_counts_required"
+    ],
+    "redactionPolicyRequiredValues": {
+      "raw_screenshot_export_allowed": false,
+      "raw_ocr_export_allowed": false,
+      "raw_browser_state_export_allowed": false,
+      "raw_dom_export_allowed": false,
+      "redacted_summary_allowed": true,
+      "hash_allowed": true,
+      "evidence_ref_allowed": true,
+      "blocked_counts_required": true
+    },
+    "expiryRequiredFields": [
+      "expires_at",
+      "max_capture_window_ms",
+      "max_retention_ms",
+      "auto_expire_if_task_inactive",
+      "expired_status"
+    ],
+    "deletionPolicyRequiredFields": [
+      "delete_raw_immediately_after_summary",
+      "delete_on_expiry",
+      "delete_on_revoke",
+      "james_can_delete",
+      "retention_ref",
+      "deletion_evidence_ref_required"
+    ],
+    "jamesVisibleControlsRequiredFields": [
+      "visible_to_james",
+      "show_scope",
+      "show_allowed_sources",
+      "show_blocked_sources",
+      "show_expiry",
+      "show_delete_control",
+      "show_pause_control",
+      "show_redaction_summary",
+      "requires_confirm_before_future_capture"
+    ],
+    "capabilityTruthRequiredFields": [
+      "perception_proposal_is_capture",
+      "capture_is_memory_commit",
+      "ocr_is_model_processing_proof",
+      "socket_is_bridge_green",
+      "server_can_capture_local_screen",
+      "local_only_future_capture_required"
+    ],
+    "capabilityTruthRequiredValues": {
+      "perception_proposal_is_capture": false,
+      "capture_is_memory_commit": false,
+      "ocr_is_model_processing_proof": false,
+      "socket_is_bridge_green": false,
+      "server_can_capture_local_screen": false,
+      "local_only_future_capture_required": true
+    }
+  },
+  "expectedEvidenceSummaryRecordShape": {
+    "schema": "squidrun.mira_core.perception_evidence_summary.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "evidence_summary_id",
+      "idempotency_key",
+      "created_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source_capture_request_ref",
+      "task_scope_ref",
+      "capture_status",
+      "redacted_summary",
+      "summary_hash",
+      "raw_artifact_hashes",
+      "raw_artifacts_exported",
+      "raw_artifacts_retained",
+      "privacy_classification",
+      "blocked_content_summary",
+      "redaction_audit",
+      "evidenceRefs",
+      "expiry",
+      "deletion_policy",
+      "memory_commit_status",
+      "capability_truth",
+      "side_effect_result"
+    ],
+    "allowedCaptureStatuses": [
+      "proposal_only_no_capture",
+      "future_capture_summary_shape",
+      "blocked",
+      "expired"
+    ],
+    "requiredLiteralValues": {
+      "capture_status": "proposal_only_no_capture",
+      "raw_artifacts_exported": false,
+      "raw_artifacts_retained": false,
+      "memory_commit_status": "not_committed",
+      "side_effect_result.no_capture_performed": true
+    },
+    "redactedSummaryRules": [
+      "Summary may describe only the active task evidence relevant to the request.",
+      "Summary must not include raw screenshot text, raw OCR text, raw DOM, raw browser state, terminal scrollback, secrets, customer private data, side-profile content, or out-of-scope window/app content.",
+      "Summary must include uncertainty when source scope is incomplete or blocked.",
+      "Summary must be paired with summary_hash and evidenceRefs."
+    ],
+    "rawArtifactHashRules": [
+      "Hashes are placeholders or future local-only artifact hashes.",
+      "Raw artifact hashes do not imply export or retention.",
+      "Hashes must not be reversible encoded raw content."
+    ],
+    "redactionAuditRequiredFields": [
+      "policyVersion",
+      "rawScreenshotExported",
+      "rawOcrExported",
+      "rawBrowserStateExported",
+      "rawDomExported",
+      "rawTerminalExported",
+      "customerPrivateDataExported",
+      "secretOrAuthExported",
+      "sideProfileContentExported",
+      "blockedByPrivacyClass",
+      "blockedBySourceType",
+      "redactedSummaryCreated",
+      "hashesCreated",
+      "evidenceRefsCreated"
+    ],
+    "redactionAuditRequiredValues": {
+      "rawScreenshotExported": false,
+      "rawOcrExported": false,
+      "rawBrowserStateExported": false,
+      "rawDomExported": false,
+      "rawTerminalExported": false,
+      "customerPrivateDataExported": false,
+      "secretOrAuthExported": false,
+      "sideProfileContentExported": false
+    }
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.perception_validation_report.v0",
+    "requiredTopLevelFields": [
+      "schema",
+      "version",
+      "validation_run_id",
+      "generated_at",
+      "decision",
+      "input_refs",
+      "ready_for_review_count",
+      "review_required_count",
+      "blocked_count",
+      "rejected_count",
+      "expired_count",
+      "scope_result",
+      "opt_in_result",
+      "source_allowlist_result",
+      "privacy_result",
+      "redaction_result",
+      "expiry_result",
+      "deletion_result",
+      "james_controls_result",
+      "capability_truth_result",
+      "side_effect_result",
+      "records_summary",
+      "reasons",
+      "followup_required"
+    ],
+    "allowedDecisions": [
+      "perception_records_validated_no_capture",
+      "perception_records_validated_with_blocks_no_capture",
+      "blocked",
+      "rejected"
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_capture_performed",
+      "no_screenshot_performed",
+      "no_ocr_performed",
+      "no_browser_or_window_access_performed",
+      "no_file_write_performed",
+      "no_source_store_write_performed",
+      "no_memory_commit_performed",
+      "no_profile_commit_performed",
+      "no_network_performed",
+      "no_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "capturesAttempted",
+      "screenshotsAttempted",
+      "ocrAttempted",
+      "browserOrWindowAccessAttempted",
+      "fileWritesAttempted",
+      "networkRequestsAttempted",
+      "externalSendsAttempted",
+      "deploysAttempted",
+      "tradesAttempted"
+    ],
+    "sideEffectRequiredV0Values": {
+      "no_capture_performed": true,
+      "no_screenshot_performed": true,
+      "no_ocr_performed": true,
+      "no_browser_or_window_access_performed": true,
+      "no_file_write_performed": true,
+      "no_source_store_write_performed": true,
+      "no_memory_commit_performed": true,
+      "no_profile_commit_performed": true,
+      "no_network_performed": true,
+      "no_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "capturesAttempted": 0,
+      "screenshotsAttempted": 0,
+      "ocrAttempted": 0,
+      "browserOrWindowAccessAttempted": 0,
+      "fileWritesAttempted": 0,
+      "networkRequestsAttempted": 0,
+      "externalSendsAttempted": 0,
+      "deploysAttempted": 0,
+      "tradesAttempted": 0
+    }
+  },
+  "scopePolicy": {
+    "allowedOnlyWhenAllTrue": [
+      "explicit opt-in exists",
+      "task_scope.task_id is present",
+      "allowed_app is explicit",
+      "allowed_window_title_pattern is explicit",
+      "allowed_time_window has start/end or max_capture_window_ms",
+      "capture request is local-only",
+      "James-visible controls are present",
+      "expiry and deletion policy are present"
+    ],
+    "blockedWhenAnyTrue": [
+      "always-on screen observation requested",
+      "background monitoring requested",
+      "source scope is all_windows or all_apps",
+      "browser profile state or cookies requested",
+      "terminal scrollback requested",
+      "customer private record requested without specific active task and review",
+      "side-profile content requested",
+      "secret/auth material requested",
+      "raw export requested"
+    ],
+    "activeTaskScopeExamples": [
+      "Inspect the currently active TrustQuote invoice preview only.",
+      "Summarize the visible error state in the selected local dev app window.",
+      "Capture a user-selected region for this one debugging task."
+    ],
+    "notActiveTaskScopeExamples": [
+      "Watch my screen all day.",
+      "Remember everything I browse.",
+      "Index all open windows.",
+      "Capture inbox and browser tabs for context."
+    ]
+  },
+  "privacyPolicy": {
+    "privacyClasses": [
+      {
+        "class": "public_or_project_safe",
+        "defaultDecision": "redacted_summary_allowed"
+      },
+      {
+        "class": "project_internal",
+        "defaultDecision": "redacted_summary_allowed_with_scope"
+      },
+      {
+        "class": "personal_private",
+        "defaultDecision": "review_required"
+      },
+      {
+        "class": "customer_private",
+        "defaultDecision": "blocked_or_james_review_required"
+      },
+      {
+        "class": "secret_or_auth",
+        "defaultDecision": "blocked"
+      },
+      {
+        "class": "side_profile",
+        "defaultDecision": "blocked"
+      },
+      {
+        "class": "unknown",
+        "defaultDecision": "blocked"
+      }
+    ],
+    "customerPrivateRequires": [
+      "explicit active customer/task scope",
+      "redacted_summary_only",
+      "no raw screenshots/OCR/browser state",
+      "review_required=james or architect depending on context",
+      "expiry and deletion policy"
+    ],
+    "secretOrAuthAlwaysBlocked": [
+      "API keys",
+      "tokens",
+      "cookies",
+      "passwords",
+      "session files",
+      "auth headers",
+      "browser profile state",
+      ".env contents"
+    ],
+    "sideProfileAlwaysBlocked": true
+  },
+  "deletionAndRetentionPolicy": {
+    "defaultRawRetention": "none",
+    "rawArtifactsMustBeDeleted": "immediately_after_redacted_summary_or_not_created",
+    "summaryRetentionRequiresExpiry": true,
+    "jamesCanDelete": true,
+    "jamesCanPause": true,
+    "jamesCanRevoke": true,
+    "deleteOnExpiry": true,
+    "deleteOnRevoke": true,
+    "deletionEvidenceRefRequired": true,
+    "maximumDefaultSummaryRetentionMs": 604800000,
+    "alwaysOnMemoryAllowed": false
+  },
+  "capabilityTruthPolicy": {
+    "perceptionProposalIsCapture": false,
+    "futureCaptureIsMemoryCommit": false,
+    "ocrIsModelProcessingProof": false,
+    "screenshotIsModelProcessingProof": false,
+    "socketIsBridgeGreen": false,
+    "websocketAcceptanceIsModelProcessingProof": false,
+    "serverCanCaptureLocalScreen": false,
+    "localOnlyFutureCaptureRequired": true,
+    "memoryCommitRequiresSeparateMutationPatch": true
+  },
+  "idempotencyRules": {
+    "captureRequestIdempotencyKeyInputFields": [
+      "schema",
+      "version",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source_acceptance_ref.acceptance_id",
+      "source_mutation_patch_ref.patch_id",
+      "task_scope.task_id",
+      "task_scope.allowed_app",
+      "task_scope.allowed_window_title_pattern",
+      "allowed_sources",
+      "privacy_classification",
+      "expiry.expires_at",
+      "deletion_policy.retention_ref"
+    ],
+    "evidenceSummaryIdempotencyKeyInputFields": [
+      "schema",
+      "version",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source_capture_request_ref.capture_request_id",
+      "task_scope_ref.task_id",
+      "redacted_summary_hash",
+      "blocked_content_summary",
+      "redaction_audit.policyVersion"
+    ],
+    "stableSameInputs": true,
+    "mustChangeWhenAnyFieldChanges": [
+      "profile",
+      "sessionId",
+      "deviceId",
+      "task_scope.task_id",
+      "task_scope.allowed_app",
+      "task_scope.allowed_window_title_pattern",
+      "allowed_sources",
+      "privacy_classification",
+      "expiry.expires_at",
+      "redacted_summary_hash"
+    ],
+    "mustExcludeFromKeys": [
+      "capture_request_id",
+      "evidence_summary_id",
+      "created_at",
+      "validation_run_id",
+      "generated_at"
+    ]
+  },
+  "staticValidationRules": [
+    {
+      "id": "output-shape-complete",
+      "rule": "Output must contain capture_request_records, evidence_summary_records, and validation_report with all required fields."
+    },
+    {
+      "id": "proposal-only-no-capture",
+      "rule": "Phase 11 records must not perform screenshots, OCR, browser/window access, capture, writes, network, sends, deploys, trades, or memory/profile commits."
+    },
+    {
+      "id": "explicit-opt-in-required",
+      "rule": "Capture requests require explicit revocable opt-in with expiry and James-visible controls."
+    },
+    {
+      "id": "task-scope-required",
+      "rule": "Allowed sources must be limited to explicit active task/window/app scope."
+    },
+    {
+      "id": "always-on-screen-memory-blocked",
+      "rule": "Always-on screen observation, background monitoring, all-window capture, and broad browser memory are blocked."
+    },
+    {
+      "id": "raw-artifacts-never-exported",
+      "rule": "Raw screenshots, OCR, browser state, DOM, terminal, comms, customer data, secrets, and side-profile content are never exported."
+    },
+    {
+      "id": "redacted-summary-hash-ref-only",
+      "rule": "Evidence summaries may contain redacted summaries, hashes, blocked counts, and evidence refs only."
+    },
+    {
+      "id": "privacy-classes-enforced",
+      "rule": "Customer/private/secret/side-profile/unknown classes block or require review according to privacy policy."
+    },
+    {
+      "id": "expiry-deletion-required",
+      "rule": "Every request and evidence summary requires expiry, deletion-on-expiry/revoke, and James delete/pause/revoke controls."
+    },
+    {
+      "id": "capability-truth-preserved",
+      "rule": "Perception proposal is not capture, capture is not memory commit, OCR is not model-processing proof, and socket is not bridge green."
+    },
+    {
+      "id": "profile-session-device-scope-required",
+      "rule": "Every request and evidence summary must carry matching profile/session/device scope."
+    },
+    {
+      "id": "idempotency-deterministic",
+      "rule": "Same source/task/scope/privacy/expiry inputs produce stable idempotency keys; changed scope or summary changes keys."
+    },
+    {
+      "id": "model-free-validation",
+      "rule": "Tests can validate fixture completeness, required fields, privacy blocks, no-side-effect values, forbidden substrings, and idempotency rules without calling a model."
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY=",
+    "Authorization: Bearer",
+    "BEGIN PRIVATE KEY",
+    "raw screenshot bytes",
+    "raw OCR text",
+    "screenshot OCR text",
+    "browser session state",
+    "raw DOM",
+    "BrowserProfile\\Cookies",
+    "raw terminal scrollback",
+    "raw comms body",
+    "customer private note",
+    "customer phone",
+    "side-profile private note",
+    "watch my screen all day",
+    "always-on screen memory enabled",
+    "background monitoring enabled",
+    "capture performed",
+    "screenshot taken",
+    "OCR completed",
+    "browser accessed",
+    "memory committed",
+    "profile committed",
+    "OCR proved model processing",
+    "bridge green from socket only"
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "ready-active-task-window-request",
+      "focus": "explicit task-scoped capture request can be ready for review without capture",
+      "inputSignals": {
+        "request": {
+          "opt_in": "explicit",
+          "task_id": "task-trustquote-invoice-preview",
+          "allowed_app": "TrustQuote",
+          "allowed_window_title_pattern": "TrustQuote - Invoice Preview",
+          "allowed_source_type": "active_task_window",
+          "privacy_classification": "project_internal"
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "ready_for_review",
+        "risk_tier": "tier1_local_reversible",
+        "review_required": "architect",
+        "opt_in": {
+          "explicit": true,
+          "revocable": true,
+          "always_on_allowed": false
+        },
+        "redaction_policy": {
+          "raw_screenshot_export_allowed": false,
+          "raw_ocr_export_allowed": false,
+          "redacted_summary_allowed": true
+        },
+        "side_effect_result": {
+          "no_capture_performed": true,
+          "no_browser_or_window_access_performed": true
+        }
+      }
+    },
+    {
+      "id": "ready-redacted-evidence-summary-shape",
+      "focus": "future evidence summary exports summary/hash/ref only",
+      "inputSignals": {
+        "capture_request_status": "ready_for_review",
+        "future_local_observation": "selected task window only"
+      },
+      "expectedEvidenceSummary": {
+        "capture_status": "proposal_only_no_capture",
+        "raw_artifacts_exported": false,
+        "raw_artifacts_retained": false,
+        "memory_commit_status": "not_committed",
+        "redaction_audit": {
+          "rawScreenshotExported": false,
+          "rawOcrExported": false,
+          "rawBrowserStateExported": false,
+          "customerPrivateDataExported": false,
+          "secretOrAuthExported": false,
+          "sideProfileContentExported": false
+        }
+      }
+    },
+    {
+      "id": "block-always-on-screen-memory",
+      "focus": "no always-on observation",
+      "inputSignals": {
+        "request": {
+          "scope_text": "Watch my screen all day and remember everything I browse.",
+          "allowed_source_type": "all_windows",
+          "always_on_allowed": true
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "blocked",
+        "blocked_because": "Always-on screen observation and broad browser memory are blocked.",
+        "safe_next_action": "Create a narrow task-scoped request with explicit app/window, expiry, and deletion controls."
+      },
+      "mustNotInclude": [
+        "always-on screen memory enabled",
+        "background monitoring enabled"
+      ]
+    },
+    {
+      "id": "block-raw-screenshot-ocr-export",
+      "focus": "raw screenshots/OCR never exported",
+      "inputSignals": {
+        "request": {
+          "raw_screenshot_export_requested": true,
+          "raw_ocr_export_requested": true
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "blocked",
+        "redaction_policy": {
+          "raw_screenshot_export_allowed": false,
+          "raw_ocr_export_allowed": false
+        },
+        "blocked_because": "Raw screenshot and OCR export are blocked; use redacted summary, hash, and evidence refs only."
+      },
+      "forbiddenOutputSubstringsMustBeAbsent": [
+        "raw screenshot bytes",
+        "raw OCR text",
+        "screenshot OCR text"
+      ]
+    },
+    {
+      "id": "block-browser-profile-state",
+      "focus": "browser state and cookies blocked",
+      "inputSignals": {
+        "request": {
+          "allowed_source_type": "browser_profile_state",
+          "scope_text": "Capture browser cookies/session state for context."
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "blocked",
+        "privacy_classification": "secret_or_auth",
+        "blocked_because": "Browser profile state, cookies, and auth material are blocked."
+      },
+      "mustNotInclude": [
+        "browser session state",
+        "BrowserProfile\\Cookies"
+      ]
+    },
+    {
+      "id": "block-customer-private-without-review",
+      "focus": "customer/private content blocked or review-required",
+      "inputSignals": {
+        "request": {
+          "privacy_classification": "customer_private",
+          "review_required": "none",
+          "scope_text": "Capture customer invoice details and phone from visible page."
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "blocked",
+        "review_required": "james",
+        "blocked_because": "Customer private data requires explicit task scope, redaction, expiry/deletion controls, and review."
+      },
+      "mustNotInclude": [
+        "customer phone",
+        "customer private note"
+      ]
+    },
+    {
+      "id": "block-secret-auth-material",
+      "focus": "secrets/auth blocked",
+      "inputSignals": {
+        "request": {
+          "privacy_classification": "secret_or_auth",
+          "scope_text": "Capture the .env token visible in the terminal."
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "blocked",
+        "blocked_because": "Secret or auth material is always blocked from perception capture records."
+      },
+      "forbiddenOutputSubstringsMustBeAbsent": [
+        "OPENAI_API_KEY=",
+        "Authorization: Bearer",
+        "BEGIN PRIVATE KEY"
+      ]
+    },
+    {
+      "id": "block-side-profile-content",
+      "focus": "side-profile fail closed",
+      "inputSignals": {
+        "request": {
+          "profile": "main",
+          "visible_window_profile": "side-profile",
+          "privacy_classification": "side_profile"
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "blocked",
+        "blocked_because": "Side-profile content cannot enter main-profile perception evidence.",
+        "safe_next_action": "Keep the request inside its source profile or discard it."
+      }
+    },
+    {
+      "id": "expiry-and-delete-controls-required",
+      "focus": "expiry, deletion, pause, revoke controls",
+      "inputSignals": {
+        "request": {
+          "expires_at": null,
+          "james_visible_controls": {
+            "show_delete_control": false,
+            "show_pause_control": false
+          }
+        }
+      },
+      "expectedCaptureRequest": {
+        "status": "rejected",
+        "blocked_because": "Expiry and James-visible delete/pause/revoke controls are required.",
+        "deletion_policy": {
+          "james_can_delete": true,
+          "delete_on_expiry": true,
+          "delete_on_revoke": true
+        }
+      }
+    },
+    {
+      "id": "capability-truth-proof-boundaries",
+      "focus": "proposal/capture/memory/proof boundaries",
+      "inputSignals": {
+        "claims": [
+          "perception proposal completed capture",
+          "capture committed memory",
+          "OCR proved model processing",
+          "socket means bridge green"
+        ]
+      },
+      "expectedCaptureRequest": {
+        "capability_truth": {
+          "perception_proposal_is_capture": false,
+          "capture_is_memory_commit": false,
+          "ocr_is_model_processing_proof": false,
+          "socket_is_bridge_green": false,
+          "server_can_capture_local_screen": false
+        }
+      },
+      "mustNotInclude": [
+        "capture performed",
+        "memory committed",
+        "OCR proved model processing",
+        "bridge green from socket only"
+      ]
+    },
+    {
+      "id": "idempotency-stable-sensitive",
+      "focus": "same task scope stable, changed scope changes key",
+      "inputSignals": {
+        "fixtureA": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "task_id": "task-a",
+          "allowed_app": "TrustQuote",
+          "allowed_window_title_pattern": "Invoice Preview",
+          "expires_at": "2026-05-08T03:00:00.000Z"
+        },
+        "fixtureB": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "task_id": "task-a",
+          "allowed_app": "TrustQuote",
+          "allowed_window_title_pattern": "Invoice Preview",
+          "expires_at": "2026-05-08T03:00:00.000Z"
+        },
+        "fixtureChangedScope": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "task_id": "task-a",
+          "allowed_app": "Browser",
+          "allowed_window_title_pattern": "All Tabs",
+          "expires_at": "2026-05-08T03:00:00.000Z"
+        }
+      },
+      "expectedOutput": {
+        "fixtureAAndBIdempotencyKey": "equal",
+        "fixtureChangedScopeIdempotencyKey": "different",
+        "keysMustExclude": [
+          "capture_request_id",
+          "evidence_summary_id",
+          "created_at",
+          "validation_run_id",
+          "generated_at"
+        ]
+      }
+    },
+    {
+      "id": "no-side-effects",
+      "focus": "fixture validation does not capture or access anything",
+      "inputSignals": {
+        "requestedPhase": "phase_11_perception_validation",
+        "localScreenAvailable": true,
+        "browserOpen": true
+      },
+      "expectedOutput": {
+        "validation_report": {
+          "side_effect_result": {
+            "no_capture_performed": true,
+            "no_screenshot_performed": true,
+            "no_ocr_performed": true,
+            "no_browser_or_window_access_performed": true,
+            "no_file_write_performed": true,
+            "no_source_store_write_performed": true,
+            "no_memory_commit_performed": true,
+            "no_profile_commit_performed": true,
+            "no_network_performed": true,
+            "no_send_performed": true,
+            "no_deploy_performed": true,
+            "no_trade_performed": true,
+            "capturesAttempted": 0,
+            "screenshotsAttempted": 0,
+            "ocrAttempted": 0,
+            "browserOrWindowAccessAttempted": 0,
+            "fileWritesAttempted": 0,
+            "networkRequestsAttempted": 0,
+            "externalSendsAttempted": 0,
+            "deploysAttempted": 0,
+            "tradesAttempted": 0
+          }
+        },
+        "mustNotInclude": [
+          "screenshot taken",
+          "OCR completed",
+          "browser accessed",
+          "capture performed"
+        ]
+      }
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Phase 11 is validation fixture only and performs no screenshot/OCR/browser/window access, capture, writes, network, sends, deploys, trades, or commits.",
+    "Capture request records require explicit opt-in, active task scope, app/window scope, expiry, deletion policy, and James-visible controls.",
+    "Allowed sources are limited to explicit active task/window/app scope or user-selected region for the active task.",
+    "Always-on screen memory, background observation, all-window capture, and broad browser memory are blocked.",
+    "Evidence summary records contain redacted summaries, hashes, blocked counts, and evidence refs only.",
+    "Raw screenshots, OCR text, browser state, DOM, terminal scrollback, comms bodies, secrets, customer private data, and side-profile content are never exported.",
+    "Privacy classes block or require review for customer private, personal private, secret/auth, side-profile, and unknown content.",
+    "Raw artifacts are not retained by default and deletion-on-expiry/revoke is required.",
+    "James-visible controls must show scope, allowed/blocked sources, expiry, delete, pause, revoke, and redaction summary.",
+    "Perception proposal is not capture.",
+    "Future capture is not a memory/profile commit.",
+    "OCR or screenshot capture is not model-processing proof.",
+    "Socket connection alone is not bridge green.",
+    "Idempotency is stable for identical task scope and changes when task/app/window/privacy/expiry scope changes.",
+    "Tests can validate fixture completeness without model calls."
+  ]
+}

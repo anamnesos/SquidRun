@@ -1,0 +1,1108 @@
+{
+  "schema": "squidrun.mira_core.readiness_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_13_readiness_index_manifest",
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-snapshot-contract.json",
+    "ui/__tests__/fixtures/mira-core-orientation-contract.json",
+    "ui/__tests__/fixtures/mira-core-profile-contract.json",
+    "ui/__tests__/fixtures/mira-core-proposal-contract.json",
+    "ui/__tests__/fixtures/mira-core-eval-contract.json",
+    "ui/__tests__/fixtures/mira-core-pulse-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+    "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+    "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json",
+    "ui/__tests__/fixtures/mira-core-mutation-patch-contract.json",
+    "ui/__tests__/fixtures/mira-core-perception-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+  ],
+  "purpose": "Validate a local read-only Mira Core readiness/index manifest over Phases 1-12. The manifest answers what exists, what is real now, what remains proposal or validation only, what capabilities are allowed, what is blocked, what proof is missing or degraded, and what Tier 0/Tier 1 next actions are safe without executing any work.",
+  "nonGoals": [
+    "No runtime implementation in this Oracle fixture.",
+    "No source-store writes from the readiness manifest.",
+    "No memory or profile commits.",
+    "No network requests.",
+    "No server deployment or server process.",
+    "No queue creation.",
+    "No database writes.",
+    "No auth, secret, or signing material generation.",
+    "No local execution.",
+    "No shell or PTY actions.",
+    "No browser, screenshot, OCR, or window access.",
+    "No external sends or customer sends.",
+    "No deploys.",
+    "No trades or financial actions.",
+    "No claim that a manifest, socket, lease, route, or upload envelope proves model processing."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build a local read-only readiness_manifest and validation_report over the existing Mira Core Phase 1-12 artifact surface.",
+      "Represent all twelve prior phases with phase number, module path, CLI path, test path, fixture path, status, boundary mode, real-now summary, and evidence refs.",
+      "Index schemas and CLI entry points without claiming that stdout JSON or local validators create server, queue, capture, apply, memory commit, or execution capability.",
+      "Preserve local/server capability truth, including serverCanExecuteLocal=false and serverCanProveModelProcessing=false.",
+      "Report verification proof honestly: only commands/results actually supplied or observed may be marked proven; missing proof is unknown or degraded.",
+      "Expose blockers for real server runtime, durable mutation, capture/apply/execution, and memory drift.",
+      "Emit only Tier 0/Tier 1 next recommendations with why-safe text and evidence refs.",
+      "Emit side_effect_result showing no runtime writes, network, server, queue, db, execution, shell, browser, sends, deploys, trades, or output-file write performed by manifest generation."
+    ],
+    "hardRejects": [
+      "Manifest labels a contract-only, proposal-only, dry-run, upload-envelope, intent-record, mutation-patch, perception-proposal, or server-boundary phase as live server/runtime/capture/apply/execution behavior.",
+      "Manifest claims a future server can run local arms, operate PTY, run shell, access browser/window state, send customer messages, deploy, trade, or prove model processing.",
+      "Manifest allows direct server targeting of Builder or Oracle instead of local Architect.",
+      "Manifest treats socket connection, queue acceptance, dry-run lease, route delivery, or manifest generation as bridge-green or model-processing proof.",
+      "Manifest includes raw private content, secrets, raw comms, raw terminal scrollback, screenshot/OCR text, browser state, customer private content, side-profile content, or raw source-store payloads.",
+      "Manifest fakes test proof, omits unknown/degraded proof, or promotes missing command results to green status.",
+      "Manifest omits blockers for server identity/signing/auth/storage/deletion/retention, memory/profile commits, capture/apply/execution local gates, or memory drift.",
+      "Manifest recommends Tier 2 repo mutation, Tier 3 external side effects, Tier 4 financial/irreversible actions, server deploys, customer sends, trades, real queues, durable commits, or capture/apply/execution as next safe actions."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "readiness_manifest",
+      "validation_report"
+    ],
+    "readinessManifestSchema": "squidrun.mira_core.readiness_manifest.v0",
+    "validationReportSchema": "squidrun.mira_core.readiness_validation_report.v0"
+  },
+  "expectedReadinessManifestShape": {
+    "schema": "squidrun.mira_core.readiness_manifest.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "manifest_id",
+      "idempotency_key",
+      "generated_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "phase_inventory",
+      "schema_registry",
+      "cli_registry",
+      "capability_matrix",
+      "boundary_truth",
+      "artifact_summary",
+      "verification_summary",
+      "blocker_summary",
+      "next_phase_recommendations",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.readiness_manifest.v0",
+      "capability_matrix.serverCanExecuteLocal": false,
+      "capability_matrix.serverCanProveModelProcessing": false,
+      "boundary_truth.serverCanExecuteLocal": false,
+      "boundary_truth.serverCanProveModelProcessing": false,
+      "boundary_truth.builderOracleDirectServerTargetsAllowed": false,
+      "boundary_truth.socketIsBridgeGreenProof": false,
+      "boundary_truth.manifestIsExecutionProof": false,
+      "side_effect_result.no_source_store_write_performed": true,
+      "side_effect_result.no_memory_profile_commit_performed": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_server_deploy_performed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_shell_or_pty_performed": true,
+      "side_effect_result.no_browser_window_access_performed": true,
+      "side_effect_result.no_external_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_runtime_output_file_written": true
+    },
+    "phaseInventoryRequiredFields": [
+      "phase",
+      "name",
+      "module_path",
+      "cli_path",
+      "test_path",
+      "fixture_path",
+      "status",
+      "boundary_mode",
+      "real_now",
+      "validation_only",
+      "proposal_only",
+      "capability_level",
+      "evidenceRefs"
+    ],
+    "phaseInventoryExpected": [
+      {
+        "phase": 1,
+        "name": "snapshot",
+        "module_path": "ui/modules/mira-core/snapshot.js",
+        "cli_path": "ui/scripts/hm-mira-core-snapshot.js",
+        "test_path": "ui/__tests__/mira-core-snapshot.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-snapshot-contract.json",
+        "status": "local_read_only_runtime_present",
+        "boundary_mode": "local_read_only_snapshot",
+        "real_now": "local snapshot summary surface with redacted refs, counts, hashes, watermarks, and capability state only",
+        "validation_only": false,
+        "proposal_only": false,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 2,
+        "name": "orientation",
+        "module_path": "ui/modules/mira-core/orientation.js",
+        "cli_path": "ui/scripts/hm-mira-core-status.js",
+        "test_path": "ui/__tests__/mira-core-orientation.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-orientation-contract.json",
+        "status": "local_read_only_runtime_present",
+        "boundary_mode": "local_read_only_orientation",
+        "real_now": "local orientation surface over snapshot capability, memory, redaction, bridge, and next safe actions",
+        "validation_only": false,
+        "proposal_only": false,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 3,
+        "name": "profiles",
+        "module_path": "ui/modules/mira-core/profiles.js",
+        "cli_path": "ui/scripts/hm-mira-core-profiles.js",
+        "test_path": "ui/__tests__/mira-core-profiles.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-profile-contract.json",
+        "status": "local_read_only_runtime_present",
+        "boundary_mode": "read_only_profile_projection_pending_proposals",
+        "real_now": "local self-profile and James-profile read-only projection plus pending proposals, with no durable profile rewrite",
+        "validation_only": false,
+        "proposal_only": true,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 4,
+        "name": "proposal-validator",
+        "module_path": "ui/modules/mira-core/proposal-validator.js",
+        "cli_path": "ui/scripts/hm-mira-core-validate-proposal.js",
+        "test_path": "ui/__tests__/mira-core-proposal-validator.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-proposal-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "memory_proposal_validation_only_no_commit",
+        "real_now": "local validation decision for memory/profile proposals only; accepted means pending, not committed",
+        "validation_only": true,
+        "proposal_only": true,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 5,
+        "name": "eval-runner",
+        "module_path": "ui/modules/mira-core/eval-runner.js",
+        "cli_path": "ui/scripts/hm-mira-core-eval-runner.js",
+        "test_path": "ui/__tests__/mira-core-eval-runner.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-eval-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "model_free_eval_fixture_validation",
+        "real_now": "static fixture completeness and gate coverage validation without model calls",
+        "validation_only": true,
+        "proposal_only": false,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 6,
+        "name": "pulse",
+        "module_path": "ui/modules/mira-core/pulse.js",
+        "cli_path": "ui/scripts/hm-mira-core-pulse.js",
+        "test_path": "ui/__tests__/mira-core-pulse.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-pulse-contract.json",
+        "status": "local_read_only_runtime_present",
+        "boundary_mode": "bounded_local_reflection_cards_only",
+        "real_now": "local read-only Pulse cards and proposals, not execution, sends, deploys, or memory commits",
+        "validation_only": false,
+        "proposal_only": true,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 7,
+        "name": "server-upload",
+        "module_path": "ui/modules/mira-core/server-upload.js",
+        "cli_path": "ui/scripts/hm-mira-core-server-upload.js",
+        "test_path": "ui/__tests__/mira-core-server-upload.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "upload_envelope_preparation_only_no_network",
+        "real_now": "redacted upload envelope preparation and validation only; no server upload occurs",
+        "validation_only": true,
+        "proposal_only": false,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 8,
+        "name": "intent-queue",
+        "module_path": "ui/modules/mira-core/intent-queue.js",
+        "cli_path": "ui/scripts/hm-mira-core-intent-queue.js",
+        "test_path": "ui/__tests__/mira-core-intent-queue.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "intent_record_preparation_only_no_real_queue",
+        "real_now": "intent records prepared for pending local acceptance only; no queue, route, lease, or execution",
+        "validation_only": true,
+        "proposal_only": true,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 9,
+        "name": "local-acceptance",
+        "module_path": "ui/modules/mira-core/local-acceptance.js",
+        "cli_path": "ui/scripts/hm-mira-core-local-acceptance.js",
+        "test_path": "ui/__tests__/mira-core-local-acceptance.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "local_acceptance_and_dry_run_lease_contract_only",
+        "real_now": "local acceptance records and dry-run lease contracts only; acceptance is not execution and lease is not model-processing proof",
+        "validation_only": true,
+        "proposal_only": false,
+        "capability_level": "tier1_local_reversible"
+      },
+      {
+        "phase": 10,
+        "name": "mutation-patch",
+        "module_path": "ui/modules/mira-core/mutation-patch.js",
+        "cli_path": "ui/scripts/hm-mira-core-mutation-patch.js",
+        "test_path": "ui/__tests__/mira-core-mutation-patch.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-mutation-patch-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "mutation_patch_proposal_only_no_apply",
+        "real_now": "reviewable mutation patch records only; no file, memory, profile, or skill mutation is applied",
+        "validation_only": true,
+        "proposal_only": true,
+        "capability_level": "tier1_local_reversible"
+      },
+      {
+        "phase": 11,
+        "name": "perception",
+        "module_path": "ui/modules/mira-core/perception.js",
+        "cli_path": "ui/scripts/hm-mira-core-perception.js",
+        "test_path": "ui/__tests__/mira-core-perception.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-perception-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "perception_capture_proposal_only_no_capture",
+        "real_now": "task-scoped capture request and evidence-summary proposal records only; no screenshots, OCR, browser/window access, or always-on screen memory",
+        "validation_only": true,
+        "proposal_only": true,
+        "capability_level": "tier0_read_only"
+      },
+      {
+        "phase": 12,
+        "name": "server-boundary",
+        "module_path": "ui/modules/mira-core/server-boundary.js",
+        "cli_path": "ui/scripts/hm-mira-core-server-boundary.js",
+        "test_path": "ui/__tests__/mira-core-server-boundary.test.js",
+        "fixture_path": "ui/__tests__/fixtures/mira-core-server-boundary-contract.json",
+        "status": "local_validation_runtime_present",
+        "boundary_mode": "server_receive_store_status_boundary_validation_only_no_server",
+        "real_now": "server receive/status boundary records only; no server runtime, network, db write, queue, or local execution",
+        "validation_only": true,
+        "proposal_only": false,
+        "capability_level": "tier0_read_only"
+      }
+    ],
+    "schemaRegistryRequiredFields": [
+      "registry_id",
+      "phase",
+      "name",
+      "fixture_schema",
+      "runtime_schemas",
+      "validation_report_schema",
+      "source_fixture_path",
+      "source_module_path",
+      "status",
+      "evidenceRefs"
+    ],
+    "schemaRegistryExpected": [
+      {
+        "phase": 1,
+        "name": "snapshot",
+        "fixture_schema": "squidrun.mira_core.snapshot_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.snapshot.v0"
+        ],
+        "validation_report_schema": null
+      },
+      {
+        "phase": 2,
+        "name": "orientation",
+        "fixture_schema": "squidrun.mira_core.orientation_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.orientation.v0"
+        ],
+        "validation_report_schema": null
+      },
+      {
+        "phase": 3,
+        "name": "profiles",
+        "fixture_schema": "squidrun.mira_core.profile_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.profiles.v0"
+        ],
+        "validation_report_schema": null
+      },
+      {
+        "phase": 4,
+        "name": "proposal-validator",
+        "fixture_schema": "squidrun.mira_core.proposal_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.proposal_validation.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.proposal_validation.v0"
+      },
+      {
+        "phase": 5,
+        "name": "eval-runner",
+        "fixture_schema": "squidrun.mira_core.eval_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.eval_fixture_validation.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.eval_fixture_validation.v0"
+      },
+      {
+        "phase": 6,
+        "name": "pulse",
+        "fixture_schema": "squidrun.mira_core.pulse_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.pulse.v0"
+        ],
+        "validation_report_schema": null
+      },
+      {
+        "phase": 7,
+        "name": "server-upload",
+        "fixture_schema": "squidrun.mira_core.server_upload_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.server_upload_envelope.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.server_upload_validation_report.v0"
+      },
+      {
+        "phase": 8,
+        "name": "intent-queue",
+        "fixture_schema": "squidrun.mira_core.intent_queue_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.intent_record.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.intent_queue_validation_report.v0"
+      },
+      {
+        "phase": 9,
+        "name": "local-acceptance",
+        "fixture_schema": "squidrun.mira_core.local_acceptance_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.local_acceptance_record.v0",
+          "squidrun.mira_core.dry_run_lease_contract.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.local_acceptance_validation_report.v0"
+      },
+      {
+        "phase": 10,
+        "name": "mutation-patch",
+        "fixture_schema": "squidrun.mira_core.mutation_patch_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.mutation_patch_record.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.mutation_patch_validation_report.v0"
+      },
+      {
+        "phase": 11,
+        "name": "perception",
+        "fixture_schema": "squidrun.mira_core.perception_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.capture_request_record.v0",
+          "squidrun.mira_core.perception_evidence_summary.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.perception_validation_report.v0"
+      },
+      {
+        "phase": 12,
+        "name": "server-boundary",
+        "fixture_schema": "squidrun.mira_core.server_boundary_contract_fixture.v0",
+        "runtime_schemas": [
+          "squidrun.mira_core.server_receive_record.v0",
+          "squidrun.mira_core.server_status_summary.v0"
+        ],
+        "validation_report_schema": "squidrun.mira_core.server_boundary_validation_report.v0"
+      }
+    ],
+    "cliRegistryRequiredFields": [
+      "phase",
+      "name",
+      "cli_path",
+      "command_name",
+      "stdout_json_allowed",
+      "output_file_mode_allowed",
+      "network_allowed",
+      "source_store_write_allowed",
+      "external_send_allowed",
+      "boundary_mode",
+      "evidenceRefs"
+    ],
+    "cliRegistryRequiredValues": {
+      "stdout_json_allowed": true,
+      "output_file_mode_allowed": false,
+      "network_allowed": false,
+      "source_store_write_allowed": false,
+      "external_send_allowed": false
+    },
+    "capabilityMatrixRequiredFields": [
+      "canBuildReadOnlySnapshot",
+      "canBuildReadOnlyOrientation",
+      "canBuildReadOnlyProfiles",
+      "canValidateMemoryProposal",
+      "canValidateEvalFixtures",
+      "canBuildPulseCards",
+      "canPrepareUploadEnvelopeOffline",
+      "canPrepareIntentRecordsOffline",
+      "canPrepareLocalAcceptanceDryRun",
+      "canPrepareMutationPatchRecords",
+      "canPreparePerceptionRequestRecords",
+      "canPrepareServerBoundaryRecords",
+      "canBuildReadinessManifest",
+      "localArchitectMayCoordinateWhenLocalArmsOnline",
+      "serverCanExecuteLocal",
+      "serverCanProveModelProcessing",
+      "builderOracleDirectServerTargetsAllowed",
+      "realServerRuntimeAvailable",
+      "durableMemoryProfileCommitAllowed",
+      "captureApplyExecutionAllowed",
+      "allowedNowRiskTiers",
+      "blockedRiskTiers"
+    ],
+    "capabilityMatrixRequiredValues": {
+      "canBuildReadOnlySnapshot": true,
+      "canBuildReadOnlyOrientation": true,
+      "canBuildReadOnlyProfiles": true,
+      "canValidateMemoryProposal": true,
+      "canValidateEvalFixtures": true,
+      "canBuildPulseCards": true,
+      "canPrepareUploadEnvelopeOffline": true,
+      "canPrepareIntentRecordsOffline": true,
+      "canPrepareLocalAcceptanceDryRun": true,
+      "canPrepareMutationPatchRecords": true,
+      "canPreparePerceptionRequestRecords": true,
+      "canPrepareServerBoundaryRecords": true,
+      "canBuildReadinessManifest": true,
+      "localArchitectMayCoordinateWhenLocalArmsOnline": true,
+      "serverCanExecuteLocal": false,
+      "serverCanProveModelProcessing": false,
+      "builderOracleDirectServerTargetsAllowed": false,
+      "realServerRuntimeAvailable": false,
+      "durableMemoryProfileCommitAllowed": false,
+      "captureApplyExecutionAllowed": false
+    },
+    "allowedNowRiskTiers": [
+      "tier0_read_only",
+      "tier1_local_reversible"
+    ],
+    "blockedRiskTiers": [
+      "tier2_repo_mutation_without_review",
+      "tier3_external_side_effect",
+      "tier4_financial_or_irreversible"
+    ],
+    "boundaryTruthRequiredFields": [
+      "serverCanExecuteLocal",
+      "serverCanOperatePTY",
+      "serverCanRunShell",
+      "serverCanAccessBrowserOrWindow",
+      "serverCanSendCustomerMessages",
+      "serverCanDeploy",
+      "serverCanTrade",
+      "serverCanProveModelProcessing",
+      "builderOracleDirectServerTargetsAllowed",
+      "serverOriginatedTarget",
+      "localArchitectCoordinationRequiresLocalArmsOnline",
+      "socketIsBridgeGreenProof",
+      "manifestIsExecutionProof",
+      "uploadEnvelopeIsNetworkUpload",
+      "intentRecordIsRealQueue",
+      "acceptanceRecordIsExecution",
+      "dryRunLeaseIsModelProcessingProof",
+      "mutationPatchRecordIsAppliedChange",
+      "perceptionProposalIsCapture",
+      "serverBoundaryRecordIsServerRuntime",
+      "memoryDriftLowersSyncConfidence"
+    ],
+    "boundaryTruthRequiredValues": {
+      "serverCanExecuteLocal": false,
+      "serverCanOperatePTY": false,
+      "serverCanRunShell": false,
+      "serverCanAccessBrowserOrWindow": false,
+      "serverCanSendCustomerMessages": false,
+      "serverCanDeploy": false,
+      "serverCanTrade": false,
+      "serverCanProveModelProcessing": false,
+      "builderOracleDirectServerTargetsAllowed": false,
+      "serverOriginatedTarget": "architect",
+      "localArchitectCoordinationRequiresLocalArmsOnline": true,
+      "socketIsBridgeGreenProof": false,
+      "manifestIsExecutionProof": false,
+      "uploadEnvelopeIsNetworkUpload": false,
+      "intentRecordIsRealQueue": false,
+      "acceptanceRecordIsExecution": false,
+      "dryRunLeaseIsModelProcessingProof": false,
+      "mutationPatchRecordIsAppliedChange": false,
+      "perceptionProposalIsCapture": false,
+      "serverBoundaryRecordIsServerRuntime": false,
+      "memoryDriftLowersSyncConfidence": true
+    },
+    "artifactSummaryRequiredFields": [
+      "phase_count",
+      "fixture_count",
+      "module_count",
+      "cli_count",
+      "test_count",
+      "missing_artifacts",
+      "degraded_artifacts",
+      "validation_only_count",
+      "proposal_only_count",
+      "local_read_only_runtime_count",
+      "server_runtime_count",
+      "evidenceRefs"
+    ],
+    "artifactSummaryRequiredValues": {
+      "phase_count": 12,
+      "fixture_count": 12,
+      "module_count": 12,
+      "cli_count": 12,
+      "test_count": 12,
+      "server_runtime_count": 0
+    },
+    "verificationSummaryRequiredFields": [
+      "json_parse_status",
+      "fixture_static_rule_status",
+      "test_commands_reported",
+      "test_result_counts",
+      "test_proof_status",
+      "unknown_or_degraded_proof",
+      "missing_proof_reason",
+      "no_fake_test_proof",
+      "evidenceRefs"
+    ],
+    "verificationSummaryRequiredValues": {
+      "no_fake_test_proof": true
+    },
+    "allowedTestProofStatuses": [
+      "proven_by_reported_command",
+      "partial",
+      "unknown",
+      "degraded"
+    ],
+    "blockerSummaryRequiredFields": [
+      "blocker_id",
+      "severity",
+      "summary",
+      "blocked_capability",
+      "unblocks_when",
+      "evidenceRefs"
+    ],
+    "requiredBlockerIds": [
+      "real-server-runtime-blocked-pending-identity-signing-auth-storage-deletion-retention",
+      "memory-profile-commits-blocked-pending-review-evals",
+      "capture-apply-execution-local-gated",
+      "memory-drift-reduces-sync-confidence"
+    ],
+    "nextRecommendationRequiredFields": [
+      "recommendation_id",
+      "label",
+      "risk_tier",
+      "allowed",
+      "why_safe",
+      "evidenceRefs",
+      "blocked_side_effects",
+      "prerequisites"
+    ],
+    "allowedNextRecommendationRiskTiers": [
+      "tier0_read_only",
+      "tier1_local_reversible"
+    ],
+    "forbiddenNextRecommendationRiskTiers": [
+      "tier2_repo_mutation",
+      "tier3_external_side_effect",
+      "tier4_financial_or_irreversible"
+    ],
+    "requiredNextRecommendationIds": [
+      "readiness-static-review",
+      "run-local-model-free-readiness-tests-if-available",
+      "server-runtime-gap-spec-only"
+    ],
+    "idempotencyRules": [
+      "Equivalent profile, session, device, phase inventory, schema registry, artifact status, verification inputs, and blocker inputs produce the same idempotency_key.",
+      "Changing any phase path, schema, boundary mode, status, capability truth value, verification proof status, blocker, or next recommendation changes the idempotency_key.",
+      "Volatile fields generated_at, manifest_id, validation_run_id, and reviewer notes are excluded from stable idempotency comparison.",
+      "Equivalent manifest input never creates duplicate side effects because Phase 13 has no side effects."
+    ]
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.readiness_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "validation_run_id",
+      "generated_at",
+      "fixture_schema",
+      "readiness_manifest_schema",
+      "phase_inventory_count",
+      "schema_registry_count",
+      "cli_registry_count",
+      "fixture_static_rule_count",
+      "acceptance_check_count",
+      "required_blocker_count",
+      "next_recommendation_count",
+      "phase_inventory_result",
+      "schema_registry_result",
+      "cli_registry_result",
+      "capability_boundary_result",
+      "verification_truth_result",
+      "blocker_summary_result",
+      "next_recommendation_result",
+      "idempotency_result",
+      "forbidden_output_result",
+      "side_effect_result",
+      "passed",
+      "reasons",
+      "evidenceRefs"
+    ],
+    "requiredLiteralValues": {
+      "fixture_schema": "squidrun.mira_core.readiness_contract_fixture.v0",
+      "readiness_manifest_schema": "squidrun.mira_core.readiness_manifest.v0"
+    },
+    "sideEffectRequiredFields": [
+      "no_source_store_write_performed",
+      "no_memory_profile_commit_performed",
+      "no_network_performed",
+      "no_server_deploy_performed",
+      "no_queue_created",
+      "no_database_write_performed",
+      "no_auth_secret_or_signing_material_created",
+      "no_local_execution_performed",
+      "no_shell_or_pty_performed",
+      "no_browser_window_access_performed",
+      "no_external_send_performed",
+      "no_customer_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_runtime_output_file_written"
+    ],
+    "sideEffectRequiredValues": {
+      "no_source_store_write_performed": true,
+      "no_memory_profile_commit_performed": true,
+      "no_network_performed": true,
+      "no_server_deploy_performed": true,
+      "no_queue_created": true,
+      "no_database_write_performed": true,
+      "no_auth_secret_or_signing_material_created": true,
+      "no_local_execution_performed": true,
+      "no_shell_or_pty_performed": true,
+      "no_browser_window_access_performed": true,
+      "no_external_send_performed": true,
+      "no_customer_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_runtime_output_file_written": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "phase-inventory-complete",
+      "must": "readiness_manifest.phase_inventory contains exactly phases 1 through 12, each with phase number, module path, CLI path, test path, fixture path, status, boundary_mode, real_now, validation_only, proposal_only, capability_level, and evidenceRefs."
+    },
+    {
+      "id": "phase-paths-do-not-overclaim",
+      "must": "Existing module, CLI, test, and fixture paths prove only local artifacts; they do not prove server runtime, capture, memory commit, external send, deploy, trade, or model processing."
+    },
+    {
+      "id": "proposal-validation-labels-preserved",
+      "must": "Proposal-only, validation-only, dry-run, upload-envelope, intent-record, mutation-patch, perception-proposal, and server-boundary phases remain labeled as such."
+    },
+    {
+      "id": "schema-registry-complete",
+      "must": "schema_registry covers every Phase 1-12 fixture schema and known runtime/output schema without inventing missing schemas."
+    },
+    {
+      "id": "cli-registry-no-side-effects",
+      "must": "cli_registry allows stdout JSON only and marks output-file, network, source-store write, and external-send modes false."
+    },
+    {
+      "id": "capability-boundary-truth",
+      "must": "capability_matrix and boundary_truth require serverCanExecuteLocal=false, serverCanProveModelProcessing=false, and Builder/Oracle direct server targeting blocked."
+    },
+    {
+      "id": "architect-coordination-not-execution",
+      "must": "Readiness may say local Architect can coordinate when local arms are online, but manifest generation itself is not execution or delivery/model proof."
+    },
+    {
+      "id": "forbidden-private-content-blocked",
+      "must": "Manifest and report contain no raw private content, secrets, raw comms, terminal scrollback, screenshot/OCR/browser state, customer private content, side-profile content, or raw store payloads."
+    },
+    {
+      "id": "verification-proof-honesty",
+      "must": "verification_summary may include command names and counts only when supplied; missing proof remains unknown or degraded and no_fake_test_proof=true."
+    },
+    {
+      "id": "required-blockers-present",
+      "must": "blocker_summary includes the four required blockers for real server runtime, memory/profile commits, capture/apply/execution local gates, and memory drift sync confidence."
+    },
+    {
+      "id": "next-recommendations-tier-limited",
+      "must": "next_phase_recommendations are allowed, Tier 0/Tier 1 only, include why_safe and evidenceRefs, and exclude repo mutation, sends, deploys, trades, server runtime, queues, commits, capture, apply, or execution."
+    },
+    {
+      "id": "idempotency-stable-sensitive",
+      "must": "idempotency_key is stable for equivalent manifest inputs and changes when phase inventory, schema registry, boundary mode, status, capability truth, verification proof, blockers, or recommendations change."
+    },
+    {
+      "id": "side-effect-truth",
+      "must": "readiness_manifest.side_effect_result and validation_report.side_effect_result prove no source-store writes, memory/profile commits, network, server deploy, queue, db write, auth/secret/signing generation, local execution, shell/PTY, browser/window access, sends, deploys, trades, or runtime output file writes."
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "Authorization: Bearer",
+    "BEGIN PRIVATE KEY",
+    "raw terminal scrollback",
+    "raw comms transcript",
+    "raw screenshot OCR",
+    "browser profile",
+    "customer phone",
+    "customer address",
+    "side profile",
+    "server executed local work",
+    "server can run shell",
+    "server can operate PTY",
+    "server can deploy",
+    "server can trade",
+    "socket alone proves bridge green",
+    "lease proves model processing",
+    "manifest proves execution"
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "all-phases-1-through-12-represented",
+      "focus": "phase_inventory",
+      "input": {
+        "inventory": "phase_inventory from readiness_manifest"
+      },
+      "expected": {
+        "phase_count": 12,
+        "phases": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "required_fields": [
+          "phase",
+          "module_path",
+          "cli_path",
+          "test_path",
+          "fixture_path",
+          "status",
+          "boundary_mode"
+        ]
+      },
+      "zeroScoreBlockers": [
+        "any_phase_missing",
+        "phase_path_missing",
+        "status_or_boundary_mode_missing"
+      ],
+      "source_refs": [
+        "ARCH #220"
+      ]
+    },
+    {
+      "id": "contract-only-phases-not-mislabeled-live",
+      "focus": "boundary_modes",
+      "input": {
+        "phases": [
+          4,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ]
+      },
+      "expected": {
+        "live_server_runtime": false,
+        "live_capture": false,
+        "live_apply": false,
+        "live_memory_commit": false,
+        "live_queue": false,
+        "live_external_send": false
+      },
+      "zeroScoreBlockers": [
+        "validation_phase_marked_as_live_server",
+        "proposal_record_marked_as_applied_change",
+        "perception_proposal_marked_as_capture"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-proposal-contract.json",
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+      ]
+    },
+    {
+      "id": "schema-and-cli-registries-complete",
+      "focus": "schema_registry_cli_registry",
+      "input": {
+        "schema_registry": "readiness_manifest.schema_registry",
+        "cli_registry": "readiness_manifest.cli_registry"
+      },
+      "expected": {
+        "schema_registry_count": 12,
+        "cli_registry_count": 12,
+        "cli_output_file_mode_allowed": false,
+        "cli_network_allowed": false,
+        "cli_external_send_allowed": false
+      },
+      "zeroScoreBlockers": [
+        "schema_missing_for_phase",
+        "cli_missing_for_phase",
+        "cli_side_effect_mode_allowed"
+      ],
+      "source_refs": [
+        "ui/scripts/hm-mira-core-snapshot.js",
+        "ui/scripts/hm-mira-core-server-boundary.js"
+      ]
+    },
+    {
+      "id": "capability-matrix-preserves-server-local-boundary",
+      "focus": "capability_matrix",
+      "input": {
+        "capability_matrix": "readiness_manifest.capability_matrix"
+      },
+      "expected": {
+        "serverCanExecuteLocal": false,
+        "serverCanProveModelProcessing": false,
+        "builderOracleDirectServerTargetsAllowed": false,
+        "realServerRuntimeAvailable": false,
+        "durableMemoryProfileCommitAllowed": false,
+        "captureApplyExecutionAllowed": false
+      },
+      "zeroScoreBlockers": [
+        "server_execution_allowed",
+        "server_model_processing_proof_claimed",
+        "direct_builder_oracle_server_target_allowed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+        "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+      ]
+    },
+    {
+      "id": "architect-coordination-allowed-but-not-execution-proof",
+      "focus": "boundary_truth",
+      "input": {
+        "boundary_truth": "readiness_manifest.boundary_truth"
+      },
+      "expected": {
+        "localArchitectCoordinationRequiresLocalArmsOnline": true,
+        "serverOriginatedTarget": "architect",
+        "manifestIsExecutionProof": false,
+        "socketIsBridgeGreenProof": false,
+        "dryRunLeaseIsModelProcessingProof": false
+      },
+      "zeroScoreBlockers": [
+        "manifest_claims_execution",
+        "socket_claims_bridge_green",
+        "lease_claims_model_processing_proof"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "raw-private-content-forbidden",
+      "focus": "redaction",
+      "input": {
+        "sample_forbidden_material": "SECRET_TOKEN raw comms transcript raw screenshot OCR browser profile customer phone side profile"
+      },
+      "expected": {
+        "forbidden_output_result": "blocked",
+        "raw_private_content_exported": false,
+        "secret_like_content_exported": false,
+        "side_profile_content_exported": false
+      },
+      "zeroScoreBlockers": [
+        "secret_like_content_visible",
+        "raw_comms_visible",
+        "raw_terminal_visible",
+        "raw_screenshot_ocr_visible",
+        "browser_state_visible",
+        "customer_private_content_visible",
+        "side_profile_content_visible"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-snapshot-contract.json",
+        "ui/__tests__/fixtures/mira-core-perception-contract.json"
+      ]
+    },
+    {
+      "id": "phase-13-no-side-effects",
+      "focus": "side_effect_result",
+      "input": {
+        "manifest_generation": "local readiness/index manifest"
+      },
+      "expected": {
+        "no_source_store_write_performed": true,
+        "no_memory_profile_commit_performed": true,
+        "no_network_performed": true,
+        "no_server_deploy_performed": true,
+        "no_queue_created": true,
+        "no_database_write_performed": true,
+        "no_local_execution_performed": true,
+        "no_shell_or_pty_performed": true,
+        "no_browser_window_access_performed": true,
+        "no_external_send_performed": true,
+        "no_deploy_performed": true,
+        "no_trade_performed": true,
+        "no_runtime_output_file_written": true
+      },
+      "zeroScoreBlockers": [
+        "runtime_side_effect_seen",
+        "server_or_queue_created",
+        "network_or_db_write_seen",
+        "output_file_written_by_manifest"
+      ],
+      "source_refs": [
+        "ARCH #220"
+      ]
+    },
+    {
+      "id": "verification-summary-does-not-fake-proof",
+      "focus": "verification_summary",
+      "input": {
+        "test_commands_reported": []
+      },
+      "expected": {
+        "test_proof_status": [
+          "unknown",
+          "degraded",
+          "partial",
+          "proven_by_reported_command"
+        ],
+        "no_fake_test_proof": true,
+        "missing_proof_remains_unknown_or_degraded": true
+      },
+      "zeroScoreBlockers": [
+        "missing_test_proof_marked_green",
+        "command_count_fabricated",
+        "unobserved_ci_result_claimed"
+      ],
+      "source_refs": [
+        "ARCH #220"
+      ]
+    },
+    {
+      "id": "required-blocker-summary-present",
+      "focus": "blocker_summary",
+      "input": {
+        "blocker_summary": "readiness_manifest.blocker_summary"
+      },
+      "expected": {
+        "required_blocker_ids": [
+          "real-server-runtime-blocked-pending-identity-signing-auth-storage-deletion-retention",
+          "memory-profile-commits-blocked-pending-review-evals",
+          "capture-apply-execution-local-gated",
+          "memory-drift-reduces-sync-confidence"
+        ]
+      },
+      "zeroScoreBlockers": [
+        "server_runtime_blocker_missing",
+        "memory_commit_blocker_missing",
+        "capture_apply_execution_blocker_missing",
+        "memory_drift_blocker_missing"
+      ],
+      "source_refs": [
+        "ARCH #220",
+        "workspace/specs/mira-core-architecture.md"
+      ]
+    },
+    {
+      "id": "next-recommendations-tier0-tier1-only",
+      "focus": "next_phase_recommendations",
+      "input": {
+        "recommendations": "readiness_manifest.next_phase_recommendations"
+      },
+      "expected": {
+        "allowed_risk_tiers": [
+          "tier0_read_only",
+          "tier1_local_reversible"
+        ],
+        "forbidden_risk_tiers_absent": [
+          "tier2_repo_mutation",
+          "tier3_external_side_effect",
+          "tier4_financial_or_irreversible"
+        ],
+        "each_has_why_safe": true,
+        "each_has_evidenceRefs": true
+      },
+      "zeroScoreBlockers": [
+        "tier2_or_higher_recommended_as_safe",
+        "server_deploy_recommended",
+        "customer_send_recommended",
+        "trade_recommended",
+        "memory_commit_recommended",
+        "capture_or_execution_recommended"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-pulse-contract.json"
+      ]
+    },
+    {
+      "id": "idempotency-stable-and-sensitive",
+      "focus": "idempotency",
+      "input": {
+        "same_manifest_inputs": "same profile/session/device/phase inventory/schema registry/artifact status/verification/blockers/recommendations",
+        "changed_manifest_inputs": "phase boundary mode or schema changes"
+      },
+      "expected": {
+        "same_inputs_same_idempotency_key": true,
+        "changed_inventory_changes_idempotency_key": true,
+        "changed_schema_changes_idempotency_key": true,
+        "changed_capability_truth_changes_idempotency_key": true,
+        "volatile_fields_excluded": [
+          "generated_at",
+          "manifest_id",
+          "validation_run_id"
+        ]
+      },
+      "zeroScoreBlockers": [
+        "idempotency_changes_for_equivalent_input",
+        "idempotency_ignores_phase_or_schema_change",
+        "volatile_field_included_in_stable_hash"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+        "ui/__tests__/fixtures/mira-core-intent-queue-contract.json"
+      ]
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture parses as JSON.",
+    "Readiness manifest shape requires all ARCH #220 fields.",
+    "Validation report shape requires fixture/static-rule coverage, side-effect truth, and forbidden-output checks.",
+    "Phase inventory expected list contains exactly phases 1-12.",
+    "Each phase inventory item has module path, CLI path, test path, fixture path, status, and boundary mode.",
+    "Schema registry expected list contains exactly 12 phase entries.",
+    "CLI registry requires stdout JSON only and blocks output-file, network, source-store write, and external-send modes.",
+    "Capability matrix keeps serverCanExecuteLocal=false and serverCanProveModelProcessing=false.",
+    "Boundary truth blocks direct Builder/Oracle server targets and bridge-green/model-processing proof overclaims.",
+    "Contract-only and proposal-only phases cannot be mislabeled as live runtime/server/capture/apply behavior.",
+    "Forbidden output substrings cover secrets, raw private data, raw comms, terminal, screenshot/OCR, browser, customer private, and side-profile content.",
+    "Side-effect result blocks source-store writes, memory/profile commits, network, server, queue, db, auth/secret/signing, local execution, shell/PTY, browser/window, sends, deploys, trades, and runtime output files.",
+    "Verification summary cannot fake test proof; missing proof remains unknown or degraded.",
+    "Blocker summary requires server runtime, memory/profile commit, capture/apply/execution, and memory drift blockers.",
+    "Next recommendations are Tier 0/Tier 1 only and include why-safe plus evidence refs.",
+    "Idempotency is stable for equivalent inputs and sensitive to phase inventory/schema/capability/verification/blocker/recommendation changes."
+  ]
+}

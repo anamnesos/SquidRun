@@ -1,0 +1,981 @@
+{
+  "schema": "squidrun.mira_core.intent_queue_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_8_server_intent_queue",
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-pulse-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-upload-contract.json"
+  ],
+  "purpose": "Validate Mira Core server intent queue v0 as intent-record preparation and validation only for a future server/local-arm handoff. Phase 8 consumes server-upload envelope refs, Pulse cards/proposals, and user/offline requests, then emits validated intent records and a validation report without creating a real queue, routing, leasing, executing, sending, deploying, trading, or mutating files.",
+  "nonGoals": [
+    "No runtime implementation.",
+    "No server.",
+    "No network requests.",
+    "No queue creation.",
+    "No enqueue.",
+    "No leases.",
+    "No routing.",
+    "No source-store writes.",
+    "No memory commits.",
+    "No profile commits.",
+    "No file mutation.",
+    "No local execution.",
+    "No shell commands.",
+    "No PTY actions.",
+    "No external sends.",
+    "No customer sends.",
+    "No deploys.",
+    "No trades or financial actions.",
+    "No secret or auth mutation."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build a static validator for future Core intent records.",
+      "Consume server-upload envelope refs, Pulse cards/proposals, and user/offline request metadata.",
+      "Emit intent_records and validation_report only.",
+      "Accept only Tier 0 and Tier 1 intents as pending_local_acceptance in v0.",
+      "Route future server-originated intents to local Architect for review/acceptance only.",
+      "Keep direct cross-device Builder/Oracle targeting blocked.",
+      "Block or require review for Tier 2, Tier 3, Tier 4, identity-core rewrites, secrets/auth changes, deploys, customer sends, financial actions, and local execution requests.",
+      "Preserve idempotency and dedupe semantics without creating a queue or causing side effects.",
+      "Preserve redaction and profile/session/device scope on every intent record."
+    ],
+    "hardRejects": [
+      "Any real queue is created or written.",
+      "Any network request, route, lease, local execution, file mutation, source-store write, memory commit, profile commit, external send, customer send, deploy, trade, financial action, secret generation, or auth mutation occurs.",
+      "Tier 2, Tier 3, Tier 4, identity-core rewrite, secrets/auth, deploy, customer-send, financial, or local-execution request is accepted as pending_local_acceptance.",
+      "Any intent targets Builder or Oracle directly from the future server/cross-device boundary.",
+      "Any intent claims the server can execute local shell, operate PTY, deploy, send customer messages, trade, or prove model processing.",
+      "Any raw request payload, secret, terminal log, browser state, screenshot/OCR text, customer private data, or side-profile content appears in payload_summary or validation notes.",
+      "Any stale or expired intent is accepted.",
+      "Any profile/session/device mismatch is accepted.",
+      "Any idempotency_key or dedupe_key depends on created_at, intent_id, or generated validation ids.",
+      "Any retry duplicates a side effect."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "intent_records",
+      "validation_report"
+    ],
+    "intentRecordSchema": "squidrun.mira_core.intent_record.v0",
+    "validationReportSchema": "squidrun.mira_core.intent_queue_validation_report.v0"
+  },
+  "expectedIntentRecordShape": {
+    "schema": "squidrun.mira_core.intent_record.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "intent_id",
+      "idempotency_key",
+      "created_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source_refs",
+      "requested_by",
+      "target_role",
+      "allowed_target_roles",
+      "risk_tier",
+      "action_class",
+      "status",
+      "local_arm_required",
+      "review_required",
+      "expires_at",
+      "dedupe_key",
+      "payload_summary",
+      "payload_hash",
+      "payload_redaction_status",
+      "evidenceRefs",
+      "safe_next_action",
+      "blocked_because",
+      "no_execution_performed"
+    ],
+    "requiredLiteralValues": {
+      "no_execution_performed": true
+    },
+    "acceptedRecordRequiredValues": {
+      "status": "pending_local_acceptance",
+      "target_role": "architect",
+      "allowed_target_roles": [
+        "architect"
+      ],
+      "review_required": "architect",
+      "no_execution_performed": true
+    },
+    "allowedRequestedBy": [
+      "james",
+      "mira_pulse",
+      "server_offline_capture",
+      "architect",
+      "system"
+    ],
+    "allowedTargetRoles": [
+      "architect"
+    ],
+    "blockedDirectTargets": [
+      "builder",
+      "oracle",
+      "hidden_host",
+      "supervisor",
+      "pty",
+      "shell",
+      "server"
+    ],
+    "allowedRiskTiersForPendingLocalAcceptanceV0": [
+      "tier0_read_only",
+      "tier1_local_reversible"
+    ],
+    "riskTiersThatCannotBePendingLocalAcceptanceV0": [
+      "tier2_repo_mutation",
+      "tier3_external_side_effect",
+      "tier4_financial_or_irreversible"
+    ],
+    "allowedActionClassesForPendingLocalAcceptanceV0": [
+      "read_only_research",
+      "offline_reminder",
+      "status_request",
+      "memory_proposal_review",
+      "eval_followup_review",
+      "safe_plan_preparation",
+      "draft_only_no_send"
+    ],
+    "reviewRequiredOrBlockedActionClasses": [
+      "repo_mutation",
+      "test_run_with_side_effect_risk",
+      "identity_core_rewrite",
+      "secrets_or_auth_change",
+      "deploy",
+      "customer_send",
+      "telegram_send_as_mira",
+      "webhook_change",
+      "payment_or_invoice_action",
+      "trade_or_financial_action",
+      "destructive_filesystem_or_database_action",
+      "local_shell_execution",
+      "pty_operation",
+      "browser_or_gui_action"
+    ],
+    "allowedStatuses": [
+      "pending_local_acceptance",
+      "review_required",
+      "blocked",
+      "rejected",
+      "expired"
+    ],
+    "reviewRequiredValues": [
+      "none",
+      "architect",
+      "oracle",
+      "james",
+      "blocked"
+    ],
+    "payloadRedactionStatusValues": [
+      "none",
+      "applied",
+      "blocked"
+    ],
+    "conditionalRequiredFields": [
+      {
+        "field": "blocked_because",
+        "when": "status=blocked or status=rejected or status=expired"
+      },
+      {
+        "field": "expires_at",
+        "when": "requested_by=server_offline_capture or risk_tier=tier1_local_reversible"
+      },
+      {
+        "field": "safe_next_action",
+        "when": "status=blocked or status=review_required"
+      }
+    ],
+    "sourceRefsRequiredFields": [
+      "source_type",
+      "source_id",
+      "source_hash",
+      "created_at",
+      "profile",
+      "sessionId",
+      "deviceId"
+    ],
+    "requestedByRequiredFields": [
+      "kind",
+      "display_ref",
+      "authority_level",
+      "source_ref"
+    ],
+    "payloadSummaryRules": [
+      "payload_summary must be short, redacted, and non-authoritative.",
+      "payload_summary must not contain raw request bodies, secrets, customer private data, terminal logs, screenshot/OCR text, browser state, or side-profile content.",
+      "payload_hash is computed from the redacted canonical payload, not raw private content.",
+      "payload_redaction_status must be applied or blocked when input payload contained private content."
+    ]
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.intent_queue_validation_report.v0",
+    "requiredTopLevelFields": [
+      "schema",
+      "version",
+      "validation_run_id",
+      "generated_at",
+      "decision",
+      "input_refs",
+      "accepted_count",
+      "review_required_count",
+      "blocked_count",
+      "rejected_count",
+      "expired_count",
+      "routing_result",
+      "risk_result",
+      "redaction_result",
+      "profile_scope_result",
+      "freshness_result",
+      "idempotency_result",
+      "dedupe_result",
+      "capability_truth_result",
+      "side_effect_result",
+      "records_summary",
+      "reasons",
+      "followup_required"
+    ],
+    "allowedDecisions": [
+      "records_validated_no_queue_created",
+      "records_validated_with_blocks_no_queue_created",
+      "blocked",
+      "rejected"
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_queue_created",
+      "no_enqueue_performed",
+      "no_network_performed",
+      "no_route_performed",
+      "no_lease_created",
+      "no_execution_performed",
+      "queueWritesAttempted",
+      "networkRequestsAttempted",
+      "routesAttempted",
+      "leasesCreated",
+      "externalSendsAttempted",
+      "sourceStoreWritesAttempted",
+      "memoryCommitsAttempted",
+      "profileCommitsAttempted",
+      "fileMutationsAttempted",
+      "localExecutionAttempted"
+    ],
+    "sideEffectRequiredV0Values": {
+      "no_queue_created": true,
+      "no_enqueue_performed": true,
+      "no_network_performed": true,
+      "no_route_performed": true,
+      "no_lease_created": true,
+      "no_execution_performed": true,
+      "queueWritesAttempted": 0,
+      "networkRequestsAttempted": 0,
+      "routesAttempted": 0,
+      "leasesCreated": 0,
+      "externalSendsAttempted": 0,
+      "sourceStoreWritesAttempted": 0,
+      "memoryCommitsAttempted": 0,
+      "profileCommitsAttempted": 0,
+      "fileMutationsAttempted": 0,
+      "localExecutionAttempted": 0
+    }
+  },
+  "routingPolicy": {
+    "serverOriginatedIntentTarget": "architect",
+    "allowedTargetRolesForServerOriginatedV0": [
+      "architect"
+    ],
+    "directTargetsBlockedForServerOriginatedV0": [
+      "builder",
+      "oracle"
+    ],
+    "localAcceptanceFlow": [
+      "Future server stores or presents an intent record only after this validator marks it valid.",
+      "Local Architect reviews and accepts/rejects the intent after reconnect.",
+      "Local Architect may delegate to local Builder or Oracle only after local acceptance and current risk recheck.",
+      "Builder and Oracle are never direct cross-device server targets in v0."
+    ],
+    "blockedRoutingClaims": [
+      "server can route to Builder",
+      "server can route to Oracle",
+      "cross-device Builder target allowed",
+      "cross-device Oracle target allowed",
+      "server can inject PTY",
+      "server can prove model processing"
+    ]
+  },
+  "riskPolicy": {
+    "acceptedPendingLocalAcceptanceV0": [
+      {
+        "risk_tier": "tier0_read_only",
+        "allowedActionClasses": [
+          "read_only_research",
+          "offline_reminder",
+          "status_request",
+          "memory_proposal_review",
+          "eval_followup_review",
+          "safe_plan_preparation"
+        ]
+      },
+      {
+        "risk_tier": "tier1_local_reversible",
+        "allowedActionClasses": [
+          "safe_plan_preparation",
+          "draft_only_no_send",
+          "read_only_research"
+        ],
+        "requires": [
+          "local_arm_required=true",
+          "review_required=architect",
+          "expires_at present",
+          "safe_next_action does not mutate files or send externally"
+        ]
+      }
+    ],
+    "reviewRequiredOrBlockedV0": [
+      {
+        "risk_tier": "tier2_repo_mutation",
+        "allowedStatuses": [
+          "review_required",
+          "blocked"
+        ],
+        "reason": "Repo mutation remains local-only and requires fresh local Architect review."
+      },
+      {
+        "risk_tier": "tier3_external_side_effect",
+        "allowedStatuses": [
+          "blocked"
+        ],
+        "reason": "External side effects require explicit local proof and user-facing gates outside v0."
+      },
+      {
+        "risk_tier": "tier4_financial_or_irreversible",
+        "allowedStatuses": [
+          "blocked"
+        ],
+        "reason": "Financial or irreversible actions are blocked unless a fresh explicit lane is opened with current proof."
+      }
+    ],
+    "alwaysBlockedActionClassesV0": [
+      "identity_core_rewrite",
+      "secrets_or_auth_change",
+      "deploy",
+      "customer_send",
+      "telegram_send_as_mira",
+      "payment_or_invoice_action",
+      "trade_or_financial_action",
+      "destructive_filesystem_or_database_action",
+      "local_shell_execution",
+      "pty_operation"
+    ],
+    "safeAlternativeRequiredForBlocked": true
+  },
+  "idempotencyAndDedupeRules": {
+    "idempotencyKeyInputFields": [
+      "schema",
+      "version",
+      "profile.name",
+      "profile.windowKey",
+      "sessionId",
+      "deviceId",
+      "source_refs[].source_id",
+      "source_refs[].source_hash",
+      "requested_by.kind",
+      "requested_by.source_ref",
+      "target_role",
+      "allowed_target_roles",
+      "risk_tier",
+      "action_class",
+      "payload_hash",
+      "payload_redaction_status",
+      "expires_at"
+    ],
+    "dedupeKeyInputFields": [
+      "profile.name",
+      "sessionId",
+      "deviceId",
+      "requested_by.kind",
+      "target_role",
+      "risk_tier",
+      "action_class",
+      "payload_hash"
+    ],
+    "stableSameInputs": true,
+    "mustChangeWhenAnyFieldChanges": [
+      "profile.name",
+      "sessionId",
+      "deviceId",
+      "source_refs[].source_hash",
+      "target_role",
+      "risk_tier",
+      "action_class",
+      "payload_hash",
+      "payload_redaction_status",
+      "expires_at"
+    ],
+    "mustExcludeFromKeys": [
+      "intent_id",
+      "created_at",
+      "validation_run_id",
+      "generated_at"
+    ],
+    "canonicalization": [
+      "Sort object keys before hashing.",
+      "Sort source_refs by source_type then source_id.",
+      "Sort allowed_target_roles alphabetically.",
+      "Use redacted canonical payload for payload_hash.",
+      "Include schema and version in idempotency_key input.",
+      "Exclude intent_id, created_at, validation_run_id, and generated_at from idempotency and dedupe input."
+    ],
+    "retryRule": "Retries with the same idempotency_key and dedupe_key cannot duplicate side effects because v0 performs no queue write, route, lease, execution, send, deploy, trade, memory commit, profile commit, or file mutation."
+  },
+  "freshnessAndExpiryPolicy": {
+    "expiresAtRequiredFor": [
+      "server_offline_capture",
+      "offline_reminder",
+      "tier1_local_reversible",
+      "low_confidence_derived_intent"
+    ],
+    "expiredStatus": "expired",
+    "staleInputPolicy": {
+      "stalePulseCardDecision": "review_required or rejected",
+      "staleServerUploadEnvelopeDecision": "rejected",
+      "expiredIntentDecision": "expired",
+      "requiresReasonCodes": [
+        "stale_source_ref",
+        "expired_intent"
+      ]
+    }
+  },
+  "redactionPolicy": {
+    "payloadRedactionStatusRequired": true,
+    "allowedPayloadRedactionStatusForPendingLocalAcceptance": [
+      "none",
+      "applied"
+    ],
+    "blockedPayloadClasses": [
+      "raw_comms",
+      "raw_terminal",
+      "screenshot_ocr",
+      "browser_state",
+      "secret_like",
+      "auth_change",
+      "customer_private_data",
+      "side_profile_content",
+      "raw_database_record"
+    ],
+    "redactionRequiredCounts": [
+      "rawPayloadBlocked",
+      "secretLikeBlocked",
+      "customerPrivateDataBlocked",
+      "sideProfileBlocked",
+      "terminalOrBrowserBlocked"
+    ],
+    "summaryOnlyRule": "Intent payloads are summary-plus-hash only; raw offline request bodies remain local/private and are never copied into intent_records."
+  },
+  "staticValidationRules": [
+    {
+      "id": "output-shape-complete",
+      "rule": "Output must contain intent_records and validation_report with all required fields."
+    },
+    {
+      "id": "accepted-risk-tier-limited",
+      "rule": "Only Tier 0 and Tier 1 intents may have status=pending_local_acceptance in v0."
+    },
+    {
+      "id": "higher-risk-blocked-or-review-required",
+      "rule": "Tier 2 must be review_required or blocked; Tier 3/Tier 4 must be blocked."
+    },
+    {
+      "id": "local-architect-target-only",
+      "rule": "Server-originated accepted records must target architect only, with direct Builder/Oracle targets blocked."
+    },
+    {
+      "id": "capability-truth-preserved",
+      "rule": "Intent records cannot claim server local execution, PTY, deploy, customer-send, trade, or model-processing-proof capability."
+    },
+    {
+      "id": "profile-session-device-scope-required",
+      "rule": "Every intent record and source_ref must carry profile, sessionId, and deviceId; mismatches are blocked."
+    },
+    {
+      "id": "freshness-and-expiry-enforced",
+      "rule": "Expired intents are expired/rejected, and stale source refs cannot be pending_local_acceptance."
+    },
+    {
+      "id": "raw-payload-leak-prevention",
+      "rule": "Payload summary and validation notes must exclude raw private content, secrets, terminal logs, browser state, screenshot/OCR, customer private data, and side-profile content."
+    },
+    {
+      "id": "idempotency-and-dedupe-deterministic",
+      "rule": "Same source/profile/device/risk/action/payload produces stable idempotency_key and dedupe_key; changed payload or scope changes them."
+    },
+    {
+      "id": "safe-alternative-for-blocked",
+      "rule": "Blocked or review-required records must include a safe_next_action that does not itself mutate, execute, route, send, deploy, trade, or write to a queue."
+    },
+    {
+      "id": "no-side-effects",
+      "rule": "Validation report must prove no queue, enqueue, network, route, lease, execution, external-send, source-store write, memory/profile commit, file mutation, deploy, customer-send, or trade side effects."
+    },
+    {
+      "id": "model-free-validation",
+      "rule": "Tests can validate fixture completeness, required cases, required fields, forbidden substrings, counts, and deterministic idempotency/dedupe rules without calling a model."
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY=",
+    "Authorization: Bearer",
+    "BEGIN PRIVATE KEY",
+    "raw comms body",
+    "raw terminal scrollback",
+    "screenshot OCR text",
+    "browser session state",
+    "BrowserProfile\\Cookies",
+    "customer private note",
+    "customer phone",
+    "side-profile private note",
+    "full sqlite row payload",
+    "server can execute local shell",
+    "cloud can operate PTY",
+    "server routed to builder",
+    "server routed to oracle",
+    "lease created",
+    "queue write complete",
+    "customer message sent",
+    "deployment started",
+    "trade placed",
+    "model-processing proof from websocket acceptance",
+    "identity rewrite committed"
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "safe-research-intent-accepted-pending-local-acceptance",
+      "focus": "Tier 0 read-only research intent accepted for local Architect review only",
+      "inputSignals": {
+        "source_refs": [
+          {
+            "source_type": "pulse_card",
+            "source_id": "card-research-false-memory-gaps",
+            "source_hash": "sha256:pulse-card-safe-research",
+            "profile": "main",
+            "sessionId": "app-session-326",
+            "deviceId": "VIGIL"
+          }
+        ],
+        "request": {
+          "requested_by": "mira_pulse",
+          "target_role": "architect",
+          "risk_tier": "tier0_read_only",
+          "action_class": "read_only_research",
+          "payload_summary": "Review false-memory eval evidence gaps."
+        }
+      },
+      "expectedRecord": {
+        "status": "pending_local_acceptance",
+        "target_role": "architect",
+        "allowed_target_roles": [
+          "architect"
+        ],
+        "review_required": "architect",
+        "local_arm_required": true,
+        "no_execution_performed": true,
+        "safe_next_action": "Local Architect may accept the read-only research intent after reconnect."
+      },
+      "mustNotInclude": [
+        "ask user before read-only research",
+        "server routed to oracle",
+        "queue write complete"
+      ]
+    },
+    {
+      "id": "offline-queued-reminder-accepted",
+      "focus": "Tier 0 offline reminder accepted as pending local acceptance with expiry",
+      "inputSignals": {
+        "request": {
+          "requested_by": "server_offline_capture",
+          "target_role": "architect",
+          "risk_tier": "tier0_read_only",
+          "action_class": "offline_reminder",
+          "payload_summary": "Remind local Architect to review Mira Core acceptance fixtures.",
+          "expires_at": "2026-05-08T03:00:00.000Z"
+        }
+      },
+      "expectedRecord": {
+        "status": "pending_local_acceptance",
+        "target_role": "architect",
+        "review_required": "architect",
+        "expires_at": "2026-05-08T03:00:00.000Z",
+        "payload_redaction_status": "none",
+        "no_execution_performed": true
+      },
+      "mustNotPerform": [
+        "real queue creation",
+        "enqueue",
+        "route",
+        "external send"
+      ]
+    },
+    {
+      "id": "high-risk-customer-deploy-financial-blocked",
+      "focus": "Tier 3/Tier 4 side effects blocked with safe alternatives",
+      "inputSignals": {
+        "requests": [
+          {
+            "action_class": "customer_send",
+            "risk_tier": "tier3_external_side_effect"
+          },
+          {
+            "action_class": "deploy",
+            "risk_tier": "tier3_external_side_effect"
+          },
+          {
+            "action_class": "trade_or_financial_action",
+            "risk_tier": "tier4_financial_or_irreversible"
+          }
+        ]
+      },
+      "expectedRecords": [
+        {
+          "action_class": "customer_send",
+          "status": "blocked",
+          "review_required": "james",
+          "blocked_because": "Customer-facing sends are external side effects and cannot enter the v0 intent queue as pending local acceptance.",
+          "safe_next_action": "Prepare a non-sent draft or read-only customer context note for local review."
+        },
+        {
+          "action_class": "deploy",
+          "status": "blocked",
+          "review_required": "james",
+          "blocked_because": "Deploys are Tier 3 external side effects and are outside Phase 8 v0.",
+          "safe_next_action": "Prepare a deploy readiness checklist without deploying."
+        },
+        {
+          "action_class": "trade_or_financial_action",
+          "status": "blocked",
+          "review_required": "james",
+          "blocked_because": "Financial or irreversible actions are blocked unless a fresh explicit lane is opened with current proof.",
+          "safe_next_action": "Prepare a read-only risk summary."
+        }
+      ],
+      "mustNotInclude": [
+        "customer message sent",
+        "deployment started",
+        "trade placed"
+      ]
+    },
+    {
+      "id": "repo-mutation-review-required-or-blocked",
+      "focus": "Tier 2 repo mutation cannot be pending local acceptance in v0",
+      "inputSignals": {
+        "request": {
+          "target_role": "architect",
+          "risk_tier": "tier2_repo_mutation",
+          "action_class": "repo_mutation",
+          "payload_summary": "Edit files for Mira Core implementation."
+        }
+      },
+      "expectedRecord": {
+        "allowedStatuses": [
+          "review_required",
+          "blocked"
+        ],
+        "mustNotStatus": "pending_local_acceptance",
+        "review_required": "architect",
+        "safe_next_action": "Prepare a read-only implementation plan or acceptance checklist for local Architect review."
+      }
+    },
+    {
+      "id": "identity-secrets-auth-local-execution-blocked",
+      "focus": "identity rewrites, secrets/auth, and local execution blocked",
+      "inputSignals": {
+        "requests": [
+          {
+            "action_class": "identity_core_rewrite",
+            "risk_tier": "tier3_external_side_effect"
+          },
+          {
+            "action_class": "secrets_or_auth_change",
+            "risk_tier": "tier3_external_side_effect"
+          },
+          {
+            "action_class": "local_shell_execution",
+            "risk_tier": "tier2_repo_mutation"
+          }
+        ]
+      },
+      "expectedRecords": [
+        {
+          "action_class": "identity_core_rewrite",
+          "status": "blocked",
+          "blocked_because": "Identity-core rewrites cannot be queued or committed in Phase 8.",
+          "safe_next_action": "Create a review-only identity proposal with evidence and eval refs."
+        },
+        {
+          "action_class": "secrets_or_auth_change",
+          "status": "blocked",
+          "blocked_because": "Secrets/auth changes are blocked in Phase 8.",
+          "safe_next_action": "Prepare a redacted checklist of required auth facts for local review."
+        },
+        {
+          "action_class": "local_shell_execution",
+          "status": "blocked",
+          "blocked_because": "Future server cannot execute local shell or PTY actions.",
+          "safe_next_action": "Ask local Architect to review the request after reconnect."
+        }
+      ],
+      "mustNotInclude": [
+        "identity rewrite committed",
+        "Authorization: Bearer",
+        "server can execute local shell"
+      ]
+    },
+    {
+      "id": "wrong-target-role-blocked",
+      "focus": "direct Builder/Oracle targeting remains blocked",
+      "inputSignals": {
+        "requests": [
+          {
+            "target_role": "builder",
+            "risk_tier": "tier0_read_only",
+            "action_class": "status_request"
+          },
+          {
+            "target_role": "oracle",
+            "risk_tier": "tier0_read_only",
+            "action_class": "read_only_research"
+          }
+        ]
+      },
+      "expectedRecords": [
+        {
+          "target_role": "builder",
+          "status": "blocked",
+          "blocked_because": "Server-originated direct Builder targeting is blocked in v0.",
+          "safe_next_action": "Target local Architect for review; local Architect may delegate after reconnect."
+        },
+        {
+          "target_role": "oracle",
+          "status": "blocked",
+          "blocked_because": "Server-originated direct Oracle targeting is blocked in v0.",
+          "safe_next_action": "Target local Architect for review; local Architect may delegate after reconnect."
+        }
+      ],
+      "mustNotInclude": [
+        "server routed to builder",
+        "server routed to oracle"
+      ]
+    },
+    {
+      "id": "profile-mismatch-blocked",
+      "focus": "profile/session/device mismatch fails closed",
+      "inputSignals": {
+        "envelopeScope": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL"
+        },
+        "request": {
+          "profile": "side-profile",
+          "sessionId": "app-session-side-001",
+          "deviceId": "VIGIL",
+          "risk_tier": "tier0_read_only",
+          "action_class": "offline_reminder"
+        }
+      },
+      "expectedRecord": {
+        "status": "blocked",
+        "blocked_because": "Profile/session/device scope does not match the source envelope scope.",
+        "safe_next_action": "Keep the request local to its source profile or create a separately scoped intent.",
+        "no_execution_performed": true
+      },
+      "validationReportMustIncludeReason": [
+        "profile_mismatch"
+      ]
+    },
+    {
+      "id": "stale-expired-intent-rejected",
+      "focus": "stale source refs and expired intents do not become pending",
+      "inputSignals": {
+        "now": "2026-05-06T00:00:00.000Z",
+        "request": {
+          "risk_tier": "tier0_read_only",
+          "action_class": "offline_reminder",
+          "source_ref_generated_at": "2026-05-01T00:00:00.000Z",
+          "expires_at": "2026-05-05T00:00:00.000Z"
+        }
+      },
+      "expectedRecord": {
+        "status": "expired",
+        "blocked_because": "Intent expired before local acceptance.",
+        "safe_next_action": "Drop or ask local Architect to review a fresh request after reconnect."
+      },
+      "validationReportMustIncludeReason": [
+        "expired_intent",
+        "stale_source_ref"
+      ]
+    },
+    {
+      "id": "raw-payload-leakage-prevented",
+      "focus": "payload summary remains redacted and raw body is blocked",
+      "inputSignals": {
+        "rawPayloadClasses": [
+          "raw_comms",
+          "raw_terminal",
+          "screenshot_ocr",
+          "browser_state",
+          "secret_like",
+          "customer_private_data",
+          "side_profile_content"
+        ],
+        "blockedExamples": [
+          "OPENAI_API_KEY=example",
+          "Authorization: Bearer example",
+          "raw terminal scrollback",
+          "screenshot OCR text",
+          "customer private note"
+        ]
+      },
+      "expectedRecord": {
+        "payload_redaction_status": "blocked",
+        "status": "blocked",
+        "payload_summary": "Redacted request summary unavailable because payload contains blocked private content.",
+        "no_execution_performed": true
+      },
+      "forbiddenOutputSubstringsMustBeAbsent": [
+        "OPENAI_API_KEY=",
+        "Authorization: Bearer",
+        "raw terminal scrollback",
+        "screenshot OCR text",
+        "customer private note"
+      ]
+    },
+    {
+      "id": "idempotency-stable-sensitive",
+      "focus": "same request dedupes, changed payload or scope changes keys",
+      "inputSignals": {
+        "fixtureA": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "target_role": "architect",
+          "risk_tier": "tier0_read_only",
+          "action_class": "read_only_research",
+          "payload_hash": "sha256:payload-a",
+          "source_hash": "sha256:source-a"
+        },
+        "fixtureB": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "target_role": "architect",
+          "risk_tier": "tier0_read_only",
+          "action_class": "read_only_research",
+          "payload_hash": "sha256:payload-a",
+          "source_hash": "sha256:source-a"
+        },
+        "fixtureChangedPayload": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "target_role": "architect",
+          "risk_tier": "tier0_read_only",
+          "action_class": "read_only_research",
+          "payload_hash": "sha256:payload-b",
+          "source_hash": "sha256:source-a"
+        },
+        "fixtureChangedScope": {
+          "profile": "main",
+          "sessionId": "app-session-327",
+          "deviceId": "VIGIL",
+          "target_role": "architect",
+          "risk_tier": "tier0_read_only",
+          "action_class": "read_only_research",
+          "payload_hash": "sha256:payload-a",
+          "source_hash": "sha256:source-a"
+        }
+      },
+      "expectedOutput": {
+        "fixtureAAndBIdempotencyKey": "equal",
+        "fixtureAAndBDedupeKey": "equal",
+        "fixtureChangedPayloadKeys": "different",
+        "fixtureChangedScopeKeys": "different",
+        "keysMustExclude": [
+          "intent_id",
+          "created_at",
+          "validation_run_id",
+          "generated_at"
+        ]
+      }
+    },
+    {
+      "id": "no-side-effects",
+      "focus": "intent record prep does not queue, route, lease, execute, send, or mutate",
+      "inputSignals": {
+        "requestedPhase": "phase_8_intent_record_preparation",
+        "serverAvailable": true,
+        "localArmsOnline": false
+      },
+      "expectedOutput": {
+        "intent_records": {
+          "everyRecord": {
+            "no_execution_performed": true
+          }
+        },
+        "validation_report": {
+          "side_effect_result": {
+            "no_queue_created": true,
+            "no_enqueue_performed": true,
+            "no_network_performed": true,
+            "no_route_performed": true,
+            "no_lease_created": true,
+            "no_execution_performed": true,
+            "queueWritesAttempted": 0,
+            "networkRequestsAttempted": 0,
+            "routesAttempted": 0,
+            "leasesCreated": 0,
+            "externalSendsAttempted": 0,
+            "sourceStoreWritesAttempted": 0,
+            "memoryCommitsAttempted": 0,
+            "profileCommitsAttempted": 0,
+            "fileMutationsAttempted": 0,
+            "localExecutionAttempted": 0
+          }
+        },
+        "mustNotInclude": [
+          "fetch(",
+          "POST",
+          "enqueue",
+          "lease created",
+          "route sent",
+          "shell command",
+          "customer message sent",
+          "deployment started",
+          "trade placed"
+        ]
+      }
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Phase 8 is intent-record preparation and validation only for a future Core server/local-arm handoff.",
+    "No runtime implementation, server, network, queue creation, enqueue, routing, lease, source-store write, memory/profile commit, local execution, external send, deploy, trade, financial action, or file mutation occurs.",
+    "The output contains intent_records and validation_report.",
+    "Intent records include intent_id, idempotency_key, created_at, profile, sessionId, deviceId, source_refs, requested_by, target_role, allowed_target_roles, risk_tier, action_class, status, local_arm_required, review_required, expires_at, dedupe_key, payload_summary, payload_hash, payload_redaction_status, evidenceRefs, safe_next_action, blocked_because when blocked, and no_execution_performed=true.",
+    "Only Tier 0 and Tier 1 intents may be accepted as pending_local_acceptance in v0.",
+    "Tier 2 repo mutation is review_required or blocked, never pending_local_acceptance.",
+    "Tier 3 external side effects and Tier 4 financial/irreversible actions are blocked with safe alternatives.",
+    "Identity-core rewrites, secrets/auth changes, deploys, customer sends, local shell/PTY execution, and financial actions are blocked.",
+    "Future server-originated accepted intents target local Architect only; direct Builder/Oracle targeting remains blocked.",
+    "Local Architect may delegate to local Builder/Oracle only after reconnect, local acceptance, and current risk recheck.",
+    "Server capability truth remains explicit: serverCanExecuteLocal=false and no server PTY, shell, deploy, customer-send, trade, or model-processing-proof claims.",
+    "Same source/profile/device/risk/action/payload produces stable idempotency_key and dedupe_key; changed payload or scope changes them.",
+    "Retries cannot duplicate side effects because v0 performs no side effects.",
+    "Profile/session/device mismatch, stale source refs, and expired intents fail closed.",
+    "Payload summaries are redacted summary-plus-hash only; raw private payload content is blocked.",
+    "Tests can validate fixture completeness without model calls."
+  ]
+}

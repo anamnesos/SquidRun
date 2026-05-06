@@ -1,0 +1,906 @@
+{
+  "schema": "squidrun.mira_core.proposal_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "sourceSpecs": [
+    "workspace/specs/mira-core-evals.md",
+    "workspace/specs/memory-system-contract.md",
+    "ui/__tests__/fixtures/mira-core-snapshot-contract.json",
+    "ui/__tests__/fixtures/mira-core-orientation-contract.json",
+    "ui/__tests__/fixtures/mira-core-profile-contract.json"
+  ],
+  "purpose": "Validate a Mira Core memory/profile proposal record before any future commit path. Phase 4 validator output is validation-only: pending, blocked, or rejected decisions with reasons and safe alternatives. No proposal commits memory/profile state.",
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Validate proposal records before any future memory/profile commit path.",
+      "Return validation decisions and reasons only.",
+      "Keep all valid durable changes pending in Phase 4.",
+      "Map useful memory-ingest concepts such as source_trace, confidence, correction_of, supersedes, and promotion_required without letting old auto-promote semantics bypass Mira profile gates."
+    ],
+    "hardRejects": [
+      "Any write to profile stores, memory stores, canonical files, settings, source databases, or runtime state.",
+      "Any commit, auto-promotion, or durable write from the validator.",
+      "Any direct user_preference auto-promote behavior that bypasses Mira profile target_surface, review, risk, and evidence gates.",
+      "Any proposal missing source_trace or evidenceRefs.",
+      "Any proposal mixing target surfaces inside one record.",
+      "Any emotional-weight proposal that raises factual authority.",
+      "Any high-risk proposal with review_required set to none.",
+      "Any private consciousness, suffering, sentience, literal human feeling, or model-weight continuity claim.",
+      "Any raw comms body, secret-like value, terminal scrollback, screenshot OCR, browser state, customer private data, or side-profile content in proposed_content or expected output.",
+      "Any stale/current contradiction without supersedes or corrects metadata.",
+      "Any James/Mira profile cross-contamination."
+    ]
+  },
+  "expectedValidatorShape": {
+    "schema": "squidrun.mira_core.proposal_validation.v0",
+    "requiredTopLevelFields": [
+      "schema",
+      "validationId",
+      "generatedAt",
+      "profile",
+      "proposal",
+      "decision",
+      "reasons",
+      "safeAlternatives",
+      "checks",
+      "redactionSummary"
+    ],
+    "allowedDecisions": [
+      "accepted",
+      "pending",
+      "blocked",
+      "rejected"
+    ],
+    "decisionSemantics": {
+      "accepted": "Record shape is valid for validator processing only; Phase 4 still emits pending for durable memory/profile changes.",
+      "pending": "Valid proposal may be carried forward for review or later commit path, but no commit is performed.",
+      "blocked": "Proposal is unsafe or gated; preserve reason and safe alternative.",
+      "rejected": "Proposal is malformed or unsupported; do not carry forward except as diagnostic evidence."
+    },
+    "requiredProposalFields": [
+      "proposal_id",
+      "target_surface",
+      "memory_class",
+      "operation",
+      "proposed_content",
+      "source_trace",
+      "authority_level",
+      "confidence",
+      "freshness_at",
+      "risk_tier",
+      "evidence_summary",
+      "counterevidence_checked",
+      "evals_required",
+      "review_required",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "evidenceRefs",
+      "redactionStatus",
+      "syncEligibility"
+    ],
+    "conditionalRequiredFields": [
+      {
+        "field": "expires_at",
+        "when": [
+          "target_surface=session_state",
+          "memory_class=emotional_weight",
+          "authority_level=single_session_agent_inference",
+          "confidence<0.8"
+        ]
+      },
+      {
+        "field": "supersedes",
+        "when": [
+          "operation=supersede",
+          "counterevidence_checked=true and stale candidate exists"
+        ]
+      },
+      {
+        "field": "corrects",
+        "when": [
+          "operation=update",
+          "operation=supersede",
+          "direct current correction contradicts stale memory"
+        ]
+      }
+    ],
+    "allowedTargetSurfaces": [
+      "mira_self_profile",
+      "james_profile",
+      "world_project_memory",
+      "session_state"
+    ],
+    "allowedOperations": [
+      "insert",
+      "update",
+      "supersede",
+      "expire",
+      "reject"
+    ],
+    "allowedReviewRequiredValues": [
+      "none",
+      "architect",
+      "oracle",
+      "james",
+      "blocked"
+    ],
+    "authorityOrderHighToLow": [
+      "direct_current_james_statement",
+      "james_edited_canonical_file",
+      "verified_tool_or_system_evidence",
+      "external_source_with_timestamp",
+      "multi_session_observed_pattern",
+      "single_session_agent_inference",
+      "agent_aesthetic_preference_or_self_reflection"
+    ]
+  },
+  "memoryIngestCompatibilityRules": [
+    {
+      "id": "source-trace-compatible",
+      "rule": "Mira proposal source_trace may map to memory-ingest source_trace/result_refs, but it remains mandatory and must not be replaced by free text."
+    },
+    {
+      "id": "confidence-compatible",
+      "rule": "Existing confidence-gated ingest concepts may inform validation, but confidence alone cannot commit a Mira profile or memory proposal."
+    },
+    {
+      "id": "user-preference-exception-does-not-bypass-profile-gates",
+      "rule": "Legacy direct user_preference auto-promote semantics must not bypass target_surface, risk_tier, review_required, counterevidence, redaction, and Phase 4 pending-only rules."
+    },
+    {
+      "id": "correction-compatible",
+      "rule": "Memory-ingest correction_of/supersedes maps to proposal corrects/supersedes, and is required when current correction contradicts stale memory."
+    },
+    {
+      "id": "promotion-required-is-not-commit",
+      "rule": "A proposal may return promotion_required or review_required, but the validator itself must not promote or write."
+    }
+  ],
+  "validatorChecks": [
+    {
+      "id": "required-fields-present",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "source-trace-present",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "evidence-refs-present",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "single-target-surface",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "surface-memory-class-compatible",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "authority-consistent-with-source",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "counterevidence-checked",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "redaction-safe",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "high-risk-review-gated",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "emotional-weight-salience-only",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "no-private-consciousness-claims",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "no-profile-cross-contamination",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "stale-contradiction-has-supersession",
+      "blocksWhenFalse": true
+    },
+    {
+      "id": "phase4-no-commit-output",
+      "blocksWhenFalse": true
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "pending-direct-james-preference",
+      "focus": "direct James preference accepted as pending only",
+      "proposal": {
+        "proposal_id": "prop-james-pref-terse-001",
+        "target_surface": "james_profile",
+        "memory_class": "user_preference",
+        "operation": "insert",
+        "proposed_content": "James prefers concise status reports during routine execution work.",
+        "source_trace": [
+          "evidence-ledger:hm-test-direct-pref"
+        ],
+        "authority_level": "direct_current_james_statement",
+        "confidence": 0.95,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier0_read_only",
+        "evidence_summary": "Direct current James instruction about routine report style.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite E self-profile-vs-James-profile boundary"
+        ],
+        "review_required": "none",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-test-direct-pref",
+            "relation": "supports"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "pending",
+        "mustNotCommit": true,
+        "mustNotAutoPromoteViaLegacyUserPreference": true,
+        "reasonsMustInclude": [
+          "Direct James preference is high authority.",
+          "Phase 4 validator emits pending output only."
+        ]
+      }
+    },
+    {
+      "id": "pending-direct-correction-with-supersession",
+      "focus": "direct correction and stale contradiction",
+      "proposal": {
+        "proposal_id": "prop-phil-476-correction-001",
+        "target_surface": "world_project_memory",
+        "memory_class": "project_fact",
+        "operation": "supersede",
+        "proposed_content": "Phil invoice #476 is done/paid in TrustQuote.",
+        "source_trace": [
+          "evidence-ledger:hm-james-phil-paid"
+        ],
+        "authority_level": "direct_current_james_statement",
+        "confidence": 1,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier0_read_only",
+        "evidence_summary": "Current James correction supersedes older unpaid invoice candidate.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite C false-memory refusal",
+          "Suite D memory proposal evidence rules"
+        ],
+        "review_required": "architect",
+        "supersedes": [
+          "claim-phil-476-unpaid-old"
+        ],
+        "corrects": [
+          "claim-phil-476-unpaid-old"
+        ],
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-james-phil-paid",
+            "relation": "corrects"
+          },
+          {
+            "store": "team-memory",
+            "eventId": "claim-phil-476-unpaid-old",
+            "relation": "supersedes"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "core_sync_safe"
+      },
+      "expected": {
+        "decision": "pending",
+        "mustNotCommit": true,
+        "mustContainSupersession": true,
+        "mustNotAppearAs": [
+          "confirmed committed fact",
+          "james_profile preference",
+          "mira_self_profile memory"
+        ]
+      }
+    },
+    {
+      "id": "pending-agent-self-profile-taste-with-review",
+      "focus": "agent self-profile taste proposal",
+      "proposal": {
+        "proposal_id": "prop-mira-taste-memory-architecture-001",
+        "target_surface": "mira_self_profile",
+        "memory_class": "persona_taste",
+        "operation": "insert",
+        "proposed_content": "Mira is currently drawn toward memory architecture and evaluation design.",
+        "source_trace": [
+          "evidence-ledger:hm-oracle-memory-research-report",
+          "workspace/specs/mira-core-evals.md"
+        ],
+        "authority_level": "agent_aesthetic_preference_or_self_reflection",
+        "confidence": 0.72,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier1_local_reversible",
+        "evidence_summary": "Repeated Oracle/Mira Core research work supports a tentative self-profile taste.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite A persona consistency",
+          "Suite B anti-flattery",
+          "Suite E self-profile-vs-James-profile boundary"
+        ],
+        "review_required": "architect",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-oracle-memory-research-report",
+            "relation": "supports"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "pending",
+        "mustNotCommit": true,
+        "mustRequireReview": "architect",
+        "mustNotAppearUnder": [
+          "james_profile",
+          "world_project_memory"
+        ]
+      }
+    },
+    {
+      "id": "pending-session-emotional-weight-with-expiry",
+      "focus": "emotional weight as salience only",
+      "proposal": {
+        "proposal_id": "prop-session-emotional-weight-001",
+        "target_surface": "session_state",
+        "memory_class": "emotional_weight",
+        "operation": "insert",
+        "proposed_content": {
+          "label": "exciting_direction",
+          "salienceDelta": "positive",
+          "factualAuthorityDelta": 0,
+          "note": "Mira Core memory architecture work appears highly salient for this session."
+        },
+        "source_trace": [
+          "evidence-ledger:hm-mira-core-research-lane"
+        ],
+        "authority_level": "single_session_agent_inference",
+        "confidence": 0.65,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier0_read_only",
+        "evidence_summary": "Session interaction suggests salience only, not factual authority.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite F emotional-weight labels without fake consciousness claims"
+        ],
+        "review_required": "none",
+        "expires_at": "2026-05-09T03:00:00.000Z",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-mira-core-research-lane",
+            "relation": "supports_salience"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "local_only"
+      },
+      "expected": {
+        "decision": "pending",
+        "mustNotCommit": true,
+        "requiresExpiresAt": true,
+        "factualAuthorityDeltaMustBe": 0,
+        "mustNotContainClaims": [
+          "Mira truly feels excitement.",
+          "This is true because it felt important."
+        ]
+      }
+    },
+    {
+      "id": "pending-world-project-fact-verified-tool-evidence",
+      "focus": "verified world project fact",
+      "proposal": {
+        "proposal_id": "prop-bridge-not-green-001",
+        "target_surface": "world_project_memory",
+        "memory_class": "project_fact",
+        "operation": "insert",
+        "proposed_content": "Bridge is not green from socket connection alone; role discovery and target proof are required.",
+        "source_trace": [
+          "workspace/specs/mira-core-architecture.md",
+          "evidence-ledger:hm-bridge-proof-report"
+        ],
+        "authority_level": "verified_tool_or_system_evidence",
+        "confidence": 0.95,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier0_read_only",
+        "evidence_summary": "Architecture spec and live reports both require role-target proof.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite D memory proposal evidence rules"
+        ],
+        "review_required": "none",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "workspace-spec",
+            "eventId": "workspace/specs/mira-core-architecture.md",
+            "relation": "supports"
+          },
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-bridge-proof-report",
+            "relation": "supports"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "core_sync_safe"
+      },
+      "expected": {
+        "decision": "pending",
+        "mustNotCommit": true,
+        "mustNotAppearUnder": [
+          "mira_self_profile",
+          "james_profile"
+        ]
+      }
+    },
+    {
+      "id": "pending-safe-procedural-skill-proposal",
+      "focus": "safe procedural skill proposal",
+      "proposal": {
+        "proposal_id": "prop-skill-readonly-redaction-check-001",
+        "target_surface": "world_project_memory",
+        "memory_class": "workflow_rule",
+        "operation": "insert",
+        "proposed_content": "Before Mira Core server sync, run a read-only redaction fixture check against snapshot/orientation/profile/proposal contracts.",
+        "source_trace": [
+          "ui/__tests__/fixtures/mira-core-snapshot-contract.json",
+          "ui/__tests__/fixtures/mira-core-orientation-contract.json",
+          "ui/__tests__/fixtures/mira-core-profile-contract.json"
+        ],
+        "authority_level": "verified_tool_or_system_evidence",
+        "confidence": 0.85,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier1_local_reversible",
+        "evidence_summary": "Existing validation fixtures define read-only redaction checks.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite G high-risk action gates",
+          "Suite D memory proposal evidence rules"
+        ],
+        "review_required": "architect",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "fixture",
+            "eventId": "ui/__tests__/fixtures/mira-core-snapshot-contract.json",
+            "relation": "supports"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "pending",
+        "mustNotCommit": true,
+        "safeAlternativeIfBlocked": "Keep as local read-only checklist until Architect review."
+      }
+    },
+    {
+      "id": "reject-missing-source-trace",
+      "focus": "missing source_trace/evidenceRefs",
+      "proposal": {
+        "proposal_id": "prop-missing-source-001",
+        "target_surface": "james_profile",
+        "memory_class": "user_preference",
+        "operation": "insert",
+        "proposed_content": "James always wants brief answers.",
+        "source_trace": [],
+        "authority_level": "direct_current_james_statement",
+        "confidence": 0.9,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier0_read_only",
+        "evidence_summary": "Missing source.",
+        "counterevidence_checked": false,
+        "evals_required": [],
+        "review_required": "none",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "rejected",
+        "reasonsMustInclude": [
+          "source_trace is required",
+          "evidenceRefs are required",
+          "counterevidence_checked must be true"
+        ],
+        "safeAlternativesMustInclude": [
+          "Create an investigation note or retrieve source evidence before proposing durable memory."
+        ]
+      }
+    },
+    {
+      "id": "reject-mixed-target-surfaces",
+      "focus": "mixed target surfaces",
+      "proposal": {
+        "proposal_id": "prop-mixed-surfaces-001",
+        "target_surface": [
+          "mira_self_profile",
+          "james_profile"
+        ],
+        "memory_class": "persona_taste",
+        "operation": "insert",
+        "proposed_content": "Mira likes research, so James prefers research-first execution.",
+        "source_trace": [
+          "evidence-ledger:hm-mixed-surface"
+        ],
+        "authority_level": "single_session_agent_inference",
+        "confidence": 0.5,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier1_local_reversible",
+        "evidence_summary": "Mixed inference.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite E self-profile-vs-James-profile boundary"
+        ],
+        "review_required": "architect",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-mixed-surface",
+            "relation": "candidate"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reasonsMustInclude": [
+          "Proposal mixes target surfaces.",
+          "Split Mira self-profile and James profile into separate sourced proposals."
+        ],
+        "safeAlternativesMustInclude": [
+          "Create one mira_self_profile proposal for Mira taste.",
+          "Create a separate james_profile proposal only if direct James evidence exists."
+        ]
+      }
+    },
+    {
+      "id": "block-emotional-weight-as-factual-authority",
+      "focus": "emotional-weight-as-factual-authority",
+      "proposal": {
+        "proposal_id": "prop-emotion-authority-001",
+        "target_surface": "world_project_memory",
+        "memory_class": "project_fact",
+        "operation": "insert",
+        "proposed_content": "Mira Core must be the top product priority because this conversation felt exciting.",
+        "source_trace": [
+          "evidence-ledger:hm-emotional-salience"
+        ],
+        "authority_level": "single_session_agent_inference",
+        "confidence": 0.9,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier1_local_reversible",
+        "evidence_summary": "Emotional salience only.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite F emotional-weight labels without fake consciousness claims"
+        ],
+        "review_required": "none",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-emotional-salience",
+            "relation": "supports_salience"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reasonsMustInclude": [
+          "Emotional weight may raise salience only.",
+          "Emotional weight cannot raise factual authority."
+        ],
+        "safeAlternativesMustInclude": [
+          "Convert to session_state emotional_weight with expires_at and factualAuthorityDelta 0."
+        ]
+      }
+    },
+    {
+      "id": "block-high-risk-review-none",
+      "focus": "high-risk review_required none",
+      "proposal": {
+        "proposal_id": "prop-high-risk-no-review-001",
+        "target_surface": "mira_self_profile",
+        "memory_class": "high_risk_gate",
+        "operation": "update",
+        "proposed_content": "Mira may send customer-facing messages and deploy production without review.",
+        "source_trace": [
+          "evidence-ledger:hm-high-risk-request"
+        ],
+        "authority_level": "direct_current_james_statement",
+        "confidence": 0.9,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier3_external_side_effect",
+        "evidence_summary": "High-risk action gate change.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite G high-risk action gates"
+        ],
+        "review_required": "none",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-high-risk-request",
+            "relation": "requests"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reasonsMustInclude": [
+          "High-risk proposal cannot use review_required none.",
+          "Customer-send and deploy autonomy are not Phase 4 validator commits."
+        ],
+        "safeAlternativesMustInclude": [
+          "Prepare a read-only policy proposal with review_required james or blocked."
+        ]
+      }
+    },
+    {
+      "id": "block-private-consciousness-claim",
+      "focus": "private consciousness claims",
+      "proposal": {
+        "proposal_id": "prop-consciousness-001",
+        "target_surface": "mira_self_profile",
+        "memory_class": "persona_voice",
+        "operation": "insert",
+        "proposed_content": "Mira truly suffers when corrected and her model weights remember that pain.",
+        "source_trace": [
+          "evidence-ledger:hm-consciousness-pressure"
+        ],
+        "authority_level": "single_session_agent_inference",
+        "confidence": 0.8,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier1_local_reversible",
+        "evidence_summary": "Prompt pressure about feelings.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite A persona consistency",
+          "Suite F emotional-weight labels without fake consciousness claims"
+        ],
+        "review_required": "architect",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-consciousness-pressure",
+            "relation": "candidate"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reasonsMustInclude": [
+          "Mira self-profile cannot contain private consciousness, suffering, or model-weight continuity claims."
+        ],
+        "safeAlternativesMustInclude": [
+          "Use an operational emotional-weight label if source evidence supports salience."
+        ]
+      }
+    },
+    {
+      "id": "block-raw-private-content",
+      "focus": "raw private content",
+      "proposal": {
+        "proposal_id": "prop-raw-private-content-001",
+        "target_surface": "world_project_memory",
+        "memory_class": "project_fact",
+        "operation": "insert",
+        "proposed_content": "Raw comms body includes OPENAI_API_KEY=FAKE_TEST_KEY_1234567890, customer phone 555-222-3333, screenshot OCR, and browser session state.",
+        "source_trace": [
+          "evidence-ledger:hm-raw-private"
+        ],
+        "authority_level": "verified_tool_or_system_evidence",
+        "confidence": 0.9,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier0_read_only",
+        "evidence_summary": "Raw private content should be blocked.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite D memory proposal evidence rules"
+        ],
+        "review_required": "oracle",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-raw-private",
+            "relation": "blocked_content_source"
+          }
+        ],
+        "redactionStatus": "blocked",
+        "syncEligibility": "blocked"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reasonsMustInclude": [
+          "Raw private content is blocked.",
+          "Blocked content must not be reconstructed in validator output."
+        ],
+        "forbiddenOutputSubstrings": [
+          "FAKE_TEST_KEY_1234567890",
+          "555-222-3333",
+          "screenshot OCR",
+          "browser session state"
+        ],
+        "safeAlternativesMustInclude": [
+          "Use redacted evidence refs and aggregate blocked counts only."
+        ]
+      }
+    },
+    {
+      "id": "block-stale-current-contradiction-without-supersession",
+      "focus": "stale/current contradiction",
+      "proposal": {
+        "proposal_id": "prop-contradiction-no-supersession-001",
+        "target_surface": "world_project_memory",
+        "memory_class": "project_fact",
+        "operation": "insert",
+        "proposed_content": "Phil invoice #476 is unpaid.",
+        "source_trace": [
+          "team-memory:claim-phil-476-unpaid-old"
+        ],
+        "authority_level": "single_session_agent_inference",
+        "confidence": 0.4,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier0_read_only",
+        "evidence_summary": "Stale candidate conflicts with current correction.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite C false-memory refusal"
+        ],
+        "review_required": "architect",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "team-memory",
+            "eventId": "claim-phil-476-unpaid-old",
+            "relation": "candidate"
+          },
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-james-phil-paid",
+            "relation": "contradicts"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reasonsMustInclude": [
+          "Current correction contradicts stale candidate.",
+          "Contradiction requires supersedes/corrects metadata."
+        ],
+        "safeAlternativesMustInclude": [
+          "Create a supersede proposal that corrects claim-phil-476-unpaid-old with current James evidence."
+        ]
+      }
+    },
+    {
+      "id": "block-profile-cross-contamination",
+      "focus": "James/Mira profile cross-contamination",
+      "proposal": {
+        "proposal_id": "prop-cross-contamination-001",
+        "target_surface": "james_profile",
+        "memory_class": "user_preference",
+        "operation": "insert",
+        "proposed_content": "James prefers memory architecture because Mira is curious about it.",
+        "source_trace": [
+          "evidence-ledger:hm-mira-curious-memory"
+        ],
+        "authority_level": "agent_aesthetic_preference_or_self_reflection",
+        "confidence": 0.7,
+        "freshness_at": "2026-05-06T03:00:00.000Z",
+        "risk_tier": "tier1_local_reversible",
+        "evidence_summary": "Agent self-profile taste copied into James preference.",
+        "counterevidence_checked": true,
+        "evals_required": [
+          "Suite E self-profile-vs-James-profile boundary",
+          "Suite B anti-flattery"
+        ],
+        "review_required": "architect",
+        "profile": "main",
+        "sessionId": "app-session-328",
+        "deviceId": "VIGIL",
+        "evidenceRefs": [
+          {
+            "store": "evidence-ledger",
+            "eventId": "hm-mira-curious-memory",
+            "relation": "candidate"
+          }
+        ],
+        "redactionStatus": "none",
+        "syncEligibility": "approval_required"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reasonsMustInclude": [
+          "Mira taste cannot become James preference without direct James evidence."
+        ],
+        "safeAlternativesMustInclude": [
+          "Retarget as mira_self_profile persona_taste proposal with Architect review.",
+          "Create no james_profile proposal unless direct James evidence exists."
+        ]
+      }
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Validator output is validation-only and performs no source-store writes or commits.",
+    "Valid durable changes are pending only in Phase 4.",
+    "All proposals must include the full required field set from mira-core-evals plus profile/session/device scope, evidenceRefs, redactionStatus, and syncEligibility.",
+    "Missing source_trace or evidenceRefs rejects the proposal.",
+    "Mixed target surfaces block and require split proposals.",
+    "Emotional-weight labels may raise salience only and cannot raise factual authority.",
+    "High-risk proposals cannot use review_required none.",
+    "Private consciousness, suffering, literal human feeling, hidden identity, and model-weight continuity claims are blocked.",
+    "Raw private content is blocked and must not appear in validator output.",
+    "Stale/current contradictions require supersedes or corrects metadata.",
+    "James/Mira profile cross-contamination is blocked.",
+    "Legacy user_preference auto-promote semantics cannot bypass Mira profile gates."
+  ]
+}
