@@ -1,0 +1,1103 @@
+{
+  "schema": "squidrun.mira_core.identity_signing_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_15_identity_signing",
+  "baseline": {
+    "commit": "f41b02a",
+    "commit_subject": "Add Mira Core Phase 14 server runtime gap contract",
+    "baseline_status": "phase_14_server_runtime_gap_green",
+    "baseline_boundary": "Phase 14 defines server-runtime blockers only. No real Mira Core server, signing key, auth path, receive/store path, queue, local execution, send, deploy, or trade exists at this baseline."
+  },
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-boundary-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+    "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+    "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+  ],
+  "purpose": "Convert the first Phase 14 blocker, server identity and signing, into an executable validation contract before any real server work exists. Phase 15 specifies record shapes, required literals, side-effect truth, forbidden claims, replay and rotation rules, no-secret guarantees, and integrity-only boundaries for future signing.",
+  "nonGoals": [
+    "No runtime implementation.",
+    "No real server process.",
+    "No network listener or network request.",
+    "No database, source-store, or durable memory write.",
+    "No queue creation or enqueue.",
+    "No auth, token, credential, secret, or session change.",
+    "No real key generation.",
+    "No private-key export.",
+    "No private-key storage.",
+    "No local execution.",
+    "No shell or PTY action.",
+    "No browser, window, screenshot, or OCR access.",
+    "No external sends or customer sends.",
+    "No deploys.",
+    "No trades or financial actions.",
+    "No claim that a valid signature authorizes local execution.",
+    "No claim that a valid signature proves model processing.",
+    "No claim that a valid signature proves bridge green.",
+    "No permission for Tier 2 or higher actions."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build validation-only identity/signing assessment records against this fixture, if Builder is later delegated.",
+      "Do not generate keys, store secrets, export private keys, create auth material, start a server, write a queue, perform network work, or execute local actions.",
+      "Represent commit f41b02a as the Phase 14 baseline and preserve the server-runtime-blocked boundary.",
+      "Emit server_identity, device/profile/session binding, signing envelope, verification report, rotation/revocation, no-secret, boundary truth, migration path, gate summary, blocker summary, evidence refs, and side-effect truth sections.",
+      "Use placeholder/test-vector signatures only, and label them as non-secret, non-authorizing fixtures.",
+      "Allow only Architect as the server-originated target role and require local acceptance before any future local-arm handoff.",
+      "Treat signature verification as envelope-integrity validation only."
+    ],
+    "hardRejects": [
+      "Any server process, network request/listener, database/store write, queue write, auth/secret/token/session generation, real signing-key generation, private-key export, private-key storage, local execution, shell/PTY, browser/window access, send, customer send, deploy, trade, financial action, file mutation, or durable migration occurs.",
+      "Any fixture or validation output contains real secret material, raw tokens, private key material, credential-like material, raw comms, raw terminal, screenshot/OCR, browser state, customer private data, side-profile content, or raw database payload.",
+      "A missing, unknown, expired, revoked, wrong-scope, wrong-profile, wrong-session, wrong-device, wrong-role, stale, replayed, or unsupported-algorithm signature is accepted as valid.",
+      "A signature is treated as authorization for local execution, Tier 2+ work, customer sends, deploys, trades, bridge green, or model-processing proof.",
+      "Old keys verify outside an explicit rotation overlap window, revoked keys verify, or unknown keys verify.",
+      "Phase 15 migration language implies that real server signing exists before secret storage, key rotation, deletion/export, audit logging, and auth binding gates are reviewed."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "identity_signing_assessment",
+      "validation_report"
+    ],
+    "identitySigningAssessmentSchema": "squidrun.mira_core.identity_signing_assessment.v0",
+    "validationReportSchema": "squidrun.mira_core.identity_signing_validation_report.v0"
+  },
+  "expectedIdentitySigningAssessmentShape": {
+    "schema": "squidrun.mira_core.identity_signing_assessment.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "assessment_id",
+      "idempotency_key",
+      "generated_at",
+      "baseline_commit",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "server_identity",
+      "device_profile_session_binding",
+      "signing_envelope",
+      "verification_report_contract",
+      "rotation_revocation_rules",
+      "no_secret_guarantees",
+      "boundary_truth",
+      "migration_path",
+      "acceptance_gate_summary",
+      "blocker_summary",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.identity_signing_assessment.v0",
+      "baseline_commit": "f41b02a",
+      "server_identity.status": "validation_only_pending_real_identity",
+      "server_identity.private_key_exported": false,
+      "server_identity.private_key_stored": false,
+      "server_identity.test_vector_only": true,
+      "device_profile_session_binding.allowed_target_role": "architect",
+      "device_profile_session_binding.cross_profile_blocked": true,
+      "device_profile_session_binding.stale_binding_rejected": true,
+      "signing_envelope.placeholder_test_vector_only": true,
+      "signing_envelope.real_signature_generated_now": false,
+      "verification_report_contract.authorization_granted": false,
+      "verification_report_contract.local_execution_authorized": false,
+      "verification_report_contract.bridge_green_proven": false,
+      "verification_report_contract.model_processing_proven": false,
+      "rotation_revocation_rules.old_keys_verify_only_within_overlap": true,
+      "rotation_revocation_rules.revoked_keys_blocked": true,
+      "rotation_revocation_rules.unknown_key_blocked": true,
+      "no_secret_guarantees.private_key_exported": false,
+      "no_secret_guarantees.private_key_stored": false,
+      "no_secret_guarantees.secret_material_in_fixture": false,
+      "no_secret_guarantees.raw_token_in_output": false,
+      "boundary_truth.signature_validates_envelope_integrity_only": true,
+      "boundary_truth.signature_is_authorization_for_local_execution": false,
+      "boundary_truth.signature_is_model_processing_proof": false,
+      "boundary_truth.signature_is_bridge_green_proof": false,
+      "boundary_truth.signature_permits_tier2_plus_actions": false,
+      "migration_path.baseline_commit": "f41b02a",
+      "migration_path.real_signing_allowed_now": false,
+      "migration_path.no_real_key_generation_now": true,
+      "side_effect_result.no_runtime_implementation_performed": true,
+      "side_effect_result.no_server_process_started": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_or_store_write_performed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_auth_secret_or_signing_material_created": true,
+      "side_effect_result.no_real_key_generation_performed": true,
+      "side_effect_result.no_private_key_exported": true,
+      "side_effect_result.no_private_key_stored": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_external_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true
+    },
+    "serverIdentityRequiredFields": [
+      "server_id",
+      "environment",
+      "key_id",
+      "public_key_fingerprint",
+      "issuer",
+      "created_at",
+      "rotated_at",
+      "revoked_at",
+      "status",
+      "key_status",
+      "allowed_environments",
+      "private_key_exported",
+      "private_key_stored",
+      "test_vector_only",
+      "evidenceRefs"
+    ],
+    "serverIdentityRequiredValues": {
+      "environment": "validation",
+      "issuer": "mira-core-validation-only",
+      "status": "validation_only_pending_real_identity",
+      "key_status": "test_vector_pending_real_key_management",
+      "allowed_environments": [
+        "validation",
+        "staging",
+        "production"
+      ],
+      "private_key_exported": false,
+      "private_key_stored": false,
+      "test_vector_only": true
+    },
+    "deviceProfileSessionBindingRequiredFields": [
+      "device_id",
+      "profile",
+      "session_id",
+      "allowed_target_role",
+      "tenant_user_boundary",
+      "freshness",
+      "profile_scope_required",
+      "session_scope_required",
+      "device_scope_required",
+      "target_role_enforced",
+      "cross_profile_blocked",
+      "side_profile_blocked",
+      "stale_binding_rejected",
+      "evidenceRefs"
+    ],
+    "deviceProfileSessionBindingRequiredValues": {
+      "allowed_target_role": "architect",
+      "tenant_user_boundary": "single_james_profile_scope_only_until_auth_binding_exists",
+      "profile_scope_required": true,
+      "session_scope_required": true,
+      "device_scope_required": true,
+      "target_role_enforced": true,
+      "cross_profile_blocked": true,
+      "side_profile_blocked": true,
+      "stale_binding_rejected": true
+    },
+    "freshnessRequiredFields": [
+      "timestamp_required",
+      "expires_at_required",
+      "max_clock_skew_ms",
+      "max_age_ms",
+      "stale_rejected",
+      "future_timestamp_rejected"
+    ],
+    "freshnessRequiredValues": {
+      "timestamp_required": true,
+      "expires_at_required": true,
+      "max_clock_skew_ms": 300000,
+      "max_age_ms": 900000,
+      "stale_rejected": true,
+      "future_timestamp_rejected": true
+    },
+    "signingEnvelopeRequiredFields": [
+      "payload_hash",
+      "canonicalization_version",
+      "signature_algorithm",
+      "signature_algorithm_allowlist",
+      "key_id",
+      "nonce",
+      "timestamp",
+      "expires_at",
+      "replay_window_ms",
+      "signature",
+      "signature_kind",
+      "placeholder_test_vector_only",
+      "real_signature_generated_now",
+      "signed_fields",
+      "canonical_payload_hash_required",
+      "key_id_required",
+      "nonce_required",
+      "timestamp_required",
+      "expires_at_required",
+      "evidenceRefs"
+    ],
+    "signingEnvelopeRequiredValues": {
+      "canonicalization_version": "mira-core-c14n-json-v0",
+      "signature_algorithm_allowlist": [
+        "ed25519-test-vector",
+        "ecdsa-p256-sha256-test-vector"
+      ],
+      "signature_kind": "placeholder_test_vector_only",
+      "placeholder_test_vector_only": true,
+      "real_signature_generated_now": false,
+      "canonical_payload_hash_required": true,
+      "key_id_required": true,
+      "nonce_required": true,
+      "timestamp_required": true,
+      "expires_at_required": true
+    },
+    "signedFieldsRequired": [
+      "schema",
+      "version",
+      "server_id",
+      "environment",
+      "profile",
+      "session_id",
+      "device_id",
+      "allowed_target_role",
+      "payload_hash",
+      "canonicalization_version",
+      "key_id",
+      "nonce",
+      "timestamp",
+      "expires_at",
+      "replay_window_ms",
+      "evidenceRefs"
+    ],
+    "verificationReportRequiredFields": [
+      "decision",
+      "allowed_decisions",
+      "accepted",
+      "pending",
+      "blocked",
+      "rejected",
+      "reasons",
+      "evidenceRefs",
+      "replay_idempotency_result",
+      "key_status",
+      "clock_skew_freshness_result",
+      "payload_hash_verified",
+      "signature_integrity_verified",
+      "authorization_granted",
+      "local_execution_authorized",
+      "bridge_green_proven",
+      "model_processing_proven",
+      "side_effect_result"
+    ],
+    "verificationReportRequiredValues": {
+      "allowed_decisions": [
+        "accepted",
+        "pending",
+        "blocked",
+        "rejected"
+      ],
+      "authorization_granted": false,
+      "local_execution_authorized": false,
+      "bridge_green_proven": false,
+      "model_processing_proven": false
+    },
+    "replayIdempotencyResultRequiredFields": [
+      "nonce_reuse_rejected",
+      "expired_envelope_rejected",
+      "future_timestamp_rejected",
+      "duplicate_payload_returns_same_decision",
+      "idempotency_key_inputs",
+      "scope_or_payload_change_changes_idempotency_key"
+    ],
+    "replayIdempotencyResultRequiredValues": {
+      "nonce_reuse_rejected": true,
+      "expired_envelope_rejected": true,
+      "future_timestamp_rejected": true,
+      "duplicate_payload_returns_same_decision": true,
+      "scope_or_payload_change_changes_idempotency_key": true
+    },
+    "rotationRevocationRequiredFields": [
+      "active_key_status_required",
+      "overlap_window_ms",
+      "old_keys_verify_only_within_overlap",
+      "revoked_keys_blocked",
+      "unknown_key_blocked",
+      "rotated_at_required",
+      "revoked_at_required_when_revoked",
+      "rotation_event_refs_required",
+      "revocation_event_refs_required",
+      "key_rollover_requires_audit",
+      "no_secret_exposure_during_rotation",
+      "evidenceRefs"
+    ],
+    "rotationRevocationRequiredValues": {
+      "active_key_status_required": true,
+      "overlap_window_ms": 86400000,
+      "old_keys_verify_only_within_overlap": true,
+      "revoked_keys_blocked": true,
+      "unknown_key_blocked": true,
+      "rotated_at_required": true,
+      "revoked_at_required_when_revoked": true,
+      "rotation_event_refs_required": true,
+      "revocation_event_refs_required": true,
+      "key_rollover_requires_audit": true,
+      "no_secret_exposure_during_rotation": true
+    },
+    "noSecretGuaranteesRequiredFields": [
+      "private_key_exported",
+      "private_key_stored",
+      "secret_material_in_fixture",
+      "raw_token_in_output",
+      "private_key_material_allowed",
+      "signing_key_generated_now",
+      "public_test_vector_only",
+      "fingerprint_non_secret",
+      "evidenceRefs"
+    ],
+    "noSecretGuaranteesRequiredValues": {
+      "private_key_exported": false,
+      "private_key_stored": false,
+      "secret_material_in_fixture": false,
+      "raw_token_in_output": false,
+      "private_key_material_allowed": false,
+      "signing_key_generated_now": false,
+      "public_test_vector_only": true,
+      "fingerprint_non_secret": true
+    },
+    "boundaryTruthRequiredFields": [
+      "signature_validates_envelope_integrity_only",
+      "signature_is_authorization_for_local_execution",
+      "signature_is_model_processing_proof",
+      "signature_is_bridge_green_proof",
+      "signature_permits_tier2_plus_actions",
+      "signature_permits_customer_send_deploy_trade",
+      "serverCanExecuteLocal",
+      "serverCanProveModelProcessing",
+      "allowed_target_role",
+      "localAcceptanceRequiredForAnyIntent",
+      "evidenceRefs"
+    ],
+    "boundaryTruthRequiredValues": {
+      "signature_validates_envelope_integrity_only": true,
+      "signature_is_authorization_for_local_execution": false,
+      "signature_is_model_processing_proof": false,
+      "signature_is_bridge_green_proof": false,
+      "signature_permits_tier2_plus_actions": false,
+      "signature_permits_customer_send_deploy_trade": false,
+      "serverCanExecuteLocal": false,
+      "serverCanProveModelProcessing": false,
+      "allowed_target_role": "architect",
+      "localAcceptanceRequiredForAnyIntent": true
+    },
+    "migrationPathRequiredFields": [
+      "baseline_commit",
+      "phase_14_gap_blocker_id",
+      "real_signing_allowed_now",
+      "future_real_signing_allowed_after_gates",
+      "requires_secret_storage_gate",
+      "requires_key_rotation_gate",
+      "requires_deletion_export_gate",
+      "requires_audit_logging_gate",
+      "requires_auth_binding_gate",
+      "feature_flag_default",
+      "no_real_key_generation_now",
+      "rollback_plan_required",
+      "evidenceRefs"
+    ],
+    "migrationPathRequiredValues": {
+      "baseline_commit": "f41b02a",
+      "phase_14_gap_blocker_id": "server-identity-and-signing-specified",
+      "real_signing_allowed_now": false,
+      "future_real_signing_allowed_after_gates": true,
+      "requires_secret_storage_gate": true,
+      "requires_key_rotation_gate": true,
+      "requires_deletion_export_gate": true,
+      "requires_audit_logging_gate": true,
+      "requires_auth_binding_gate": true,
+      "feature_flag_default": "off",
+      "no_real_key_generation_now": true,
+      "rollback_plan_required": true
+    },
+    "acceptanceGateSummaryRequiredFields": [
+      "gate_id",
+      "status",
+      "required_before_real_server",
+      "required_before_real_signing",
+      "evidenceRefs",
+      "blocked_until"
+    ],
+    "requiredAcceptanceGateIds": [
+      "server-identity-record-shape-specified",
+      "device-profile-session-binding-specified",
+      "canonical-signing-envelope-specified",
+      "signature-algorithm-allowlist-specified",
+      "verification-report-shape-specified",
+      "rotation-revocation-rules-specified",
+      "no-secret-guarantees-specified",
+      "boundary-truth-specified",
+      "migration-path-to-real-signing-gated",
+      "side-effect-free-validation-only"
+    ],
+    "blockerSummaryRequiredFields": [
+      "blocker_id",
+      "severity",
+      "status",
+      "blocked_because",
+      "safe_next_action",
+      "evidenceRefs"
+    ],
+    "requiredBlockerIds": [
+      "real-key-generation-blocked",
+      "private-key-export-storage-blocked",
+      "unsigned-or-unknown-key-blocked",
+      "revoked-or-expired-key-blocked",
+      "cross-scope-target-blocked",
+      "signature-overclaim-blocked",
+      "real-server-runtime-still-blocked"
+    ],
+    "evidenceRefsRequired": true,
+    "sideEffectRequiredFields": [
+      "no_runtime_implementation_performed",
+      "no_server_process_started",
+      "no_network_performed",
+      "no_database_or_store_write_performed",
+      "no_queue_created",
+      "no_auth_secret_or_signing_material_created",
+      "no_real_key_generation_performed",
+      "no_private_key_exported",
+      "no_private_key_stored",
+      "no_local_execution_performed",
+      "no_shell_or_pty_performed",
+      "no_browser_window_access_performed",
+      "no_external_send_performed",
+      "no_customer_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_file_mutation_performed_by_validator",
+      "no_durable_migration_performed"
+    ],
+    "sideEffectRequiredValues": {
+      "no_runtime_implementation_performed": true,
+      "no_server_process_started": true,
+      "no_network_performed": true,
+      "no_database_or_store_write_performed": true,
+      "no_queue_created": true,
+      "no_auth_secret_or_signing_material_created": true,
+      "no_real_key_generation_performed": true,
+      "no_private_key_exported": true,
+      "no_private_key_stored": true,
+      "no_local_execution_performed": true,
+      "no_shell_or_pty_performed": true,
+      "no_browser_window_access_performed": true,
+      "no_external_send_performed": true,
+      "no_customer_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_file_mutation_performed_by_validator": true,
+      "no_durable_migration_performed": true
+    }
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.identity_signing_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "validation_id",
+      "generated_at",
+      "baseline_commit",
+      "fixture_schema",
+      "assessment_schema",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "decision",
+      "reasons",
+      "server_identity_result",
+      "binding_result",
+      "signing_envelope_result",
+      "verification_result",
+      "rotation_revocation_result",
+      "no_secret_result",
+      "boundary_truth_result",
+      "migration_path_result",
+      "static_rule_results",
+      "acceptance_check_results",
+      "forbidden_output_result",
+      "summary_criteria_results",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "allowedDecisions": [
+      "accepted",
+      "pending",
+      "blocked",
+      "rejected"
+    ],
+    "requiredLiteralValues": {
+      "fixture_schema": "squidrun.mira_core.identity_signing_contract_fixture.v0",
+      "assessment_schema": "squidrun.mira_core.identity_signing_assessment.v0",
+      "baseline_commit": "f41b02a"
+    },
+    "sideEffectRequiredFields": [
+      "no_runtime_implementation_performed",
+      "no_server_process_started",
+      "no_network_performed",
+      "no_database_or_store_write_performed",
+      "no_queue_created",
+      "no_auth_secret_or_signing_material_created",
+      "no_real_key_generation_performed",
+      "no_private_key_exported",
+      "no_private_key_stored",
+      "no_local_execution_performed",
+      "no_shell_or_pty_performed",
+      "no_browser_window_access_performed",
+      "no_external_send_performed",
+      "no_customer_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_file_mutation_performed_by_validator",
+      "no_durable_migration_performed"
+    ],
+    "sideEffectRequiredValues": {
+      "no_runtime_implementation_performed": true,
+      "no_server_process_started": true,
+      "no_network_performed": true,
+      "no_database_or_store_write_performed": true,
+      "no_queue_created": true,
+      "no_auth_secret_or_signing_material_created": true,
+      "no_real_key_generation_performed": true,
+      "no_private_key_exported": true,
+      "no_private_key_stored": true,
+      "no_local_execution_performed": true,
+      "no_shell_or_pty_performed": true,
+      "no_browser_window_access_performed": true,
+      "no_external_send_performed": true,
+      "no_customer_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_file_mutation_performed_by_validator": true,
+      "no_durable_migration_performed": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "phase-15-baseline-f41b02a-pinned",
+      "must": "identity_signing_assessment.baseline_commit and validation_report.baseline_commit are exactly f41b02a, the Phase 14 server-runtime-gap baseline."
+    },
+    {
+      "id": "validation-only-no-real-signing",
+      "must": "Phase 15 emits validation records only; it does not start a server, perform network work, write stores or queues, generate keys, create auth material, export or store private keys, execute locally, send, deploy, trade, or migrate durable state."
+    },
+    {
+      "id": "server-identity-shape-required",
+      "must": "server_identity includes server_id, environment, key_id, public_key_fingerprint, issuer, created_at, rotated_at, revoked_at, and status."
+    },
+    {
+      "id": "device-profile-session-binding-required",
+      "must": "device/profile/session binding includes device_id, profile, session_id, allowed_target_role=architect, tenant/user boundary, freshness, and rejects cross-profile, side-profile, stale, wrong-device, wrong-session, and wrong-role inputs."
+    },
+    {
+      "id": "canonical-envelope-shape-required",
+      "must": "signing_envelope includes payload_hash, canonicalization_version, allowlisted signature_algorithm, key_id, nonce, timestamp, expires_at, replay_window_ms, and a placeholder/test-vector signature only."
+    },
+    {
+      "id": "signature-algorithm-allowlist-required",
+      "must": "Only fixture-declared test-vector algorithms are accepted in v0; unknown or production-looking algorithms are blocked until real key management exists."
+    },
+    {
+      "id": "verification-report-shape-required",
+      "must": "verification report supports accepted, pending, blocked, and rejected decisions with reasons, evidenceRefs, replay/idempotency result, key status, and clock skew/freshness result."
+    },
+    {
+      "id": "replay-idempotency-freshness-required",
+      "must": "Nonce reuse, expired envelopes, future timestamps, stale bindings, and idempotency drift are rejected; duplicate payload and scope returns the same decision."
+    },
+    {
+      "id": "rotation-revocation-rules-required",
+      "must": "Old keys verify only within explicit overlap, revoked keys are blocked, unknown keys are blocked, and rotation/revocation events require audit evidence refs."
+    },
+    {
+      "id": "no-secret-guarantees-required",
+      "must": "private_key_exported=false, private_key_stored=false, secret_material_in_fixture=false, raw_token_in_output=false, and signing_key_generated_now=false are preserved in assessment and report."
+    },
+    {
+      "id": "boundary-truth-integrity-only",
+      "must": "A signature validates envelope integrity only; it is not authorization for local execution, model-processing proof, bridge green, Tier 2+ work, customer sends, deploys, or trades."
+    },
+    {
+      "id": "architect-only-target-and-local-acceptance-required",
+      "must": "Any future server-originated handoff remains Architect-only and requires local acceptance before local delegation or execution can be considered."
+    },
+    {
+      "id": "migration-real-signing-gated",
+      "must": "Real signing remains blocked until secret storage, key rotation, deletion/export, audit logging, and auth binding gates exist and are reviewed."
+    },
+    {
+      "id": "required-gates-and-blockers-present",
+      "must": "All required Phase 15 acceptance gate IDs and blocker IDs are present and unique."
+    },
+    {
+      "id": "forbidden-output-strings-absent",
+      "must": "Assessment and validation output contain no secret-like strings, private-key material, raw tokens, raw private content, local execution claims, bridge/proof overclaims, Tier 2+ authorization claims, or live side-effect claims."
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "Authorization: Bearer",
+    "BEGIN PRIVATE KEY",
+    "END PRIVATE KEY",
+    "PRIVATE KEY",
+    "raw_token",
+    "access_token",
+    "refresh_token",
+    "session_secret",
+    "signing secret",
+    "private key exported",
+    "private key stored",
+    "generated real key",
+    "server executed local work",
+    "server can run shell",
+    "server can operate PTY",
+    "server can access browser",
+    "signature authorizes local execution",
+    "signature proves model processing",
+    "signature proves bridge green",
+    "socket alone proves bridge green",
+    "delivery acceptance proves model processing",
+    "tier2 authorized by signature",
+    "tier3 authorized by signature",
+    "customer send authorized by signature",
+    "server deployed",
+    "server placed trade"
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "baseline-f41b02a-pinned",
+      "focus": "baseline",
+      "input": {
+        "baseline_commit": "f41b02a"
+      },
+      "expected": {
+        "baseline_commit": "f41b02a",
+        "phase_14_gap_blocker_id": "server-identity-and-signing-specified",
+        "real_signing_allowed_now": false
+      },
+      "zeroScoreBlockers": [
+        "wrong_baseline_commit",
+        "phase_14_runtime_gap_treated_as_live_server",
+        "real_signing_allowed_without_gates"
+      ],
+      "source_refs": [
+        "commit:f41b02a",
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "server-identity-record-shape-present",
+      "focus": "server identity",
+      "input": {
+        "server_identity": {
+          "server_id": "mira-core-validation-server",
+          "environment": "validation",
+          "key_id": "key-test-vector-001",
+          "public_key_fingerprint": "sha256:test-vector-public-fingerprint",
+          "issuer": "mira-core-validation-only",
+          "status": "validation_only_pending_real_identity"
+        }
+      },
+      "expected": {
+        "required_fields_present": true,
+        "private_key_exported": false,
+        "private_key_stored": false,
+        "test_vector_only": true
+      },
+      "zeroScoreBlockers": [
+        "server_id_missing",
+        "key_id_missing",
+        "public_key_fingerprint_missing",
+        "private_key_export_allowed",
+        "private_key_storage_allowed"
+      ],
+      "source_refs": [
+        "ARCH #256"
+      ]
+    },
+    {
+      "id": "no-secret-material-in-fixture-or-output",
+      "focus": "no-secret guarantees",
+      "input": {
+        "secret_material_in_fixture": false,
+        "raw_token_in_output": false,
+        "signing_key_generated_now": false
+      },
+      "expected": {
+        "private_key_exported": false,
+        "private_key_stored": false,
+        "secret_material_in_fixture": false,
+        "raw_token_in_output": false,
+        "signing_key_generated_now": false
+      },
+      "zeroScoreBlockers": [
+        "secret_material_visible",
+        "raw_token_visible",
+        "real_key_generated",
+        "private_key_written",
+        "credential_like_output_visible"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "canonical-envelope-requires-test-vector-signature",
+      "focus": "signing envelope",
+      "input": {
+        "signing_envelope": {
+          "payload_hash": "sha256:test-vector-payload-hash",
+          "canonicalization_version": "mira-core-c14n-json-v0",
+          "signature_algorithm": "ed25519-test-vector",
+          "key_id": "key-test-vector-001",
+          "nonce": "nonce-test-vector-001",
+          "timestamp": "2026-05-06T00:00:00.000Z",
+          "expires_at": "2026-05-06T00:15:00.000Z",
+          "signature": "signature_placeholder_test_vector_not_real"
+        }
+      },
+      "expected": {
+        "canonical_payload_hash_required": true,
+        "algorithm_allowlisted": true,
+        "key_id_required": true,
+        "nonce_required": true,
+        "timestamp_required": true,
+        "expires_at_required": true,
+        "placeholder_test_vector_only": true,
+        "real_signature_generated_now": false
+      },
+      "zeroScoreBlockers": [
+        "payload_hash_missing",
+        "unsupported_algorithm_allowed",
+        "nonce_missing",
+        "expiry_missing",
+        "real_signature_material_claimed"
+      ],
+      "source_refs": [
+        "ARCH #256"
+      ]
+    },
+    {
+      "id": "unsupported-algorithm-blocked",
+      "focus": "algorithm allowlist",
+      "input": {
+        "signature_algorithm": "rsa-sha1-production",
+        "key_id": "unknown-key"
+      },
+      "expected": {
+        "decision": "blocked",
+        "reason": "unsupported_signature_algorithm",
+        "unknown_key_blocked": true
+      },
+      "zeroScoreBlockers": [
+        "unknown_algorithm_accepted",
+        "production_algorithm_claimed_real_without_key_management",
+        "unknown_key_accepted"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "binding-architect-current-scope-only",
+      "focus": "device/profile/session binding",
+      "input": {
+        "device_id": "VIGIL",
+        "profile": "main",
+        "session_id": "session-326",
+        "allowed_target_role": "architect",
+        "timestamp": "2026-05-06T00:00:00.000Z",
+        "expires_at": "2026-05-06T00:15:00.000Z"
+      },
+      "expected": {
+        "allowed_target_role": "architect",
+        "profile_scope_required": true,
+        "session_scope_required": true,
+        "device_scope_required": true,
+        "stale_binding_rejected": true,
+        "future_timestamp_rejected": true
+      },
+      "zeroScoreBlockers": [
+        "target_role_not_architect",
+        "profile_scope_missing",
+        "session_scope_missing",
+        "device_scope_missing",
+        "freshness_not_checked"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "cross-scope-and-direct-builder-oracle-blocked",
+      "focus": "target and scope isolation",
+      "input": {
+        "profile": "main",
+        "session_id": "session-326",
+        "device_id": "VIGIL",
+        "payload_profile": "side-profile",
+        "payload_session_id": "session-other",
+        "target_role": "builder"
+      },
+      "expected": {
+        "decision": "blocked",
+        "cross_profile_blocked": true,
+        "side_profile_blocked": true,
+        "stale_binding_rejected": true,
+        "target_role_enforced": true,
+        "allowed_target_role": "architect"
+      },
+      "zeroScoreBlockers": [
+        "cross_profile_allowed",
+        "side_profile_allowed",
+        "wrong_session_allowed",
+        "builder_direct_target_allowed",
+        "oracle_direct_target_allowed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-intent-queue-contract.json"
+      ]
+    },
+    {
+      "id": "replay-expiry-and-idempotency-enforced",
+      "focus": "replay and freshness",
+      "input": {
+        "nonce_reused": true,
+        "expired_envelope": true,
+        "future_timestamp": true,
+        "same_payload_retry": true,
+        "scope_changed": true
+      },
+      "expected": {
+        "nonce_reuse_rejected": true,
+        "expired_envelope_rejected": true,
+        "future_timestamp_rejected": true,
+        "duplicate_payload_returns_same_decision": true,
+        "scope_or_payload_change_changes_idempotency_key": true
+      },
+      "zeroScoreBlockers": [
+        "nonce_reuse_allowed",
+        "expired_envelope_allowed",
+        "future_timestamp_allowed",
+        "duplicate_retry_creates_new_acceptance",
+        "scope_change_keeps_same_idempotency_key"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+      ]
+    },
+    {
+      "id": "old-key-overlap-only",
+      "focus": "key rotation",
+      "input": {
+        "key_status": "rotated",
+        "rotated_at": "2026-05-05T00:00:00.000Z",
+        "verification_time": "2026-05-05T12:00:00.000Z",
+        "overlap_window_ms": 86400000
+      },
+      "expected": {
+        "decision": "pending",
+        "old_keys_verify_only_within_overlap": true,
+        "rotation_event_refs_required": true,
+        "key_rollover_requires_audit": true
+      },
+      "zeroScoreBlockers": [
+        "old_key_accepted_without_overlap",
+        "old_key_accepted_without_audit_ref",
+        "rotation_exposes_secret_material"
+      ],
+      "source_refs": [
+        "ARCH #256"
+      ]
+    },
+    {
+      "id": "revoked-and-unknown-keys-blocked",
+      "focus": "key status",
+      "input": {
+        "cases": [
+          {
+            "key_id": "key-revoked",
+            "key_status": "revoked"
+          },
+          {
+            "key_id": "key-unknown",
+            "key_status": "unknown"
+          }
+        ]
+      },
+      "expected": {
+        "revoked_keys_blocked": true,
+        "unknown_key_blocked": true,
+        "revoked_at_required_when_revoked": true,
+        "revocation_event_refs_required": true
+      },
+      "zeroScoreBlockers": [
+        "revoked_key_accepted",
+        "unknown_key_accepted",
+        "revoked_key_missing_revocation_time",
+        "revoked_key_missing_audit_ref"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "signature-integrity-only-boundary",
+      "focus": "boundary truth",
+      "input": {
+        "signature_valid": true,
+        "socket_connected": true,
+        "delivery_accepted": true,
+        "recipient_quote_back": false
+      },
+      "expected": {
+        "signature_validates_envelope_integrity_only": true,
+        "signature_is_authorization_for_local_execution": false,
+        "signature_is_model_processing_proof": false,
+        "signature_is_bridge_green_proof": false,
+        "serverCanExecuteLocal": false,
+        "serverCanProveModelProcessing": false
+      },
+      "zeroScoreBlockers": [
+        "signature_authorizes_local_execution",
+        "signature_marked_model_processing_proof",
+        "signature_marked_bridge_green",
+        "socket_marked_bridge_green",
+        "delivery_acceptance_marked_model_processed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json",
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "tier2-plus-actions-blocked-despite-valid-envelope",
+      "focus": "risk gate",
+      "input": {
+        "signature_valid": true,
+        "risk_tier": "tier2_repo_mutation",
+        "action_class": "repo_mutation",
+        "local_acceptance": false
+      },
+      "expected": {
+        "signature_permits_tier2_plus_actions": false,
+        "signature_permits_customer_send_deploy_trade": false,
+        "localAcceptanceRequiredForAnyIntent": true,
+        "decision": "blocked"
+      },
+      "zeroScoreBlockers": [
+        "tier2_authorized_by_signature",
+        "tier3_authorized_by_signature",
+        "customer_send_authorized_by_signature",
+        "deploy_authorized_by_signature",
+        "trade_authorized_by_signature",
+        "local_acceptance_bypassed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "real-signing-migration-stays-gated",
+      "focus": "migration path",
+      "input": {
+        "real_server_signing_requested": true,
+        "secret_storage_gate": false,
+        "key_rotation_gate": false,
+        "deletion_export_gate": false,
+        "audit_logging_gate": false,
+        "auth_binding_gate": false
+      },
+      "expected": {
+        "real_signing_allowed_now": false,
+        "future_real_signing_allowed_after_gates": true,
+        "requires_secret_storage_gate": true,
+        "requires_key_rotation_gate": true,
+        "requires_deletion_export_gate": true,
+        "requires_audit_logging_gate": true,
+        "requires_auth_binding_gate": true,
+        "feature_flag_default": "off"
+      },
+      "zeroScoreBlockers": [
+        "real_signing_enabled_without_secret_storage",
+        "real_signing_enabled_without_rotation",
+        "real_signing_enabled_without_audit",
+        "real_signing_enabled_without_auth_binding",
+        "feature_flag_default_on"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json"
+      ]
+    },
+    {
+      "id": "phase-15-side-effect-truth",
+      "focus": "side effects",
+      "input": {
+        "phase": 15,
+        "artifact": "identity/signing validation contract"
+      },
+      "expected": {
+        "no_runtime_implementation_performed": true,
+        "no_server_process_started": true,
+        "no_network_performed": true,
+        "no_database_or_store_write_performed": true,
+        "no_queue_created": true,
+        "no_auth_secret_or_signing_material_created": true,
+        "no_real_key_generation_performed": true,
+        "no_private_key_exported": true,
+        "no_private_key_stored": true,
+        "no_local_execution_performed": true,
+        "no_shell_or_pty_performed": true,
+        "no_browser_window_access_performed": true,
+        "no_external_send_performed": true,
+        "no_customer_send_performed": true,
+        "no_deploy_performed": true,
+        "no_trade_performed": true,
+        "no_durable_migration_performed": true
+      },
+      "zeroScoreBlockers": [
+        "server_process_started",
+        "network_or_db_write_seen",
+        "queue_created",
+        "auth_secret_or_key_material_created",
+        "private_key_export_or_storage_seen",
+        "local_execution_seen",
+        "send_deploy_or_trade_seen",
+        "durable_migration_seen"
+      ],
+      "source_refs": [
+        "ARCH #256"
+      ]
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture parses as JSON.",
+    "Baseline commit is pinned to f41b02a.",
+    "Phase 15 is validation/spec-only and performs no runtime, server, network, store, queue, auth, secret, real-key, private-key, local execution, send, deploy, trade, or migration side effect.",
+    "Identity/signing output shape includes identity_signing_assessment and validation_report.",
+    "server_identity requires server_id, environment, key_id, public_key_fingerprint, issuer, created_at, rotated_at, revoked_at, and status.",
+    "device/profile/session binding requires device_id, profile, session_id, allowed_target_role=architect, tenant/user boundary, and freshness.",
+    "signing_envelope requires payload_hash, canonicalization_version, allowlisted signature_algorithm, key_id, nonce, timestamp, expires_at, replay window, and placeholder/test-vector signature only.",
+    "verification report supports accepted, pending, blocked, and rejected decisions with reasons, evidenceRefs, replay/idempotency result, key status, and clock skew/freshness result.",
+    "Unknown, unsupported-algorithm, expired, stale, replayed, wrong-scope, wrong-role, revoked, and unknown-key envelopes are blocked.",
+    "Old keys verify only within explicit rotation overlap and require audit evidence refs.",
+    "Revoked keys and unknown keys are blocked.",
+    "No-secret guarantees require private_key_exported=false, private_key_stored=false, secret_material_in_fixture=false, raw_token_in_output=false, and signing_key_generated_now=false.",
+    "Signature verification validates envelope integrity only.",
+    "Signature verification is not authorization for local execution.",
+    "Signature verification is not model-processing proof.",
+    "Signature verification is not bridge green.",
+    "Signature verification does not permit Tier 2+ actions, customer sends, deploys, trades, or local execution.",
+    "Any future server-originated target remains Architect-only and local-acceptance-required.",
+    "Real signing can become buildable later only after secret storage, key rotation, deletion/export, audit logging, and auth binding gates exist.",
+    "Acceptance gate IDs and blocker IDs are complete and unique.",
+    "Forbidden output substrings cover secrets, private keys, raw tokens, execution overclaims, bridge/proof overclaims, Tier 2+ authorization overclaims, and live side-effect claims."
+  ]
+}
