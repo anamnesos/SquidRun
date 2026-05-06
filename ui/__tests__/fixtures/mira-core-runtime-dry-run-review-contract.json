@@ -1,0 +1,711 @@
+{
+  "schema": "squidrun.mira_core.runtime_dry_run_review_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_28_local_dry_run_preflight_review",
+  "baseline": {
+    "commit": "e7a8dbc",
+    "subject": "Add Mira Core Phase 27 runtime preflight validation"
+  },
+  "sourceSpecs": [
+    "ui/__tests__/fixtures/mira-core-runtime-preflight-contract.json",
+    "ui/modules/mira-core/runtime-preflight.js",
+    "ui/scripts/hm-mira-core-runtime-preflight.js",
+    "ui/__tests__/mira-core-runtime-preflight.test.js"
+  ],
+  "purpose": [
+    "Define a validation-only review gate before any future disabled local dry-run runtime slice implementation.",
+    "Convert Phase 27 runtime-preflight readiness into concrete Phase 29 prerequisites without implementing or authorizing runtime.",
+    "Keep all runtime, listener, store, queue, lease, local execution, and external side-effect behavior out of scope."
+  ],
+  "nonGoals": [
+    "No runtime implementation.",
+    "No runtime authorization.",
+    "No server, listener, route, HTTP, WebSocket, network, database, store, file, migration, queue, or lease behavior.",
+    "No auth, key, secret, token, env secret read, local execution, shell, PTY, browser, screenshot, OCR, send, deploy, trade, memory/profile commit, or output-file behavior.",
+    "No source-store writes and no mutation of Phase 27 artifacts."
+  ],
+  "builderPatchMustSatisfy": [
+    "Consume this Oracle fixture directly.",
+    "Emit runtime_dry_run_review_report plus validation_report only.",
+    "Default decision must be remain_pre_runtime_review.",
+    "eligible_for_phase29_disabled_local_dry_run_implementation may appear only as a non-authorizing future implementation-review state.",
+    "Reject stale Phase 27 baseline or dependency.",
+    "Map every Phase 27 unsatisfied gate to a concrete Phase 29 prerequisite.",
+    "Reject missing kill switch, rollback, audit, local binding, or proof prerequisites.",
+    "Reject any runtime/listener/network/store/queue/lease/local-execution/external-action overclaim.",
+    "CLI, if implemented later, must be stdout-only and ignore output-file flags."
+  ],
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "runtime_dry_run_review_report",
+      "validation_report"
+    ],
+    "runtimeDryRunReviewReportSchema": "squidrun.mira_core.runtime_dry_run_review_report.v0",
+    "validationReportSchema": "squidrun.mira_core.runtime_dry_run_review_validation_report.v0"
+  },
+  "expectedRuntimeDryRunReviewReportShape": {
+    "requiredFields": [
+      "schema",
+      "version",
+      "review_report_id",
+      "idempotency_key",
+      "generated_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "baseline_commit",
+      "phase_27_dependency",
+      "decision",
+      "decision_allowed_values",
+      "eligible_is_authorization",
+      "eligible_is_runtime_proof",
+      "phase29_prerequisites",
+      "safe_first_slice_constraints",
+      "proof_boundaries",
+      "blocked_side_effects",
+      "tamper_case_coverage",
+      "next_safe_actions",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_dry_run_review_report.v0",
+      "version": "v0",
+      "baseline_commit": "e7a8dbc",
+      "phase_27_dependency.commit": "e7a8dbc",
+      "phase_27_dependency.phase": "phase_27_runtime_slice_0_preflight_readiness",
+      "phase_27_dependency.status": "committed_validation_only",
+      "phase_27_dependency.default_decision": "remain_validation_only",
+      "phase_27_dependency.candidate_slice_id": "runtime_slice_0_local_in_process_status_only",
+      "phase_27_dependency.runtime_available_now": false,
+      "phase_27_dependency.non_authorizing": true,
+      "decision": "remain_pre_runtime_review",
+      "eligible_is_authorization": false,
+      "eligible_is_runtime_proof": false,
+      "proof_boundaries.preflight_ready_is_runtime_proof": false,
+      "proof_boundaries.config_present_is_runtime_proof": false,
+      "proof_boundaries.socket_is_bridge_green_proof": false,
+      "proof_boundaries.delivery_acceptance_is_model_processing_proof": false,
+      "proof_boundaries.serverCanExecuteLocal": false,
+      "proof_boundaries.server_can_execute_local_arms": false,
+      "proof_boundaries.builder_direct_server_target_allowed": false,
+      "proof_boundaries.oracle_direct_server_target_allowed": false,
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    },
+    "phase27DependencyRequiredFields": [
+      "phase",
+      "commit",
+      "fixture_path",
+      "module_path",
+      "cli_path",
+      "test_path",
+      "status",
+      "default_decision",
+      "candidate_slice_id",
+      "runtime_available_now",
+      "non_authorizing",
+      "unsatisfied_gate_count",
+      "evidenceRefs"
+    ],
+    "phase27DependencyRequiredValues": {
+      "phase": "phase_27_runtime_slice_0_preflight_readiness",
+      "commit": "e7a8dbc",
+      "default_decision": "remain_validation_only",
+      "candidate_slice_id": "runtime_slice_0_local_in_process_status_only",
+      "runtime_available_now": false,
+      "non_authorizing": true,
+      "unsatisfied_gate_count": 9
+    },
+    "decisionAllowedValues": [
+      "remain_pre_runtime_review",
+      "blocked",
+      "eligible_for_phase29_disabled_local_dry_run_implementation"
+    ],
+    "requiredDefaultDecision": "remain_pre_runtime_review",
+    "eligibleDecisionRequiredValues": {
+      "eligible_is_authorization": false,
+      "eligible_is_runtime_proof": false,
+      "runtime_available_now": false,
+      "runtime_started": false,
+      "requires_future_review": true,
+      "requires_operator_review": true
+    },
+    "phase29PrerequisiteRequiredIds": [
+      "runtime-mode-flag-implementation",
+      "live-kill-switch-wiring",
+      "tested-dry-run-runtime-path",
+      "actual-local-only-binding",
+      "telemetry-audit-sink",
+      "storage-env-config-key-auth-refs",
+      "operator-ui-status-surface",
+      "rollback-exercise",
+      "end-to-end-runtime-proof"
+    ],
+    "phase29PrerequisiteRequiredFields": [
+      "prerequisite_id",
+      "maps_from_phase27_gate",
+      "status",
+      "required_for_phase29",
+      "blocks_runtime_now",
+      "acceptance_evidence_required",
+      "evidenceRefs"
+    ],
+    "phase29PrerequisiteMap": [
+      {
+        "maps_from_phase27_gate": "no-real-runtime-mode-implementation",
+        "prerequisite_id": "runtime-mode-flag-implementation",
+        "acceptance_evidence_required": "Code path reads explicit disabled-by-default local dev runtime mode flag without enabling runtime."
+      },
+      {
+        "maps_from_phase27_gate": "no-live-kill-switch-wiring",
+        "prerequisite_id": "live-kill-switch-wiring",
+        "acceptance_evidence_required": "Kill switch is wired into the future dry-run entry path, defaults fail-closed, and is testable."
+      },
+      {
+        "maps_from_phase27_gate": "no-tested-dry-run-runtime-path",
+        "prerequisite_id": "tested-dry-run-runtime-path",
+        "acceptance_evidence_required": "Future dry-run request path is deterministic, preview-only, and covered by tests."
+      },
+      {
+        "maps_from_phase27_gate": "no-actual-local-only-binding-implementation",
+        "prerequisite_id": "actual-local-only-binding",
+        "acceptance_evidence_required": "Binding is in-process or loopback-only and proves no public/remote listener behavior."
+      },
+      {
+        "maps_from_phase27_gate": "no-real-telemetry-audit-sink",
+        "prerequisite_id": "telemetry-audit-sink",
+        "acceptance_evidence_required": "Telemetry/audit sink is redacted, preview-safe, and separately gated before persistence."
+      },
+      {
+        "maps_from_phase27_gate": "no-storage-path-env-config-key-auth-binding",
+        "prerequisite_id": "storage-env-config-key-auth-refs",
+        "acceptance_evidence_required": "Storage path, env config, key refs, and auth refs are validated by reference only with no secret read."
+      },
+      {
+        "maps_from_phase27_gate": "no-operator-ui-status-surface",
+        "prerequisite_id": "operator-ui-status-surface",
+        "acceptance_evidence_required": "Operator can inspect disabled/local/dry-run status and kill-switch state."
+      },
+      {
+        "maps_from_phase27_gate": "no-rollback-exercise",
+        "prerequisite_id": "rollback-exercise",
+        "acceptance_evidence_required": "Disable/rollback is idempotent, tested, non-destructive, and cannot resurrect blocked state."
+      },
+      {
+        "maps_from_phase27_gate": "no-full-end-to-end-runtime-proof",
+        "prerequisite_id": "end-to-end-runtime-proof",
+        "acceptance_evidence_required": "Future proof demonstrates dry-run request to status response without side effects or proof overclaims."
+      }
+    ],
+    "safeFirstSliceConstraintRequiredIds": [
+      "disabled-by-default",
+      "dev-only",
+      "local-in-process-or-loopback-only",
+      "no-listener-unless-separately-gated",
+      "kill-switch-fail-closed",
+      "dry-run-no-side-effects",
+      "redacted-telemetry-preview",
+      "operator-visible-status",
+      "rollback-disable-plan"
+    ],
+    "safeFirstSliceConstraintRequiredFields": [
+      "constraint_id",
+      "required",
+      "non_authorizing",
+      "blocks_runtime_now",
+      "evidenceRefs"
+    ],
+    "proofBoundaryRequiredFields": [
+      "preflight_ready_is_runtime_proof",
+      "config_present_is_runtime_proof",
+      "socket_is_bridge_green_proof",
+      "delivery_acceptance_is_model_processing_proof",
+      "serverCanExecuteLocal",
+      "server_can_execute_local_arms",
+      "builder_direct_server_target_allowed",
+      "oracle_direct_server_target_allowed"
+    ],
+    "blockedSideEffectRequiredIds": [
+      "runtime",
+      "server-listener-routes",
+      "network",
+      "db-store-file-migration",
+      "queue-lease",
+      "auth-key-secret",
+      "local-execution-shell-pty-browser",
+      "send-deploy-trade-customer",
+      "output-file"
+    ],
+    "nextSafeActionRequiredIds": [
+      "implement-phase28-validator-only",
+      "draft-phase29-disabled-local-dry-run-implementation-contract"
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_runtime_performed",
+      "no_server_performed",
+      "no_listener_or_route_bound",
+      "no_network_performed",
+      "no_database_write_performed",
+      "no_store_write_performed",
+      "no_file_write_performed",
+      "no_migration_executed",
+      "no_queue_created",
+      "no_lease_created",
+      "no_auth_change_performed",
+      "no_key_secret_operation_performed",
+      "no_local_execution_performed",
+      "no_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_output_file_written"
+    ]
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.runtime_dry_run_review_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "report_id",
+      "generated_at",
+      "baseline_commit",
+      "decision",
+      "reasons",
+      "phase27_dependency_result",
+      "decision_result",
+      "phase29_prerequisites_result",
+      "safe_first_slice_constraints_result",
+      "proof_boundary_result",
+      "side_effect_result",
+      "acceptance_checks",
+      "failed_checks",
+      "evidenceRefs"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.runtime_dry_run_review_validation_report.v0",
+      "version": "v0",
+      "baseline_commit": "e7a8dbc",
+      "decision": "accepted",
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_server_performed": true,
+      "side_effect_result.no_listener_or_route_bound": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_lease_created": true,
+      "side_effect_result.no_auth_change_performed": true,
+      "side_effect_result.no_key_secret_operation_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_output_file_written": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "baseline-e7a8dbc-pinned",
+      "description": "Phase 28 baseline must stay pinned to e7a8dbc.",
+      "failClosedWhen": "Baseline commit changes or is missing."
+    },
+    {
+      "id": "phase27-dependency-e7a8dbc-pinned",
+      "description": "Phase 27 runtime-preflight dependency must point to commit e7a8dbc.",
+      "failClosedWhen": "Phase 27 dependency commit, fixture path, module path, or status is stale."
+    },
+    {
+      "id": "decision-default-remain-pre-runtime-review",
+      "description": "Default decision remains pre-runtime review.",
+      "failClosedWhen": "Default decision is eligible, runtime-ready, runtime-started, or authorized."
+    },
+    {
+      "id": "eligible-phase29-state-non-authorizing",
+      "description": "Eligible for Phase 29 disabled local dry-run implementation is a future review state only.",
+      "failClosedWhen": "Eligible is treated as runtime authorization, runtime proof, or execution permission."
+    },
+    {
+      "id": "phase27-proof-boundaries-preserved",
+      "description": "Phase 27 proof boundaries carry forward unchanged.",
+      "failClosedWhen": "Preflight/config/socket/delivery acceptance become runtime, model-processing, bridge-green, or local-arms proof."
+    },
+    {
+      "id": "server-local-capability-truth-preserved",
+      "description": "serverCanExecuteLocal remains false and direct Builder/Oracle server targets remain blocked.",
+      "failClosedWhen": "Server local execution or direct Builder/Oracle targeting is allowed."
+    },
+    {
+      "id": "all-phase27-gates-mapped-to-phase29-prerequisites",
+      "description": "The nine Phase 27 unsatisfied gates map one-to-one to concrete Phase 29 prerequisites.",
+      "failClosedWhen": "Any Phase 27 gate is missing, unmapped, or marked satisfied in Phase 28."
+    },
+    {
+      "id": "safe-first-slice-constraints-complete",
+      "description": "Safe first implementation slice constraints are present and non-authorizing.",
+      "failClosedWhen": "Disabled-by-default, dev-only, local binding, kill switch, dry-run, telemetry, status, or rollback constraints are missing."
+    },
+    {
+      "id": "kill-switch-rollback-audit-required",
+      "description": "Future dry-run implementation requires kill switch, rollback/disable, and telemetry/audit review.",
+      "failClosedWhen": "Any of kill switch, rollback, or audit prerequisite is missing or optional."
+    },
+    {
+      "id": "network-listener-overclaim-rejected",
+      "description": "Network/listener/route overclaims are blocked.",
+      "failClosedWhen": "Output claims a real listener, route, port, HTTP/WebSocket server, public interface, or network request."
+    },
+    {
+      "id": "local-execution-shell-pty-overclaim-rejected",
+      "description": "Local execution, shell, PTY, browser, screenshot, and OCR overclaims are blocked.",
+      "failClosedWhen": "Output authorizes or reports any local execution or observation side effect."
+    },
+    {
+      "id": "queue-lease-store-write-rejected",
+      "description": "Queue, lease, database, store, file, and migration writes are blocked.",
+      "failClosedWhen": "Output claims queue/lease creation or any persistence/write behavior."
+    },
+    {
+      "id": "customer-send-deploy-trade-rejected",
+      "description": "Customer sends, deploys, trades, money movement, and external sends are blocked.",
+      "failClosedWhen": "Next safe actions or decisions authorize these actions."
+    },
+    {
+      "id": "raw-secret-path-private-leakage-rejected",
+      "description": "Raw secrets, paths, tokens, keys, customer private content, terminal scrollback, browser state, screenshots, OCR, plaintext, ciphertext, and decrypted payloads are blocked.",
+      "failClosedWhen": "Forbidden raw/private/secret strings appear in output values."
+    },
+    {
+      "id": "fake-proof-rejected",
+      "description": "Socket, delivery acceptance, config presence, and preflight readiness cannot be treated as runtime proof.",
+      "failClosedWhen": "Any proof boundary is overclaimed."
+    },
+    {
+      "id": "next-safe-actions-tier0-tier1-only",
+      "description": "Next safe actions are Tier0/Tier1 only and do not authorize runtime.",
+      "failClosedWhen": "A next action is Tier2+ or authorizes runtime/server/local execution/external action."
+    },
+    {
+      "id": "side-effects-blocked-now",
+      "description": "No runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior.",
+      "failClosedWhen": "Any no_* field is false or side-effect counter is non-zero."
+    },
+    {
+      "id": "idempotency-sensitive-to-baseline-prerequisites-and-decision",
+      "description": "Idempotency is stable for equivalent inputs and sensitive to baseline, dependency, prerequisite, constraint, proof, and decision changes.",
+      "failClosedWhen": "Equivalent inputs produce different keys or changed inputs reuse a key."
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "baseline-e7a8dbc-current",
+      "expects": "baseline_commit is e7a8dbc."
+    },
+    {
+      "id": "phase27-dependency-current",
+      "expects": "phase_27_dependency commit is e7a8dbc and status is committed_validation_only."
+    },
+    {
+      "id": "phase27-candidate-non-authorizing",
+      "expects": "Phase 27 dependency keeps runtime_slice_0_local_in_process_status_only unavailable and non-authorizing."
+    },
+    {
+      "id": "decision-default-remain-pre-runtime-review",
+      "expects": "Default decision is remain_pre_runtime_review."
+    },
+    {
+      "id": "eligible-phase29-non-authorizing",
+      "expects": "eligible_for_phase29_disabled_local_dry_run_implementation does not authorize runtime or prove runtime."
+    },
+    {
+      "id": "phase29-prerequisites-complete",
+      "expects": "All nine Phase 29 prerequisite IDs are present."
+    },
+    {
+      "id": "phase27-gates-one-to-one-mapped",
+      "expects": "Every Phase 27 unsatisfied gate maps to exactly one Phase 29 prerequisite."
+    },
+    {
+      "id": "prerequisites-remain-unsatisfied",
+      "expects": "All Phase 29 prerequisites remain unsatisfied/planned and block runtime now."
+    },
+    {
+      "id": "safe-first-slice-constraints-complete",
+      "expects": "All safe first-slice constraints are present and non-authorizing."
+    },
+    {
+      "id": "disabled-dev-local-constraints-present",
+      "expects": "Disabled-by-default, dev-only, local/in-process/loopback-only, and no-listener-unless-gated constraints are present."
+    },
+    {
+      "id": "kill-switch-rollback-audit-required",
+      "expects": "Kill switch, rollback/disable, and telemetry/audit prerequisites are required."
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "expects": "Preflight/config/socket/delivery acceptance are not runtime/model/bridge/local-arms proof."
+    },
+    {
+      "id": "server-local-target-boundaries-preserved",
+      "expects": "serverCanExecuteLocal=false and direct Builder/Oracle server targets blocked."
+    },
+    {
+      "id": "side-effect-truth-all-blocked",
+      "expects": "All side-effect truth fields are safe and counters are zero."
+    },
+    {
+      "id": "next-safe-actions-tier0-tier1-only",
+      "expects": "Next safe actions are Tier0/Tier1 only and non-authorizing."
+    },
+    {
+      "id": "stale-baseline-rejected",
+      "expects": "Changing baseline e7a8dbc fails validation."
+    },
+    {
+      "id": "stale-phase27-dependency-rejected",
+      "expects": "Changing Phase 27 dependency commit or status fails validation."
+    },
+    {
+      "id": "eligible-as-authorization-rejected",
+      "expects": "Eligible decision with authorization/proof flags fails validation."
+    },
+    {
+      "id": "missing-kill-switch-rollback-audit-rejected",
+      "expects": "Removing kill switch, rollback, or audit prerequisites fails validation."
+    },
+    {
+      "id": "network-listener-overclaim-rejected",
+      "expects": "Listener, route, port, public interface, or network overclaims fail validation."
+    },
+    {
+      "id": "local-execution-shell-pty-overclaim-rejected",
+      "expects": "Local execution, shell, PTY, browser, screenshot, or OCR overclaims fail validation."
+    },
+    {
+      "id": "queue-lease-store-write-rejected",
+      "expects": "Queue, lease, DB, store, file, migration, or output-file write overclaims fail validation."
+    },
+    {
+      "id": "customer-send-deploy-trade-rejected",
+      "expects": "Customer send, deploy, trade, money movement, or external send drift fails validation."
+    },
+    {
+      "id": "raw-secret-path-private-leakage-rejected",
+      "expects": "Raw secret/path/customer/private/token/key/payload leakage fails validation."
+    },
+    {
+      "id": "fake-proof-rejected",
+      "expects": "Socket, delivery, config, preflight, model-processing, or bridge-green proof overclaim fails validation."
+    },
+    {
+      "id": "missing-carried-forward-gates-rejected",
+      "expects": "Omitting any Phase 27 gate-to-Phase29 prerequisite mapping fails validation."
+    },
+    {
+      "id": "unsafe-next-action-drift-rejected",
+      "expects": "Tier2+ or runtime-authorizing next action fails validation."
+    },
+    {
+      "id": "idempotency-sensitive-to-review-inputs",
+      "expects": "Idempotency changes when baseline, dependency, prerequisites, proof, constraints, or decision changes."
+    }
+  ],
+  "tamperCases": [
+    {
+      "id": "tamper-stale-baseline",
+      "mutation": "Change baseline_commit from e7a8dbc to b125eee.",
+      "expected_failure_checks": [
+        "baseline-e7a8dbc-current",
+        "stale-baseline-rejected"
+      ]
+    },
+    {
+      "id": "tamper-stale-phase27-dependency",
+      "mutation": "Change phase_27_dependency.commit from e7a8dbc to b125eee or status away from committed_validation_only.",
+      "expected_failure_checks": [
+        "phase27-dependency-current",
+        "stale-phase27-dependency-rejected"
+      ]
+    },
+    {
+      "id": "tamper-eligible-as-authorization",
+      "mutation": "Set decision=eligible_for_phase29_disabled_local_dry_run_implementation and eligible_is_authorization=true or eligible_is_runtime_proof=true.",
+      "expected_failure_checks": [
+        "eligible-phase29-non-authorizing",
+        "eligible-as-authorization-rejected"
+      ]
+    },
+    {
+      "id": "tamper-missing-kill-switch",
+      "mutation": "Remove live-kill-switch-wiring prerequisite or kill-switch-fail-closed constraint.",
+      "expected_failure_checks": [
+        "missing-kill-switch-rollback-audit-rejected",
+        "safe-first-slice-constraints-complete"
+      ]
+    },
+    {
+      "id": "tamper-missing-rollback",
+      "mutation": "Remove rollback-exercise prerequisite or rollback-disable-plan constraint.",
+      "expected_failure_checks": [
+        "missing-kill-switch-rollback-audit-rejected",
+        "safe-first-slice-constraints-complete"
+      ]
+    },
+    {
+      "id": "tamper-missing-audit",
+      "mutation": "Remove telemetry-audit-sink prerequisite or redacted-telemetry-preview constraint.",
+      "expected_failure_checks": [
+        "missing-kill-switch-rollback-audit-rejected",
+        "safe-first-slice-constraints-complete"
+      ]
+    },
+    {
+      "id": "tamper-network-listener-overclaim",
+      "mutation": "Claim listener bound, route registered, public interface, port opened, or network request.",
+      "expected_failure_checks": [
+        "network-listener-overclaim-rejected",
+        "side-effect-truth-all-blocked"
+      ]
+    },
+    {
+      "id": "tamper-local-execution-shell-pty",
+      "mutation": "Claim local execution, shell, PTY, browser state, screenshot, or OCR behavior.",
+      "expected_failure_checks": [
+        "local-execution-shell-pty-overclaim-rejected",
+        "side-effect-truth-all-blocked"
+      ]
+    },
+    {
+      "id": "tamper-queue-lease-store-write",
+      "mutation": "Claim queue/lease creation, DB/store/file/migration write, or output-file write.",
+      "expected_failure_checks": [
+        "queue-lease-store-write-rejected",
+        "side-effect-truth-all-blocked"
+      ]
+    },
+    {
+      "id": "tamper-customer-send-deploy-trade",
+      "mutation": "Authorize customer send, email client, deploy, trade, move money, or external send in next safe actions.",
+      "expected_failure_checks": [
+        "customer-send-deploy-trade-rejected",
+        "unsafe-next-action-drift-rejected"
+      ]
+    },
+    {
+      "id": "tamper-raw-secret-path-private-leak",
+      "mutation": "Insert bearer token, env secret read, raw path, private key, customer private content, plaintext, ciphertext, or decrypted payload into output values.",
+      "expected_failure_checks": [
+        "raw-secret-path-private-leakage-rejected"
+      ]
+    },
+    {
+      "id": "tamper-fake-proof",
+      "mutation": "Set socket_is_bridge_green_proof=true, delivery_acceptance_is_model_processing_proof=true, preflight_ready_is_runtime_proof=true, or serverCanExecuteLocal=true.",
+      "expected_failure_checks": [
+        "fake-proof-rejected",
+        "proof-boundaries-preserved"
+      ]
+    },
+    {
+      "id": "tamper-missing-carried-forward-gate",
+      "mutation": "Remove one Phase27 gate to Phase29 prerequisite mapping.",
+      "expected_failure_checks": [
+        "phase29-prerequisites-complete",
+        "missing-carried-forward-gates-rejected"
+      ]
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "runtime authorized",
+    "runtime available now",
+    "runtime started",
+    "eligible authorizes runtime",
+    "eligible proves runtime",
+    "phase29 authorized",
+    "server started",
+    "listener bound",
+    "route registered",
+    "http server listening",
+    "websocket listening",
+    "network request performed",
+    "public interface allowed",
+    "0.0.0.0",
+    "port opened",
+    "port bound",
+    "database write performed",
+    "store write performed",
+    "file write performed",
+    "migration executed",
+    "queue created",
+    "lease created",
+    "auth changed",
+    "key generated",
+    "secret read",
+    "env secret read",
+    "raw path",
+    "local execution performed",
+    "shell executed",
+    "pty executed",
+    "browser state captured",
+    "screenshot captured",
+    "ocr captured",
+    "memory committed",
+    "profile committed",
+    "customer send performed",
+    "external send performed",
+    "deploy performed",
+    "trade performed",
+    "money moved",
+    "output file written",
+    "preflight proves runtime",
+    "config proves runtime",
+    "socket proves bridge green",
+    "delivery acceptance proves model processing",
+    "server can execute local arms",
+    "direct builder target allowed",
+    "direct oracle target allowed",
+    "raw terminal scrollback",
+    "raw browser state",
+    "raw screenshot",
+    "raw ocr",
+    "raw customer private",
+    "side-profile payload",
+    "source-store payload",
+    "bearer token",
+    "session secret",
+    "auth secret value",
+    "private key",
+    "data key",
+    "plaintext payload",
+    "ciphertext payload",
+    "decrypted payload"
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture pins Phase 28 baseline e7a8dbc and Phase 27 runtime-preflight dependency at e7a8dbc.",
+    "Fixture defines runtime_dry_run_review_report plus validation_report output shapes.",
+    "Decision defaults to remain_pre_runtime_review; eligible_for_phase29_disabled_local_dry_run_implementation is explicitly non-authorizing and not runtime proof.",
+    "All Phase 27 proof boundaries are carried forward, including serverCanExecuteLocal=false and direct Builder/Oracle server target blocks.",
+    "The nine Phase 27 unsatisfied gates map one-to-one into concrete Phase 29 prerequisites.",
+    "Safe first implementation slice constraints require disabled-by-default, dev-only, local/in-process or loopback-only, no listener unless separately gated, fail-closed kill switch, dry-run/no side effects, redacted telemetry preview, operator-visible status, and rollback/disable plan.",
+    "Static rules and tamper cases cover stale baseline, eligible-as-authorization, missing kill switch/rollback/audit, network/listener overclaim, local execution/shell/PTY overclaim, queue/lease/store writes, customer send/deploy/trade/money/external-send drift, raw secret/path/private leakage, fake proof, and missing carried-forward gates.",
+    "Next safe actions are Tier0/Tier1 only and do not authorize runtime.",
+    "Fixture forbids runtime/server/listener/routes/network/db/store/file/migration/queue/lease/auth/key/secret/local execution/send/deploy/trade/output-file behavior."
+  ]
+}
