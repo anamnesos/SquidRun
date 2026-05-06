@@ -25,6 +25,26 @@ const VOICE_DATA_CHANNEL_CONTRACT = Object.freeze({
     'conversation.item.created',
   ]),
 });
+const AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
+const BARE_AGENT_SEQUENCE_PREFIX_RE = /^\s*(?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\s*:?\s*/i;
+const QUIET_GENERIC_CANCEL_REASONS = new Set([
+  'user_transcript_routed',
+  'response.created',
+  'response.output_item.added',
+  'response.audio.delta',
+  'response.output_audio.delta',
+  'response.audio_transcript.delta',
+  'response.output_audio_transcript.delta',
+]);
+const QUIET_VISIBLE_VOICE_EVENTS = new Set([
+  'conversation.item.input_audio_transcription.delta',
+  'input_audio_buffer.speech_started',
+  'input_audio_buffer.speech_stopped',
+  'response.audio.delta',
+  'response.output_audio.delta',
+  'response.audio_transcript.delta',
+  'response.output_audio_transcript.delta',
+]);
 
 const IDS = Object.freeze({
   panel: 'voiceBrokerPanel',
@@ -131,6 +151,16 @@ function getTranscriptionModel(status) {
   return status?.config?.transcriptionModel || 'gpt-4o-transcribe';
 }
 
+function getVadConfig(status) {
+  const config = status?.config || {};
+  const prefix = Number.parseInt(String(config.vadPrefixPaddingMs ?? ''), 10);
+  const silence = Number.parseInt(String(config.vadSilenceDurationMs ?? ''), 10);
+  return {
+    prefixPaddingMs: Number.isInteger(prefix) && prefix >= 0 ? prefix : 700,
+    silenceDurationMs: Number.isInteger(silence) && silence >= 0 ? silence : 2200,
+  };
+}
+
 function renderText(id, text) {
   const el = getEl(id);
   if (el) el.textContent = text;
@@ -163,6 +193,33 @@ function appendSessionLog(text) {
   const current = String(el.textContent || '').trim();
   const next = current ? `${current}\n${text}` : text;
   el.textContent = next.split('\n').slice(-6).join('\n');
+}
+
+function stripAgentSequencePrefix(value) {
+  let text = String(value || '').trim();
+  for (let i = 0; i < 3; i += 1) {
+    const next = text
+      .replace(AGENT_SEQUENCE_PREFIX_RE, '')
+      .replace(BARE_AGENT_SEQUENCE_PREFIX_RE, '')
+      .trim();
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+function appendVoiceDataChannelEventLog(eventType) {
+  const type = String(eventType || '');
+  if (!type) {
+    appendSessionLog('Voice event');
+    return;
+  }
+  if (type === 'conversation.item.input_audio_transcription.completed') {
+    appendSessionLog('Transcript received');
+    return;
+  }
+  if (QUIET_VISIBLE_VOICE_EVENTS.has(type)) return;
+  appendSessionLog(type);
 }
 
 function postVoiceDiagnostic(eventType, detail = {}, options = {}) {
@@ -349,7 +406,7 @@ function sendDataChannelEvent(channel, event) {
 }
 
 function buildSpeakMiraReplyEvents(text) {
-  const reply = String(text || '').trim();
+  const reply = stripAgentSequencePrefix(text);
   if (!reply) return [];
   return [
     {
@@ -383,7 +440,19 @@ function cancelGenericRealtimeResponse(session, reason = 'generic_response') {
   sendDataChannelEvent(session.dataChannel, {
     type: VOICE_DATA_CHANNEL_CONTRACT.clientEvents.outputAudioClear,
   });
-  if (canceled) appendSessionLog(`Generic voice response canceled: ${reason}`);
+  if (canceled) {
+    const textReason = String(reason || 'generic_response');
+    void postVoiceDiagnostic('voice.generic_response.canceled', {
+      reason: textReason,
+    }, {
+      status: session.status || lastStatus,
+      fetchImpl: session.fetchImpl || globalThis.fetch,
+      reason: textReason,
+    });
+    if (!QUIET_GENERIC_CANCEL_REASONS.has(textReason)) {
+      appendSessionLog(`Generic voice response canceled: ${textReason}`);
+    }
+  }
   return canceled;
 }
 
@@ -625,6 +694,21 @@ async function postTranscriptToBroker(transcript, status = lastStatus, fetchImpl
   };
 }
 
+function reportTranscriptRouteFailure(resultOrError, status = lastStatus, fetchImpl = globalThis.fetch) {
+  const reason = resultOrError?.body?.reason
+    || resultOrError?.reason
+    || resultOrError?.message
+    || 'unknown';
+  const message = `Transcript route failed: ${reason}`;
+  appendSessionLog(message);
+  setError(message);
+  setSessionStatus('Transcript route failed', 'error');
+  void postVoiceDiagnostic('voice.transcript.route_failed', {
+    reason,
+    statusCode: resultOrError?.statusCode || null,
+  }, { status, fetchImpl, ok: false, reason });
+}
+
 async function createVoiceRealtimeSession(options = {}) {
   const status = options.status || lastStatus;
   const fetchImpl = options.fetchImpl || globalThis.fetch;
@@ -715,6 +799,7 @@ async function createVoiceRealtimeSession(options = {}) {
     spokenMessageIds: new Set(),
     stream,
     status,
+    fetchImpl,
   };
   startAudioTranscriptionFallback(session, {
     status,
@@ -723,6 +808,7 @@ async function createVoiceRealtimeSession(options = {}) {
     timesliceMs: options.audioChunkMs,
   });
   dataChannel.addEventListener?.('open', () => {
+    const vadConfig = getVadConfig(status);
     appendSessionLog('Data channel open');
     void postVoiceDiagnostic('voice.data_channel.open', {}, { status, fetchImpl });
     sendDataChannelEvent(dataChannel, {
@@ -735,8 +821,8 @@ async function createVoiceRealtimeSession(options = {}) {
             transcription: { model: getTranscriptionModel(status) },
             turn_detection: {
               type: 'server_vad',
-              prefix_padding_ms: 500,
-              silence_duration_ms: 1400,
+              prefix_padding_ms: vadConfig.prefixPaddingMs,
+              silence_duration_ms: vadConfig.silenceDurationMs,
               create_response: false,
             },
           },
@@ -747,8 +833,8 @@ async function createVoiceRealtimeSession(options = {}) {
   dataChannel.addEventListener?.('message', (event) => {
     const payload = safeJsonParse(event.data);
     if (!payload) return;
-    appendSessionLog(payload.type || 'voice event');
     const eventType = String(payload.type || '');
+    appendVoiceDataChannelEventLog(eventType);
     void postVoiceDiagnostic('voice.data_channel.event', {
       eventType,
       hasTranscript: Boolean(payload.transcript || payload.text || payload.delta),
@@ -803,7 +889,11 @@ async function createVoiceRealtimeSession(options = {}) {
           Math.max(0, nowMs - 2000)
         );
       }
-      void postTranscriptToBroker(transcript, status, fetchImpl);
+      void postTranscriptToBroker(transcript, status, fetchImpl)
+        .then((result) => {
+          if (result?.ok === false) reportTranscriptRouteFailure(result, status, fetchImpl);
+        })
+        .catch((err) => reportTranscriptRouteFailure(err, status, fetchImpl));
     }
   });
 
@@ -953,5 +1043,6 @@ module.exports = {
   startVoiceEgressPolling,
   stopVoiceSession,
   setupVoiceBrokerTab,
+  stripAgentSequencePrefix,
   VOICE_DATA_CHANNEL_CONTRACT,
 };

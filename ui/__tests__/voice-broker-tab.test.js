@@ -245,6 +245,8 @@ describe('voice-broker tab', () => {
         running: true,
         lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
         config: {
+          vadPrefixPaddingMs: 900,
+          vadSilenceDurationMs: 2600,
           endpointShape: {
             clientSecret: { path: '/v1/voice/realtime/client-secret' },
             transcript: { path: '/v1/voice/transcripts' },
@@ -286,8 +288,8 @@ describe('voice-broker tab', () => {
     }));
     expect(dataChannel.sent[0].session.audio.input.turn_detection).toEqual(expect.objectContaining({
       type: 'server_vad',
-      prefix_padding_ms: 500,
-      silence_duration_ms: 1400,
+      prefix_padding_ms: 900,
+      silence_duration_ms: 2600,
       create_response: false,
     }));
   });
@@ -703,6 +705,12 @@ describe('voice-broker tab', () => {
 
     dataChannel.handlers.message({
       data: JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.delta',
+        delta: 'push this',
+      }),
+    });
+    dataChannel.handlers.message({
+      data: JSON.stringify({
         type: 'conversation.item.input_audio_transcription.completed',
         event_id: 'evt_1',
         transcript: 'push this to Mira pane',
@@ -712,9 +720,78 @@ describe('voice-broker tab', () => {
 
     expect(dataChannel.sent).toContainEqual({ type: 'response.cancel' });
     expect(dataChannel.sent).toContainEqual({ type: 'output_audio_buffer.clear' });
+    expect(elements.voiceSessionLog.textContent).toContain('Transcript received');
+    expect(elements.voiceSessionLog.textContent).not.toContain('conversation.item.input_audio_transcription.delta');
+    expect(elements.voiceSessionLog.textContent).not.toContain('conversation.item.input_audio_transcription.completed');
+    expect(elements.voiceSessionLog.textContent).not.toContain('Generic voice response canceled');
     expect(fetchImpl).toHaveBeenLastCalledWith('http://127.0.0.1:43123/v1/voice/transcripts', expect.objectContaining({
       body: expect.stringContaining('push this to Mira pane'),
     }));
+  });
+
+  test('reports transcript route failures without blaming expected generic cancellation', async () => {
+    const dataChannel = {
+      readyState: 'open',
+      handlers: {},
+      sent: [],
+      addEventListener(event, handler) {
+        this.handlers[event] = handler;
+      },
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+      close: jest.fn(),
+    };
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' })
+      .mockRejectedValueOnce(new Error('broker down'));
+
+    await tab.createVoiceRealtimeSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: {
+          endpointShape: {
+            clientSecret: { path: '/v1/voice/realtime/client-secret' },
+            transcript: { path: '/v1/voice/transcripts' },
+          },
+        },
+      },
+      fetchImpl,
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [{ enabled: true, stop: jest.fn() }],
+          getTracks: () => [],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => dataChannel,
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: jest.fn(),
+      })),
+    });
+
+    dataChannel.handlers.message({
+      data: JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        event_id: 'evt_1',
+        transcript: 'route me even if broker is down',
+      }),
+    });
+    await Promise.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(dataChannel.sent).toContainEqual({ type: 'response.cancel' });
+    expect(elements.voiceSessionLog.textContent).toContain('Transcript route failed: broker down');
+    expect(elements.voiceBrokerError.textContent).toBe('Transcript route failed: broker down');
+    expect(elements.voiceSessionStatus.textContent).toBe('Transcript route failed');
+    expect(elements.voiceSessionLog.textContent).not.toContain('Generic voice response canceled');
   });
 
   test('does not cancel Realtime response while speaking a Mira egress reply', () => {
@@ -741,7 +818,7 @@ describe('voice-broker tab', () => {
       },
     };
 
-    expect(tab.speakMiraReply({ dataChannel }, 'This is Mira speaking through the voice mouth.')).toBe(true);
+    expect(tab.speakMiraReply({ dataChannel }, '(ARCH #35): This is Mira speaking through the voice mouth.')).toBe(true);
 
     expect(dataChannel.sent).toEqual([
       expect.objectContaining({
@@ -753,6 +830,7 @@ describe('voice-broker tab', () => {
         }),
       }),
     ]);
+    expect(dataChannel.sent[0].response.instructions).not.toContain('(ARCH #35)');
   });
 
   test('polls voice egress and speaks new Architect messages once', async () => {

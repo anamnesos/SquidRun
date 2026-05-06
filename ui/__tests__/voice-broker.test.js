@@ -113,6 +113,8 @@ describe('voice-broker', () => {
       model: 'gpt-realtime',
       voice: 'marin',
       transcriptionModel: 'gpt-4o-transcribe',
+      vadPrefixPaddingMs: 700,
+      vadSilenceDurationMs: 2200,
       openaiApiKeyPresent: true,
       transcriptJournalPath: path.join(tempRoot, 'runtime', 'voice-transcripts.jsonl'),
     }));
@@ -146,6 +148,7 @@ describe('voice-broker', () => {
     expect(payload.session.instructions).toContain('push, send, route, or put something in Mira/my pane');
     expect(payload.session.instructions).toContain('Do not refuse pane-routing commands');
     expect(payload.session.instructions).toContain('Current SquidRun context:');
+    expect(payload.session.instructions).toContain('Give James room to finish thoughts');
   });
 
   test('adds compact live SquidRun context to default voice instructions', () => {
@@ -296,7 +299,23 @@ describe('voice-broker', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       text: 'Push this to Mira from fallback audio.',
-      ingest: expect.objectContaining({ ok: true }),
+      ingest: expect.objectContaining({
+        ok: true,
+        event: expect.objectContaining({
+          riskClass: expect.any(String),
+          ingressEnvelope: expect.objectContaining({
+            source: 'voice',
+            targetIntent: expect.objectContaining({
+              target: 'architect',
+              allowDirectPaneWrite: false,
+            }),
+            routePolicy: expect.objectContaining({
+              requireSameProfile: true,
+              allowMainFallback: false,
+            }),
+          }),
+        }),
+      }),
     }));
     expect(fetchImpl).toHaveBeenCalledWith(
       voiceBroker.OPENAI_TRANSCRIPTIONS_URL,
@@ -764,7 +783,7 @@ describe('voice-broker', () => {
         messageId: 'mira-reply-1',
         senderRole: 'architect',
         targetRole: 'user',
-        rawBody: 'Yep, I am here through voice now.',
+        rawBody: '(ARCH #35): Yep, I am here through voice now.',
         brokeredAtMs: 1777883000000,
       },
       {
@@ -817,7 +836,7 @@ describe('voice-broker', () => {
 
     try {
       const response = await postJson(port, '/v1/voice/egress', {
-        text: 'I can speak this as Mira.',
+        text: '(ARCH #36): I can speak this as Mira.',
         messageId: 'voice-egress-post-1',
       });
 
@@ -836,7 +855,7 @@ describe('voice-broker', () => {
         targetRole: 'user',
         channel: 'voice',
         direction: 'outbound',
-        rawBody: 'I can speak this as Mira.',
+        rawBody: '(ARCH #36): I can speak this as Mira.',
       }));
     } finally {
       await broker.stop();

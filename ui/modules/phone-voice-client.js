@@ -42,6 +42,8 @@ function sanitizePublicStatus(status = {}) {
     model: toNonEmptyString(config.model) || 'gpt-realtime-1.5',
     voice: toNonEmptyString(config.voice) || 'marin',
     transcriptionModel: toNonEmptyString(config.transcriptionModel) || 'gpt-4o-transcribe',
+    vadPrefixPaddingMs: toPositiveInt(config.vadPrefixPaddingMs, 700),
+    vadSilenceDurationMs: toPositiveInt(config.vadSilenceDurationMs, 2200),
     openaiApiKeyPresent: Boolean(config.openaiApiKeyPresent),
   };
 }
@@ -300,8 +302,8 @@ function renderPhoneVoiceClientPage(input = {}) {
                 transcription: { model: window.SQUIDRUN_PHONE_VOICE.status.transcriptionModel },
                 turn_detection: {
                   type: 'server_vad',
-                  prefix_padding_ms: 500,
-                  silence_duration_ms: 1400,
+                  prefix_padding_ms: window.SQUIDRUN_PHONE_VOICE.status.vadPrefixPaddingMs || 700,
+                  silence_duration_ms: window.SQUIDRUN_PHONE_VOICE.status.vadSilenceDurationMs || 2200,
                   create_response: false,
                 },
               },
