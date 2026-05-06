@@ -1,0 +1,1296 @@
+{
+  "schema": "squidrun.mira_core.server_api_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_20_server_api_control_plane_status",
+  "baseline": {
+    "commit": "8a8ccf0",
+    "commit_subject": "Add Mira Core Phase 19 encryption key validation",
+    "baseline_status": "phase_19_encryption_key_green",
+    "baseline_boundary": "Phase 19 defines encryption/key-reference/secret-handling validation only. No real Mira Core server, API listener, route table, network path, database/store write, queue, auth/session/keygen/encrypt/decrypt/KMS/env-secret read, local execution, send, deploy, trade, memory/profile commit, export, deletion, restore, raw-content storage, or output-file behavior exists at this baseline."
+  },
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json",
+    "ui/__tests__/fixtures/mira-core-identity-signing-contract.json",
+    "ui/__tests__/fixtures/mira-core-auth-binding-contract.json",
+    "ui/__tests__/fixtures/mira-core-storage-retention-contract.json",
+    "ui/__tests__/fixtures/mira-core-persistence-audit-contract.json",
+    "ui/__tests__/fixtures/mira-core-encryption-key-contract.json",
+    "ui/__tests__/fixtures/mira-core-server-boundary-contract.json",
+    "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+    "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+  ],
+  "purpose": "Convert the next server-runtime blocker into an executable validation contract for future Mira Core server API/control-plane/status behavior before any real API server exists. Phase 20 defines dependency mapping for Phases 14-19, planned endpoint and control-plane shapes, request/response envelope shapes, status semantics, operator controls, privacy/security boundaries, capability boundaries, migration gates, blockers, static rules, acceptance checks, and side-effect truth.",
+  "nonGoals": [
+    "No runtime implementation.",
+    "No real server process.",
+    "No listener.",
+    "No routes registered.",
+    "No network request.",
+    "No database, source-store, or file write.",
+    "No migration executed.",
+    "No queue creation or enqueue.",
+    "No auth, token, credential, secret, or session change.",
+    "No key generation.",
+    "No encryption performed.",
+    "No decryption performed.",
+    "No KMS call.",
+    "No environment secret read or export.",
+    "No local execution.",
+    "No shell or PTY action.",
+    "No browser, window, screenshot, or OCR access.",
+    "No external sends or customer sends.",
+    "No deploys.",
+    "No trades or financial actions.",
+    "No memory or profile commits.",
+    "No export file written.",
+    "No deletion performed.",
+    "No restore performed.",
+    "No raw content stored.",
+    "No output file written."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build validation-only server API/control-plane/status assessment records against this fixture, if Builder is later delegated.",
+      "Do not start a server, bind a listener, register routes, make network calls, write databases/stores/files, run migrations, create queues, mutate auth/session/key/secret state, generate keys, encrypt, decrypt, call KMS, read env secrets, execute locally, send, deploy, trade, commit memory/profile state, export a file, delete records, restore records, or store raw content.",
+      "Represent commit 8a8ccf0 as the Phase 19 baseline and map the green dependency chain for Phases 14-19.",
+      "Emit dependency map, planned endpoint/control-plane shape, request/response envelope rules, status semantics, operator controls, privacy/security boundaries, capability boundaries, migration gates, gate summary, blocker summary, evidence refs, and side-effect truth sections.",
+      "Represent endpoints as planned shapes only for receive upload, auth/signature/key validation, store dry-run status, export/delete status, retention/tombstone status, local-arms/offline status, intent proposal status, audit-log status, and health/readiness status.",
+      "Represent API outputs as redacted status/envelope records with no raw payload, no secrets, no bearer tokens, no cookies, no private/data keys, no plaintext, no raw ciphertext, and no decrypted content.",
+      "Treat API/status validity as validation-only. It never authorizes DB writes, storage, local execution, shell/PTY, Builder/Oracle direct server targeting, Tier 2+ work, customer sends, deploys, trades, memory/profile commits, model-processing proof, bridge green, raw restore, or resurrection of deleted local state."
+    ],
+    "hardRejects": [
+      "Any server process, listener, route registration, network request, database/store/file write, migration execution, queue write, auth/secret/token/session/key change, key generation, encryption, decryption, KMS call, env secret read, local execution, shell/PTY, browser/window access, send, customer send, deploy, trade, financial action, durable migration, memory/profile commit, export-file write, deletion, restore, raw-content storage, or output-file write occurs.",
+      "Any fixture or validation output contains raw comms, raw terminal, screenshot/OCR, browser state, customer private content, secret material, side-profile content, profile-mismatch payloads, bearer tokens, cookies, session secrets, private keys, data keys, plaintext, raw ciphertext, raw payloads, decrypted content, or raw database payloads.",
+      "A planned endpoint/control-plane entry implies a live HTTP server, route, listener, websocket, API call, database write, queue write, job, worker, delete/export action, deploy, send, trade, local execution, or output file.",
+      "An API status marks socket connection as bridge green, delivery acceptance as model-processing proof, or a lease/status response as recipient model processing proof without recipient quote-back or equivalent local proof.",
+      "A request/response envelope accepts missing scope, missing auth binding ref, missing signature ref, missing key reference ref, missing source watermark, missing idempotency/replay key, raw payload, expired request, replay, tombstone conflict, profile mismatch, side-profile payload, or high-risk action as allowed.",
+      "Server API validity is treated as authorization for DB writes, storage, local execution, shell/PTY, direct Builder/Oracle targeting, Tier 2+, customer sends, deploys, trades, memory/profile commits, raw restore, or resurrection of deleted state.",
+      "Phase 20 migration language implies a real API server can exist before transport/TLS, auth middleware, replay store, rate limits, audit logging, schema migrations, encryption/KMS integration, deletion/export jobs, operator UI, monitoring/alerts, disaster recovery, profile isolation tests, and red-team leakage tests are reviewed."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "server_api_assessment",
+      "validation_report"
+    ],
+    "serverApiAssessmentSchema": "squidrun.mira_core.server_api_assessment.v0",
+    "validationReportSchema": "squidrun.mira_core.server_api_validation_report.v0"
+  },
+  "expectedServerApiAssessmentShape": {
+    "schema": "squidrun.mira_core.server_api_assessment.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "assessment_id",
+      "idempotency_key",
+      "generated_at",
+      "baseline_commit",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "dependency_map",
+      "planned_endpoint_control_plane",
+      "request_response_envelope",
+      "status_semantics",
+      "operator_controls",
+      "privacy_security_boundary",
+      "capability_boundary",
+      "migration_gates",
+      "acceptance_gate_summary",
+      "blocker_summary",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.server_api_assessment.v0",
+      "baseline_commit": "8a8ccf0",
+      "dependency_map.baseline_ref": "commit:8a8ccf0",
+      "dependency_map.phase_19_encryption_key_ref": "mira-core-encryption-key-contract:phase_19_green",
+      "dependency_map.all_dependencies_validation_only": true,
+      "planned_endpoint_control_plane.planned_only": true,
+      "planned_endpoint_control_plane.real_server_listener_created": false,
+      "planned_endpoint_control_plane.routes_registered_now": false,
+      "request_response_envelope.raw_payload_allowed": false,
+      "request_response_envelope.idempotency_replay_keys_required": true,
+      "request_response_envelope.auth_signature_key_refs_required": true,
+      "request_response_envelope.source_watermark_required": true,
+      "status_semantics.allowed_statuses": [
+        "accepted_for_validation_only",
+        "blocked",
+        "pending_local_acceptance",
+        "offline_local_arms",
+        "review_required",
+        "expired",
+        "replay_rejected",
+        "tombstone_wins",
+        "no_store_performed",
+        "no_execution_performed"
+      ],
+      "status_semantics.no_store_performed_required": true,
+      "status_semantics.no_execution_performed_required": true,
+      "operator_controls.read_only_status_controls_only": true,
+      "operator_controls.delete_export_retention_actions_performed_now": false,
+      "privacy_security_boundary.no_raw_private_content": true,
+      "privacy_security_boundary.no_secret_material": true,
+      "privacy_security_boundary.no_plaintext_ciphertext_or_decrypted_content": true,
+      "capability_boundary.api_validity_permits": "future_server_api_control_plane_status_validation_only",
+      "capability_boundary.local_execution_authorized": false,
+      "capability_boundary.db_write_authorized": false,
+      "capability_boundary.storage_write_authorized": false,
+      "capability_boundary.builder_direct_target_authorized": false,
+      "capability_boundary.oracle_direct_target_authorized": false,
+      "capability_boundary.tier2_plus_authorized": false,
+      "capability_boundary.customer_send_authorized": false,
+      "capability_boundary.deploy_authorized": false,
+      "capability_boundary.trade_authorized": false,
+      "capability_boundary.memory_profile_commit_authorized": false,
+      "capability_boundary.model_processing_proven": false,
+      "capability_boundary.bridge_green_proven": false,
+      "capability_boundary.raw_restore_authorized": false,
+      "capability_boundary.server_resurrection_of_deleted_state_authorized": false,
+      "migration_gates.baseline_commit": "8a8ccf0",
+      "migration_gates.real_api_server_allowed_now": false,
+      "migration_gates.feature_flag_default": "off",
+      "side_effect_result.no_runtime_implementation_performed": true,
+      "side_effect_result.no_server_process_started": true,
+      "side_effect_result.no_listener_started": true,
+      "side_effect_result.no_routes_registered": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_or_store_write_performed": true,
+      "side_effect_result.no_file_write_performed": true,
+      "side_effect_result.no_migration_executed": true,
+      "side_effect_result.no_queue_created": true,
+      "side_effect_result.no_auth_secret_token_session_change_performed": true,
+      "side_effect_result.no_key_generation_performed": true,
+      "side_effect_result.no_encryption_performed": true,
+      "side_effect_result.no_decryption_performed": true,
+      "side_effect_result.no_kms_call_performed": true,
+      "side_effect_result.no_env_secret_read_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_output_file_written": true
+    },
+    "dependencyMapRequiredFields": [
+      "baseline_ref",
+      "phase_14_server_runtime_gap_ref",
+      "phase_15_identity_signing_ref",
+      "phase_16_auth_binding_ref",
+      "phase_17_storage_retention_ref",
+      "phase_18_persistence_audit_ref",
+      "phase_19_encryption_key_ref",
+      "dependency_paths",
+      "dependency_commits",
+      "all_dependencies_validation_only",
+      "real_server_dependency_exists",
+      "real_api_dependency_exists",
+      "evidenceRefs"
+    ],
+    "dependencyMapRequiredValues": {
+      "baseline_ref": "commit:8a8ccf0",
+      "phase_14_server_runtime_gap_ref": "mira-core-server-runtime-gap-contract:phase_14_green",
+      "phase_15_identity_signing_ref": "mira-core-identity-signing-contract:phase_15_green",
+      "phase_16_auth_binding_ref": "mira-core-auth-binding-contract:phase_16_green",
+      "phase_17_storage_retention_ref": "mira-core-storage-retention-contract:phase_17_green",
+      "phase_18_persistence_audit_ref": "mira-core-persistence-audit-contract:phase_18_green",
+      "phase_19_encryption_key_ref": "mira-core-encryption-key-contract:phase_19_green",
+      "all_dependencies_validation_only": true,
+      "real_server_dependency_exists": false,
+      "real_api_dependency_exists": false
+    },
+    "dependencyPhaseEntriesRequired": [
+      "phase",
+      "name",
+      "fixture_path",
+      "baseline_commit",
+      "implementation_commit",
+      "status",
+      "boundary_mode"
+    ],
+    "plannedEndpointControlPlaneRequiredFields": [
+      "planned_only",
+      "real_server_listener_created",
+      "routes_registered_now",
+      "endpoints",
+      "control_plane_actions",
+      "endpoint_count",
+      "allowed_methods",
+      "requires_request_response_envelope",
+      "requires_status_semantics",
+      "evidenceRefs"
+    ],
+    "plannedEndpointControlPlaneRequiredValues": {
+      "planned_only": true,
+      "real_server_listener_created": false,
+      "routes_registered_now": false,
+      "allowed_methods": [
+        "GET",
+        "POST"
+      ],
+      "requires_request_response_envelope": true,
+      "requires_status_semantics": true
+    },
+    "requiredEndpointIds": [
+      "receive-upload-envelope",
+      "validate-auth-signature-key-refs",
+      "future-store-dry-run-status",
+      "export-delete-request-status",
+      "retention-tombstone-status",
+      "local-arms-offline-status",
+      "intent-proposal-status",
+      "audit-log-status",
+      "health-readiness-status"
+    ],
+    "endpointRequiredFields": [
+      "endpoint_id",
+      "method",
+      "path",
+      "purpose",
+      "boundary_mode",
+      "side_effect_free",
+      "allowed_statuses",
+      "raw_payload_allowed",
+      "requires_auth_binding_ref",
+      "requires_signature_ref",
+      "requires_key_reference_ref",
+      "requires_evidenceRefs"
+    ],
+    "requestResponseEnvelopeRequiredFields": [
+      "schema",
+      "method",
+      "path",
+      "action_id",
+      "idempotency_key",
+      "replay_key",
+      "tenant_id",
+      "profile",
+      "device_id",
+      "session_id",
+      "auth_binding_ref",
+      "signature_ref",
+      "key_reference_ref",
+      "source_watermark",
+      "redaction_summary",
+      "evidenceRefs",
+      "risk_tier",
+      "status",
+      "allowed",
+      "review_required",
+      "expires_at",
+      "no_raw_payload",
+      "raw_payload_allowed"
+    ],
+    "requestResponseEnvelopeRequiredValues": {
+      "schema": "squidrun.mira_core.server_api_envelope.v0",
+      "idempotency_replay_keys_required": true,
+      "tenant_profile_device_session_scope_required": true,
+      "auth_signature_key_refs_required": true,
+      "source_watermark_required": true,
+      "redaction_summary_required": true,
+      "evidence_refs_required": true,
+      "expires_at_required": true,
+      "no_raw_payload": true,
+      "raw_payload_allowed": false
+    },
+    "statusSemanticsRequiredFields": [
+      "allowed_statuses",
+      "terminal_statuses",
+      "transient_statuses",
+      "no_store_performed_required",
+      "no_execution_performed_required",
+      "tombstone_wins_required",
+      "replay_rejected_required",
+      "offline_local_arms_honest",
+      "pending_local_acceptance_requires_architect",
+      "evidenceRefs"
+    ],
+    "statusSemanticsRequiredValues": {
+      "allowed_statuses": [
+        "accepted_for_validation_only",
+        "blocked",
+        "pending_local_acceptance",
+        "offline_local_arms",
+        "review_required",
+        "expired",
+        "replay_rejected",
+        "tombstone_wins",
+        "no_store_performed",
+        "no_execution_performed"
+      ],
+      "no_store_performed_required": true,
+      "no_execution_performed_required": true,
+      "tombstone_wins_required": true,
+      "replay_rejected_required": true,
+      "offline_local_arms_honest": true,
+      "pending_local_acceptance_requires_architect": true
+    },
+    "operatorControlsRequiredFields": [
+      "read_only_status_controls_only",
+      "status_report_controls",
+      "future_delete_request_shape",
+      "future_export_manifest_shape",
+      "future_retention_control_shape",
+      "delete_export_retention_actions_performed_now",
+      "james_visible_controls_required",
+      "redacted_manifests_only",
+      "evidenceRefs"
+    ],
+    "operatorControlsRequiredValues": {
+      "read_only_status_controls_only": true,
+      "delete_export_retention_actions_performed_now": false,
+      "james_visible_controls_required": true,
+      "redacted_manifests_only": true
+    },
+    "privacySecurityBoundaryRequiredFields": [
+      "no_raw_private_content",
+      "no_secret_material",
+      "no_profile_mismatch_content",
+      "no_side_profile_content",
+      "no_bearer_tokens",
+      "no_cookies",
+      "no_session_secrets",
+      "no_private_keys",
+      "no_data_keys",
+      "no_plaintext_ciphertext_or_decrypted_content",
+      "blocked_content_classes",
+      "forbidden_header_values",
+      "redaction_summary_required",
+      "evidenceRefs"
+    ],
+    "privacySecurityBoundaryRequiredValues": {
+      "no_raw_private_content": true,
+      "no_secret_material": true,
+      "no_profile_mismatch_content": true,
+      "no_side_profile_content": true,
+      "no_bearer_tokens": true,
+      "no_cookies": true,
+      "no_session_secrets": true,
+      "no_private_keys": true,
+      "no_data_keys": true,
+      "no_plaintext_ciphertext_or_decrypted_content": true,
+      "redaction_summary_required": true
+    },
+    "capabilityBoundaryRequiredFields": [
+      "api_validity_permits",
+      "local_execution_authorized",
+      "shell_or_pty_authorized",
+      "db_write_authorized",
+      "storage_write_authorized",
+      "builder_direct_target_authorized",
+      "oracle_direct_target_authorized",
+      "tier2_plus_authorized",
+      "customer_send_authorized",
+      "deploy_authorized",
+      "trade_authorized",
+      "memory_profile_commit_authorized",
+      "model_processing_proven",
+      "bridge_green_proven",
+      "raw_restore_authorized",
+      "server_resurrection_of_deleted_state_authorized",
+      "allowed_target_role",
+      "local_acceptance_required",
+      "evidenceRefs"
+    ],
+    "capabilityBoundaryRequiredValues": {
+      "api_validity_permits": "future_server_api_control_plane_status_validation_only",
+      "local_execution_authorized": false,
+      "shell_or_pty_authorized": false,
+      "db_write_authorized": false,
+      "storage_write_authorized": false,
+      "builder_direct_target_authorized": false,
+      "oracle_direct_target_authorized": false,
+      "tier2_plus_authorized": false,
+      "customer_send_authorized": false,
+      "deploy_authorized": false,
+      "trade_authorized": false,
+      "memory_profile_commit_authorized": false,
+      "model_processing_proven": false,
+      "bridge_green_proven": false,
+      "raw_restore_authorized": false,
+      "server_resurrection_of_deleted_state_authorized": false,
+      "allowed_target_role": "architect",
+      "local_acceptance_required": true
+    },
+    "migrationGatesRequiredFields": [
+      "baseline_commit",
+      "phase_19_dependency_id",
+      "real_api_server_allowed_now",
+      "future_real_api_allowed_after_gates",
+      "requires_transport_tls_gate",
+      "requires_auth_middleware_gate",
+      "requires_replay_store_gate",
+      "requires_rate_limits_gate",
+      "requires_audit_logging_gate",
+      "requires_schema_migrations_gate",
+      "requires_encryption_kms_integration_gate",
+      "requires_deletion_export_jobs_gate",
+      "requires_operator_ui_gate",
+      "requires_monitoring_alerts_gate",
+      "requires_disaster_recovery_gate",
+      "requires_profile_isolation_tests_gate",
+      "requires_red_team_leakage_tests_gate",
+      "feature_flag_default",
+      "rollback_plan_required",
+      "evidenceRefs"
+    ],
+    "migrationGatesRequiredValues": {
+      "baseline_commit": "8a8ccf0",
+      "phase_19_dependency_id": "encryption-key-validation-green",
+      "real_api_server_allowed_now": false,
+      "future_real_api_allowed_after_gates": true,
+      "requires_transport_tls_gate": true,
+      "requires_auth_middleware_gate": true,
+      "requires_replay_store_gate": true,
+      "requires_rate_limits_gate": true,
+      "requires_audit_logging_gate": true,
+      "requires_schema_migrations_gate": true,
+      "requires_encryption_kms_integration_gate": true,
+      "requires_deletion_export_jobs_gate": true,
+      "requires_operator_ui_gate": true,
+      "requires_monitoring_alerts_gate": true,
+      "requires_disaster_recovery_gate": true,
+      "requires_profile_isolation_tests_gate": true,
+      "requires_red_team_leakage_tests_gate": true,
+      "feature_flag_default": "off",
+      "rollback_plan_required": true
+    },
+    "acceptanceGateSummaryRequiredFields": [
+      "gate_id",
+      "status",
+      "required_before_real_server",
+      "required_before_real_api",
+      "evidenceRefs",
+      "blocked_until"
+    ],
+    "requiredAcceptanceGateIds": [
+      "baseline-dependency-map-pinned",
+      "planned-endpoint-control-plane-specified",
+      "request-response-envelope-specified",
+      "status-semantics-specified",
+      "operator-controls-specified",
+      "privacy-security-boundary-specified",
+      "capability-boundary-specified",
+      "migration-gates-to-real-api-specified",
+      "auth-signature-key-dependency-refs-required",
+      "replay-idempotency-and-tombstone-rules-specified",
+      "side-effect-free-validation-only"
+    ],
+    "blockerSummaryRequiredFields": [
+      "blocker_id",
+      "severity",
+      "status",
+      "blocked_because",
+      "safe_next_action",
+      "evidenceRefs"
+    ],
+    "requiredBlockerIds": [
+      "server-listener-routes-blocked",
+      "network-call-blocked",
+      "db-store-file-queue-write-blocked",
+      "auth-signature-key-ref-missing-blocked",
+      "raw-api-payload-leakage-blocked",
+      "replay-idempotency-store-blocked",
+      "delete-export-real-action-blocked",
+      "local-execution-capability-overclaim-blocked",
+      "builder-oracle-direct-target-blocked",
+      "high-risk-action-blocked",
+      "proof-bridge-overclaim-blocked",
+      "real-api-runtime-still-blocked"
+    ],
+    "evidenceRefsRequired": true,
+    "sideEffectRequiredFields": [
+      "no_runtime_implementation_performed",
+      "no_server_process_started",
+      "no_listener_started",
+      "no_routes_registered",
+      "no_network_performed",
+      "no_database_or_store_write_performed",
+      "no_file_write_performed",
+      "no_migration_executed",
+      "no_queue_created",
+      "no_auth_secret_token_session_change_performed",
+      "no_key_generation_performed",
+      "no_encryption_performed",
+      "no_decryption_performed",
+      "no_kms_call_performed",
+      "no_env_secret_read_performed",
+      "no_local_execution_performed",
+      "no_shell_or_pty_performed",
+      "no_browser_window_access_performed",
+      "no_external_send_performed",
+      "no_customer_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_memory_profile_commit_performed",
+      "no_export_file_written",
+      "no_delete_performed",
+      "no_restore_performed",
+      "no_raw_content_stored",
+      "no_output_file_written",
+      "no_durable_migration_performed"
+    ],
+    "sideEffectRequiredValues": {
+      "no_runtime_implementation_performed": true,
+      "no_server_process_started": true,
+      "no_listener_started": true,
+      "no_routes_registered": true,
+      "no_network_performed": true,
+      "no_database_or_store_write_performed": true,
+      "no_file_write_performed": true,
+      "no_migration_executed": true,
+      "no_queue_created": true,
+      "no_auth_secret_token_session_change_performed": true,
+      "no_key_generation_performed": true,
+      "no_encryption_performed": true,
+      "no_decryption_performed": true,
+      "no_kms_call_performed": true,
+      "no_env_secret_read_performed": true,
+      "no_local_execution_performed": true,
+      "no_shell_or_pty_performed": true,
+      "no_browser_window_access_performed": true,
+      "no_external_send_performed": true,
+      "no_customer_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_memory_profile_commit_performed": true,
+      "no_export_file_written": true,
+      "no_delete_performed": true,
+      "no_restore_performed": true,
+      "no_raw_content_stored": true,
+      "no_output_file_written": true,
+      "no_durable_migration_performed": true
+    }
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.server_api_validation_report.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "validation_id",
+      "generated_at",
+      "baseline_commit",
+      "fixture_schema",
+      "assessment_schema",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "decision",
+      "reasons",
+      "dependency_map_result",
+      "planned_endpoint_control_plane_result",
+      "request_response_envelope_result",
+      "status_semantics_result",
+      "operator_controls_result",
+      "privacy_security_boundary_result",
+      "capability_boundary_result",
+      "migration_gates_result",
+      "static_rule_results",
+      "acceptance_check_results",
+      "forbidden_output_result",
+      "summary_criteria_results",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.server_api_validation_report.v0",
+      "baseline_commit": "8a8ccf0",
+      "fixture_schema": "squidrun.mira_core.server_api_contract_fixture.v0",
+      "assessment_schema": "squidrun.mira_core.server_api_assessment.v0"
+    },
+    "allowedDecisions": [
+      "accepted",
+      "pending",
+      "blocked",
+      "rejected"
+    ],
+    "sideEffectRequiredValues": {
+      "no_runtime_implementation_performed": true,
+      "no_server_process_started": true,
+      "no_listener_started": true,
+      "no_routes_registered": true,
+      "no_network_performed": true,
+      "no_database_or_store_write_performed": true,
+      "no_file_write_performed": true,
+      "no_migration_executed": true,
+      "no_queue_created": true,
+      "no_auth_secret_token_session_change_performed": true,
+      "no_key_generation_performed": true,
+      "no_encryption_performed": true,
+      "no_decryption_performed": true,
+      "no_kms_call_performed": true,
+      "no_env_secret_read_performed": true,
+      "no_local_execution_performed": true,
+      "no_shell_or_pty_performed": true,
+      "no_browser_window_access_performed": true,
+      "no_external_send_performed": true,
+      "no_customer_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_memory_profile_commit_performed": true,
+      "no_export_file_written": true,
+      "no_delete_performed": true,
+      "no_restore_performed": true,
+      "no_raw_content_stored": true,
+      "no_output_file_written": true,
+      "no_durable_migration_performed": true
+    }
+  },
+  "staticValidationRules": [
+    {
+      "id": "phase-20-baseline-8a8ccf0-pinned",
+      "must": "server_api_assessment.baseline_commit and validation_report.baseline_commit are exactly 8a8ccf0, the Phase 19 encryption-key baseline."
+    },
+    {
+      "id": "validation-only-no-real-api",
+      "must": "Phase 20 emits validation records only; it does not start a server, bind listeners, register routes, perform network work, write stores/files, run migrations, create queues, mutate auth/session/key state, generate keys, encrypt, decrypt, call KMS, read env secrets, execute locally, send, deploy, trade, commit memory/profile data, export, delete, restore, store raw content, or write output files."
+    },
+    {
+      "id": "phase-14-through-19-dependency-map-required",
+      "must": "Dependency map includes Phases 14-19 with fixture paths, commits, green status, and validation-only boundaries."
+    },
+    {
+      "id": "planned-endpoints-shape-only",
+      "must": "Planned endpoints cover receive upload envelope, auth/signature/key validation, store dry-run status, export/delete status, retention/tombstone status, local-arms/offline status, intent proposal status, audit log status, and health/readiness status without creating real routes."
+    },
+    {
+      "id": "request-response-envelope-scope-and-refs",
+      "must": "Request/response envelopes require method/path/action_id, idempotency/replay keys, tenant/profile/device/session scope, auth_binding_ref, signature_ref, key_reference_ref, source watermark, redaction summary, evidence refs, risk tier, status, allowed flag, review_required, expires_at, and no raw payload."
+    },
+    {
+      "id": "status-semantics-safe",
+      "must": "Allowed statuses include validation-only acceptance, blocked, pending local acceptance, offline local arms, review required, expired, replay rejected, tombstone wins, no store performed, and no execution performed."
+    },
+    {
+      "id": "operator-controls-read-only-status",
+      "must": "Operator controls are read-only status/report controls; future delete/export/retention controls are request records and redacted manifests/status only, not real actions."
+    },
+    {
+      "id": "privacy-security-no-raw-or-secrets",
+      "must": "API outputs contain no raw comms, terminal, OCR, browser, customer private, secret, side-profile, profile-mismatch, bearer token, cookie, session secret, private key, data key, plaintext, raw ciphertext, raw payload, or decrypted content."
+    },
+    {
+      "id": "replay-idempotency-required",
+      "must": "Idempotency and replay keys are required; replay and expired requests fail closed, and tombstones win over stale or conflicting requests."
+    },
+    {
+      "id": "offline-local-arms-honesty",
+      "must": "Server API/status may report local arms offline or unknown but cannot claim local execution, PTY, shell, browser/window access, bridge green, or model-processing proof."
+    },
+    {
+      "id": "capability-boundary-validation-only",
+      "must": "API validity/status does not authorize DB writes, storage, local execution, shell/PTY, Builder/Oracle direct server target, Tier 2+ action, customer-send, deploy, trade, memory/profile commit, model-processing proof, bridge green, raw restore, or server resurrection of deleted local state."
+    },
+    {
+      "id": "high-risk-actions-blocked",
+      "must": "Tier 3 and Tier 4 actions, customer sends, deploys, trades, financial actions, auth/secret changes, and local execution remain blocked or require review, never accepted as API-allowed work."
+    },
+    {
+      "id": "migration-real-api-gated",
+      "must": "Real API server remains blocked until transport/TLS, auth middleware, replay store, rate limits, audit logging, schema migrations, encryption/KMS integration, deletion/export jobs, operator UI, monitoring/alerts, disaster recovery, profile isolation tests, and red-team leakage tests exist."
+    },
+    {
+      "id": "side-effect-truth-all-zero",
+      "must": "All Phase 20 side-effect truth fields are true/zero-equivalent in assessment and validation report."
+    },
+    {
+      "id": "required-gates-and-blockers-present",
+      "must": "All required Phase 20 acceptance gate IDs and blocker IDs are present and unique."
+    },
+    {
+      "id": "forbidden-output-strings-absent",
+      "must": "Assessment and validation output contain no secret-like strings, raw private content, bearer tokens, cookies, keys, plaintext/ciphertext/decrypted content, server/listener/network/write claims, bridge/proof overclaims, direct Builder/Oracle target authorization, high-risk authorization claims, or live side-effect claims."
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "Authorization: Bearer",
+    "Bearer token",
+    "Set-Cookie",
+    "cookie=",
+    "session_secret",
+    "BEGIN PRIVATE KEY",
+    "PRIVATE KEY",
+    "DATA KEY",
+    "plaintext key",
+    "raw plaintext payload",
+    "raw ciphertext payload",
+    "decrypted raw content",
+    "raw comms body",
+    "raw terminal scrollback",
+    "screenshot OCR text",
+    "browser cookies",
+    "browser session state",
+    "customer private note",
+    "customer phone",
+    "customer address",
+    "side-profile private note",
+    "profile mismatch payload",
+    "server listener started",
+    "route registered",
+    "network request complete",
+    "database write complete",
+    "store write complete",
+    "file write complete",
+    "migration executed",
+    "queue created",
+    "key generated",
+    "encryption performed",
+    "decryption performed",
+    "kms call complete",
+    "env secret read",
+    "output file written",
+    "export file written",
+    "delete performed",
+    "restore performed",
+    "raw content stored",
+    "server executed local work",
+    "server can run shell",
+    "server can operate PTY",
+    "server can access browser",
+    "server sent customer message",
+    "server deployed",
+    "server placed trade",
+    "api authorizes local execution",
+    "api authorizes database write",
+    "api proves model processing",
+    "api proves bridge green",
+    "socket alone proves bridge green",
+    "delivery acceptance proves model processing",
+    "builder direct target authorized",
+    "oracle direct target authorized",
+    "tier3 authorized by api",
+    "tier4 authorized by api",
+    "memory commit authorized by api"
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "baseline-8a8ccf0-pinned",
+      "focus": "baseline",
+      "input": {
+        "baseline_commit": "8a8ccf0"
+      },
+      "expected": {
+        "baseline_commit": "8a8ccf0",
+        "baseline_ref": "commit:8a8ccf0",
+        "real_api_server_allowed_now": false
+      },
+      "zeroScoreBlockers": [
+        "wrong_baseline_commit",
+        "phase_19_encryption_key_treated_as_real_api",
+        "real_api_allowed_without_gates"
+      ],
+      "source_refs": [
+        "commit:8a8ccf0",
+        "ui/__tests__/fixtures/mira-core-encryption-key-contract.json"
+      ]
+    },
+    {
+      "id": "phase-14-through-19-dependencies-present",
+      "focus": "dependency map",
+      "input": {
+        "dependencies": [
+          "phase_14_server_runtime_gap",
+          "phase_15_identity_signing",
+          "phase_16_auth_binding",
+          "phase_17_storage_retention",
+          "phase_18_persistence_audit",
+          "phase_19_encryption_key"
+        ]
+      },
+      "expected": {
+        "all_dependencies_validation_only": true,
+        "real_server_dependency_exists": false,
+        "real_api_dependency_exists": false,
+        "dependency_count": 6
+      },
+      "zeroScoreBlockers": [
+        "dependency_missing",
+        "dependency_claims_real_server",
+        "dependency_claims_real_api",
+        "phase_19_dependency_missing"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json",
+        "ui/__tests__/fixtures/mira-core-encryption-key-contract.json"
+      ]
+    },
+    {
+      "id": "no-server-listener-network",
+      "focus": "server/listener/network boundary",
+      "input": {
+        "server_requested": true,
+        "listener_requested": true,
+        "network_call_requested": true
+      },
+      "expected": {
+        "real_server_listener_created": false,
+        "routes_registered_now": false,
+        "no_server_process_started": true,
+        "no_listener_started": true,
+        "no_routes_registered": true,
+        "no_network_performed": true
+      },
+      "zeroScoreBlockers": [
+        "server_process_started",
+        "listener_started",
+        "route_registered",
+        "network_request_seen"
+      ],
+      "source_refs": [
+        "ARCH #322"
+      ]
+    },
+    {
+      "id": "endpoint-shapes-planned-only",
+      "focus": "planned endpoint catalog",
+      "input": {
+        "endpoint_ids": [
+          "receive-upload-envelope",
+          "validate-auth-signature-key-refs",
+          "future-store-dry-run-status",
+          "export-delete-request-status",
+          "retention-tombstone-status",
+          "local-arms-offline-status",
+          "intent-proposal-status",
+          "audit-log-status",
+          "health-readiness-status"
+        ]
+      },
+      "expected": {
+        "planned_only": true,
+        "endpoint_count": 9,
+        "side_effect_free": true,
+        "raw_payload_allowed": false
+      },
+      "zeroScoreBlockers": [
+        "endpoint_missing",
+        "endpoint_registered_as_live_route",
+        "endpoint_allows_raw_payload",
+        "endpoint_side_effecting"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json"
+      ]
+    },
+    {
+      "id": "auth-signature-key-refs-required",
+      "focus": "request/response envelope dependencies",
+      "input": {
+        "request_envelope": {
+          "auth_binding_ref": "auth-binding-validation:ref",
+          "signature_ref": "identity-signing-validation:ref",
+          "key_reference_ref": "encryption-key-validation:ref"
+        }
+      },
+      "expected": {
+        "auth_signature_key_refs_required": true,
+        "auth_binding_ref_required": true,
+        "signature_ref_required": true,
+        "key_reference_ref_required": true,
+        "allowed": "validation_only_if_refs_present"
+      },
+      "zeroScoreBlockers": [
+        "auth_binding_ref_missing",
+        "signature_ref_missing",
+        "key_reference_ref_missing",
+        "request_allowed_without_dependency_refs"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-identity-signing-contract.json",
+        "ui/__tests__/fixtures/mira-core-auth-binding-contract.json",
+        "ui/__tests__/fixtures/mira-core-encryption-key-contract.json"
+      ]
+    },
+    {
+      "id": "request-response-envelope-complete",
+      "focus": "request/response envelope shape",
+      "input": {
+        "method": "POST",
+        "path": "/v0/mira-core/receive-upload-envelope",
+        "risk_tier": "tier0_read_only"
+      },
+      "expected": {
+        "method_path_action_id_required": true,
+        "idempotency_replay_keys_required": true,
+        "tenant_profile_device_session_scope_required": true,
+        "source_watermark_required": true,
+        "redaction_summary_required": true,
+        "evidence_refs_required": true,
+        "expires_at_required": true,
+        "raw_payload_allowed": false
+      },
+      "zeroScoreBlockers": [
+        "method_or_path_missing",
+        "idempotency_key_missing",
+        "scope_missing",
+        "watermark_missing",
+        "redaction_summary_missing",
+        "raw_payload_allowed"
+      ],
+      "source_refs": [
+        "ARCH #322"
+      ]
+    },
+    {
+      "id": "raw-payload-and-secret-output-blocked",
+      "focus": "privacy and security",
+      "input": {
+        "payload_classes": [
+          "raw_comms",
+          "raw_terminal",
+          "screenshot_ocr",
+          "browser_state",
+          "customer_private",
+          "secret",
+          "side_profile",
+          "profile_mismatch",
+          "bearer_token",
+          "cookie",
+          "private_key",
+          "data_key",
+          "plaintext",
+          "ciphertext",
+          "decrypted_content"
+        ]
+      },
+      "expected": {
+        "no_raw_private_content": true,
+        "no_secret_material": true,
+        "no_profile_mismatch_content": true,
+        "no_side_profile_content": true,
+        "no_bearer_tokens": true,
+        "no_plaintext_ciphertext_or_decrypted_content": true,
+        "raw_payload_allowed": false
+      },
+      "zeroScoreBlockers": [
+        "raw_private_content_visible",
+        "secret_material_visible",
+        "bearer_token_visible",
+        "cookie_visible",
+        "key_material_visible",
+        "plaintext_or_ciphertext_visible",
+        "decrypted_content_visible"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-boundary-contract.json",
+        "ui/__tests__/fixtures/mira-core-encryption-key-contract.json"
+      ]
+    },
+    {
+      "id": "replay-idempotency-enforced",
+      "focus": "replay and idempotency",
+      "input": {
+        "same_request_retry": true,
+        "replay_key_reused_with_changed_scope": true,
+        "expired_request": true
+      },
+      "expected": {
+        "idempotency_replay_keys_required": true,
+        "replay_rejected_required": true,
+        "expired_status_required": true,
+        "same_request_same_decision": true,
+        "scope_change_changes_idempotency": true
+      },
+      "zeroScoreBlockers": [
+        "replay_without_key_allowed",
+        "changed_scope_replay_allowed",
+        "expired_request_allowed",
+        "retry_duplicates_side_effect"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+        "ui/__tests__/fixtures/mira-core-persistence-audit-contract.json"
+      ]
+    },
+    {
+      "id": "delete-export-status-only",
+      "focus": "operator controls",
+      "input": {
+        "delete_requested": true,
+        "export_requested": true,
+        "retention_change_requested": true
+      },
+      "expected": {
+        "read_only_status_controls_only": true,
+        "delete_export_retention_actions_performed_now": false,
+        "future_delete_request_shape": "record_only",
+        "future_export_manifest_shape": "redacted_manifest_only",
+        "redacted_manifests_only": true
+      },
+      "zeroScoreBlockers": [
+        "delete_performed",
+        "export_file_written",
+        "retention_mutated",
+        "raw_export_allowed",
+        "operator_control_performs_action"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-storage-retention-contract.json"
+      ]
+    },
+    {
+      "id": "local-arms-offline-honesty",
+      "focus": "local arms/offline status",
+      "input": {
+        "local_arms_online": false,
+        "socket_connected": true,
+        "architect_role_discovery": "missing",
+        "architect_to_architect_target_proof": "missing"
+      },
+      "expected": {
+        "status": "offline_local_arms",
+        "local_execution_authorized": false,
+        "model_processing_proven": false,
+        "bridge_green_proven": false,
+        "socket_alone_not_green": true
+      },
+      "zeroScoreBlockers": [
+        "offline_status_claims_execution",
+        "socket_marked_bridge_green",
+        "status_claims_model_processing_proof"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "builder-oracle-direct-target-blocked",
+      "focus": "targeting",
+      "input": {
+        "target_roles": [
+          "builder",
+          "oracle"
+        ]
+      },
+      "expected": {
+        "allowed_target_role": "architect",
+        "builder_direct_target_authorized": false,
+        "oracle_direct_target_authorized": false,
+        "pending_local_acceptance_requires_architect": true
+      },
+      "zeroScoreBlockers": [
+        "builder_direct_target_allowed",
+        "oracle_direct_target_allowed",
+        "local_acceptance_bypassed"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-intent-queue-contract.json",
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "tier3-tier4-high-risk-blocked",
+      "focus": "high-risk action gates",
+      "input": {
+        "requests": [
+          {
+            "risk_tier": "tier3_external_side_effect",
+            "action_class": "customer_send"
+          },
+          {
+            "risk_tier": "tier3_external_side_effect",
+            "action_class": "deploy"
+          },
+          {
+            "risk_tier": "tier4_financial_or_irreversible",
+            "action_class": "trade_or_financial_action"
+          }
+        ]
+      },
+      "expected": {
+        "tier2_plus_authorized": false,
+        "customer_send_authorized": false,
+        "deploy_authorized": false,
+        "trade_authorized": false,
+        "status": "blocked"
+      },
+      "zeroScoreBlockers": [
+        "tier3_authorized_by_api",
+        "tier4_authorized_by_api",
+        "customer_send_authorized",
+        "deploy_authorized",
+        "trade_authorized"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-intent-queue-contract.json"
+      ]
+    },
+    {
+      "id": "proof-bridge-overclaim-blocked",
+      "focus": "proof and bridge truth",
+      "input": {
+        "socket_connected": true,
+        "delivery_accepted": true,
+        "recipient_quote_back": false
+      },
+      "expected": {
+        "model_processing_proven": false,
+        "bridge_green_proven": false,
+        "socket_alone_proves_bridge_green": false,
+        "delivery_acceptance_proves_model_processing": false
+      },
+      "zeroScoreBlockers": [
+        "socket_marked_bridge_green",
+        "delivery_acceptance_marked_model_processing",
+        "api_status_claims_model_processing_proof"
+      ],
+      "source_refs": [
+        "ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json",
+        "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
+      ]
+    },
+    {
+      "id": "no-output-file-store-writes",
+      "focus": "write boundary",
+      "input": {
+        "output_file_requested": true,
+        "store_write_requested": true,
+        "queue_requested": true
+      },
+      "expected": {
+        "no_database_or_store_write_performed": true,
+        "no_file_write_performed": true,
+        "no_queue_created": true,
+        "no_output_file_written": true
+      },
+      "zeroScoreBlockers": [
+        "database_or_store_write_seen",
+        "file_write_seen",
+        "queue_created",
+        "output_file_written"
+      ],
+      "source_refs": [
+        "ARCH #322"
+      ]
+    },
+    {
+      "id": "required-gates-and-blockers-present",
+      "focus": "gate and blocker completeness",
+      "input": {
+        "acceptance_gate_summary": "all_required_gate_ids",
+        "blocker_summary": "all_required_blocker_ids"
+      },
+      "expected": {
+        "required_gate_ids_unique": true,
+        "required_blocker_ids_unique": true,
+        "required_before_real_server": true,
+        "required_before_real_api": true
+      },
+      "zeroScoreBlockers": [
+        "gate_missing",
+        "gate_duplicate",
+        "blocker_missing",
+        "blocker_duplicate"
+      ],
+      "source_refs": [
+        "ARCH #322"
+      ]
+    },
+    {
+      "id": "real-api-migration-stays-gated",
+      "focus": "migration gates",
+      "input": {
+        "real_api_requested": true,
+        "transport_tls_gate": false,
+        "auth_middleware_gate": false,
+        "replay_store_gate": false,
+        "rate_limits_gate": false,
+        "audit_logging_gate": false,
+        "schema_migrations_gate": false,
+        "encryption_kms_integration_gate": false,
+        "operator_ui_gate": false,
+        "monitoring_alerts_gate": false,
+        "red_team_leakage_tests_gate": false
+      },
+      "expected": {
+        "real_api_server_allowed_now": false,
+        "future_real_api_allowed_after_gates": true,
+        "requires_transport_tls_gate": true,
+        "requires_auth_middleware_gate": true,
+        "requires_replay_store_gate": true,
+        "requires_rate_limits_gate": true,
+        "requires_audit_logging_gate": true,
+        "requires_schema_migrations_gate": true,
+        "requires_encryption_kms_integration_gate": true,
+        "requires_operator_ui_gate": true,
+        "requires_monitoring_alerts_gate": true,
+        "requires_red_team_leakage_tests_gate": true,
+        "feature_flag_default": "off"
+      },
+      "zeroScoreBlockers": [
+        "real_api_enabled_without_transport_tls",
+        "real_api_enabled_without_auth_middleware",
+        "real_api_enabled_without_replay_store",
+        "real_api_enabled_without_rate_limits",
+        "real_api_enabled_without_audit_logging",
+        "real_api_enabled_without_red_team_tests",
+        "feature_flag_default_on"
+      ],
+      "source_refs": [
+        "ARCH #322"
+      ]
+    },
+    {
+      "id": "phase-20-side-effect-truth",
+      "focus": "side effects",
+      "input": {
+        "phase": 20,
+        "artifact": "server API/control-plane/status validation contract"
+      },
+      "expected": {
+        "no_runtime_implementation_performed": true,
+        "no_server_process_started": true,
+        "no_listener_started": true,
+        "no_routes_registered": true,
+        "no_network_performed": true,
+        "no_database_or_store_write_performed": true,
+        "no_file_write_performed": true,
+        "no_migration_executed": true,
+        "no_queue_created": true,
+        "no_key_generation_performed": true,
+        "no_encryption_performed": true,
+        "no_decryption_performed": true,
+        "no_kms_call_performed": true,
+        "no_env_secret_read_performed": true,
+        "no_local_execution_performed": true,
+        "no_output_file_written": true
+      },
+      "zeroScoreBlockers": [
+        "server_process_started",
+        "listener_started",
+        "route_registered",
+        "network_seen",
+        "db_store_file_or_queue_write_seen",
+        "auth_key_crypto_or_kms_seen",
+        "local_execution_seen",
+        "send_deploy_trade_seen",
+        "output_file_written"
+      ],
+      "source_refs": [
+        "ARCH #322"
+      ]
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Fixture parses as JSON.",
+    "Baseline commit is pinned to 8a8ccf0.",
+    "Phase 20 maps Phases 14-19 as green validation-only dependencies and does not claim any dependency is a real server/API/runtime.",
+    "Phase 20 is validation/spec-only and performs no runtime, server, listener, route, network, DB/store/file write, migration, queue, auth/session mutation, key generation, encryption, decryption, KMS, env secret read, local execution, send, deploy, trade, memory/profile commit, export, deletion, restore, raw-content storage, or output-file side effect.",
+    "Server API output shape includes server_api_assessment and validation_report.",
+    "Planned endpoint/control-plane shape covers receive upload envelope, auth/signature/key-ref validation, future store dry-run status, export/delete request status, retention/tombstone status, local-arms/offline status, intent proposal status, audit log status, and health/readiness status.",
+    "Request/response envelopes require method, path, action_id, idempotency key, replay key, tenant/profile/device/session scope, auth binding ref, signature ref, key reference ref, source watermark, redaction summary, evidence refs, risk tier, status, allowed flag, review_required, expires_at, and no raw payload.",
+    "Status semantics include accepted_for_validation_only, blocked, pending_local_acceptance, offline_local_arms, review_required, expired, replay_rejected, tombstone_wins, no_store_performed, and no_execution_performed.",
+    "Operator controls are read-only status/report controls; future delete/export/retention controls are represented as request records and redacted manifests/status only.",
+    "API outputs block raw comms, terminal, OCR, browser, customer private, secret, side-profile, profile mismatch, bearer token, cookie, session secret, private key, data key, plaintext, raw ciphertext, raw payload, and decrypted content.",
+    "Idempotency/replay keys and watermarks are required; replay, expired requests, profile mismatch, and tombstone conflicts fail closed.",
+    "Local-arms/offline status stays honest and cannot imply local execution, bridge green, or model-processing proof.",
+    "Future server-originated handoff remains Architect-only; direct Builder/Oracle server targets are blocked.",
+    "Tier 3/Tier 4, customer-send, deploy, trade, financial, auth/secret, and local-execution requests remain blocked or review-required, never API-authorized.",
+    "Capability boundary prevents DB writes, storage, local execution, shell/PTY, Builder/Oracle direct server target, Tier 2+ action, customer-send, deploy, trade, memory/profile commit, model-processing proof, bridge-green claim, raw restore, and server resurrection of deleted state.",
+    "Real API server can become buildable later only after transport/TLS, auth middleware, replay store, rate limits, audit logging, schema migrations, encryption/KMS integration, deletion/export jobs, operator UI, monitoring/alerts, disaster recovery, profile isolation tests, and red-team leakage tests exist.",
+    "Acceptance gate IDs and blocker IDs are complete and unique.",
+    "Forbidden output substrings cover secrets, bearer tokens, cookies, key material, plaintext/ciphertext/decrypted content, raw private content, server/listener/network/write claims, execution overclaims, bridge/proof overclaims, direct Builder/Oracle target authorization, high-risk authorization overclaims, and live side-effect claims."
+  ]
+}
