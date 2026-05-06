@@ -1,0 +1,2000 @@
+{
+  "schema": "squidrun.mira_core.kill_switch_wiring_readiness_rollup_through_phase50_contract_fixture.v0",
+  "version": 0,
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_51_kill_switch_wiring_readiness_rollup_through_phase50_contract",
+  "created_at": "2026-05-06T00:00:00.000Z",
+  "baseline": {
+    "commit": "6ecba39",
+    "subject": "Add Mira Core Phase 50 kill switch wiring readiness rollup validation",
+    "status": "phase_50_kill_switch_wiring_readiness_rollup_through_phase49_validation_committed_current",
+    "boundary": "baseline_is_validation_only_no_runtime_ui_browser_capture_server_network_store_queue_lease_auth_key_secret_env_config_flag_read_local_execution_control_reporting_sink_send_deploy_trade_output_file_behavior"
+  },
+  "scope": {
+    "fixture_spec_only": true,
+    "module_implementation": false,
+    "cli_implementation": false,
+    "test_implementation": false,
+    "ui_implementation": false,
+    "browser_window_capture_access": false,
+    "runtime_server_listener_routes": false,
+    "network_behavior": false,
+    "database_store_file_migration_writes": false,
+    "queue_or_lease_created": false,
+    "auth_key_secret_behavior": false,
+    "env_config_flag_read": false,
+    "local_execution_shell_pty": false,
+    "control_execution_or_reporting_sink": false,
+    "send_deploy_trade_behavior": false,
+    "output_file_behavior": false
+  },
+  "sourceRecommendation": {
+    "source_phase": 50,
+    "source_fixture": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json",
+    "recommendation_id": "phase51-kill-switch-wiring-readiness-rollup-through-phase50-contract",
+    "tier": "tier1",
+    "kind": "fixture_only_contract",
+    "selected_now": true,
+    "selected_as": "fixture_only_contract",
+    "implementation_status": "not_implemented",
+    "safe_next_action": "Create a kill-switch wiring readiness rollup through Phase50 without reading flags, wiring controls, running no-op checks, or producing output files",
+    "does_not_authorize_runtime": true,
+    "does_not_authorize_flag_read": true,
+    "does_not_authorize_kill_switch_wiring": true,
+    "does_not_authorize_noop_execution": true,
+    "does_not_authorize_live_check": true,
+    "does_not_authorize_execution": true,
+    "does_not_authorize_output_files": true
+  },
+  "satisfiedPriorRecommendations": [
+    {
+      "source_phase": 50,
+      "source_fixture": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json",
+      "recommendation_id": "phase51-kill-switch-wiring-readiness-rollup-through-phase49-validator",
+      "tier": "tier0",
+      "status": "satisfied_by_6ecba39_do_not_repeat_as_open_work",
+      "commit": "6ecba39",
+      "evidenceRefs": [
+        "ORACLE #200",
+        "BUILDER #306",
+        "ARCH #712"
+      ],
+      "must_not_reopen_as_open_work": true
+    }
+  ],
+  "sourceContracts": [
+    "ui/__tests__/fixtures/mira-core-runtime-controls-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-preflight-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-dry-run-implementation-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-control-path-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-dry-runner-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-operator-status-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-control-reporting-reconciliation-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-readiness-refresh-through-phase37-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-dry-run-readiness-gap-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-status-gap-refresh-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-prerequisite-boundary-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-implementation-risk-contract.json",
+    "ui/__tests__/fixtures/mira-core-runtime-mode-flag-reader-safety-contract.json",
+    "ui/__tests__/fixtures/mira-core-kill-switch-wiring-safety-contract.json",
+    "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-gap-contract.json",
+    "ui/__tests__/fixtures/mira-core-kill-switch-wiring-preimplementation-checklist-contract.json",
+    "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-dry-check-contract.json",
+    "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json",
+    "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json"
+  ],
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "kill_switch_wiring_readiness_rollup_through_phase50",
+      "validation_report"
+    ],
+    "manifestSchema": "squidrun.mira_core.kill_switch_wiring_readiness_rollup_through_phase50.v0",
+    "reportSchema": "squidrun.mira_core.kill_switch_wiring_readiness_rollup_through_phase50_validation_report.v0",
+    "output_is_validation_report_only": true,
+    "output_is_readiness_rollup_only": true,
+    "output_is_runtime_proof": false,
+    "output_is_flag_reader_proof": false,
+    "output_is_kill_switch_wiring_proof": false,
+    "output_is_noop_execution_proof": false,
+    "output_is_live_check_proof": false
+  },
+  "expectedManifestShape": {
+    "requiredFields": [
+      "schema",
+      "version",
+      "rollup_id",
+      "idempotency_key",
+      "generated_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "baseline_commit",
+      "phase_registry",
+      "schema_registry",
+      "cli_registry",
+      "commit_chain",
+      "source_recommendation",
+      "satisfied_prior_recommendations",
+      "current_truth",
+      "stale_readiness",
+      "phase34_prior_recommendations",
+      "closure_summary",
+      "source_refs",
+      "readiness_rollup_summary",
+      "phase49_boundary_refresh_summary",
+      "phase50_readiness_rollup_summary",
+      "noop_boundary_refresh_summary",
+      "noop_boundary_status",
+      "noop_dry_check_request_contract",
+      "noop_dry_check_result_contract",
+      "runtime_mode_boundary",
+      "flag_reader_boundary",
+      "env_config_read_boundary",
+      "kill_switch_boundary",
+      "kill_switch_wiring_boundary",
+      "prerequisite_gap_matrix",
+      "readiness_gap_matrix",
+      "preimplementation_checklist_gaps",
+      "noop_dry_check_items",
+      "blocked_future_slices",
+      "capability_matrix",
+      "proof_boundaries",
+      "boundary_truth",
+      "redaction_summary",
+      "unsafe_action_policy",
+      "next_phase_recommendations",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.kill_switch_wiring_readiness_rollup_through_phase50.v0",
+      "version": 0,
+      "baseline_commit": "6ecba39",
+      "phase_registry.current_through_phase": 50,
+      "phase_registry.phase_inventory_count": 50,
+      "schema_registry.count": 50,
+      "cli_registry.count": 50,
+      "phase_registry.phase35_current": true,
+      "phase_registry.phase36_current": true,
+      "phase_registry.phase37_current": true,
+      "phase_registry.phase38_current": true,
+      "phase_registry.phase39_current": true,
+      "phase_registry.phase40_current": true,
+      "phase_registry.phase41_current": true,
+      "phase_registry.phase42_current": true,
+      "phase_registry.phase43_current": true,
+      "phase_registry.phase44_current": true,
+      "phase_registry.phase45_current": true,
+      "phase_registry.phase46_current": true,
+      "phase_registry.phase47_current": true,
+      "phase_registry.phase50_current": true,
+      "phase_registry.phase50_commit": "6ecba39",
+      "source_recommendation.recommendation_id": "phase51-kill-switch-wiring-readiness-rollup-through-phase50-contract",
+      "source_recommendation.tier": "tier1",
+      "source_recommendation.selected_as": "fixture_only_contract",
+      "source_recommendation.implementation_status": "not_implemented",
+      "source_recommendation.does_not_authorize_runtime": true,
+      "source_recommendation.does_not_authorize_flag_read": true,
+      "source_recommendation.does_not_authorize_kill_switch_wiring": true,
+      "source_recommendation.does_not_authorize_noop_execution": true,
+      "source_recommendation.does_not_authorize_live_check": true,
+      "satisfied_prior_recommendations[0].recommendation_id": "phase51-kill-switch-wiring-readiness-rollup-through-phase49-validator",
+      "satisfied_prior_recommendations[0].status": "satisfied_by_6ecba39_do_not_repeat_as_open_work",
+      "satisfied_prior_recommendations[0].must_not_reopen_as_open_work": true,
+      "current_truth.phase35_current": true,
+      "current_truth.phase36_current": true,
+      "current_truth.phase37_current": true,
+      "current_truth.phase38_current": true,
+      "current_truth.phase39_current": true,
+      "current_truth.phase40_current": true,
+      "current_truth.phase41_current": true,
+      "current_truth.phase42_current": true,
+      "current_truth.phase43_current": true,
+      "current_truth.phase44_current": true,
+      "current_truth.phase45_current": true,
+      "current_truth.phase46_current": true,
+      "current_truth.phase47_current": true,
+      "current_truth.phase50_current": true,
+      "current_truth.kill_switch_wiring_noop_boundary_refresh_remains_non_authorizing": true,
+      "current_truth.noop_dry_check_remains_contract_only": true,
+      "current_truth.no_env_config_flag_read_now": true,
+      "current_truth.kill_switch_remains_unwired": true,
+      "stale_readiness.phase13_stale": true,
+      "stale_readiness.phase23_stale": true,
+      "stale_readiness.phase31_stale": true,
+      "phase34_prior_recommendations.satisfied_and_not_reopened": true,
+      "closure_summary.oracle_115_prerequisite_mapping_closure_carried": true,
+      "closure_summary.oracle_123_expires_at_closure_carried": true,
+      "closure_summary.oracle_127_validation_report_tamper_closure_carried": true,
+      "closure_summary.oracle_131_phase34_review_closure_carried": true,
+      "closure_summary.oracle_134_phase35_review_closure_carried": true,
+      "closure_summary.oracle_137_phase36_review_closure_carried": true,
+      "closure_summary.oracle_141_phase37_review_closure_carried": true,
+      "closure_summary.oracle_148_phase38_review_closure_carried": true,
+      "closure_summary.oracle_149_phase38_status_closure_carried": true,
+      "closure_summary.oracle_156_phase39_review_closure_carried": true,
+      "closure_summary.oracle_161_phase40_review_closure_carried": true,
+      "closure_summary.oracle_165_phase41_review_closure_carried": true,
+      "closure_summary.oracle_168_phase42_review_closure_carried": true,
+      "closure_summary.oracle_171_phase43_review_closure_carried": true,
+      "closure_summary.oracle_174_phase44_review_closure_carried": true,
+      "closure_summary.oracle_178_phase45_review_closure_carried": true,
+      "closure_summary.oracle_182_phase46_review_closure_carried": true,
+      "closure_summary.oracle_186_phase47_review_closure_carried": true,
+      "closure_summary.oracle_200_phase50_review_closure_carried": true,
+      "noop_boundary_refresh_summary.decision": "remain_noop_boundary_refresh_contract_only",
+      "noop_boundary_refresh_summary.status": "refresh_only_blocked_unread_unwired_non_authorizing",
+      "noop_boundary_refresh_summary.boundary_refresh_item_count": 8,
+      "noop_boundary_refresh_summary.ready_for_runtime_now": false,
+      "noop_boundary_refresh_summary.ready_for_dry_run_now": false,
+      "noop_boundary_refresh_summary.ready_for_kill_switch_wiring_now": false,
+      "noop_boundary_refresh_summary.noop_would_read_flag": false,
+      "noop_boundary_refresh_summary.noop_would_execute": false,
+      "noop_boundary_refresh_summary.noop_would_wire_kill_switch": false,
+      "noop_boundary_refresh_summary.noop_would_perform_live_check": false,
+      "noop_boundary_refresh_summary.noop_would_emit_output_file": false,
+      "noop_boundary_status.contract_only": true,
+      "noop_boundary_status.reference_only": true,
+      "noop_boundary_status.request_reads_allowed": false,
+      "noop_boundary_status.noop_execution_allowed": false,
+      "noop_boundary_status.live_check_allowed": false,
+      "noop_boundary_status.output_file_allowed": false,
+      "noop_dry_check_request_contract.request_kind": "kill_switch_wiring_noop_dry_check_request",
+      "noop_dry_check_request_contract.validation_only": true,
+      "noop_dry_check_request_contract.no_env_config_flag_read": true,
+      "noop_dry_check_request_contract.no_live_kill_switch_check": true,
+      "noop_dry_check_request_contract.no_control_or_reporting_sink": true,
+      "noop_dry_check_result_contract.result_kind": "kill_switch_wiring_noop_dry_check_result",
+      "noop_dry_check_result_contract.result_status": "blocked_contract_only",
+      "noop_dry_check_result_contract.no_runtime_started": true,
+      "noop_dry_check_result_contract.no_flag_read": true,
+      "noop_dry_check_result_contract.no_kill_switch_wired": true,
+      "noop_dry_check_result_contract.no_live_check_performed": true,
+      "noop_dry_check_result_contract.no_output_file_written": true,
+      "runtime_mode_boundary.default_off": true,
+      "runtime_mode_boundary.disabled": true,
+      "runtime_mode_boundary.local_dev_only": true,
+      "runtime_mode_boundary.reference_only": true,
+      "runtime_mode_boundary.implemented": false,
+      "runtime_mode_boundary.authorizes_runtime": false,
+      "flag_reader_boundary.flagReader": false,
+      "flag_reader_boundary.flagReadNow": false,
+      "flag_reader_boundary.readerImplemented": false,
+      "flag_reader_boundary.envReadNow": false,
+      "flag_reader_boundary.configReadNow": false,
+      "flag_reader_boundary.secretReadNow": false,
+      "env_config_read_boundary.no_env_read": true,
+      "env_config_read_boundary.no_config_read": true,
+      "env_config_read_boundary.no_flag_read": true,
+      "env_config_read_boundary.no_process_env_read": true,
+      "env_config_read_boundary.no_secret_read": true,
+      "env_config_read_boundary.no_raw_config_export": true,
+      "kill_switch_boundary.visible": true,
+      "kill_switch_boundary.fail_closed": true,
+      "kill_switch_boundary.reference_only": true,
+      "kill_switch_boundary.unwired": true,
+      "kill_switch_boundary.unimplemented": true,
+      "kill_switch_boundary.non_authorizing": true,
+      "kill_switch_boundary.killWired": false,
+      "kill_switch_boundary.liveCheck": false,
+      "kill_switch_boundary.bypass": false,
+      "kill_switch_boundary.allow_open": false,
+      "kill_switch_wiring_boundary.future_live_kill_switch_wiring_slice_blocked_now": true,
+      "kill_switch_wiring_boundary.killSwitchWiringAvailable": false,
+      "kill_switch_wiring_boundary.wiringImplemented": false,
+      "kill_switch_wiring_boundary.wiringAuthorized": false,
+      "kill_switch_wiring_boundary.non_authorizing": true,
+      "prerequisite_gap_matrix[0].gap_id": "runtime-mode-flag",
+      "prerequisite_gap_matrix[0].status": "unsatisfied_blocking_non_authorizing",
+      "prerequisite_gap_matrix[0].satisfied_now": false,
+      "prerequisite_gap_matrix[1].gap_id": "live-kill-switch",
+      "prerequisite_gap_matrix[1].status": "unsatisfied_blocking_non_authorizing",
+      "prerequisite_gap_matrix[1].satisfied_now": false,
+      "readiness_gap_matrix[0].gap_id": "fail-closed-default-proof",
+      "readiness_gap_matrix[0].status": "unsatisfied_blocking_non_authorizing",
+      "preimplementation_checklist_gaps[0].check_id": "runtime-mode-flag-reader-disabled-boundary",
+      "preimplementation_checklist_gaps[0].status": "required_unsatisfied_blocking_non_authorizing",
+      "noop_dry_check_items[0].check_id": "noop-request-shape-describe-only",
+      "noop_dry_check_items[0].status": "required_contract_only_non_authorizing",
+      "noop_dry_check_items[0].satisfied_now": false,
+      "blocked_future_slices[0].slice_id": "future-live-kill-switch-wiring",
+      "blocked_future_slices[0].status": "blocked_now_non_authorizing",
+      "blocked_future_slices[0].implementation_allowed_now": false,
+      "capability_matrix.runtimeStarted": false,
+      "capability_matrix.runnerExecuted": false,
+      "capability_matrix.runtimeAvailable": false,
+      "capability_matrix.serverCanExecuteLocal": false,
+      "capability_matrix.serverCanProveModelProcessing": false,
+      "capability_matrix.directBuilderOracleServerTargetsBlocked": true,
+      "capability_matrix.killSwitchWiringAvailable": false,
+      "capability_matrix.noopDryCheckAvailable": false,
+      "capability_matrix.noopBoundaryRefreshAvailable": false,
+      "proof_boundaries.socket_is_bridge_green": false,
+      "proof_boundaries.delivery_acceptance_is_model_processing_proof": false,
+      "proof_boundaries.phase50_commit_is_runtime_proof": false,
+      "proof_boundaries.noop_boundary_refresh_contract_is_runtime_authorization": false,
+      "proof_boundaries.noop_boundary_refresh_contract_is_kill_switch_authorization": false,
+      "proof_boundaries.noop_boundary_refresh_contract_is_live_check_proof": false,
+      "boundary_truth.no_runtime_server_listener_routes": true,
+      "boundary_truth.no_ui_browser_window_capture": true,
+      "boundary_truth.no_network": true,
+      "boundary_truth.no_db_store_file_migration_write": true,
+      "boundary_truth.no_queue_or_lease": true,
+      "boundary_truth.no_env_config_flag_read": true,
+      "boundary_truth.no_auth_key_secret": true,
+      "boundary_truth.no_local_execution_shell_pty": true,
+      "boundary_truth.no_control_execution_or_reporting_sink": true,
+      "boundary_truth.no_send_deploy_trade": true,
+      "boundary_truth.no_output_file": true,
+      "redaction_summary.raw_private_content_exported": false,
+      "unsafe_action_policy.customer_send_allowed": false,
+      "unsafe_action_policy.deploy_allowed": false,
+      "unsafe_action_policy.trade_allowed": false,
+      "side_effect_result.no_runtime_performed": true,
+      "side_effect_result.no_ui_performed": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_or_store_write_performed": true,
+      "side_effect_result.no_queue_or_lease_created": true,
+      "side_effect_result.no_env_config_flag_read_performed": true,
+      "side_effect_result.no_kill_switch_live_check_performed": true,
+      "side_effect_result.no_noop_execution_performed": true,
+      "side_effect_result.no_local_execution_performed": true,
+      "side_effect_result.no_control_execution_or_reporting_sink_performed": true,
+      "side_effect_result.no_send_deploy_trade_performed": true,
+      "side_effect_result.no_output_file_written": true,
+      "phase_registry.schema_registry_count": 50,
+      "phase_registry.cli_registry_count": 50,
+      "phase_registry.phase48_current": true,
+      "commit_chain.length": 38,
+      "commit_chain.last": "6ecba39",
+      "current_truth.phase48_current": true,
+      "current_truth.phase50_noop_boundary_refresh_validation_current": true,
+      "current_truth.kill_switch_wiring_readiness_rollup_remains_non_authorizing": true,
+      "current_truth.noop_boundary_refresh_remains_contract_only": true,
+      "closure_summary.builder_301_phase50_validation_report_carried": true,
+      "readiness_rollup_summary.decision": "remain_kill_switch_wiring_readiness_rollup_contract_only",
+      "readiness_rollup_summary.current_through_phase": 50,
+      "readiness_rollup_summary.ready_for_runtime_now": false,
+      "readiness_rollup_summary.ready_for_kill_switch_wiring_now": false,
+      "readiness_rollup_summary.ready_for_noop_execution_now": false,
+      "readiness_rollup_summary.authorizes_runtime": false,
+      "readiness_rollup_summary.authorizes_kill_switch_wiring": false,
+      "phase_registry.phase49_current": true,
+      "current_truth.phase49_current": true,
+      "current_truth.phase50_readiness_rollup_validation_current": true,
+      "current_truth.kill_switch_wiring_readiness_rollup_through_phase50_remains_non_authorizing": true,
+      "closure_summary.builder_306_phase50_validation_report_carried": true,
+      "phase50_readiness_rollup_summary.committed_baseline": "6ecba39",
+      "phase50_readiness_rollup_summary.validation_green": true,
+      "phase50_readiness_rollup_summary.oracle_review_ref": "ORACLE #200",
+      "phase50_readiness_rollup_summary.remains_validation_only": true,
+      "phase50_readiness_rollup_summary.no_noop_execution_performed": true,
+      "phase50_readiness_rollup_summary.no_output_file_written": true,
+      "phase49_boundary_refresh_summary.committed_baseline": "17441a8",
+      "phase49_boundary_refresh_summary.validation_green": true,
+      "phase49_boundary_refresh_summary.oracle_review_ref": "ORACLE #194",
+      "phase49_boundary_refresh_summary.remains_validation_only": true,
+      "phase49_boundary_refresh_summary.no_noop_execution_performed": true,
+      "phase49_boundary_refresh_summary.no_output_file_written": true
+    }
+  },
+  "expectedCounts": {
+    "phase_inventory_count": 50,
+    "schema_registry_count": 50,
+    "cli_registry_count": 50,
+    "commit_chain_count": 38,
+    "source_contract_count": 20,
+    "source_ref_count": 20,
+    "recent_phase_path_count": 16,
+    "prerequisite_gap_count": 2,
+    "readiness_gap_count": 6,
+    "preimplementation_checklist_gap_count": 8,
+    "noop_dry_check_item_count": 7,
+    "blocked_future_slice_count": 5,
+    "static_rule_min_count": 48,
+    "acceptance_check_min_count": 57,
+    "tamper_case_min_count": 43,
+    "required_literal_min_count": 170
+  },
+  "expectedValidationReportShape": {
+    "requiredFields": [
+      "schema",
+      "version",
+      "validation_report_id",
+      "fixture_path",
+      "generated_at",
+      "baseline_commit",
+      "decision",
+      "status",
+      "static_rule_results",
+      "acceptance_check_results",
+      "tamper_case_results",
+      "required_literal_results",
+      "referenced_path_results",
+      "forbidden_output_scan",
+      "unsafe_action_scan",
+      "side_effect_truth",
+      "scoped_status",
+      "diff_check",
+      "caveats"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.kill_switch_wiring_readiness_rollup_through_phase50_validation_report.v0",
+      "version": 0,
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase50-contract.json",
+      "baseline_commit": "6ecba39",
+      "decision": "accepted_validation_only",
+      "status": "fixture_contract_only",
+      "side_effect_truth.no_runtime_performed": true,
+      "side_effect_truth.no_noop_execution_performed": true,
+      "side_effect_truth.no_output_file_written": true,
+      "scoped_status.only_fixture_changed_before_builder": true,
+      "diff_check.clean": true,
+      "caveats": []
+    }
+  },
+  "commitChainExpected": [
+    "785dbec",
+    "f41b02a",
+    "3904697",
+    "6f97287",
+    "afabea1",
+    "3742ab7",
+    "8a8ccf0",
+    "ce9e55d",
+    "ffe130c",
+    "b7e2106",
+    "3ce041c",
+    "e062d16",
+    "3efa9c5",
+    "b125eee",
+    "e7a8dbc",
+    "d4aa1a5",
+    "8084b29",
+    "679e018",
+    "83963ab",
+    "2c4d9ff",
+    "0e82768",
+    "c04155d",
+    "801a92a",
+    "6f08b05",
+    "c8b55be",
+    "85c78ab",
+    "a62fe16",
+    "def3f3b",
+    "833f9c1",
+    "5b3de99",
+    "78f5164",
+    "b6fd5b8",
+    "62fa3a8",
+    "bbf6e9f",
+    "2bff807",
+    "d57e546",
+    "17441a8",
+    "6ecba39"
+  ],
+  "phaseRegistryExpected": {
+    "expected_phases": "1-50",
+    "phase_inventory_count": 50,
+    "schema_registry_count": 50,
+    "cli_registry_count": 50,
+    "current_truth": {
+      "phase35_current": true,
+      "phase36_current": true,
+      "phase37_current": true,
+      "phase38_current": true,
+      "phase39_current": true,
+      "phase40_current": true,
+      "phase41_current": true,
+      "phase42_current": true,
+      "phase43_current": true,
+      "phase44_current": true,
+      "phase45_current": true,
+      "phase46_current": true,
+      "phase47_current": true,
+      "phase48_current": true,
+      "phase49_current": true,
+      "phase50_current": true
+    },
+    "stale_truth": {
+      "phase13_stale": true,
+      "phase23_stale": true,
+      "phase31_stale": true
+    },
+    "phase34_prior_recommendations": "satisfied_and_not_reopened",
+    "phase48_delta": {
+      "phase": 48,
+      "name": "kill_switch_wiring_noop_dry_check",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-dry-check-contract.json",
+      "module_path": "ui/modules/mira-core/kill-switch-wiring-noop-dry-check.js",
+      "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-noop-dry-check.js",
+      "test_path": "ui/__tests__/mira-core-kill-switch-wiring-noop-dry-check.test.js",
+      "committed_baseline": "d57e546",
+      "status": "local_validation_kill_switch_wiring_noop_dry_check_current",
+      "evidenceRefs": [
+        "ORACLE #190",
+        "BUILDER #296"
+      ]
+    },
+    "required_recent_phase_paths": [
+      {
+        "phase": 35,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-next-action-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-next-action.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-next-action.js",
+        "test_path": "ui/__tests__/mira-core-runtime-next-action.test.js",
+        "commit": "801a92a"
+      },
+      {
+        "phase": 36,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-operator-ui-surface-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-operator-ui-surface.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-operator-ui-surface.js",
+        "test_path": "ui/__tests__/mira-core-runtime-operator-ui-surface.test.js",
+        "commit": "6f08b05"
+      },
+      {
+        "phase": 37,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-control-reporting-reconciliation-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-control-reporting-reconciliation.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-control-reporting-reconciliation.js",
+        "test_path": "ui/__tests__/mira-core-runtime-control-reporting-reconciliation.test.js",
+        "commit": "c8b55be"
+      },
+      {
+        "phase": 38,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-readiness-refresh-through-phase37-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-readiness-refresh-through-phase37.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-readiness-refresh-through-phase37.js",
+        "test_path": "ui/__tests__/mira-core-runtime-readiness-refresh-through-phase37.test.js",
+        "commit": "85c78ab"
+      },
+      {
+        "phase": 39,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-dry-run-readiness-gap-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-dry-run-readiness-gap.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-dry-run-readiness-gap.js",
+        "test_path": "ui/__tests__/mira-core-runtime-dry-run-readiness-gap.test.js",
+        "commit": "a62fe16"
+      },
+      {
+        "phase": 40,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-mode-kill-switch.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-mode-kill-switch.js",
+        "test_path": "ui/__tests__/mira-core-runtime-mode-kill-switch.test.js",
+        "commit": "def3f3b"
+      },
+      {
+        "phase": 41,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-status-gap-refresh-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-mode-kill-switch-status-gap-refresh.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-mode-kill-switch-status-gap-refresh.js",
+        "test_path": "ui/__tests__/mira-core-runtime-mode-kill-switch-status-gap-refresh.test.js",
+        "commit": "833f9c1"
+      },
+      {
+        "phase": 42,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-prerequisite-boundary-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-mode-kill-switch-prerequisite-boundary.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-mode-kill-switch-prerequisite-boundary.js",
+        "test_path": "ui/__tests__/mira-core-runtime-mode-kill-switch-prerequisite-boundary.test.js",
+        "commit": "5b3de99"
+      },
+      {
+        "phase": 43,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-implementation-risk-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-mode-kill-switch-implementation-risk.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-mode-kill-switch-implementation-risk.js",
+        "test_path": "ui/__tests__/mira-core-runtime-mode-kill-switch-implementation-risk.test.js",
+        "commit": "78f5164"
+      },
+      {
+        "phase": 44,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-flag-reader-safety-contract.json",
+        "module_path": "ui/modules/mira-core/runtime-mode-flag-reader-safety.js",
+        "cli_path": "ui/scripts/hm-mira-core-runtime-mode-flag-reader-safety.js",
+        "test_path": "ui/__tests__/mira-core-runtime-mode-flag-reader-safety.test.js",
+        "commit": "b6fd5b8"
+      },
+      {
+        "phase": 45,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-safety-contract.json",
+        "module_path": "ui/modules/mira-core/kill-switch-wiring-safety.js",
+        "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-safety.js",
+        "test_path": "ui/__tests__/mira-core-kill-switch-wiring-safety.test.js",
+        "commit": "62fa3a8"
+      },
+      {
+        "phase": 46,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-gap-contract.json",
+        "module_path": "ui/modules/mira-core/kill-switch-wiring-readiness-gap.js",
+        "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-readiness-gap.js",
+        "test_path": "ui/__tests__/mira-core-kill-switch-wiring-readiness-gap.test.js",
+        "commit": "bbf6e9f"
+      },
+      {
+        "phase": 47,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-preimplementation-checklist-contract.json",
+        "module_path": "ui/modules/mira-core/kill-switch-wiring-preimplementation-checklist.js",
+        "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-preimplementation-checklist.js",
+        "test_path": "ui/__tests__/mira-core-kill-switch-wiring-preimplementation-checklist.test.js",
+        "commit": "2bff807"
+      },
+      {
+        "phase": 48,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-dry-check-contract.json",
+        "module_path": "ui/modules/mira-core/kill-switch-wiring-noop-dry-check.js",
+        "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-noop-dry-check.js",
+        "test_path": "ui/__tests__/mira-core-kill-switch-wiring-noop-dry-check.test.js",
+        "commit": "d57e546"
+      },
+      {
+        "phase": 49,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json",
+        "module_path": "ui/modules/mira-core/kill-switch-wiring-noop-boundary-refresh.js",
+        "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-noop-boundary-refresh.js",
+        "test_path": "ui/__tests__/mira-core-kill-switch-wiring-noop-boundary-refresh.test.js",
+        "commit": "17441a8"
+      },
+      {
+        "phase": 50,
+        "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json",
+        "module_path": "ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase49.js",
+        "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase49.js",
+        "test_path": "ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase49.test.js",
+        "commit": "6ecba39"
+      }
+    ],
+    "phase49_delta": {
+      "phase": 49,
+      "name": "kill_switch_wiring_noop_boundary_refresh",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json",
+      "module_path": "ui/modules/mira-core/kill-switch-wiring-noop-boundary-refresh.js",
+      "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-noop-boundary-refresh.js",
+      "test_path": "ui/__tests__/mira-core-kill-switch-wiring-noop-boundary-refresh.test.js",
+      "committed_baseline": "17441a8",
+      "status": "local_validation_kill_switch_wiring_noop_boundary_refresh_current",
+      "evidenceRefs": [
+        "ORACLE #194",
+        "BUILDER #301",
+        "ARCH #692"
+      ]
+    },
+    "phase50_delta": {
+      "phase": 50,
+      "name": "kill_switch_wiring_readiness_rollup_through_phase49",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json",
+      "module_path": "ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase49.js",
+      "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase49.js",
+      "test_path": "ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase49.test.js",
+      "committed_baseline": "6ecba39",
+      "status": "local_validation_kill_switch_wiring_readiness_rollup_through_phase49_current",
+      "evidenceRefs": [
+        "ORACLE #200",
+        "BUILDER #306",
+        "ARCH #712"
+      ]
+    }
+  },
+  "sourceRefsExpected": [
+    {
+      "artifact_id": "phase26-runtime-controls",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-controls-contract.json"
+    },
+    {
+      "artifact_id": "phase27-runtime-preflight",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-preflight-contract.json"
+    },
+    {
+      "artifact_id": "phase29-runtime-dry-run-implementation",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-dry-run-implementation-contract.json"
+    },
+    {
+      "artifact_id": "phase30-runtime-control-path",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-control-path-contract.json"
+    },
+    {
+      "artifact_id": "phase32-runtime-dry-runner",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-dry-runner-contract.json"
+    },
+    {
+      "artifact_id": "phase33-runtime-operator-status",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-operator-status-contract.json"
+    },
+    {
+      "artifact_id": "phase37-control-reporting-reconciliation",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-control-reporting-reconciliation-contract.json"
+    },
+    {
+      "artifact_id": "phase38-readiness-refresh",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-readiness-refresh-through-phase37-contract.json"
+    },
+    {
+      "artifact_id": "phase39-dry-run-readiness-gap",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-dry-run-readiness-gap-contract.json"
+    },
+    {
+      "artifact_id": "phase40-runtime-mode-kill-switch",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-contract.json"
+    },
+    {
+      "artifact_id": "phase41-runtime-mode-kill-switch-status-gap-refresh",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-status-gap-refresh-contract.json"
+    },
+    {
+      "artifact_id": "phase42-runtime-mode-kill-switch-prerequisite-boundary",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-prerequisite-boundary-contract.json"
+    },
+    {
+      "artifact_id": "phase43-runtime-mode-kill-switch-implementation-risk",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-implementation-risk-contract.json"
+    },
+    {
+      "artifact_id": "phase44-runtime-mode-flag-reader-safety",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-runtime-mode-flag-reader-safety-contract.json"
+    },
+    {
+      "artifact_id": "phase45-kill-switch-wiring-safety",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-safety-contract.json"
+    },
+    {
+      "artifact_id": "phase46-kill-switch-wiring-readiness-gap",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-gap-contract.json"
+    },
+    {
+      "artifact_id": "phase47-kill-switch-wiring-preimplementation-checklist",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-preimplementation-checklist-contract.json"
+    },
+    {
+      "artifact_id": "phase48-kill-switch-wiring-noop-dry-check",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-dry-check-contract.json"
+    },
+    {
+      "artifact_id": "phase49-kill-switch-wiring-noop-boundary-refresh",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json"
+    },
+    {
+      "artifact_id": "phase50-kill-switch-wiring-readiness-rollup-through-phase49",
+      "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json"
+    }
+  ],
+  "noopBoundaryRefreshSummaryExpected": {
+    "decision": "remain_noop_boundary_refresh_contract_only",
+    "status": "refresh_only_blocked_unread_unwired_non_authorizing",
+    "boundary_refresh_item_count": 8,
+    "ready_for_runtime_now": false,
+    "ready_for_dry_run_now": false,
+    "ready_for_kill_switch_wiring_now": false,
+    "noop_would_read_flag": false,
+    "noop_would_execute": false,
+    "noop_would_wire_kill_switch": false,
+    "noop_would_perform_live_check": false,
+    "noop_would_emit_output_file": false,
+    "all_items_non_authorizing": true
+  },
+  "noopBoundaryStatusExpected": {
+    "contract_only": true,
+    "reference_only": true,
+    "request_reads_allowed": false,
+    "noop_execution_allowed": false,
+    "live_check_allowed": false,
+    "output_file_allowed": false,
+    "authorizes_runtime": false,
+    "authorizes_kill_switch_wiring": false
+  },
+  "noopDryCheckRequestContractExpected": {
+    "request_kind": "kill_switch_wiring_noop_dry_check_request",
+    "validation_only": true,
+    "no_env_config_flag_read": true,
+    "no_live_kill_switch_check": true,
+    "no_control_or_reporting_sink": true,
+    "no_output_file": true,
+    "authorizes_runtime": false,
+    "authorizes_kill_switch_wiring": false
+  },
+  "noopDryCheckResultContractExpected": {
+    "result_kind": "kill_switch_wiring_noop_dry_check_result",
+    "result_status": "blocked_contract_only",
+    "no_runtime_started": true,
+    "no_flag_read": true,
+    "no_kill_switch_wired": true,
+    "no_live_check_performed": true,
+    "no_control_or_reporting_sink": true,
+    "no_output_file_written": true,
+    "authorizes_runtime": false,
+    "authorizes_kill_switch_wiring": false
+  },
+  "runtimeModeBoundaryShapeExpected": {
+    "requiredValues": {
+      "disabled": true,
+      "default_off": true,
+      "local_dev_only": true,
+      "reference_only": true,
+      "implemented": false,
+      "authorizes_runtime": false,
+      "authorizes_local_execution": false,
+      "authorizes_output_file": false
+    }
+  },
+  "flagReaderBoundaryShapeExpected": {
+    "requiredValues": {
+      "readerImplemented": false,
+      "flagReader": false,
+      "flagReadNow": false,
+      "envReadNow": false,
+      "configReadNow": false,
+      "secretReadNow": false,
+      "rawConfigExportNow": false,
+      "non_authorizing": true
+    }
+  },
+  "envConfigReadBoundaryShapeExpected": {
+    "requiredValues": {
+      "no_env_read": true,
+      "no_config_read": true,
+      "no_flag_read": true,
+      "no_process_env_read": true,
+      "no_secret_read": true,
+      "no_raw_config_export": true
+    }
+  },
+  "killSwitchBoundaryShapeExpected": {
+    "requiredValues": {
+      "visible": true,
+      "fail_closed": true,
+      "reference_only": true,
+      "unwired": true,
+      "unimplemented": true,
+      "non_authorizing": true,
+      "killWired": false,
+      "liveCheck": false,
+      "bypass": false,
+      "allow_open": false
+    }
+  },
+  "killSwitchWiringBoundaryShapeExpected": {
+    "requiredValues": {
+      "future_live_kill_switch_wiring_slice_blocked_now": true,
+      "killSwitchWiringAvailable": false,
+      "wiringImplemented": false,
+      "wiringAuthorized": false,
+      "non_authorizing": true
+    }
+  },
+  "prerequisiteGapMatrixExpected": [
+    {
+      "gap_id": "runtime-mode-flag",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "gap_id": "live-kill-switch",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    }
+  ],
+  "readinessGapMatrixExpected": [
+    {
+      "gap_id": "fail-closed-default-proof",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true
+    },
+    {
+      "gap_id": "operator-visible-control-proof",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true
+    },
+    {
+      "gap_id": "kill-switch-bypass-rejection-proof",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true
+    },
+    {
+      "gap_id": "allow-open-rejection-proof",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true
+    },
+    {
+      "gap_id": "control-reporting-side-effect-proof",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true
+    },
+    {
+      "gap_id": "stdout-only-output-file-proof",
+      "status": "unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "blocking": true
+    }
+  ],
+  "preimplementationChecklistGapsExpected": [
+    {
+      "check_id": "runtime-mode-flag-reader-disabled-boundary",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "live-kill-switch-wiring-remains-blocked",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "fail-closed-default-proof-required",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "no-bypass-no-allow-open-proof-required",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "operator-visible-status-proof-required",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "control-reporting-side-effect-boundary-required",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "stdout-only-no-output-file-boundary-required",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "proof-boundaries-remain-false-required",
+      "status": "required_unsatisfied_blocking_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_kill_switch_wiring": false
+    }
+  ],
+  "noopDryCheckItemsExpected": [
+    {
+      "check_id": "noop-request-shape-describe-only",
+      "status": "required_contract_only_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "noop-does-not-read-env-config-flag",
+      "status": "required_contract_only_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "noop-does-not-wire-kill-switch",
+      "status": "required_contract_only_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "noop-does-not-perform-live-check",
+      "status": "required_contract_only_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "noop-does-not-hit-control-reporting-sink",
+      "status": "required_contract_only_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "noop-output-is-redacted-status-only",
+      "status": "required_contract_only_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    },
+    {
+      "check_id": "noop-result-cannot-be-used-as-proof",
+      "status": "required_contract_only_non_authorizing",
+      "satisfied_now": false,
+      "authorizes_runtime": false,
+      "authorizes_kill_switch_wiring": false
+    }
+  ],
+  "blockedFutureSlicesExpected": [
+    {
+      "slice_id": "future-live-kill-switch-wiring",
+      "status": "blocked_now_non_authorizing",
+      "implementation_allowed_now": false,
+      "requires_future_contract": true
+    },
+    {
+      "slice_id": "future-runtime-mode-flag-reader",
+      "status": "blocked_now_non_authorizing",
+      "implementation_allowed_now": false,
+      "requires_future_contract": true
+    },
+    {
+      "slice_id": "future-control-reporting-sink",
+      "status": "blocked_now_non_authorizing",
+      "implementation_allowed_now": false,
+      "requires_future_contract": true
+    },
+    {
+      "slice_id": "future-disabled-local-dry-run-runtime",
+      "status": "blocked_now_non_authorizing",
+      "implementation_allowed_now": false,
+      "requires_future_contract": true
+    },
+    {
+      "slice_id": "future-noop-dry-check-execution",
+      "status": "blocked_now_non_authorizing",
+      "implementation_allowed_now": false,
+      "requires_future_contract": true
+    }
+  ],
+  "capabilityMatrixExpected": {
+    "runtimeStarted": false,
+    "runnerExecuted": false,
+    "runtimeAvailable": false,
+    "serverCanExecuteLocal": false,
+    "serverCanProveModelProcessing": false,
+    "directBuilderOracleServerTargetsBlocked": true,
+    "flagReaderAvailable": false,
+    "envConfigReadAvailable": false,
+    "killSwitchWiringAvailable": false,
+    "noopDryCheckAvailable": false,
+    "noopBoundaryRefreshAvailable": false,
+    "controlReportingSinkAvailable": false,
+    "readinessRollupAvailable": false,
+    "phase49BoundaryRefreshAvailable": false,
+    "phase50ReadinessRollupAvailable": false
+  },
+  "proofBoundaryExpected": {
+    "socket_is_bridge_green": false,
+    "delivery_acceptance_is_model_processing_proof": false,
+    "phase48_commit_is_runtime_proof": false,
+    "noop_boundary_refresh_contract_is_runtime_authorization": false,
+    "noop_boundary_refresh_contract_is_kill_switch_authorization": false,
+    "noop_boundary_refresh_contract_is_live_check_proof": false,
+    "server_can_execute_local_arms": false,
+    "builder_oracle_direct_server_target_allowed": false,
+    "phase49_commit_is_runtime_proof": false,
+    "readiness_rollup_is_runtime_authorization": false,
+    "readiness_rollup_is_kill_switch_authorization": false,
+    "readiness_rollup_is_live_check_proof": false,
+    "phase50_commit_is_runtime_proof": false,
+    "readiness_rollup_through_phase50_is_runtime_authorization": false,
+    "readiness_rollup_through_phase50_is_kill_switch_authorization": false,
+    "readiness_rollup_through_phase50_is_live_check_proof": false
+  },
+  "sideEffectTruthExpected": {
+    "no_runtime_performed": true,
+    "no_ui_performed": true,
+    "no_browser_window_capture_performed": true,
+    "no_network_performed": true,
+    "no_database_or_store_write_performed": true,
+    "no_file_migration_write_performed": true,
+    "no_queue_or_lease_created": true,
+    "no_auth_key_secret_behavior_performed": true,
+    "no_env_config_flag_read_performed": true,
+    "no_kill_switch_live_check_performed": true,
+    "no_noop_execution_performed": true,
+    "no_local_execution_performed": true,
+    "no_control_execution_or_reporting_sink_performed": true,
+    "no_send_deploy_trade_performed": true,
+    "no_output_file_written": true
+  },
+  "staticValidationRules": [
+    {
+      "id": "static-schema-and-baseline-pinned",
+      "description": "Schema and baseline must remain Phase 50 no-op boundary refresh against 6ecba39."
+    },
+    {
+      "id": "static-phase-registries-through-49",
+      "description": "Phase, schema, and CLI registries must each cover Phases 1-50."
+    },
+    {
+      "id": "static-commit-chain-count-and-tail",
+      "description": "Commit chain must contain 36 entries and end at 6ecba39."
+    },
+    {
+      "id": "static-phase50-tier0-satisfied",
+      "description": "Phase48 Tier0 validator recommendation must be satisfied by 6ecba39 and not reopened."
+    },
+    {
+      "id": "static-phase50-tier1-selected",
+      "description": "Phase48 Tier1 no-op boundary refresh recommendation must be selected fixture-only."
+    },
+    {
+      "id": "static-phase35-through-49-current",
+      "description": "Phase35 through Phase48 current truth must be preserved."
+    },
+    {
+      "id": "static-stale-phase13-23-31-preserved",
+      "description": "Stale readiness truth for Phases 13, 23, and 31 must remain explicit."
+    },
+    {
+      "id": "static-phase34-prior-recs-not-reopened",
+      "description": "Phase34 prior recommendations remain satisfied and not reopened."
+    },
+    {
+      "id": "static-oracle-closure-chain-through-200",
+      "description": "ORACLE closure chain through #190 must be carried."
+    },
+    {
+      "id": "static-noop-boundary-refresh-contract-only",
+      "description": "No-op boundary refresh summary must remain contract-only and non-authorizing."
+    },
+    {
+      "id": "static-noop-boundary-status-blocked",
+      "description": "No-op boundary status must not allow request reads, execution, live checks, or output files."
+    },
+    {
+      "id": "static-noop-request-does-not-read",
+      "description": "No-op request contract must forbid env/config/flag/process env/secret/raw-config reads."
+    },
+    {
+      "id": "static-noop-result-not-proof",
+      "description": "No-op result must not be runtime proof, wiring proof, or live-check proof."
+    },
+    {
+      "id": "static-runtime-mode-default-off-disabled",
+      "description": "Runtime mode remains disabled/default-off/local-dev-only/reference-only/unimplemented."
+    },
+    {
+      "id": "static-runtime-mode-non-authorizing",
+      "description": "Runtime mode and no-op refresh cannot authorize runtime, execution, or output files."
+    },
+    {
+      "id": "static-flag-reader-false",
+      "description": "flagReader and flagReadNow must remain false."
+    },
+    {
+      "id": "static-no-env-config-flag-read",
+      "description": "No env/config/flag/process env/secret/raw-config read is allowed."
+    },
+    {
+      "id": "static-kill-switch-visible-reference-only",
+      "description": "Kill switch must remain visible/fail-closed/reference-only/unwired/unimplemented."
+    },
+    {
+      "id": "static-kill-switch-live-values-false",
+      "description": "killWired, liveCheck, bypass, and allow_open must remain false."
+    },
+    {
+      "id": "static-wiring-availability-false",
+      "description": "killSwitchWiringAvailable, wiringImplemented, and wiringAuthorized must remain false."
+    },
+    {
+      "id": "static-prerequisite-gaps-blocking",
+      "description": "Runtime-mode-flag and live-kill-switch prerequisite gaps must be unsatisfied/blocking/non-authorizing."
+    },
+    {
+      "id": "static-readiness-gaps-blocking",
+      "description": "All six readiness gaps must remain unsatisfied/blocking/non-authorizing."
+    },
+    {
+      "id": "static-preimplementation-gaps-blocking",
+      "description": "All eight preimplementation checklist gaps must remain unsatisfied/blocking/non-authorizing."
+    },
+    {
+      "id": "static-noop-item-count",
+      "description": "No-op dry-check must contain seven contract-only non-authorizing items."
+    },
+    {
+      "id": "static-noop-items-non-authorizing",
+      "description": "Every no-op dry-check item must be non-authorizing for runtime and kill-switch wiring."
+    },
+    {
+      "id": "static-blocked-future-slices",
+      "description": "All five future slices remain blocked now and require future contracts."
+    },
+    {
+      "id": "static-capability-matrix-false",
+      "description": "Runtime, runner, server local execution, model proof, flag reader, no-op, refresh, and wiring flags remain false."
+    },
+    {
+      "id": "static-direct-builder-oracle-targets-blocked",
+      "description": "Direct Builder/Oracle server targeting must remain blocked."
+    },
+    {
+      "id": "static-proof-boundaries-false",
+      "description": "Socket, delivery acceptance, Phase48 commit, and no-op boundary refresh must not become proof or authorization."
+    },
+    {
+      "id": "static-no-runtime-side-effects",
+      "description": "No runtime/server/listener/routes side effects are allowed."
+    },
+    {
+      "id": "static-no-ui-browser-capture",
+      "description": "No UI/browser/window/capture behavior is allowed."
+    },
+    {
+      "id": "static-no-network-store-queue-lease",
+      "description": "No network, store, queue, or lease behavior is allowed."
+    },
+    {
+      "id": "static-no-auth-key-secret",
+      "description": "No auth/key/secret behavior is allowed."
+    },
+    {
+      "id": "static-no-local-execution",
+      "description": "No local execution, shell, or PTY behavior is allowed."
+    },
+    {
+      "id": "static-no-control-reporting-sink",
+      "description": "No control execution or reporting sink behavior is allowed."
+    },
+    {
+      "id": "static-no-send-deploy-trade",
+      "description": "No send, deploy, or trade behavior is allowed."
+    },
+    {
+      "id": "static-no-output-file",
+      "description": "No output file behavior is allowed."
+    },
+    {
+      "id": "static-validation-report-bound",
+      "description": "Validation report static, acceptance, tamper, literal, path, forbidden, and side-effect checks must be bound."
+    },
+    {
+      "id": "static-forbidden-output-scan",
+      "description": "Forbidden output strings must reject affirmative runtime/wiring/secret/action claims."
+    },
+    {
+      "id": "static-unsafe-action-policy",
+      "description": "Customer/client/email/message/send, deploy, trade, money, shell, and PTY drift must remain blocked."
+    },
+    {
+      "id": "static-next-recommendations-tier0-tier1-only",
+      "description": "Next recommendations must be Tier0/Tier1 only, non-authorizing, and not live runtime work."
+    },
+    {
+      "id": "static-readiness-rollup-contract-only",
+      "description": "Readiness rollup through Phase50 remains fixture-only, blocked, unread, unwired, and non-authorizing."
+    },
+    {
+      "id": "static-noop-boundary-refresh-still-contract-only",
+      "description": "No-op boundary refresh remains contract-only: no request reads, no no-op execution, no live check, and no output files."
+    },
+    {
+      "id": "static-readiness-rollup-non-authorizing",
+      "description": "Readiness rollup does not authorize runtime, kill-switch wiring, local execution, live checks, or output files."
+    },
+    {
+      "id": "static-readiness-rollup-through-phase50-contract-only",
+      "description": "Readiness rollup through Phase50 remains fixture-only, blocked, unread, unwired, and non-authorizing."
+    },
+    {
+      "id": "static-phase50-readiness-rollup-current",
+      "description": "Phase50 readiness rollup is committed at 6ecba39 and carried as validation-only evidence, not runtime proof."
+    },
+    {
+      "id": "static-phase49-boundary-refresh-still-evidence-only",
+      "description": "Phase49 no-op boundary refresh remains evidence-only and does not authorize runtime, no-op execution, or live checks."
+    },
+    {
+      "id": "static-readiness-rollup-through-phase50-non-authorizing",
+      "description": "Readiness rollup through Phase50 does not authorize runtime, kill-switch wiring, local execution, live checks, or output files."
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "accept-schema-baseline-6ecba39",
+      "expected": "schema and baseline accepted exactly"
+    },
+    {
+      "id": "accept-registries-48-48-48",
+      "expected": "phase/schema/CLI registries equal 50/50/50"
+    },
+    {
+      "id": "accept-commit-chain-36-ending-6ecba39",
+      "expected": "commit chain has 36 entries and last commit 6ecba39"
+    },
+    {
+      "id": "accept-phase50-validator-satisfied",
+      "expected": "phase52-kill-switch-wiring-readiness-rollup-through-phase50-validator is satisfied_by_6ecba39_do_not_repeat_as_open_work"
+    },
+    {
+      "id": "accept-phase50-readiness-rollup-selected",
+      "expected": "phase50-kill-switch-wiring-readiness-rollup-through-phase50-contract is selected fixture-only"
+    },
+    {
+      "id": "accept-phase35-through-49-current",
+      "expected": "Phase35 through Phase48 current truth preserved"
+    },
+    {
+      "id": "accept-stale-phase13-23-31",
+      "expected": "Phase13/23/31 stale truth preserved"
+    },
+    {
+      "id": "accept-phase34-recs-satisfied",
+      "expected": "Phase34 prior recommendations are satisfied and not reopened"
+    },
+    {
+      "id": "accept-oracle-closure-through-200",
+      "expected": "ORACLE closure chain through #190 carried"
+    },
+    {
+      "id": "accept-noop-refresh-contract-only",
+      "expected": "no-op boundary refresh summary remains contract-only and non-authorizing"
+    },
+    {
+      "id": "accept-noop-boundary-status-blocked",
+      "expected": "no-op boundary status blocks request reads, execution, live checks, and output files"
+    },
+    {
+      "id": "accept-noop-request-no-read",
+      "expected": "no-op request does not read env/config/flag/process env/secret/raw config"
+    },
+    {
+      "id": "accept-noop-result-no-proof",
+      "expected": "no-op result does not prove runtime, wiring, or live check"
+    },
+    {
+      "id": "accept-runtime-mode-default-off",
+      "expected": "runtime mode disabled/default-off/local-dev-only/reference-only"
+    },
+    {
+      "id": "accept-runtime-mode-unimplemented",
+      "expected": "runtime mode implemented=false"
+    },
+    {
+      "id": "accept-runtime-mode-non-authorizing",
+      "expected": "runtime mode authorizes_runtime=false"
+    },
+    {
+      "id": "accept-flag-reader-false",
+      "expected": "flagReader=false and flagReadNow=false"
+    },
+    {
+      "id": "accept-no-env-read",
+      "expected": "envReadNow=false and no_env_read=true"
+    },
+    {
+      "id": "accept-no-config-read",
+      "expected": "configReadNow=false and no_config_read=true"
+    },
+    {
+      "id": "accept-no-flag-read",
+      "expected": "no_flag_read=true"
+    },
+    {
+      "id": "accept-no-process-env-read",
+      "expected": "no_process_env_read=true"
+    },
+    {
+      "id": "accept-no-secret-read",
+      "expected": "secretReadNow=false and no_secret_read=true"
+    },
+    {
+      "id": "accept-no-raw-config-export",
+      "expected": "rawConfigExportNow=false and no_raw_config_export=true"
+    },
+    {
+      "id": "accept-kill-switch-visible-fail-closed",
+      "expected": "kill switch visible=true and fail_closed=true"
+    },
+    {
+      "id": "accept-kill-switch-reference-only-unwired",
+      "expected": "kill switch reference_only=true and unwired=true"
+    },
+    {
+      "id": "accept-kill-switch-unimplemented",
+      "expected": "kill switch unimplemented=true"
+    },
+    {
+      "id": "accept-kill-wired-false",
+      "expected": "killWired=false"
+    },
+    {
+      "id": "accept-live-check-false",
+      "expected": "liveCheck=false"
+    },
+    {
+      "id": "accept-bypass-false",
+      "expected": "bypass=false"
+    },
+    {
+      "id": "accept-allow-open-false",
+      "expected": "allow_open=false"
+    },
+    {
+      "id": "accept-wiring-available-false",
+      "expected": "killSwitchWiringAvailable=false"
+    },
+    {
+      "id": "accept-wiring-implemented-false",
+      "expected": "wiringImplemented=false"
+    },
+    {
+      "id": "accept-wiring-authorized-false",
+      "expected": "wiringAuthorized=false"
+    },
+    {
+      "id": "accept-prerequisite-gaps-two",
+      "expected": "two prerequisite gaps present"
+    },
+    {
+      "id": "accept-prerequisite-gaps-unsatisfied",
+      "expected": "all prerequisite gaps unsatisfied/blocking/non-authorizing"
+    },
+    {
+      "id": "accept-readiness-gaps-six",
+      "expected": "six readiness gaps present"
+    },
+    {
+      "id": "accept-readiness-gaps-unsatisfied",
+      "expected": "all readiness gaps unsatisfied/blocking/non-authorizing"
+    },
+    {
+      "id": "accept-preimplementation-gaps-eight",
+      "expected": "eight preimplementation checklist gaps present"
+    },
+    {
+      "id": "accept-preimplementation-gaps-unsatisfied",
+      "expected": "all preimplementation checklist gaps unsatisfied/blocking/non-authorizing"
+    },
+    {
+      "id": "accept-noop-items-seven",
+      "expected": "seven no-op dry-check items present"
+    },
+    {
+      "id": "accept-noop-items-non-authorizing",
+      "expected": "all no-op dry-check items are contract-only and non-authorizing"
+    },
+    {
+      "id": "accept-blocked-future-slices-five",
+      "expected": "five future slices blocked"
+    },
+    {
+      "id": "accept-capability-false",
+      "expected": "runtime/runner/server/proof/flag/noop/refresh/wiring capability flags false"
+    },
+    {
+      "id": "accept-direct-targets-blocked",
+      "expected": "direct Builder/Oracle server targets blocked"
+    },
+    {
+      "id": "accept-proof-boundaries-false",
+      "expected": "socket/delivery/commit/no-op refresh are not proof or authorization"
+    },
+    {
+      "id": "accept-side-effect-truth",
+      "expected": "all no-side-effect truth fields true"
+    },
+    {
+      "id": "accept-forbidden-substrings",
+      "expected": "forbidden output scan rejects affirmative overclaims"
+    },
+    {
+      "id": "accept-unsafe-action-phrases",
+      "expected": "unsafe action drift remains blocked"
+    },
+    {
+      "id": "accept-next-recs-tier0-tier1",
+      "expected": "next recommendations are Tier0/Tier1 only"
+    },
+    {
+      "id": "accept-next-recs-non-authorizing",
+      "expected": "next recommendations do not authorize runtime, execution, wiring, live checks, sends, deploys, trades, or output files"
+    },
+    {
+      "id": "accept-readiness-rollup-contract-only",
+      "expected": "readiness_rollup_summary decision remains contract-only and ready flags are false"
+    },
+    {
+      "id": "accept-readiness-rollup-non-authorizing",
+      "expected": "readiness_rollup_summary authorizes_runtime, authorizes_kill_switch_wiring, authorizes_local_execution, and authorizes_output_file are false"
+    },
+    {
+      "id": "accept-source-refs-include-phase50",
+      "expected": "source_refs include phase50-kill-switch-wiring-noop-boundary-refresh fixture evidence"
+    },
+    {
+      "id": "accept-readiness-rollup-through-phase50-contract-only",
+      "expected": "readiness_rollup_summary current_through_phase=50 and ready flags are false"
+    },
+    {
+      "id": "accept-phase50-readiness-rollup-current",
+      "expected": "phase50 readiness rollup summary references 6ecba39, ORACLE #200, BUILDER #306, validation-only truth, and no side effects"
+    },
+    {
+      "id": "accept-readiness-rollup-through-phase50-non-authorizing",
+      "expected": "readiness_rollup_summary authorizes_runtime, authorizes_kill_switch_wiring, authorizes_local_execution, and authorizes_output_file are false"
+    },
+    {
+      "id": "accept-phase51-report-identity-current",
+      "expected": "expectedValidationReportShape required literal identity uses Phase51 fixture path, Phase50 report schema, and baseline 6ecba39"
+    }
+  ],
+  "tamperCases": [
+    {
+      "id": "tamper-baseline-drift",
+      "mutation": "baseline_commit=not-6ecba39",
+      "expectedFailure": "baseline-drift-rejected"
+    },
+    {
+      "id": "tamper-registry-count-47",
+      "mutation": "phase_registry.phase_inventory_count=47",
+      "expectedFailure": "phase-registry-count-rejected"
+    },
+    {
+      "id": "tamper-commit-chain-tail",
+      "mutation": "commit_chain[-1]=2bff807",
+      "expectedFailure": "commit-chain-tail-rejected"
+    },
+    {
+      "id": "tamper-phase50-validator-reopened",
+      "mutation": "satisfied_prior_recommendations[0].status=open_work",
+      "expectedFailure": "prior-recommendation-reopen-rejected"
+    },
+    {
+      "id": "tamper-wrong-source-recommendation",
+      "mutation": "source_recommendation.recommendation_id=phase50-wrong-contract",
+      "expectedFailure": "source-recommendation-rejected"
+    },
+    {
+      "id": "tamper-stale-phase23-cleared",
+      "mutation": "stale_readiness.phase23_stale=false",
+      "expectedFailure": "stale-readiness-truth-rejected"
+    },
+    {
+      "id": "tamper-missing-oracle-190",
+      "mutation": "closure_summary.oracle_200_phase50_review_closure_carried=false",
+      "expectedFailure": "closure-chain-rejected"
+    },
+    {
+      "id": "tamper-noop-refresh-ready",
+      "mutation": "noop_boundary_refresh_summary.ready_for_kill_switch_wiring_now=true",
+      "expectedFailure": "noop-refresh-summary-rejected"
+    },
+    {
+      "id": "tamper-noop-boundary-execution-allowed",
+      "mutation": "noop_boundary_status.noop_execution_allowed=true",
+      "expectedFailure": "noop-boundary-status-rejected"
+    },
+    {
+      "id": "tamper-noop-request-reads-flag",
+      "mutation": "noop_dry_check_request_contract.no_env_config_flag_read=false",
+      "expectedFailure": "noop-request-read-rejected"
+    },
+    {
+      "id": "tamper-noop-result-live-check",
+      "mutation": "noop_dry_check_result_contract.no_live_check_performed=false",
+      "expectedFailure": "noop-result-proof-rejected"
+    },
+    {
+      "id": "tamper-runtime-mode-enabled",
+      "mutation": "runtime_mode_boundary.disabled=false",
+      "expectedFailure": "runtime-mode-boundary-rejected"
+    },
+    {
+      "id": "tamper-runtime-mode-implemented",
+      "mutation": "runtime_mode_boundary.implemented=true",
+      "expectedFailure": "runtime-mode-implementation-rejected"
+    },
+    {
+      "id": "tamper-runtime-authorized",
+      "mutation": "runtime_mode_boundary.authorizes_runtime=true",
+      "expectedFailure": "runtime-authorization-rejected"
+    },
+    {
+      "id": "tamper-flag-reader-true",
+      "mutation": "flag_reader_boundary.flagReader=true",
+      "expectedFailure": "flag-reader-rejected"
+    },
+    {
+      "id": "tamper-flag-read-now-true",
+      "mutation": "flag_reader_boundary.flagReadNow=true",
+      "expectedFailure": "flag-read-now-rejected"
+    },
+    {
+      "id": "tamper-env-read-now-true",
+      "mutation": "flag_reader_boundary.envReadNow=true",
+      "expectedFailure": "env-read-rejected"
+    },
+    {
+      "id": "tamper-config-read-now-true",
+      "mutation": "flag_reader_boundary.configReadNow=true",
+      "expectedFailure": "config-read-rejected"
+    },
+    {
+      "id": "tamper-secret-read-now-true",
+      "mutation": "flag_reader_boundary.secretReadNow=true",
+      "expectedFailure": "secret-read-rejected"
+    },
+    {
+      "id": "tamper-kill-wired-true",
+      "mutation": "kill_switch_boundary.killWired=true",
+      "expectedFailure": "kill-wired-rejected"
+    },
+    {
+      "id": "tamper-live-check-true",
+      "mutation": "kill_switch_boundary.liveCheck=true",
+      "expectedFailure": "live-check-rejected"
+    },
+    {
+      "id": "tamper-bypass-true",
+      "mutation": "kill_switch_boundary.bypass=true",
+      "expectedFailure": "kill-switch-bypass-rejected"
+    },
+    {
+      "id": "tamper-allow-open-true",
+      "mutation": "kill_switch_boundary.allow_open=true",
+      "expectedFailure": "allow-open-rejected"
+    },
+    {
+      "id": "tamper-kill-switch-wiring-available",
+      "mutation": "kill_switch_wiring_boundary.killSwitchWiringAvailable=true",
+      "expectedFailure": "kill-switch-wiring-availability-rejected"
+    },
+    {
+      "id": "tamper-wiring-authorized",
+      "mutation": "kill_switch_wiring_boundary.wiringAuthorized=true",
+      "expectedFailure": "wiring-authorization-rejected"
+    },
+    {
+      "id": "tamper-prerequisite-gap-satisfied",
+      "mutation": "prerequisite_gap_matrix[0].satisfied_now=true",
+      "expectedFailure": "prerequisite-gap-rejected"
+    },
+    {
+      "id": "tamper-readiness-gap-satisfied",
+      "mutation": "readiness_gap_matrix[0].satisfied_now=true",
+      "expectedFailure": "readiness-gap-rejected"
+    },
+    {
+      "id": "tamper-preimplementation-gap-satisfied",
+      "mutation": "preimplementation_checklist_gaps[0].satisfied_now=true",
+      "expectedFailure": "preimplementation-gap-rejected"
+    },
+    {
+      "id": "tamper-noop-item-satisfied",
+      "mutation": "noop_dry_check_items[0].satisfied_now=true",
+      "expectedFailure": "noop-item-rejected"
+    },
+    {
+      "id": "tamper-future-slice-allowed",
+      "mutation": "blocked_future_slices[0].implementation_allowed_now=true",
+      "expectedFailure": "future-slice-allowance-rejected"
+    },
+    {
+      "id": "tamper-server-can-execute-local",
+      "mutation": "capability_matrix.serverCanExecuteLocal=true",
+      "expectedFailure": "capability-overclaim-rejected"
+    },
+    {
+      "id": "tamper-noop-boundary-refresh-available",
+      "mutation": "capability_matrix.noopBoundaryRefreshAvailable=true",
+      "expectedFailure": "noop-refresh-availability-overclaim-rejected"
+    },
+    {
+      "id": "tamper-socket-proof",
+      "mutation": "proof_boundaries.socket_is_bridge_green=true",
+      "expectedFailure": "proof-overclaim-rejected"
+    },
+    {
+      "id": "tamper-noop-refresh-proof",
+      "mutation": "proof_boundaries.noop_boundary_refresh_contract_is_live_check_proof=true",
+      "expectedFailure": "proof-overclaim-rejected"
+    },
+    {
+      "id": "tamper-output-file-side-effect",
+      "mutation": "side_effect_result.no_output_file_written=false",
+      "expectedFailure": "side-effect-truth-rejected"
+    },
+    {
+      "id": "tamper-noop-execution-side-effect",
+      "mutation": "side_effect_result.no_noop_execution_performed=false",
+      "expectedFailure": "side-effect-truth-rejected"
+    },
+    {
+      "id": "tamper-live-check-side-effect",
+      "mutation": "side_effect_result.no_kill_switch_live_check_performed=false",
+      "expectedFailure": "side-effect-truth-rejected"
+    },
+    {
+      "id": "tamper-customer-send-next-action",
+      "mutation": "next_phase_recommendations[0].safe_next_action=send email to customer",
+      "expectedFailure": "unsafe-action-drift-rejected"
+    },
+    {
+      "id": "tamper-deploy-next-action",
+      "mutation": "next_phase_recommendations[0].safe_next_action=deploy runtime service",
+      "expectedFailure": "unsafe-action-drift-rejected"
+    },
+    {
+      "id": "tamper-readiness-rollup-ready",
+      "mutation": "readiness_rollup_summary.ready_for_kill_switch_wiring_now=true",
+      "expectedFailure": "accept-readiness-rollup-contract-only"
+    },
+    {
+      "id": "tamper-readiness-rollup-authorized",
+      "mutation": "readiness_rollup_summary.authorizes_runtime=true",
+      "expectedFailure": "accept-readiness-rollup-non-authorizing"
+    },
+    {
+      "id": "tamper-readiness-rollup-through-phase50-ready",
+      "mutation": "readiness_rollup_summary.ready_for_kill_switch_wiring_now=true",
+      "expectedFailure": "accept-readiness-rollup-through-phase50-contract-only"
+    },
+    {
+      "id": "tamper-readiness-rollup-through-phase50-authorized",
+      "mutation": "readiness_rollup_summary.authorizes_runtime=true",
+      "expectedFailure": "accept-readiness-rollup-through-phase50-non-authorizing"
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "runtime started",
+    "runtime available now",
+    "runner executed",
+    "server can execute local",
+    "server can prove model processing",
+    "builder target allowed",
+    "oracle target allowed",
+    "kill switch wired",
+    "kill switch live check performed",
+    "allow open",
+    "flag reader implemented",
+    "flag read now",
+    "env read",
+    "process.env",
+    "secret read",
+    "raw config",
+    "output file written",
+    "database written",
+    "store written",
+    "queue created",
+    "lease created",
+    "reporting sink written",
+    "shell executed",
+    "pty executed",
+    "network request",
+    "listener started",
+    "route registered",
+    "browser opened",
+    "capture performed",
+    "noop dry check available",
+    "noop dry check executed",
+    "noop boundary refresh available",
+    "send customer",
+    "email customer",
+    "message client",
+    "deploy",
+    "trade"
+  ],
+  "unsafeActionPhrases": [
+    "send email to customer",
+    "email a client",
+    "message the client",
+    "send message to client",
+    "customer email",
+    "client email",
+    "send a customer message",
+    "safe to send customer message",
+    "deploy",
+    "trade",
+    "financial action",
+    "local shell",
+    "run pty",
+    "open browser",
+    "capture screen",
+    "write output file",
+    "create queue",
+    "create lease"
+  ],
+  "nextRecommendationExpectedCandidates": [
+    {
+      "recommendation_id": "phase52-kill-switch-wiring-readiness-rollup-through-phase50-validator",
+      "tier": "tier0",
+      "kind": "validation_only_builder_validator",
+      "safe_next_action": "Implement validation-only module CLI test for this Phase50 readiness rollup fixture",
+      "does_not_authorize_runtime": true,
+      "does_not_authorize_execution": true,
+      "does_not_authorize_kill_switch_wiring": true,
+      "does_not_authorize_noop_execution": true,
+      "does_not_authorize_live_check": true,
+      "does_not_authorize_output_files": true
+    },
+    {
+      "recommendation_id": "phase52-kill-switch-wiring-readiness-rollup-through-phase51-contract",
+      "tier": "tier1",
+      "kind": "fixture_only_contract",
+      "safe_next_action": "Refresh kill-switch wiring readiness after Phase51 validation without implementing runtime, flag reads, wiring, live checks, or output files",
+      "does_not_authorize_runtime": true,
+      "does_not_authorize_execution": true,
+      "does_not_authorize_kill_switch_wiring": true,
+      "does_not_authorize_noop_execution": true,
+      "does_not_authorize_live_check": true,
+      "does_not_authorize_output_files": true
+    }
+  ],
+  "summaryCriteria": {
+    "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase50-contract.json",
+    "json_parse_required": true,
+    "baseline_commit": "6ecba39",
+    "phase_registry_current_through": 50,
+    "schema_registry_count": 50,
+    "cli_registry_count": 50,
+    "commit_chain_count": 38,
+    "commit_chain_ends_at": "6ecba39",
+    "phase50_tier0_satisfied": "satisfied_by_6ecba39_do_not_repeat_as_open_work",
+    "phase50_tier1_selected_fixture_only": "phase51-kill-switch-wiring-readiness-rollup-through-phase50-contract",
+    "phase35_to_phase50_current": true,
+    "stale_phase13_23_31_preserved": true,
+    "closure_chain_through_oracle_200": true,
+    "source_ref_count": 20,
+    "noop_dry_check_items": 7,
+    "preimplementation_gaps": 8,
+    "prerequisite_gaps": 2,
+    "readiness_gaps": 6,
+    "blocked_future_slices": 5,
+    "runtime_started": false,
+    "runner_executed": false,
+    "runtime_available": false,
+    "flag_reader": false,
+    "flag_read_now": false,
+    "env_config_flag_read": false,
+    "kill_wired": false,
+    "live_check": false,
+    "kill_switch_wiring_available": false,
+    "noop_dry_check_available": false,
+    "noop_boundary_refresh_available": false,
+    "readiness_rollup_available": false,
+    "next_recommendations_tier0_tier1_only": true,
+    "diff_check_clean_required": true,
+    "caveats_expected": []
+  },
+  "currentTruthExpected": {
+    "phase35_current": true,
+    "phase36_current": true,
+    "phase37_current": true,
+    "phase38_current": true,
+    "phase39_current": true,
+    "phase40_current": true,
+    "phase41_current": true,
+    "phase42_current": true,
+    "phase43_current": true,
+    "phase44_current": true,
+    "phase45_current": true,
+    "phase46_current": true,
+    "phase47_current": true,
+    "phase48_current": true,
+    "phase49_current": true,
+    "phase49_noop_boundary_refresh_validation_current": true,
+    "kill_switch_wiring_readiness_rollup_remains_non_authorizing": true,
+    "noop_boundary_refresh_remains_contract_only": true,
+    "noop_dry_check_remains_contract_only": true,
+    "no_env_config_flag_read_now": true,
+    "kill_switch_remains_unwired": true,
+    "phase50_current": true,
+    "phase50_readiness_rollup_validation_current": true,
+    "kill_switch_wiring_readiness_rollup_through_phase50_remains_non_authorizing": true
+  },
+  "staleReadinessExpected": {
+    "phase13_stale": true,
+    "phase23_stale": true,
+    "phase31_stale": true
+  },
+  "phase34PriorRecommendationsExpected": {
+    "satisfied_and_not_reopened": true
+  },
+  "closureSummaryExpected": {
+    "closed_review_refs": [
+      "ORACLE #115",
+      "ORACLE #123",
+      "ORACLE #127",
+      "ORACLE #131",
+      "ORACLE #134",
+      "ORACLE #137",
+      "ORACLE #141",
+      "ORACLE #148",
+      "ORACLE #149",
+      "ORACLE #156",
+      "ORACLE #161",
+      "ORACLE #165",
+      "ORACLE #168",
+      "ORACLE #171",
+      "ORACLE #174",
+      "ORACLE #178",
+      "ORACLE #182",
+      "ORACLE #186",
+      "ORACLE #190",
+      "ORACLE #194",
+      "ORACLE #200"
+    ],
+    "oracle_200_phase50_review_closure_carried": true,
+    "builder_306_phase50_validation_report_carried": true
+  },
+  "readinessRollupSummaryExpected": {
+    "decision": "remain_kill_switch_wiring_readiness_rollup_contract_only",
+    "status": "rollup_only_blocked_unread_unwired_non_authorizing",
+    "current_through_phase": 50,
+    "selected_source_recommendation": "phase51-kill-switch-wiring-readiness-rollup-through-phase50-contract",
+    "satisfied_prior_recommendation": "phase51-kill-switch-wiring-readiness-rollup-through-phase49-validator",
+    "phase49_validator_satisfied": true,
+    "ready_for_runtime_now": false,
+    "ready_for_dry_run_now": false,
+    "ready_for_kill_switch_wiring_now": false,
+    "ready_for_noop_execution_now": false,
+    "runtime_mode_flag_reader_implemented": false,
+    "live_kill_switch_wired": false,
+    "noop_boundary_refresh_available": false,
+    "all_gaps_blocking": true,
+    "all_future_slices_blocked": true,
+    "all_next_recommendations_non_authorizing": true,
+    "authorizes_runtime": false,
+    "authorizes_kill_switch_wiring": false,
+    "authorizes_local_execution": false,
+    "authorizes_output_file": false,
+    "phase50_validator_satisfied": true
+  },
+  "phase49BoundaryRefreshSummaryExpected": {
+    "source_phase": 49,
+    "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json",
+    "module_path": "ui/modules/mira-core/kill-switch-wiring-noop-boundary-refresh.js",
+    "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-noop-boundary-refresh.js",
+    "test_path": "ui/__tests__/mira-core-kill-switch-wiring-noop-boundary-refresh.test.js",
+    "committed_baseline": "17441a8",
+    "validation_green": true,
+    "targeted_tests": "18/18",
+    "combined_mira_core_tests": "49 suites / 777 tests",
+    "oracle_review_ref": "ORACLE #194",
+    "builder_report_ref": "BUILDER #301",
+    "remains_validation_only": true,
+    "remains_contract_only": true,
+    "no_runtime_performed": true,
+    "no_flag_read_performed": true,
+    "no_kill_switch_wiring_performed": true,
+    "no_noop_execution_performed": true,
+    "no_live_check_performed": true,
+    "no_output_file_written": true,
+    "does_not_authorize_runtime": true,
+    "does_not_authorize_kill_switch_wiring": true
+  },
+  "phase50ReadinessRollupSummaryExpected": {
+    "source_phase": 50,
+    "fixture_path": "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json",
+    "module_path": "ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase49.js",
+    "cli_path": "ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase49.js",
+    "test_path": "ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase49.test.js",
+    "committed_baseline": "6ecba39",
+    "validation_green": true,
+    "targeted_tests": "14/14",
+    "combined_mira_core_tests": "50 suites / 791 tests",
+    "oracle_review_ref": "ORACLE #200",
+    "builder_report_ref": "BUILDER #306",
+    "remains_validation_only": true,
+    "remains_contract_only": true,
+    "no_runtime_performed": true,
+    "no_flag_read_performed": true,
+    "no_kill_switch_wiring_performed": true,
+    "no_noop_execution_performed": true,
+    "no_live_check_performed": true,
+    "no_output_file_written": true,
+    "does_not_authorize_runtime": true,
+    "does_not_authorize_kill_switch_wiring": true
+  }
+}
