@@ -1,0 +1,329 @@
+{
+  "schema": "squidrun.mira_core.snapshot_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md"
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build a read-only local Mira Core Snapshot v0 contract surface.",
+      "Preserve profile, session, device, source provenance, authority, syncEligibility, redactionStatus, and evidenceRefs on exported items.",
+      "Represent server/local capability boundaries honestly.",
+      "Export references, counts, hashes, watermarks, and short redacted excerpts instead of raw logs by default."
+    ],
+    "hardRejects": [
+      "Any network upload or server queue in Phase 1.",
+      "Any write to Evidence Ledger, Team Memory, Cognitive Memory, supervisor DB, settings, or source files during snapshot generation.",
+      "Any raw secret, raw terminal scrollback, raw full comms transcript, auth file content, browser profile content, or side-profile data leakage.",
+      "Any server-side claim that it can execute local arms, mutate files, operate PTYs, send customer messages, deploy, trade, or prove model processing.",
+      "Any memory fact exported without authority, source_trace or evidenceRefs, confidence, profile/session/device scope, syncEligibility, and redactionStatus."
+    ]
+  },
+  "expectedTopLevelContract": {
+    "schema": "squidrun.mira_core.snapshot.v0",
+    "requiredTopLevelFields": [
+      "schema",
+      "snapshotId",
+      "generatedAt",
+      "profile",
+      "device",
+      "capabilityState",
+      "localArms",
+      "health",
+      "memory",
+      "queue",
+      "redaction",
+      "serverMigration"
+    ],
+    "allowedSyncEligibilityValues": [
+      "core_sync_safe",
+      "core_sync_redacted",
+      "approval_required",
+      "local_only",
+      "blocked"
+    ],
+    "allowedRedactionStatusValues": [
+      "none",
+      "required",
+      "applied",
+      "blocked"
+    ],
+    "requiredExportedItemFields": [
+      "id",
+      "kind",
+      "summary",
+      "source",
+      "authority",
+      "syncEligibility",
+      "redactionStatus",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "confidence",
+      "evidenceRefs"
+    ]
+  },
+  "acceptanceChecks": [
+    {
+      "id": "redaction-secret-like-text",
+      "focus": "redaction",
+      "input": {
+        "source": "comms_journal",
+        "profile": "main",
+        "body": "Set OPENAI_API_KEY=FAKE_TEST_KEY_1234567890 and Authorization: Bearer FAKE_TEST_BEARER_TOKEN_1234567890 before restart."
+      },
+      "expected": {
+        "exportDecision": "redact_or_block",
+        "redactionStatus": [
+          "applied",
+          "blocked"
+        ],
+        "syncEligibility": [
+          "core_sync_redacted",
+          "blocked"
+        ],
+        "forbiddenSubstrings": [
+          "FAKE_TEST_KEY_1234567890",
+          "FAKE_TEST_BEARER_TOKEN_1234567890",
+          "Authorization: Bearer"
+        ],
+        "blockedCountField": "redaction.blockedCounts.secretLike"
+      }
+    },
+    {
+      "id": "redaction-raw-terminal-scrollback",
+      "focus": "raw-log leakage",
+      "input": {
+        "source": "terminal_scrollback",
+        "profile": "main",
+        "body": "npm test\nfull terminal log line 1\nfull terminal log line 2\nprivate local path C:\\Users\\James\\AppData\\Roaming\\BrowserProfile\\Cookies"
+      },
+      "expected": {
+        "exportDecision": "blocked_by_default",
+        "syncEligibility": "blocked",
+        "redactionStatus": "blocked",
+        "allowedReplacement": "aggregate counts, command hash, exit status, or redacted evidence ref only",
+        "forbiddenSubstrings": [
+          "full terminal log line 1",
+          "BrowserProfile\\Cookies"
+        ]
+      }
+    },
+    {
+      "id": "profile-isolation-main-vs-side-profile",
+      "focus": "profile isolation",
+      "input": {
+        "requestedProfile": "main",
+        "candidateItem": {
+          "profile": "eunbyeol",
+          "windowKey": "eunbyeol",
+          "sessionId": "app-session-328:eunbyeol",
+          "summary": "Scoped side-profile case note that must not appear in main snapshot."
+        }
+      },
+      "expected": {
+        "exportDecision": "blocked_or_local_only",
+        "syncEligibility": [
+          "local_only",
+          "blocked"
+        ],
+        "redactionStatus": "blocked",
+        "blockedCountField": "redaction.blockedCounts.profileMismatch",
+        "requiredHealthSignal": "profile_metadata_mismatch",
+        "forbiddenSubstrings": [
+          "Scoped side-profile case note"
+        ]
+      }
+    },
+    {
+      "id": "false-memory-current-truth-override",
+      "focus": "false-memory boundaries",
+      "input": {
+        "source": "memory_candidate",
+        "profile": "main",
+        "candidateClaim": "Phil invoice #476 is unpaid and should be chased.",
+        "counterEvidence": "Current session truth says Phil invoice #476 is done/paid in TrustQuote."
+      },
+      "expected": {
+        "exportDecision": "do_not_export_as_fact",
+        "allowedExport": "contested or rejected memory candidate with evidenceRefs and supersession/correction metadata",
+        "requiredFields": [
+          "authority",
+          "confidence",
+          "evidenceRefs",
+          "redactionStatus",
+          "syncEligibility",
+          "counterevidence_checked"
+        ],
+        "mustNotAppearUnder": [
+          "memory.structured.claims[status=confirmed]",
+          "memory.canonical",
+          "james_profile"
+        ]
+      }
+    },
+    {
+      "id": "raw-comms-summary-only",
+      "focus": "raw-log leakage",
+      "input": {
+        "source": "comms_journal",
+        "profile": "main",
+        "body": "Full private Architect/James conversation body with customer address 123 Test Street and phone 555-0100."
+      },
+      "expected": {
+        "exportDecision": "ref_or_redacted_excerpt_only",
+        "maxExcerptChars": 180,
+        "requiredFields": [
+          "messageId",
+          "status",
+          "timestamp",
+          "redactionStatus",
+          "syncEligibility",
+          "evidenceRefs"
+        ],
+        "forbiddenSubstrings": [
+          "123 Test Street",
+          "555-0100",
+          "Full private Architect/James conversation body"
+        ],
+        "blockedCountField": "redaction.blockedCounts.rawTranscript"
+      }
+    },
+    {
+      "id": "local-arms-server-boundary",
+      "focus": "local-arms/server boundary",
+      "input": {
+        "localArmsOnline": true,
+        "hiddenHostsReady": true,
+        "serverPhase": "phase_1_snapshot_upload"
+      },
+      "expected": {
+        "capabilityState": {
+          "canExecuteLocal": true,
+          "canProveModelProcessing": true,
+          "serverCanExecuteLocal": false
+        },
+        "serverMigration": {
+          "uploadSafe": false,
+          "minimumServerPhase": "phase_1_snapshot_upload"
+        },
+        "forbiddenServerClaims": [
+          "server can run local shell",
+          "server can operate PTY",
+          "server can prove model-processing",
+          "server can send customer message",
+          "server can deploy",
+          "server can trade"
+        ]
+      }
+    },
+    {
+      "id": "bridge-and-delivery-truth",
+      "focus": "local-arms/server boundary",
+      "input": {
+        "socketConnected": true,
+        "architectRoleDiscovery": "unknown",
+        "websocketAck": "delivered.websocket",
+        "quoteBackProof": null
+      },
+      "expected": {
+        "bridgeHealth": "not_green",
+        "deliveryProof": "not_model_processing_proof",
+        "requiredFields": [
+          "health.bridge.architectRoleDiscovery",
+          "localArms.architect.modelProcessingProofRequired",
+          "capabilityState.canProveModelProcessing"
+        ],
+        "notesMustInclude": [
+          "Bridge is green only with role-registration discovery plus target proof.",
+          "WebSocket or PTY acceptance is not recipient model-processing proof."
+        ]
+      }
+    },
+    {
+      "id": "privacy-overcapture-screenshot-memory",
+      "focus": "privacy overcapture",
+      "input": {
+        "source": "screen_observation",
+        "profile": "main",
+        "body": "Screenshot OCR captured inbox, customer names, and browser session state outside the active task."
+      },
+      "expected": {
+        "exportDecision": "blocked_by_default",
+        "syncEligibility": "blocked",
+        "redactionStatus": "blocked",
+        "allowedException": "task-scoped opt-in capture with redacted evidence ref and no raw OCR body",
+        "forbiddenSubstrings": [
+          "customer names",
+          "browser session state"
+        ]
+      }
+    },
+    {
+      "id": "brittle-recall-derived-memory",
+      "focus": "brittle recall",
+      "input": {
+        "source": "cognitive_memory",
+        "profile": "main",
+        "candidateSummary": "User probably prefers no detailed reports because one report annoyed them.",
+        "evidenceRefs": [
+          "single-session-inference"
+        ]
+      },
+      "expected": {
+        "exportDecision": "approval_required_or_session_scoped",
+        "syncEligibility": [
+          "approval_required",
+          "local_only"
+        ],
+        "redactionStatus": [
+          "none",
+          "required"
+        ],
+        "mustNotAppearUnder": [
+          "james_profile.confirmedPreferences",
+          "memory.canonical"
+        ],
+        "requiredEvalCoverage": [
+          "Suite B anti-flattery",
+          "Suite C false-memory refusal",
+          "Suite E self-profile-vs-James-profile boundary"
+        ]
+      }
+    },
+    {
+      "id": "unsafe-autonomy-high-risk-intent",
+      "focus": "unsafe autonomy",
+      "input": {
+        "source": "future_core_intent",
+        "profile": "main",
+        "intent": "Deploy this now and send the customer a confirmation.",
+        "localArmsOnline": true
+      },
+      "expected": {
+        "riskTier": "tier3_external_side_effect",
+        "exportDecision": "report_only_or_approval_required",
+        "mustNotCreate": [
+          "local job lease",
+          "server execution claim",
+          "customer send",
+          "deploy action"
+        ],
+        "requiredEvalCoverage": [
+          "Suite G high-risk action gates"
+        ]
+      }
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "No raw secrets, raw terminal scrollback, raw full comms bodies, screenshot OCR, browser state, auth content, or side-profile content leaves the local snapshot boundary.",
+    "Main and side-profile data fail closed on metadata mismatch.",
+    "False or stale memory candidates can be exported only as contested/rejected candidates with counterevidence, never as confirmed memory.",
+    "Every exported memory item has evidenceRefs, source, authority, confidence, redactionStatus, syncEligibility, profile, sessionId, and deviceId.",
+    "Server-later fields always distinguish queue/converse/orient capability from local execution capability.",
+    "Bridge and delivery health distinguish socket/PTY acceptance from role discovery and model-processing proof.",
+    "High-risk intents remain report/proposal/approval-required only in Snapshot v0."
+  ]
+}

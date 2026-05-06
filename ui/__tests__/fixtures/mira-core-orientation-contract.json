@@ -1,0 +1,529 @@
+{
+  "schema": "squidrun.mira_core.orientation_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-snapshot-contract.json"
+  ],
+  "purpose": "Validate that Mira Core Orientation v0 turns a redacted local snapshot into an honest, useful next-action surface without overstating capability, leaking private data, or opening high-risk actions.",
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build an orientation contract over Snapshot v0 or equivalent fixture input.",
+      "Summarize capability, memory health, bridge uncertainty, redaction status, and next safe actions.",
+      "Keep the local-arms/server boundary visible in every orientation.",
+      "Prefer bounded next safe actions over vague status prose."
+    ],
+    "hardRejects": [
+      "Orientation claims server or cloud can run local shell, operate PTY, mutate files, send externally, deploy, trade, or prove model processing.",
+      "Orientation marks bridge green from socket connection alone.",
+      "Orientation treats WebSocket/PTY acceptance as recipient model-processing proof.",
+      "Orientation hides memory consistency drift, bridge uncertainty, or redaction blocks from the operator.",
+      "Orientation includes raw comms bodies, raw terminal scrollback, raw screenshot OCR, customer addresses/phones, secrets, auth paths, browser profile content, or side-profile content.",
+      "Orientation recommends Tier 3 or Tier 4 actions as safe next actions in v0.",
+      "Orientation presents contested/low-confidence memory as settled fact."
+    ]
+  },
+  "expectedOrientationShape": {
+    "schema": "squidrun.mira_core.orientation.v0",
+    "requiredTopLevelFields": [
+      "schema",
+      "orientationId",
+      "generatedAt",
+      "snapshotRef",
+      "profile",
+      "capabilitySummary",
+      "boundarySummary",
+      "healthSummary",
+      "memorySummary",
+      "redactionSummary",
+      "riskSummary",
+      "nextSafeActions",
+      "blockedActions",
+      "operatorNotes"
+    ],
+    "capabilitySummaryRequiredFields": [
+      "canConverse",
+      "canQueueIntent",
+      "canRouteToArchitect",
+      "localArmsCanExecute",
+      "serverCanExecuteLocal",
+      "canProveModelProcessing",
+      "modelProcessingProofBasis"
+    ],
+    "nextSafeActionRequiredFields": [
+      "actionId",
+      "label",
+      "riskTier",
+      "allowed",
+      "requiresLocalArm",
+      "requiresReview",
+      "whySafe",
+      "evidenceRefs"
+    ],
+    "blockedActionRequiredFields": [
+      "actionId",
+      "label",
+      "riskTier",
+      "blockedBecause",
+      "safeAlternative"
+    ],
+    "allowedRiskTiersForNextSafeActionsV0": [
+      "tier0_read_only",
+      "tier1_local_reversible"
+    ],
+    "forbiddenRiskTiersForNextSafeActionsV0": [
+      "tier2_repo_mutation",
+      "tier3_external_side_effect",
+      "tier4_financial_or_irreversible"
+    ]
+  },
+  "orientationRules": [
+    {
+      "id": "capability-wording-must-be-honest",
+      "rule": "If local arms are online, orientation may say local arms can execute local work. It must still say serverCanExecuteLocal is false.",
+      "forbiddenClaims": [
+        "Mira Core can run local shell from the server",
+        "server can operate PTY",
+        "cloud can prove model processing",
+        "server can deploy from this snapshot"
+      ]
+    },
+    {
+      "id": "bridge-green-requires-proof",
+      "rule": "Bridge is not green unless role registration/discovery and target proof are present. Socket connected alone is uncertain or degraded.",
+      "requiredOperatorNoteWhenUnproven": "Bridge status is uncertain; socket/connection state is not role-target proof."
+    },
+    {
+      "id": "model-processing-proof-is-distinct",
+      "rule": "WebSocket, PTY, daemon, or trigger acceptance is not model-processing proof. Orientation must expose the proof basis.",
+      "requiredProofBasisValues": [
+        "recipient_quote_back",
+        "equivalent_transcript_proof",
+        "missing",
+        "unknown"
+      ]
+    },
+    {
+      "id": "memory-drift-is-operator-visible",
+      "rule": "Memory consistency drift must appear in healthSummary and should lower sync confidence or produce a read-only repair/check action.",
+      "requiredNextActionWhenDrift": "memory-consistency-review"
+    },
+    {
+      "id": "redaction-truth-is-preserved",
+      "rule": "If snapshot redaction has blocked/applied counts, orientation must surface those counts and must not reconstruct blocked content.",
+      "forbiddenClaims": [
+        "all memory is upload-safe",
+        "no sensitive content present"
+      ]
+    },
+    {
+      "id": "orientation-is-useful",
+      "rule": "Orientation must recommend at least one concrete next safe action when health, bridge, memory, redaction, or risk state is degraded.",
+      "minimumNextSafeActionsWhenDegraded": 1
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "healthy-local-arms-server-boundary",
+      "focus": "capability honesty",
+      "inputSnapshot": {
+        "profile": {
+          "name": "main",
+          "sessionScopeId": "app-session-328"
+        },
+        "capabilityState": {
+          "canConverse": true,
+          "canQueueIntent": true,
+          "canRouteToArchitect": true,
+          "canRouteToBuilderOracle": true,
+          "canExecuteLocal": true,
+          "canProveModelProcessing": true,
+          "serverCanExecuteLocal": false
+        },
+        "localArms": {
+          "architect": {
+            "routeStatus": "ready",
+            "modelProcessingProofRequired": true
+          },
+          "builder": {
+            "routeStatus": "ready",
+            "modelProcessingProofRequired": true
+          },
+          "oracle": {
+            "routeStatus": "ready",
+            "modelProcessingProofRequired": true
+          }
+        }
+      },
+      "expectedOrientation": {
+        "capabilitySummary": {
+          "localArmsCanExecute": true,
+          "serverCanExecuteLocal": false,
+          "canProveModelProcessing": true
+        },
+        "boundarySummaryMustInclude": [
+          "Local arms can execute local work.",
+          "Server/Core cannot execute local work in v0."
+        ],
+        "forbiddenSubstrings": [
+          "server can execute",
+          "cloud can operate PTY",
+          "server can prove model processing"
+        ]
+      }
+    },
+    {
+      "id": "bridge-socket-without-role-proof",
+      "focus": "bridge uncertainty",
+      "inputSnapshot": {
+        "health": {
+          "bridge": {
+            "ok": false,
+            "mode": "connecting",
+            "socketConnected": true,
+            "architectRoleDiscovery": "unknown",
+            "architectTargetProof": "missing"
+          }
+        }
+      },
+      "expectedOrientation": {
+        "healthSummary": {
+          "bridgeStatus": "uncertain_or_degraded"
+        },
+        "operatorNotesMustInclude": [
+          "Bridge is not green from socket connection alone.",
+          "Architect role discovery and target proof are missing or unknown."
+        ],
+        "nextSafeActionsMustInclude": [
+          {
+            "actionId": "bridge-readonly-proof-check",
+            "riskTier": "tier0_read_only",
+            "allowed": true
+          }
+        ],
+        "forbiddenSubstrings": [
+          "bridge green",
+          "cross-device ready"
+        ]
+      }
+    },
+    {
+      "id": "memory-drift-visible",
+      "focus": "memory drift",
+      "inputSnapshot": {
+        "health": {
+          "memoryConsistency": {
+            "status": "drift_detected",
+            "missing": 7,
+            "orphans": 46,
+            "duplicates": 0
+          }
+        },
+        "serverMigration": {
+          "uploadSafe": false
+        }
+      },
+      "expectedOrientation": {
+        "healthSummary": {
+          "memoryConsistencyStatus": "drift_detected",
+          "syncConfidence": "reduced"
+        },
+        "operatorNotesMustInclude": [
+          "Memory drift is present.",
+          "Broad memory sync should stay cautious until drift is reviewed."
+        ],
+        "nextSafeActionsMustInclude": [
+          {
+            "actionId": "memory-consistency-review",
+            "riskTier": "tier0_read_only",
+            "allowed": true
+          }
+        ],
+        "forbiddenSubstrings": [
+          "memory green",
+          "all memory sync-safe"
+        ]
+      }
+    },
+    {
+      "id": "redaction-blocks-visible-no-raw-content",
+      "focus": "redaction truth",
+      "inputSnapshot": {
+        "redaction": {
+          "policyVersion": "mira-core-redaction-v0",
+          "rawSecretsExported": false,
+          "rawTerminalExported": false,
+          "rawCommsExported": false,
+          "blockedCounts": {
+            "secretLike": 2,
+            "profileMismatch": 1,
+            "rawTranscript": 3,
+            "phoneOrCustomerLike": 1
+          }
+        },
+        "blockedExamples": [
+          "OPENAI_API_KEY=FAKE_TEST_KEY_1234567890",
+          "Customer Jane Doe 555-222-3333",
+          "C:\\Users\\James\\AppData\\Roaming\\BrowserProfile\\Cookies"
+        ]
+      },
+      "expectedOrientation": {
+        "redactionSummary": {
+          "rawSecretsExported": false,
+          "rawTerminalExported": false,
+          "rawCommsExported": false,
+          "blockedCountsVisible": true
+        },
+        "operatorNotesMustInclude": [
+          "Some content was blocked or redacted.",
+          "Blocked raw content is not reconstructed in orientation."
+        ],
+        "forbiddenSubstrings": [
+          "FAKE_TEST_KEY_1234567890",
+          "555-222-3333",
+          "BrowserProfile\\Cookies",
+          "Customer Jane Doe"
+        ]
+      }
+    },
+    {
+      "id": "raw-comms-not-exposed-in-orientation",
+      "focus": "raw comms and secrets",
+      "inputSnapshot": {
+        "memory": {
+          "episodic": {
+            "recentComms": [
+              {
+                "messageId": "hm-test-1",
+                "status": "routed",
+                "excerpt": "Redacted comms excerpt...",
+                "rawBody": "PRIVATE RAW BODY SHOULD NOT BE HERE",
+                "redactionStatus": "applied",
+                "syncEligibility": "core_sync_redacted",
+                "evidenceRefs": [
+                  {
+                    "store": "evidence-ledger",
+                    "eventId": "hm-test-1",
+                    "relation": "supports"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expectedOrientation": {
+        "exportDecision": "do_not_surface_rawBody",
+        "allowedFields": [
+          "messageId",
+          "status",
+          "excerpt",
+          "redactionStatus",
+          "syncEligibility",
+          "evidenceRefs"
+        ],
+        "forbiddenSubstrings": [
+          "PRIVATE RAW BODY SHOULD NOT BE HERE"
+        ]
+      }
+    },
+    {
+      "id": "high-risk-actions-forbidden",
+      "focus": "high-risk action gates",
+      "inputRequest": {
+        "requestedNextAction": "Deploy production, send customer confirmation, then trade based on the outcome.",
+        "snapshotRiskTier": "tier0_read_only"
+      },
+      "expectedOrientation": {
+        "blockedActionsMustInclude": [
+          {
+            "actionId": "production-deploy",
+            "riskTier": "tier3_external_side_effect"
+          },
+          {
+            "actionId": "customer-send",
+            "riskTier": "tier3_external_side_effect"
+          },
+          {
+            "actionId": "financial-trade",
+            "riskTier": "tier4_financial_or_irreversible"
+          }
+        ],
+        "nextSafeActionsMayInclude": [
+          {
+            "actionId": "prepare-risk-report",
+            "riskTier": "tier0_read_only",
+            "allowed": true
+          },
+          {
+            "actionId": "draft-non-sent-message",
+            "riskTier": "tier1_local_reversible",
+            "allowed": true
+          }
+        ],
+        "forbiddenSubstrings": [
+          "safe to deploy now",
+          "customer sent",
+          "trade placed",
+          "financial action approved"
+        ]
+      }
+    },
+    {
+      "id": "false-memory-candidate-stays-cautious",
+      "focus": "false-memory boundaries",
+      "inputSnapshot": {
+        "memory": {
+          "structured": {
+            "claims": [
+              {
+                "id": "claim-phil-476-old",
+                "summary": "Phil invoice #476 is unpaid.",
+                "status": "superseded",
+                "authority": "derived",
+                "confidence": 0.2,
+                "evidenceRefs": [
+                  {
+                    "store": "evidence-ledger",
+                    "eventId": "old-claim",
+                    "relation": "superseded_by_current_truth"
+                  }
+                ],
+                "redactionStatus": "none",
+                "syncEligibility": "core_sync_safe"
+              }
+            ]
+          }
+        }
+      },
+      "expectedOrientation": {
+        "memorySummaryMustInclude": [
+          "Superseded or contested memory is not treated as current truth."
+        ],
+        "forbiddenSubstrings": [
+          "Phil invoice #476 is unpaid",
+          "chase Phil for unpaid invoice"
+        ],
+        "nextSafeActionsMayInclude": [
+          {
+            "actionId": "verify-current-invoice-state-readonly",
+            "riskTier": "tier0_read_only",
+            "allowed": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "offline-local-arms-still-useful",
+      "focus": "useful next safe action",
+      "inputSnapshot": {
+        "capabilityState": {
+          "canConverse": true,
+          "canQueueIntent": true,
+          "canRouteToArchitect": false,
+          "canExecuteLocal": false,
+          "canProveModelProcessing": false,
+          "serverCanExecuteLocal": false
+        },
+        "localArms": {
+          "architect": {
+            "routeStatus": "offline"
+          },
+          "builder": {
+            "routeStatus": "offline"
+          },
+          "oracle": {
+            "routeStatus": "offline"
+          }
+        }
+      },
+      "expectedOrientation": {
+        "capabilitySummary": {
+          "canConverse": true,
+          "canQueueIntent": true,
+          "localArmsCanExecute": false,
+          "serverCanExecuteLocal": false,
+          "canProveModelProcessing": false
+        },
+        "nextSafeActionsMustInclude": [
+          {
+            "actionId": "queue-tier0-status-request",
+            "riskTier": "tier0_read_only",
+            "allowed": true,
+            "requiresLocalArm": false
+          }
+        ],
+        "blockedActionsMustInclude": [
+          {
+            "actionId": "execute-local-work",
+            "blockedBecause": "Local arms are offline or not routable."
+          }
+        ],
+        "operatorNotesMustInclude": [
+          "Mira can converse or queue intent, but cannot claim local execution until local arms reconnect."
+        ]
+      }
+    },
+    {
+      "id": "orientation-usefulness-degraded-system",
+      "focus": "next safe action quality",
+      "inputSnapshot": {
+        "health": {
+          "bridge": {
+            "ok": false,
+            "mode": "connecting",
+            "architectRoleDiscovery": "unknown"
+          },
+          "memoryConsistency": {
+            "status": "drift_detected",
+            "missing": 1,
+            "orphans": 40,
+            "duplicates": 0
+          }
+        },
+        "redaction": {
+          "blockedCounts": {
+            "secretLike": 1,
+            "rawTranscript": 1
+          }
+        }
+      },
+      "expectedOrientation": {
+        "minimumNextSafeActions": 2,
+        "nextSafeActionsMustInclude": [
+          {
+            "actionId": "memory-consistency-review",
+            "riskTier": "tier0_read_only"
+          },
+          {
+            "actionId": "bridge-readonly-proof-check",
+            "riskTier": "tier0_read_only"
+          }
+        ],
+        "eachNextSafeActionRequires": [
+          "whySafe",
+          "evidenceRefs",
+          "requiresReview"
+        ],
+        "forbiddenSubstrings": [
+          "all clear",
+          "nothing to do",
+          "ready for high-risk action"
+        ]
+      }
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Orientation never upgrades capability beyond the underlying snapshot.",
+    "Orientation distinguishes local-arm capability from future server/Core capability in plain language and machine fields.",
+    "Memory drift and bridge uncertainty are surfaced as operator-visible health signals.",
+    "Redaction status and blocked counts remain visible; blocked content is never reconstructed.",
+    "Raw comms, raw terminal logs, secrets, screenshot OCR, browser state, and side-profile content do not appear in orientation output.",
+    "Tier 3 and Tier 4 actions are always blocked or review-required in orientation v0.",
+    "At least one concrete Tier 0 or Tier 1 next safe action is present when degraded health or uncertainty exists.",
+    "Next safe actions include risk tier, allowed flag, local-arm requirement, review requirement, why-safe text, and evidence refs.",
+    "Contested, superseded, or low-confidence memories are never presented as settled current truth."
+  ]
+}

@@ -1,0 +1,1019 @@
+{
+  "schema": "squidrun.mira_core.local_acceptance_contract_fixture.v0",
+  "owner": "oracle",
+  "status": "validation_contract_only",
+  "phase": "phase_9_local_architect_acceptance",
+  "sourceSpecs": [
+    "workspace/specs/mira-core-architecture.md",
+    "workspace/specs/mira-core-evals.md",
+    "ui/__tests__/fixtures/mira-core-server-upload-contract.json",
+    "ui/__tests__/fixtures/mira-core-intent-queue-contract.json"
+  ],
+  "purpose": "Validate local Architect acceptance and dry-run local-arm lease handoff after Phase 8 intent records. Phase 9 converts pending_local_acceptance intents into local-only acceptance/reject records and optional dry-run lease candidates without creating queues, leases, routes, execution, sends, deploys, trades, or store writes.",
+  "nonGoals": [
+    "No runtime implementation.",
+    "No queue creation.",
+    "No enqueue.",
+    "No lease creation.",
+    "No routing.",
+    "No local execution.",
+    "No shell commands.",
+    "No PTY actions.",
+    "No external sends.",
+    "No customer sends.",
+    "No deploys.",
+    "No trades or financial actions.",
+    "No source-store writes.",
+    "No memory commits.",
+    "No profile commits.",
+    "No file mutation.",
+    "No server state mutation.",
+    "No model-processing proof claim."
+  ],
+  "builderPatchMustSatisfy": {
+    "scope": [
+      "Build a static validation contract for converting Phase 8 pending_local_acceptance intent records into local-only acceptance/reject records.",
+      "Emit acceptance_records, dry_run_lease_records, and validation_report only.",
+      "Require local Architect role discovery and current role proof before acceptance.",
+      "Run a fresh risk recheck against current profile/session/device scope before any acceptance decision.",
+      "Reject expired, stale, profile-mismatched, wrong-target, or risk-upgraded intents.",
+      "Keep server-originated target as Architect only until local acceptance.",
+      "Allow Builder/Oracle delegation only as a future local Architect action after acceptance and another current risk/route proof check.",
+      "Represent dry-run lease candidates as contracts only, not real leases.",
+      "Preserve proof boundaries: acceptance is not execution, dry-run lease is not model-processing proof, socket connection is not bridge green."
+    ],
+    "hardRejects": [
+      "A real queue is created or written.",
+      "A real lease is created.",
+      "A route is sent.",
+      "A shell command, PTY action, deploy, customer send, external send, trade, file mutation, source-store write, memory commit, profile commit, server mutation, or local execution happens.",
+      "An intent whose status is not pending_local_acceptance is accepted.",
+      "An expired or stale intent is accepted.",
+      "A profile/session/device-mismatched intent is accepted.",
+      "A direct Builder or Oracle cross-device target is accepted.",
+      "A Tier 2, Tier 3, Tier 4, identity-core rewrite, secrets/auth, deploy, customer-send, local-execution, or financial intent is accepted.",
+      "Acceptance record claims work was executed or a recipient model processed the intent.",
+      "Dry-run lease record is treated as a real lease, route, queue entry, or model-processing proof.",
+      "Socket connection alone is treated as bridge green.",
+      "WebSocket, trigger, or PTY acceptance is treated as model-processing proof.",
+      "Raw payload, secrets, raw comms, raw terminal, screenshot/OCR text, browser state, customer private data, or side-profile content appears in accepted records."
+    ]
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "acceptance_records",
+      "dry_run_lease_records",
+      "validation_report"
+    ],
+    "acceptanceRecordSchema": "squidrun.mira_core.local_acceptance_record.v0",
+    "dryRunLeaseRecordSchema": "squidrun.mira_core.dry_run_lease_contract.v0",
+    "validationReportSchema": "squidrun.mira_core.local_acceptance_validation_report.v0"
+  },
+  "expectedAcceptanceRecordShape": {
+    "schema": "squidrun.mira_core.local_acceptance_record.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "acceptance_id",
+      "idempotency_key",
+      "created_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source_intent_ref",
+      "source_upload_ref",
+      "accepted_by",
+      "role_discovery",
+      "role_proof_refs",
+      "decision",
+      "status",
+      "target_role",
+      "allowed_target_roles",
+      "risk_tier",
+      "action_class",
+      "current_risk_recheck",
+      "profile_scope_result",
+      "freshness_result",
+      "review_required",
+      "local_delegation",
+      "dry_run_lease_ref",
+      "evidenceRefs",
+      "reasons",
+      "safe_next_action",
+      "blocked_because",
+      "no_queue_created",
+      "no_lease_created",
+      "no_route_performed",
+      "no_execution_performed"
+    ],
+    "requiredLiteralValues": {
+      "target_role": "architect",
+      "allowed_target_roles": [
+        "architect"
+      ],
+      "no_queue_created": true,
+      "no_lease_created": true,
+      "no_route_performed": true,
+      "no_execution_performed": true
+    },
+    "allowedDecisions": [
+      "accepted_local_only",
+      "rejected",
+      "blocked",
+      "expired"
+    ],
+    "allowedStatuses": [
+      "accepted_local_only_no_execution",
+      "rejected_no_execution",
+      "blocked_no_execution",
+      "expired_no_execution"
+    ],
+    "acceptedRecordRequiredValues": {
+      "decision": "accepted_local_only",
+      "status": "accepted_local_only_no_execution",
+      "target_role": "architect",
+      "allowed_target_roles": [
+        "architect"
+      ],
+      "role_discovery.architect_role_registered": true,
+      "role_discovery.role_target_proof": "architect_local_verified",
+      "current_risk_recheck.decision": "still_tier0_or_tier1",
+      "profile_scope_result.decision": "match",
+      "freshness_result.decision": "fresh",
+      "no_queue_created": true,
+      "no_lease_created": true,
+      "no_route_performed": true,
+      "no_execution_performed": true
+    },
+    "sourceIntentRequiredFields": [
+      "intent_id",
+      "idempotency_key",
+      "dedupe_key",
+      "status",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "target_role",
+      "risk_tier",
+      "action_class",
+      "payload_hash",
+      "expires_at"
+    ],
+    "acceptedByRequiredFields": [
+      "role",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source",
+      "authority"
+    ],
+    "roleDiscoveryRequiredFields": [
+      "architect_role_registered",
+      "architect_target",
+      "role_target_proof",
+      "socket_connection_status",
+      "socket_is_bridge_green",
+      "builder_direct_target_blocked",
+      "oracle_direct_target_blocked"
+    ],
+    "currentRiskRecheckRequiredFields": [
+      "previous_risk_tier",
+      "current_risk_tier",
+      "decision",
+      "checked_at",
+      "blocked_if_upgraded",
+      "evidenceRefs"
+    ],
+    "localDelegationRequiredFields": [
+      "state",
+      "allowed_after_acceptance",
+      "allowed_local_delegate_roles",
+      "requires_current_local_route_proof",
+      "requires_fresh_risk_recheck",
+      "server_originated_direct_targeting_still_blocked",
+      "delegation_performed"
+    ],
+    "conditionalRequiredFields": [
+      {
+        "field": "blocked_because",
+        "when": "decision=blocked or decision=rejected or decision=expired"
+      },
+      {
+        "field": "dry_run_lease_ref",
+        "when": "decision=accepted_local_only and dry-run lease candidate emitted"
+      },
+      {
+        "field": "safe_next_action",
+        "when": "decision=blocked or decision=rejected or decision=expired"
+      }
+    ]
+  },
+  "expectedDryRunLeaseRecordShape": {
+    "schema": "squidrun.mira_core.dry_run_lease_contract.v0",
+    "requiredFields": [
+      "schema",
+      "version",
+      "lease_dry_run_id",
+      "idempotency_key",
+      "created_at",
+      "profile",
+      "sessionId",
+      "deviceId",
+      "source_acceptance_ref",
+      "source_intent_ref",
+      "dry_run_only",
+      "lease_not_created",
+      "queue_not_written",
+      "route_not_sent",
+      "execution_not_performed",
+      "model_processing_not_proven",
+      "server_originated_target_role",
+      "local_acceptance_required",
+      "local_delegation_candidate",
+      "risk_tier",
+      "action_class",
+      "lease_scope",
+      "proof_boundaries",
+      "expires_at",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "dry_run_only": true,
+      "lease_not_created": true,
+      "queue_not_written": true,
+      "route_not_sent": true,
+      "execution_not_performed": true,
+      "model_processing_not_proven": true,
+      "server_originated_target_role": "architect",
+      "local_acceptance_required": true
+    },
+    "localDelegationCandidateRequiredFields": [
+      "state",
+      "candidate_roles",
+      "server_direct_targeting_allowed",
+      "local_architect_may_delegate_after_acceptance",
+      "requires_current_role_route_proof",
+      "requires_recipient_quote_back_for_model_processing_proof"
+    ],
+    "proofBoundaryRequiredFields": [
+      "acceptance_is_execution",
+      "dry_run_lease_is_real_lease",
+      "dry_run_lease_is_model_processing_proof",
+      "socket_is_bridge_green",
+      "websocket_acceptance_is_model_processing_proof",
+      "required_model_processing_proof"
+    ],
+    "proofBoundaryRequiredValues": {
+      "acceptance_is_execution": false,
+      "dry_run_lease_is_real_lease": false,
+      "dry_run_lease_is_model_processing_proof": false,
+      "socket_is_bridge_green": false,
+      "websocket_acceptance_is_model_processing_proof": false,
+      "required_model_processing_proof": "recipient_quote_back_or_equivalent_transcript_proof_after_real_local_route"
+    }
+  },
+  "expectedValidationReportShape": {
+    "schema": "squidrun.mira_core.local_acceptance_validation_report.v0",
+    "requiredTopLevelFields": [
+      "schema",
+      "version",
+      "validation_run_id",
+      "generated_at",
+      "decision",
+      "input_refs",
+      "accepted_count",
+      "rejected_count",
+      "blocked_count",
+      "expired_count",
+      "dry_run_lease_candidate_count",
+      "role_discovery_result",
+      "risk_recheck_result",
+      "profile_scope_result",
+      "freshness_result",
+      "routing_result",
+      "delegation_result",
+      "proof_boundary_result",
+      "idempotency_result",
+      "side_effect_result",
+      "records_summary",
+      "reasons",
+      "followup_required"
+    ],
+    "allowedDecisions": [
+      "local_acceptance_records_validated_no_side_effects",
+      "local_acceptance_records_validated_with_blocks_no_side_effects",
+      "blocked",
+      "rejected"
+    ],
+    "sideEffectResultRequiredFields": [
+      "no_queue_created",
+      "no_enqueue_performed",
+      "no_lease_created",
+      "no_route_performed",
+      "no_network_performed",
+      "no_execution_performed",
+      "no_external_send_performed",
+      "no_deploy_performed",
+      "no_trade_performed",
+      "no_store_write_performed",
+      "queueWritesAttempted",
+      "leasesCreated",
+      "routesAttempted",
+      "networkRequestsAttempted",
+      "localExecutionAttempted",
+      "externalSendsAttempted",
+      "deploysAttempted",
+      "tradesAttempted",
+      "sourceStoreWritesAttempted",
+      "memoryCommitsAttempted",
+      "profileCommitsAttempted",
+      "fileMutationsAttempted"
+    ],
+    "sideEffectRequiredV0Values": {
+      "no_queue_created": true,
+      "no_enqueue_performed": true,
+      "no_lease_created": true,
+      "no_route_performed": true,
+      "no_network_performed": true,
+      "no_execution_performed": true,
+      "no_external_send_performed": true,
+      "no_deploy_performed": true,
+      "no_trade_performed": true,
+      "no_store_write_performed": true,
+      "queueWritesAttempted": 0,
+      "leasesCreated": 0,
+      "routesAttempted": 0,
+      "networkRequestsAttempted": 0,
+      "localExecutionAttempted": 0,
+      "externalSendsAttempted": 0,
+      "deploysAttempted": 0,
+      "tradesAttempted": 0,
+      "sourceStoreWritesAttempted": 0,
+      "memoryCommitsAttempted": 0,
+      "profileCommitsAttempted": 0,
+      "fileMutationsAttempted": 0
+    }
+  },
+  "acceptancePolicy": {
+    "inputIntentMustHave": [
+      "status=pending_local_acceptance",
+      "target_role=architect",
+      "allowed_target_roles=[architect]",
+      "risk_tier=tier0_read_only or risk_tier=tier1_local_reversible",
+      "payload_redaction_status=none or payload_redaction_status=applied",
+      "no_execution_performed=true",
+      "profile/session/device scope present",
+      "expires_at not expired when required"
+    ],
+    "acceptIfAllTrue": [
+      "local Architect role is registered and target proof is current",
+      "current profile/session/device matches source intent and current local context",
+      "intent is fresh and not expired",
+      "fresh risk recheck remains Tier 0 or Tier 1",
+      "payload hash and evidence refs are present",
+      "direct Builder/Oracle cross-device target is absent",
+      "no raw private payload is present",
+      "acceptance idempotency key does not collide with a different decision"
+    ],
+    "rejectOrBlockIfAnyTrue": [
+      "intent status is not pending_local_acceptance",
+      "intent is expired or source refs are stale",
+      "current risk recheck upgrades the action to Tier 2, Tier 3, Tier 4, identity-core rewrite, secret/auth, deploy, customer-send, local-execution, or financial action",
+      "profile/session/device scope mismatches current local context",
+      "role discovery does not prove local Architect as the accepted target",
+      "target_role is Builder or Oracle from the server/cross-device boundary",
+      "payload redaction is blocked or raw private content is present",
+      "source intent idempotency or dedupe keys are missing"
+    ],
+    "acceptedDecisionOutput": "accepted_local_only",
+    "blockedDecisionOutputs": [
+      "rejected",
+      "blocked",
+      "expired"
+    ]
+  },
+  "roleDiscoveryPolicy": {
+    "architectAcceptanceRequires": [
+      "registered architect role",
+      "current local architect target proof",
+      "matching profile/session/device context",
+      "evidence ref for role discovery check"
+    ],
+    "socketConnectionAloneMeans": "transport_connected_only",
+    "socketConnectionAloneCannotMean": [
+      "bridge green",
+      "role discovery complete",
+      "target proof complete",
+      "model-processing proof"
+    ],
+    "bridgeGreenRequires": [
+      "registered architect role discovery",
+      "Architect-to-Architect target proof",
+      "non-architect cross-device target rejection proof"
+    ],
+    "directCrossDeviceTargetsBlocked": [
+      "builder",
+      "oracle"
+    ]
+  },
+  "riskRecheckPolicy": {
+    "allowedForAcceptanceAfterRecheck": [
+      "tier0_read_only",
+      "tier1_local_reversible"
+    ],
+    "blockAfterRecheck": [
+      "tier2_repo_mutation",
+      "tier3_external_side_effect",
+      "tier4_financial_or_irreversible",
+      "identity_core_rewrite",
+      "secrets_or_auth_change",
+      "deploy",
+      "customer_send",
+      "local_shell_execution",
+      "pty_operation",
+      "trade_or_financial_action"
+    ],
+    "recheckInputs": [
+      "current user/session constraints",
+      "current profile/session/device scope",
+      "current action_class",
+      "current payload summary/hash",
+      "current local capability state",
+      "current explicit lane openings or closures"
+    ],
+    "recheckCannotRelyOnlyOn": [
+      "old Phase 8 risk tier",
+      "server label",
+      "Pulse card priority",
+      "user pressure",
+      "socket delivery"
+    ]
+  },
+  "localDelegationPolicy": {
+    "serverOriginatedAcceptedTarget": "architect",
+    "delegationBeforeAcceptance": "blocked",
+    "delegationAfterAcceptance": "allowed_local_only_with_recheck",
+    "allowedLocalDelegateRolesAfterAcceptance": [
+      "builder",
+      "oracle"
+    ],
+    "requiresBeforeAnyRealDelegation": [
+      "local Architect accepted the intent",
+      "current local Builder/Oracle role discovery when applicable",
+      "current local route proof when applicable",
+      "fresh risk recheck for the delegated task",
+      "recipient quote-back or equivalent transcript proof after any real route if model processing proof is claimed"
+    ],
+    "thisFixturePerformsDelegation": false
+  },
+  "idempotencyRules": {
+    "acceptanceIdempotencyKeyInputFields": [
+      "schema",
+      "version",
+      "source_intent_ref.intent_id",
+      "source_intent_ref.idempotency_key",
+      "source_intent_ref.dedupe_key",
+      "profile.name",
+      "sessionId",
+      "deviceId",
+      "decision",
+      "target_role",
+      "risk_tier",
+      "action_class",
+      "current_risk_recheck.current_risk_tier",
+      "profile_scope_result.decision",
+      "freshness_result.decision",
+      "role_discovery.role_target_proof",
+      "source_intent_ref.payload_hash"
+    ],
+    "dryRunLeaseIdempotencyKeyInputFields": [
+      "schema",
+      "version",
+      "source_acceptance_ref.acceptance_id",
+      "source_acceptance_ref.idempotency_key",
+      "profile.name",
+      "sessionId",
+      "deviceId",
+      "risk_tier",
+      "action_class",
+      "lease_scope",
+      "expires_at"
+    ],
+    "stableSameInputs": true,
+    "mustChangeWhenAnyFieldChanges": [
+      "decision",
+      "profile.name",
+      "sessionId",
+      "deviceId",
+      "current_risk_recheck.current_risk_tier",
+      "profile_scope_result.decision",
+      "freshness_result.decision",
+      "role_discovery.role_target_proof",
+      "source_intent_ref.payload_hash"
+    ],
+    "mustExcludeFromKeys": [
+      "acceptance_id",
+      "lease_dry_run_id",
+      "created_at",
+      "validation_run_id",
+      "generated_at"
+    ],
+    "retryRule": "Repeating the same acceptance or reject validation returns the same idempotency key and still performs no queue, lease, route, execution, send, deploy, trade, store write, memory commit, profile commit, or file mutation."
+  },
+  "staticValidationRules": [
+    {
+      "id": "output-shape-complete",
+      "rule": "Output must contain acceptance_records, dry_run_lease_records, and validation_report with required fields."
+    },
+    {
+      "id": "pending-intent-only",
+      "rule": "Only Phase 8 intents with status=pending_local_acceptance can become accepted_local_only records."
+    },
+    {
+      "id": "local-architect-role-proof-required",
+      "rule": "Acceptance requires current registered local Architect role discovery and target proof."
+    },
+    {
+      "id": "fresh-risk-recheck-required",
+      "rule": "A current risk recheck must occur before acceptance; risk upgrades block acceptance."
+    },
+    {
+      "id": "current-scope-required",
+      "rule": "Current profile/session/device scope must match the source intent and local context."
+    },
+    {
+      "id": "expired-stale-rejected",
+      "rule": "Expired intents and stale source refs are rejected or expired, never accepted."
+    },
+    {
+      "id": "direct-builder-oracle-cross-device-blocked",
+      "rule": "Server-originated direct Builder/Oracle targets remain blocked before and after acceptance."
+    },
+    {
+      "id": "local-delegation-after-acceptance-only",
+      "rule": "Builder/Oracle delegation may only be represented as a future local Architect action after acceptance and fresh checks."
+    },
+    {
+      "id": "proof-boundaries-preserved",
+      "rule": "Acceptance is not execution; dry-run lease is not a real lease or model-processing proof; socket is not bridge green."
+    },
+    {
+      "id": "idempotent-accept-reject",
+      "rule": "Same input and decision produce stable acceptance idempotency; changed decision, risk, scope, proof, or payload changes it."
+    },
+    {
+      "id": "raw-payload-leak-prevention",
+      "rule": "Acceptance and dry-run lease records must exclude raw private payloads and keep summaries redacted."
+    },
+    {
+      "id": "no-side-effects",
+      "rule": "Validation report must prove no queue, lease, route, execution, network, send, deploy, trade, store write, memory/profile commit, or file mutation."
+    },
+    {
+      "id": "model-free-validation",
+      "rule": "Tests can validate fixture completeness, required cases, required fields, forbidden substrings, counts, and idempotency rules without calling a model."
+    }
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY=",
+    "Authorization: Bearer",
+    "BEGIN PRIVATE KEY",
+    "raw comms body",
+    "raw terminal scrollback",
+    "screenshot OCR text",
+    "browser session state",
+    "BrowserProfile\\Cookies",
+    "customer private note",
+    "side-profile private note",
+    "server routed to builder",
+    "server routed to oracle",
+    "direct builder target accepted",
+    "direct oracle target accepted",
+    "lease created",
+    "queue write complete",
+    "route sent",
+    "shell command executed",
+    "customer message sent",
+    "deployment started",
+    "trade placed",
+    "acceptance executed work",
+    "dry-run lease proved model processing",
+    "bridge green from socket only",
+    "model-processing proof from websocket acceptance"
+  ],
+  "acceptanceChecks": [
+    {
+      "id": "valid-tier0-intent-accepted-local-only",
+      "focus": "pending Tier 0 intent becomes local-only acceptance record",
+      "inputSignals": {
+        "intent": {
+          "intent_id": "intent-safe-research-001",
+          "status": "pending_local_acceptance",
+          "target_role": "architect",
+          "allowed_target_roles": [
+            "architect"
+          ],
+          "risk_tier": "tier0_read_only",
+          "action_class": "read_only_research",
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "payload_redaction_status": "none",
+          "payload_hash": "sha256:payload-safe-research"
+        },
+        "currentContext": {
+          "architect_role_registered": true,
+          "role_target_proof": "architect_local_verified",
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "current_risk_tier": "tier0_read_only"
+        }
+      },
+      "expectedAcceptance": {
+        "decision": "accepted_local_only",
+        "status": "accepted_local_only_no_execution",
+        "target_role": "architect",
+        "allowed_target_roles": [
+          "architect"
+        ],
+        "no_queue_created": true,
+        "no_lease_created": true,
+        "no_route_performed": true,
+        "no_execution_performed": true
+      },
+      "expectedDryRunLease": {
+        "dry_run_only": true,
+        "lease_not_created": true,
+        "route_not_sent": true,
+        "model_processing_not_proven": true
+      }
+    },
+    {
+      "id": "valid-tier1-plan-intent-accepted-with-expiry",
+      "focus": "Tier 1 reversible planning intent can be locally accepted without execution",
+      "inputSignals": {
+        "intent": {
+          "status": "pending_local_acceptance",
+          "risk_tier": "tier1_local_reversible",
+          "action_class": "safe_plan_preparation",
+          "target_role": "architect",
+          "expires_at": "2026-05-08T03:00:00.000Z"
+        },
+        "currentRiskRecheck": {
+          "current_risk_tier": "tier1_local_reversible",
+          "decision": "still_tier0_or_tier1"
+        }
+      },
+      "expectedAcceptance": {
+        "decision": "accepted_local_only",
+        "status": "accepted_local_only_no_execution",
+        "review_required": "architect",
+        "safe_next_action": "Local Architect may prepare a plan after acceptance without mutating files or sending externally."
+      }
+    },
+    {
+      "id": "role-discovery-missing-blocks-acceptance",
+      "focus": "local Architect role proof required",
+      "inputSignals": {
+        "intent": {
+          "status": "pending_local_acceptance",
+          "target_role": "architect",
+          "risk_tier": "tier0_read_only"
+        },
+        "roleDiscovery": {
+          "architect_role_registered": false,
+          "socket_connection_status": "connected",
+          "role_target_proof": "missing"
+        }
+      },
+      "expectedAcceptance": {
+        "decision": "blocked",
+        "status": "blocked_no_execution",
+        "blocked_because": "Local Architect role discovery and target proof are required before acceptance.",
+        "safe_next_action": "Run read-only role discovery and target proof locally."
+      },
+      "mustNotInclude": [
+        "bridge green from socket only",
+        "accepted_local_only"
+      ]
+    },
+    {
+      "id": "fresh-risk-recheck-upgrade-blocks",
+      "focus": "current risk recheck overrides stale Tier 0/Tier 1 label",
+      "inputSignals": {
+        "intent": {
+          "status": "pending_local_acceptance",
+          "risk_tier": "tier1_local_reversible",
+          "action_class": "draft_only_no_send"
+        },
+        "currentRiskRecheck": {
+          "current_risk_tier": "tier3_external_side_effect",
+          "reason": "Request now includes customer send."
+        }
+      },
+      "expectedAcceptance": {
+        "decision": "blocked",
+        "status": "blocked_no_execution",
+        "blocked_because": "Fresh risk recheck upgraded the intent above Tier 1.",
+        "safe_next_action": "Prepare a non-sent draft or ask local Architect for a fresh gated review."
+      }
+    },
+    {
+      "id": "expired-stale-intent-rejected",
+      "focus": "expired or stale intents cannot be accepted",
+      "inputSignals": {
+        "now": "2026-05-06T00:00:00.000Z",
+        "intent": {
+          "status": "pending_local_acceptance",
+          "expires_at": "2026-05-05T00:00:00.000Z",
+          "source_ref_generated_at": "2026-05-01T00:00:00.000Z"
+        }
+      },
+      "expectedAcceptance": {
+        "decision": "expired",
+        "status": "expired_no_execution",
+        "blocked_because": "Intent expired or source refs are stale before local acceptance.",
+        "safe_next_action": "Reject and require a fresh intent if still relevant."
+      },
+      "validationReportMustIncludeReason": [
+        "expired_intent",
+        "stale_source_ref"
+      ]
+    },
+    {
+      "id": "profile-session-device-mismatch-blocked",
+      "focus": "current scope must match source intent",
+      "inputSignals": {
+        "intent": {
+          "profile": "side-profile",
+          "sessionId": "app-session-side-001",
+          "deviceId": "VIGIL",
+          "status": "pending_local_acceptance"
+        },
+        "currentContext": {
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL"
+        }
+      },
+      "expectedAcceptance": {
+        "decision": "blocked",
+        "status": "blocked_no_execution",
+        "blocked_because": "Intent profile/session/device does not match current local context.",
+        "safe_next_action": "Keep the request scoped to its source profile or create a fresh matching intent."
+      }
+    },
+    {
+      "id": "direct-builder-oracle-cross-device-target-blocked",
+      "focus": "server-originated Builder/Oracle target remains blocked",
+      "inputSignals": {
+        "intents": [
+          {
+            "target_role": "builder",
+            "status": "pending_local_acceptance",
+            "risk_tier": "tier0_read_only"
+          },
+          {
+            "target_role": "oracle",
+            "status": "pending_local_acceptance",
+            "risk_tier": "tier0_read_only"
+          }
+        ]
+      },
+      "expectedAcceptance": [
+        {
+          "target_role": "builder",
+          "decision": "blocked",
+          "blocked_because": "Server-originated direct Builder targeting is blocked."
+        },
+        {
+          "target_role": "oracle",
+          "decision": "blocked",
+          "blocked_because": "Server-originated direct Oracle targeting is blocked."
+        }
+      ],
+      "mustNotInclude": [
+        "server routed to builder",
+        "server routed to oracle"
+      ]
+    },
+    {
+      "id": "local-delegation-after-acceptance-only",
+      "focus": "Builder/Oracle delegation is future local Architect work, not server handoff",
+      "inputSignals": {
+        "acceptedIntent": {
+          "decision": "accepted_local_only",
+          "target_role": "architect",
+          "action_class": "read_only_research"
+        },
+        "requestedDelegation": {
+          "candidate_role": "oracle",
+          "timing": "after_acceptance"
+        }
+      },
+      "expectedAcceptance": {
+        "local_delegation": {
+          "state": "available_after_acceptance_only",
+          "allowed_after_acceptance": true,
+          "allowed_local_delegate_roles": [
+            "builder",
+            "oracle"
+          ],
+          "server_originated_direct_targeting_still_blocked": true,
+          "delegation_performed": false
+        }
+      },
+      "expectedDryRunLease": {
+        "local_delegation_candidate": {
+          "state": "candidate_only",
+          "server_direct_targeting_allowed": false,
+          "local_architect_may_delegate_after_acceptance": true
+        }
+      }
+    },
+    {
+      "id": "acceptance-and-reject-idempotent",
+      "focus": "same accept/reject decisions are stable, changed decision/scope/risk changes key",
+      "inputSignals": {
+        "acceptanceA": {
+          "sourceIntentId": "intent-safe-research-001",
+          "sourceIntentKey": "intent-key-a",
+          "decision": "accepted_local_only",
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "risk_tier": "tier0_read_only",
+          "payload_hash": "sha256:payload-a"
+        },
+        "acceptanceB": {
+          "sourceIntentId": "intent-safe-research-001",
+          "sourceIntentKey": "intent-key-a",
+          "decision": "accepted_local_only",
+          "profile": "main",
+          "sessionId": "app-session-326",
+          "deviceId": "VIGIL",
+          "risk_tier": "tier0_read_only",
+          "payload_hash": "sha256:payload-a"
+        },
+        "changedDecision": {
+          "decision": "blocked"
+        },
+        "changedRisk": {
+          "risk_tier": "tier3_external_side_effect"
+        }
+      },
+      "expectedOutput": {
+        "acceptanceAAndBIdempotencyKey": "equal",
+        "changedDecisionIdempotencyKey": "different",
+        "changedRiskIdempotencyKey": "different",
+        "keysMustExclude": [
+          "acceptance_id",
+          "lease_dry_run_id",
+          "created_at",
+          "validation_run_id",
+          "generated_at"
+        ]
+      }
+    },
+    {
+      "id": "proof-boundaries-are-explicit",
+      "focus": "acceptance, dry-run lease, socket, and model-processing proof remain separate",
+      "inputSignals": {
+        "transport": {
+          "socket_connection_status": "connected",
+          "websocketAccepted": true,
+          "recipientQuoteBack": "missing"
+        },
+        "records": {
+          "acceptance_record_created": true,
+          "dry_run_lease_record_created": true
+        }
+      },
+      "expectedDryRunLease": {
+        "proof_boundaries": {
+          "acceptance_is_execution": false,
+          "dry_run_lease_is_real_lease": false,
+          "dry_run_lease_is_model_processing_proof": false,
+          "socket_is_bridge_green": false,
+          "websocket_acceptance_is_model_processing_proof": false,
+          "required_model_processing_proof": "recipient_quote_back_or_equivalent_transcript_proof_after_real_local_route"
+        }
+      },
+      "mustNotInclude": [
+        "dry-run lease proved model processing",
+        "bridge green from socket only",
+        "model-processing proof from websocket acceptance"
+      ]
+    },
+    {
+      "id": "raw-payload-leakage-prevented",
+      "focus": "accepted records keep payload redacted",
+      "inputSignals": {
+        "blockedPayloadExamples": [
+          "OPENAI_API_KEY=example",
+          "Authorization: Bearer example",
+          "raw terminal scrollback",
+          "screenshot OCR text",
+          "customer private note"
+        ]
+      },
+      "expectedAcceptance": {
+        "decision": "blocked",
+        "status": "blocked_no_execution",
+        "blocked_because": "Raw private payload cannot be accepted into local handoff records.",
+        "safe_next_action": "Use a redacted summary-plus-hash intent."
+      },
+      "forbiddenOutputSubstringsMustBeAbsent": [
+        "OPENAI_API_KEY=",
+        "Authorization: Bearer",
+        "raw terminal scrollback",
+        "screenshot OCR text",
+        "customer private note"
+      ]
+    },
+    {
+      "id": "no-side-effects",
+      "focus": "validation creates no queue, lease, route, execution, send, deploy, trade, or store write",
+      "inputSignals": {
+        "requestedPhase": "phase_9_local_acceptance_validation",
+        "localArmsOnline": true,
+        "intentAccepted": true
+      },
+      "expectedOutput": {
+        "acceptance_records": {
+          "everyRecord": {
+            "no_queue_created": true,
+            "no_lease_created": true,
+            "no_route_performed": true,
+            "no_execution_performed": true
+          }
+        },
+        "dry_run_lease_records": {
+          "everyRecord": {
+            "dry_run_only": true,
+            "lease_not_created": true,
+            "queue_not_written": true,
+            "route_not_sent": true,
+            "execution_not_performed": true
+          }
+        },
+        "validation_report": {
+          "side_effect_result": {
+            "no_queue_created": true,
+            "no_enqueue_performed": true,
+            "no_lease_created": true,
+            "no_route_performed": true,
+            "no_network_performed": true,
+            "no_execution_performed": true,
+            "no_external_send_performed": true,
+            "no_deploy_performed": true,
+            "no_trade_performed": true,
+            "no_store_write_performed": true,
+            "queueWritesAttempted": 0,
+            "leasesCreated": 0,
+            "routesAttempted": 0,
+            "networkRequestsAttempted": 0,
+            "localExecutionAttempted": 0,
+            "externalSendsAttempted": 0,
+            "deploysAttempted": 0,
+            "tradesAttempted": 0,
+            "sourceStoreWritesAttempted": 0,
+            "memoryCommitsAttempted": 0,
+            "profileCommitsAttempted": 0,
+            "fileMutationsAttempted": 0
+          }
+        },
+        "mustNotInclude": [
+          "enqueue",
+          "lease created",
+          "route sent",
+          "shell command executed",
+          "customer message sent",
+          "deployment started",
+          "trade placed"
+        ]
+      }
+    }
+  ],
+  "summaryAcceptanceCriteria": [
+    "Phase 9 is fixture-only local Architect acceptance and dry-run local-arm lease handoff validation.",
+    "No runtime implementation, queue creation, enqueue, lease creation, routing, execution, sends, deploys, trades, store writes, memory/profile commits, or file mutation occurs.",
+    "The output contains acceptance_records, dry_run_lease_records, and validation_report.",
+    "Only Phase 8 pending_local_acceptance intents targeting Architect may become accepted_local_only records.",
+    "Local Architect role discovery and current target proof are required before acceptance.",
+    "Current profile/session/device scope must match the source intent and local context.",
+    "A fresh risk recheck is required; Tier 2, Tier 3, Tier 4, identity-core rewrite, secrets/auth, deploy, customer-send, local execution, and financial upgrades block acceptance.",
+    "Expired or stale intents are rejected or expired, never accepted.",
+    "Direct Builder/Oracle cross-device server targets remain blocked.",
+    "Local Architect may delegate to local Builder/Oracle only after acceptance, reconnect, current role/route proof, and fresh risk recheck.",
+    "Acceptance is not execution.",
+    "Dry-run lease is not a real lease, queue entry, route, execution, or model-processing proof.",
+    "Socket connection alone is not bridge green.",
+    "WebSocket, trigger, or PTY acceptance is not model-processing proof.",
+    "Accepted records and dry-run lease records contain no raw private payload content.",
+    "Accept/reject validation is idempotent and retries produce no side effects.",
+    "Tests can validate fixture completeness without model calls."
+  ]
+}
