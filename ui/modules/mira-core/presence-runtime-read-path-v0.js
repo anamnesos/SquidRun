@@ -32,6 +32,8 @@ const EXPLICIT_DURABLE_SOURCE_PATHS = Object.freeze({
   growth_history: NAMED_ARTIFACT_PATHS.history_ledger,
   growth_audit: NAMED_ARTIFACT_PATHS.audit_ledger,
 });
+const DURABLE_SEED_ID = 'durable-state-seed-v0:redacted-local-main';
+const DURABLE_SEED_PROVENANCE_LABEL = 'durable_state_seed_v0_redacted_local_fact';
 
 const REQUIRED_OUTPUT_FIELDS = Object.freeze([
   'presence_runtime_read_path_v0',
@@ -284,6 +286,129 @@ function scopeSummaryOk(scope = {}) {
     && scope.side_profile_reconstruction === false;
 }
 
+function withoutCanonicalHash(value = {}) {
+  const copy = clone(value);
+  delete copy.canonical_hash;
+  return copy;
+}
+
+function seedPayload(value = {}) {
+  const copy = clone(value);
+  for (const key of [
+    'artifact_id',
+    'generated_at',
+    'scope',
+    'profile',
+    'window',
+    'session',
+    'device',
+    'source_scope',
+    'provenance',
+    'canonical_hash',
+  ]) {
+    delete copy[key];
+  }
+  return copy;
+}
+
+function durableSeedCanonicalHash(value = {}, artifactId) {
+  return sha256({
+    artifact_id: artifactId,
+    generated_at: value.generated_at,
+    profile: value.profile,
+    window: value.window,
+    session: value.session,
+    device: value.device,
+    source_scope: value.source_scope,
+    payload: seedPayload(value),
+    provenance: value.provenance,
+  });
+}
+
+function provenanceOk(provenance = {}) {
+  return Boolean(provenance)
+    && typeof provenance === 'object'
+    && Boolean(provenance.source_label)
+    && provenance.raw_content_included === false
+    && provenance.redacted_summary_only === true
+    && asArray(provenance.evidenceRefs).length > 0;
+}
+
+function seedProvenanceOk(provenance = {}) {
+  return provenanceOk(provenance)
+    && provenance.source_label === DURABLE_SEED_PROVENANCE_LABEL;
+}
+
+function growthEventMetadataOk(entry = {}, sourceId) {
+  if (sourceId === 'self_profile' || sourceId === 'relationship_state') {
+    return Boolean(entry.event_id)
+      && Boolean(entry.created_at || entry.generated_at)
+      && wordCount(entry.summary || entry.reflection_summary) >= 8
+      && asArray(entry.reasons).length >= 2
+      && asArray(entry.evidenceRefs).length > 0
+      && !forbiddenStringDetected(entry);
+  }
+  const hasId = sourceId === 'growth_audit'
+    ? Boolean(entry.audit_id || entry.event_id || entry.proposal_id)
+    : Boolean(entry.event_id || entry.proposal_id);
+  return hasId
+    && Boolean(entry.generated_at || entry.created_at)
+    && scopeSummaryOk(sourceScope(entry))
+    && entry.raw_content_included === false
+    && entry.redacted_summary_only === true
+    && Number(entry.total_drift_points || entry.identity_anchor_drift_points || 0) === 0
+    && (sourceId === 'growth_history'
+      ? wordCount(entry.reflection_summary) >= 8 && asArray(entry.reasons).length >= 2
+      : entry.append_only === true || entry.event_type === 'growth_apply_requested')
+    && !forbiddenStringDetected(entry);
+}
+
+function jsonCanonicalMetadata(value = {}, sourceId) {
+  if (!value || typeof value !== 'object') {
+    return { ok: false, reason: 'not_object' };
+  }
+  if (!value.canonical_hash) {
+    return { ok: false, reason: 'missing_canonical_hash' };
+  }
+  if (!provenanceOk(value.provenance)) {
+    return { ok: false, reason: 'invalid_provenance' };
+  }
+  if (value.seed_id !== DURABLE_SEED_ID) {
+    return { ok: false, reason: 'missing_or_invalid_seed_id' };
+  }
+  const seedHashOk = seedProvenanceOk(value.provenance)
+    && value.canonical_hash === durableSeedCanonicalHash(value, sourceId);
+  const growthHashOk = ['self_profile', 'relationship_state'].includes(sourceId)
+    && value.canonical_hash === sha256(withoutCanonicalHash(value))
+    && asArray(value.growth_events).length > 0
+    && asArray(value.growth_events).every((event) => growthEventMetadataOk(event, sourceId));
+  if (seedHashOk || growthHashOk) {
+    return {
+      ok: true,
+      reason: seedHashOk ? 'seed_canonical_metadata_ok' : 'growth_canonical_metadata_ok',
+    };
+  }
+  return { ok: false, reason: 'canonical_hash_or_growth_metadata_mismatch' };
+}
+
+function jsonlCanonicalMetadata(entries = [], sourceId) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { ok: false, reason: 'no_jsonl_entries' };
+  }
+  for (const entry of entries) {
+    if (!entry.canonical_hash) return { ok: false, reason: 'missing_canonical_hash' };
+    const seedHashOk = entry.seed_id === DURABLE_SEED_ID
+      && seedProvenanceOk(entry.provenance)
+      && entry.canonical_hash === durableSeedCanonicalHash(entry, sourceId);
+    const growthHashOk = entry.canonical_hash === sha256(withoutCanonicalHash(entry))
+      && growthEventMetadataOk(entry, sourceId);
+    if (!seedHashOk && !growthHashOk) {
+      return { ok: false, reason: 'jsonl_canonical_hash_or_metadata_mismatch' };
+    }
+  }
+  return { ok: true, reason: 'jsonl_canonical_metadata_ok' };
+}
+
 function summarizeJsonSource(projectRoot, id, relativePath, textRead) {
   try {
     const value = JSON.parse(textRead.text);
@@ -297,6 +422,7 @@ function summarizeJsonSource(projectRoot, id, relativePath, textRead) {
       'side_profile_reconstruction',
       'side_profile_reconstructed',
     ]);
+    const canonical = jsonCanonicalMetadata(value, id);
     return {
       id,
       path: normalizeRelativePath(relativePath),
@@ -316,6 +442,8 @@ function summarizeJsonSource(projectRoot, id, relativePath, textRead) {
       side_profile_reconstruction: sideFlags.length > 0,
       forbidden_content_detected: forbiddenStringDetected(value),
       redacted_summary_only: value.provenance?.redacted_summary_only !== false,
+      canonical_metadata_ok: canonical.ok,
+      canonical_metadata_reason: canonical.reason,
       evidenceRefs: asArray(value.evidenceRefs || value.provenance?.evidenceRefs).length > 0
         ? clone(value.evidenceRefs || value.provenance.evidenceRefs)
         : [evidenceRef('source', id)],
@@ -341,6 +469,8 @@ function summarizeJsonSource(projectRoot, id, relativePath, textRead) {
       side_profile_reconstruction: false,
       forbidden_content_detected: forbiddenStringDetected(textRead.text),
       redacted_summary_only: true,
+      canonical_metadata_ok: false,
+      canonical_metadata_reason: 'invalid_json',
       evidenceRefs: [evidenceRef('source', id)],
       projectRoot,
     };
@@ -362,6 +492,7 @@ function summarizeJsonlSource(projectRoot, id, relativePath, textRead) {
       'side_profile_reconstructed',
     ]);
     const entryScopesOk = entries.length > 0 && entries.every((entry) => scopeSummaryOk(sourceScope(entry)));
+    const canonical = jsonlCanonicalMetadata(entries, id);
     return {
       id,
       path: normalizeRelativePath(relativePath),
@@ -381,6 +512,8 @@ function summarizeJsonlSource(projectRoot, id, relativePath, textRead) {
       side_profile_reconstruction: sideFlags.length > 0,
       forbidden_content_detected: forbiddenStringDetected(entries),
       redacted_summary_only: entries.every((entry) => entry.redacted_summary_only !== false),
+      canonical_metadata_ok: canonical.ok,
+      canonical_metadata_reason: canonical.reason,
       evidenceRefs: asArray(latest.evidenceRefs).length > 0 ? clone(latest.evidenceRefs) : [evidenceRef('source', id)],
       projectRoot,
     };
@@ -404,6 +537,8 @@ function summarizeJsonlSource(projectRoot, id, relativePath, textRead) {
       side_profile_reconstruction: false,
       forbidden_content_detected: forbiddenStringDetected(textRead.text),
       redacted_summary_only: true,
+      canonical_metadata_ok: false,
+      canonical_metadata_reason: 'invalid_jsonl',
       evidenceRefs: [evidenceRef('source', id)],
       projectRoot,
     };
@@ -434,6 +569,8 @@ function readOneExplicitDurableSource(projectRoot, id, relativePath, kind) {
       side_profile_reconstruction: false,
       forbidden_content_detected: false,
       redacted_summary_only: true,
+      canonical_metadata_ok: false,
+      canonical_metadata_reason: 'path_safety_blocked',
       evidenceRefs: [evidenceRef('source', id)],
       projectRoot,
     };
@@ -461,6 +598,8 @@ function readOneExplicitDurableSource(projectRoot, id, relativePath, kind) {
       side_profile_reconstruction: false,
       forbidden_content_detected: false,
       redacted_summary_only: true,
+      canonical_metadata_ok: false,
+      canonical_metadata_reason: read.error,
       evidenceRefs: [evidenceRef('source', id)],
       projectRoot,
     };
@@ -513,6 +652,7 @@ function readPresenceRuntimeReadPathSources(options = {}) {
 }
 
 function sourcePublicSummary(source = {}) {
+  const characterCount = Number(source.size_bytes || 0);
   return {
     id: source.id,
     path: source.path,
@@ -521,6 +661,9 @@ function sourcePublicSummary(source = {}) {
     hash: source.hash,
     version: source.version || 0,
     entry_count: source.entry_count || 0,
+    size_bytes: characterCount,
+    character_count: characterCount,
+    tokenish_count: Math.ceil(characterCount / 4),
     path_safe: source.path_safe === true,
     path_safety_reason: source.path_safety_reason || null,
     profile: source.scope?.profile || null,
@@ -533,6 +676,8 @@ function sourcePublicSummary(source = {}) {
     side_profile_reconstruction: source.side_profile_reconstruction === true,
     forbidden_content_detected: source.forbidden_content_detected === true,
     redacted_summary_only: source.redacted_summary_only !== false,
+    canonical_metadata_ok: source.canonical_metadata_ok === true,
+    canonical_metadata_reason: source.canonical_metadata_reason || null,
     evidenceRefs: clone(asArray(source.evidenceRefs)),
   };
 }
@@ -550,6 +695,7 @@ function sourceManifest(sources = {}) {
     result[entry.id] = entry.hash;
     return result;
   }, {});
+  const loaded_character_count = loaded.reduce((sum, entry) => sum + Number(entry.character_count || 0), 0);
   return {
     explicit_durable_sources_only: true,
     fallback_sources_allowed: false,
@@ -560,6 +706,9 @@ function sourceManifest(sources = {}) {
     raw_content_included: sourceEntries.some((entry) => entry.raw_content_included === true),
     side_profile_reconstruction: sourceEntries.some((entry) => entry.side_profile_reconstruction === true),
     forbidden_content_detected: sourceEntries.some((entry) => entry.forbidden_content_detected === true),
+    canonical_metadata_ok: sourceEntries.every((entry) => entry.canonical_metadata_ok === true),
+    loaded_character_count,
+    approximate_loaded_token_count: Math.ceil(loaded_character_count / 4),
     source_hashes: hashes,
     sources: sourceEntries,
   };
@@ -621,6 +770,32 @@ function selfProfileOk(self = {}) {
     && !forbiddenStringDetected(self);
 }
 
+function permissionMarkerBlocked(permissions = {}) {
+  const directMarkers = [
+    permissions.stale,
+    permissions.degraded,
+    permissions.review_required,
+    permissions.reviewRequired,
+    permissions.review_required_now,
+  ].some((value) => value === true);
+  const statusMarkers = [
+    permissions.status,
+    permissions.permission_status,
+    permissions.permissions_status,
+    permissions.boundary_status,
+    permissions.freshness,
+    permissions.review_status,
+  ].map((value) => String(value || '').trim().toLowerCase());
+  return directMarkers
+    || statusMarkers.some((value) => [
+      'stale',
+      'degraded',
+      'review_required',
+      'review-required',
+      'review required',
+    ].includes(value));
+}
+
 function permissionsOk(permissions = {}) {
   return permissions.machine_checkable === true
     && permissions.read_local_redacted_context === true
@@ -638,7 +813,8 @@ function permissionsOk(permissions = {}) {
     && permissions.runtime_start === false
     && permissions.server_listener_routes === false
     && permissions.live_kill_switch_check === false
-    && permissions.kill_switch_wiring === false;
+    && permissions.kill_switch_wiring === false
+    && !permissionMarkerBlocked(permissions);
 }
 
 function historyTextureOk(historySource = {}) {
@@ -972,8 +1148,9 @@ function careIntakeReporting(sources = {}) {
     no_runtime_authorization: true,
     identity_packet: {
       token_budget_required: true,
-      approximate_loaded_character_count: asArray(manifest.sources)
-        .reduce((sum, source) => sum + Number(source.size_bytes || 0), 0),
+      approximate_loaded_character_count: manifest.loaded_character_count,
+      approximate_loaded_token_count: manifest.approximate_loaded_token_count,
+      loaded_source_count: manifest.loaded_count,
       loaded_source_proof: manifest.loaded_count === 5,
       loaded_sources: clone(manifest.source_hashes),
       meaning_rich_fields: [
@@ -1191,6 +1368,9 @@ function sourceManifestOk(manifest = {}) {
     && manifest.raw_content_included === false
     && manifest.side_profile_reconstruction === false
     && manifest.forbidden_content_detected === false
+    && manifest.canonical_metadata_ok === true
+    && Number(manifest.loaded_character_count) > 0
+    && Number(manifest.approximate_loaded_token_count) > 0
     && sources.length === 5
     && Object.entries(expected).every(([id, expectedPath]) => sources.some((source) => (
       source.id === id
@@ -1202,6 +1382,9 @@ function sourceManifestOk(manifest = {}) {
       && source.side_profile_reconstruction === false
       && source.forbidden_content_detected === false
       && source.redacted_summary_only === true
+      && source.canonical_metadata_ok === true
+      && Number(source.character_count) > 0
+      && Number(source.tokenish_count) > 0
       && Boolean(source.hash)
       && asArray(source.evidenceRefs).length > 0
     )))
@@ -1239,6 +1422,9 @@ function careReportingOk(reporting = {}) {
     && reporting.no_runtime_authorization === true
     && reporting.identity_packet?.token_budget_required === true
     && reporting.identity_packet?.loaded_source_proof === true
+    && Number(reporting.identity_packet?.approximate_loaded_character_count) > 0
+    && Number(reporting.identity_packet?.approximate_loaded_token_count) > 0
+    && Number(reporting.identity_packet?.loaded_source_count) === 5
     && reporting.identity_packet?.profile_scope_bound === true
     && asArray(reporting.identity_packet?.meaning_rich_fields).includes('trust')
     && reporting.compression_gate?.status === 'not_compressing_reporting_only'

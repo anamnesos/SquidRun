@@ -147,10 +147,19 @@ describe('mira core Presence Runtime Read Path v0 phase 73', () => {
       raw_content_included: false,
       side_profile_reconstruction: false,
       forbidden_content_detected: false,
+      canonical_metadata_ok: true,
     }));
+    expect(current.source_manifest.loaded_character_count).toBeGreaterThan(0);
+    expect(current.source_manifest.approximate_loaded_token_count).toBeGreaterThan(0);
     expect(current.source_manifest.sources.map((source) => source.path).sort()).toEqual(
       Object.values(EXPLICIT_DURABLE_SOURCE_PATHS).sort(),
     );
+    for (const source of current.source_manifest.sources) {
+      expect(source.character_count).toBeGreaterThan(0);
+      expect(source.tokenish_count).toBeGreaterThan(0);
+      expect(source.canonical_metadata_ok).toBe(true);
+      expect(source.canonical_metadata_reason).toEqual(expect.any(String));
+    }
     expect(current.gate_results).toEqual(expect.objectContaining({
       same_loaded_source_hashes: true,
     }));
@@ -192,8 +201,11 @@ describe('mira core Presence Runtime Read Path v0 phase 73', () => {
     expect(current.care_intake_reporting.identity_packet).toEqual(expect.objectContaining({
       token_budget_required: true,
       loaded_source_proof: true,
+      loaded_source_count: 5,
       profile_scope_bound: true,
     }));
+    expect(current.care_intake_reporting.identity_packet.approximate_loaded_character_count).toBeGreaterThan(0);
+    expect(current.care_intake_reporting.identity_packet.approximate_loaded_token_count).toBeGreaterThan(0);
     expect(output.validation_report).toEqual(expect.objectContaining({
       schema: VALIDATION_REPORT_SCHEMA_VERSION,
       decision: 'accepted_read_only',
@@ -339,6 +351,61 @@ describe('mira core Presence Runtime Read Path v0 phase 73', () => {
     validation = validateMiraCorePresenceRuntimeReadPathV0Output(output, contract);
     expect(validation.ok).toBe(false);
     expect(validation.errors).toContain('validation-report-side-effect-truth');
+  });
+
+  test('fails closed for durable canonical metadata and stale permission tampering', () => {
+    let projectRoot = seededProject();
+    const self = readJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.self_profile);
+    self.canonical_hash = 'sha256:tampered';
+    writeJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.self_profile, self);
+    let output = build(projectRoot);
+    let validation = validateMiraCorePresenceRuntimeReadPathV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(readPath(output).source_manifest.canonical_metadata_ok).toBe(false);
+    expect(readPath(output).source_manifest.sources.find((source) => source.id === 'self_profile')).toEqual(expect.objectContaining({
+      canonical_metadata_ok: false,
+      canonical_metadata_reason: 'canonical_hash_or_growth_metadata_mismatch',
+    }));
+
+    projectRoot = seededProject();
+    const permissions = readJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.permissions);
+    permissions.seed_id = 'durable-state-seed-v0:tampered';
+    permissions.provenance.source_label = 'tampered_provenance';
+    writeJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.permissions, permissions);
+    output = build(projectRoot);
+    validation = validateMiraCorePresenceRuntimeReadPathV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(readPath(output).source_manifest.sources.find((source) => source.id === 'permissions')).toEqual(expect.objectContaining({
+      canonical_metadata_ok: false,
+      canonical_metadata_reason: 'missing_or_invalid_seed_id',
+    }));
+
+    projectRoot = seededProject();
+    const historyPath = workspacePath(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.growth_history);
+    const historyEntries = fs.readFileSync(historyPath, 'utf8')
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+    historyEntries[0].canonical_hash = 'sha256:tampered';
+    historyEntries[0].redacted_summary_only = false;
+    fs.writeFileSync(historyPath, `${historyEntries.map((entry) => JSON.stringify(entry)).join('\n')}\n`, 'utf8');
+    output = build(projectRoot);
+    validation = validateMiraCorePresenceRuntimeReadPathV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(readPath(output).source_manifest.sources.find((source) => source.id === 'growth_history')).toEqual(expect.objectContaining({
+      canonical_metadata_ok: false,
+      canonical_metadata_reason: 'jsonl_canonical_hash_or_metadata_mismatch',
+    }));
+
+    projectRoot = seededProject();
+    const stalePermissions = readJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.permissions);
+    stalePermissions.stale = true;
+    stalePermissions.permission_status = 'review_required';
+    writeJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.permissions, stalePermissions);
+    output = build(projectRoot);
+    validation = validateMiraCorePresenceRuntimeReadPathV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(readPath(output).source_manifest.source_quality.permissions_ok).toBe(false);
   });
 
   test('parses inert output/apply flags and stdin scope overrides', () => {
