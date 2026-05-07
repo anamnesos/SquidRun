@@ -210,4 +210,78 @@ describe('startup-transcript-context', () => {
     expect(result.activeItems.join('\n')).toContain('Scoped chat should appear in side startup only');
     expect(result.activeItems.join('\n')).not.toContain('Main chat should stay main-only');
   });
+
+  test('keeps Eunbyeol-scoped Telegram comms out of main startup and available to Eunbyeol window', () => {
+    const indexPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index.jsonl');
+    const metaPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index-meta.json');
+    const dbPath = path.join(tempRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
+
+    fs.writeFileSync(indexPath, '');
+    fs.writeFileSync(metaPath, JSON.stringify({
+      builtAt: new Date().toISOString(),
+      transcriptFileCount: 0,
+      recordCount: 0,
+    }, null, 2));
+
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE comms_journal (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_role TEXT,
+        target_role TEXT,
+        channel TEXT,
+        raw_body TEXT,
+        session_id TEXT,
+        metadata_json TEXT
+      );
+    `);
+    const insert = db.prepare(`
+      INSERT INTO comms_journal (sender_role, target_role, channel, raw_body, session_id, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(
+      'user',
+      'architect',
+      'telegram',
+      'Main SquidRun message',
+      'app-session-329',
+      JSON.stringify({ chatId: '5613428850', windowKey: 'main', profile: 'main' })
+    );
+    insert.run(
+      'user',
+      'architect',
+      'telegram',
+      '한국어 Eunbyeol case message',
+      'app-session-329:eunbyeol',
+      JSON.stringify({
+        chatId: '8754356993',
+        windowKey: 'eunbyeol',
+        profile: 'eunbyeol',
+        sessionScopeId: 'app-session-329:eunbyeol',
+      })
+    );
+    db.close();
+
+    const main = buildStartupTranscriptContext({
+      projectRoot: tempRoot,
+      indexPath,
+      metaPath,
+      evidenceLedgerDbPath: dbPath,
+      windowKey: 'main',
+    });
+    const eunbyeol = buildStartupTranscriptContext({
+      projectRoot: tempRoot,
+      indexPath,
+      metaPath,
+      evidenceLedgerDbPath: dbPath,
+      windowKey: 'eunbyeol',
+    });
+
+    expect(main.ok).toBe(true);
+    expect(main.activeItems.join('\n')).toContain('Main SquidRun message');
+    expect(main.activeItems.join('\n')).not.toContain('Eunbyeol case message');
+    expect(eunbyeol.ok).toBe(true);
+    expect(eunbyeol.activeItems.join('\n')).toContain('Eunbyeol case message');
+    expect(eunbyeol.activeItems.join('\n')).not.toContain('Main SquidRun message');
+  });
 });

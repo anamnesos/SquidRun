@@ -19,9 +19,13 @@ const DEFAULT_RECENT_COMMS_LIMIT = 8;
 const SCOPED_PROFILE_CHAT_ID = '2222222222';
 const DatabaseSync = getDatabaseSync();
 
-function normalizeWindowKey(value) {
+function normalizeScopeKey(value) {
   const normalized = trimText(value).toLowerCase();
   return normalized || 'main';
+}
+
+function normalizeWindowKey(value) {
+  return normalizeScopeKey(value);
 }
 
 function trimText(value) {
@@ -51,6 +55,45 @@ function resolveEvidenceLedgerDbPath(projectRoot, explicitPath = null) {
   return explicitPath
     ? path.resolve(explicitPath)
     : path.join(projectRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
+}
+
+function extractSessionScopeSuffix(value) {
+  const text = trimText(value).toLowerCase();
+  if (!text || !text.includes(':')) return '';
+  const suffix = text.split(':').pop().trim();
+  return suffix || '';
+}
+
+function extractRowScopeKey(row = {}) {
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const directScope = normalizeScopeKey(
+    metadata.windowKey
+    || metadata.window_key
+    || metadata.profile
+    || metadata.profileName
+    || metadata.profile_name
+  );
+  if (directScope !== 'main') return directScope;
+
+  const sessionScope = extractSessionScopeSuffix(
+    metadata.sessionScopeId
+    || metadata.session_scope_id
+    || metadata.sessionId
+    || metadata.session_id
+    || row.sessionId
+  );
+  if (sessionScope && sessionScope !== 'main') return sessionScope;
+
+  const chatId = trimText(metadata.chatId || metadata.telegramChatId);
+  if (chatId === SCOPED_PROFILE_CHAT_ID) return 'scoped';
+
+  return 'main';
+}
+
+function rowMatchesWindowScope(row = {}, requestedWindowKey = 'main') {
+  const requested = normalizeWindowKey(requestedWindowKey);
+  const rowScope = extractRowScopeKey(row);
+  return requested === 'main' ? rowScope === 'main' : rowScope === requested;
 }
 
 function readFileIfExists(filePath) {
@@ -124,17 +167,7 @@ function readRecentComms(options = {}) {
       })(),
     }));
     const windowKey = normalizeWindowKey(options.windowKey);
-    return mappedRows.filter((row) => {
-      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
-      const chatId = trimText(metadata.chatId || metadata.telegramChatId);
-      const commsWindowKey = trimText(metadata.windowKey).toLowerCase();
-      const isScopedRow = (
-        chatId === SCOPED_PROFILE_CHAT_ID
-        || commsWindowKey === 'scoped'
-        || trimText(row.sessionId).toLowerCase().endsWith(':scoped')
-      );
-      return windowKey === 'scoped' ? isScopedRow : !isScopedRow;
-    });
+    return mappedRows.filter((row) => rowMatchesWindowScope(row, windowKey));
   } catch (_) {
     return [];
   } finally {
@@ -170,12 +203,12 @@ function buildActiveItems(options = {}) {
   const caseItems = extractCaseActiveItems(caseContent).slice(0, 3);
   const commsItems = extractCommsActiveItems(recentComms).slice(0, 2);
   const windowKey = normalizeWindowKey(options.windowKey);
-  const items = windowKey === 'scoped'
+  const items = windowKey !== 'main'
     ? [
       ...caseItems,
       ...commsItems,
     ]
-    : (windowKey === 'main' ? commsItems : [...caseItems, ...commsItems]);
+    : commsItems;
 
   return {
     items: unique(items).slice(0, Math.max(1, Number.parseInt(options.maxActiveItems, 10) || DEFAULT_MAX_ACTIVE_ITEMS)),
@@ -335,5 +368,7 @@ module.exports = {
     retrieveTranscriptMatches,
     getLatestTranscriptSourceMtimeMs,
     normalizeWindowKey,
+    extractRowScopeKey,
+    rowMatchesWindowScope,
   },
 };

@@ -167,6 +167,52 @@ function safeJsonObject(value) {
   return value;
 }
 
+function normalizeScopeKey(value) {
+  const normalized = toOptionalString(value, 'main').toLowerCase();
+  return normalized || 'main';
+}
+
+function extractSessionScopeSuffix(value) {
+  const text = toOptionalString(value, '').toLowerCase();
+  if (!text || !text.includes(':')) return '';
+  const suffix = text.split(':').pop().trim();
+  return suffix || '';
+}
+
+function extractRowScopeKey(row = {}) {
+  const metadata = safeJsonObject(row?.metadata);
+  const directScope = normalizeScopeKey(
+    metadata.windowKey
+    || metadata.window_key
+    || metadata.profile
+    || metadata.profileName
+    || metadata.profile_name
+  );
+  if (directScope !== 'main') return directScope;
+
+  const sessionScope = extractSessionScopeSuffix(
+    metadata.sessionScopeId
+    || metadata.session_scope_id
+    || metadata.sessionId
+    || metadata.session_id
+    || row?.sessionId
+  );
+  if (sessionScope && sessionScope !== 'main') return sessionScope;
+
+  return 'main';
+}
+
+function rowMatchesWindowScope(row = {}, requestedWindowKey = 'main') {
+  const requested = normalizeScopeKey(requestedWindowKey);
+  const rowScope = extractRowScopeKey(row);
+  return requested === 'main' ? rowScope === 'main' : rowScope === requested;
+}
+
+function filterRowsForWindowScope(rows = [], requestedWindowKey = 'main') {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => rowMatchesWindowScope(row, requestedWindowKey));
+}
+
 function stripKnownTagPrefixes(line) {
   let normalized = String(line || '').trim();
   if (!normalized) return '';
@@ -1069,6 +1115,7 @@ async function writeTextIfChanged(filePath, content, options = {}) {
 
 async function materializeSessionHandoff(options = {}) {
   const sessionId = resolveEffectiveSessionScopeId(options.sessionId, options);
+  const windowKey = normalizeScopeKey(options.windowKey || options.profileName || 'main');
   const queryLimit = Math.max(1, Number(options.queryLimit) || DEFAULT_QUERY_LIMIT);
   const queryFn = typeof options.queryCommsJournal === 'function'
     ? options.queryCommsJournal
@@ -1083,7 +1130,7 @@ async function materializeSessionHandoff(options = {}) {
     }, {
       dbPath: options.dbPath || null,
     }));
-  const rows = Array.isArray(queriedRows) ? queriedRows : [];
+  const rows = filterRowsForWindowScope(Array.isArray(queriedRows) ? queriedRows : [], windowKey);
 
   const queriedCrossSessionRows = Array.isArray(options.crossSessionRows)
     ? options.crossSessionRows
@@ -1101,7 +1148,10 @@ async function materializeSessionHandoff(options = {}) {
             : rows
         )
     );
-  const crossSessionRows = Array.isArray(queriedCrossSessionRows) ? queriedCrossSessionRows : [];
+  const crossSessionRows = filterRowsForWindowScope(
+    Array.isArray(queriedCrossSessionRows) ? queriedCrossSessionRows : [],
+    windowKey
+  );
   const sourceSession = selectSourceSessionRows(sessionId, rows, crossSessionRows);
   const unresolvedClaims = Array.isArray(options.unresolvedClaims)
     ? normalizeUnresolvedClaims(options.unresolvedClaims, options.unresolvedClaimsMax)
@@ -1298,6 +1348,9 @@ module.exports = {
     isMeaningfulHandoffRow,
     filterMeaningfulRows,
     selectSourceSessionRows,
+    extractRowScopeKey,
+    rowMatchesWindowScope,
+    filterRowsForWindowScope,
     LEGACY_PANE_HANDOFFS,
   },
 };

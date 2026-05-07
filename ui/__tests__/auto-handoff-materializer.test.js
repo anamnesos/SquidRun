@@ -573,6 +573,86 @@ describe('auto-handoff-materializer', () => {
     expect(digestSection).not.toContain('TASK: Should not appear in digest highlights');
   });
 
+  test('materializeSessionHandoff excludes Eunbyeol side-profile rows from main and keeps them available to that window', async () => {
+    const mainOutputPath = path.join(tempDir, 'handoffs', 'main-session.md');
+    const emptyMainOutputPath = path.join(tempDir, 'handoffs', 'empty-main-session.md');
+    const eunbyeolOutputPath = path.join(tempDir, 'handoffs-eunbyeol', 'session.md');
+    const mainRow = {
+      messageId: 'm-main-task',
+      sessionId: 'app-session-329',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: '(ARCHITECT #1): TASK: Main runtime guard',
+      brokeredAtMs: 2000,
+      metadata: { windowKey: 'main', profile: 'main' },
+    };
+    const eunbyeolRow = {
+      messageId: 'm-eunbyeol-task',
+      sessionId: 'app-session-329:eunbyeol',
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'telegram',
+      direction: 'inbound',
+      status: 'brokered',
+      rawBody: '(USER #1): TASK: 한국어 Eunbyeol case message',
+      brokeredAtMs: 1000,
+      metadata: {
+        chatId: '8754356993',
+        windowKey: 'eunbyeol',
+        profile: 'eunbyeol',
+        sessionScopeId: 'app-session-329:eunbyeol',
+      },
+    };
+
+    const main = await materializeSessionHandoff({
+      rows: [mainRow, eunbyeolRow],
+      crossSessionRows: [mainRow, eunbyeolRow],
+      outputPath: mainOutputPath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-329',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+    const emptyMain = await materializeSessionHandoff({
+      rows: [],
+      crossSessionRows: [eunbyeolRow],
+      outputPath: emptyMainOutputPath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-329',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+    const eunbyeol = await materializeSessionHandoff({
+      rows: [mainRow, eunbyeolRow],
+      crossSessionRows: [mainRow, eunbyeolRow],
+      outputPath: eunbyeolOutputPath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-329',
+      windowKey: 'eunbyeol',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+
+    expect(main.ok).toBe(true);
+    const mainContent = fs.readFileSync(mainOutputPath, 'utf8');
+    expect(mainContent).toContain('Main runtime guard');
+    expect(mainContent).not.toContain('Eunbyeol case message');
+    expect(mainContent).not.toContain('m-eunbyeol-task');
+
+    expect(emptyMain.ok).toBe(true);
+    expect(emptyMain.skipped).toBe(true);
+    expect(emptyMain.reason).toBe('no_meaningful_content');
+    expect(fs.existsSync(emptyMainOutputPath)).toBe(false);
+
+    expect(eunbyeol.ok).toBe(true);
+    const eunbyeolContent = fs.readFileSync(eunbyeolOutputPath, 'utf8');
+    expect(eunbyeolContent).toContain('Eunbyeol case message');
+    expect(eunbyeolContent).not.toContain('Main runtime guard');
+  });
+
   test('removeLegacyPaneHandoffFiles deletes legacy files', () => {
     const handoffsDir = path.join(tempDir, 'handoffs');
     fs.mkdirSync(handoffsDir, { recursive: true });
