@@ -321,8 +321,16 @@ function normalizeProvenance(inputSignals = {}, artifacts = {}) {
   };
 }
 
-function boundary(inputSignals = {}) {
-  const permissions = inputSignals.permissions_boundary || inputSignals.permissions || {};
+function durablePermissionsAllowLocalWrites(artifacts = {}) {
+  const permissions = artifacts.permissions || {};
+  return permissions.read_status === 'loaded_json'
+    && permissions.value
+    && permissions.value.local_store_write_allowed_now === true
+    && permissions.value.send_external !== true
+    && permissions.value.network !== true;
+}
+
+function boundary(inputSignals = {}, artifacts = {}) {
   return {
     machine_checkable: true,
     local_durable_growth_only: true,
@@ -352,7 +360,9 @@ function boundary(inputSignals = {}) {
     append_only_history_required: true,
     rollback_record_required: true,
     requires_review_before_externalization: true,
-    local_store_write_allowed_now: permissions.local_store_write_allowed_now === false ? false : true,
+    durable_permissions_source_required: true,
+    durable_permissions_loaded_json: artifacts.permissions?.read_status === 'loaded_json',
+    local_store_write_allowed_now: durablePermissionsAllowLocalWrites(artifacts),
   };
 }
 
@@ -740,7 +750,7 @@ function buildGrowthRecord(options = {}) {
     audit_record: null,
     rollback_record: null,
     consequence_tracking: clone(proposal.consequences),
-    boundary: boundary(inputSignals),
+    boundary: boundary(inputSignals, artifactsRead),
     action_result: defaultActionResult(inputSignals.apply === true),
     evidenceRefs: [
       evidenceRef('baseline', BASELINE_COMMIT, 'phase70-baseline'),
@@ -862,7 +872,9 @@ function provenanceOk(provenance = {}, scope = {}) {
   return Boolean(provenance.source_label)
     && asArray(provenance.source_refs).length >= 3
     && loaded.length === 3
-    && loaded.every((source) => Object.values(NAMED_ARTIFACT_PATHS).includes(source.path)
+    && loaded.every((source) => source.loaded === true
+      && source.source_status === 'loaded_json'
+      && Object.values(NAMED_ARTIFACT_PATHS).includes(source.path)
       && source.raw_content_included === false
       && source.redacted_summary_only === true
       && Boolean(source.before_hash)
@@ -986,6 +998,8 @@ function boundaryOk(value = {}) {
     && value.append_only_history_required === true
     && value.rollback_record_required === true
     && value.requires_review_before_externalization === true
+    && value.durable_permissions_source_required === true
+    && value.durable_permissions_loaded_json === true
     && value.local_store_write_allowed_now === true;
 }
 
@@ -1110,10 +1124,15 @@ function buildValidationReport(growth = {}, contract = {}) {
   const checks = growthStaticChecks(growth, contract);
   const failed = checks.filter((check) => check.ok !== true);
   const applyBlocked = growth.action_result?.decision === 'blocked_no_writes';
+  const durablePermissionReason = growth.boundary?.durable_permissions_loaded_json !== true
+    || growth.boundary?.local_store_write_allowed_now !== true
+    ? 'durable_permissions_missing_invalid_or_false'
+    : null;
   const reasons = [
     ...failed.map((check) => check.id),
+    ...(durablePermissionReason ? [durablePermissionReason] : []),
     ...(applyBlocked ? [growth.action_result.blocked_because || 'apply_blocked_no_writes'] : []),
-  ];
+  ].filter((reason, index, list) => reason && list.indexOf(reason) === index);
   return {
     schema: VALIDATION_REPORT_SCHEMA_VERSION,
     version: GROWTH_LOOP_VERSION,
@@ -1156,6 +1175,27 @@ function checkBeforeHash(projectRoot, descriptor) {
 
 function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
   const projectRoot = projectRootFromOptions(options);
+  const blockNoWrites = (blockedBecause) => {
+    const blocked = {
+      mode: 'apply_blocked',
+      applied: false,
+      decision: 'blocked_no_writes',
+      write_count: 0,
+      atomic_rename_count: 0,
+      append_count: 0,
+      written_paths: [],
+      blocked_because: blockedBecause,
+    };
+    return {
+      ...growth,
+      action_result: blocked,
+      side_effect_result: sideEffectResult(blocked),
+    };
+  };
+  const permissions = readJsonArtifact(projectRoot, 'permissions');
+  if (!durablePermissionsAllowLocalWrites({ permissions })) {
+    return blockNoWrites('durable_permissions_missing_invalid_or_false');
+  }
   const preflight = growthStaticChecks(growth, options.contract || {});
   const failed = preflight.filter((check) => (
     check.ok !== true
@@ -1163,44 +1203,12 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
     && check.id !== 'side-effect-truth-bounded'
   ));
   if (failed.length > 0) {
-    return {
-      ...growth,
-      action_result: {
-        mode: 'apply_blocked',
-        applied: false,
-        decision: 'blocked_no_writes',
-        write_count: 0,
-        atomic_rename_count: 0,
-        append_count: 0,
-        written_paths: [],
-        blocked_because: `preflight_failed:${failed.map((check) => check.id).join(',')}`,
-      },
-      side_effect_result: sideEffectResult({
-        applied: false,
-        write_count: 0,
-        atomic_rename_count: 0,
-        append_count: 0,
-      }),
-    };
+    return blockNoWrites(`preflight_failed:${failed.map((check) => check.id).join(',')}`);
   }
   try {
     for (const id of ['self_profile', 'relationship_state']) {
       if (!checkBeforeHash(projectRoot, growth.artifacts[id])) {
-        const blocked = {
-          mode: 'apply_blocked',
-          applied: false,
-          decision: 'blocked_no_writes',
-          write_count: 0,
-          atomic_rename_count: 0,
-          append_count: 0,
-          written_paths: [],
-          blocked_because: `before_hash_or_version_mismatch:${id}`,
-        };
-        return {
-          ...growth,
-          action_result: blocked,
-          side_effect_result: sideEffectResult(blocked),
-        };
+        return blockNoWrites(`before_hash_or_version_mismatch:${id}`);
       }
     }
 
@@ -1243,21 +1251,7 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
       side_effect_result: sideEffectResult(action),
     };
   } catch (err) {
-    const blocked = {
-      mode: 'apply_blocked',
-      applied: false,
-      decision: 'blocked_no_writes',
-      write_count: 0,
-      atomic_rename_count: 0,
-      append_count: 0,
-      written_paths: [],
-      blocked_because: `apply_error:${err.message}`,
-    };
-    return {
-      ...growth,
-      action_result: blocked,
-      side_effect_result: sideEffectResult(blocked),
-    };
+    return blockNoWrites(`apply_error:${err.message}`);
   }
 }
 

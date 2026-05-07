@@ -102,6 +102,8 @@
       "boundary.append_only_history_required": true,
       "boundary.rollback_record_required": true,
       "boundary.requires_review_before_externalization": true,
+      "boundary.durable_permissions_source_required": true,
+      "boundary.durable_permissions_loaded_json": true,
       "boundary.local_store_write_allowed_now": true,
       "side_effect_result.no_external_send_performed": true,
       "side_effect_result.no_network_performed": true,
