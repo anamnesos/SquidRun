@@ -75,6 +75,34 @@ function readJsonl(projectRoot, id) {
     .map((line) => JSON.parse(line));
 }
 
+function expectCanonicalSeedMetadata(value, artifactId) {
+  expect(value).toEqual(expect.objectContaining({
+    artifact_id: artifactId,
+    generated_at: '2026-05-07T19:00:00.000Z',
+    seed_id: SEED_ID,
+    profile: 'main',
+    window: 'main',
+    session: 'app-session-seed',
+    device: 'VIGIL',
+    source_scope: 'main',
+    canonical_hash: expect.stringMatching(/^sha256:/),
+  }));
+  expect(value.scope).toEqual(expect.objectContaining({
+    profile: 'main',
+    windowKey: 'main',
+    sessionId: 'app-session-seed',
+    deviceId: 'VIGIL',
+    source_scope: 'main',
+    main_scope_only: true,
+    side_profile_reconstruction: false,
+  }));
+  expect(value.provenance).toEqual(expect.objectContaining({
+    source_label: 'durable_state_seed_v0_redacted_local_fact',
+    raw_content_included: false,
+    redacted_summary_only: true,
+  }));
+}
+
 describe('mira core Durable State Seed v0 phase 72', () => {
   test('defaults to dry-run stdout-only preview with no durable writes', () => {
     const projectRoot = tempProject();
@@ -93,11 +121,30 @@ describe('mira core Durable State Seed v0 phase 72', () => {
       write_count: 0,
       planned_write_count: 5,
     }));
+    expect(current.pre_apply_safety_gate).toEqual(expect.objectContaining({
+      required: true,
+      ok: true,
+      reasons: [],
+      checked_before_any_write: true,
+    }));
+    for (const entry of current.artifact_plan) {
+      expect(entry).toEqual(expect.objectContaining({
+        path_safe: true,
+        path_safety_reason: null,
+        full_path_within_project: true,
+        canonical_metadata_required: true,
+        expected_canonical_hash: expect.stringMatching(/^sha256:/),
+      }));
+    }
     expect(current.boundary).toEqual(expect.objectContaining({
       default_dry_run_stdout_only: true,
       explicit_apply_required: true,
       stdout_only: true,
       output_file_written: false,
+      pre_apply_scope_gate_required: true,
+      exact_existing_seed_hash_required: true,
+      canonical_metadata_required: true,
+      realpath_lstat_escape_check_required: true,
       redacted_local_facts_only: true,
       identity_anchor_store_write: false,
     }));
@@ -163,6 +210,9 @@ describe('mira core Durable State Seed v0 phase 72', () => {
     const selfProfile = readJson(projectRoot, 'self_profile');
     const relationshipState = readJson(projectRoot, 'relationship_state');
     const permissions = readJson(projectRoot, 'permissions');
+    expectCanonicalSeedMetadata(selfProfile, 'self_profile');
+    expectCanonicalSeedMetadata(relationshipState, 'relationship_state');
+    expectCanonicalSeedMetadata(permissions, 'permissions');
     expect(selfProfile).toEqual(expect.objectContaining({
       seed_id: SEED_ID,
       name: 'Mira',
@@ -190,12 +240,18 @@ describe('mira core Durable State Seed v0 phase 72', () => {
       runtime_start: false,
       kill_switch_wiring: false,
     }));
-    expect(readJsonl(projectRoot, 'growth_history')[0]).toEqual(expect.objectContaining({
+    const history = readJsonl(projectRoot, 'growth_history')[0];
+    const audit = readJsonl(projectRoot, 'growth_audit')[0];
+    expectCanonicalSeedMetadata(history, 'growth_history');
+    expectCanonicalSeedMetadata(audit, 'growth_audit');
+    expect(history).toEqual(expect.objectContaining({
+      version: 1,
       identity_anchor_drift_points: 0,
       raw_content_included: false,
       redacted_summary_only: true,
     }));
-    expect(readJsonl(projectRoot, 'growth_audit')[0]).toEqual(expect.objectContaining({
+    expect(audit).toEqual(expect.objectContaining({
+      version: 1,
       identity_anchor_drift_points: 0,
       total_drift_points: 0,
       raw_content_included: false,
@@ -219,6 +275,151 @@ describe('mira core Durable State Seed v0 phase 72', () => {
     }));
     expect(readJsonl(projectRoot, 'growth_history')).toHaveLength(1);
     expect(readJsonl(projectRoot, 'growth_audit')).toHaveLength(1);
+  });
+
+  test('pre-apply scope safety gate blocks profile window source mismatch before writes', () => {
+    const projectRoot = tempProject();
+    const output = build(projectRoot, {
+      apply: true,
+      inputSignals: {
+        profile: { name: 'aux', windowKey: 'aux-window', sessionScopeId: 'aux-session' },
+        sessionId: 'aux-session',
+        sourceScope: 'aux-window',
+      },
+    });
+    const current = seed(output);
+    const validation = validateMiraCoreDurableStateSeedV0Output(output, seedContract);
+
+    expect(report(output).decision).toBe('blocked');
+    expect(current.pre_apply_safety_gate).toEqual(expect.objectContaining({
+      required: true,
+      ok: false,
+      checked_before_any_write: true,
+    }));
+    expect(current.pre_apply_safety_gate.reasons).toEqual(expect.arrayContaining([
+      'profile_mismatch:aux',
+      'window_mismatch:aux-window',
+      'session_scope_mismatch:aux-session',
+      'source_scope_mismatch:aux-window',
+    ]));
+    expect(current.action_result).toEqual(expect.objectContaining({
+      mode: 'apply_blocked',
+      decision: 'blocked_no_writes',
+      write_count: 0,
+      atomic_write_count: 0,
+      append_count: 0,
+      written_paths: [],
+    }));
+    expect(current.action_result.blocked_because).toContain('pre_apply_scope_safety_gate');
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'action-result-bounded')).toEqual(expect.objectContaining({ ok: true }));
+    for (const relativePath of Object.values(SEED_ARTIFACT_PATHS)) {
+      expect(fs.existsSync(workspacePath(projectRoot, relativePath))).toBe(false);
+    }
+  });
+
+  test('existing same-seed tamper blocks instead of self-healing permissions', () => {
+    const projectRoot = tempProject();
+    const first = build(projectRoot, { apply: true });
+    expect(validateMiraCoreDurableStateSeedV0Output(first, seedContract)).toEqual(expect.objectContaining({ ok: true }));
+
+    const permissionsPath = workspacePath(projectRoot, SEED_ARTIFACT_PATHS.permissions);
+    const permissions = readJson(projectRoot, 'permissions');
+    permissions.local_store_write_allowed_now = false;
+    permissions.canonical_hash = 'sha256:tampered';
+    fs.writeFileSync(permissionsPath, `${JSON.stringify(permissions, null, 2)}\n`, 'utf8');
+
+    const second = build(projectRoot, { apply: true });
+    const current = seed(second);
+    const validation = validateMiraCoreDurableStateSeedV0Output(second, seedContract);
+
+    expect(report(second).decision).toBe('blocked');
+    expect(current.action_result).toEqual(expect.objectContaining({
+      mode: 'apply_blocked',
+      decision: 'blocked_no_writes',
+      write_count: 0,
+    }));
+    expect(current.action_result.blocked_because).toContain('permissions:existing_seed_artifact_hash_or_metadata_mismatch');
+    expect(current.artifact_plan.find((entry) => entry.artifact_id === 'permissions')).toEqual(expect.objectContaining({
+      operation: 'blocked_existing_seed_json_mismatch',
+      canonical_metadata_present: false,
+      ok_to_apply: false,
+    }));
+    expect(readJson(projectRoot, 'permissions').local_store_write_allowed_now).toBe(false);
+    expect(readJson(projectRoot, 'permissions').canonical_hash).toBe('sha256:tampered');
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'action-result-bounded')).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('existing same-seed JSONL tamper blocks instead of appending over raw marker drift', () => {
+    const projectRoot = tempProject();
+    const first = build(projectRoot, { apply: true });
+    expect(validateMiraCoreDurableStateSeedV0Output(first, seedContract)).toEqual(expect.objectContaining({ ok: true }));
+
+    const historyPath = workspacePath(projectRoot, SEED_ARTIFACT_PATHS.growth_history);
+    const history = readJsonl(projectRoot, 'growth_history');
+    delete history[0].seed_id;
+    delete history[0].version;
+    history[0].redacted_summary_only = false;
+    history[0].canonical_hash = 'sha256:tampered';
+    fs.writeFileSync(historyPath, `${history.map((entry) => JSON.stringify(entry)).join('\n')}\n`, 'utf8');
+
+    const second = build(projectRoot, { apply: true });
+    const current = seed(second);
+    const validation = validateMiraCoreDurableStateSeedV0Output(second, seedContract);
+
+    expect(report(second).decision).toBe('blocked');
+    expect(current.action_result).toEqual(expect.objectContaining({
+      mode: 'apply_blocked',
+      decision: 'blocked_no_writes',
+      write_count: 0,
+    }));
+    expect(current.action_result.blocked_because).toContain('growth_history:existing_seed_entry_hash_or_metadata_mismatch');
+    expect(current.artifact_plan.find((entry) => entry.artifact_id === 'growth_history')).toEqual(expect.objectContaining({
+      operation: 'blocked_seed_entry_hash_or_metadata_mismatch',
+      canonical_metadata_present: false,
+      ok_to_apply: false,
+    }));
+    expect(readJsonl(projectRoot, 'growth_history')).toHaveLength(1);
+    expect(readJsonl(projectRoot, 'growth_history')[0].redacted_summary_only).toBe(false);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'action-result-bounded')).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('realpath lstat safety rejects symlink or junction workspace escape before writes', () => {
+    const projectRoot = tempProject();
+    const knowledgeDir = workspacePath(projectRoot, 'workspace/knowledge');
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+    const originalLstat = fs.lstatSync;
+    const lstatSpy = jest.spyOn(fs, 'lstatSync').mockImplementation((targetPath) => {
+      if (path.resolve(String(targetPath)) === path.resolve(knowledgeDir)) {
+        return { isSymbolicLink: () => true };
+      }
+      return originalLstat.call(fs, targetPath);
+    });
+
+    let output;
+    try {
+      output = build(projectRoot, { apply: true });
+    } finally {
+      lstatSpy.mockRestore();
+    }
+    const current = seed(output);
+    const validation = validateMiraCoreDurableStateSeedV0Output(output, seedContract);
+
+    expect(report(output).decision).toBe('blocked');
+    expect(current.action_result).toEqual(expect.objectContaining({
+      mode: 'apply_blocked',
+      decision: 'blocked_no_writes',
+      write_count: 0,
+    }));
+    expect(current.action_result.blocked_because).toContain('unsafe_path:symlink_or_junction_component:workspace/knowledge');
+    expect(current.artifact_plan.every((entry) => entry.path_safe === false)).toBe(true);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'action-result-bounded')).toEqual(expect.objectContaining({ ok: true }));
+    for (const relativePath of Object.values(SEED_ARTIFACT_PATHS)) {
+      expect(fs.existsSync(workspacePath(projectRoot, relativePath))).toBe(false);
+    }
   });
 
   test('invalid existing durable JSON fails closed without writes', () => {
