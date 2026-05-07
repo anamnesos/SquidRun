@@ -573,6 +573,86 @@ describe('auto-handoff-materializer', () => {
     expect(digestSection).not.toContain('TASK: Should not appear in digest highlights');
   });
 
+  test('materializeSessionHandoff excludes sideprofile side-profile rows from main and keeps them available to that window', async () => {
+    const mainOutputPath = path.join(tempDir, 'handoffs', 'main-session.md');
+    const emptyMainOutputPath = path.join(tempDir, 'handoffs', 'empty-main-session.md');
+    const sideprofileOutputPath = path.join(tempDir, 'handoffs-sideprofile', 'session.md');
+    const mainRow = {
+      messageId: 'm-main-task',
+      sessionId: 'app-session-329',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: '(ARCHITECT #1): TASK: Main runtime guard',
+      brokeredAtMs: 2000,
+      metadata: { windowKey: 'main', profile: 'main' },
+    };
+    const sideprofileRow = {
+      messageId: 'm-sideprofile-task',
+      sessionId: 'app-session-329:sideprofile',
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'telegram',
+      direction: 'inbound',
+      status: 'brokered',
+      rawBody: '(USER #1): TASK: 한국어 sideprofile case message',
+      brokeredAtMs: 1000,
+      metadata: {
+        chatId: 'REDACTED-CHAT-ID',
+        windowKey: 'sideprofile',
+        profile: 'sideprofile',
+        sessionScopeId: 'app-session-329:sideprofile',
+      },
+    };
+
+    const main = await materializeSessionHandoff({
+      rows: [mainRow, sideprofileRow],
+      crossSessionRows: [mainRow, sideprofileRow],
+      outputPath: mainOutputPath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-329',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+    const emptyMain = await materializeSessionHandoff({
+      rows: [],
+      crossSessionRows: [sideprofileRow],
+      outputPath: emptyMainOutputPath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-329',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+    const sideprofile = await materializeSessionHandoff({
+      rows: [mainRow, sideprofileRow],
+      crossSessionRows: [mainRow, sideprofileRow],
+      outputPath: sideprofileOutputPath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-329',
+      windowKey: 'sideprofile',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+
+    expect(main.ok).toBe(true);
+    const mainContent = fs.readFileSync(mainOutputPath, 'utf8');
+    expect(mainContent).toContain('Main runtime guard');
+    expect(mainContent).not.toContain('sideprofile case message');
+    expect(mainContent).not.toContain('m-sideprofile-task');
+
+    expect(emptyMain.ok).toBe(true);
+    expect(emptyMain.skipped).toBe(true);
+    expect(emptyMain.reason).toBe('no_meaningful_content');
+    expect(fs.existsSync(emptyMainOutputPath)).toBe(false);
+
+    expect(sideprofile.ok).toBe(true);
+    const sideprofileContent = fs.readFileSync(sideprofileOutputPath, 'utf8');
+    expect(sideprofileContent).toContain('sideprofile case message');
+    expect(sideprofileContent).not.toContain('Main runtime guard');
+  });
+
   test('removeLegacyPaneHandoffFiles deletes legacy files', () => {
     const handoffsDir = path.join(tempDir, 'handoffs');
     fs.mkdirSync(handoffsDir, { recursive: true });

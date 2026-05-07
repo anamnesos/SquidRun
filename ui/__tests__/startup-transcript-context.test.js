@@ -210,4 +210,78 @@ describe('startup-transcript-context', () => {
     expect(result.activeItems.join('\n')).toContain('Scoped chat should appear in side startup only');
     expect(result.activeItems.join('\n')).not.toContain('Main chat should stay main-only');
   });
+
+  test('keeps sideprofile-scoped Telegram comms out of main startup and available to sideprofile window', () => {
+    const indexPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index.jsonl');
+    const metaPath = path.join(tempRoot, '.squidrun', 'runtime', 'transcript-index-meta.json');
+    const dbPath = path.join(tempRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
+
+    fs.writeFileSync(indexPath, '');
+    fs.writeFileSync(metaPath, JSON.stringify({
+      builtAt: new Date().toISOString(),
+      transcriptFileCount: 0,
+      recordCount: 0,
+    }, null, 2));
+
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE comms_journal (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_role TEXT,
+        target_role TEXT,
+        channel TEXT,
+        raw_body TEXT,
+        session_id TEXT,
+        metadata_json TEXT
+      );
+    `);
+    const insert = db.prepare(`
+      INSERT INTO comms_journal (sender_role, target_role, channel, raw_body, session_id, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(
+      'user',
+      'architect',
+      'telegram',
+      'Main SquidRun message',
+      'app-session-329',
+      JSON.stringify({ chatId: 'REDACTED', windowKey: 'main', profile: 'main' })
+    );
+    insert.run(
+      'user',
+      'architect',
+      'telegram',
+      '한국어 sideprofile case message',
+      'app-session-329:sideprofile',
+      JSON.stringify({
+        chatId: 'REDACTED-CHAT-ID',
+        windowKey: 'sideprofile',
+        profile: 'sideprofile',
+        sessionScopeId: 'app-session-329:sideprofile',
+      })
+    );
+    db.close();
+
+    const main = buildStartupTranscriptContext({
+      projectRoot: tempRoot,
+      indexPath,
+      metaPath,
+      evidenceLedgerDbPath: dbPath,
+      windowKey: 'main',
+    });
+    const sideprofile = buildStartupTranscriptContext({
+      projectRoot: tempRoot,
+      indexPath,
+      metaPath,
+      evidenceLedgerDbPath: dbPath,
+      windowKey: 'sideprofile',
+    });
+
+    expect(main.ok).toBe(true);
+    expect(main.activeItems.join('\n')).toContain('Main SquidRun message');
+    expect(main.activeItems.join('\n')).not.toContain('sideprofile case message');
+    expect(sideprofile.ok).toBe(true);
+    expect(sideprofile.activeItems.join('\n')).toContain('sideprofile case message');
+    expect(sideprofile.activeItems.join('\n')).not.toContain('Main SquidRun message');
+  });
 });

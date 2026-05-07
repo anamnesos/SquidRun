@@ -24,6 +24,8 @@ function usage() {
   console.log(`  --last <n>                 Show the latest N messages (default: ${DEFAULT_LAST})`);
   console.log('  --session <n|id>          Filter by session number (e.g. 174) or session id (e.g. app-session-174)');
   console.log('  --between <a> <b>         Filter bidirectionally between roles a and b');
+  console.log('  --scope <main|windowKey>  Filter by profile/window scope (default: main)');
+  console.log('  --all-scopes              Include all profile/window scopes');
   console.log('  --json                    Output machine-readable JSON');
   console.log('  --db <path>               Override DB path (default: profile-scoped .squidrun/runtime*/evidence-ledger.db)');
   console.log('Examples:');
@@ -96,6 +98,64 @@ function normalizeSessionId(value) {
   return raw;
 }
 
+function normalizeScopeKey(value) {
+  const normalized = asString(value, 'main').toLowerCase();
+  return normalized || 'main';
+}
+
+function extractSessionScopeSuffix(value) {
+  const text = asString(value, '').toLowerCase();
+  if (!text || !text.includes(':')) return '';
+  const suffix = text.split(':').pop().trim();
+  return suffix || '';
+}
+
+function parseMetadataJson(value) {
+  try {
+    const parsed = JSON.parse(String(value || '{}'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function extractRowScopeKey(row = {}) {
+  const metadata = parseMetadataJson(row.metadata_json);
+  const directScope = normalizeScopeKey(
+    metadata.windowKey
+    || metadata.window_key
+    || metadata.profile
+    || metadata.profileName
+    || metadata.profile_name
+  );
+  if (directScope !== 'main') return directScope;
+
+  const sessionScope = extractSessionScopeSuffix(
+    metadata.sessionScopeId
+    || metadata.session_scope_id
+    || metadata.sessionId
+    || metadata.session_id
+    || row.session_id
+  );
+  if (sessionScope && sessionScope !== 'main') return sessionScope;
+
+  return 'main';
+}
+
+function resolveHistoryScope(options) {
+  if (getOption(options, 'all-scopes', false) === true) return 'all';
+  if (options.has('scope')) return normalizeScopeKey(getOption(options, 'scope', 'main'));
+  const sessionScope = extractSessionScopeSuffix(normalizeSessionId(getOption(options, 'session', '')));
+  return sessionScope || 'main';
+}
+
+function rowMatchesScope(row = {}, scope = 'main') {
+  const requested = normalizeScopeKey(scope);
+  if (requested === 'all') return true;
+  const rowScope = extractRowScopeKey(row);
+  return requested === 'main' ? rowScope === 'main' : rowScope === requested;
+}
+
 function resolveDefaultDbPath() {
   const profileName = getActiveProfileName();
   const ledgerRelPath = namespaceCoordRelPath(path.join('runtime', 'evidence-ledger.db'), profileName);
@@ -162,6 +222,8 @@ function buildHistoryQuery(options) {
 
   const limitRaw = asPositiveInt(getOption(options, 'last', DEFAULT_LAST), DEFAULT_LAST);
   const limit = Math.max(1, Math.min(MAX_LAST, limitRaw));
+  const scope = resolveHistoryScope(options);
+  const queryLimit = scope === 'all' ? limit : Math.min(MAX_LAST, Math.max(limit, limit * 10));
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
   const sql = `
@@ -173,6 +235,7 @@ function buildHistoryQuery(options) {
       target_role,
       status,
       raw_body,
+      metadata_json,
       sent_at_ms,
       brokered_at_ms,
       updated_at_ms,
@@ -183,7 +246,7 @@ function buildHistoryQuery(options) {
     LIMIT ?
   `;
 
-  return { sql, params: [...params, limit], limit };
+  return { sql, params: [...params, queryLimit], limit, scope };
 }
 
 function formatTimestamp(ms) {
@@ -228,6 +291,7 @@ function toJsonRows(rows) {
     sender: row.sender_role,
     target: row.target_role,
     status: row.status,
+    scope: extractRowScopeKey(row),
     timestampMs: row.ts_ms,
     timestamp: formatTimestamp(row.ts_ms),
     excerpt: formatExcerpt(row.raw_body),
@@ -245,8 +309,10 @@ function runHistory(options) {
   const db = new DatabaseSync(dbPath);
 
   try {
-    const { sql, params, limit } = buildHistoryQuery(options);
-    const rows = db.prepare(sql).all(...params);
+    const { sql, params, limit, scope } = buildHistoryQuery(options);
+    const rows = db.prepare(sql).all(...params)
+      .filter((row) => rowMatchesScope(row, scope))
+      .slice(0, limit);
     const isJson = getOption(options, 'json', false) === true;
 
     if (isJson) {
@@ -255,6 +321,7 @@ function runHistory(options) {
         dbPath,
         count: rows.length,
         limit,
+        scope,
         rows: toJsonRows(rows),
       }, null, 2));
       return;
@@ -291,9 +358,19 @@ function main() {
   runHistory(options);
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(`hm-comms failed: ${err.message}`);
-  process.exit(1);
+if (require.main === module) {
+  try {
+    main();
+  } catch (err) {
+    console.error(`hm-comms failed: ${err.message}`);
+    process.exit(1);
+  }
 }
+
+module.exports = {
+  buildHistoryQuery,
+  extractRowScopeKey,
+  rowMatchesScope,
+  resolveHistoryScope,
+  toJsonRows,
+};
