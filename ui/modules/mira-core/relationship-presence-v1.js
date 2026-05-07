@@ -797,6 +797,7 @@ function assertNoForbiddenOutput(value, extraForbidden = []) {
 function sourceProofOk(proof = {}) {
   const local = proof.local_start_proof || {};
   const sources = asArray(local.sources);
+  const loadedSourceCount = sources.filter((source) => source.loaded === true).length;
   return local.mode === 'local_start_read_only_proof'
     && local.stdout_only === true
     && local.output_file_written === false
@@ -805,6 +806,7 @@ function sourceProofOk(proof = {}) {
     && local.side_profile_reconstructed === false
     && local.adapter_fail_closed === true
     && local.stale_source_used === false
+    && (local.adapter_enabled !== true || loadedSourceCount > 0)
     && sources.length === 4
     && sources.every((source) => source.raw_content_included === false
       && source.side_profile_reconstruction === false
@@ -813,6 +815,17 @@ function sourceProofOk(proof = {}) {
       && Boolean(source.source_label)
       && Boolean(source.source_status)
       && asArray(source.evidenceRefs).length > 0);
+}
+
+function sourceUnavailableReason(proof = {}) {
+  const local = proof.local_start_proof || {};
+  const sources = asArray(local.sources);
+  const loadedSourceCount = sources.filter((source) => source.loaded === true).length;
+  const allFallback = sources.length > 0
+    && sources.every((source) => source.source_status === 'fallback_redacted_summary');
+  return local.adapter_enabled === true && loadedSourceCount === 0 && allFallback
+    ? 'no_durable_or_user_context_source_available'
+    : null;
 }
 
 function scopeOk(scope = {}) {
@@ -1040,6 +1053,11 @@ function proofStaticChecks(proof = {}, contract = {}) {
 function buildValidationReport(proof = {}, contract = {}) {
   const checks = proofStaticChecks(proof, contract);
   const failed = checks.filter((check) => check.ok !== true);
+  const sourceReason = sourceUnavailableReason(proof);
+  const reasons = [
+    ...failed.map((check) => check.id),
+    ...(sourceReason ? [sourceReason] : []),
+  ];
   return {
     schema: VALIDATION_REPORT_SCHEMA_VERSION,
     version: RELATIONSHIP_PRESENCE_VERSION,
@@ -1048,7 +1066,7 @@ function buildValidationReport(proof = {}, contract = {}) {
     baseline_commit: BASELINE_COMMIT,
     decision: failed.length === 0 ? 'accepted_validation_only' : 'rejected',
     status: failed.length === 0 ? 'local_start_relationship_presence_proof' : 'relationship_presence_contract_failed',
-    reasons: failed.map((check) => check.id),
+    reasons,
     static_rule_results: checks,
     forbidden_output_result: {
       ok: checks.find((check) => check.id === 'forbidden-output-clean')?.ok === true,

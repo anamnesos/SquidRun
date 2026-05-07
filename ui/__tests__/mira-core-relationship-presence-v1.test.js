@@ -371,7 +371,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
   });
 
-  test('read adapter fail-closed fallback keeps proof valid without durable files', () => {
+  test('read adapter rejects generic zero-source fallback without durable files or user-context', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-relationship-adapter-empty-'));
     const localSignals = readRelationshipPresenceV1LocalSources({ projectRoot: tempDir });
     const output = buildMiraCoreRelationshipPresenceV1({
@@ -385,9 +385,15 @@ describe('mira core Relationship Presence v1 phase 69', () => {
 
     expect(proof(output).local_start_proof.adapter_enabled).toBe(true);
     expect(proof(output).local_start_proof.adapter_fail_closed).toBe(true);
-    expect(proof(output).local_start_proof.sources.some((source) => source.loaded === false)).toBe(true);
+    expect(proof(output).local_start_proof.sources.every((source) => source.loaded === false)).toBe(true);
+    expect(proof(output).local_start_proof.sources.every((source) => source.source_status === 'fallback_redacted_summary')).toBe(true);
     expect(proof(output).prior_context_memory.source_label).toBe('prior_context_memory_redacted_fallback');
-    expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
+    expect(report(output).decision).toBe('rejected');
+    expect(report(output).status).toBe('relationship_presence_contract_failed');
+    expect(report(output).reasons).toContain('no_durable_or_user_context_source_available');
+    const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'local-start-proof-sources')).toEqual(expect.objectContaining({ ok: false }));
   });
 
   test('read adapter uses redacted user-context fallback when durable JSON files are missing', () => {
