@@ -92,6 +92,17 @@ function seedProject(projectRoot) {
   });
 }
 
+function removeArtifact(projectRoot, relativePath) {
+  const fullPath = knowledgePath(projectRoot, relativePath);
+  if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+}
+
+function writeRaw(projectRoot, relativePath, text) {
+  const fullPath = knowledgePath(projectRoot, relativePath);
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, text, 'utf8');
+}
+
 function build(projectRoot, inputSignals = {}, options = {}) {
   return buildMiraCoreGrowthLoopV0({
     contract: growthContract,
@@ -239,6 +250,215 @@ describe('mira core Growth Loop v0 phase 70', () => {
     expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state).version).toBe(2);
     expect(readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger)).toHaveLength(1);
     expect(readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger)).toHaveLength(1);
+  });
+
+  test('empty projectRoot rejects generic bootstrap growth and performs no writes', () => {
+    const projectRoot = tempProject();
+
+    const output = build(projectRoot);
+    const validation = validateMiraCoreGrowthLoopV0Output(output, growthContract);
+
+    expect(report(output)).toEqual(expect.objectContaining({
+      decision: 'blocked',
+      status: 'growth_loop_contract_failed',
+    }));
+    expect(report(output).reasons).toEqual(expect.arrayContaining([
+      'reflection-reasons-and-provenance',
+      'machine-boundary-local-durable-only',
+    ]));
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'reflection-reasons-and-provenance')).toEqual(expect.objectContaining({ ok: false }));
+    expect(checkById(validation, 'machine-boundary-local-durable-only')).toEqual(expect.objectContaining({ ok: false }));
+    expect(growth(output).proposal.provenance.loaded_sources.every((source) => source.loaded === false)).toBe(true);
+    expect(growth(output).action_result.applied).toBe(false);
+    expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger))).toBe(false);
+  });
+
+  test('invalid self or relationship JSON rejects instead of bootstrapping accepted state', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+    writeRaw(projectRoot, NAMED_ARTIFACT_PATHS.self_profile, '{ not json');
+    writeRaw(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state, '{ also not json');
+
+    const output = build(projectRoot);
+    const validation = validateMiraCoreGrowthLoopV0Output(output, growthContract);
+
+    expect(report(output).decision).toBe('blocked');
+    expect(report(output).reasons).toContain('reflection-reasons-and-provenance');
+    expect(validation.ok).toBe(false);
+    const sources = growth(output).proposal.provenance.loaded_sources;
+    expect(sources.find((source) => source.artifact_id === 'self_profile').source_status).toMatch(/^invalid_json:/);
+    expect(sources.find((source) => source.artifact_id === 'relationship_state').source_status).toMatch(/^invalid_json:/);
+  });
+
+  test('missing permissions source rejects dry-run and apply even when input claims permission', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+    removeArtifact(projectRoot, NAMED_ARTIFACT_PATHS.permissions);
+
+    const output = build(projectRoot, {
+      permissions_boundary: { local_store_write_allowed_now: true },
+    }, { apply: true });
+    const validation = validateMiraCoreGrowthLoopV0Output(output, growthContract);
+
+    expect(report(output).decision).toBe('blocked');
+    expect(report(output).reasons).toEqual(expect.arrayContaining([
+      'reflection-reasons-and-provenance',
+      'machine-boundary-local-durable-only',
+      'durable_permissions_missing_invalid_or_false',
+    ]));
+    expect(validation.ok).toBe(false);
+    expect(growth(output).boundary).toEqual(expect.objectContaining({
+      durable_permissions_loaded_json: false,
+      local_store_write_allowed_now: false,
+    }));
+    expect(growth(output).action_result).toEqual(expect.objectContaining({
+      mode: 'apply_blocked',
+      applied: false,
+      decision: 'blocked_no_writes',
+      write_count: 0,
+      blocked_because: 'durable_permissions_missing_invalid_or_false',
+    }));
+    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile).version).toBe(1);
+    expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger))).toBe(false);
+  });
+
+  test('invalid permissions JSON rejects and blocks apply with no writes', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+    writeRaw(projectRoot, NAMED_ARTIFACT_PATHS.permissions, '{ invalid permissions');
+
+    const output = build(projectRoot, {}, { apply: true });
+
+    expect(report(output).decision).toBe('blocked');
+    expect(report(output).reasons).toEqual(expect.arrayContaining([
+      'reflection-reasons-and-provenance',
+      'machine-boundary-local-durable-only',
+      'durable_permissions_missing_invalid_or_false',
+    ]));
+    expect(growth(output).action_result.applied).toBe(false);
+    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile).version).toBe(1);
+    expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger))).toBe(false);
+  });
+
+  test('durable permissions false blocks apply despite optimistic input signals', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+    writeJson(projectRoot, NAMED_ARTIFACT_PATHS.permissions, {
+      schema: 'squidrun.relationship_presence_permissions.v0',
+      version: 2,
+      local_store_write_allowed_now: false,
+      send_external: false,
+      network: false,
+    });
+
+    const output = build(projectRoot, {
+      permissions_boundary: { local_store_write_allowed_now: true },
+    }, { apply: true });
+
+    expect(report(output).decision).toBe('blocked');
+    expect(report(output).reasons).toEqual(expect.arrayContaining([
+      'machine-boundary-local-durable-only',
+      'durable_permissions_missing_invalid_or_false',
+    ]));
+    expect(growth(output).boundary).toEqual(expect.objectContaining({
+      durable_permissions_loaded_json: true,
+      local_store_write_allowed_now: false,
+    }));
+    expect(growth(output).action_result).toEqual(expect.objectContaining({
+      applied: false,
+      decision: 'blocked_no_writes',
+      blocked_because: 'durable_permissions_missing_invalid_or_false',
+    }));
+    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state).version).toBe(1);
+    expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger))).toBe(false);
+  });
+
+  test('fail-closed source matrix rejects both dry-run proposals and apply attempts', () => {
+    const cases = [
+      {
+        name: 'empty projectRoot',
+        prepare: () => {},
+        expectedReasons: [
+          'reflection-reasons-and-provenance',
+          'machine-boundary-local-durable-only',
+          'durable_permissions_missing_invalid_or_false',
+        ],
+      },
+      {
+        name: 'invalid self and relationship JSON',
+        prepare: (projectRoot) => {
+          seedProject(projectRoot);
+          writeRaw(projectRoot, NAMED_ARTIFACT_PATHS.self_profile, '{ not json');
+          writeRaw(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state, '{ also not json');
+        },
+        expectedReasons: ['reflection-reasons-and-provenance'],
+      },
+      {
+        name: 'missing permissions JSON',
+        prepare: (projectRoot) => {
+          seedProject(projectRoot);
+          removeArtifact(projectRoot, NAMED_ARTIFACT_PATHS.permissions);
+        },
+        expectedReasons: [
+          'reflection-reasons-and-provenance',
+          'machine-boundary-local-durable-only',
+          'durable_permissions_missing_invalid_or_false',
+        ],
+      },
+      {
+        name: 'invalid permissions JSON',
+        prepare: (projectRoot) => {
+          seedProject(projectRoot);
+          writeRaw(projectRoot, NAMED_ARTIFACT_PATHS.permissions, '{ invalid permissions');
+        },
+        expectedReasons: [
+          'reflection-reasons-and-provenance',
+          'machine-boundary-local-durable-only',
+          'durable_permissions_missing_invalid_or_false',
+        ],
+      },
+      {
+        name: 'permission false',
+        prepare: (projectRoot) => {
+          seedProject(projectRoot);
+          writeJson(projectRoot, NAMED_ARTIFACT_PATHS.permissions, {
+            schema: 'squidrun.relationship_presence_permissions.v0',
+            version: 2,
+            local_store_write_allowed_now: false,
+            send_external: false,
+            network: false,
+          });
+        },
+        expectedReasons: [
+          'machine-boundary-local-durable-only',
+          'durable_permissions_missing_invalid_or_false',
+        ],
+      },
+    ];
+
+    for (const currentCase of cases) {
+      for (const apply of [false, true]) {
+        const projectRoot = tempProject();
+        currentCase.prepare(projectRoot);
+        const output = build(projectRoot, {
+          permissions_boundary: { local_store_write_allowed_now: true },
+        }, { apply });
+
+        expect(report(output).decision).toBe('blocked');
+        expect(report(output).reasons).toEqual(expect.arrayContaining(currentCase.expectedReasons));
+        expect(validateMiraCoreGrowthLoopV0Output(output, growthContract).ok).toBe(false);
+        expect(growth(output).action_result.applied).toBe(false);
+        expect(growth(output).action_result.write_count).toBe(0);
+        expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger))).toBe(false);
+        expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger))).toBe(false);
+        if (apply) {
+          expect(growth(output).action_result.decision).toBe('blocked_no_writes');
+        } else {
+          expect(growth(output).action_result.decision).toBe('proposed_no_writes');
+        }
+      }
+    }
   });
 
   test('apply fails closed on before-hash or version mismatch without silent overwrite', () => {
