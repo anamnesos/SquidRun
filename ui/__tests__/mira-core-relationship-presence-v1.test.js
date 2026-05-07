@@ -9,6 +9,7 @@ const {
   VALIDATION_REPORT_SCHEMA_VERSION,
   assertNoForbiddenOutput,
   buildMiraCoreRelationshipPresenceV1,
+  readRelationshipPresenceV1LocalSources,
   validateMiraCoreRelationshipPresenceV1Output,
 } = require('../modules/mira-core/relationship-presence-v1');
 const {
@@ -46,6 +47,8 @@ function build(inputSignals = {}) {
         confidence: 0.9,
         evidenceRefs: [{ store: 'local-context', eventId: 'prior-memory-north-star', relation: 'supports' }],
       },
+      profile: { name: 'main', windowKey: 'main', sessionScopeId: 'app-session-329' },
+      sessionId: 'app-session-329',
       ...inputSignals,
     },
     nowMs: Date.parse('2026-05-07T09:10:00.000Z'),
@@ -83,6 +86,14 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       side_profile_reconstructed: false,
     }));
     expect(current.local_start_proof.sources).toHaveLength(4);
+    expect(current.scope).toEqual(expect.objectContaining({
+      profile: 'main',
+      windowKey: 'main',
+      sessionId: 'app-session-329',
+      source_scope: 'main',
+      main_scope_only: true,
+      side_profile_reconstruction: false,
+    }));
     expect(JSON.stringify(current).length).toBeLessThan(14000);
   });
 
@@ -307,6 +318,134 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     expect(checkById(validation, 'forbidden-output-clean')).toEqual(expect.objectContaining({ ok: false }));
   });
 
+  test('read adapter loads durable local redacted sources with provenance and preserves stdin overrides', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-relationship-adapter-'));
+    const knowledgeDir = path.join(tempDir, 'workspace', 'knowledge');
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+    fs.writeFileSync(path.join(knowledgeDir, 'mira-self-profile.json'), JSON.stringify({
+      name: 'Mira',
+      role: 'relationship_presence_local_start_proof',
+    }));
+    fs.writeFileSync(path.join(knowledgeDir, 'james-relationship-state.json'), JSON.stringify({
+      relationship_mode: 'collaborative_presence_design',
+      what_mira_knows_about_james: 'James wants grounded relationship presence from durable local state.',
+      confidence: 0.91,
+      trust: {
+        label: 'trust',
+        summary: 'Trust comes from using local durable state without overstating it.',
+        confidence: 0.9,
+        source_label: 'durable_relationship_state_file',
+        evidenceRefs: [{ store: 'fixture', eventId: 'trust', relation: 'supports' }],
+      },
+    }));
+    fs.writeFileSync(path.join(knowledgeDir, 'relationship-presence-permissions.json'), JSON.stringify({
+      read_local_redacted_context: true,
+      propose_next_action: true,
+    }));
+    fs.writeFileSync(path.join(knowledgeDir, 'user-context.md'), [
+      'Mira presence should preserve warmth, dignity, memory, boundaries, and pushback.',
+      'No fake consciousness, fake suffering, manipulative guilt, sends, writes, network, or runtime.',
+    ].join('\n'));
+
+    const localSignals = readRelationshipPresenceV1LocalSources({ projectRoot: tempDir });
+    const output = buildMiraCoreRelationshipPresenceV1({
+      contract: relationshipContract,
+      inputSignals: mergeDeep(localSignals, {
+        profile: { name: 'main', windowKey: 'main', sessionScopeId: 'app-session-adapter' },
+        sessionId: 'app-session-adapter',
+        prior_context_memory: {
+          summary: 'Override keeps stdin compatibility while adapter still provides provenance and source labels.',
+        },
+      }),
+      nowMs: Date.parse('2026-05-07T09:20:00.000Z'),
+    });
+
+    expect(proof(output).self_profile.source_label).toBe('self_profile_durable_local_source');
+    expect(proof(output).james_relationship_state.source_label).toBe('durable_relationship_state_file');
+    expect(proof(output).permissions_boundary.source_label).toBe('permissions_boundary_durable_local_source');
+    expect(proof(output).prior_context_memory.source_label).toBe('prior_context_memory_durable_local_source');
+    expect(proof(output).prior_context_memory.summary).toContain('Override keeps stdin compatibility');
+    expect(proof(output).local_start_proof.sources.every((source) => source.redacted_summary_only === true)).toBe(true);
+    expect(proof(output).local_start_proof.sources.every((source) => source.raw_content_included === false)).toBe(true);
+    expect(proof(output).local_start_proof.adapter_enabled).toBe(true);
+    expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('read adapter fail-closed fallback keeps proof valid without durable files', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-relationship-adapter-empty-'));
+    const localSignals = readRelationshipPresenceV1LocalSources({ projectRoot: tempDir });
+    const output = buildMiraCoreRelationshipPresenceV1({
+      contract: relationshipContract,
+      inputSignals: mergeDeep(localSignals, {
+        profile: { name: 'main', windowKey: 'main', sessionScopeId: 'app-session-fallback' },
+        sessionId: 'app-session-fallback',
+      }),
+      nowMs: Date.parse('2026-05-07T09:20:00.000Z'),
+    });
+
+    expect(proof(output).local_start_proof.adapter_enabled).toBe(true);
+    expect(proof(output).local_start_proof.adapter_fail_closed).toBe(true);
+    expect(proof(output).local_start_proof.sources.some((source) => source.loaded === false)).toBe(true);
+    expect(proof(output).prior_context_memory.source_label).toBe('prior_context_memory_redacted_fallback');
+    expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('read adapter uses redacted user-context fallback when durable JSON files are missing', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-relationship-adapter-context-'));
+    const knowledgeDir = path.join(tempDir, 'workspace', 'knowledge');
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+    fs.writeFileSync(path.join(knowledgeDir, 'user-context.md'), [
+      'Mira relationship presence should preserve warmth, dignity, memory, boundaries, and pushback.',
+      'Keep it local and read-only. No raw private reconstruction, sends, writes, network, runtime, or fake consciousness.',
+    ].join('\n'));
+
+    const localSignals = readRelationshipPresenceV1LocalSources({ projectRoot: tempDir });
+    const output = buildMiraCoreRelationshipPresenceV1({
+      contract: relationshipContract,
+      inputSignals: mergeDeep(localSignals, {
+        profile: { name: 'main', windowKey: 'main', sessionScopeId: 'app-session-context' },
+        sessionId: 'app-session-context',
+      }),
+      nowMs: Date.parse('2026-05-07T09:20:00.000Z'),
+    });
+
+    const sources = proof(output).local_start_proof.sources;
+    expect(sources.find((source) => source.id === 'self_profile')).toEqual(expect.objectContaining({
+      loaded: false,
+      source_status: 'fallback_redacted_summary',
+      raw_content_included: false,
+    }));
+    expect(sources.find((source) => source.id === 'relationship_state')).toEqual(expect.objectContaining({
+      loaded: true,
+      source_status: 'read_redacted_summary',
+      source_path: 'workspace/knowledge/user-context.md',
+      raw_content_included: false,
+    }));
+    expect(sources.find((source) => source.id === 'permissions_boundary')).toEqual(expect.objectContaining({
+      loaded: true,
+      source_path: 'workspace/knowledge/user-context.md',
+    }));
+    expect(sources.find((source) => source.id === 'prior_context_memory')).toEqual(expect.objectContaining({
+      loaded: true,
+      source_path: 'workspace/knowledge/user-context.md',
+    }));
+    expect(proof(output).james_relationship_state.source_label).toBe('relationship_state_durable_local_source');
+    expect(proof(output).prior_context_memory.raw_content_present).toBe(false);
+    expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('validator rejects profile/source-scope mismatch and stale source truth', () => {
+    const output = build();
+    proof(output).scope.source_scope = 'scoped';
+    proof(output).local_start_proof.stale_source_used = true;
+    proof(output).local_start_proof.sources[0].stale = true;
+
+    const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'scope-profile-window-session-source')).toEqual(expect.objectContaining({ ok: false }));
+    expect(checkById(validation, 'local-start-proof-sources')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
   test('validator rejects side-effect truth lies and report/static-rule mismatch', () => {
     const output = build();
     report(output).side_effect_truth.no_network_performed = false;
@@ -356,6 +495,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
         '--self-name', 'Mira',
         '--james-state', 'relationship presence local-start proof',
         '--memory-summary', 'James wants warmth, directness, dignity, and pushback without fake internal-state claims.',
+        '--no-read-local',
         '--out', outputPath,
       ], JSON.stringify({
         james_relationship_state: {
@@ -384,6 +524,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       '--self-name=Mira',
       '--james-state=local proof',
       '--memory-summary=One safe prior memory summary with enough words for validation.',
+      '--no-read-local',
       '--out=ignored.json',
     ]);
     const merged = mergeDeep({

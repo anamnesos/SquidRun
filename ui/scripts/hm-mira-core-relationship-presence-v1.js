@@ -6,6 +6,7 @@ const path = require('path');
 
 const {
   buildMiraCoreRelationshipPresenceV1,
+  readRelationshipPresenceV1LocalSources,
 } = require('../modules/mira-core/relationship-presence-v1');
 
 function parseArgs(argv = []) {
@@ -18,6 +19,8 @@ function parseArgs(argv = []) {
       'mira-core-relationship-presence-v1-contract.json',
     ),
     pretty: false,
+    projectRoot: process.cwd(),
+    readLocal: true,
     inputSignals: {},
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -62,6 +65,13 @@ function parseArgs(argv = []) {
         ...(parsed.inputSignals.prior_context_memory || {}),
         summary: token.slice('--memory-summary='.length),
       };
+    } else if (token === '--project-root') {
+      parsed.projectRoot = argv[index + 1] || parsed.projectRoot;
+      index += 1;
+    } else if (token.startsWith('--project-root=')) {
+      parsed.projectRoot = token.slice('--project-root='.length);
+    } else if (token === '--no-read-local') {
+      parsed.readLocal = false;
     } else if (token === '--out') {
       index += 1;
     } else if (token.startsWith('--out=')) {
@@ -105,9 +115,12 @@ function main(argv = process.argv.slice(2), stdinText = null) {
   const inputText = stdinText === null ? readStdin() : String(stdinText || '');
   const stdinSignals = inputText.trim() ? JSON.parse(inputText) : {};
   const contract = JSON.parse(fs.readFileSync(path.resolve(args.fixturePath), 'utf8'));
+  const localSignals = args.readLocal
+    ? readRelationshipPresenceV1LocalSources({ projectRoot: args.projectRoot })
+    : {};
   const output = buildMiraCoreRelationshipPresenceV1({
     contract,
-    inputSignals: mergeDeep(stdinSignals, args.inputSignals),
+    inputSignals: mergeDeep(mergeDeep(localSignals, stdinSignals), args.inputSignals),
   });
   process.stdout.write(`${JSON.stringify(output, null, args.pretty ? 2 : 0)}\n`);
   return output;
