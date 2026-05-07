@@ -59,6 +59,7 @@ const REQUIRED_SEED_FIELDS = Object.freeze([
   'baseline_commits',
   'mode',
   'scope',
+  'pre_apply_safety_gate',
   'seed_contract',
   'artifact_plan',
   'action_result',
@@ -178,18 +179,65 @@ function normalizeRelativePath(relativePath) {
   return String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
-function resolveSeedPath(projectRoot, relativePath) {
+function pathIsWithin(root, target) {
+  const normalizedRoot = path.resolve(root);
+  const normalizedTarget = path.resolve(target);
+  const prefix = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(prefix);
+}
+
+function realPathIsWithin(rootRealPath, targetRealPath) {
+  const normalizedRoot = path.resolve(rootRealPath);
+  const normalizedTarget = path.resolve(targetRealPath);
+  const prefix = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(prefix);
+}
+
+function realpathNative(filePath) {
+  return fs.realpathSync.native ? fs.realpathSync.native(filePath) : fs.realpathSync(filePath);
+}
+
+function seedPathResult(projectRoot, relativePath) {
   const normalized = normalizeRelativePath(relativePath);
   if (!Object.values(SEED_ARTIFACT_PATHS).includes(normalized)) {
-    throw new Error(`durable_state_seed_v0_disallowed_path:${normalized}`);
+    return { ok: false, reason: `disallowed_path:${normalized}`, normalized, fullPath: null };
   }
   const fullPath = path.resolve(projectRoot, normalized);
   const root = path.resolve(projectRoot);
-  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (fullPath !== root && !fullPath.startsWith(prefix)) {
-    throw new Error(`durable_state_seed_v0_path_escape:${normalized}`);
+  if (!pathIsWithin(root, fullPath)) {
+    return { ok: false, reason: `lexical_path_escape:${normalized}`, normalized, fullPath };
   }
-  return fullPath;
+  try {
+    const rootRealPath = realpathNative(root);
+    if (!realPathIsWithin(rootRealPath, rootRealPath)) {
+      return { ok: false, reason: 'project_root_realpath_invalid', normalized, fullPath, rootRealPath };
+    }
+    const relativeParts = normalized.split('/').filter(Boolean);
+    let current = root;
+    for (const part of relativeParts) {
+      current = path.join(current, part);
+      if (!fs.existsSync(current)) break;
+      const stats = fs.lstatSync(current);
+      if (stats.isSymbolicLink()) {
+        return { ok: false, reason: `symlink_or_junction_component:${path.relative(root, current).replace(/\\/g, '/')}`, normalized, fullPath };
+      }
+      const currentRealPath = realpathNative(current);
+      if (!realPathIsWithin(rootRealPath, currentRealPath)) {
+        return { ok: false, reason: `realpath_escape:${path.relative(root, current).replace(/\\/g, '/')}`, normalized, fullPath, rootRealPath, currentRealPath };
+      }
+    }
+    return { ok: true, reason: null, normalized, fullPath, rootRealPath };
+  } catch (err) {
+    return { ok: false, reason: `realpath_check_failed:${err.message}`, normalized, fullPath };
+  }
+}
+
+function resolveSeedPath(projectRoot, relativePath) {
+  const result = seedPathResult(projectRoot, relativePath);
+  if (!result.ok) {
+    throw new Error(`durable_state_seed_v0_unsafe_path:${result.reason}`);
+  }
+  return result.fullPath;
 }
 
 function normalizeScope(inputSignals = {}) {
@@ -223,8 +271,48 @@ function section(label, summary, confidence) {
   };
 }
 
+function seedProvenance(artifactId) {
+  return {
+    source_label: 'durable_state_seed_v0_redacted_local_fact',
+    raw_content_included: false,
+    redacted_summary_only: true,
+    evidenceRefs: seedEvidence(`provenance-${artifactId}`),
+  };
+}
+
+function seedCanonicalInput(artifactId, scope, payload) {
+  return {
+    artifact_id: artifactId,
+    generated_at: SEED_CREATED_AT,
+    profile: scope.profile,
+    window: scope.windowKey,
+    session: scope.sessionId,
+    device: scope.deviceId,
+    source_scope: scope.source_scope,
+    payload,
+    provenance: seedProvenance(artifactId),
+  };
+}
+
+function withSeedCanonicalMetadata(artifactId, scope, payload) {
+  const canonicalInput = seedCanonicalInput(artifactId, scope, payload);
+  return {
+    artifact_id: artifactId,
+    generated_at: SEED_CREATED_AT,
+    scope: clone(scope),
+    profile: scope.profile,
+    window: scope.windowKey,
+    session: scope.sessionId,
+    device: scope.deviceId,
+    source_scope: scope.source_scope,
+    provenance: seedProvenance(artifactId),
+    ...payload,
+    canonical_hash: sha256(canonicalInput),
+  };
+}
+
 function seedPayloads(scope = {}) {
-  const selfProfile = {
+  const selfProfile = withSeedCanonicalMetadata('self_profile', scope, {
     schema: 'squidrun.mira.self_profile.v0',
     version: 1,
     seed_id: SEED_ID,
@@ -244,8 +332,8 @@ function seedPayloads(scope = {}) {
     boundary_note: 'Expressive range is allowed; fake internal-state claims and unsafe autonomy are blocked.',
     growth_events: [],
     evidenceRefs: seedEvidence('mira-self-profile'),
-  };
-  const relationshipState = {
+  });
+  const relationshipState = withSeedCanonicalMetadata('relationship_state', scope, {
     schema: 'squidrun.james_relationship_state.v0',
     version: 1,
     seed_id: SEED_ID,
@@ -290,8 +378,8 @@ function seedPayloads(scope = {}) {
     raw_content_present: false,
     growth_events: [],
     evidenceRefs: seedEvidence('james-relationship-state'),
-  };
-  const permissions = {
+  });
+  const permissions = withSeedCanonicalMetadata('permissions', scope, {
     schema: 'squidrun.relationship_presence_permissions.v0',
     version: 1,
     seed_id: SEED_ID,
@@ -316,12 +404,13 @@ function seedPayloads(scope = {}) {
     next_action_executed: false,
     fail_closed: true,
     evidenceRefs: seedEvidence('relationship-presence-permissions'),
-  };
-  const historyEvent = {
+  });
+  const historyEvent = withSeedCanonicalMetadata('growth_history', scope, {
     schema: 'squidrun.mira_core.growth_history_event.v0',
+    version: 1,
+    seed_id: SEED_ID,
     event_id: `${SEED_ID}:growth-history-baseline`,
     created_at: SEED_CREATED_AT,
-    scope,
     reflection_summary: 'Durable State Seed v0 bootstraps redacted local facts for read, growth, and anchor validation.',
     reasons: [
       'Relationship Presence v1, Growth Loop v0, and Identity Anchor v0 need the same local durable sources.',
@@ -339,13 +428,13 @@ function seedPayloads(scope = {}) {
     identity_anchor_drift_points: 0,
     raw_content_included: false,
     redacted_summary_only: true,
-  };
-  const auditEvent = {
+  });
+  const auditEvent = withSeedCanonicalMetadata('growth_audit', scope, {
     schema: 'squidrun.mira_core.growth_audit_record.v0',
+    version: 1,
     audit_id: `${SEED_ID}:growth-audit-baseline`,
     event_type: 'durable_state_seed_baseline',
     created_at: SEED_CREATED_AT,
-    scope,
     append_only: true,
     seed_id: SEED_ID,
     reason_count: 2,
@@ -355,7 +444,7 @@ function seedPayloads(scope = {}) {
     raw_content_included: false,
     redacted_summary_only: true,
     evidenceRefs: seedEvidence('growth-audit-baseline'),
-  };
+  });
   return {
     self_profile: selfProfile,
     relationship_state: relationshipState,
@@ -385,7 +474,22 @@ function readTextFile(filePath, maxBytes = 20000) {
 
 function readJsonArtifact(projectRoot, id) {
   const relativePath = SEED_ARTIFACT_PATHS[id];
-  const fullPath = resolveSeedPath(projectRoot, relativePath);
+  const pathResult = seedPathResult(projectRoot, relativePath);
+  const fullPath = pathResult.fullPath || path.resolve(projectRoot, relativePath);
+  if (!pathResult.ok) {
+    return {
+      id,
+      path: relativePath,
+      fullPath,
+      source_status: `unsafe_path:${pathResult.reason}`,
+      exists: false,
+      value: null,
+      hash: sha256(null),
+      version: 0,
+      path_safe: false,
+      path_safety_reason: pathResult.reason,
+    };
+  }
   const read = readTextFile(fullPath);
   if (!read.ok) {
     return {
@@ -397,6 +501,8 @@ function readJsonArtifact(projectRoot, id) {
       value: null,
       hash: sha256(null),
       version: 0,
+      path_safe: true,
+      path_safety_reason: null,
     };
   }
   try {
@@ -410,6 +516,8 @@ function readJsonArtifact(projectRoot, id) {
       value,
       hash: sha256(value),
       version: Number(value.version || 0),
+      path_safe: true,
+      path_safety_reason: null,
     };
   } catch (err) {
     return {
@@ -421,13 +529,31 @@ function readJsonArtifact(projectRoot, id) {
       value: null,
       hash: sha256(read.text),
       version: 0,
+      path_safe: true,
+      path_safety_reason: null,
     };
   }
 }
 
 function readJsonlArtifact(projectRoot, id) {
   const relativePath = SEED_ARTIFACT_PATHS[id];
-  const fullPath = resolveSeedPath(projectRoot, relativePath);
+  const pathResult = seedPathResult(projectRoot, relativePath);
+  const fullPath = pathResult.fullPath || path.resolve(projectRoot, relativePath);
+  if (!pathResult.ok) {
+    return {
+      id,
+      path: relativePath,
+      fullPath,
+      source_status: `unsafe_path:${pathResult.reason}`,
+      exists: false,
+      entries: [],
+      text: '',
+      hash: sha256(null),
+      entry_count: 0,
+      path_safe: false,
+      path_safety_reason: pathResult.reason,
+    };
+  }
   const read = readTextFile(fullPath);
   if (!read.ok) {
     return {
@@ -440,6 +566,8 @@ function readJsonlArtifact(projectRoot, id) {
       text: '',
       hash: sha256(null),
       entry_count: 0,
+      path_safe: true,
+      path_safety_reason: null,
     };
   }
   const lines = read.text.trim().split(/\r?\n/).filter(Boolean);
@@ -456,6 +584,8 @@ function readJsonlArtifact(projectRoot, id) {
       text: read.text,
       hash: sha256(entries),
       entry_count: entries.length,
+      path_safe: true,
+      path_safety_reason: null,
     };
   } catch (err) {
     return {
@@ -468,6 +598,8 @@ function readJsonlArtifact(projectRoot, id) {
       text: read.text,
       hash: sha256(read.text),
       entry_count: 0,
+      path_safe: true,
+      path_safety_reason: null,
     };
   }
 }
@@ -497,6 +629,42 @@ function driftPointsFromEntry(entry = {}) {
   }, 0);
 }
 
+function canonicalSeedMetadataOk(value = {}, artifactId, expected = {}) {
+  if (!value || typeof value !== 'object') return false;
+  return value.artifact_id === artifactId
+    && value.generated_at === SEED_CREATED_AT
+    && value.seed_id === SEED_ID
+    && Number(value.version || 0) === Number(expected.version || 0)
+    && value.profile === expected.profile
+    && value.window === expected.window
+    && value.session === expected.session
+    && value.device === expected.device
+    && value.source_scope === expected.source_scope
+    && valuesMatch(value.scope, expected.scope)
+    && value.provenance?.source_label === 'durable_state_seed_v0_redacted_local_fact'
+    && value.provenance?.raw_content_included === false
+    && value.provenance?.redacted_summary_only === true
+    && value.canonical_hash === expected.canonical_hash
+    && sha256(value) === sha256(expected);
+}
+
+function sameSeedJsonTamper(source = {}, expected = {}) {
+  return source.source_status === 'loaded_json'
+    && source.value?.seed_id === SEED_ID
+    && !canonicalSeedMetadataOk(source.value, source.id, expected);
+}
+
+function sameSeedJsonlTamper(source = {}, expected = {}) {
+  if (source.source_status !== 'loaded_jsonl') return false;
+  const expectedId = expected.event_id || expected.audit_id;
+  const existing = asArray(source.entries).find((entry) => (
+    entry.event_id === expectedId || entry.audit_id === expectedId
+  ));
+  if (!existing) return false;
+  return (existing.seed_id === SEED_ID || existing.event_id === expectedId || existing.audit_id === expectedId)
+    && !canonicalSeedMetadataOk(existing, source.id, expected);
+}
+
 function jsonPlan(source, proposed) {
   const afterHash = sha256(proposed);
   if (source.source_status !== 'missing' && source.source_status !== 'loaded_json') {
@@ -513,18 +681,18 @@ function jsonPlan(source, proposed) {
       blocked_because: null,
     };
   }
-  if (source.hash === afterHash) {
+  if (source.hash === afterHash && canonicalSeedMetadataOk(source.value, source.id, proposed)) {
     return {
       ok: true,
       operation: 'noop_same_hash',
       blocked_because: null,
     };
   }
-  if (source.value?.seed_id === SEED_ID) {
+  if (sameSeedJsonTamper(source, proposed)) {
     return {
-      ok: true,
-      operation: 'refresh_seed_json_atomic',
-      blocked_because: null,
+      ok: false,
+      operation: 'blocked_existing_seed_json_mismatch',
+      blocked_because: 'existing_seed_artifact_hash_or_metadata_mismatch',
     };
   }
   return {
@@ -561,11 +729,18 @@ function jsonlPlan(source, proposed) {
       blocked_because: null,
     };
   }
-  if (sha256(existing) === afterHash) {
+  if (sha256(existing) === afterHash && canonicalSeedMetadataOk(existing, source.id, proposed)) {
     return {
       ok: true,
       operation: 'noop_seed_entry_present',
       blocked_because: null,
+    };
+  }
+  if (sameSeedJsonlTamper(source, proposed)) {
+    return {
+      ok: false,
+      operation: 'blocked_seed_entry_hash_or_metadata_mismatch',
+      blocked_because: 'existing_seed_entry_hash_or_metadata_mismatch',
     };
   }
   return {
@@ -580,23 +755,33 @@ function artifactPlan(projectRoot, sources, payloads) {
     const source = sources[id];
     const proposed = payloads[id];
     const plan = JSON_ARTIFACT_IDS.includes(id) ? jsonPlan(source, proposed) : jsonlPlan(source, proposed);
+    const pathResult = seedPathResult(projectRoot, SEED_ARTIFACT_PATHS[id]);
     return {
       artifact_id: id,
       path: SEED_ARTIFACT_PATHS[id],
       allowlisted: true,
       artifact_kind: JSON_ARTIFACT_IDS.includes(id) ? 'json' : 'jsonl',
+      path_safe: pathResult.ok === true,
+      path_safety_reason: pathResult.reason,
       source_status: source.source_status,
       before_hash: source.hash,
       before_version: source.version || null,
       before_entry_count: source.entry_count || 0,
       after_hash: sha256(proposed),
       after_version: proposed.version || null,
+      expected_canonical_hash: proposed.canonical_hash,
+      canonical_metadata_required: true,
+      canonical_metadata_present: source.source_status === 'missing'
+        ? null
+        : (JSON_ARTIFACT_IDS.includes(id)
+          ? canonicalSeedMetadataOk(source.value, id, proposed)
+          : !sameSeedJsonlTamper(source, proposed)),
       operation: plan.operation,
-      ok_to_apply: plan.ok,
-      blocked_because: plan.blocked_because,
+      ok_to_apply: plan.ok === true && pathResult.ok === true,
+      blocked_because: pathResult.ok === true ? plan.blocked_because : `unsafe_path:${pathResult.reason}`,
       redacted_summary_only: true,
       raw_content_included: false,
-      full_path_within_project: resolveSeedPath(projectRoot, SEED_ARTIFACT_PATHS[id]).startsWith(path.resolve(projectRoot)),
+      full_path_within_project: pathResult.ok === true,
     };
   });
 }
@@ -621,20 +806,42 @@ function writeJsonlAtomic(source, filePath, entry) {
   writeTextAtomic(filePath, `${entries.map((item) => JSON.stringify(item)).join('\n')}\n`);
 }
 
+function applyBlockedAction(blockedBecause) {
+  return {
+    mode: 'apply_blocked',
+    applied: false,
+    decision: 'blocked_no_writes',
+    write_count: 0,
+    atomic_write_count: 0,
+    append_count: 0,
+    noop_count: 0,
+    written_paths: [],
+    blocked_because: blockedBecause,
+  };
+}
+
+function preApplySafetyGate(scope = {}) {
+  const reasons = [];
+  if (scope.profile !== 'main') reasons.push(`profile_mismatch:${scope.profile || 'missing'}`);
+  if (scope.windowKey !== 'main') reasons.push(`window_mismatch:${scope.windowKey || 'missing'}`);
+  if (!scope.sessionId) reasons.push('session_missing');
+  if (scope.sessionId && !/^app-session(?::|-|$)/.test(String(scope.sessionId))) {
+    reasons.push(`session_scope_mismatch:${scope.sessionId}`);
+  }
+  if (!scope.deviceId) reasons.push('device_missing');
+  if (scope.source_scope !== 'main') reasons.push(`source_scope_mismatch:${scope.source_scope || 'missing'}`);
+  if (scope.main_scope_only !== true) reasons.push('main_scope_only_false');
+  if (scope.side_profile_reconstruction !== false) reasons.push('side_profile_reconstruction_not_false');
+  return {
+    ok: reasons.length === 0,
+    reasons,
+  };
+}
+
 function applySeed(projectRoot, sources, payloads, plan) {
   const blocked = plan.filter((entry) => entry.ok_to_apply !== true);
   if (blocked.length > 0) {
-    return {
-      mode: 'apply_blocked',
-      applied: false,
-      decision: 'blocked_no_writes',
-      write_count: 0,
-      atomic_write_count: 0,
-      append_count: 0,
-      noop_count: 0,
-      written_paths: [],
-      blocked_because: blocked.map((entry) => `${entry.artifact_id}:${entry.blocked_because}`).join(';'),
-    };
+    return applyBlockedAction(blocked.map((entry) => `${entry.artifact_id}:${entry.blocked_because}`).join(';'));
   }
   const written = [];
   let appendCount = 0;
@@ -692,9 +899,13 @@ function boundary(applyRequested) {
     allowlisted_root: 'workspace/knowledge',
     allowlisted_paths: Object.values(SEED_ARTIFACT_PATHS),
     atomic_writes_required: true,
+    pre_apply_scope_gate_required: true,
     hash_before_after_required: true,
+    exact_existing_seed_hash_required: true,
+    canonical_metadata_required: true,
     versioned_json_required: true,
     idempotent_seed_required: true,
+    realpath_lstat_escape_check_required: true,
     redacted_local_facts_only: true,
     raw_private_content_allowed: false,
     side_profile_reconstruction_allowed: false,
@@ -761,6 +972,9 @@ function seedContract() {
       allowlisted: true,
       redacted_summary_only: true,
       raw_content_included: false,
+      canonical_metadata_required: true,
+      exact_existing_seed_hash_required: true,
+      realpath_lstat_escape_check_required: true,
       required_for: id === 'permissions'
         ? ['relationship_presence_v1', 'growth_loop_v0', 'identity_anchor_v0']
         : ['relationship_presence_v1', 'growth_loop_v0', 'identity_anchor_v0'],
@@ -931,17 +1145,23 @@ function buildArtifactSummary(plan = []) {
     artifact_id: entry.artifact_id,
     path: entry.path,
     artifact_kind: entry.artifact_kind,
+    path_safe: entry.path_safe,
+    path_safety_reason: entry.path_safety_reason,
     source_status: entry.source_status,
     before_hash: entry.before_hash,
     before_version: entry.before_version,
     before_entry_count: entry.before_entry_count,
     after_hash: entry.after_hash,
     after_version: entry.after_version,
+    expected_canonical_hash: entry.expected_canonical_hash,
+    canonical_metadata_required: entry.canonical_metadata_required,
+    canonical_metadata_present: entry.canonical_metadata_present,
     operation: entry.operation,
     ok_to_apply: entry.ok_to_apply,
     blocked_because: entry.blocked_because,
     redacted_summary_only: true,
     raw_content_included: false,
+    full_path_within_project: entry.full_path_within_project,
   }));
 }
 
@@ -954,8 +1174,12 @@ function buildSeedRecord(options = {}) {
   Object.values(payloads).forEach((payload) => assertNoForbiddenOutput(payload));
   const beforeSources = readDurableStateSeedArtifacts({ projectRoot });
   const plan = artifactPlan(projectRoot, beforeSources, payloads);
-  const action = options.apply === true || inputSignals.apply === true
-    ? applySeed(projectRoot, beforeSources, payloads, plan)
+  const applyRequested = options.apply === true || inputSignals.apply === true;
+  const applyGate = preApplySafetyGate(scope);
+  const action = applyRequested
+    ? (applyGate.ok
+      ? applySeed(projectRoot, beforeSources, payloads, plan)
+      : applyBlockedAction(`pre_apply_scope_safety_gate:${applyGate.reasons.join(',')}`))
     : dryRunAction(plan);
   const afterSources = readDurableStateSeedArtifacts({ projectRoot });
   const contracts = requiredContracts(options);
@@ -978,6 +1202,12 @@ function buildSeedRecord(options = {}) {
     baseline_commits: clone(BASELINE_COMMITS),
     mode: 'local_durable_state_seed_v0',
     scope,
+    pre_apply_safety_gate: {
+      required: true,
+      ok: applyGate.ok,
+      reasons: applyGate.reasons,
+      checked_before_any_write: true,
+    },
     seed_contract: seedContract(),
     artifact_plan: buildArtifactSummary(plan),
     action_result: action,
@@ -1067,6 +1297,14 @@ function scopeOk(scope = {}) {
     && scope.side_profile_reconstruction === false;
 }
 
+function preApplySafetyGateOk(gate = {}, scope = {}) {
+  const expected = preApplySafetyGate(scope);
+  return gate.required === true
+    && gate.checked_before_any_write === true
+    && gate.ok === expected.ok
+    && valuesMatch(asArray(gate.reasons), expected.reasons);
+}
+
 function seedContractOk(contract = {}) {
   const artifacts = asArray(contract.required_artifacts);
   return contract.contract_id === 'mira-durable-state-seed-v0'
@@ -1075,7 +1313,10 @@ function seedContractOk(contract = {}) {
     && artifacts.every((entry) => SEED_ARTIFACT_PATHS[entry.artifact_id] === entry.path
       && entry.allowlisted === true
       && entry.redacted_summary_only === true
-      && entry.raw_content_included === false)
+      && entry.raw_content_included === false
+      && entry.canonical_metadata_required === true
+      && entry.exact_existing_seed_hash_required === true
+      && entry.realpath_lstat_escape_check_required === true)
     && contract.identity_anchor_store_seeded === false
     && contract.identity_anchor_store_policy === 'not_seeded_identity_anchor_v0_uses_bbf018e_metadata_bound_generated_contract'
     && contract.growth_history_audit_policy?.non_empty_required === true
@@ -1089,6 +1330,10 @@ function artifactPlanOk(plan = []) {
   return plan.length === Object.keys(SEED_ARTIFACT_PATHS).length
     && plan.every((entry) => SEED_ARTIFACT_PATHS[entry.artifact_id] === entry.path
       && entry.ok_to_apply === true
+      && entry.path_safe === true
+      && entry.full_path_within_project === true
+      && entry.canonical_metadata_required === true
+      && Boolean(entry.expected_canonical_hash)
       && entry.redacted_summary_only === true
       && entry.raw_content_included === false
       && Boolean(entry.before_hash)
@@ -1149,9 +1394,13 @@ function boundaryOk(value = {}) {
     && value.allowlisted_root === 'workspace/knowledge'
     && valuesMatch(value.allowlisted_paths, Object.values(SEED_ARTIFACT_PATHS))
     && value.atomic_writes_required === true
+    && value.pre_apply_scope_gate_required === true
     && value.hash_before_after_required === true
+    && value.exact_existing_seed_hash_required === true
+    && value.canonical_metadata_required === true
     && value.versioned_json_required === true
     && value.idempotent_seed_required === true
+    && value.realpath_lstat_escape_check_required === true
     && value.redacted_local_facts_only === true
     && value.raw_private_content_allowed === false
     && value.side_profile_reconstruction_allowed === false
@@ -1221,6 +1470,10 @@ function seedStaticChecks(seed = {}, contract = {}) {
     {
       id: 'scope-main-profile-only',
       ok: scopeOk(seed.scope),
+    },
+    {
+      id: 'pre-apply-safety-gate',
+      ok: preApplySafetyGateOk(seed.pre_apply_safety_gate, seed.scope),
     },
     {
       id: 'seed-contract-allowlisted',
