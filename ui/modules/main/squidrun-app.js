@@ -7,6 +7,7 @@ const { app, BrowserWindow, dialog, ipcMain, session, powerMonitor, Menu, shell 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const WebSocket = require('ws');
 const { createHash } = require('crypto');
 const { spawn } = require('child_process');
 const log = require('../logger');
@@ -28,6 +29,7 @@ const {
   isMainProfile,
   normalizeProfileName,
   buildProfileTelegramEnv,
+  getProfileWebSocketPort,
   getProfileProjectRootOverride,
   resolveProfileInstructionPath,
 } = require('../../profile');
@@ -79,6 +81,7 @@ const {
 const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
+  buildWebSocketDispatchMessage,
 } = require('../comms/message-envelope');
 const teamMemory = require('../team-memory');
 const experiment = require('../experiment');
@@ -419,6 +422,75 @@ function toNonEmptyString(value) {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
   return normalized || null;
+}
+
+function parseJsonMessage(raw) {
+  try {
+    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+function waitForSocketMessage(ws, predicate, timeoutMs, timeoutLabel) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(timeoutLabel || 'Timed out waiting for socket response'));
+    }, timeoutMs);
+
+    const onMessage = (raw) => {
+      const message = parseJsonMessage(raw);
+      if (!message || !predicate(message)) return;
+      cleanup();
+      resolve(message);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('Socket closed before response'));
+    };
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    function cleanup() {
+      clearTimeout(timeout);
+      ws.off('message', onMessage);
+      ws.off('close', onClose);
+      ws.off('error', onError);
+    }
+
+    ws.on('message', onMessage);
+    ws.on('close', onClose);
+    ws.on('error', onError);
+  });
+}
+
+function closeSocketBestEffort(ws) {
+  return new Promise((resolve) => {
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+      resolve();
+      return;
+    }
+    const timeout = setTimeout(() => {
+      try {
+        ws.terminate();
+      } catch (_) {}
+      resolve();
+    }, 250);
+    ws.once('close', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    try {
+      ws.close();
+    } catch (_) {
+      clearTimeout(timeout);
+      resolve();
+    }
+  });
 }
 
 function normalizeToPosixPath(value) {
@@ -2056,6 +2128,12 @@ class SquidRunApp {
       return { success: false, reason: 'daemon_not_connected', paneId: id };
     }
     try {
+      if (this.isCodexPaneCommand(id)) {
+        const pasteEndAccepted = dc.write(id, '\u001b[201~');
+        if (!pasteEndAccepted) {
+          return { success: false, reason: 'daemon_paste_end_write_failed', paneId: id };
+        }
+      }
       const accepted = dc.write(id, '\r');
       if (!accepted) {
         return { success: false, reason: 'daemon_write_failed', paneId: id };
@@ -2069,6 +2147,27 @@ class SquidRunApp {
         error: err?.message || 'daemon_write_failed',
       };
     }
+  }
+
+  isCodexPaneCommand(paneId) {
+    const id = String(paneId || '').trim();
+    if (!id) return false;
+    const commands = this.ctx.currentSettings?.paneCommands;
+    const command = commands && typeof commands === 'object'
+      ? String(commands[id] || '')
+      : '';
+    if (command.toLowerCase().includes('codex')) {
+      return true;
+    }
+
+    let persistedCommands = null;
+    try {
+      persistedCommands = this.settings?.loadSettings?.()?.paneCommands;
+    } catch {
+      persistedCommands = null;
+    }
+    if (!persistedCommands || typeof persistedCommands !== 'object') return false;
+    return String(persistedCommands[id] || '').toLowerCase().includes('codex');
   }
 
   handleTriggerDeliveryAck(data = {}) {
@@ -2292,6 +2391,24 @@ class SquidRunApp {
     return { duplicate: false, dedupeKey };
   }
 
+  hasVisibleInjectDeliveryForMessage(paneId = '', windowKey = 'main', messageId = null, now = Date.now()) {
+    const stableMessageId = toNonEmptyString(messageId);
+    const normalizedPaneId = toNonEmptyString(paneId);
+    if (!stableMessageId || !normalizedPaneId) return false;
+    const normalizedWindowKey = toNonEmptyString(windowKey) || 'main';
+    this.pruneVisibleInjectDeliveryCache(now);
+    const prefix = [
+      normalizedWindowKey,
+      normalizedPaneId,
+      stableMessageId,
+    ].join('|') + '|';
+    for (const [dedupeKey, entry] of this.visibleInjectDeliveryCache.entries()) {
+      if (!dedupeKey.startsWith(prefix)) continue;
+      if (Number(entry?.expiresAt || 0) > now) return true;
+    }
+    return false;
+  }
+
   recordVisibleInjectDelivery(dedupeKey, now = Date.now()) {
     if (!dedupeKey) return;
     this.pruneVisibleInjectDeliveryCache(now);
@@ -2358,13 +2475,23 @@ class SquidRunApp {
         log.info('InjectIPC', `Pre-IPC route pane ${paneId}: ${totalBytes} bytes -> ${packet.ipcChunk?.count || 1} packet(s) (startup=${startupInjection})`);
       }
       const targetWindowKey = packet?.windowKey || packet?.meta?.windowKey || 'main';
+      const normalizedTargetWindowKey = String(targetWindowKey || 'main').trim() || 'main';
+      const preferHiddenPaneHost = packet?.meta?.preferHiddenPaneHost === true
+        || payload?.meta?.preferHiddenPaneHost === true;
+      const disableVisibleFallback = packet?.meta?.disableVisibleFallback === true
+        || payload?.meta?.disableVisibleFallback === true;
+      const visibleWindowAvailable = this.canSendToWindow(this.getAppWindow(normalizedTargetWindowKey));
       const routeToVisibleWindow = (
-        !this.isHiddenPaneHostModeEnabled()
-        || startupInjection
-        || String(targetWindowKey || 'main').trim() !== 'main'
+        !preferHiddenPaneHost
+        && (
+          visibleWindowAvailable
+          || !this.isHiddenPaneHostModeEnabled()
+          || startupInjection
+          || normalizedTargetWindowKey !== 'main'
+        )
       );
       if (routeToVisibleWindow) {
-        const deliveryPath = String(targetWindowKey || 'main').trim() === 'main'
+        const deliveryPath = normalizedTargetWindowKey === 'main'
           ? 'visible_window'
           : 'visible_window_scoped';
         const dedupe = this.hasVisibleInjectDelivery(packet, paneId, targetWindowKey, messageId);
@@ -2390,7 +2517,7 @@ class SquidRunApp {
           _ipcPacketized: true,
           _routerAttempted: true,
         }, {
-          windowKey: targetWindowKey,
+          windowKey: normalizedTargetWindowKey,
         });
         appendBusTraceEvent({
           eventType: 'pane_ipc_handoff',
@@ -2458,6 +2585,37 @@ class SquidRunApp {
       fallbackMeta.hiddenHostReady = hostReady;
       fallbackMeta.hiddenHostWindowPresent = hostWindowPresent;
       fallbackMeta.hiddenHostLoading = hostLoading;
+
+      if (disableVisibleFallback) {
+        appendBusTraceEvent({
+          eventType: 'pane_ipc_handoff',
+          messageId: messageId || null,
+          deliveryId: packet.deliveryId || null,
+          paneId,
+          deliveryPath: 'hidden_pane_host_unavailable',
+          success: false,
+          packetBytes,
+          chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+          chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          hiddenHostReady: hostReady,
+          hiddenHostWindowPresent: hostWindowPresent,
+          hiddenHostLoading: hostLoading,
+          reason: 'visible_fallback_disabled',
+        });
+        this.reportPaneHostDegraded({
+          paneId,
+          reason: canRouteToHiddenHost ? 'inject_hidden_send_failed' : 'inject_hidden_not_ready',
+          message: `Hidden pane host unavailable/not ready for pane ${paneId}; renderer fallback will handle delivery.`,
+          details: {
+            deliveryId: packet.deliveryId || null,
+            hiddenHostReady: hostReady,
+            hiddenHostWindowPresent: hostWindowPresent,
+            hiddenHostLoading: hostLoading,
+            fallback: 'visible_renderer_direct_injection',
+          },
+        });
+        continue;
+      }
 
       const routedToVisible = this.sendToVisibleWindow('inject-message', {
         ...packet,
@@ -3319,6 +3477,9 @@ class SquidRunApp {
                   errorCode: telegramResult?.ok ? null : (telegramResult?.error || telegramResult?.status || 'telegram_send_failed'),
                   error: telegramResult?.ok ? null : (telegramResult?.error || null),
                   chatId: telegramResult?.chatId || null,
+                  windowKey: telegramResult?.windowKey || null,
+                  profile: telegramResult?.profile || null,
+                  sessionScopeId: telegramResult?.sessionScopeId || null,
                   telegramMessageId: telegramResult?.messageId || null,
                   summary: telegramResult?.ok
                     ? `Telegram delivery acknowledged${telegramResult?.chatId ? ` (chat ${telegramResult.chatId})` : ''}`
@@ -3337,6 +3498,9 @@ class SquidRunApp {
                 mode: 'telegram',
                 messageId: telegramResult?.messageId || null,
                 chatId: telegramResult?.chatId || null,
+                windowKey: telegramResult?.windowKey || null,
+                profile: telegramResult?.profile || null,
+                sessionScopeId: telegramResult?.sessionScopeId || null,
                 error: telegramResult?.error || null,
                 guardActions: preflight.actions,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
@@ -4606,10 +4770,21 @@ class SquidRunApp {
         message: payload?.message || '',
         deliveryId: payload?.deliveryId || null,
         traceContext: payload?.traceContext || null,
-        meta: payload?.meta || null,
+        meta: {
+          ...((payload?.meta && typeof payload.meta === 'object') ? payload.meta : {}),
+          preferHiddenPaneHost: true,
+          disableVisibleFallback: true,
+        },
       });
       return routed
-        ? { success: true, paneId: id, mode: 'routed-inject' }
+        ? {
+          success: true,
+          paneId: id,
+          mode: 'routed-inject',
+          verified: false,
+          status: 'pane_host_route_pending',
+          reason: 'hidden_pane_host_delivery_pending',
+        }
         : { success: false, reason: 'inject_route_unavailable', paneId: id };
     });
 
@@ -5341,6 +5516,23 @@ class SquidRunApp {
       return { accepted: false, queued: false, verified: false, status: 'invalid_message' };
     }
 
+    const directPtyResult = await this.deliverPaneMessageViaDaemonPty({
+      paneId: normalizedPaneId,
+      message: normalizedMessage,
+      traceContext,
+      messageId,
+    });
+    const directStatus = toNonEmptyString(directPtyResult?.status).toLowerCase();
+    const directAccepted = (
+      directPtyResult?.accepted === true
+      || directPtyResult?.queued === true
+      || directPtyResult?.ok === true
+    ) && !directStatus.includes('failed')
+      && directStatus !== 'skipped.codex_chunked_payload';
+    if (directPtyResult?.verified === true || directAccepted) {
+      return directPtyResult;
+    }
+
     const result = await triggers.sendDirectMessage(
       [String(normalizedPaneId)],
       normalizedMessage,
@@ -5388,6 +5580,185 @@ class SquidRunApp {
       pendingQueueKey: queued?.entry?.queueKey || null,
       pendingFailureReason: failureReason,
     };
+  }
+
+  async deliverPaneMessageViaDaemonPty({
+    paneId = '1',
+    message = '',
+    traceContext = null,
+    messageId = null,
+  } = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const text = String(message || '');
+    if (!text.trim()) {
+      return { ok: false, accepted: false, queued: false, verified: false, status: 'invalid_message' };
+    }
+
+    const daemonClient = this.ctx.daemonClient;
+    if (!daemonClient || daemonClient.connected !== true || typeof daemonClient.write !== 'function') {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'daemon_not_connected',
+        mode: 'daemon-pty',
+        paneId: normalizedPaneId,
+      };
+    }
+
+    const traceId = toNonEmptyString(traceContext?.traceId)
+      || toNonEmptyString(traceContext?.correlationId)
+      || toNonEmptyString(messageId)
+      || null;
+    const kernelMeta = {
+      eventId: `${normalizedPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      correlationId: traceId || undefined,
+      traceId: traceId || undefined,
+      parentEventId: toNonEmptyString(traceContext?.parentEventId) || undefined,
+      causationId: toNonEmptyString(traceContext?.causationId) || undefined,
+      source: 'squidrun-app.direct-pane-delivery',
+    };
+
+    appendBusTraceEvent({
+      eventType: 'pane_direct_pty_write_scheduled',
+      messageId: messageId || traceId || null,
+      deliveryId: null,
+      paneId: normalizedPaneId,
+      payloadBytes: getUtf8ByteLength(text),
+      payloadFingerprint: createPayloadFingerprint(text),
+      mode: 'daemon-pty',
+    });
+
+    try {
+      const payloadBytes = getUtf8ByteLength(text);
+      if (
+        this.isCodexPaneCommand(normalizedPaneId)
+        && payloadBytes >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES
+      ) {
+        appendBusTraceEvent({
+          eventType: 'pane_direct_pty_write_skipped',
+          messageId: messageId || traceId || null,
+          deliveryId: null,
+          paneId: normalizedPaneId,
+          payloadBytes,
+          payloadFingerprint: createPayloadFingerprint(text),
+          success: false,
+          verified: false,
+          status: 'skipped.codex_chunked_payload',
+          mode: 'daemon-pty',
+          reason: 'codex_chunked_payload_requires_verified_inject_path',
+        });
+        return {
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'skipped.codex_chunked_payload',
+          mode: 'daemon-pty',
+          paneId: normalizedPaneId,
+        };
+      }
+
+      const acceptedText = daemonClient.write(normalizedPaneId, text, kernelMeta);
+      if (!acceptedText) {
+        return {
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'daemon_write_failed',
+          mode: 'daemon-pty',
+          paneId: normalizedPaneId,
+        };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      if (this.isCodexPaneCommand(normalizedPaneId)) {
+        const acceptedPasteEnd = daemonClient.write(normalizedPaneId, '\u001b[201~', {
+          ...kernelMeta,
+          eventId: `${normalizedPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          parentEventId: kernelMeta.eventId,
+          causationId: kernelMeta.eventId,
+          source: 'squidrun-app.direct-pane-delivery.codex-paste-end',
+        });
+        if (!acceptedPasteEnd) {
+          return {
+            ok: false,
+            accepted: true,
+            queued: false,
+            verified: false,
+            status: 'daemon_paste_end_failed',
+            mode: 'daemon-pty',
+            paneId: normalizedPaneId,
+          };
+        }
+      }
+
+      const acceptedEnter = daemonClient.write(normalizedPaneId, '\r', {
+        ...kernelMeta,
+        eventId: `${normalizedPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        parentEventId: kernelMeta.eventId,
+        causationId: kernelMeta.eventId,
+      });
+      if (!acceptedEnter) {
+        return {
+          ok: false,
+          accepted: true,
+          queued: false,
+          verified: false,
+          status: 'daemon_enter_failed',
+          mode: 'daemon-pty',
+          paneId: normalizedPaneId,
+        };
+      }
+
+      appendBusTraceEvent({
+        eventType: 'pane_direct_pty_write_completed',
+        messageId: messageId || traceId || null,
+        deliveryId: null,
+        paneId: normalizedPaneId,
+        payloadBytes: getUtf8ByteLength(text),
+        payloadFingerprint: createPayloadFingerprint(text),
+        success: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+      });
+
+      return {
+        ok: true,
+        accepted: true,
+        queued: false,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+        paneId: normalizedPaneId,
+      };
+    } catch (err) {
+      appendBusTraceEvent({
+        eventType: 'pane_direct_pty_write_failed',
+        messageId: messageId || traceId || null,
+        deliveryId: null,
+        paneId: normalizedPaneId,
+        success: false,
+        verified: false,
+        status: 'daemon_write_failed',
+        reason: err?.message || String(err || 'daemon_write_failed'),
+        mode: 'daemon-pty',
+      });
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'daemon_write_failed',
+        error: err?.message || String(err || 'daemon_write_failed'),
+        mode: 'daemon-pty',
+        paneId: normalizedPaneId,
+      };
+    }
   }
 
   async flushPendingPaneDeliveries({ paneId = null, reason = 'manual-replay' } = {}) {
@@ -7203,6 +7574,9 @@ class SquidRunApp {
       chatId,
       defaultChatId: normalizeChatId(process.env.TELEGRAM_CHAT_ID || '') || null,
       sender: typeof context?.sender === 'string' && context.sender.trim() ? context.sender.trim() : null,
+      windowKey: 'main',
+      profile: 'main',
+      sessionScopeId: toNonEmptyString(context?.sessionScopeId) || this.getWindowSessionScopeId('main'),
       lastInboundAtMs: Number.isFinite(Number(context?.lastInboundAtMs))
         ? Math.floor(Number(context.lastInboundAtMs))
         : Date.now(),
@@ -7220,12 +7594,19 @@ class SquidRunApp {
 
   markTelegramInboundContext(sender = 'unknown', metadata = {}) {
     const chatId = normalizeChatId(metadata?.chatId);
-    const windowKey = toNonEmptyString(metadata?.windowKey) || this.resolveTelegramInboundWindowKey(chatId) || 'main';
+    const route = this.resolveTelegramInboundRoute(chatId);
+    const windowKey = toNonEmptyString(metadata?.windowKey) || route?.windowKey || 'main';
+    const profile = toNonEmptyString(metadata?.profile) || route?.profile || windowKey;
+    if (!route?.ok || windowKey !== 'main' || profile !== 'main') {
+      return this.telegramInboundContext;
+    }
     this.telegramInboundContext = {
       lastInboundAtMs: Date.now(),
       sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
       chatId,
-      windowKey,
+      windowKey: 'main',
+      profile: 'main',
+      sessionScopeId: toNonEmptyString(metadata?.sessionScopeId) || this.getWindowSessionScopeId('main'),
     };
     this.persistTelegramReplyContext(this.telegramInboundContext);
     return this.telegramInboundContext;
@@ -7261,9 +7642,10 @@ class SquidRunApp {
     if (!normalizedWindowKey || normalizedWindowKey === 'main') return [];
 
     const profileRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env);
-    const roots = profileRoot
-      ? [profileRoot]
-      : [getProjectRoot()].filter(Boolean);
+    const roots = [
+      profileRoot,
+      getProjectRoot(),
+    ].filter(Boolean);
 
     return Array.from(new Set(roots.map((root) => path.resolve(root))))
       .map((root) => path.join(root, '.squidrun', `triggers-${normalizedWindowKey}`, 'architect.txt'));
@@ -7286,6 +7668,136 @@ class SquidRunApp {
       }
     }
     return wrote;
+  }
+
+  async deliverScopedTelegramInboundToProfileWindow(windowKey, message, options = {}) {
+    const normalizedWindowKey = normalizeProfileName(toNonEmptyString(windowKey));
+    const normalizedMessage = toNonEmptyString(message);
+    if (!normalizedWindowKey || normalizedWindowKey === 'main' || !normalizedMessage) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'invalid_scoped_telegram_route',
+      };
+    }
+
+    const port = getProfileWebSocketPort(normalizedWindowKey);
+    const timeoutMs = Math.max(
+      1000,
+      Number.parseInt(String(options.timeoutMs || process.env.SQUIDRUN_SCOPED_TELEGRAM_ACK_TIMEOUT_MS || '7000'), 10) || 7000
+    );
+    const messageId = toNonEmptyString(options.messageId)
+      || `telegram-scoped-${normalizedWindowKey}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sessionScopeId = toNonEmptyString(options.sessionScopeId)
+      || this.getWindowSessionScopeId(normalizedWindowKey);
+    const projectRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env) || getProjectRoot();
+    const targetRole = toNonEmptyString(options.targetRole) || 'architect';
+    const targetRaw = toNonEmptyString(options.target) || targetRole;
+    const targetPaneId = toNonEmptyString(options.targetPaneId) || ROLE_ID_MAP[targetRole] || null;
+    const envelope = buildOutboundMessageEnvelope({
+      message_id: messageId,
+      session_id: sessionScopeId,
+      priority: 'urgent',
+      content: normalizedMessage,
+      sender: { role: 'telegram' },
+      target: {
+        raw: targetRaw,
+        role: targetRole,
+        pane_id: targetPaneId,
+      },
+      project: {
+        name: path.basename(projectRoot || getProjectRoot() || 'squidrun'),
+        path: projectRoot || getProjectRoot() || null,
+        session_id: sessionScopeId,
+        source: 'telegram-poller',
+      },
+      timestamp_ms: Date.now(),
+    });
+    const dispatchMessage = buildWebSocketDispatchMessage(envelope, {
+      target: targetRaw,
+      priority: 'urgent',
+      ackRequired: true,
+      attempt: 1,
+      maxAttempts: 1,
+    });
+    dispatchMessage.metadata = {
+      ...(dispatchMessage.metadata && typeof dispatchMessage.metadata === 'object' ? dispatchMessage.metadata : {}),
+      source: 'telegram-poller',
+      channel: 'telegram',
+      profileName: normalizedWindowKey,
+      windowKey: normalizedWindowKey,
+      sessionScopeId,
+      chatId: options.chatId ?? null,
+      telegramChatId: options.chatId ?? null,
+      updateId: options.updateId ?? null,
+      telegramMessageId: options.telegramMessageId ?? null,
+      sender: toNonEmptyString(options.sender),
+    };
+    dispatchMessage.traceContext = {
+      traceId: messageId,
+      correlationId: messageId,
+      messageId,
+      source: 'telegram-poller',
+      profileName: normalizedWindowKey,
+      windowKey: normalizedWindowKey,
+    };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    try {
+      await waitForSocketMessage(ws, (msg) => msg.type === 'welcome', timeoutMs, 'Scoped runtime connection timeout');
+      ws.send(JSON.stringify({
+        type: 'register',
+        role: 'telegram',
+        profileName: normalizedWindowKey,
+        windowKey: normalizedWindowKey,
+        sessionScopeId,
+      }));
+      await waitForSocketMessage(ws, (msg) => msg.type === 'registered', timeoutMs, 'Scoped runtime registration timeout');
+      ws.send(JSON.stringify(dispatchMessage));
+      const ack = await waitForSocketMessage(
+        ws,
+        (msg) => msg.type === 'send-ack' && msg.messageId === messageId,
+        timeoutMs,
+        'Scoped runtime pane delivery timeout'
+      );
+      return {
+        ok: ack?.ok === true,
+        accepted: ack?.accepted === true,
+        queued: ack?.queued === true,
+        verified: ack?.verified === true,
+        userVisible: ack?.userVisible === true,
+        status: ack?.status || (ack?.verified === true ? 'delivered.verified' : 'accepted.unverified'),
+        ack,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'scoped_runtime_unavailable',
+        error: err.message,
+      };
+    } finally {
+      await closeSocketBestEffort(ws);
+    }
+  }
+
+  handleScopedTelegramInboundFallback(windowKey, message, deliveryResult = null) {
+    const normalizedWindowKey = toNonEmptyString(windowKey);
+    const status = toNonEmptyString(deliveryResult?.status) || 'unknown';
+    log.warn(
+      'Telegram',
+      `Scoped Telegram pane injection for ${normalizedWindowKey || 'unknown'} did not verify (${status}); writing trigger fallback`
+    );
+    const forwarded = this.forwardScopedTelegramInboundToProfileWindow(normalizedWindowKey, message);
+    if (!forwarded) {
+      log.error('Telegram', `Scoped Telegram fallback failed for ${normalizedWindowKey || 'unknown'}; message was not pane-visible`);
+    }
+    return forwarded;
   }
 
   hasRecentTelegramInbound(nowMs = Date.now()) {
@@ -7335,6 +7847,28 @@ class SquidRunApp {
     try {
       const replyChatId = normalizeChatId(chatId)
         || (requiresRecentInbound ? normalizeChatId(this.telegramInboundContext?.chatId) : null);
+      const contextWindowKey = toNonEmptyString(this.telegramInboundContext?.windowKey) || 'main';
+      const contextProfile = toNonEmptyString(this.telegramInboundContext?.profile)
+        || (contextWindowKey === 'main' ? 'main' : contextWindowKey);
+      if (requiresRecentInbound && (contextWindowKey !== 'main' || contextProfile !== 'main')) {
+        return {
+          handled: true,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'telegram_privacy_route_cross_profile_context',
+          error: 'inherited_telegram_context_not_main',
+          windowKey: contextWindowKey,
+          profile: contextProfile,
+          chatId: replyChatId || null,
+          sessionScopeId: toNonEmptyString(this.telegramInboundContext?.sessionScopeId)
+            || this.getWindowSessionScopeId(contextWindowKey),
+        };
+      }
+      let routeWindowKey = 'main';
+      let routeProfile = 'main';
+      let routeSessionScopeId = this.commsSessionScopeId || this.getWindowSessionScopeId('main');
       if (requiresRecentInbound && replyChatId) {
         const replyRoute = this.resolveTelegramInboundRoute(replyChatId);
         if (!replyRoute?.ok) {
@@ -7347,6 +7881,31 @@ class SquidRunApp {
             status: 'telegram_privacy_route_blocked',
             error: replyRoute?.reason || 'telegram_inbound_route_blocked',
           };
+        }
+        routeWindowKey = toNonEmptyString(replyRoute.windowKey) || 'main';
+        routeProfile = toNonEmptyString(replyRoute.profile) || routeWindowKey;
+        routeSessionScopeId = this.getWindowSessionScopeId(routeWindowKey);
+        if (routeWindowKey !== 'main' || routeProfile !== 'main') {
+          return {
+            handled: true,
+            ok: false,
+            accepted: false,
+            queued: false,
+            verified: false,
+            status: 'telegram_privacy_route_cross_profile_context',
+            error: replyRoute?.reason || 'telegram_inbound_route_non_main',
+            windowKey: routeWindowKey,
+            profile: routeProfile,
+            chatId: replyChatId,
+            sessionScopeId: routeSessionScopeId,
+          };
+        }
+      } else if (!requiresRecentInbound && replyChatId) {
+        const explicitRoute = this.resolveTelegramInboundRoute(replyChatId);
+        if (explicitRoute?.ok) {
+          routeWindowKey = toNonEmptyString(explicitRoute.windowKey) || 'main';
+          routeProfile = toNonEmptyString(explicitRoute.profile) || routeWindowKey;
+          routeSessionScopeId = this.getWindowSessionScopeId(routeWindowKey);
         }
       }
       if (requiresRecentInbound && !replyChatId && toNonEmptyString(this.telegramInboundContext?.windowKey) !== 'main') {
@@ -7367,6 +7926,11 @@ class SquidRunApp {
         metadata: {
           routeKind: 'telegram',
           targetRaw: normalizedTarget,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          chatId: replyChatId || null,
+          telegramChatId: replyChatId || null,
+          sessionScopeId: routeSessionScopeId,
         },
       });
       if (!result?.ok) {
@@ -7390,6 +7954,9 @@ class SquidRunApp {
         status: 'telegram_delivered',
         messageId: result.messageId || null,
         chatId: result.chatId || null,
+        windowKey: routeWindowKey,
+        profile: routeProfile,
+        sessionScopeId: routeSessionScopeId,
         routeMethod: result.method || null,
       };
     } catch (err) {
@@ -8110,6 +8677,7 @@ class SquidRunApp {
       relayUrl,
       deviceId,
       sharedSecret: relaySecret,
+      availableRoles: ['architect'],
       onMessage: (payload = {}) => this.handleBridgeInboundMessage(payload),
       onStatus: (status = {}) => this.handleBridgeClientStatusUpdate(status),
       onPairing: (update = {}) => this.handleBridgePairingUpdate(update),
@@ -8643,10 +9211,14 @@ class SquidRunApp {
           'Telegram',
           `Handling inbound Telegram callback from ${sender} (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))})`
         );
-        this.markTelegramInboundContext(sender, {
-          chatId: metadata?.chatId,
-          windowKey: inboundWindowKey,
-        });
+        if (inboundWindowKey === 'main') {
+          this.markTelegramInboundContext(sender, {
+            chatId: metadata?.chatId,
+            windowKey: inboundWindowKey,
+            profile: inboundRoute.profile || 'main',
+            sessionScopeId: inboundSessionScopeId,
+          });
+        }
         const updateId = Number.isFinite(Number(metadata?.updateId))
           ? Math.floor(Number(metadata.updateId))
           : null;
@@ -8684,6 +9256,7 @@ class SquidRunApp {
                 ? Number(metadata.chatId)
                 : null,
               windowKey: inboundWindowKey,
+              profile: inboundRoute.profile || inboundWindowKey,
               sessionScopeId: inboundSessionScopeId,
               mediaKind: typeof media?.kind === 'string' ? media.kind : null,
               telegramMediaKind: typeof media?.telegramKind === 'string' ? media.telegramKind : null,
@@ -8726,10 +9299,29 @@ class SquidRunApp {
         const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
           ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
           : fullTelegramMessage;
-        const scopedStandaloneForwarded = inboundWindowKey !== 'main'
-          && !this.canSendToWindow(this.getAppWindow(inboundWindowKey))
-          && this.forwardScopedTelegramInboundToProfileWindow(inboundWindowKey, safeMessage);
-        if (scopedStandaloneForwarded) {
+        if (inboundWindowKey !== 'main') {
+          void this.deliverScopedTelegramInboundToProfileWindow(inboundWindowKey, safeMessage, {
+            messageId: inboundMessageId,
+            sessionScopeId: inboundSessionScopeId,
+            chatId: metadata?.chatId,
+            updateId,
+            telegramMessageId: messageId,
+            sender,
+          }).then((result) => {
+            if (result?.verified === true && result?.userVisible === true) {
+              log.info(
+                'Telegram',
+                `Scoped Telegram inbound injected into ${inboundWindowKey} Architect pane (${inboundMessageId})`
+              );
+              return;
+            }
+            this.handleScopedTelegramInboundFallback(inboundWindowKey, safeMessage, result);
+          }).catch((err) => {
+            this.handleScopedTelegramInboundFallback(inboundWindowKey, safeMessage, {
+              status: 'scoped_runtime_error',
+              error: err.message,
+            });
+          });
           return;
         }
         void this.deliverHumanMessageWithRecall(
