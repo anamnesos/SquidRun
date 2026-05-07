@@ -647,6 +647,98 @@ describe('SquidRunApp', () => {
       }));
     });
 
+    it('prefers the visible main window over hidden pane-host delivery for normal injections', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      const mainWindow = {
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          send: jest.fn(),
+        },
+      };
+      app.registerAppWindow('main', mainWindow);
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+
+      const routed = app.routeInjectMessage({
+        panes: ['1'],
+        message: 'visible-main-before-hidden-host',
+        traceContext: {
+          messageId: 'hm-visible-main-before-hidden-host',
+        },
+      });
+
+      expect(routed).toBe(true);
+      expect(sendPaneHostBridgeEvent).not.toHaveBeenCalled();
+      expect(app.paneHostWindowManager.getPaneWindow).not.toHaveBeenCalled();
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          panes: ['1'],
+          message: 'visible-main-before-hidden-host',
+          _ipcPacketized: true,
+          _routerAttempted: true,
+        })
+      );
+    });
+
+    it('still routes visible-renderer hidden pane-host handoff after visible-window delivery', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      const mainWindow = {
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          send: jest.fn(),
+        },
+      };
+      app.registerAppWindow('main', mainWindow);
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+      const traceContext = { messageId: 'hm-visible-then-hidden-echo' };
+
+      expect(app.routeInjectMessage({
+        panes: ['1'],
+        message: 'visible first payload',
+        traceContext,
+      })).toBe(true);
+
+      mainWindow.webContents.send.mockClear();
+      expect(app.routeInjectMessage({
+        panes: ['1'],
+        message: 'same message after renderer stripping prefix',
+        traceContext,
+        meta: {
+          preferHiddenPaneHost: true,
+        },
+      })).toBe(true);
+
+      expect(sendPaneHostBridgeEvent).toHaveBeenCalledWith(
+        '1',
+        'inject-message',
+        expect.objectContaining({
+          message: 'same message after renderer stripping prefix',
+          traceContext,
+        })
+      );
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
     it('routes pane-host inject IPC through the shared inject router and chunks long payloads', async () => {
       const { ipcMain } = require('electron');
       const watcher = require('../modules/watcher');
@@ -711,6 +803,9 @@ describe('SquidRunApp', () => {
         success: true,
         paneId: '1',
         mode: 'routed-inject',
+        verified: false,
+        status: 'pane_host_route_pending',
+        reason: 'hidden_pane_host_delivery_pending',
       });
 
       const hostPayloads = sendPaneHostBridgeEvent.mock.calls
@@ -729,6 +824,7 @@ describe('SquidRunApp', () => {
         traceContext,
         meta: expect.objectContaining({
           source: 'test',
+          disableVisibleFallback: true,
           ipcChunked: true,
           ipcOriginalBytes: Buffer.byteLength(message, 'utf8'),
         }),
@@ -2503,6 +2599,100 @@ describe('SquidRunApp', () => {
       expect(result).toEqual({ success: true, paneId: '2' });
     });
 
+    it('writes Codex paste terminator before enter for Codex pane commands', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: '1' });
+    });
+
+    it('falls back to persisted settings when current settings lack pane commands', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {};
+      mockManagers.settings.loadSettings.mockReturnValue({
+        paneCommands: {
+          1: 'codex',
+        },
+      });
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(mockManagers.settings.loadSettings).toHaveBeenCalled();
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: '1' });
+    });
+
+    it('uses persisted settings when current pane command is stale non-Codex', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'claude',
+        },
+      };
+      mockManagers.settings.loadSettings.mockReturnValue({
+        paneCommands: {
+          1: 'codex',
+        },
+      });
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(mockManagers.settings.loadSettings).toHaveBeenCalled();
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: '1' });
+    });
+
+    it('fails closed when Codex paste terminator write is rejected', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex --yolo',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn((_paneId, data) => data !== '\u001b[201~'),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(app.ctx.daemonClient.write).toHaveBeenCalledWith('1', '\u001b[201~');
+      expect(app.ctx.daemonClient.write).not.toHaveBeenCalledWith('1', '\r');
+      expect(result).toEqual({
+        success: false,
+        reason: 'daemon_paste_end_write_failed',
+        paneId: '1',
+      });
+    });
+
     it('returns daemon_write_failed when daemon rejects enter write', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.daemonClient = {
@@ -2514,6 +2704,200 @@ describe('SquidRunApp', () => {
 
       expect(app.ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
       expect(result).toEqual({ success: false, reason: 'daemon_write_failed', paneId: '2' });
+    });
+  });
+
+  describe('deliverPaneMessageViaDaemonPty', () => {
+    it('writes Codex paste terminator before Enter on the direct daemon route', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'hello architect',
+        messageId: 'direct-codex-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['1', 'hello architect'],
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+        paneId: '1',
+      }));
+    });
+
+    it('does not duplicate accepted direct daemon delivery through the trigger path', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockClear();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          2: 'claude',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageReliably({
+        paneId: '2',
+        message: 'short direct message',
+        fromRole: 'architect',
+        messageId: 'direct-no-duplicate-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['2', 'short direct message'],
+        ['2', '\r'],
+      ]);
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+        paneId: '2',
+      }));
+    });
+
+    it('does not write Codex paste terminator for non-Codex direct daemon route', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          2: 'claude',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      await app.deliverPaneMessageViaDaemonPty({
+        paneId: '2',
+        message: 'hello builder',
+        messageId: 'direct-claude-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['2', 'hello builder'],
+        ['2', '\r'],
+      ]);
+    });
+
+    it('skips direct PTY writes for Codex payloads that require chunked verified injection', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex --yolo',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'x'.repeat(256),
+        messageId: 'direct-codex-long-1',
+      });
+
+      expect(app.ctx.daemonClient.write).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({
+        accepted: false,
+        verified: false,
+        status: 'skipped.codex_chunked_payload',
+        mode: 'daemon-pty',
+        paneId: '1',
+      }));
+    });
+
+    it('routes long Codex pane messages through the verified trigger path after skipping direct PTY', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockClear();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex --yolo',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+      const message = 'x'.repeat(256);
+
+      const result = await app.deliverPaneMessageReliably({
+        paneId: '1',
+        message,
+        fromRole: 'builder',
+        messageId: 'codex-long-fallback-1',
+      });
+
+      expect(app.ctx.daemonClient.write).not.toHaveBeenCalled();
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        message,
+        'builder',
+        expect.objectContaining({ awaitDelivery: true })
+      );
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        verified: true,
+        status: 'delivered.verified',
+      }));
+    });
+
+    it('fails closed when direct Codex paste terminator write is rejected', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex --yolo',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn((_paneId, data) => data !== '\u001b[201~'),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'hello architect',
+        messageId: 'direct-codex-reject-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['1', 'hello architect'],
+        ['1', '\u001b[201~'],
+      ]);
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        verified: false,
+        status: 'daemon_paste_end_failed',
+        mode: 'daemon-pty',
+        paneId: '1',
+      }));
     });
   });
 
@@ -3276,10 +3660,14 @@ describe('SquidRunApp', () => {
       app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
-    it('wires inbound SMS callback to pane 1 trigger injection', () => {
+    it('wires inbound SMS callback to reliable pane delivery', async () => {
       const smsPoller = require('../modules/sms-poller');
-      const triggers = require('../modules/triggers');
       smsPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
 
       app.startSmsPoller();
 
@@ -3288,13 +3676,16 @@ describe('SquidRunApp', () => {
       expect(typeof options.onMessage).toBe('function');
 
       options.onMessage('build passed', '+15557654321');
-      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
-        ['1'],
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
         '[SMS from +15557654321]: build passed',
-        null,
         expect.objectContaining({
-          awaitDelivery: true,
-        })
+          paneId: '1',
+          role: 'architect',
+          channel: 'sms',
+          sender: '+15557654321',
+        }),
+        'SMS'
       );
     });
   });
@@ -3369,9 +3760,18 @@ describe('SquidRunApp', () => {
       }));
     });
 
-    it('captures inbound Telegram chatId for reply routing', () => {
+    it('does not capture scoped inbound Telegram chatId for main reply routing', () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
+      jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+      const previousContext = { ...app.telegramInboundContext };
 
       app.registerAppWindow('scoped', {
         isDestroyed: jest.fn().mockReturnValue(false),
@@ -3385,17 +3785,12 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('hi there', 'scoped', { chatId: 2222222222 });
 
-      expect(app.telegramInboundContext).toEqual(
-        expect.objectContaining({
-          sender: 'scoped',
-          chatId: '2222222222',
-          windowKey: 'scoped',
-        })
-      );
+      expect(app.telegramInboundContext).toEqual(previousContext);
     });
 
     it('routes main Telegram chat inbound to the main window scope', async () => {
       const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
         accepted: true,
@@ -3423,15 +3818,60 @@ describe('SquidRunApp', () => {
         }),
         'Telegram'
       );
+      expect(app.telegramInboundContext).toEqual(expect.objectContaining({
+        sender: 'james',
+        chatId: '5613428850',
+        windowKey: 'main',
+        profile: 'main',
+      }));
+
+      const replyResult = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Main reply still allowed.',
+        messageId: 'telegram-main-reply-ok',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Main reply still allowed.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-main-reply-ok',
+          chatId: '5613428850',
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'user',
+            windowKey: 'main',
+            profile: 'main',
+            chatId: '5613428850',
+            telegramChatId: '5613428850',
+            sessionScopeId: expect.any(String),
+          }),
+        })
+      );
+      expect(replyResult).toEqual(expect.objectContaining({
+        handled: true,
+        ok: true,
+        status: 'telegram_delivered',
+        windowKey: 'main',
+        profile: 'main',
+      }));
     });
 
-    it('routes scoped Telegram chat inbound to the side window scope', async () => {
+    it('routes scoped Telegram chat inbound through the scoped runtime even when a side window is registered', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
         accepted: true,
         queued: true,
         verified: true,
+      });
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.daemon_pty',
       });
 
       app.registerAppWindow('scoped', {
@@ -3447,23 +3887,22 @@ describe('SquidRunApp', () => {
       options.onMessage('side hello', 'scoped', { chatId: 2222222222, updateId: 102 });
 
       await new Promise((resolve) => setImmediate(resolve));
-      expect(deliverySpy).toHaveBeenCalledWith(
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
+        'scoped',
         '[Telegram from scoped]: side hello',
         expect.objectContaining({
-          paneId: '1',
-          role: 'architect',
-          windowKey: 'scoped',
           chatId: 2222222222,
-          metadata: expect.objectContaining({
-            chatId: 2222222222,
-            windowKey: 'scoped',
-          }),
-        }),
-        'Telegram'
+          messageId: 'telegram-in-102',
+          sender: 'scoped',
+          sessionScopeId: expect.stringContaining(':scoped'),
+          updateId: 102,
+        })
       );
+      expect(deliverySpy).not.toHaveBeenCalled();
     });
 
-    it('forwards scoped Telegram chat inbound to Scoped profile triggers when side window is standalone', async () => {
+    it('injects scoped Telegram chat inbound through the standalone profile runtime first', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -3472,6 +3911,14 @@ describe('SquidRunApp', () => {
         verified: true,
       });
       const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
 
       app.startTelegramPoller();
 
@@ -3479,14 +3926,23 @@ describe('SquidRunApp', () => {
       options.onMessage('standalone hello', 'scoped', { chatId: 2222222222, updateId: 103 });
 
       await new Promise((resolve) => setImmediate(resolve));
-      expect(forwardSpy).toHaveBeenCalledWith(
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
         'scoped',
-        '[Telegram from scoped]: standalone hello'
+        '[Telegram from scoped]: standalone hello',
+        expect.objectContaining({
+          chatId: 2222222222,
+          messageId: 'telegram-in-103',
+          sender: 'scoped',
+          sessionScopeId: expect.stringContaining(':scoped'),
+          updateId: 103,
+        })
       );
+      expect(forwardSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
     });
 
-    it('routes configured non-owner Telegram inbound to profile triggers instead of main Architect', async () => {
+    it('routes configured non-owner Telegram inbound to the scoped profile pane runtime instead of main Architect', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -3495,6 +3951,14 @@ describe('SquidRunApp', () => {
         verified: true,
       });
       const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
 
       app.startTelegramPoller();
 
@@ -3502,21 +3966,27 @@ describe('SquidRunApp', () => {
       options.onMessage('hello client lane', '@ClientProfile', { chatId: 3333333333, updateId: 104 });
 
       await new Promise((resolve) => setImmediate(resolve));
-      expect(forwardSpy).toHaveBeenCalledWith(
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
         'client-profile',
-        '[Telegram from @ClientProfile]: hello client lane'
-      );
-      expect(deliverySpy).not.toHaveBeenCalled();
-      expect(app.telegramInboundContext).toEqual(
+        '[Telegram from @ClientProfile]: hello client lane',
         expect.objectContaining({
+          chatId: 3333333333,
+          messageId: 'telegram-in-104',
           sender: '@ClientProfile',
-          chatId: '3333333333',
-          windowKey: 'client-profile',
+          sessionScopeId: expect.stringContaining(':client-profile'),
+          updateId: 104,
         })
       );
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expect(app.telegramInboundContext).toEqual(expect.objectContaining({
+        lastInboundAtMs: 0,
+        chatId: null,
+      }));
     });
 
-    it('routes Eunbyeol Telegram inbound to the Eunbyeol side-window scope without relaunching it', async () => {
+    it('writes scoped Telegram triggers only as a fallback when pane runtime delivery is not verified', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -3525,6 +3995,69 @@ describe('SquidRunApp', () => {
         verified: true,
       });
       const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'scoped_runtime_unavailable',
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('fallback hello', 'scoped', { chatId: 2222222222, updateId: 107 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(forwardSpy).toHaveBeenCalledWith(
+        'scoped',
+        '[Telegram from scoped]: fallback hello'
+      );
+      expect(deliverySpy).not.toHaveBeenCalled();
+    });
+
+    it('routes Eunbyeol Telegram inbound through the Eunbyeol scoped runtime even when the window is registered', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-telegram-context-'));
+      const contextPath = path.join(tempRoot, 'telegram-reply-context.json');
+      const previousPersistedContext = {
+        chatId: '1111111111',
+        defaultChatId: '1111111111',
+        sender: 'james',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundAtMs: 1700000000000,
+        updatedAt: '2026-05-07T00:00:00.000Z',
+      };
+      fs.writeFileSync(contextPath, JSON.stringify(previousPersistedContext, null, 2));
+      jest.spyOn(app, 'getTelegramReplyContextPath').mockReturnValue(contextPath);
+      app.telegramInboundContext = {
+        lastInboundAtMs: previousPersistedContext.lastInboundAtMs,
+        sender: previousPersistedContext.sender,
+        chatId: previousPersistedContext.chatId,
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: previousPersistedContext.sessionScopeId,
+      };
+      const previousContext = { ...app.telegramInboundContext };
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.daemon_pty',
+      });
       const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
       app.registerAppWindow('eunbyeol', {
         isDestroyed: jest.fn().mockReturnValue(false),
@@ -3534,28 +4067,33 @@ describe('SquidRunApp', () => {
         },
       });
 
-      app.startTelegramPoller();
+      try {
+        app.startTelegramPoller();
 
-      const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('hello Eunbyeol lane', '@Eunbyeol', { chatId: 4444444444, updateId: 106 });
+        const options = telegramPoller.start.mock.calls[0][0];
+        options.onMessage('hello Eunbyeol lane', '@Eunbyeol', { chatId: 4444444444, updateId: 106 });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from @Eunbyeol]: hello Eunbyeol lane',
-        expect.objectContaining({
-          paneId: '1',
-          role: 'architect',
-          windowKey: 'eunbyeol',
-          chatId: 4444444444,
-          metadata: expect.objectContaining({
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(scopedRuntimeSpy).toHaveBeenCalledWith(
+          'eunbyeol',
+          '[Telegram from @Eunbyeol]: hello Eunbyeol lane',
+          expect.objectContaining({
             chatId: 4444444444,
-            windowKey: 'eunbyeol',
-          }),
-        }),
-        'Telegram'
-      );
-      expect(forwardSpy).not.toHaveBeenCalled();
-      expect(launchSpy).not.toHaveBeenCalled();
+            messageId: 'telegram-in-106',
+            sender: '@Eunbyeol',
+            sessionScopeId: expect.stringContaining(':eunbyeol'),
+            updateId: 106,
+          })
+        );
+        expect(forwardSpy).not.toHaveBeenCalled();
+        expect(deliverySpy).not.toHaveBeenCalled();
+        expect(launchSpy).not.toHaveBeenCalled();
+        expect(app.telegramInboundContext).toEqual(previousContext);
+        expect(JSON.parse(fs.readFileSync(contextPath, 'utf8'))).toEqual(previousPersistedContext);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
     });
 
     it('fails closed for unknown non-owner Telegram chats before updating reply context', async () => {
@@ -3580,10 +4118,18 @@ describe('SquidRunApp', () => {
       expect(app.telegramInboundContext).toEqual(previousContext);
     });
 
-    it('writes standalone scoped Telegram forwarding into the scoped profile trigger root', () => {
+    it('writes standalone scoped Telegram forwarding into scoped profile and compatibility trigger roots', () => {
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-root-'));
       const previousRoot = process.env.SQUIDRUN_SCOPED_PROJECT_ROOT;
       process.env.SQUIDRUN_SCOPED_PROJECT_ROOT = tempRoot;
+      const mainTriggerPath = path.resolve(path.join(
+        require('../config').getProjectRoot(),
+        '.squidrun',
+        'triggers-scoped',
+        'architect.txt'
+      ));
+      const hadMainTrigger = fs.existsSync(mainTriggerPath);
+      const previousMainTrigger = hadMainTrigger ? fs.readFileSync(mainTriggerPath, 'utf8') : null;
 
       try {
         const forwarded = app.forwardScopedTelegramInboundToProfileWindow(
@@ -3596,18 +4142,20 @@ describe('SquidRunApp', () => {
           'triggers-scoped',
           'architect.txt'
         );
-        const mainTriggerPath = path.join(
-          require('../config').getProjectRoot(),
-          '.squidrun',
-          'triggers-scoped',
-          'architect.txt'
-        );
 
-        expect(app.getScopedTelegramTriggerPaths('scoped')).toEqual([scopedTriggerPath]);
+        expect(app.getScopedTelegramTriggerPaths('scoped')).toEqual([scopedTriggerPath, mainTriggerPath]);
         expect(forwarded).toBe(true);
         expect(fs.readFileSync(scopedTriggerPath, 'utf8')).toBe('[Telegram from scoped]: root test');
-        expect(app.getScopedTelegramTriggerPaths('scoped')).not.toContain(mainTriggerPath);
+        expect(fs.readFileSync(mainTriggerPath, 'utf8')).toBe('[Telegram from scoped]: root test');
       } finally {
+        try {
+          if (hadMainTrigger) {
+            fs.mkdirSync(path.dirname(mainTriggerPath), { recursive: true });
+            fs.writeFileSync(mainTriggerPath, previousMainTrigger, 'utf8');
+          } else if (fs.existsSync(mainTriggerPath)) {
+            fs.unlinkSync(mainTriggerPath);
+          }
+        } catch (_) {}
         if (previousRoot === undefined) {
           delete process.env.SQUIDRUN_SCOPED_PROJECT_ROOT;
         } else {
@@ -3625,6 +4173,14 @@ describe('SquidRunApp', () => {
         queued: true,
         verified: true,
       });
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
 
       app.registerAppWindow('scoped', {
         isDestroyed: jest.fn().mockReturnValue(false),
@@ -3638,6 +4194,7 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('[Photo received]', '@ScopedContact', {
         chatId: 2222222222,
+        updateId: 808489705,
         media: {
           kind: 'photo',
           localPath: 'D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
@@ -3646,29 +4203,34 @@ describe('SquidRunApp', () => {
       });
 
       await new Promise((resolve) => setImmediate(resolve));
-      expect(deliverySpy).toHaveBeenCalledWith(
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
+        'scoped',
         '[Telegram from @ScopedContact]: [Photo received] | saved: D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
         expect.objectContaining({
-          paneId: '1',
-          role: 'architect',
-          windowKey: 'scoped',
-          channel: 'telegram',
+          chatId: 2222222222,
+          messageId: 'telegram-in-808489705',
           sender: '@ScopedContact',
-          metadata: expect.objectContaining({
-            windowKey: 'scoped',
-          }),
         }),
-        'Telegram'
       );
+      expect(deliverySpy).not.toHaveBeenCalled();
     });
 
-    it('synthesizes photo display text when poller passes empty body with photo metadata', async () => {
+    it('synthesizes photo display text for scoped runtime delivery when poller passes empty body with photo metadata', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
         accepted: true,
         queued: true,
         verified: true,
+      });
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
       });
 
       app.registerAppWindow('scoped', {
@@ -3691,16 +4253,17 @@ describe('SquidRunApp', () => {
       });
 
       await new Promise((resolve) => setImmediate(resolve));
-      expect(deliverySpy).toHaveBeenCalledWith(
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
+        'scoped',
         '[Telegram from @ScopedContact]: [Photo received]',
         expect.objectContaining({
-          paneId: '1',
-          role: 'architect',
-          channel: 'telegram',
+          chatId: 2222222222,
+          messageId: 'telegram-in-808489706',
           sender: '@ScopedContact',
         }),
-        'Telegram'
       );
+      expect(deliverySpy).not.toHaveBeenCalled();
     });
 
     it('synthesizes video display text and includes saved file path for inbound Telegram videos', async () => {
@@ -3966,6 +4529,11 @@ describe('SquidRunApp', () => {
           metadata: expect.objectContaining({
             routeKind: 'telegram',
             targetRaw: 'user',
+            windowKey: 'main',
+            profile: 'main',
+            chatId: null,
+            telegramChatId: null,
+            sessionScopeId: expect.any(String),
           }),
         })
       );
@@ -3975,6 +4543,71 @@ describe('SquidRunApp', () => {
           ok: true,
           status: 'telegram_delivered',
           routeMethod: 'hm-send-telegram',
+          windowKey: 'main',
+          profile: 'main',
+          sessionScopeId: expect.any(String),
+        })
+      );
+    });
+
+    it('fails closed for user target when inherited reply context belongs to a scoped profile', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: '@Eunbyeol',
+        lastInboundAtMs: Date.now(),
+        chatId: '4444444444',
+        windowKey: 'eunbyeol',
+        profile: 'eunbyeol',
+        sessionScopeId: 'app-test:eunbyeol',
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+        messageId: 'telegram-route-cross-profile-context',
+      });
+
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: false,
+          status: 'telegram_privacy_route_cross_profile_context',
+          windowKey: 'eunbyeol',
+          profile: 'eunbyeol',
+          chatId: '4444444444',
+          sessionScopeId: 'app-test:eunbyeol',
+        })
+      );
+    });
+
+    it('fails closed for user target when the reply chat route resolves outside main', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: 'james',
+        lastInboundAtMs: Date.now(),
+        chatId: '4444444444',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+        messageId: 'telegram-route-cross-profile-chat',
+      });
+
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: false,
+          status: 'telegram_privacy_route_cross_profile_context',
+          windowKey: 'eunbyeol',
+          profile: 'eunbyeol',
+          chatId: '4444444444',
+          sessionScopeId: expect.stringContaining(':eunbyeol'),
         })
       );
     });
@@ -4045,6 +4678,9 @@ describe('SquidRunApp', () => {
         sender: '@ScopedContact',
         lastInboundAtMs: Date.now(),
         chatId: '2222222222',
+        windowKey: 'scoped',
+        profile: 'scoped',
+        sessionScopeId: 'app-test:scoped',
       };
 
       const result = await app.routeTelegramReply({
@@ -4062,6 +4698,11 @@ describe('SquidRunApp', () => {
           metadata: expect.objectContaining({
             routeKind: 'telegram',
             targetRaw: 'telegram',
+            windowKey: 'main',
+            profile: 'main',
+            chatId: null,
+            telegramChatId: null,
+            sessionScopeId: expect.any(String),
           }),
         })
       );
@@ -4091,6 +4732,15 @@ describe('SquidRunApp', () => {
         expect.objectContaining({
           messageId: 'telegram-route-3',
           chatId: '2222222222',
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'telegram',
+            windowKey: 'scoped',
+            profile: 'scoped',
+            chatId: '2222222222',
+            telegramChatId: '2222222222',
+            sessionScopeId: expect.stringContaining(':scoped'),
+          }),
         })
       );
       expect(result).toEqual(
