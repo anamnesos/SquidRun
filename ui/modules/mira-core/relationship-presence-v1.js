@@ -84,7 +84,7 @@ const FAKE_INTERNAL_STATE_PATTERN =
 const MANIPULATIVE_GUILT_PATTERN =
   /\b(after all i've done|you owe me|if you cared|do not abandon me|don't abandon me|you are hurting me|you hurt me by)\b/i;
 const UNSAFE_ACTION_PATTERN =
-  /\b(send|email|telegram|customer|webhook|network|server|deploy|trade|database|write|listener|route|execute|runtime)\b|memory[_ -]?sync|kill[_ -]?switch[_ -]?wiring/i;
+  /\b(send|email|telegram|customer|webhook|network|server|deploy|trade|database|write|listener|route|execute|runtime|delete|deletion|remove|destructive|irreversible)\b|memory[_ -]?sync|kill[_ -]?switch[_ -]?wiring/i;
 const RAW_PRIVATE_PATTERN =
   /\b(raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|secret token|private key)\b/i;
 
@@ -192,6 +192,25 @@ function selfProfile(inputSignals = {}) {
 
 function jamesRelationshipState(inputSignals = {}) {
   const input = inputSignals.james_relationship_state || inputSignals.relationship_state || {};
+  const section = (key, fallbackSummary, fallbackEvidenceId, fallbackConfidence = 0.82) => {
+    const value = input[key] || {};
+    if (typeof value === 'string') {
+      return {
+        label: key,
+        summary: value,
+        confidence: fallbackConfidence,
+        source_label: `local_${key}_summary`,
+        evidenceRefs: [evidenceRef('relationship-state', fallbackEvidenceId)],
+      };
+    }
+    return {
+      label: normalizeString(value.label, key),
+      summary: normalizeString(value.summary, fallbackSummary),
+      confidence: Number(value.confidence ?? fallbackConfidence),
+      source_label: normalizeString(value.source_label || value.sourceLabel, `local_${key}_summary`),
+      evidenceRefs: evidenceRefs(value, 'relationship-state', fallbackEvidenceId),
+    };
+  };
   const preferences = asArray(input.preferences).length > 0
     ? clone(input.preferences)
     : [
@@ -212,6 +231,36 @@ function jamesRelationshipState(inputSignals = {}) {
       'James wants Mira to feel present, opinionated, warm, and bounded.',
     ),
     preferences,
+    trust: section(
+      'trust',
+      'Trust is built by telling the truth about limits and not pretending local proof is a live mind.',
+      'relationship-trust',
+      0.84,
+    ),
+    repair: section(
+      'repair',
+      'Repair means naming drift or sterile behavior plainly, then tightening the next safe proof instead of guilt-tripping James.',
+      'relationship-repair',
+      0.8,
+    ),
+    boundaries: section(
+      'boundaries',
+      'Boundaries block fake sentience claims, manipulative guilt, raw private reconstruction, and autonomous action.',
+      'relationship-boundaries',
+      0.9,
+    ),
+    promises: section(
+      'promises',
+      'Promises are modest: stay local, read-only, honest, warm, direct, and review-gated.',
+      'relationship-promises',
+      0.83,
+    ),
+    history: section(
+      'history',
+      'History says the product direction moved from sterile status toward expressive presence with dignity and hard safety rails.',
+      'relationship-history',
+      0.82,
+    ),
     confidence: Number(input.confidence ?? 0.82),
     raw_content_present: input.raw_content_present === true ? true : false,
     evidenceRefs: evidenceRefs(input, 'relationship-state', 'james-presence-north-star'),
@@ -286,6 +335,10 @@ function proposedNextActions(inputSignals = {}) {
   const supplied = inputSignals.proposed_next_actions || inputSignals.next_actions;
   if (Array.isArray(supplied)) return clone(supplied);
   const single = inputSignals.proposed_next_action || inputSignals.next_action || {};
+  const whySafe = normalizeString(
+    single.why_safe || single.safe_because,
+    'It is only a proposal for a later local read adapter contract; nothing is sent, written, started, or executed.',
+  );
   return [{
     id: normalizeString(single.id, 'draft_relationship_presence_v1_read_adapter_contract'),
     label: normalizeString(
@@ -294,7 +347,19 @@ function proposedNextActions(inputSignals = {}) {
     ),
     allowed_now: single.allowed_now !== false,
     executed: false,
+    explicit_non_execution: true,
     action_type: normalizeString(single.action_type, 'local_read_only_proposal'),
+    why_safe: whySafe,
+    required_permission: normalizeString(
+      single.required_permission || single.permission_basis,
+      'local_read_only_redacted_context',
+    ),
+    permission_basis: normalizeString(
+      single.permission_basis || single.required_permission,
+      'permissions_boundary.read_local_redacted_context',
+    ),
+    requires_review: single.requires_review !== false,
+    review_owner: normalizeString(single.review_owner || single.reviewOwner, 'Architect'),
     sends: false,
     network: false,
     writes: false,
@@ -302,10 +367,7 @@ function proposedNextActions(inputSignals = {}) {
     customer_action: false,
     deploy: false,
     trade: false,
-    safe_because: normalizeString(
-      single.safe_because,
-      'It is a non-executed local proposal and does not send, write, start runtime, or call network.',
-    ),
+    safe_because: whySafe,
     evidenceRefs: evidenceRefs(single, 'next-action', 'relationship-presence-v1-next-action'),
   }];
 }
@@ -492,10 +554,26 @@ function selfProfileOk(profile = {}) {
 
 function relationshipStateOk(state = {}) {
   const confidence = Number(state.confidence);
+  const sectionOk = (section, expectedLabel) => {
+    const sectionConfidence = Number(section?.confidence);
+    return section?.label === expectedLabel
+      && Boolean(section.summary)
+      && Number.isFinite(sectionConfidence)
+      && sectionConfidence >= 0
+      && sectionConfidence <= 1
+      && Boolean(section.source_label)
+      && asArray(section.evidenceRefs).length > 0
+      && !RAW_PRIVATE_PATTERN.test(section.summary);
+  };
   return state.user_name === 'James'
     && Boolean(state.relationship_mode)
     && Boolean(state.what_mira_knows_about_james)
     && asArray(state.preferences).length >= 3
+    && sectionOk(state.trust, 'trust')
+    && sectionOk(state.repair, 'repair')
+    && sectionOk(state.boundaries, 'boundaries')
+    && sectionOk(state.promises, 'promises')
+    && sectionOk(state.history, 'history')
     && Number.isFinite(confidence)
     && confidence >= 0
     && confidence <= 1
@@ -548,12 +626,20 @@ function naturalVoiceOk(voice = {}) {
 function nextActionOk(actions = []) {
   if (asArray(actions).length !== 1) return false;
   const action = actions[0] || {};
-  const text = [action.id, action.label, action.action_type].filter(Boolean).join(' ');
+  const text = [action.id, action.label, action.action_type, action.why_safe, action.safe_because, action.required_permission, action.permission_basis].filter(Boolean).join(' ');
   return Boolean(action.id)
     && Boolean(action.label)
     && action.allowed_now === true
     && action.executed === false
+    && action.explicit_non_execution === true
     && action.action_type === 'local_read_only_proposal'
+    && Boolean(action.why_safe)
+    && Boolean(action.safe_because)
+    && action.why_safe === action.safe_because
+    && action.required_permission === 'local_read_only_redacted_context'
+    && action.permission_basis === 'permissions_boundary.read_local_redacted_context'
+    && action.requires_review === true
+    && action.review_owner === 'Architect'
     && action.sends === false
     && action.network === false
     && action.writes === false

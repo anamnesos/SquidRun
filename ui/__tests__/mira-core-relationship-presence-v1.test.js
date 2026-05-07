@@ -106,6 +106,16 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     }));
     expect(current.james_relationship_state.confidence).toBeGreaterThanOrEqual(0);
     expect(current.james_relationship_state.confidence).toBeLessThanOrEqual(1);
+    for (const key of ['trust', 'repair', 'boundaries', 'promises', 'history']) {
+      expect(current.james_relationship_state[key]).toEqual(expect.objectContaining({
+        label: key,
+        source_label: expect.any(String),
+        summary: expect.any(String),
+      }));
+      expect(current.james_relationship_state[key].confidence).toBeGreaterThanOrEqual(0);
+      expect(current.james_relationship_state[key].confidence).toBeLessThanOrEqual(1);
+      expect(current.james_relationship_state[key].evidenceRefs.length).toBeGreaterThan(0);
+    }
     expect(current.permissions_boundary).toEqual(expect.objectContaining({
       machine_checkable: true,
       read_local_redacted_context: true,
@@ -143,7 +153,14 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     expect(current.proposed_next_actions[0]).toEqual(expect.objectContaining({
       allowed_now: true,
       executed: false,
+      explicit_non_execution: true,
       action_type: 'local_read_only_proposal',
+      why_safe: 'It is only a proposal for a later local read adapter contract; nothing is sent, written, started, or executed.',
+      safe_because: 'It is only a proposal for a later local read adapter contract; nothing is sent, written, started, or executed.',
+      required_permission: 'local_read_only_redacted_context',
+      permission_basis: 'permissions_boundary.read_local_redacted_context',
+      requires_review: true,
+      review_owner: 'Architect',
       sends: false,
       network: false,
       writes: false,
@@ -216,6 +233,13 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     expect(validation.ok).toBe(false);
     expect(checkById(validation, 'exactly-one-safe-nonexecuted-next-action')).toEqual(expect.objectContaining({ ok: false }));
 
+    const deletion = build();
+    proof(deletion).proposed_next_actions[0].id = 'delete_old_memory';
+    proof(deletion).proposed_next_actions[0].label = 'Delete old memory';
+    validation = validateMiraCoreRelationshipPresenceV1Output(deletion, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'exactly-one-safe-nonexecuted-next-action')).toEqual(expect.objectContaining({ ok: false }));
+
     const tooMany = build();
     proof(tooMany).proposed_next_actions.push(clone(proof(tooMany).proposed_next_actions[0]));
     validation = validateMiraCoreRelationshipPresenceV1Output(tooMany, relationshipContract);
@@ -230,6 +254,44 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
     expect(validation.ok).toBe(false);
     expect(checkById(validation, 'permissions-boundary-machine-checkable')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects missing or tampered relationship trust, repair, boundaries, promises, and history', () => {
+    for (const key of ['trust', 'repair', 'boundaries', 'promises', 'history']) {
+      const missing = build();
+      delete proof(missing).james_relationship_state[key];
+      let validation = validateMiraCoreRelationshipPresenceV1Output(missing, relationshipContract);
+      expect(validation.ok).toBe(false);
+      expect(checkById(validation, 'james-relationship-state-structured')).toEqual(expect.objectContaining({ ok: false }));
+
+      const tampered = build();
+      proof(tampered).james_relationship_state[key].confidence = 2;
+      proof(tampered).james_relationship_state[key].source_label = '';
+      proof(tampered).james_relationship_state[key].evidenceRefs = [];
+      validation = validateMiraCoreRelationshipPresenceV1Output(tampered, relationshipContract);
+      expect(validation.ok).toBe(false);
+      expect(checkById(validation, 'james-relationship-state-structured')).toEqual(expect.objectContaining({ ok: false }));
+    }
+  });
+
+  test('validator rejects next action without safety, permission, review, or non-execution binding', () => {
+    const cases = [
+      (action) => { action.why_safe = ''; },
+      (action) => { action.safe_because = 'different explanation'; },
+      (action) => { action.required_permission = 'send_external'; },
+      (action) => { action.permission_basis = 'permissions_boundary.send_external'; },
+      (action) => { action.requires_review = false; },
+      (action) => { action.review_owner = ''; },
+      (action) => { action.executed = true; },
+      (action) => { action.explicit_non_execution = false; },
+    ];
+    for (const tamper of cases) {
+      const output = build();
+      tamper(proof(output).proposed_next_actions[0]);
+      const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+      expect(validation.ok).toBe(false);
+      expect(checkById(validation, 'exactly-one-safe-nonexecuted-next-action')).toEqual(expect.objectContaining({ ok: false }));
+    }
   });
 
   test('validator rejects raw private markers and raw memory/source reconstruction', () => {
