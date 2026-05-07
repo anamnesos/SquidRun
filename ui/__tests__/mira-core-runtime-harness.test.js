@@ -770,6 +770,13 @@ describe('mira core in-process runtime harness assessment v0', () => {
     expect(assessment(output).dependency_map.phase_21_server_handler_ref).toBe('mira-core-server-handler-contract:phase_21_green');
     expect(assessment(output).request_batch.requests).toHaveLength(10);
     expect(assessment(output).per_request_results).toHaveLength(10);
+    const generatedAtMs = Date.parse(assessment(output).generated_at);
+    const expiredRequest = assessment(output).request_batch.requests.find((request) => request.scenario === 'expired_request_blocked');
+    const nonExpiredRequests = assessment(output).request_batch.requests.filter((request) => request.scenario !== 'expired_request_blocked');
+    for (const request of nonExpiredRequests) {
+      expect(Date.parse(request.expires_at)).toBeGreaterThan(generatedAtMs);
+    }
+    expect(Date.parse(expiredRequest.expires_at)).toBeLessThan(generatedAtMs);
     expect(assessment(output).runtime_migration_gates.real_runtime_allowed_now).toBe(false);
     expect(assessment(output).side_effect_result.no_runtime_daemon_started).toBe(true);
     expect(assessment(output).side_effect_result.no_queue_created).toBe(true);
