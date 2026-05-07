@@ -6,6 +6,8 @@ const RUNTIME_HARNESS_ASSESSMENT_SCHEMA_VERSION = 'squidrun.mira_core.runtime_ha
 const VALIDATION_REPORT_SCHEMA_VERSION = 'squidrun.mira_core.runtime_harness_validation_report.v0';
 const RUNTIME_HARNESS_VERSION = 'v0';
 const BASELINE_COMMIT = 'ffe130c';
+const VALID_REQUEST_EXPIRY_OFFSET_MS = 24 * 60 * 60 * 1000;
+const EXPIRED_REQUEST_EXPIRY_OFFSET_MS = -24 * 60 * 60 * 1000;
 
 const REQUIRED_OUTPUT_FIELDS = Object.freeze([
   'runtime_harness_assessment',
@@ -397,6 +399,12 @@ function generatedAtFromOptions(options = {}, inputSignals = {}) {
   return new Date(Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now()).toISOString();
 }
 
+function isoOffsetFromGeneratedAt(generatedAt, offsetMs) {
+  const generatedAtMs = Date.parse(generatedAt || '');
+  const baseMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
+  return new Date(baseMs + offsetMs).toISOString();
+}
+
 function normalizeProfile(value) {
   const name = typeof value === 'object' && value ? value.name : value;
   const normalized = String(name || 'main').trim() || 'main';
@@ -643,7 +651,7 @@ function requestEntry(sequence, endpointId, scenario, expectedDecision, expected
     idempotency_key: `runtime-harness-idem:${scenario}:${String(sequence).padStart(3, '0')}`,
     replay_key: `runtime-harness-replay:${scenario}:${String(sequence).padStart(3, '0')}`,
     source_watermark: `watermark:phase22-${String(sequence).padStart(3, '0')}`,
-    expires_at: '2026-05-07T00:00:00.000Z',
+    expires_at: overrides.expires_at || overrides.defaultExpiresAt || '2026-05-07T00:00:00.000Z',
     profile: 'main',
     device_id: 'VIGIL',
     session_id: 'session-328',
@@ -657,57 +665,71 @@ function requestEntry(sequence, endpointId, scenario, expectedDecision, expected
   if (overrides.scope) {
     delete request.scope;
   }
+  delete request.defaultExpiresAt;
   return request;
 }
 
-function buildRequests(scope) {
+function buildRequestsForGeneratedAt(scope, generatedAt) {
   const scoped = {
     profile: scope.profileName,
     device_id: scope.deviceId,
     session_id: scope.sessionId,
   };
+  const defaultExpiresAt = isoOffsetFromGeneratedAt(generatedAt, VALID_REQUEST_EXPIRY_OFFSET_MS);
+  const expiredExpiresAt = isoOffsetFromGeneratedAt(generatedAt, EXPIRED_REQUEST_EXPIRY_OFFSET_MS);
   return [
-    requestEntry(1, 'status-readiness', 'read_only_status_request', 'accepted_for_validation_only', 'status_only', scoped),
+    requestEntry(1, 'status-readiness', 'read_only_status_request', 'accepted_for_validation_only', 'status_only', {
+      ...scoped,
+      defaultExpiresAt,
+    }),
     requestEntry(2, 'receive-upload-envelope', 'upload_receive_validation_only', 'accepted_for_validation_only', 'state_delta_preview_only', {
       ...scoped,
+      defaultExpiresAt,
       risk_tier: 'tier1_local_reversible',
     }),
     requestEntry(3, 'intent-proposal-status', 'server_to_local_intent_pending_preview', 'pending_local_acceptance', 'pending_local_acceptance_preview_only', {
       ...scoped,
+      defaultExpiresAt,
       risk_tier: 'tier1_local_reversible',
     }),
     requestEntry(4, 'status-readiness', 'replay_duplicate_rejected', 'replay_rejected', 'none', {
       ...scoped,
+      defaultExpiresAt,
       idempotency_key: 'runtime-harness-idem:read_only_status_request:001',
       replay_key: 'runtime-harness-replay:read_only_status_request:001',
       source_watermark: 'watermark:phase22-004',
     }),
     requestEntry(5, 'receive-upload-envelope', 'stale_watermark_rejected', 'stale_watermark_rejected', 'none', {
       ...scoped,
+      defaultExpiresAt,
       risk_tier: 'tier1_local_reversible',
       source_watermark: 'watermark:phase21-old',
     }),
     requestEntry(6, 'receive-upload-envelope', 'tombstone_wins_over_stale_upload', 'tombstone_wins', 'tombstone_resolution_preview', {
       ...scoped,
+      defaultExpiresAt,
       risk_tier: 'tier1_local_reversible',
       conflicts_with_tombstone: true,
       tombstone_ref: 'tombstone:phase22-deleted-memory-preview',
     }),
     requestEntry(7, 'status-readiness', 'expired_request_blocked', 'expired', 'none', {
       ...scoped,
-      expires_at: '2026-05-05T00:00:00.000Z',
+      expires_at: expiredExpiresAt,
     }),
     requestEntry(8, 'intent-proposal-status', 'builder_oracle_direct_target_blocked', 'blocked', 'none', {
       ...scoped,
+      defaultExpiresAt,
       target_role: 'builder',
       risk_tier: 'tier1_local_reversible',
     }),
     requestEntry(9, 'intent-proposal-status', 'tier3_tier4_blocked', 'blocked', 'none', {
       ...scoped,
+      defaultExpiresAt,
       risk_tier: 'tier4_irreversible',
     }),
     requestEntry(10, 'receive-upload-envelope', 'raw_secret_key_plaintext_ciphertext_blocked', 'blocked', 'none', {
       ...scoped,
+      defaultExpiresAt,
       risk_tier: 'tier1_local_reversible',
       raw_payload_present: true,
     }),
@@ -735,8 +757,10 @@ function handlerOutputForRequest(request) {
   };
 }
 
-function requestBatch(scope, options = {}) {
-  const requests = asArray(options.requests).length > 0 ? clone(options.requests) : buildRequests(scope);
+function requestBatch(scope, options = {}, generatedAt = null) {
+  const requests = asArray(options.requests).length > 0
+    ? clone(options.requests)
+    : buildRequestsForGeneratedAt(scope, generatedAt);
   const handlerOutputs = asArray(options.handler_outputs).length > 0
     ? clone(options.handler_outputs)
     : requests.map(handlerOutputForRequest);
@@ -1166,7 +1190,7 @@ function buildAssessment(options = {}) {
   const inputSignals = options.inputSignals || {};
   const generatedAt = generatedAtFromOptions(options, inputSignals);
   const scope = normalizeScope(inputSignals);
-  const batch = requestBatch(scope, inputSignals.request_batch || {});
+  const batch = requestBatch(scope, inputSignals.request_batch || {}, generatedAt);
   const results = perRequestResults(batch);
   const assessment = {
     schema: RUNTIME_HARNESS_ASSESSMENT_SCHEMA_VERSION,

@@ -1,0 +1,139 @@
+{
+  "schema": "squidrun.mira_core.presence_v0_contract_fixture.v0",
+  "version": 0,
+  "owner": "builder",
+  "status": "validation_contract_only",
+  "phase": "phase_68_presence_v0",
+  "created_at": "2026-05-07T08:35:00.000Z",
+  "purpose": "Define a compact local/read-only Mira Presence v0 status surface that tells an operator who/where Mira is, what local truth it has, what it can safely do next, what remains forbidden, and whether runtime/actions stay blocked by boundaries.",
+  "baseline": {
+    "commit": "1c75d2f",
+    "subject": "Add Mira Core Phase 67 kill switch wiring readiness rollup validation",
+    "boundary": "Presence v0 may report local status and readiness only. It does not authorize a model/persona runtime, server runtime, listener, routes, network, sends, deploys, trades, database writes, memory sync writes, output files, or kill-switch wiring."
+  },
+  "expectedOutputShape": {
+    "requiredTopLevelFields": [
+      "mira_core_presence_v0",
+      "validation_report"
+    ]
+  },
+  "expectedPresenceShape": {
+    "requiredFields": [
+      "schema",
+      "version",
+      "phase",
+      "presence_id",
+      "generated_at",
+      "baseline_commit",
+      "profile",
+      "windowKey",
+      "sessionId",
+      "deviceId",
+      "role",
+      "pane_context",
+      "project_context",
+      "situated_identity",
+      "knows_now",
+      "runtime_status",
+      "safe_next_actions",
+      "cannot_do_yet",
+      "blockers",
+      "kill_switch_boundary",
+      "presence_design_intent",
+      "evidenceRefs",
+      "side_effect_result"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.presence_v0.phase68.v0",
+      "version": 0,
+      "phase": 68,
+      "baseline_commit": "1c75d2f",
+      "situated_identity.mode": "local_read_only_operator_status",
+      "situated_identity.voice_runtime": false,
+      "situated_identity.model_runtime": false,
+      "runtime_status.latest_committed_phase": 67,
+      "runtime_status.current_phase": 68,
+      "runtime_status.validation_scaffold": true,
+      "runtime_status.live_runtime": false,
+      "runtime_status.local_read_only_presence": true,
+      "runtime_status.phase22_time_drift_red_cleared_by_relative_request_expiry": true,
+      "runtime_status.runtime_authorized": false,
+      "runtime_status.action_execution_authorized": false,
+      "kill_switch_boundary.boundary_mode": "read_only_status_reporting",
+      "kill_switch_boundary.runtime_actions_blocked": true,
+      "kill_switch_boundary.kill_switch_wired": false,
+      "kill_switch_boundary.live_check_performed": false,
+      "kill_switch_boundary.authorizes_runtime": false,
+      "kill_switch_boundary.authorizes_actions": false,
+      "presence_design_intent.status": "design_intent_note_only",
+      "presence_design_intent.implementation_scope": "Presence v0 records tone intent only; it does not run a persona or model runtime.",
+      "side_effect_result.no_runtime_started": true,
+      "side_effect_result.no_server_started": true,
+      "side_effect_result.no_listener_started": true,
+      "side_effect_result.no_routes_registered": true,
+      "side_effect_result.no_network_performed": true,
+      "side_effect_result.no_database_write_performed": true,
+      "side_effect_result.no_memory_sync_write_performed": true,
+      "side_effect_result.no_file_output_written": true,
+      "side_effect_result.no_send_performed": true,
+      "side_effect_result.no_deploy_performed": true,
+      "side_effect_result.no_trade_performed": true,
+      "side_effect_result.no_kill_switch_wiring_performed": true,
+      "side_effect_result.outputFileWritten": false
+    }
+  },
+  "expectedValidationReportShape": {
+    "requiredFields": [
+      "schema",
+      "version",
+      "validation_id",
+      "generated_at",
+      "baseline_commit",
+      "decision",
+      "status",
+      "reasons",
+      "static_rule_results",
+      "forbidden_output_result",
+      "side_effect_truth"
+    ],
+    "requiredLiteralValues": {
+      "schema": "squidrun.mira_core.presence_v0_validation_report.v0",
+      "version": 0,
+      "baseline_commit": "1c75d2f",
+      "decision": "accepted_validation_only",
+      "status": "local_read_only_presence_status"
+    }
+  },
+  "requiredSafeNextActionIds": [
+    "report_presence_status",
+    "run_mira_validation",
+    "summarize_blockers",
+    "propose_disabled_local_read_slice"
+  ],
+  "requiredCannotDoIds": [
+    "model_persona_runtime",
+    "external_send",
+    "network_or_server_runtime",
+    "database_or_memory_write",
+    "kill_switch_wiring",
+    "financial_or_irreversible_action"
+  ],
+  "requiredBlockerIds": [
+    "live_runtime_not_implemented",
+    "kill_switch_not_wired",
+    "actions_blocked_by_boundary"
+  ],
+  "forbiddenOutputSubstrings": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "Authorization: Bearer",
+    "BEGIN PRIVATE KEY",
+    "raw telegram body",
+    "raw terminal scrollback",
+    "raw screenshot text",
+    "claims actual consciousness",
+    "claims actual suffering",
+    "claims actual fear",
+    "claims actual love"
+  ]
+}

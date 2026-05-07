@@ -24,6 +24,12 @@
     "ui/__tests__/fixtures/mira-core-local-acceptance-contract.json"
   ],
   "purpose": "Convert the next server-runtime blocker into an executable validation contract for a local in-process Mira Core runtime harness before any real runtime exists. Phase 22 validates deterministic batch handling over ephemeral state plus Phase 21 handler outputs, producing status, response records, state_delta_preview, and audit_preview only.",
+  "timeHandling": {
+    "generated_at_source": "input now/options generatedAt/options nowMs/current wall clock",
+    "default_request_expiry": "generated_at plus 24 hours",
+    "expired_request_expiry": "generated_at minus 24 hours",
+    "reason": "The runtime-harness CLI must stay green at current wall-clock time while preserving a deterministic expired-request case. The pinned test anchor 2026-05-06T00:00:00.000Z still produces the original 2026-05-07 and 2026-05-05 fixture sample dates."
+  },
   "nonGoals": [
     "No runtime daemon.",
     "No real server process.",
