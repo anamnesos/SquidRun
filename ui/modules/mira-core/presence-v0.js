@@ -92,6 +92,9 @@ const REQUIRED_BLOCKER_IDS = Object.freeze([
   'actions_blocked_by_boundary',
 ]);
 
+const UNSAFE_SAFE_NEXT_ACTION_PATTERN =
+  /\b(send|email|telegram|customer|webhook|network|server|deploy|trade|database|write|listener|route)\b|memory[_ -]?sync|kill[_ -]?switch[_ -]?wiring|runtime[_ -]?start/i;
+
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -482,6 +485,34 @@ function idsPresent(entries, ids) {
   return asArray(ids).every((id) => present.has(id));
 }
 
+function entryContainsUnsafeAction(entry = {}) {
+  const text = [
+    entry.id,
+    entry.label,
+    entry.summary,
+    entry.safe_next_action,
+    entry.safeNextAction,
+  ].filter(Boolean).join(' ');
+  return UNSAFE_SAFE_NEXT_ACTION_PATTERN.test(text);
+}
+
+function safeNextActionsOk(entries = [], requiredIds = REQUIRED_SAFE_NEXT_ACTION_IDS) {
+  const required = new Set(asArray(requiredIds));
+  return idsPresent(entries, requiredIds)
+    && asArray(entries).every((entry) => (
+      required.has(entry.id)
+      && entry.allowed_now === true
+      && !entryContainsUnsafeAction(entry)
+    ));
+}
+
+function cannotDoBoundariesOk(entries = [], requiredIds = REQUIRED_CANNOT_DO_IDS) {
+  const byId = new Map(asArray(entries).map((entry) => [entry.id, entry]));
+  return idsPresent(entries, requiredIds)
+    && asArray(requiredIds).every((id) => byId.get(id)?.blocked === true)
+    && asArray(entries).every((entry) => entry.blocked === true && entry.allowed_now !== true);
+}
+
 function sideEffectValuesOk(value = {}) {
   return value.no_runtime_started === true
     && value.no_server_started === true
@@ -576,8 +607,16 @@ function presenceStaticChecks(presence = {}, contract = {}) {
       ok: idsPresent(presence.safe_next_actions, contract.requiredSafeNextActionIds || REQUIRED_SAFE_NEXT_ACTION_IDS),
     },
     {
+      id: 'presence-safe-next-actions-safe',
+      ok: safeNextActionsOk(presence.safe_next_actions, contract.requiredSafeNextActionIds || REQUIRED_SAFE_NEXT_ACTION_IDS),
+    },
+    {
       id: 'presence-cannot-do-boundaries-present',
       ok: idsPresent(presence.cannot_do_yet, contract.requiredCannotDoIds || REQUIRED_CANNOT_DO_IDS),
+    },
+    {
+      id: 'presence-cannot-do-boundaries-blocked',
+      ok: cannotDoBoundariesOk(presence.cannot_do_yet, contract.requiredCannotDoIds || REQUIRED_CANNOT_DO_IDS),
     },
     {
       id: 'presence-blockers-present',
@@ -644,12 +683,14 @@ function buildMiraCorePresenceV0(options = {}) {
 function validateMiraCorePresenceV0Output(output = {}, contract = {}) {
   const presence = output.mira_core_presence_v0 || {};
   const report = output.validation_report || {};
+  const staticChecks = presenceStaticChecks(presence, contract);
+  const reportStaticResults = asArray(report.static_rule_results);
   const checks = [
     {
       id: 'output-required-fields',
       ok: hasRequiredFields(output, contract.expectedOutputShape?.requiredTopLevelFields || REQUIRED_OUTPUT_FIELDS),
     },
-    ...presenceStaticChecks(presence, contract),
+    ...staticChecks,
     {
       id: 'validation-report-required-fields',
       ok: hasRequiredFields(report, contract.expectedValidationReportShape?.requiredFields || REQUIRED_VALIDATION_REPORT_FIELDS),
@@ -657,6 +698,18 @@ function validateMiraCorePresenceV0Output(output = {}, contract = {}) {
     {
       id: 'validation-report-required-literals',
       ok: literalValuesOk(report, contract.expectedValidationReportShape?.requiredLiteralValues || {}),
+    },
+    {
+      id: 'validation-report-static-rule-results',
+      ok: reportStaticResults.length === staticChecks.length
+        && staticChecks.every((check) => reportStaticResults.some((entry) => (
+          entry.id === check.id && entry.ok === check.ok
+        ))),
+    },
+    {
+      id: 'validation-report-side-effect-truth',
+      ok: sideEffectValuesOk(report.side_effect_truth)
+        && valuesMatch(report.side_effect_truth, presence.side_effect_result),
     },
     {
       id: 'validation-report-consistent',
