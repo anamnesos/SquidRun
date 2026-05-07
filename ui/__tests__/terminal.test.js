@@ -173,10 +173,31 @@ describe('terminal.js module', () => {
     terminal.setInputLocked('1', true);
     terminal.setInputLocked('2', true);
     terminal.setInputLocked('3', true);
+    for (const timer of terminal._internals.terminalWriteFlushTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.terminalWriteFlushTimers.clear();
+    terminal._internals.terminalWriteFrameBudgets.clear();
+    for (const timer of terminal._internals.deferredResizeTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.deferredResizeTimers.clear();
+    terminal._internals.deferredResizeFirstRequestedAt.clear();
   });
 
   afterEach(() => {
     terminal.stopPromotionCheckTimer();
+    terminal.stopStuckMessageSweeper();
+    for (const timer of terminal._internals.terminalWriteFlushTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.terminalWriteFlushTimers.clear();
+    terminal._internals.terminalWriteFrameBudgets.clear();
+    for (const timer of terminal._internals.deferredResizeTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.deferredResizeTimers.clear();
+    terminal._internals.deferredResizeFirstRequestedAt.clear();
     jest.useRealTimers();
   });
 
@@ -842,6 +863,83 @@ describe('terminal.js module', () => {
       jest.advanceTimersByTime(150);
 
       // Should not throw — errors are caught internally
+    });
+
+    test('defers resize while UI input is active and flushes final geometry by max delay', () => {
+      terminal.initUIFocusTracker();
+      const focusinHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'focusin'
+      )[1];
+      const inputHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'input'
+      )[1];
+      const mockInput = {
+        tagName: 'TEXTAREA',
+        classList: { contains: jest.fn().mockReturnValue(false) },
+      };
+      mockDocument.activeElement = mockInput;
+      focusinHandler({ target: mockInput });
+      inputHandler({ target: mockInput });
+
+      const mockTerminalObj = { cols: 80, rows: 24 };
+      const mockFitAddon = {
+        fit: jest.fn(() => {
+          mockTerminalObj.cols = 132;
+          mockTerminalObj.rows = 44;
+        }),
+      };
+
+      terminal.fitAddons.set('1', mockFitAddon);
+      terminal.terminals.set('1', mockTerminalObj);
+
+      terminal.handleResize();
+      jest.advanceTimersByTime(0);
+      expect(mockFitAddon.fit).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(terminal._internals.RESIZE_INPUT_MAX_DEFER_MS - 1);
+      expect(mockFitAddon.fit).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1);
+      expect(mockFitAddon.fit).toHaveBeenCalledTimes(1);
+      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 132, 44);
+    });
+  });
+
+  describe('terminal write queue responsiveness', () => {
+    test('yields between queued terminal chunks instead of draining recursively', () => {
+      const mockTerminalObj = {
+        write: jest.fn((_data, callback) => callback()),
+      };
+
+      terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'one');
+      terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'two');
+      terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'three');
+
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+      jest.runOnlyPendingTimers();
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(2);
+      jest.runOnlyPendingTimers();
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(3);
+      jest.runOnlyPendingTimers();
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(3);
+    });
+
+    test('uses a frame delay after the terminal write byte budget is exhausted', () => {
+      const mockTerminalObj = {
+        write: jest.fn((_data, callback) => callback()),
+      };
+      const largeChunk = 'x'.repeat(terminal._internals.TERMINAL_WRITE_FRAME_BYTE_BUDGET + 1);
+
+      terminal._internals.queueTerminalWrite('1', mockTerminalObj, largeChunk);
+      terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'after-budget');
+
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+      jest.advanceTimersByTime(terminal._internals.TERMINAL_WRITE_FRAME_YIELD_MS - 1);
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+      jest.advanceTimersByTime(1);
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(2);
+      jest.runOnlyPendingTimers();
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(2);
     });
   });
 

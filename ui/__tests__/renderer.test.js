@@ -230,6 +230,8 @@ jest.mock('../modules/renderer-ipc-registry', () => ({
   registerScopedIpcListener: jest.fn(),
 }));
 
+let renderer;
+
 describe('renderer.js smoke tests', () => {
   // Load the module once before all tests
   // This tests that the module can be required without throwing
@@ -260,7 +262,7 @@ describe('renderer.js smoke tests', () => {
       rendererModules,
     };
 
-    require('../renderer');
+    renderer = require('../renderer');
   });
 
   describe('module loading', () => {
@@ -287,4 +289,61 @@ describe('renderer.js smoke tests', () => {
   // Note: Callback wiring tests removed - Jest module caching makes them unreliable.
   // The fact that the module loads successfully (tested above) implicitly verifies
   // the wiring works, since missing callbacks would cause runtime errors.
+
+  describe('broadcast input auto-grow', () => {
+    it('coalesces textarea measurement to one animation frame', () => {
+      const frames = [];
+      const input = {
+        style: { height: '' },
+        value: 'hello',
+        scrollHeight: 48,
+      };
+      const controller = renderer.createRafTextareaAutoGrow(input, {
+        requestAnimationFrame: (callback) => {
+          frames.push(callback);
+          return frames.length;
+        },
+      });
+
+      controller.schedule();
+      controller.schedule();
+
+      expect(frames).toHaveLength(1);
+      expect(input.style.height).toBe('');
+
+      frames[0]();
+      expect(input.style.height).toBe('48px');
+    });
+
+    it('skips writes when the measured textarea height is unchanged', () => {
+      const writes = [];
+      let height = '48px';
+      const style = {};
+      Object.defineProperty(style, 'height', {
+        get: () => height,
+        set: (next) => {
+          writes.push(next);
+          height = next;
+        },
+      });
+      const frames = [];
+      const input = {
+        style,
+        value: 'hello',
+        scrollHeight: 48,
+      };
+      const controller = renderer.createRafTextareaAutoGrow(input, {
+        requestAnimationFrame: (callback) => {
+          frames.push(callback);
+          return frames.length;
+        },
+      });
+
+      controller.schedule();
+      frames[0]();
+
+      expect(writes).toEqual([]);
+      expect(input.style.height).toBe('48px');
+    });
+  });
 });

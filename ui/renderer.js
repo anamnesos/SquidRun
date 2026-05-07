@@ -1605,6 +1605,62 @@ function toggleExpandPane(paneId) {
 
 // Status Strip - imported from modules/status-strip.js
 
+function createRafTextareaAutoGrow(input, options = {}) {
+  const maxHeight = Number.isFinite(options.maxHeight) ? options.maxHeight : 120;
+  const requestFrame = typeof options.requestAnimationFrame === 'function'
+    ? options.requestAnimationFrame
+    : (typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (callback) => setTimeout(callback, 16));
+  const cancelFrame = typeof options.cancelAnimationFrame === 'function'
+    ? options.cancelAnimationFrame
+    : (typeof cancelAnimationFrame === 'function'
+      ? cancelAnimationFrame
+      : (id) => clearTimeout(id));
+
+  let frameId = null;
+  let lastAppliedHeight = input?.style?.height || '';
+  let lastValueLength = String(input?.value || '').length;
+
+  const apply = () => {
+    frameId = null;
+    if (!input || !input.style) return;
+
+    const currentValueLength = String(input.value || '').length;
+    const currentHeight = input.style.height || '';
+    const mayShrink = currentValueLength < lastValueLength;
+
+    if (!mayShrink && currentHeight && currentHeight === lastAppliedHeight) {
+      const measuredHeight = `${Math.min(input.scrollHeight || 0, maxHeight)}px`;
+      if (measuredHeight === lastAppliedHeight) {
+        lastValueLength = currentValueLength;
+        return;
+      }
+    }
+
+    input.style.height = 'auto';
+    const nextHeight = `${Math.min(input.scrollHeight || 0, maxHeight)}px`;
+    if (nextHeight !== lastAppliedHeight || input.style.height !== nextHeight) {
+      input.style.height = nextHeight;
+    }
+    lastAppliedHeight = nextHeight;
+    lastValueLength = currentValueLength;
+  };
+
+  const schedule = () => {
+    if (frameId !== null) return;
+    frameId = requestFrame(apply);
+  };
+
+  const cancel = () => {
+    if (frameId === null) return;
+    cancelFrame(frameId);
+    frameId = null;
+  };
+
+  return { schedule, cancel, flush: apply };
+}
+
 // Wire up module callbacks
 terminal.setStatusCallbacks(null, updateConnectionStatus);
 tabs.setConnectionStatusCallback(updateConnectionStatus);
@@ -2081,12 +2137,12 @@ function setupEventListeners() {
   }
 
   if (broadcastInput) {
-    // Auto-grow textarea as user types
-    const autoGrow = () => {
-      broadcastInput.style.height = 'auto';
-      broadcastInput.style.height = Math.min(broadcastInput.scrollHeight, 120) + 'px';
-    };
-    broadcastInput.addEventListener('input', autoGrow);
+    const autoGrow = createRafTextareaAutoGrow(broadcastInput);
+    broadcastInput.addEventListener('input', autoGrow.schedule);
+    registerRendererLifecycleCleanup(() => {
+      broadcastInput.removeEventListener('input', autoGrow.schedule);
+      autoGrow.cancel();
+    });
     broadcastInput.addEventListener('contextmenu', (event) => {
       openBroadcastContextMenu(event, broadcastInput);
     });
@@ -3000,3 +3056,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    createRafTextareaAutoGrow,
+  };
+}

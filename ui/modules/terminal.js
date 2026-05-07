@@ -116,10 +116,16 @@ const terminalWriteQueues = new Map(); // paneId -> [data chunks]
 const terminalWriting = new Map(); // paneId -> boolean (write in progress)
 const terminalWatermarks = new Map(); // paneId -> number (bytes in flight)
 const terminalPaused = new Map(); // paneId -> boolean (is PTY paused)
+const terminalWriteFlushTimers = new Map(); // paneId -> timer ID
+const terminalWriteFrameBudgets = new Map(); // paneId -> { startedAt, bytes, chunks }
 
 const HIGH_WATERMARK = 500000; // 500KB - pause producer
 const LOW_WATERMARK = 50000;   // 50KB - resume producer
 const TERMINAL_QUEUE_MAX_BYTES = 2 * 1024 * 1024; // 2MB absolute per-pane queue cap
+const TERMINAL_WRITE_FRAME_BYTE_BUDGET = 64 * 1024;
+const TERMINAL_WRITE_FRAME_CHUNK_BUDGET = 8;
+const TERMINAL_WRITE_FRAME_TIME_BUDGET_MS = 8;
+const TERMINAL_WRITE_FRAME_YIELD_MS = 16;
 const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 // WebGL rendering: disabled by default to reduce memory usage.
@@ -201,6 +207,54 @@ function maybeResumePtyProducer(paneId, watermark) {
   }
 }
 
+function getTerminalWriteNow() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function clearTerminalWriteFlushTimer(paneId) {
+  const id = String(paneId);
+  const timer = terminalWriteFlushTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    terminalWriteFlushTimers.delete(id);
+  }
+}
+
+function scheduleTerminalQueueFlush(paneId, terminal, delayMs = 0) {
+  const id = String(paneId);
+  if (terminalWriteFlushTimers.has(id)) return;
+  const timer = setTimeout(() => {
+    terminalWriteFlushTimers.delete(id);
+    flushTerminalQueue(id, terminal);
+  }, Math.max(0, Number(delayMs) || 0));
+  terminalWriteFlushTimers.set(id, timer);
+}
+
+function recordTerminalWriteFrame(paneId, byteLen) {
+  const id = String(paneId);
+  const now = getTerminalWriteNow();
+  let frame = terminalWriteFrameBudgets.get(id);
+  if (!frame || (now - frame.startedAt) > TERMINAL_WRITE_FRAME_YIELD_MS) {
+    frame = { startedAt: now, bytes: 0, chunks: 0 };
+    terminalWriteFrameBudgets.set(id, frame);
+  }
+
+  frame.bytes += Math.max(0, Number(byteLen) || 0);
+  frame.chunks += 1;
+
+  const shouldYield = frame.bytes >= TERMINAL_WRITE_FRAME_BYTE_BUDGET
+    || frame.chunks >= TERMINAL_WRITE_FRAME_CHUNK_BUDGET
+    || (now - frame.startedAt) >= TERMINAL_WRITE_FRAME_TIME_BUDGET_MS;
+  if (shouldYield) {
+    terminalWriteFrameBudgets.delete(id);
+    return TERMINAL_WRITE_FRAME_YIELD_MS;
+  }
+  return 0;
+}
+
 /**
  * Reset terminal write queue state for a pane.
  * Must be called when terminal is killed/restarted to prevent frozen state.
@@ -208,10 +262,12 @@ function maybeResumePtyProducer(paneId, watermark) {
  */
 function resetTerminalWriteQueue(paneId) {
   const id = String(paneId);
+  clearTerminalWriteFlushTimer(id);
   terminalWriteQueues.delete(id);
   terminalWriting.delete(id);
   terminalWatermarks.set(id, 0);
   terminalPaused.set(id, false);
+  terminalWriteFrameBudgets.delete(id);
 }
 
 /**
@@ -284,7 +340,9 @@ function queueTerminalWrite(paneId, terminal, data) {
   queue.push({ data: payload, byteLen });
 
   // Start processing if not already writing
-  flushTerminalQueue(paneId, terminal);
+  if (!terminalWriteFlushTimers.has(paneId)) {
+    flushTerminalQueue(paneId, terminal);
+  }
 }
 
 /**
@@ -331,10 +389,8 @@ function flushTerminalQueue(paneId, terminal) {
     // If watermark drops below low threshold, resume the PTY producer
     maybeResumePtyProducer(paneId, newWatermark);
 
-    // Process next chunk if any
-    if (queue.length > 0) {
-      flushTerminalQueue(paneId, terminal);
-    }
+    const nextDelayMs = recordTerminalWriteFrame(paneId, byteLen);
+    scheduleTerminalQueueFlush(paneId, terminal, nextDelayMs);
   });
 }
 
@@ -2395,8 +2451,52 @@ async function freshStartAll() {
 // Replaces window 'resize' event + transitionend listeners with a single mechanism
 const resizeObservers = new Map();    // paneId -> ResizeObserver
 const resizeDebounceTimers = new Map(); // paneId -> timer ID
+const deferredResizeTimers = new Map(); // paneId -> timer ID
+const deferredResizeFirstRequestedAt = new Map(); // paneId -> timestamp
 
 const RESIZE_OBSERVER_DEBOUNCE_MS = 150;
+const RESIZE_INPUT_DEFER_MS = 150;
+const RESIZE_INPUT_MAX_DEFER_MS = 900;
+
+function shouldDeferTerminalResizeForInput() {
+  return userIsTyping() || userInputFocused();
+}
+
+function clearDeferredTerminalResize(paneId) {
+  const id = String(paneId);
+  const timer = deferredResizeTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    deferredResizeTimers.delete(id);
+  }
+  deferredResizeFirstRequestedAt.delete(id);
+}
+
+function scheduleDeferredTerminalResize(paneId) {
+  const id = String(paneId);
+  const now = Date.now();
+  const firstRequestedAt = deferredResizeFirstRequestedAt.get(id) || now;
+  deferredResizeFirstRequestedAt.set(id, firstRequestedAt);
+
+  const existingTimer = deferredResizeTimers.get(id);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  const elapsedMs = Math.max(0, now - firstRequestedAt);
+  const delayMs = elapsedMs >= RESIZE_INPUT_MAX_DEFER_MS
+    ? 0
+    : Math.min(RESIZE_INPUT_DEFER_MS, RESIZE_INPUT_MAX_DEFER_MS - elapsedMs);
+
+  deferredResizeTimers.set(id, setTimeout(() => {
+    deferredResizeTimers.delete(id);
+    const liveElapsedMs = Math.max(0, Date.now() - firstRequestedAt);
+    if (shouldDeferTerminalResizeForInput() && liveElapsedMs < RESIZE_INPUT_MAX_DEFER_MS) {
+      scheduleDeferredTerminalResize(id);
+      return;
+    }
+    deferredResizeFirstRequestedAt.delete(id);
+    resizeSinglePane(id, { force: true });
+  }, delayMs));
+}
 
 function setupResizeObserver(paneId) {
   cleanupResizeObserver(paneId);
@@ -2446,6 +2546,7 @@ function cleanupResizeObserver(paneId) {
     clearTimeout(timer);
     resizeDebounceTimers.delete(paneId);
   }
+  clearDeferredTerminalResize(paneId);
 }
 
 // Explicit resize all — kept for programmatic calls (e.g., right panel toggle)
@@ -2458,10 +2559,15 @@ function handleResize() {
   }
 }
 
-function resizeSinglePane(paneId) {
+function resizeSinglePane(paneId, options = {}) {
   const fitAddon = fitAddons.get(paneId);
   const terminal = terminals.get(paneId);
   if (!fitAddon || !terminal) return;
+  if (options?.force !== true && shouldDeferTerminalResizeForInput()) {
+    scheduleDeferredTerminalResize(paneId);
+    return;
+  }
+  clearDeferredTerminalResize(paneId);
   try {
     const prevCols = terminal.cols;
     const prevRows = terminal.rows;
@@ -2695,6 +2801,17 @@ module.exports = {
     fetchStartupHealthSummary,
     fetchStartupAiBriefing,
     getPaneIdentityLabel,
+    queueTerminalWrite,
+    resizeSinglePane,
+    scheduleDeferredTerminalResize,
+    clearDeferredTerminalResize,
+    terminalWriteFlushTimers,
+    terminalWriteFrameBudgets,
+    deferredResizeTimers,
+    deferredResizeFirstRequestedAt,
+    TERMINAL_WRITE_FRAME_YIELD_MS,
+    TERMINAL_WRITE_FRAME_BYTE_BUDGET,
+    RESIZE_INPUT_MAX_DEFER_MS,
   },
 };
 
