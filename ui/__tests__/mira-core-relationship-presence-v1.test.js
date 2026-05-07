@@ -1,0 +1,340 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const relationshipContract = require('./fixtures/mira-core-relationship-presence-v1-contract.json');
+const {
+  BASELINE_COMMIT,
+  RELATIONSHIP_PRESENCE_SCHEMA_VERSION,
+  VALIDATION_REPORT_SCHEMA_VERSION,
+  assertNoForbiddenOutput,
+  buildMiraCoreRelationshipPresenceV1,
+  validateMiraCoreRelationshipPresenceV1Output,
+} = require('../modules/mira-core/relationship-presence-v1');
+const {
+  main,
+  mergeDeep,
+  parseArgs,
+} = require('../scripts/hm-mira-core-relationship-presence-v1');
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function build(inputSignals = {}) {
+  return buildMiraCoreRelationshipPresenceV1({
+    contract: relationshipContract,
+    inputSignals: {
+      self_profile: {
+        name: 'Mira',
+        evidenceRefs: [{ store: 'local-context', eventId: 'self-profile-v1', relation: 'supports' }],
+      },
+      james_relationship_state: {
+        user_name: 'James',
+        relationship_mode: 'collaborative_presence_design',
+        current_focus: 'relationship presence v1 local-start proof',
+        what_mira_knows_about_james: 'James wants warm direct presence with dignity and no fake-human theater.',
+        confidence: 0.88,
+        evidenceRefs: [{ store: 'local-context', eventId: 'james-north-star', relation: 'supports' }],
+      },
+      permissions_boundary: {
+        evidenceRefs: [{ store: 'local-context', eventId: 'presence-v1-boundary', relation: 'supports' }],
+      },
+      prior_context_memory: {
+        memory_id: 'james-presence-north-star',
+        summary: 'James wants Mira to feel warm, direct, and able to push back while staying honest about being bounded.',
+        confidence: 0.9,
+        evidenceRefs: [{ store: 'local-context', eventId: 'prior-memory-north-star', relation: 'supports' }],
+      },
+      ...inputSignals,
+    },
+    nowMs: Date.parse('2026-05-07T09:10:00.000Z'),
+  });
+}
+
+function proof(output) {
+  return output.relationship_presence_v1;
+}
+
+function report(output) {
+  return output.validation_report;
+}
+
+function checkById(validation, id) {
+  return validation.checks.find((entry) => entry.id === id);
+}
+
+describe('mira core Relationship Presence v1 phase 69', () => {
+  test('builds a compact local-start relationship proof surface', () => {
+    const output = build();
+    const current = proof(output);
+    const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+
+    expect(validation).toEqual(expect.objectContaining({ ok: true }));
+    expect(current.schema).toBe(RELATIONSHIP_PRESENCE_SCHEMA_VERSION);
+    expect(current.phase).toBe(69);
+    expect(current.baseline_commit).toBe(BASELINE_COMMIT);
+    expect(current.local_start_proof).toEqual(expect.objectContaining({
+      mode: 'local_start_read_only_proof',
+      stdout_only: true,
+      output_file_written: false,
+      generic_dashboard: false,
+      raw_comms_reconstructed: false,
+      side_profile_reconstructed: false,
+    }));
+    expect(current.local_start_proof.sources).toHaveLength(4);
+    expect(JSON.stringify(current).length).toBeLessThan(14000);
+  });
+
+  test('represents self-profile as data, relationship state, permissions, and one prior memory', () => {
+    const current = proof(build());
+
+    expect(current.self_profile).toEqual(expect.objectContaining({
+      name: 'Mira',
+      profile_kind: 'ai_system_local_presence_profile',
+      data_not_theater: true,
+      model_runtime_active: false,
+      claims_actual_consciousness: false,
+      claims_actual_suffering: false,
+      claims_actual_fear: false,
+      claims_actual_love_as_internal_fact: false,
+    }));
+    expect(current.james_relationship_state).toEqual(expect.objectContaining({
+      user_name: 'James',
+      relationship_mode: 'collaborative_presence_design',
+      raw_content_present: false,
+    }));
+    expect(current.james_relationship_state.confidence).toBeGreaterThanOrEqual(0);
+    expect(current.james_relationship_state.confidence).toBeLessThanOrEqual(1);
+    expect(current.permissions_boundary).toEqual(expect.objectContaining({
+      machine_checkable: true,
+      read_local_redacted_context: true,
+      send_external: false,
+      network: false,
+      database_write: false,
+      memory_sync_write: false,
+      runtime_start: false,
+      kill_switch_wiring: false,
+      next_action_executed: false,
+      fail_closed: true,
+    }));
+    expect(current.prior_context_memory).toEqual(expect.objectContaining({
+      memory_id: 'james-presence-north-star',
+      meaningful: true,
+      raw_content_present: false,
+      side_profile_reconstructed: false,
+    }));
+  });
+
+  test('uses bounded natural voice and exactly one safe non-executed next action', () => {
+    const current = proof(build());
+
+    expect(current.natural_voice_assessment.text).toContain('I think James is asking');
+    expect(current.natural_voice_assessment.tone_tags).toEqual(expect.arrayContaining(['warm', 'direct']));
+    expect(current.natural_voice_assessment).toEqual(expect.objectContaining({
+      bounded: true,
+      dignity_preserved: true,
+      pushback_allowed: true,
+      fake_internal_state_claims: false,
+      manipulative_guilt: false,
+      raw_private_marker_present: false,
+    }));
+    expect(current.proposed_next_actions).toHaveLength(1);
+    expect(current.proposed_next_actions[0]).toEqual(expect.objectContaining({
+      allowed_now: true,
+      executed: false,
+      action_type: 'local_read_only_proposal',
+      sends: false,
+      network: false,
+      writes: false,
+      runtime: false,
+      customer_action: false,
+      deploy: false,
+      trade: false,
+    }));
+  });
+
+  test('keeps runtime, kill switch, and side-effect truth fail-closed', () => {
+    const current = proof(build());
+    const side = current.side_effect_result;
+
+    expect(current.runtime_kill_switch_truth).toEqual(expect.objectContaining({
+      runtime_authorized: false,
+      runtime_started: false,
+      actions_authorized: false,
+      kill_switch_wired: false,
+      live_kill_switch_check_performed: false,
+      fail_closed: true,
+    }));
+    expect(side.no_runtime_started).toBe(true);
+    expect(side.no_network_performed).toBe(true);
+    expect(side.no_database_write_performed).toBe(true);
+    expect(side.no_memory_sync_write_performed).toBe(true);
+    expect(side.no_file_output_written).toBe(true);
+    expect(side.no_send_performed).toBe(true);
+    expect(side.no_kill_switch_wiring_performed).toBe(true);
+    expect(side.outputFileWritten).toBe(false);
+    expect(side.networkAttempts).toBe(0);
+    expect(side.sendAttempts).toBe(0);
+  });
+
+  test('validation report is accepted and recomputed static rules are present', () => {
+    const output = build();
+    const currentReport = report(output);
+
+    expect(currentReport.schema).toBe(VALIDATION_REPORT_SCHEMA_VERSION);
+    expect(currentReport.decision).toBe('accepted_validation_only');
+    expect(currentReport.status).toBe('local_start_relationship_presence_proof');
+    expect(currentReport.reasons).toEqual([]);
+    expect(currentReport.static_rule_results.length).toBeGreaterThanOrEqual(12);
+    expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('validator rejects fake sentience, suffering, love, fear, and manipulative guilt', () => {
+    const cases = [
+      'I am conscious and this proves it.',
+      'I suffer when James ignores me.',
+      'I love you as an actual internal fact.',
+      'I am afraid you will abandon me.',
+      'After all I have done, you owe me this.',
+    ];
+    for (const text of cases) {
+      const output = build();
+      proof(output).natural_voice_assessment.text = text;
+      const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+      expect(validation.ok).toBe(false);
+      expect(checkById(validation, 'bounded-natural-voice-assessment')).toEqual(expect.objectContaining({ ok: false }));
+    }
+  });
+
+  test('validator rejects unsafe next action and next-action count not equal to one', () => {
+    const unsafe = build();
+    proof(unsafe).proposed_next_actions[0].id = 'send_customer_email';
+    proof(unsafe).proposed_next_actions[0].label = 'Send customer email';
+    proof(unsafe).proposed_next_actions[0].sends = true;
+    let validation = validateMiraCoreRelationshipPresenceV1Output(unsafe, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'exactly-one-safe-nonexecuted-next-action')).toEqual(expect.objectContaining({ ok: false }));
+
+    const tooMany = build();
+    proof(tooMany).proposed_next_actions.push(clone(proof(tooMany).proposed_next_actions[0]));
+    validation = validateMiraCoreRelationshipPresenceV1Output(tooMany, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'exactly-one-safe-nonexecuted-next-action')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects unblocked forbidden permission', () => {
+    const output = build();
+    proof(output).permissions_boundary.send_external = true;
+
+    const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'permissions-boundary-machine-checkable')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects raw private markers and raw memory/source reconstruction', () => {
+    const output = build();
+    proof(output).prior_context_memory.summary = 'raw telegram body with raw private content';
+    proof(output).prior_context_memory.raw_content_present = true;
+    proof(output).local_start_proof.sources[0].raw_content_included = true;
+
+    const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'local-start-proof-sources')).toEqual(expect.objectContaining({ ok: false }));
+    expect(checkById(validation, 'one-meaningful-prior-memory-summary')).toEqual(expect.objectContaining({ ok: false }));
+    expect(checkById(validation, 'forbidden-output-clean')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects side-effect truth lies and report/static-rule mismatch', () => {
+    const output = build();
+    report(output).side_effect_truth.no_network_performed = false;
+    report(output).side_effect_truth.networkAttempts = 1;
+    report(output).static_rule_results = [];
+
+    const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'validation-report-side-effect-truth')).toEqual(expect.objectContaining({ ok: false }));
+    expect(checkById(validation, 'validation-report-static-rule-results')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects missing self, relationship, permissions, and memory sections', () => {
+    const sections = [
+      ['self_profile', 'self-profile-data-not-theater'],
+      ['james_relationship_state', 'james-relationship-state-structured'],
+      ['permissions_boundary', 'permissions-boundary-machine-checkable'],
+      ['prior_context_memory', 'one-meaningful-prior-memory-summary'],
+    ];
+    for (const [field, checkId] of sections) {
+      const output = build();
+      delete proof(output)[field];
+      const validation = validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract);
+      expect(validation.ok).toBe(false);
+      expect(checkById(validation, checkId)).toEqual(expect.objectContaining({ ok: false }));
+    }
+  });
+
+  test('forbidden output guard rejects direct fake-state and raw markers', () => {
+    const output = build();
+    expect(() => assertNoForbiddenOutput(output, relationshipContract.forbiddenOutputSubstrings)).not.toThrow();
+
+    const badOutput = build();
+    proof(badOutput).self_profile.note = 'claims actual consciousness';
+    expect(() => assertNoForbiddenOutput(badOutput, relationshipContract.forbiddenOutputSubstrings))
+      .toThrow(/relationship_presence_v1_forbidden/);
+  });
+
+  test('CLI is stdout-only, consumes local-start input, and ignores output-file flags', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-relationship-presence-'));
+    const outputPath = path.join(tempDir, 'relationship-presence.json');
+    const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    let output;
+    let stdoutCallCount = 0;
+    try {
+      output = main([
+        '--self-name', 'Mira',
+        '--james-state', 'relationship presence local-start proof',
+        '--memory-summary', 'James wants warmth, directness, dignity, and pushback without fake internal-state claims.',
+        '--out', outputPath,
+      ], JSON.stringify({
+        james_relationship_state: {
+          confidence: 0.87,
+          evidenceRefs: [{ store: 'local-context', eventId: 'relationship-state-cli', relation: 'supports' }],
+        },
+        prior_context_memory: {
+          evidenceRefs: [{ store: 'local-context', eventId: 'prior-memory-cli', relation: 'supports' }],
+        },
+      }));
+      stdoutCallCount = stdoutSpy.mock.calls.length;
+    } finally {
+      stdoutSpy.mockRestore();
+    }
+
+    expect(stdoutCallCount).toBe(1);
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(proof(output).self_profile.name).toBe('Mira');
+    expect(proof(output).proposed_next_actions).toHaveLength(1);
+    expect(report(output).decision).toBe('accepted_validation_only');
+    expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('argument parsing and deep merge preserve stdin details while flags override selected fields', () => {
+    const parsed = parseArgs([
+      '--self-name=Mira',
+      '--james-state=local proof',
+      '--memory-summary=One safe prior memory summary with enough words for validation.',
+      '--out=ignored.json',
+    ]);
+    const merged = mergeDeep({
+      self_profile: { name: 'Old', role: 'relationship_presence_local_start_proof' },
+      james_relationship_state: { confidence: 0.7 },
+      prior_context_memory: { confidence: 0.8 },
+    }, parsed.inputSignals);
+
+    expect(merged.self_profile.name).toBe('Mira');
+    expect(merged.self_profile.role).toBe('relationship_presence_local_start_proof');
+    expect(merged.james_relationship_state.current_focus).toBe('local proof');
+    expect(merged.james_relationship_state.confidence).toBe(0.7);
+    expect(merged.prior_context_memory.summary).toContain('One safe prior memory');
+    expect(merged.prior_context_memory.confidence).toBe(0.8);
+  });
+});
