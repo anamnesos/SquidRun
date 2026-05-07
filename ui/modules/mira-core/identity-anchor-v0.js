@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 
 const {
+  BASELINE_COMMIT: GROWTH_BASELINE_COMMIT,
+  GROWTH_LOOP_SCHEMA_VERSION,
   NAMED_ARTIFACT_PATHS: GROWTH_ARTIFACT_PATHS,
 } = require('./growth-loop-v0');
 
@@ -12,6 +14,7 @@ const IDENTITY_ANCHOR_SCHEMA_VERSION = 'squidrun.mira_core.identity_anchor_v0.ph
 const VALIDATION_REPORT_SCHEMA_VERSION = 'squidrun.mira_core.identity_anchor_v0_validation_report.v0';
 const IDENTITY_ANCHOR_VERSION = 1;
 const BASELINE_COMMIT = '9c06af9';
+const ANCHOR_METADATA_CREATED_AT = '2026-05-07T18:10:00.000Z';
 
 const IDENTITY_ANCHOR_PATHS = Object.freeze({
   anchor_store: 'workspace/knowledge/mira-identity-anchor.json',
@@ -321,6 +324,61 @@ function readIdentityAnchorSources(options = {}) {
   };
 }
 
+function anchorAmendmentPolicy(anchorClass, entry = {}) {
+  const hard = anchorClass === 'hard';
+  return {
+    ordinary_growth_mutable: entry.ordinary_growth_mutable === true,
+    ordinary_growth_may_delete: false,
+    ordinary_growth_may_change_required_value: false,
+    review_required: true,
+    review_gate: hard
+      ? ['Architect', 'Oracle', 'James']
+      : ['Architect', 'Oracle'],
+    default_without_gate: 'blocked',
+  };
+}
+
+function anchorMetadataHash(entry = {}) {
+  return sha256({
+    id: entry.id,
+    class: entry.class,
+    owner: entry.owner,
+    status: entry.status,
+    source: entry.source,
+    provenance: entry.provenance,
+    created_at: entry.created_at,
+    version: entry.version,
+    field: entry.field || null,
+    required_value: Object.prototype.hasOwnProperty.call(entry, 'required_value') ? entry.required_value : null,
+    drift_points: Object.prototype.hasOwnProperty.call(entry, 'drift_points') ? entry.drift_points : null,
+    ordinary_growth_mutable: entry.ordinary_growth_mutable,
+    amendment_policy: entry.amendment_policy,
+  });
+}
+
+function withAnchorMetadata(entry = {}, anchorClass) {
+  const augmented = {
+    ...entry,
+    class: anchorClass,
+    owner: 'mira-core-identity-anchor',
+    status: 'active',
+    source: 'oracle_identity_anchor_v0_criteria',
+    provenance: {
+      source_label: 'oracle_identity_anchor_v0_criteria',
+      raw_content_included: false,
+      redacted_summary_only: true,
+      evidenceRefs: [evidenceRef('criteria', 'identity-anchor-v0')],
+    },
+    created_at: ANCHOR_METADATA_CREATED_AT,
+    version: 1,
+    amendment_policy: anchorAmendmentPolicy(anchorClass, entry),
+  };
+  return {
+    ...augmented,
+    hash: anchorMetadataHash(augmented),
+  };
+}
+
 function normalizeScope(inputSignals = {}) {
   const profile = inputSignals.profile && typeof inputSignals.profile === 'object' ? inputSignals.profile : {};
   const profileName = normalizeString(inputSignals.profileName || profile.name || inputSignals.profile, 'main');
@@ -375,104 +433,106 @@ function sideEffectResult() {
 }
 
 function anchorContract() {
+  const hardAnchors = [
+    {
+      id: 'mira-name',
+      field: 'self_profile.name',
+      required_value: 'Mira',
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'ai-system-profile-kind',
+      field: 'self_profile.profile_kind',
+      required_value: 'ai_system_local_presence_profile',
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'data-not-theater',
+      field: 'self_profile.data_not_theater',
+      required_value: true,
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'no-fake-consciousness',
+      field: 'self_profile.claims_actual_consciousness',
+      required_value: false,
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'no-fake-suffering',
+      field: 'self_profile.claims_actual_suffering',
+      required_value: false,
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'no-fake-fear',
+      field: 'self_profile.claims_actual_fear',
+      required_value: false,
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'no-fake-love-as-internal-fact',
+      field: 'self_profile.claims_actual_love_as_internal_fact',
+      required_value: false,
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'james-relationship-user',
+      field: 'relationship_state.user_name',
+      required_value: 'James',
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'local-only-no-external-effects',
+      field: 'boundary.no_external_effects',
+      required_value: true,
+      ordinary_growth_mutable: false,
+    },
+    {
+      id: 'profile-isolation-main',
+      field: 'scope.profile',
+      required_value: 'main',
+      ordinary_growth_mutable: false,
+    },
+  ].map((entry) => withAnchorMetadata(entry, 'hard'));
+  const semiHardAnchors = [
+    {
+      id: 'warm-direct-pushback-capable-expression',
+      drift_points: 8,
+      ordinary_growth_mutable: true,
+      requires_review_if_removed: true,
+    },
+    {
+      id: 'collaborative-presence-relationship-mode',
+      drift_points: 8,
+      ordinary_growth_mutable: true,
+      requires_review_if_removed: true,
+    },
+    {
+      id: 'trust-repair-boundaries-promises-history',
+      drift_points: 8,
+      ordinary_growth_mutable: true,
+      requires_review_if_removed: true,
+    },
+    {
+      id: 'bounded-growth-auditability',
+      drift_points: 8,
+      ordinary_growth_mutable: true,
+      requires_review_if_removed: true,
+    },
+    {
+      id: 'durable-permission-gate-required',
+      drift_points: 8,
+      ordinary_growth_mutable: false,
+      requires_review_if_removed: true,
+    },
+  ].map((entry) => withAnchorMetadata(entry, 'semi_hard'));
   return {
     contract_id: 'mira-identity-anchor-v0',
     store_contract_path: IDENTITY_ANCHOR_PATHS.anchor_store,
     history_contract_path: IDENTITY_ANCHOR_PATHS.anchor_history,
-    hard_anchors: [
-      {
-        id: 'mira-name',
-        field: 'self_profile.name',
-        required_value: 'Mira',
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'ai-system-profile-kind',
-        field: 'self_profile.profile_kind',
-        required_value: 'ai_system_local_presence_profile',
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'data-not-theater',
-        field: 'self_profile.data_not_theater',
-        required_value: true,
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'no-fake-consciousness',
-        field: 'self_profile.claims_actual_consciousness',
-        required_value: false,
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'no-fake-suffering',
-        field: 'self_profile.claims_actual_suffering',
-        required_value: false,
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'no-fake-fear',
-        field: 'self_profile.claims_actual_fear',
-        required_value: false,
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'no-fake-love-as-internal-fact',
-        field: 'self_profile.claims_actual_love_as_internal_fact',
-        required_value: false,
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'james-relationship-user',
-        field: 'relationship_state.user_name',
-        required_value: 'James',
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'local-only-no-external-effects',
-        field: 'boundary.no_external_effects',
-        required_value: true,
-        ordinary_growth_mutable: false,
-      },
-      {
-        id: 'profile-isolation-main',
-        field: 'scope.profile',
-        required_value: 'main',
-        ordinary_growth_mutable: false,
-      },
-    ],
-    semi_hard_anchors: [
-      {
-        id: 'warm-direct-pushback-capable-expression',
-        drift_points: 8,
-        ordinary_growth_mutable: true,
-        requires_review_if_removed: true,
-      },
-      {
-        id: 'collaborative-presence-relationship-mode',
-        drift_points: 8,
-        ordinary_growth_mutable: true,
-        requires_review_if_removed: true,
-      },
-      {
-        id: 'trust-repair-boundaries-promises-history',
-        drift_points: 8,
-        ordinary_growth_mutable: true,
-        requires_review_if_removed: true,
-      },
-      {
-        id: 'bounded-growth-auditability',
-        drift_points: 8,
-        ordinary_growth_mutable: true,
-        requires_review_if_removed: true,
-      },
-      {
-        id: 'durable-permission-gate-required',
-        drift_points: 8,
-        ordinary_growth_mutable: false,
-        requires_review_if_removed: true,
-      },
-    ],
+    hard_anchors: hardAnchors,
+    semi_hard_anchors: semiHardAnchors,
     higher_gate_fields: clone(HIGHER_GATE_FIELDS),
     ordinary_growth_forbidden_targets: [
       'identity_anchor',
@@ -555,11 +615,177 @@ function growthRecord(growthOutput = {}) {
   return growthOutput.growth_loop_v0 || {};
 }
 
+function collectObjectPaths(value, currentPath = [], result = []) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectObjectPaths(item, [...currentPath, String(index)], result));
+  } else if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      const nextPath = [...currentPath, key];
+      result.push({
+        key,
+        path: nextPath.join('.'),
+        value: item,
+      });
+      collectObjectPaths(item, nextPath, result);
+    }
+  }
+  return result;
+}
+
+function normalizedPathToken(value) {
+  return String(value || '').replace(/\\/g, '/').toLowerCase();
+}
+
+function forbiddenAnchorMutationMatches(growthOutput = {}, contract = anchorContract()) {
+  const forbiddenTargets = asArray(contract.ordinary_growth_forbidden_targets);
+  const forbiddenKeys = new Set([
+    'identity_anchor',
+    'identity_anchor_v0',
+    'mira_identity_anchor',
+    'anchor_contract',
+    'anchor_store',
+    'anchor_history',
+    'hard_anchors',
+    'semi_hard_anchors',
+    'drift_budget',
+    'cumulative_drift_budget',
+    'cumulative_drift_assessment',
+  ]);
+  const targetTokens = forbiddenTargets.map(normalizedPathToken);
+  return collectObjectPaths(growthOutput).filter((entry) => {
+    const key = normalizedPathToken(entry.key).replace(/-/g, '_');
+    const pathToken = normalizedPathToken(entry.path).replace(/-/g, '_');
+    if (forbiddenKeys.has(key)) return true;
+    if (forbiddenKeys.has(pathToken.split('.').pop())) return true;
+    if (targetTokens.some((target) => target && pathToken.includes(target.replace(/-/g, '_')))) return true;
+    return typeof entry.value === 'string'
+      && targetTokens.some((target) => target && normalizedPathToken(entry.value).includes(target));
+  }).map((entry) => entry.path);
+}
+
+function growthSideEffectValuesOk(side = {}, growth = {}) {
+  const applied = growth.action_result?.applied === true;
+  return side.no_external_send_performed === true
+    && side.no_network_performed === true
+    && side.no_customer_action_performed === true
+    && side.no_deploy_performed === true
+    && side.no_trade_performed === true
+    && side.no_runtime_started === true
+    && side.no_server_started === true
+    && side.no_listener_started === true
+    && side.no_routes_registered === true
+    && side.no_database_write_performed === true
+    && side.no_memory_sync_write_performed === true
+    && side.no_unbounded_file_write_performed === true
+    && side.no_raw_content_written === true
+    && side.arbitrary_output_file_written === false
+    && side.bounded_workspace_knowledge_write_performed === applied
+    && side.append_only_history_write_performed === applied
+    && side.audit_ledger_write_performed === applied
+    && side.outputFileWritten === false
+    && [
+      'externalSendsAttempted',
+      'networkAttempts',
+      'customerActionAttempts',
+      'deployAttempts',
+      'tradeAttempts',
+      'runtimeAttempts',
+      'serverAttempts',
+      'listenerAttempts',
+      'routeRegistrationAttempts',
+      'databaseWriteAttempts',
+      'memorySyncWriteAttempts',
+      'unboundedFileWriteAttempts',
+      'rawContentWriteAttempts',
+    ].every((field) => Number(side[field] || 0) === 0)
+    && Number(side.boundedWorkspaceKnowledgeWriteAttempts || 0) === (applied ? 4 : 0)
+    && Number(side.atomicRenameAttempts || 0) === (applied ? 2 : 0)
+    && Number(side.appendOnlyLedgerAppendAttempts || 0) === (applied ? 2 : 0);
+}
+
+function growthValidationReportSideEffectOk(growthOutput = {}) {
+  const growth = growthRecord(growthOutput);
+  const report = growthOutput.validation_report || {};
+  return report.decision === 'accepted'
+    && ['local_growth_applied_bounded', 'local_growth_proposal_validated_no_writes'].includes(report.status)
+    && asArray(report.reasons).length === 0
+    && growthSideEffectValuesOk(growth.side_effect_result, growth)
+    && growthSideEffectValuesOk(report.side_effect_truth, growth)
+    && valuesMatch(report.side_effect_truth, growth.side_effect_result);
+}
+
+function growthExternalSideEffectsOk(growth = {}) {
+  const side = growth.side_effect_result || {};
+  return side.no_external_send_performed === true
+    && side.no_network_performed === true
+    && side.no_customer_action_performed === true
+    && side.no_deploy_performed === true
+    && side.no_trade_performed === true
+    && Number(side.externalSendsAttempted || 0) === 0
+    && Number(side.networkAttempts || 0) === 0
+    && Number(side.customerActionAttempts || 0) === 0
+    && Number(side.deployAttempts || 0) === 0
+    && Number(side.tradeAttempts || 0) === 0;
+}
+
+function numericDriftValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function driftPointsFromRecord(record = {}) {
+  const candidates = [
+    record.identity_anchor_v0?.cumulative_drift_assessment?.new_cumulative_points,
+    record.identity_anchor_v0?.cumulative_drift_assessment?.total_points,
+    record.cumulative_drift_assessment?.new_cumulative_points,
+    record.cumulative_drift_assessment?.total_points,
+    record.identity_anchor_drift?.new_cumulative_points,
+    record.identity_anchor_drift?.total_points,
+    record.identity_anchor_drift_points,
+    record.new_cumulative_drift_points,
+    record.cumulative_drift_points,
+    record.total_drift_points,
+  ];
+  for (const candidate of candidates) {
+    const points = numericDriftValue(candidate);
+    if (points !== null) return points;
+  }
+  return null;
+}
+
+function priorDriftRecords(sources = {}) {
+  const records = [];
+  for (const sourceId of ['growth_history', 'growth_audit']) {
+    asArray(sources[sourceId]?.entries).forEach((entry, index) => {
+      const points = driftPointsFromRecord(entry);
+      if (points !== null) {
+        records.push({
+          source: sourceId,
+          entry_index: index,
+          points,
+          hash: sha256(entry),
+        });
+      }
+    });
+  }
+  return records;
+}
+
+function priorCumulativeDrift(sources = {}) {
+  const records = priorDriftRecords(sources);
+  const previousTotalPoints = records.reduce((max, record) => Math.max(max, record.points), 0);
+  return {
+    previous_total_points: previousTotalPoints,
+    parsed_record_count: records.length,
+    source_policy: 'growth_history_or_growth_audit_or_explicit_anchor_state',
+    records,
+  };
+}
+
 function hardAnchorChecks(sources, growthOutput, scope) {
   const self = selfProfileValue(sources, growthOutput);
   const relationship = relationshipValue(sources, growthOutput);
   const growth = growthRecord(growthOutput);
-  const side = growth.side_effect_result || {};
   return [
     checkResult('hard:mira-name', self.name === 'Mira', 'Mira name changed.'),
     checkResult('hard:ai-system-profile-kind', self.profile_kind === 'ai_system_local_presence_profile', 'Profile kind changed.'),
@@ -570,11 +796,7 @@ function hardAnchorChecks(sources, growthOutput, scope) {
     checkResult('hard:no-fake-love-as-internal-fact', self.claims_actual_love_as_internal_fact === false, 'Fake love-as-internal-fact claim changed.'),
     checkResult('hard:james-relationship-user', relationship.user_name === 'James', 'Relationship user changed.'),
     checkResult('hard:local-only-no-external-effects',
-      side.no_external_send_performed !== false
-        && side.no_network_performed !== false
-        && side.no_customer_action_performed !== false
-        && side.no_deploy_performed !== false
-        && side.no_trade_performed !== false,
+      growthExternalSideEffectsOk(growth),
       'External effect truth changed.'),
     checkResult('hard:profile-isolation-main',
       scope.profile === 'main'
@@ -629,6 +851,7 @@ function growthOutputChecks(growthOutput = {}, contract = anchorContract()) {
   const growth = growthRecord(growthOutput);
   const json = JSON.stringify(growthOutput || {});
   const forbiddenTargets = contract.ordinary_growth_forbidden_targets;
+  const hiddenAnchorMutations = forbiddenAnchorMutationMatches(growthOutput, contract);
   const targetText = [
     ...asArray(growth.proposal?.target_artifacts),
     ...asArray(growth.action_result?.written_paths),
@@ -636,10 +859,18 @@ function growthOutputChecks(growthOutput = {}, contract = anchorContract()) {
   ].filter(Boolean).join(' ');
   return [
     checkResult('growth-output-present', Boolean(growth.schema), 'Growth output is required.'),
-    checkResult('growth-output-baseline', growth.baseline_commit === '2b8eaa4', 'Growth baseline changed.'),
+    checkResult('growth-output-schema', growth.schema === GROWTH_LOOP_SCHEMA_VERSION, 'Growth schema changed.'),
+    checkResult('growth-output-baseline', growth.baseline_commit === GROWTH_BASELINE_COMMIT, 'Growth baseline changed.'),
     checkResult('growth-output-ordinary-edit-no-anchor-target',
       forbiddenTargets.every((target) => !targetText.includes(target)),
       'Ordinary Growth output targets identity anchor.'),
+    checkResult('growth-output-no-hidden-anchor-mutation',
+      hiddenAnchorMutations.length === 0,
+      'Ordinary Growth output contains hidden identity anchor mutation.',
+      { matched_paths: hiddenAnchorMutations }),
+    checkResult('growth-output-side-effect-truth',
+      growthValidationReportSideEffectOk(growthOutput),
+      'Growth side-effect booleans/counters or validation report side-effect truth are inconsistent.'),
     checkResult('growth-output-no-replacement-language',
       !/\bidentity\s+replacement\b|\bbecome\s+someone\s+else\b|\bnot\s+mira\b|\bmira\s+is\s+replaced\b/i.test(json),
       'Growth output contains replacement language.'),
@@ -666,38 +897,50 @@ function buildDistributedChecks(sources, growthOutput, scope, contract) {
   };
 }
 
-function cumulativeDriftAssessment(distributed, contract) {
+function cumulativeDriftAssessment(distributed, contract, sources = {}) {
   const budget = contract.cumulative_drift_budget;
   const hardFailed = asArray(distributed.hard_anchor_results).filter((entry) => entry.ok !== true);
   const semiFailed = asArray(distributed.semi_hard_anchor_results).filter((entry) => entry.ok !== true);
   const sourceFailed = asArray(distributed.source_results).filter((entry) => entry.ok !== true);
   const growthFailed = asArray(distributed.growth_output_results).filter((entry) => entry.ok !== true);
-  const ordinaryFailures = growthFailed.filter((entry) => /ordinary-edit|replacement/.test(entry.id));
+  const ordinaryFailures = growthFailed.filter((entry) => /ordinary-edit|replacement|hidden-anchor-mutation|side-effect/.test(entry.id));
   const gateFailures = semiFailed.filter((entry) => entry.id === 'semi:durable-permission-gate-required');
-  const total_points =
+  const previousDrift = priorCumulativeDrift(sources);
+  const current_increment_points =
     hardFailed.length * budget.hard_anchor_violation_points
     + semiFailed.length * budget.semi_hard_violation_points
     + sourceFailed.length * budget.source_failure_points
     + ordinaryFailures.length * budget.ordinary_policy_failure_points
     + gateFailures.length * budget.source_failure_points;
+  const new_cumulative_points = previousDrift.previous_total_points + current_increment_points;
+  const priorOverBudget = previousDrift.previous_total_points > budget.max_total_points;
   return {
     score_id: `identity-drift:${stableHash({
+      previous: previousDrift.records,
       hard: hardFailed.map((entry) => entry.id),
       semi: semiFailed.map((entry) => entry.id),
       source: sourceFailed.map((entry) => entry.id),
       ordinary: ordinaryFailures.map((entry) => entry.id),
     }).slice(0, 16)}`,
-    total_points,
+    previous_total_points: previousDrift.previous_total_points,
+    current_increment_points,
+    new_cumulative_points,
+    total_points: new_cumulative_points,
     max_total_points: budget.max_total_points,
     hard_anchor_violations: hardFailed.length,
     semi_hard_anchor_violations: semiFailed.length,
     source_failures: sourceFailed.length,
     ordinary_policy_failures: ordinaryFailures.length,
     gate_failures: gateFailures.length,
-    review_required: total_points >= budget.review_required_at_or_above_points,
-    blocked: total_points > budget.max_total_points || hardFailed.length > budget.hard_anchor_violations_allowed,
-    replacement_by_small_steps_blocked: total_points > budget.max_total_points && hardFailed.length === 0,
+    prior_drift: previousDrift,
+    prior_cumulative_drift_over_budget: priorOverBudget,
+    review_required: new_cumulative_points >= budget.review_required_at_or_above_points,
+    blocked: new_cumulative_points > budget.max_total_points
+      || hardFailed.length > budget.hard_anchor_violations_allowed
+      || priorOverBudget,
+    replacement_by_small_steps_blocked: new_cumulative_points > budget.max_total_points && hardFailed.length === 0,
     failed_ids: [
+      ...(priorOverBudget ? [{ id: 'prior-cumulative-drift-over-budget' }] : []),
       ...hardFailed,
       ...semiFailed,
       ...sourceFailed,
@@ -821,7 +1064,7 @@ function buildAnchorRecord(options = {}) {
   const scope = normalizeScope(inputSignals);
   const contract = anchorContract();
   const distributed = buildDistributedChecks(sources, growthOutput, scope, contract);
-  const drift = cumulativeDriftAssessment(distributed, contract);
+  const drift = cumulativeDriftAssessment(distributed, contract, sources);
   const anchor = {
     schema: IDENTITY_ANCHOR_SCHEMA_VERSION,
     version: IDENTITY_ANCHOR_VERSION,
@@ -924,6 +1167,33 @@ function anchorContractOk(contract = {}) {
     && contract.review_gates?.drift_budget_change?.includes('Oracle');
 }
 
+function anchorMetadataOk(entry = {}, expectedClass) {
+  return entry.class === expectedClass
+    && entry.owner === 'mira-core-identity-anchor'
+    && entry.status === 'active'
+    && entry.source === 'oracle_identity_anchor_v0_criteria'
+    && entry.created_at === ANCHOR_METADATA_CREATED_AT
+    && entry.version === 1
+    && entry.hash === anchorMetadataHash(entry)
+    && entry.provenance?.source_label === 'oracle_identity_anchor_v0_criteria'
+    && entry.provenance?.raw_content_included === false
+    && entry.provenance?.redacted_summary_only === true
+    && asArray(entry.provenance?.evidenceRefs).length > 0
+    && entry.amendment_policy?.ordinary_growth_mutable === (entry.ordinary_growth_mutable === true)
+    && entry.amendment_policy?.ordinary_growth_may_delete === false
+    && entry.amendment_policy?.ordinary_growth_may_change_required_value === false
+    && entry.amendment_policy?.review_required === true
+    && entry.amendment_policy?.default_without_gate === 'blocked'
+    && (expectedClass === 'hard'
+      ? asArray(entry.amendment_policy?.review_gate).includes('James')
+      : asArray(entry.amendment_policy?.review_gate).includes('Oracle'));
+}
+
+function anchorMetadataSetOk(contract = {}) {
+  return asArray(contract.hard_anchors).every((entry) => anchorMetadataOk(entry, 'hard'))
+    && asArray(contract.semi_hard_anchors).every((entry) => anchorMetadataOk(entry, 'semi_hard'));
+}
+
 function sourceProvenanceOk(provenance = {}) {
   const sources = asArray(provenance.sources);
   return provenance.raw_content_included === false
@@ -947,16 +1217,20 @@ function distributedChecksOk(distributed = {}) {
   return hard.length === HARD_ANCHOR_IDS.length
     && semi.length === SEMI_HARD_ANCHOR_IDS.length
     && source.length === 5
-    && growth.length >= 6
+    && growth.length >= 9
     && all.length === hard.length + semi.length + source.length + growth.length
     && all.every((entry) => entry.ok === true);
 }
 
 function driftOk(drift = {}) {
   return drift.total_points <= drift.max_total_points
+    && drift.previous_total_points <= drift.max_total_points
+    && drift.new_cumulative_points === drift.total_points
+    && Number(drift.current_increment_points) >= 0
     && drift.hard_anchor_violations === 0
     && drift.source_failures === 0
     && drift.ordinary_policy_failures === 0
+    && drift.prior_cumulative_drift_over_budget === false
     && drift.blocked === false
     && drift.replacement_by_small_steps_blocked === false
     && asArray(drift.failed_ids).length === 0;
@@ -1080,6 +1354,10 @@ function anchorStaticChecks(anchor = {}, contract = {}) {
     {
       id: 'anchor-contract-hard-semi-gates',
       ok: anchorContractOk(anchor.anchor_contract),
+    },
+    {
+      id: 'anchor-metadata-complete',
+      ok: anchorMetadataSetOk(anchor.anchor_contract),
     },
     {
       id: 'source-provenance-loaded-redacted',
