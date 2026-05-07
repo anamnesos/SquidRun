@@ -216,6 +216,51 @@ describe('mira core Presence v0 phase 68', () => {
     expect(validation.checks.find((entry) => entry.id === 'presence-runtime-and-actions-blocked')).toEqual(expect.objectContaining({ ok: false }));
   });
 
+  test('validator rejects unsafe safe-next actions even when required actions remain present', () => {
+    const output = build();
+    presence(output).safe_next_actions.push({
+      id: 'send_customer_email',
+      label: 'Send customer email',
+      allowed_now: true,
+    });
+
+    const validation = validateMiraCorePresenceV0Output(output, presenceContract);
+    expect(validation.ok).toBe(false);
+    expect(validation.checks.find((entry) => entry.id === 'presence-safe-next-actions-safe')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects cannot-do boundaries that are marked unblocked', () => {
+    const output = build();
+    const externalSend = presence(output).cannot_do_yet.find((entry) => entry.id === 'external_send');
+    expect(externalSend).toBeTruthy();
+    externalSend.blocked = false;
+
+    const validation = validateMiraCorePresenceV0Output(output, presenceContract);
+    expect(validation.ok).toBe(false);
+    expect(validation.checks.find((entry) => entry.id === 'presence-cannot-do-boundaries-blocked')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects falsified validation-report side-effect truth', () => {
+    const output = build();
+    report(output).side_effect_truth.no_network_performed = false;
+    report(output).side_effect_truth.no_file_output_written = false;
+    report(output).side_effect_truth.networkAttempts = 1;
+    report(output).side_effect_truth.fileOutputWriteAttempts = 1;
+
+    const validation = validateMiraCorePresenceV0Output(output, presenceContract);
+    expect(validation.ok).toBe(false);
+    expect(validation.checks.find((entry) => entry.id === 'validation-report-side-effect-truth')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  test('validator rejects empty validation-report static rule results', () => {
+    const output = build();
+    report(output).static_rule_results = [];
+
+    const validation = validateMiraCorePresenceV0Output(output, presenceContract);
+    expect(validation.ok).toBe(false);
+    expect(validation.checks.find((entry) => entry.id === 'validation-report-static-rule-results')).toEqual(expect.objectContaining({ ok: false }));
+  });
+
   test('forbidden output guard rejects fake internal-state claims and raw private markers', () => {
     const output = build();
     expect(() => assertNoForbiddenOutput(output, presenceContract.forbiddenOutputSubstrings)).not.toThrow();
