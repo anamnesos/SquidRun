@@ -248,8 +248,80 @@ describe('mira core Growth Loop v0 phase 70', () => {
     ]);
     expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile).version).toBe(2);
     expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state).version).toBe(2);
-    expect(readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger)).toHaveLength(1);
-    expect(readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger)).toHaveLength(1);
+    const history = readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger);
+    const audit = readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger);
+    expect(history).toHaveLength(1);
+    expect(audit).toHaveLength(1);
+    expect(history[0]).toEqual(expect.objectContaining({
+      artifact_id: 'growth_history',
+      proposal_id: current.proposal.proposal_id,
+      total_drift_points: 0,
+      canonical_hash: expect.stringMatching(/^sha256:/),
+    }));
+    expect(audit[0]).toEqual(expect.objectContaining({
+      artifact_id: 'growth_audit',
+      proposal_id: current.proposal.proposal_id,
+      total_drift_points: 0,
+      canonical_hash: expect.stringMatching(/^sha256:/),
+    }));
+  });
+
+  test('pinned proposal id replays as accepted no-op without duplicate writes or drift', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+    const pinned = 'growth-loop-v0:first-real-growth-event-v0';
+    const inputSignals = {
+      proposalId: pinned,
+      now: '2026-05-07T20:15:00.000Z',
+      reflection: {
+        summary: 'Mira should record one small reversible local growth event that makes future presence more situated without adding autonomy.',
+        reasons: [
+          'James asked for the first real growth event to stay tiny, local, and reversible.',
+          'The accepted durable stores can now prove replay safety without duplicate writes.',
+        ],
+        evidenceRefs: [{ store: 'architect', eventId: 'arch-134-first-real-growth-event', relation: 'source_direction' }],
+      },
+    };
+
+    const dryRun = build(projectRoot, inputSignals);
+    expect(validateMiraCoreGrowthLoopV0Output(dryRun, growthContract)).toEqual(expect.objectContaining({ ok: true }));
+    expect(growth(dryRun).proposal.proposal_id).toBe(pinned);
+    expect(growth(dryRun).action_result.write_count).toBe(0);
+
+    const firstApply = build(projectRoot, inputSignals, { apply: true });
+    expect(validateMiraCoreGrowthLoopV0Output(firstApply, growthContract)).toEqual(expect.objectContaining({ ok: true }));
+    expect(report(firstApply)).toEqual(expect.objectContaining({
+      decision: 'accepted',
+      status: 'local_growth_applied_bounded',
+      reasons: [],
+    }));
+    expect(growth(firstApply).action_result).toEqual(expect.objectContaining({
+      decision: 'applied_local_bounded_writes',
+      write_count: 4,
+      atomic_rename_count: 2,
+      append_count: 2,
+    }));
+    const selfAfterFirst = readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile);
+    const relationshipAfterFirst = readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state);
+
+    const secondApply = build(projectRoot, inputSignals, { apply: true });
+    expect(validateMiraCoreGrowthLoopV0Output(secondApply, growthContract)).toEqual(expect.objectContaining({ ok: true }));
+    expect(report(secondApply)).toEqual(expect.objectContaining({
+      decision: 'accepted',
+      status: 'local_growth_already_applied_noop',
+      reasons: [],
+    }));
+    expect(growth(secondApply).action_result).toEqual(expect.objectContaining({
+      decision: 'already_applied_noop',
+      write_count: 0,
+      atomic_rename_count: 0,
+      append_count: 0,
+      replay_event_id: pinned,
+    }));
+    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile)).toEqual(selfAfterFirst);
+    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state)).toEqual(relationshipAfterFirst);
+    expect(readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger).filter((entry) => entry.event_id === pinned)).toHaveLength(1);
+    expect(readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger).filter((entry) => entry.proposal_id === pinned)).toHaveLength(1);
   });
 
   test('empty projectRoot rejects generic bootstrap growth and performs no writes', () => {
@@ -641,6 +713,9 @@ describe('mira core Growth Loop v0 phase 70', () => {
       '--reason=second reason',
       '--profile=main',
       '--session=app-session-growth',
+      '--device=VIGIL',
+      '--now=2026-05-07T20:15:00.000Z',
+      '--proposal-id=growth-loop-v0:first-real-growth-event-v0',
       '--out=ignored.json',
     ]);
     const merged = mergeDeep({
@@ -657,5 +732,8 @@ describe('mira core Growth Loop v0 phase 70', () => {
     expect(merged.reflection.confidence).toBe(0.8);
     expect(merged.profileName).toBe('main');
     expect(merged.sessionId).toBe('app-session-growth');
+    expect(merged.deviceId).toBe('VIGIL');
+    expect(merged.now).toBe('2026-05-07T20:15:00.000Z');
+    expect(merged.proposalId).toBe('growth-loop-v0:first-real-growth-event-v0');
   });
 });
