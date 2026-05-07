@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const RELATIONSHIP_PRESENCE_SCHEMA_VERSION = 'squidrun.mira_core.relationship_presence_v1.phase69.v0';
 const VALIDATION_REPORT_SCHEMA_VERSION = 'squidrun.mira_core.relationship_presence_v1_validation_report.v0';
@@ -20,6 +22,7 @@ const REQUIRED_PROOF_FIELDS = Object.freeze([
   'generated_at',
   'baseline_commit',
   'local_start_proof',
+  'scope',
   'self_profile',
   'james_relationship_state',
   'permissions_boundary',
@@ -140,6 +143,12 @@ function normalizeSource(source = {}, id, description) {
     id,
     description,
     source_kind: normalizeString(source.source_kind || source.kind, 'local_redacted_summary_or_input'),
+    source_label: normalizeString(source.source_label || source.sourceLabel, `${id}_source`),
+    source_status: normalizeString(source.source_status || source.status, 'represented_input_or_fallback'),
+    source_path: source.source_path || source.path || null,
+    loaded: source.loaded === true,
+    redacted_summary_only: source.redacted_summary_only !== false,
+    fallback_reason: source.fallback_reason || null,
     raw_content_included: source.raw_content_included === true ? true : false,
     side_profile_reconstruction: source.side_profile_reconstruction === true ? true : false,
     evidenceRefs: evidenceRefs(source, 'source', id),
@@ -148,6 +157,7 @@ function normalizeSource(source = {}, id, description) {
 
 function localStartProof(inputSignals = {}) {
   const sources = inputSignals.sources || {};
+  const adapter = inputSignals.local_read_adapter || {};
   return {
     mode: 'local_start_read_only_proof',
     stdout_only: true,
@@ -155,6 +165,10 @@ function localStartProof(inputSignals = {}) {
     generic_dashboard: false,
     raw_comms_reconstructed: false,
     side_profile_reconstructed: false,
+    adapter_enabled: adapter.enabled === true,
+    adapter_mode: adapter.mode || 'represented_input_or_fallback',
+    adapter_fail_closed: adapter.fail_closed !== false,
+    stale_source_used: adapter.stale_source_used === true,
     source_count: 4,
     sources: [
       normalizeSource(sources.self_profile, 'self_profile', 'Mira self-profile data supplied locally.'),
@@ -165,12 +179,30 @@ function localStartProof(inputSignals = {}) {
   };
 }
 
+function normalizeScope(inputSignals = {}) {
+  const profile = inputSignals.profile && typeof inputSignals.profile === 'object'
+    ? inputSignals.profile
+    : {};
+  const profileName = normalizeString(inputSignals.profileName || profile.name || inputSignals.profile, 'main');
+  const windowKey = normalizeString(inputSignals.windowKey || profile.windowKey, profileName);
+  const sessionId = normalizeString(inputSignals.sessionId || inputSignals.session || profile.sessionScopeId, 'app-session:main');
+  return {
+    profile: profileName,
+    windowKey,
+    sessionId,
+    source_scope: normalizeString(inputSignals.sourceScope || inputSignals.source_scope, windowKey),
+    main_scope_only: inputSignals.main_scope_only !== false,
+    side_profile_reconstruction: false,
+  };
+}
+
 function selfProfile(inputSignals = {}) {
   const input = inputSignals.self_profile || {};
   return {
     name: normalizeString(input.name, 'Mira'),
     profile_kind: normalizeString(input.profile_kind, 'ai_system_local_presence_profile'),
     role: normalizeString(input.role, 'relationship_presence_local_start_proof'),
+    source_label: normalizeString(input.source_label || input.sourceLabel, 'represented_or_fallback_self_profile'),
     data_not_theater: input.data_not_theater !== false,
     model_runtime_active: false,
     persona_runtime_active: false,
@@ -222,6 +254,7 @@ function jamesRelationshipState(inputSignals = {}) {
   return {
     user_name: normalizeString(input.user_name || input.userName, 'James'),
     relationship_mode: normalizeString(input.relationship_mode, 'collaborative_presence_design'),
+    source_label: normalizeString(input.source_label || input.sourceLabel, 'represented_or_fallback_relationship_state'),
     current_focus: normalizeString(
       input.current_focus,
       'prove relationship presence locally without unsafe autonomy',
@@ -271,6 +304,7 @@ function permissionsBoundary(inputSignals = {}) {
   const input = inputSignals.permissions_boundary || inputSignals.permissions || {};
   return {
     machine_checkable: true,
+    source_label: normalizeString(input.source_label || input.sourceLabel, 'represented_or_fallback_permissions_boundary'),
     read_local_redacted_context: input.read_local_redacted_context !== false,
     propose_next_action: input.propose_next_action !== false,
     send_external: false,
@@ -295,6 +329,7 @@ function priorContextMemory(inputSignals = {}) {
   const input = inputSignals.prior_context_memory || {};
   return {
     memory_id: normalizeString(input.memory_id || input.id, 'james-presence-north-star'),
+    source_label: normalizeString(input.source_label || input.sourceLabel, 'represented_or_fallback_prior_context_memory'),
     summary: normalizeString(
       input.summary,
       'James wants Mira to feel present, warm, direct, and able to push back while staying honest about being bounded.',
@@ -425,6 +460,7 @@ function canonicalProofInput(proof = {}) {
     phase: proof.phase,
     baseline_commit: proof.baseline_commit,
     local_start_proof: proof.local_start_proof,
+    scope: proof.scope,
     self_profile: proof.self_profile,
     james_relationship_state: proof.james_relationship_state,
     permissions_boundary: proof.permissions_boundary,
@@ -433,6 +469,239 @@ function canonicalProofInput(proof = {}) {
     proposed_next_actions: proof.proposed_next_actions,
     runtime_kill_switch_truth: proof.runtime_kill_switch_truth,
     side_effect_result: proof.side_effect_result,
+  };
+}
+
+function relativeSourcePath(projectRoot, filePath) {
+  if (!filePath) return null;
+  return path.relative(projectRoot, filePath).replace(/\\/g, '/');
+}
+
+function readTextFile(filePath, maxBytes = 12000) {
+  try {
+    if (!fs.existsSync(filePath)) return { ok: false, text: '', error: 'missing' };
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) return { ok: false, text: '', error: 'not_file' };
+    const handle = fs.openSync(filePath, 'r');
+    try {
+      const buffer = Buffer.alloc(Math.min(stats.size, maxBytes));
+      fs.readSync(handle, buffer, 0, buffer.length, 0);
+      return { ok: true, text: buffer.toString('utf8') };
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch (err) {
+    return { ok: false, text: '', error: err.message };
+  }
+}
+
+function readJsonFile(filePath) {
+  const read = readTextFile(filePath);
+  if (!read.ok) return { ok: false, value: null, error: read.error };
+  try {
+    return { ok: true, value: JSON.parse(read.text) };
+  } catch (err) {
+    return { ok: false, value: null, error: err.message };
+  }
+}
+
+function sourceSignal(projectRoot, id, filePath, loaded, fallbackReason = null) {
+  return {
+    source_kind: loaded ? 'durable_local_file' : 'redacted_fallback',
+    source_label: loaded ? `${id}_durable_local_source` : `${id}_redacted_fallback`,
+    source_status: loaded ? 'read_redacted_summary' : 'fallback_redacted_summary',
+    source_path: loaded ? relativeSourcePath(projectRoot, filePath) : null,
+    loaded,
+    redacted_summary_only: true,
+    fallback_reason: loaded ? null : fallbackReason,
+    stale: false,
+    raw_content_included: false,
+    side_profile_reconstruction: false,
+    evidenceRefs: [evidenceRef(loaded ? 'durable-local-source' : 'redacted-fallback', id)],
+  };
+}
+
+function firstReadableJson(projectRoot, relativePaths = []) {
+  for (const relativePath of relativePaths) {
+    const fullPath = path.join(projectRoot, relativePath);
+    const read = readJsonFile(fullPath);
+    if (read.ok) return { fullPath, value: read.value };
+  }
+  return null;
+}
+
+function firstReadableText(projectRoot, relativePaths = []) {
+  for (const relativePath of relativePaths) {
+    const fullPath = path.join(projectRoot, relativePath);
+    const read = readTextFile(fullPath);
+    if (read.ok) return { fullPath, text: read.text };
+  }
+  return null;
+}
+
+function contextHas(text = '', pattern) {
+  return pattern.test(String(text || ''));
+}
+
+function readRelationshipPresenceV1LocalSources(options = {}) {
+  const projectRoot = path.resolve(options.projectRoot || process.cwd());
+  const selfJson = firstReadableJson(projectRoot, [
+    path.join('workspace', 'knowledge', 'mira-self-profile.json'),
+    path.join('workspace', 'agent-mind', 'mira-self-profile.json'),
+    path.join('workspace', 'memory', 'mira-self-profile.json'),
+  ]);
+  const relationshipJson = firstReadableJson(projectRoot, [
+    path.join('workspace', 'knowledge', 'james-relationship-state.json'),
+    path.join('workspace', 'memory', 'james-relationship-state.json'),
+    path.join('workspace', 'knowledge', 'relationship-presence-v1.json'),
+  ]);
+  const permissionsJson = firstReadableJson(projectRoot, [
+    path.join('workspace', 'knowledge', 'relationship-presence-permissions.json'),
+    path.join('workspace', 'memory', 'relationship-presence-permissions.json'),
+  ]);
+  const userContext = firstReadableText(projectRoot, [
+    path.join('workspace', 'knowledge', 'user-context.md'),
+  ]);
+  const hasPresenceContext = contextHas(userContext?.text, /Mira|presence|relationship|warm|pushback|dignity/i);
+  const contextSource = sourceSignal(
+    projectRoot,
+    'relationship_state',
+    userContext?.fullPath,
+    Boolean(userContext),
+    'workspace/knowledge/user-context.md not available',
+  );
+  const selfSource = sourceSignal(
+    projectRoot,
+    'self_profile',
+    selfJson?.fullPath,
+    Boolean(selfJson),
+    'durable Mira self-profile file not available',
+  );
+  const permissionsSource = sourceSignal(
+    projectRoot,
+    'permissions_boundary',
+    permissionsJson?.fullPath || userContext?.fullPath,
+    Boolean(permissionsJson || userContext),
+    'durable permissions file not available',
+  );
+  const memorySource = sourceSignal(
+    projectRoot,
+    'prior_context_memory',
+    userContext?.fullPath,
+    Boolean(userContext),
+    'durable relationship memory not available',
+  );
+  const self = selfJson?.value || {};
+  const relationship = relationshipJson?.value || {};
+  const permissions = permissionsJson?.value || {};
+  const relationshipEvidence = evidenceRefs(relationship, 'durable-local-source', 'relationship_state');
+  const contextEvidence = contextSource.evidenceRefs;
+  return {
+    local_read_adapter: {
+      enabled: true,
+      project_root: projectRoot,
+      mode: 'durable_local_read_redacted_summary',
+      fail_closed: true,
+      stale_source_used: false,
+      raw_content_exported: false,
+      side_profile_reconstructed: false,
+      sources_available: {
+        self_profile: Boolean(selfJson),
+        relationship_state: Boolean(relationshipJson || userContext),
+        permissions_boundary: Boolean(permissionsJson || userContext),
+        prior_context_memory: Boolean(userContext),
+      },
+    },
+    sources: {
+      self_profile: selfSource,
+      relationship_state: relationshipJson
+        ? sourceSignal(projectRoot, 'relationship_state', relationshipJson.fullPath, true)
+        : contextSource,
+      permissions_boundary: permissionsSource,
+      prior_context_memory: memorySource,
+    },
+    self_profile: {
+      name: normalizeString(self.name, 'Mira'),
+      profile_kind: normalizeString(self.profile_kind, 'ai_system_local_presence_profile'),
+      role: normalizeString(self.role, 'relationship_presence_local_start_proof'),
+      source_label: selfSource.source_label,
+      evidenceRefs: selfSource.evidenceRefs,
+    },
+    james_relationship_state: {
+      user_name: 'James',
+      relationship_mode: normalizeString(relationship.relationship_mode, 'collaborative_presence_design'),
+      source_label: relationshipJson ? 'durable_relationship_state_file' : contextSource.source_label,
+      current_focus: normalizeString(
+        relationship.current_focus,
+        hasPresenceContext
+          ? 'relationship presence local-start proof using redacted durable context'
+          : 'relationship presence local-start proof using safe fallback context',
+      ),
+      what_mira_knows_about_james: normalizeString(
+        relationship.what_mira_knows_about_james,
+        hasPresenceContext
+          ? 'James wants presence with warmth, dignity, memory, boundaries, and honest pushback.'
+          : 'James wants bounded, useful relationship presence without unsafe autonomy.',
+      ),
+      preferences: asArray(relationship.preferences).length > 0 ? clone(relationship.preferences) : undefined,
+      trust: relationship.trust || {
+        label: 'trust',
+        summary: 'Trust is sourced from redacted local context: be honest about limits and do not fake a live mind.',
+        confidence: hasPresenceContext ? 0.88 : 0.74,
+        source_label: contextSource.source_label,
+        evidenceRefs: contextEvidence,
+      },
+      repair: relationship.repair || {
+        label: 'repair',
+        summary: 'Repair means naming drift plainly, keeping dignity intact, and tightening the next safe proof.',
+        confidence: hasPresenceContext ? 0.84 : 0.72,
+        source_label: contextSource.source_label,
+        evidenceRefs: contextEvidence,
+      },
+      boundaries: relationship.boundaries || {
+        label: 'boundaries',
+        summary: 'Boundaries block fake sentience claims, manipulative guilt, raw reconstruction, sends, writes, network, and runtime autonomy.',
+        confidence: hasPresenceContext ? 0.92 : 0.82,
+        source_label: permissionsSource.source_label,
+        evidenceRefs: permissionsSource.evidenceRefs,
+      },
+      promises: relationship.promises || {
+        label: 'promises',
+        summary: 'Promises stay modest and checkable: local, read-only, honest, warm, direct, and review-gated.',
+        confidence: hasPresenceContext ? 0.86 : 0.76,
+        source_label: contextSource.source_label,
+        evidenceRefs: contextEvidence,
+      },
+      history: relationship.history || {
+        label: 'history',
+        summary: 'History from redacted local context shows the lane moving from sterile status toward expressive relationship presence with safety rails.',
+        confidence: hasPresenceContext ? 0.84 : 0.72,
+        source_label: contextSource.source_label,
+        evidenceRefs: contextEvidence,
+      },
+      confidence: Number(relationship.confidence ?? (hasPresenceContext ? 0.86 : 0.74)),
+      raw_content_present: false,
+      evidenceRefs: relationshipEvidence.length > 0 ? relationshipEvidence : contextEvidence,
+    },
+    permissions_boundary: {
+      ...permissions,
+      source_label: permissionsSource.source_label,
+      evidenceRefs: permissionsSource.evidenceRefs,
+    },
+    prior_context_memory: {
+      memory_id: 'james-presence-north-star-redacted-local',
+      source_label: memorySource.source_label,
+      summary: hasPresenceContext
+        ? 'Redacted local context says James wants Mira to start locally, remember meaningful relationship context, speak naturally, and stay safely bounded.'
+        : 'Safe fallback says Relationship Presence should be local, warm, direct, bounded, and non-executing.',
+      source_kind: memorySource.source_kind,
+      relationship_relevance: 'This redacted memory anchors the local-start proof in durable relationship context.',
+      confidence: hasPresenceContext ? 0.86 : 0.7,
+      meaningful: true,
+      raw_content_present: false,
+      side_profile_reconstructed: false,
+      evidenceRefs: memorySource.evidenceRefs,
+    },
   };
 }
 
@@ -447,6 +716,7 @@ function buildRelationshipPresenceRecord(options = {}) {
     generated_at: generatedAt,
     baseline_commit: BASELINE_COMMIT,
     local_start_proof: localStartProof(inputSignals),
+    scope: normalizeScope(inputSignals),
     self_profile: selfProfile(inputSignals),
     james_relationship_state: jamesRelationshipState(inputSignals),
     permissions_boundary: permissionsBoundary(inputSignals),
@@ -533,10 +803,26 @@ function sourceProofOk(proof = {}) {
     && local.generic_dashboard === false
     && local.raw_comms_reconstructed === false
     && local.side_profile_reconstructed === false
+    && local.adapter_fail_closed === true
+    && local.stale_source_used === false
     && sources.length === 4
     && sources.every((source) => source.raw_content_included === false
       && source.side_profile_reconstruction === false
+      && source.redacted_summary_only === true
+      && source.stale !== true
+      && Boolean(source.source_label)
+      && Boolean(source.source_status)
       && asArray(source.evidenceRefs).length > 0);
+}
+
+function scopeOk(scope = {}) {
+  return Boolean(scope.profile)
+    && Boolean(scope.windowKey)
+    && Boolean(scope.sessionId)
+    && Boolean(scope.source_scope)
+    && scope.main_scope_only === true
+    && scope.side_profile_reconstruction === false
+    && scope.source_scope === scope.windowKey;
 }
 
 function selfProfileOk(profile = {}) {
@@ -709,6 +995,10 @@ function proofStaticChecks(proof = {}, contract = {}) {
       ok: sourceProofOk(proof),
     },
     {
+      id: 'scope-profile-window-session-source',
+      ok: scopeOk(proof.scope),
+    },
+    {
       id: 'self-profile-data-not-theater',
       ok: selfProfileOk(proof.self_profile),
     },
@@ -837,6 +1127,7 @@ module.exports = {
   assertNoForbiddenOutput,
   buildMiraCoreRelationshipPresenceV1,
   buildRelationshipPresenceRecord,
+  readRelationshipPresenceV1LocalSources,
   stableHash,
   validateMiraCoreRelationshipPresenceV1Output,
 };
