@@ -122,6 +122,15 @@ function sha256(value) {
   return `sha256:${stableHash(value)}`;
 }
 
+function withUpdatedCanonicalHash(value = {}) {
+  const next = clone(value);
+  delete next.canonical_hash;
+  return {
+    ...next,
+    canonical_hash: sha256(next),
+  };
+}
+
 function generatedAtFromOptions(options = {}, inputSignals = {}) {
   const raw = inputSignals.now || options.generatedAt || options.now;
   if (raw) return new Date(raw).toISOString();
@@ -388,7 +397,11 @@ function selfProfileNextState(current, proposal, generatedAt) {
   const existing = current && typeof current === 'object' ? clone(current) : {};
   const previousVersion = Number(existing.version || 0);
   const growthEvents = asArray(existing.growth_events);
-  return {
+  if (growthEvents.some((event) => event.event_id === proposal.proposal_id)) {
+    return withUpdatedCanonicalHash(existing);
+  }
+  return withUpdatedCanonicalHash({
+    ...existing,
     schema: normalizeString(existing.schema, 'squidrun.mira.self_profile.v0'),
     version: previousVersion + 1,
     name: normalizeString(existing.name, 'Mira'),
@@ -420,13 +433,16 @@ function selfProfileNextState(current, proposal, generatedAt) {
         evidenceRefs: clone(proposal.reflection.evidenceRefs),
       },
     ],
-  };
+  });
 }
 
 function relationshipStateNextState(current, proposal, generatedAt) {
   const existing = current && typeof current === 'object' ? clone(current) : {};
   const previousVersion = Number(existing.version || 0);
   const growthEvents = asArray(existing.growth_events);
+  if (growthEvents.some((event) => event.event_id === proposal.proposal_id)) {
+    return withUpdatedCanonicalHash(existing);
+  }
   const section = (key, summary, confidence) => ({
     label: key,
     summary,
@@ -434,7 +450,8 @@ function relationshipStateNextState(current, proposal, generatedAt) {
     source_label: 'mira_growth_loop_v0',
     evidenceRefs: clone(proposal.reflection.evidenceRefs),
   });
-  return {
+  return withUpdatedCanonicalHash({
+    ...existing,
     schema: normalizeString(existing.schema, 'squidrun.james_relationship_state.v0'),
     version: previousVersion + 1,
     user_name: 'James',
@@ -493,7 +510,7 @@ function relationshipStateNextState(current, proposal, generatedAt) {
       },
     ],
     evidenceRefs: clone(proposal.reflection.evidenceRefs),
-  };
+  });
 }
 
 function normalizeConsequences(inputSignals = {}, proposalId = 'growth-loop-v0') {
@@ -532,7 +549,11 @@ function normalizeConsequences(inputSignals = {}, proposalId = 'growth-loop-v0')
 
 function buildProposal(inputSignals, generatedAt) {
   const reflection = normalizeReflection(inputSignals);
-  const proposalId = `growth-loop-v0:${stableHash({
+  const pinnedProposalId = normalizeString(
+    inputSignals.proposalId || inputSignals.proposal_id || inputSignals.eventId || inputSignals.event_id,
+    '',
+  );
+  const proposalId = pinnedProposalId || `growth-loop-v0:${stableHash({
     generatedAt,
     reflection,
     scope: inputSignals.profile || inputSignals.profileName || 'main',
@@ -553,8 +574,29 @@ function buildProposal(inputSignals, generatedAt) {
   };
 }
 
-function buildAuditRecord(growth, generatedAt) {
+function growthRecordMetadata(artifactId, growth, generatedAt) {
   return {
+    artifact_id: artifactId,
+    generated_at: generatedAt,
+    scope: clone(growth.scope),
+    profile: growth.scope.profile,
+    window: growth.scope.windowKey,
+    session: growth.scope.sessionId,
+    device: growth.scope.deviceId,
+    source_scope: growth.scope.source_scope,
+    proposal_id: growth.proposal.proposal_id,
+    provenance: {
+      source_label: 'mira_growth_loop_v0',
+      raw_content_included: false,
+      redacted_summary_only: true,
+      evidenceRefs: clone(growth.proposal.evidenceRefs),
+    },
+  };
+}
+
+function buildAuditRecord(growth, generatedAt) {
+  return withUpdatedCanonicalHash({
+    ...growthRecordMetadata('growth_audit', growth, generatedAt),
     audit_id: `growth-audit:${stableHash({
       proposal: growth.proposal.proposal_id,
       before: growth.artifacts.self_profile.before_hash,
@@ -565,6 +607,7 @@ function buildAuditRecord(growth, generatedAt) {
     actor: 'local_builder_cli_or_module',
     scope: clone(growth.scope),
     append_only: true,
+    total_drift_points: 0,
     raw_content_included: false,
     redacted_summary_only: true,
     before_hashes: {
@@ -578,7 +621,7 @@ function buildAuditRecord(growth, generatedAt) {
     reason_count: growth.proposal.reasons.length,
     consequence_count: growth.consequence_tracking.length,
     evidenceRefs: [evidenceRef('audit', growth.proposal.proposal_id)],
-  };
+  });
 }
 
 function buildRollbackRecord(growth, generatedAt) {
@@ -1005,6 +1048,15 @@ function boundaryOk(value = {}) {
 
 function actionResultOk(action = {}, growth = {}) {
   if (growth.proposal?.execution_requested === true) {
+    if (action.decision === 'already_applied_noop') {
+      return action.mode === 'apply_completed'
+        && action.applied === false
+        && action.write_count === 0
+        && action.atomic_rename_count === 0
+        && action.append_count === 0
+        && asArray(action.written_paths).length === 0
+        && action.replay_event_id === growth.proposal?.proposal_id;
+    }
     return ['applied_local_bounded_writes', 'blocked_no_writes'].includes(action.decision)
       && (action.applied === true
         ? action.write_count === 4
@@ -1141,7 +1193,9 @@ function buildValidationReport(growth = {}, contract = {}) {
     baseline_commit: BASELINE_COMMIT,
     decision: failed.length === 0 && !applyBlocked ? 'accepted' : 'blocked',
     status: failed.length === 0 && !applyBlocked ? (
-      growth.action_result?.applied === true
+      growth.action_result?.decision === 'already_applied_noop'
+        ? 'local_growth_already_applied_noop'
+        : growth.action_result?.applied === true
         ? 'local_growth_applied_bounded'
         : 'local_growth_proposal_validated_no_writes'
     ) : (applyBlocked ? 'local_growth_apply_blocked_no_writes' : 'growth_loop_contract_failed'),
@@ -1165,6 +1219,44 @@ function writeJsonAtomic(filePath, value) {
 function appendJsonLine(filePath, value) {
   ensureParentDir(filePath);
   fs.appendFileSync(filePath, `${JSON.stringify(value)}\n`, { encoding: 'utf8', flag: 'a' });
+}
+
+function readJsonlEntries(projectRoot, id) {
+  const relativePath = artifactPath(id);
+  const fullPath = resolveArtifactPath(projectRoot, relativePath);
+  const read = readTextFile(fullPath, 60000);
+  if (!read.ok || !read.text.trim()) return [];
+  return read.text.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function auditEntryMatchesProposal(entry = {}, proposalId) {
+  return entry.proposal_id === proposalId
+    || asArray(entry.evidenceRefs).some((ref) => ref.eventId === `audit:${proposalId}`);
+}
+
+function growthEventPresence(projectRoot, proposalId) {
+  const self = readJsonArtifact(projectRoot, 'self_profile');
+  const relationship = readJsonArtifact(projectRoot, 'relationship_state');
+  let historyEntries = [];
+  let auditEntries = [];
+  try {
+    historyEntries = readJsonlEntries(projectRoot, 'history_ledger');
+    auditEntries = readJsonlEntries(projectRoot, 'audit_ledger');
+  } catch {
+    historyEntries = [];
+    auditEntries = [];
+  }
+  const presence = {
+    self_profile: asArray(self.value?.growth_events).some((event) => event.event_id === proposalId),
+    relationship_state: asArray(relationship.value?.growth_events).some((event) => event.event_id === proposalId),
+    history_ledger: historyEntries.some((entry) => entry.event_id === proposalId),
+    audit_ledger: auditEntries.some((entry) => auditEntryMatchesProposal(entry, proposalId)),
+  };
+  return {
+    ...presence,
+    complete: Object.values(presence).every(Boolean),
+    partial: Object.values(presence).some(Boolean) && !Object.values(presence).every(Boolean),
+  };
 }
 
 function checkBeforeHash(projectRoot, descriptor) {
@@ -1192,6 +1284,29 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
       side_effect_result: sideEffectResult(blocked),
     };
   };
+  const noopAlreadyApplied = () => {
+    const action = {
+      mode: 'apply_completed',
+      applied: false,
+      decision: 'already_applied_noop',
+      write_count: 0,
+      atomic_rename_count: 0,
+      append_count: 0,
+      written_paths: [],
+      blocked_because: null,
+      replay_event_id: growth.proposal?.proposal_id || null,
+    };
+    return {
+      ...growth,
+      proposal: {
+        ...growth.proposal,
+        status: 'already_applied_noop',
+        execution_requested: true,
+      },
+      action_result: action,
+      side_effect_result: sideEffectResult(action),
+    };
+  };
   const permissions = readJsonArtifact(projectRoot, 'permissions');
   if (!durablePermissionsAllowLocalWrites({ permissions })) {
     return blockNoWrites('durable_permissions_missing_invalid_or_false');
@@ -1206,6 +1321,14 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
     return blockNoWrites(`preflight_failed:${failed.map((check) => check.id).join(',')}`);
   }
   try {
+    const eventPresence = growthEventPresence(projectRoot, growth.proposal.proposal_id);
+    if (eventPresence.complete) {
+      return noopAlreadyApplied();
+    }
+    if (eventPresence.partial) {
+      return blockNoWrites('partial_same_event_state_present');
+    }
+
     for (const id of ['self_profile', 'relationship_state']) {
       if (!checkBeforeHash(projectRoot, growth.artifacts[id])) {
         return blockNoWrites(`before_hash_or_version_mismatch:${id}`);
@@ -1218,8 +1341,10 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
     const auditPath = resolveArtifactPath(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger);
     writeJsonAtomic(selfPath, growth.proposed_artifact_states.self_profile);
     writeJsonAtomic(relationshipPath, growth.proposed_artifact_states.relationship_state);
-    appendJsonLine(historyPath, {
+    appendJsonLine(historyPath, withUpdatedCanonicalHash({
+      ...growthRecordMetadata('growth_history', growth, growth.generated_at),
       schema: 'squidrun.mira_core.growth_history_event.v0',
+      version: 1,
       event_id: growth.proposal.proposal_id,
       created_at: growth.generated_at,
       scope: growth.scope,
@@ -1227,9 +1352,10 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
       reasons: growth.proposal.reasons,
       consequences: growth.consequence_tracking,
       rollback_id: growth.rollback_record.rollback_id,
+      total_drift_points: 0,
       raw_content_included: false,
       redacted_summary_only: true,
-    });
+    }));
     appendJsonLine(auditPath, growth.audit_record);
     const action = {
       mode: 'apply_completed',
@@ -1246,6 +1372,7 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
       proposal: {
         ...growth.proposal,
         status: 'applied_local_bounded',
+        execution_requested: true,
       },
       action_result: action,
       side_effect_result: sideEffectResult(action),
@@ -1312,7 +1439,7 @@ function validateMiraCoreGrowthLoopV0Output(output = {}, contract = {}) {
     {
       id: 'validation-report-consistent',
       ok: report.decision === 'accepted'
-        && ['local_growth_applied_bounded', 'local_growth_proposal_validated_no_writes'].includes(report.status)
+        && ['local_growth_applied_bounded', 'local_growth_proposal_validated_no_writes', 'local_growth_already_applied_noop'].includes(report.status)
         && asArray(report.reasons).length === 0,
     },
   ];
