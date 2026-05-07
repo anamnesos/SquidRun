@@ -324,6 +324,47 @@ describe('mira core Growth Loop v0 phase 70', () => {
     expect(readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger).filter((entry) => entry.proposal_id === pinned)).toHaveLength(1);
   });
 
+  test('realpath lstat safety rejects junction or symlink escape before writes', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+    const knowledgeDir = knowledgePath(projectRoot, 'workspace/knowledge');
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+    const originalLstat = fs.lstatSync;
+    const lstatSpy = jest.spyOn(fs, 'lstatSync').mockImplementation((targetPath) => {
+      if (path.resolve(String(targetPath)) === path.resolve(knowledgeDir)) {
+        return { isSymbolicLink: () => true };
+      }
+      return originalLstat.call(fs, targetPath);
+    });
+
+    let output;
+    try {
+      output = build(projectRoot, {
+        proposalId: 'growth-loop-v0:path-safety-regression',
+      }, { apply: true });
+    } finally {
+      lstatSpy.mockRestore();
+    }
+
+    expect(report(output).decision).toBe('blocked');
+    expect(growth(output).proposal.provenance.loaded_sources.every((source) => source.loaded === false)).toBe(true);
+    expect(growth(output).proposal.provenance.loaded_sources.every((source) => source.path_safe === false)).toBe(true);
+    expect(growth(output).action_result).toEqual(expect.objectContaining({
+      mode: 'apply_blocked',
+      applied: false,
+      decision: 'blocked_no_writes',
+      write_count: 0,
+      atomic_rename_count: 0,
+      append_count: 0,
+      written_paths: [],
+      blocked_because: 'unsafe_artifact_path:self_profile:symlink_or_junction_component:workspace/knowledge',
+    }));
+    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile).version).toBe(1);
+    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state).version).toBe(1);
+    expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger))).toBe(false);
+    expect(fs.existsSync(knowledgePath(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger))).toBe(false);
+  });
+
   test('empty projectRoot rejects generic bootstrap growth and performs no writes', () => {
     const projectRoot = tempProject();
 

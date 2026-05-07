@@ -167,19 +167,78 @@ function artifactPath(id) {
   return NAMED_ARTIFACT_PATHS[id];
 }
 
-function resolveArtifactPath(projectRoot, relativePath) {
+function pathIsWithin(root, target) {
+  const normalizedRoot = path.resolve(root);
+  const normalizedTarget = path.resolve(target);
+  const prefix = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(prefix);
+}
+
+function realPathIsWithin(rootRealPath, targetRealPath) {
+  const normalizedRoot = path.resolve(rootRealPath);
+  const normalizedTarget = path.resolve(targetRealPath);
+  const prefix = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(prefix);
+}
+
+function realpathNative(filePath) {
+  return fs.realpathSync.native ? fs.realpathSync.native(filePath) : fs.realpathSync(filePath);
+}
+
+function artifactPathResult(projectRoot, relativePath) {
   const normalized = normalizeRelativePath(relativePath);
   const allowed = Object.values(NAMED_ARTIFACT_PATHS).includes(normalized);
   if (!allowed) {
-    throw new Error(`growth_loop_v0_disallowed_artifact_path:${normalized}`);
+    return { ok: false, reason: `disallowed_artifact_path:${normalized}`, normalized, fullPath: null };
   }
   const fullPath = path.resolve(projectRoot, normalized);
   const root = path.resolve(projectRoot);
-  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (fullPath !== root && !fullPath.startsWith(prefix)) {
-    throw new Error(`growth_loop_v0_path_escape:${normalized}`);
+  if (!pathIsWithin(root, fullPath)) {
+    return { ok: false, reason: `lexical_path_escape:${normalized}`, normalized, fullPath };
   }
-  return fullPath;
+  try {
+    const rootRealPath = realpathNative(root);
+    if (!realPathIsWithin(rootRealPath, rootRealPath)) {
+      return { ok: false, reason: 'project_root_realpath_invalid', normalized, fullPath, rootRealPath };
+    }
+    const relativeParts = normalized.split('/').filter(Boolean);
+    let current = root;
+    for (const part of relativeParts) {
+      current = path.join(current, part);
+      if (!fs.existsSync(current)) break;
+      const stats = fs.lstatSync(current);
+      if (stats.isSymbolicLink()) {
+        return {
+          ok: false,
+          reason: `symlink_or_junction_component:${path.relative(root, current).replace(/\\/g, '/')}`,
+          normalized,
+          fullPath,
+        };
+      }
+      const currentRealPath = realpathNative(current);
+      if (!realPathIsWithin(rootRealPath, currentRealPath)) {
+        return {
+          ok: false,
+          reason: `realpath_escape:${path.relative(root, current).replace(/\\/g, '/')}`,
+          normalized,
+          fullPath,
+          rootRealPath,
+          currentRealPath,
+        };
+      }
+    }
+    return { ok: true, reason: null, normalized, fullPath, rootRealPath };
+  } catch (err) {
+    return { ok: false, reason: `realpath_check_failed:${err.message}`, normalized, fullPath };
+  }
+}
+
+function resolveArtifactPath(projectRoot, relativePath) {
+  const result = artifactPathResult(projectRoot, relativePath);
+  if (!result.ok) {
+    throw new Error(`growth_loop_v0_unsafe_artifact_path:${result.reason}`);
+  }
+  return result.fullPath;
 }
 
 function readTextFile(filePath, maxBytes = 12000) {
@@ -202,7 +261,22 @@ function readTextFile(filePath, maxBytes = 12000) {
 
 function readJsonArtifact(projectRoot, id) {
   const relativePath = artifactPath(id);
-  const fullPath = resolveArtifactPath(projectRoot, relativePath);
+  const pathResult = artifactPathResult(projectRoot, relativePath);
+  const fullPath = pathResult.fullPath || path.resolve(projectRoot, relativePath);
+  if (!pathResult.ok) {
+    return {
+      id,
+      relativePath,
+      fullPath,
+      exists: false,
+      value: null,
+      version: 0,
+      hash: sha256(null),
+      read_status: `unsafe_path:${pathResult.reason}`,
+      path_safe: false,
+      path_safety_reason: pathResult.reason,
+    };
+  }
   const read = readTextFile(fullPath);
   if (!read.ok) {
     return {
@@ -214,6 +288,8 @@ function readJsonArtifact(projectRoot, id) {
       version: 0,
       hash: sha256(null),
       read_status: read.error,
+      path_safe: true,
+      path_safety_reason: null,
     };
   }
   try {
@@ -227,6 +303,8 @@ function readJsonArtifact(projectRoot, id) {
       version: Number(value.version || 0),
       hash: sha256(value),
       read_status: 'loaded_json',
+      path_safe: true,
+      path_safety_reason: null,
     };
   } catch (err) {
     return {
@@ -238,6 +316,8 @@ function readJsonArtifact(projectRoot, id) {
       version: 0,
       hash: sha256(read.text),
       read_status: `invalid_json:${err.message}`,
+      path_safe: true,
+      path_safety_reason: null,
     };
   }
 }
@@ -312,6 +392,8 @@ function normalizeProvenance(inputSignals = {}, artifacts = {}) {
       loaded: artifact.exists === true && artifact.value !== null,
       before_hash: artifact.hash,
       before_version: artifact.version,
+      path_safe: artifact.path_safe === true,
+      path_safety_reason: artifact.path_safety_reason || null,
       raw_content_included: false,
       redacted_summary_only: true,
     }));
@@ -917,6 +999,7 @@ function provenanceOk(provenance = {}, scope = {}) {
     && loaded.length === 3
     && loaded.every((source) => source.loaded === true
       && source.source_status === 'loaded_json'
+      && source.path_safe === true
       && Object.values(NAMED_ARTIFACT_PATHS).includes(source.path)
       && source.raw_content_included === false
       && source.redacted_summary_only === true
@@ -1223,10 +1306,26 @@ function appendJsonLine(filePath, value) {
 
 function readJsonlEntries(projectRoot, id) {
   const relativePath = artifactPath(id);
-  const fullPath = resolveArtifactPath(projectRoot, relativePath);
+  const pathResult = artifactPathResult(projectRoot, relativePath);
+  if (!pathResult.ok) {
+    throw new Error(`unsafe_path:${pathResult.reason}`);
+  }
+  const fullPath = pathResult.fullPath;
   const read = readTextFile(fullPath, 60000);
   if (!read.ok || !read.text.trim()) return [];
   return read.text.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function growthArtifactPathSafety(projectRoot) {
+  return Object.entries(NAMED_ARTIFACT_PATHS).map(([id, relativePath]) => {
+    const result = artifactPathResult(projectRoot, relativePath);
+    return {
+      artifact_id: id,
+      path: relativePath,
+      ok: result.ok === true,
+      reason: result.reason,
+    };
+  });
 }
 
 function auditEntryMatchesProposal(entry = {}, proposalId) {
@@ -1307,6 +1406,11 @@ function applyMiraCoreGrowthLoopV0Record(growth = {}, options = {}) {
       side_effect_result: sideEffectResult(action),
     };
   };
+  const pathSafety = growthArtifactPathSafety(projectRoot);
+  const unsafePath = pathSafety.find((entry) => entry.ok !== true);
+  if (unsafePath) {
+    return blockNoWrites(`unsafe_artifact_path:${unsafePath.artifact_id}:${unsafePath.reason}`);
+  }
   const permissions = readJsonArtifact(projectRoot, 'permissions');
   if (!durablePermissionsAllowLocalWrites({ permissions })) {
     return blockNoWrites('durable_permissions_missing_invalid_or_false');
