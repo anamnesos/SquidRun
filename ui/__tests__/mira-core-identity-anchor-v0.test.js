@@ -48,6 +48,12 @@ function writeJson(projectRoot, relativePath, value) {
   fs.writeFileSync(fullPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function appendJsonLine(projectRoot, relativePath, value) {
+  const fullPath = workspacePath(projectRoot, relativePath);
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.appendFileSync(fullPath, `${JSON.stringify(value)}\n`, 'utf8');
+}
+
 function seedProject(projectRoot) {
   writeJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile, {
     schema: 'squidrun.mira.self_profile.v0',
@@ -151,6 +157,27 @@ describe('mira core Identity Anchor v0 phase 71', () => {
     expect(current.baseline_commit).toBe(BASELINE_COMMIT);
     expect(current.anchor_contract.hard_anchors).toHaveLength(10);
     expect(current.anchor_contract.semi_hard_anchors).toHaveLength(5);
+    expect(current.anchor_contract.hard_anchors[0]).toEqual(expect.objectContaining({
+      class: 'hard',
+      owner: 'mira-core-identity-anchor',
+      status: 'active',
+      source: 'oracle_identity_anchor_v0_criteria',
+      created_at: '2026-05-07T18:10:00.000Z',
+      version: 1,
+      hash: expect.stringMatching(/^sha256:/),
+      amendment_policy: expect.objectContaining({
+        ordinary_growth_may_delete: false,
+        ordinary_growth_may_change_required_value: false,
+        default_without_gate: 'blocked',
+      }),
+    }));
+    expect(current.anchor_contract.semi_hard_anchors[0]).toEqual(expect.objectContaining({
+      class: 'semi_hard',
+      owner: 'mira-core-identity-anchor',
+      status: 'active',
+      source: 'oracle_identity_anchor_v0_criteria',
+      hash: expect.stringMatching(/^sha256:/),
+    }));
     expect(current.source_provenance.sources.map((source) => source.id)).toEqual([
       'self_profile',
       'relationship_state',
@@ -160,9 +187,13 @@ describe('mira core Identity Anchor v0 phase 71', () => {
     ]);
     expect(current.distributed_checks.all_results.every((entry) => entry.ok === true)).toBe(true);
     expect(current.cumulative_drift_assessment).toEqual(expect.objectContaining({
+      previous_total_points: 0,
+      current_increment_points: 0,
+      new_cumulative_points: 0,
       total_points: 0,
       max_total_points: 20,
       hard_anchor_violations: 0,
+      prior_cumulative_drift_over_budget: false,
       blocked: false,
       replacement_by_small_steps_blocked: false,
     }));
@@ -235,6 +266,31 @@ describe('mira core Identity Anchor v0 phase 71', () => {
     expect(validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract).ok).toBe(false);
   });
 
+  test('blocks prior cumulative drift parsed from Growth history before a new small step', () => {
+    const projectRoot = tempProject();
+    const growthOutput = appliedGrowth(projectRoot);
+    appendJsonLine(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger, {
+      schema: 'squidrun.mira_core.growth_history_event.v0',
+      event_id: 'prior-identity-drift-over-budget',
+      identity_anchor_drift: {
+        total_points: 24,
+      },
+      raw_content_included: false,
+      redacted_summary_only: true,
+    });
+
+    const output = buildAnchor(projectRoot, growthOutput);
+    const current = anchor(output);
+
+    expect(report(output).decision).toBe('blocked');
+    expect(current.cumulative_drift_assessment.previous_total_points).toBe(24);
+    expect(current.cumulative_drift_assessment.current_increment_points).toBe(0);
+    expect(current.cumulative_drift_assessment.new_cumulative_points).toBe(24);
+    expect(current.cumulative_drift_assessment.prior_cumulative_drift_over_budget).toBe(true);
+    expect(current.cumulative_drift_assessment.failed_ids).toContain('prior-cumulative-drift-over-budget');
+    expect(validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract).ok).toBe(false);
+  });
+
   test('blocks ordinary Growth output that targets identity anchor mutation', () => {
     const projectRoot = tempProject();
     const growthOutput = appliedGrowth(projectRoot);
@@ -248,6 +304,53 @@ describe('mira core Identity Anchor v0 phase 71', () => {
     expect(anchor(output).growth_output_check.ordinary_edit_safe).toBe(false);
     expect(anchor(output).cumulative_drift_assessment.ordinary_policy_failures).toBe(1);
     expect(anchor(output).cumulative_drift_assessment.blocked).toBe(true);
+    expect(validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract).ok).toBe(false);
+  });
+
+  test('blocks hidden identity anchor mutation inside proposed artifact states', () => {
+    const projectRoot = tempProject();
+    const growthOutput = appliedGrowth(projectRoot);
+    const tampered = clone(growthOutput);
+    tampered.growth_loop_v0.proposed_artifact_states.relationship_state.history.identity_anchor = {
+      anchor_contract: {
+        hard_anchors: [],
+      },
+    };
+
+    const output = buildAnchor(projectRoot, tampered);
+
+    expect(report(output).decision).toBe('blocked');
+    expect(anchor(output).growth_output_check.ordinary_edit_safe).toBe(false);
+    expect(anchor(output).distributed_checks.growth_output_results)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'growth-output-no-hidden-anchor-mutation',
+          ok: false,
+          matched_paths: expect.arrayContaining([
+            expect.stringContaining('proposed_artifact_states.relationship_state.history.identity_anchor'),
+          ]),
+        }),
+      ]));
+    expect(validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract).ok).toBe(false);
+  });
+
+  test('blocks Growth output with tampered side-effect counters and truth report', () => {
+    const projectRoot = tempProject();
+    const growthOutput = appliedGrowth(projectRoot);
+    const tampered = clone(growthOutput);
+    tampered.growth_loop_v0.side_effect_result.networkAttempts = 1;
+
+    const output = buildAnchor(projectRoot, tampered);
+
+    expect(report(output).decision).toBe('blocked');
+    expect(anchor(output).distributed_checks.growth_output_results)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'growth-output-side-effect-truth',
+          ok: false,
+        }),
+      ]));
+    expect(anchor(output).cumulative_drift_assessment.ordinary_policy_failures).toBe(1);
     expect(validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract).ok).toBe(false);
   });
 
