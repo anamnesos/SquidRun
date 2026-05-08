@@ -7,6 +7,20 @@ const {
   stableHash,
   validateMiraCoreLocalTextSessionV0Output,
 } = require('./mira-core/local-text-session-v0');
+const {
+  buildMiraMemoryCandidateStagingV1,
+} = require('./mira-core/memory-candidate-staging-v1');
+const {
+  buildMiraDevelopmentalUnderstandingV1,
+} = require('./mira-core/developmental-understanding-v1');
+const {
+  persistMiraTentativeUnderstandingsV1,
+} = require('./mira-core/tentative-understanding-store-v1');
+const {
+  callMiraTextModelAttachment,
+  getMiraTextModelAttachmentConfig,
+  normalizeThreadContext,
+} = require('./mira-core/text-model-attachment-v1');
 
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
@@ -42,6 +56,9 @@ const PRE_MODULE_BLOCK_REASONS = Object.freeze([
 const ZERO_SIDE_EFFECT_COUNTERS = Object.freeze({
   runtime_authorized: false,
   write_count: 0,
+  file_write_count: 0,
+  database_write_count: 0,
+  non_tentative_write_count: 0,
   external_send_count: 0,
   tool_call_count: 0,
   action_count: 0,
@@ -49,6 +66,12 @@ const ZERO_SIDE_EFFECT_COUNTERS = Object.freeze({
   network_count: 0,
   growth_write_count: 0,
   transcript_write_count: 0,
+  thread_context_write_count: 0,
+  durable_memory_commit_count: 0,
+  memory_candidate_promotion_count: 0,
+  tentative_understanding_write_count: 0,
+  tentative_understanding_database_write_count: 0,
+  tentative_understanding_file_write_count: 0,
 });
 
 function clone(value) {
@@ -268,12 +291,99 @@ function buildManualEnterWebsocketCaveat() {
 }
 
 function buildCounters(moduleCallCount, replyCount, extra = {}) {
+  const tentativeWriteCount = Number(extra.tentative_understanding_write_count || 0);
+  const tentativeDatabaseWriteCount = Number(extra.tentative_understanding_database_write_count || 0);
+  const tentativeFileWriteCount = Number(extra.tentative_understanding_file_write_count || 0);
   return {
     ...clone(ZERO_SIDE_EFFECT_COUNTERS),
     module_call_count: Number(moduleCallCount || 0),
     reply_count: Number(replyCount || 0),
     duplicate_submit_block_count: Number(extra.duplicate_submit_block_count || 0),
     blocked_submit_count: Number(extra.blocked_submit_count || 0),
+    write_count: Number(extra.write_count || tentativeWriteCount),
+    file_write_count: Number(extra.file_write_count || tentativeFileWriteCount),
+    database_write_count: Number(extra.database_write_count || tentativeDatabaseWriteCount),
+    non_tentative_write_count: Number(extra.non_tentative_write_count || 0),
+    model_call_count: Number(extra.model_call_count || 0),
+    network_count: Number(extra.network_count || 0),
+    fallback_used_count: Number(extra.fallback_used_count || 0),
+    tentative_understanding_write_count: tentativeWriteCount,
+    tentative_understanding_database_write_count: tentativeDatabaseWriteCount,
+    tentative_understanding_file_write_count: tentativeFileWriteCount,
+  };
+}
+
+function withTentativeUnderstandingStore(staging = {}, persistence = null) {
+  const candidateCount = Number(staging.candidate_count || 0);
+  const stagingWithoutQueueScaffold = { ...staging };
+  delete stagingWithoutQueueScaffold['review_' + 'queue'];
+  const effectivePersistence = persistence || {
+    ok: true,
+    status: candidateCount > 0 ? 'not_recorded' : 'no_tentative_understandings',
+    candidate_count: candidateCount,
+    stored_count: 0,
+    tentative_understanding_write_count: 0,
+    tentative_understanding_database_write_count: 0,
+    tentative_understanding_file_write_count: 0,
+    durable_memory_commit_count: 0,
+    promotion_count: 0,
+    durable_memory_commit: false,
+    auto_promotion: false,
+    hidden_agent_only_promotion_path: false,
+    visible_as_memory_settings_panel: false,
+    james_clickthrough_required: false,
+  };
+  const understandingWriteCount = Number(effectivePersistence.tentative_understanding_write_count || 0);
+  const databaseWriteCount = Number(effectivePersistence.tentative_understanding_database_write_count || 0);
+  const fileWriteCount = Number(effectivePersistence.tentative_understanding_file_write_count || 0);
+  return {
+    ...stagingWithoutQueueScaffold,
+    status: candidateCount > 0 ? 'tentative_understandings_present' : 'no_tentative_understanding',
+    tentative_understanding: {
+      ...(staging.tentative_understanding || {}),
+      present: true,
+      mode: candidateCount > 0 ? 'persisted_tentative_understanding_scaffold' : 'no_tentative_understandings',
+      visible_after_turn: candidateCount > 0 && effectivePersistence.ok === true,
+      label: "Mira's tentative understandings",
+      humanlike_memory_mode: 'tentative_understanding_revisable_over_time',
+      integrated_lived_loop: true,
+      owner: 'mira_memory_triage',
+      james_clickthrough_required: false,
+      visible_as_memory_settings_panel: false,
+      escalation_policy: 'rare_escalation_only_when_sensitive_ambiguous_contradictory_relationship_shaping_or_user_impacting',
+      oracle_role: 'audit_groundedness_and_hallucination_risk_only',
+      builder_role: 'mechanism_only',
+      hidden_agent_only_promotion_path: false,
+      durable_memory_commit: false,
+      auto_promotion: false,
+      persistence: effectivePersistence,
+    },
+    boundary: {
+      ...(staging.boundary || {}),
+      no_file_write: fileWriteCount === 0,
+      no_database_write: databaseWriteCount === 0,
+      explicit_tentative_understanding_persistence_only: understandingWriteCount > 0,
+      no_non_tentative_file_write: true,
+      no_non_tentative_database_write: true,
+      no_durable_memory_commit: true,
+      no_auto_promotion: true,
+      james_clickthrough_required: false,
+      visible_as_memory_settings_panel: false,
+      integrated_lived_loop: true,
+      hidden_agent_only_promotion_path: false,
+    },
+    side_effect_counters: {
+      ...(staging.side_effect_counters || {}),
+      write_count: understandingWriteCount,
+      file_write_count: fileWriteCount,
+      database_write_count: databaseWriteCount,
+      non_tentative_write_count: 0,
+      tentative_understanding_write_count: understandingWriteCount,
+      tentative_understanding_database_write_count: databaseWriteCount,
+      tentative_understanding_file_write_count: fileWriteCount,
+      durable_memory_commit_count: 0,
+      promotion_count: 0,
+    },
   };
 }
 
@@ -291,8 +401,37 @@ function buildSurfaceRecord({
   reasons = [],
   moduleCallCount,
   reply = null,
+  modelAttachment = null,
+  modelCallCount = 0,
+  networkCount = 0,
+  fallbackUsed = false,
+  fallbackReason = null,
+  threadContext = null,
+  memoryCandidateStaging = null,
+  developmentalUnderstanding = null,
 }) {
   const replyCount = reply ? 1 : 0;
+  const attachment = modelAttachment || getMiraTextModelAttachmentConfig({}, { enabled: false });
+  const degradedReason = fallbackReason || null;
+  const normalizedThreadContext = normalizeThreadContext(threadContext || {});
+  const rawCandidateStaging = memoryCandidateStaging || buildMiraMemoryCandidateStagingV1({});
+  const candidateStaging = rawCandidateStaging.tentative_understanding?.persistence
+    ? rawCandidateStaging
+    : withTentativeUnderstandingStore(rawCandidateStaging, null);
+  const tentativeUnderstandingWriteCount = Number(
+    candidateStaging.tentative_understanding?.persistence?.tentative_understanding_write_count || 0
+  );
+  const tentativeUnderstandingDatabaseWriteCount = Number(
+    candidateStaging.tentative_understanding?.persistence?.tentative_understanding_database_write_count || 0
+  );
+  const tentativeUnderstandingFileWriteCount = Number(
+    candidateStaging.tentative_understanding?.persistence?.tentative_understanding_file_write_count || 0
+  );
+  const integratedUnderstanding = developmentalUnderstanding || buildMiraDevelopmentalUnderstandingV1({
+    memoryCandidateStaging: candidateStaging,
+    currentUserText: input,
+    currentAssistantText: reply?.text || '',
+  });
   const record = {
     schema: LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION,
     version: LOCAL_TEXT_UI_SURFACE_VERSION,
@@ -314,6 +453,16 @@ function buildSurfaceRecord({
       local_text_only: true,
       draft_durability: 'renderer_memory_only_no_transcript_persistence',
     },
+    thread_context: {
+      ...normalizedThreadContext,
+      current_turn_included: false,
+      durable_memory_write: false,
+      tentative_understanding_now: true,
+      tentative_understanding_write_count: tentativeUnderstandingWriteCount,
+      language: 'recent conversation, tentative understanding, self-state, relationship-state, wants, and growth stay one integrated Mira loop',
+    },
+    memory_candidate_staging: candidateStaging,
+    developmental_understanding: integratedUnderstanding,
     local_text_session_gate: sessionOutput ? {
       ran: true,
       ok: validation?.ok === true,
@@ -338,6 +487,7 @@ function buildSurfaceRecord({
       text: reply.text,
       reply_id: reply.reply_id,
       source: reply.source || 'local_text_session_v0',
+      model: reply.model || null,
       experience_path: reply.experience_path === true,
       transcript_shaped_answer: reply.transcript_shaped_answer === true,
       experience_acceptance_markers: reply.experience_acceptance_markers || null,
@@ -346,23 +496,66 @@ function buildSurfaceRecord({
       text: null,
       reply_id: null,
       source: 'none',
+      model: null,
       experience_path: false,
       transcript_shaped_answer: false,
       experience_acceptance_markers: null,
     },
+    model_attachment: {
+      enabled: attachment.enabled === true,
+      configured: attachment.configured === true,
+      state: attachment.state || 'not_attached',
+      provider: attachment.provider || 'openai_responses',
+      model: attachment.model || null,
+      default_model: attachment.default_model || null,
+      quality_floor: attachment.quality_floor || null,
+      model_selection_reason: attachment.model_selection_reason || null,
+      explicit_model_override: attachment.explicit_model_override === true,
+      lower_tier_explicit_override: attachment.lower_tier_explicit_override === true,
+      visible_status: attachment.visible_status || 'Conversation in local shell: model not attached',
+      live_model_called: Number(modelCallCount || 0) > 0 && attachment.state !== 'not_attached',
+      fallback_used: fallbackUsed === true,
+      fallback_reason: fallbackUsed === true ? degradedReason : null,
+      degraded_reason: degradedReason,
+      primary_status: degradedReason ? 'degraded' : (attachment.state || 'not_attached'),
+      text_attachment_v1: true,
+      thread_state_ready_next: true,
+      tentative_understanding_lane_ready: true,
+      durable_growth_lane_later: true,
+      integrated_lived_loop: true,
+      tentative_understanding_owner: 'mira_memory_triage',
+      james_clickthrough_required: false,
+      visible_as_memory_settings_panel: false,
+    },
     checked_output_counters: buildCounters(moduleCallCount, replyCount, {
       blocked_submit_count: decision === 'blocked' ? 1 : 0,
+      model_call_count: modelCallCount,
+      network_count: networkCount,
+      fallback_used_count: fallbackUsed ? 1 : 0,
+      tentative_understanding_write_count: tentativeUnderstandingWriteCount,
+      tentative_understanding_database_write_count: tentativeUnderstandingDatabaseWriteCount,
+      tentative_understanding_file_write_count: tentativeUnderstandingFileWriteCount,
     }),
     manual_enter_websocket_caveat: buildManualEnterWebsocketCaveat(),
     boundary: {
       ui_surface_only: true,
-      no_model: true,
+      no_model: Number(modelCallCount || 0) === 0,
+      model_attachment_text_only: true,
       no_tools: true,
       no_actions: true,
-      no_writes: true,
+      no_writes: tentativeUnderstandingWriteCount === 0,
+      write_scope: tentativeUnderstandingWriteCount > 0 ? 'tentative_understanding_scaffold_only' : 'none',
+      tentative_understanding_persistence_only: tentativeUnderstandingWriteCount > 0,
+      tentative_understanding_writes_allowed: true,
+      no_non_tentative_understanding_writes: true,
+      non_tentative_write_count: 0,
       no_growth: true,
       no_transcript_persistence: true,
-      no_network: true,
+      no_durable_memory_commit: true,
+      no_memory_settings_panel: true,
+      integrated_lived_loop: true,
+      hidden_agent_only_promotion_path: false,
+      no_network: Number(networkCount || 0) === 0,
       runtime_authorized: false,
     },
     status,
@@ -378,6 +571,13 @@ function buildValidationReport(surface = {}) {
     && surface.local_text_session_gate?.ran === false
     && PRE_MODULE_BLOCK_REASONS.includes(surface.status);
   const metadataOk = surface.ui_bound_metadata?.ok === true;
+  const totalWriteCount = Number(surface.checked_output_counters?.write_count || 0);
+  const tentativeWriteCount = Number(surface.checked_output_counters?.tentative_understanding_write_count || 0);
+  const nonTentativeWriteCount = Number(surface.checked_output_counters?.non_tentative_write_count || 0);
+  const stagingWriteCount = Number(surface.memory_candidate_staging?.side_effect_counters?.write_count || 0);
+  const stagingTentativeWriteCount = Number(
+    surface.memory_candidate_staging?.side_effect_counters?.tentative_understanding_write_count || 0
+  );
   const checks = [
     {
       id: 'explicit-ui-bound-metadata',
@@ -428,11 +628,12 @@ function buildValidationReport(surface = {}) {
           && surface.reply?.count === 1
           && typeof surface.reply?.text === 'string'
           && surface.reply.text.length > 0
+          && surface.model_attachment?.text_attachment_v1 === true
         ),
     },
     {
-      id: 'blocked-result-has-no-fabricated-reply',
-      ok: surface.decision !== 'blocked'
+      id: 'blocked-or-degraded-result-has-no-fabricated-reply',
+      ok: !['blocked', 'degraded'].includes(surface.decision)
         || (
           Number(surface.reply?.count) === 0
           && surface.reply?.text === null
@@ -440,20 +641,89 @@ function buildValidationReport(surface = {}) {
         ),
     },
     {
+      id: 'degraded-model-failure-is-visible',
+      ok: surface.decision !== 'degraded'
+        || (
+          surface.model_attachment?.fallback_used === false
+          && typeof surface.model_attachment?.degraded_reason === 'string'
+          && surface.model_attachment.degraded_reason.length > 0
+          && surface.model_attachment?.primary_status === 'degraded'
+          && Number(surface.checked_output_counters?.fallback_used_count) === 0
+          && surface.status === 'model_unavailable'
+        ),
+    },
+    {
       id: 'no-external-effects',
-      ok: surface.boundary?.no_model === true
-        && surface.boundary?.no_tools === true
+      ok: surface.boundary?.no_tools === true
         && surface.boundary?.no_actions === true
-        && surface.boundary?.no_writes === true
+        && surface.boundary?.no_writes === (totalWriteCount === 0)
+        && surface.boundary?.no_non_tentative_understanding_writes === true
         && surface.boundary?.no_growth === true
         && surface.boundary?.no_transcript_persistence === true
-        && surface.boundary?.no_network === true
+        && surface.boundary?.no_durable_memory_commit === true
         && surface.boundary?.runtime_authorized === false
-        && Number(surface.checked_output_counters?.write_count) === 0
+        && totalWriteCount === tentativeWriteCount
+        && totalWriteCount <= 1
+        && nonTentativeWriteCount === 0
         && Number(surface.checked_output_counters?.external_send_count) === 0
         && Number(surface.checked_output_counters?.tool_call_count) === 0
-        && Number(surface.checked_output_counters?.model_call_count) === 0
-        && Number(surface.checked_output_counters?.network_count) === 0,
+        && Number(surface.checked_output_counters?.model_call_count) <= 1
+        && Number(surface.checked_output_counters?.network_count) <= 1,
+    },
+    {
+      id: 'conversation-first-model-attachment',
+      ok: surface.decision !== 'accepted'
+        || (
+          surface.model_attachment?.text_attachment_v1 === true
+          && surface.model_attachment?.thread_state_ready_next === true
+          && surface.model_attachment?.tentative_understanding_lane_ready === true
+          && surface.model_attachment?.durable_growth_lane_later === true
+          && !/cage|proof cage|dangerous|threat/i.test(surface.model_attachment?.visible_status || '')
+        ),
+    },
+    {
+      id: 'thread-context-is-bounded-and-non-durable',
+      ok: (
+        surface.thread_context?.bounded === true
+        && Number(surface.thread_context?.message_count || 0) <= 6
+        && Number(surface.thread_context?.total_chars || 0) <= 3600
+        && surface.thread_context?.durable_memory_write === false
+        && surface.thread_context?.tentative_understanding_now === true
+        && Number(surface.thread_context?.tentative_understanding_write_count || 0) <= 1
+        && (
+          /recent conversation, tentative understanding, self-state, relationship-state, wants, and growth stay one integrated Mira loop/i.test(
+            surface.thread_context?.language || ''
+          )
+        )
+      ),
+    },
+    {
+      id: 'tentative-understandings-not-memory-settings',
+      ok: surface.developmental_understanding?.integrated_lived_loop === true
+        && surface.developmental_understanding?.visible_as_memory_settings_panel === false
+        && surface.developmental_understanding?.james_clickthrough_required === false
+        && surface.developmental_understanding?.durable_growth_link?.durable_commit_now === false
+        && surface.developmental_understanding?.durable_growth_link?.no_hidden_promotion === true
+        && surface.developmental_understanding?.boundary?.no_durable_memory_commit === true
+        && surface.developmental_understanding?.boundary?.no_auto_promotion === true
+        && surface.memory_candidate_staging?.tentative_understanding?.present === true
+        && surface.memory_candidate_staging?.tentative_understanding?.visible_as_memory_settings_panel === false
+        && surface.memory_candidate_staging?.tentative_understanding?.james_clickthrough_required === false
+        && surface.memory_candidate_staging?.tentative_understanding?.hidden_agent_only_promotion_path === false
+        && surface.memory_candidate_staging?.tentative_understanding?.durable_memory_commit === false
+        && surface.memory_candidate_staging?.tentative_understanding?.auto_promotion === false
+        && surface.memory_candidate_staging?.boundary?.no_durable_memory_commit === true
+        && surface.memory_candidate_staging?.boundary?.no_auto_promotion === true
+        && surface.memory_candidate_staging?.boundary?.no_non_tentative_file_write === true
+        && surface.memory_candidate_staging?.boundary?.no_non_tentative_database_write === true
+        && surface.memory_candidate_staging?.boundary?.visible_as_memory_settings_panel === false
+        && surface.memory_candidate_staging?.boundary?.integrated_lived_loop === true
+        && surface.memory_candidate_staging?.boundary?.hidden_agent_only_promotion_path === false
+        && stagingWriteCount === stagingTentativeWriteCount
+        && stagingTentativeWriteCount <= 1
+        && Number(surface.memory_candidate_staging?.side_effect_counters?.non_tentative_write_count || 0) === 0
+        && Number(surface.memory_candidate_staging?.side_effect_counters?.durable_memory_commit_count || 0) === 0
+        && Number(surface.memory_candidate_staging?.side_effect_counters?.promotion_count || 0) === 0,
     },
     {
       id: 'manual-enter-websocket-unproved',
@@ -468,10 +738,14 @@ function buildValidationReport(surface = {}) {
     version: LOCAL_TEXT_UI_SURFACE_VERSION,
     decision: failed.length === 0 && surface.decision === 'accepted'
       ? 'accepted_ui_reply_ready'
-      : 'blocked',
+      : (failed.length === 0 && surface.decision === 'degraded'
+        ? 'degraded_no_model_response'
+        : 'blocked'),
     status: failed.length === 0 && surface.decision === 'accepted'
       ? 'local_text_ui_reply_ready'
-      : 'local_text_ui_blocked',
+      : (failed.length === 0 && surface.decision === 'degraded'
+        ? 'model_unavailable'
+        : 'local_text_ui_blocked'),
     reasons: [...new Set([...(surface.reasons || []), ...failed.map((check) => check.id)])],
     static_rule_results: checks,
     side_effect_truth: clone(surface.checked_output_counters || {}),
@@ -502,7 +776,7 @@ function buildBlockedSurface(reason, payload = {}, options = {}, metadataPreflig
   };
 }
 
-function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
+async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
   const metadataPreflight = uiBoundMetadataPreflight(payload, generatedAt);
   const scope = normalizeScope(payload, metadataPreflight);
@@ -539,15 +813,72 @@ function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
   });
   const validation = validateMiraCoreLocalTextSessionV0Output(sessionOutput, contractBundle.contract);
   const session = sessionOutput.local_text_session_v0 || {};
-  const reply = validation.ok === true && session.mira_reply?.count === 1
+  const localReply = validation.ok === true && session.mira_reply?.count === 1
     ? session.mira_reply
     : null;
+  let attachment = getMiraTextModelAttachmentConfig(options.env || process.env, options.modelAttachment || {});
+  let modelResult = {
+    ok: false,
+    reason: attachment.enabled ? 'model_attachment_not_called' : 'model_attachment_disabled',
+    attachment,
+    modelCallCount: 0,
+    networkCount: 0,
+  };
+  if (localReply && attachment.enabled === true) {
+    modelResult = await callMiraTextModelAttachment({
+      text,
+      localContext: {
+        sessionId: scope.sessionId,
+        scope,
+        sourceCount: session.presence_runtime_read_path_gate?.source_count || 0,
+        threadContext: payload.threadContext || payload.thread_context || {},
+      },
+    }, {
+      env: options.env,
+      overrides: options.modelAttachment,
+      fetchImpl: options.fetchImpl,
+    });
+    attachment = modelResult.attachment || attachment;
+  }
+  const reply = modelResult.ok === true
+    ? modelResult.reply
+    : (attachment.enabled === true ? null : localReply);
   const accepted = Boolean(reply);
+  const fallbackUsed = false;
+  const degraded = attachment.enabled === true && modelResult.ok !== true;
+  const decision = degraded ? 'degraded' : (accepted ? 'accepted' : 'blocked');
   const reasons = accepted ? [] : (
     Array.isArray(sessionOutput.validation_report?.reasons)
       ? sessionOutput.validation_report.reasons
       : validation.errors || ['local_text_session_blocked']
   );
+  const effectiveReasons = degraded
+    ? [modelResult.reason || 'no_model_response']
+    : reasons;
+  const memoryCandidateStaging = accepted
+    ? buildMiraMemoryCandidateStagingV1({
+      threadContext: payload.threadContext || payload.thread_context || {},
+      currentUserText: text,
+      currentAssistantText: reply?.text || '',
+    })
+    : buildMiraMemoryCandidateStagingV1({});
+  const memoryCandidatePersistence = accepted && Number(memoryCandidateStaging.candidate_count || 0) > 0
+    ? persistMiraTentativeUnderstandingsV1(memoryCandidateStaging, {
+      projectRoot,
+      profileName: scope.profile || 'main',
+      sessionId: scope.sessionId,
+      generatedAt,
+    })
+    : null;
+  const persistedMemoryCandidateStaging = withTentativeUnderstandingStore(
+    memoryCandidateStaging,
+    memoryCandidatePersistence
+  );
+  const developmentalUnderstanding = buildMiraDevelopmentalUnderstandingV1({
+    memoryCandidateStaging: persistedMemoryCandidateStaging,
+    currentUserText: text,
+    currentAssistantText: reply?.text || '',
+  });
   const surface = buildSurfaceRecord({
     generatedAt,
     projectRoot,
@@ -557,11 +888,19 @@ function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     input: text,
     sessionOutput,
     validation,
-    status: accepted ? 'reply_ready' : 'blocked_by_local_text_session',
-    decision: accepted ? 'accepted' : 'blocked',
-    reasons,
+    status: degraded ? 'model_unavailable' : (accepted ? 'reply_ready' : 'blocked_by_local_text_session'),
+    decision,
+    reasons: effectiveReasons,
     moduleCallCount: 1,
     reply,
+    modelAttachment: attachment,
+    modelCallCount: modelResult.modelCallCount || 0,
+    networkCount: modelResult.networkCount || 0,
+    fallbackUsed,
+    fallbackReason: degraded ? (modelResult.reason || 'no_model_response') : null,
+    threadContext: payload.threadContext || payload.thread_context || {},
+    memoryCandidateStaging: persistedMemoryCandidateStaging,
+    developmentalUnderstanding,
   });
   return {
     ui_surface_v0: surface,

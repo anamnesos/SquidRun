@@ -5,8 +5,6 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { getProjectRoot } = require('../config');
 const { DEFAULT_PROFILE, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
-const { resolveDefaultCognitiveMemoryDbPath } = require('../modules/cognitive-memory-store');
-const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capabilities');
 
 const KEY_MODULE_PATHS = Object.freeze({
@@ -97,7 +95,31 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
   }),
 });
 
+const BRIDGE_ENV_KEYS = Object.freeze([
+  'SQUIDRUN_CROSS_DEVICE',
+  'SQUIDRUN_DEVICE_ID',
+  'SQUIDRUN_RELAY_URL',
+  'SQUIDRUN_RELAY_SECRET',
+  'SQUIDRUN_PROFILE',
+]);
+
 let SQLITE_DRIVER = undefined;
+let resolveDefaultCognitiveMemoryDbPathFn = null;
+let runMemoryConsistencyCheckFn = null;
+
+function getResolveDefaultCognitiveMemoryDbPath() {
+  if (!resolveDefaultCognitiveMemoryDbPathFn) {
+    ({ resolveDefaultCognitiveMemoryDbPath: resolveDefaultCognitiveMemoryDbPathFn } = require('../modules/cognitive-memory-store'));
+  }
+  return resolveDefaultCognitiveMemoryDbPathFn;
+}
+
+function getRunMemoryConsistencyCheck() {
+  if (!runMemoryConsistencyCheckFn) {
+    ({ runMemoryConsistencyCheck: runMemoryConsistencyCheckFn } = require('../modules/memory-consistency-check'));
+  }
+  return runMemoryConsistencyCheckFn;
+}
 
 function asPositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -199,6 +221,47 @@ function safeStat(filePath) {
   } catch {
     return null;
   }
+}
+
+function asNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function envFlagTruthy(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on', 'enabled'].includes(normalized);
+}
+
+function parseEnvFile(envPath) {
+  if (!safeStat(envPath)?.isFile()) return {};
+  try {
+    const raw = fs.readFileSync(envPath, 'utf8');
+    const env = {};
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex <= 0) continue;
+      const key = trimmed.slice(0, eqIndex).trim();
+      if (!key) continue;
+      env[key] = trimmed.slice(eqIndex + 1).replace(/^['"]|['"]$/g, '');
+    }
+    return env;
+  } catch {
+    return {};
+  }
+}
+
+function readEffectiveProjectEnv(projectRoot, runtimeEnv = process.env) {
+  const envMap = parseEnvFile(path.join(projectRoot, '.env'));
+  for (const key of BRIDGE_ENV_KEYS) {
+    if (typeof runtimeEnv?.[key] === 'string') {
+      envMap[key] = runtimeEnv[key];
+    }
+  }
+  return envMap;
 }
 
 function walkFiles(rootPath, predicate = null, results = []) {
@@ -457,6 +520,27 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
   };
 }
 
+function buildBridgeSnapshotFromEnv(projectRoot, runtimeEnv = process.env) {
+  const envMap = readEffectiveProjectEnv(projectRoot, runtimeEnv);
+  const relayUrl = asNonEmptyString(envMap.SQUIDRUN_RELAY_URL);
+  const deviceId = asNonEmptyString(envMap.SQUIDRUN_DEVICE_ID);
+  const enabled = envFlagTruthy(envMap.SQUIDRUN_CROSS_DEVICE);
+  return normalizeBridgeSnapshot({
+    enabled,
+    configured: Boolean(relayUrl && deviceId),
+    relayUrl,
+    deviceId,
+    state: enabled ? 'unknown' : null,
+  });
+}
+
+function resolveBridgeSnapshot(projectRoot, options = {}) {
+  if (options.bridgeStatus && typeof options.bridgeStatus === 'object' && !Array.isArray(options.bridgeStatus)) {
+    return normalizeBridgeSnapshot(options.bridgeStatus);
+  }
+  return buildBridgeSnapshotFromEnv(projectRoot, options.env || process.env);
+}
+
 function summarizeMemoryConsistency(result = null) {
   const source = result && typeof result === 'object' && !Array.isArray(result)
     ? result
@@ -506,7 +590,7 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
   }
 
   try {
-    return summarizeMemoryConsistency(runMemoryConsistencyCheck({
+    return summarizeMemoryConsistency(getRunMemoryConsistencyCheck()({
       projectRoot,
       profileName: normalizeProfileName(options.profileName || DEFAULT_PROFILE),
       sampleLimit: Number.isFinite(Number(options.memoryConsistencySampleLimit))
@@ -623,7 +707,7 @@ function createHealthSnapshot(options = {}) {
   const testsRoot = path.join(projectRoot, 'ui', '__tests__');
   const modulesRoot = path.join(projectRoot, 'ui', 'modules');
   const evidenceLedgerDbPath = resolveProfileCoordPath(projectRoot, path.join('runtime', 'evidence-ledger.db'), profileName);
-  const cognitiveMemoryDbPath = resolveDefaultCognitiveMemoryDbPath({ projectRoot, profileName });
+  const cognitiveMemoryDbPath = getResolveDefaultCognitiveMemoryDbPath()({ projectRoot, profileName });
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
     ? options.generatedAt.trim()
@@ -638,7 +722,7 @@ function createHealthSnapshot(options = {}) {
     evidenceLedger: inspectSqliteDb(evidenceLedgerDbPath, ['comms_journal', 'ledger_sessions', 'ledger_decisions']),
     cognitiveMemory: inspectSqliteDb(cognitiveMemoryDbPath, ['nodes', 'memory_pr_queue', 'edges']),
   };
-  const bridge = normalizeBridgeSnapshot(options.bridgeStatus);
+  const bridge = resolveBridgeSnapshot(projectRoot, options);
   const memoryConsistency = inspectMemoryConsistency(projectRoot, { ...options, profileName });
   const systemCapabilities = inspectSystemCapabilities(projectRoot, options);
 
@@ -748,16 +832,92 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   return `${lines.join('\n')}\n`;
 }
 
-function main(argv = process.argv.slice(2)) {
+function renderUsage() {
+  return [
+    'Usage: node ui/scripts/hm-health-snapshot.js [projectRoot] [--profile <name>]',
+    '',
+    'Creates a JSON startup health snapshot for a SquidRun project.',
+    '',
+    'Options:',
+    '  -h, --help          Show this help and exit.',
+    '  --profile <name>    Use a profile-scoped coordination namespace.',
+    '',
+  ].join('\n');
+}
+
+function parseCliArgs(argv = []) {
+  const parsed = {
+    help: false,
+    projectRoot: null,
+    profileName: null,
+    errors: [],
+  };
+  const args = Array.isArray(argv) ? argv : [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = String(args[index] || '').trim();
+    if (!token) continue;
+    if (token === '--help' || token === '-h') {
+      parsed.help = true;
+      continue;
+    }
+    if (token === '--profile') {
+      const next = String(args[index + 1] || '').trim();
+      if (!next || next.startsWith('-')) {
+        parsed.errors.push('--profile requires a profile name.');
+      } else {
+        parsed.profileName = next;
+        index += 1;
+      }
+      continue;
+    }
+    if (token.startsWith('--profile=')) {
+      const value = token.slice('--profile='.length).trim();
+      if (!value) {
+        parsed.errors.push('--profile requires a profile name.');
+      } else {
+        parsed.profileName = value;
+      }
+      continue;
+    }
+    if (token.startsWith('-')) {
+      parsed.errors.push(`Unknown option: ${token}`);
+      continue;
+    }
+    if (!parsed.projectRoot) {
+      parsed.projectRoot = token;
+    } else {
+      parsed.errors.push(`Unexpected argument: ${token}`);
+    }
+  }
+  return parsed;
+}
+
+function main(argv = process.argv.slice(2), io = {}) {
+  const stdout = io.stdout || process.stdout;
+  const stderr = io.stderr || process.stderr;
+  const parsed = parseCliArgs(argv);
+  if (parsed.help) {
+    stdout.write(renderUsage());
+    return 0;
+  }
+  if (parsed.errors.length > 0) {
+    stderr.write(`${parsed.errors.join('\n')}\n\n${renderUsage()}`);
+    return 1;
+  }
   const snapshot = createHealthSnapshot({
-    projectRoot: argv[0] || null,
+    projectRoot: parsed.projectRoot || null,
+    profileName: parsed.profileName || DEFAULT_PROFILE,
   });
-  process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+  stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+  return 0;
 }
 
 if (require.main === module) {
   try {
-    main();
+    const exitCode = main();
+    if (exitCode !== 0) {
+      process.exit(exitCode);
+    }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
     process.exit(1);
@@ -772,12 +932,17 @@ module.exports = {
   countModuleFiles,
   countTestFiles,
   createHealthSnapshot,
+  buildBridgeSnapshotFromEnv,
   getPenaltyPoints,
   inspectSqliteDb,
   listJestTests,
   loadSqliteDriver,
   normalizeProjectRoot,
+  parseCliArgs,
+  readEffectiveProjectEnv,
   renderStartupHealthMarkdown,
+  renderUsage,
   resolveHealthThreshold,
   resolveWindowsCmdPath,
+  main,
 };

@@ -4,153 +4,130 @@ const SERVICE_DEFINITIONS = Object.freeze([
   {
     id: 'renderer',
     label: 'Renderer UI',
-    owner: 'electron-renderer',
+    owner: 'main-process',
+    statusMethod: 'BrowserWindow webContents',
     restartAction: 'reload-renderers',
     requiresMainRestart: false,
     affectsTerminals: false,
-    statusSource: 'renderer-heartbeat',
+    safeRestart: true,
+    userImpact: 'Refreshes visible UI only; terminal agents should remain attached.',
   },
   {
     id: 'main-ipc',
-    label: 'Main IPC',
+    label: 'Main IPC handlers',
     owner: 'electron-main',
-    restartAction: 'restart-app',
+    statusMethod: 'handler-registry',
+    restartAction: 'restart-electron-main',
     requiresMainRestart: true,
     affectsTerminals: false,
-    statusSource: 'app-status',
+    safeRestart: false,
+    userImpact: 'Needed for newly registered main-process handlers.',
   },
   {
     id: 'telegram-poller',
-    label: 'Telegram Poller',
-    owner: 'telegram-service',
+    label: 'Telegram poller',
+    owner: 'transport',
+    statusMethod: 'telegram-poller status',
     restartAction: 'restart-telegram-poller',
     requiresMainRestart: false,
     affectsTerminals: false,
-    statusSource: 'telegram-runtime',
+    safeRestart: true,
+    userImpact: 'Restarts remote message intake without touching panes.',
   },
   {
     id: 'voice-broker',
-    label: 'Voice Broker',
-    owner: 'voice-broker',
-    restartAction: 'hm-voice-broker restart',
+    label: 'Voice broker',
+    owner: 'transport',
+    statusMethod: 'voice-broker:status',
+    restartAction: 'voice-broker:restart',
     requiresMainRestart: false,
     affectsTerminals: false,
-    statusSource: 'voice-broker-status',
+    safeRestart: true,
+    userImpact: 'Restarts voice session service without touching panes.',
   },
   {
     id: 'bridge',
-    label: 'Device Bridge',
-    owner: 'bridge-service',
+    label: 'Cross-device bridge',
+    owner: 'transport',
+    statusMethod: 'bridge status',
     restartAction: 'restart-bridge',
     requiresMainRestart: false,
     affectsTerminals: false,
-    statusSource: 'bridge-runtime',
+    safeRestart: true,
+    userImpact: 'Reconnects remote relay/device presence only.',
   },
   {
     id: 'pane-host',
-    label: 'Pane Host Windows',
-    owner: 'pane-host-manager',
+    label: 'Hidden pane-host windows',
+    owner: 'electron-main',
+    statusMethod: 'paneHost.readyPanes',
     restartAction: 'restart-pane-hosts',
     requiresMainRestart: false,
     affectsTerminals: false,
-    statusSource: 'pane-host-status',
+    safeRestart: false,
+    userImpact: 'Can interrupt injection/ack flow but should not kill terminal PTYs.',
   },
   {
     id: 'terminal-daemon',
-    label: 'Terminal Daemon',
-    owner: 'terminal-daemon',
+    label: 'Terminal daemon',
+    owner: 'pty-runtime',
+    statusMethod: 'daemon terminal snapshot',
     restartAction: 'restart-terminal-daemon',
     requiresMainRestart: false,
     affectsTerminals: true,
-    statusSource: 'daemon-snapshot',
+    safeRestart: false,
+    userImpact: 'High impact; affects all live agent terminal sessions.',
   },
   {
     id: 'memory-workers',
-    label: 'Memory Workers',
+    label: 'Memory workers',
     owner: 'memory-runtime',
+    statusMethod: 'memory consistency / worker heartbeat',
     restartAction: 'restart-memory-workers',
     requiresMainRestart: false,
     affectsTerminals: false,
-    statusSource: 'memory-health',
+    safeRestart: true,
+    userImpact: 'Rebuilds memory/background processing without touching panes.',
   },
 ]);
 
-const VALID_SERVICE_STATES = new Set(['unknown', 'healthy', 'degraded', 'down', 'not_configured']);
-
-function toNonEmptyString(value) {
-  return typeof value === 'string' && value.trim() ? value.trim() : '';
-}
-
-function normalizeServiceState(value) {
-  const normalized = toNonEmptyString(value).toLowerCase();
-  return VALID_SERVICE_STATES.has(normalized) ? normalized : 'unknown';
-}
-
-function normalizeServiceDefinition(definition = {}, status = {}) {
-  const id = toNonEmptyString(definition.id);
+function cloneDefinition(definition, status = null) {
   return {
-    id,
-    label: toNonEmptyString(definition.label) || id,
-    owner: toNonEmptyString(definition.owner) || 'unknown',
-    restartAction: toNonEmptyString(definition.restartAction) || '',
-    requiresMainRestart: Boolean(definition.requiresMainRestart),
-    affectsTerminals: Boolean(definition.affectsTerminals),
-    statusSource: toNonEmptyString(definition.statusSource) || '',
-    state: normalizeServiceState(status.state),
-    detail: toNonEmptyString(status.detail),
-    lastCheckedAtMs: Number.isFinite(Number(status.lastCheckedAtMs)) ? Number(status.lastCheckedAtMs) : 0,
+    ...definition,
+    status,
   };
 }
 
-function buildServiceLifecycleRegistry(options = {}) {
-  const statuses = options.statuses && typeof options.statuses === 'object' ? options.statuses : {};
-  const definitions = Array.isArray(options.definitions) ? options.definitions : SERVICE_DEFINITIONS;
-  return definitions.map((definition) => normalizeServiceDefinition(definition, statuses[definition.id]));
-}
-
-function summarizeServiceLifecycle(registry = []) {
-  const services = Array.isArray(registry) ? registry : buildServiceLifecycleRegistry();
-  const counts = services.reduce((acc, service) => {
-    const state = normalizeServiceState(service.state);
-    acc[state] = (acc[state] || 0) + 1;
-    return acc;
-  }, {});
-  const terminalSensitive = services.filter((service) => service.affectsTerminals).map((service) => service.id);
-  const mainRestartRequired = services.filter((service) => service.requiresMainRestart).map((service) => service.id);
-  return {
-    total: services.length,
-    counts,
-    terminalSensitive,
-    mainRestartRequired,
-    degraded: services.filter((service) => ['degraded', 'down'].includes(normalizeServiceState(service.state))),
+function buildServiceLifecycleSummary(options = {}) {
+  const statusById = options.statusById && typeof options.statusById === 'object'
+    ? options.statusById
+    : {};
+  const services = SERVICE_DEFINITIONS.map((definition) => cloneDefinition(
+    definition,
+    statusById[definition.id] || null
+  ));
+  const totals = {
+    services: services.length,
+    safeRestartCount: services.filter((service) => service.safeRestart).length,
+    mainRestartCount: services.filter((service) => service.requiresMainRestart).length,
+    terminalImpactCount: services.filter((service) => service.affectsTerminals).length,
   };
-}
-
-function chooseMinimalRestartAction(serviceId, options = {}) {
-  const registry = buildServiceLifecycleRegistry(options);
-  const service = registry.find((entry) => entry.id === serviceId);
-  if (!service) {
-    return {
-      ok: false,
-      reason: 'unknown_service',
-      serviceId,
-    };
-  }
   return {
     ok: true,
-    serviceId: service.id,
-    restartAction: service.restartAction,
-    requiresMainRestart: service.requiresMainRestart,
-    affectsTerminals: service.affectsTerminals,
+    generatedAtMs: Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now(),
+    services,
+    totals,
   };
+}
+
+function findServiceLifecycle(id) {
+  const target = String(id || '').trim();
+  if (!target) return null;
+  return SERVICE_DEFINITIONS.find((service) => service.id === target) || null;
 }
 
 module.exports = {
   SERVICE_DEFINITIONS,
-  VALID_SERVICE_STATES,
-  buildServiceLifecycleRegistry,
-  chooseMinimalRestartAction,
-  normalizeServiceDefinition,
-  normalizeServiceState,
-  summarizeServiceLifecycle,
+  buildServiceLifecycleSummary,
+  findServiceLifecycle,
 };

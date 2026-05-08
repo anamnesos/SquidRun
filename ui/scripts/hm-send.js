@@ -25,6 +25,7 @@ const {
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
 const { sendTelegram, sendTelegramPhoto, normalizeChatId } = require('./hm-telegram');
+const { appendVoiceEgressMessage } = require('../modules/voice-broker');
 const {
   detectPermissionAskViolation,
   appendPermissionAskViolation,
@@ -120,7 +121,7 @@ const DELIVERY_CHECK_RETRY_DELAY_MS = Number.parseInt(
   process.env.HM_SEND_DELIVERY_CHECK_RETRY_MS || '250',
   10
 );
-const FORCE_FALLBACK_ON_UNVERIFIED = process.env.HM_SEND_FORCE_FALLBACK_ON_UNVERIFIED !== '0';
+const FORCE_FALLBACK_ON_UNVERIFIED = process.env.HM_SEND_FORCE_FALLBACK_ON_UNVERIFIED === '1';
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
@@ -868,6 +869,7 @@ async function runListDevicesMode() {
     relayUrl,
     deviceId,
     sharedSecret,
+    availableRoles: ['architect'],
   });
 
   try {
@@ -1099,6 +1101,29 @@ function isSpecialTarget(targetInput) {
   return SPECIAL_USER_TARGETS.has(normalized);
 }
 
+function isExplicitTelegramTarget(targetInput) {
+  return String(targetInput || '').trim().toLowerCase() === 'telegram';
+}
+
+function metadataIndicatesTelegramOrigin(metadata = null) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false;
+  const values = [
+    metadata.source,
+    metadata.routeSource,
+    metadata.origin,
+    metadata.channel,
+    metadata.routeMethod,
+    metadata?.project?.source,
+    metadata?.envelope?.project?.source,
+    metadata?.envelope?.target?.raw,
+    metadata?.envelope?.target?.role,
+  ];
+  if (metadata.telegram || metadata.replyContext || metadata.telegramUpdateId || metadata.telegramFileId) {
+    return true;
+  }
+  return values.some((value) => /telegram/i.test(String(value || '')));
+}
+
 async function sendSpecialTargetFallback(targetInput, request = null) {
   const normalized = String(targetInput || '').trim().toLowerCase();
   if (!SPECIAL_USER_TARGETS.has(normalized)) {
@@ -1118,6 +1143,37 @@ async function sendSpecialTargetFallback(targetInput, request = null) {
     const photoPath = typeof specialRequest.photoPath === 'string'
       ? specialRequest.photoPath.trim()
       : '';
+    let voiceFallbackFailure = null;
+    if (
+      !photoPath
+      && normalized === 'user'
+      && specialRequest.senderRole === 'architect'
+      && !metadataIndicatesTelegramOrigin(specialRequest.metadata)
+    ) {
+      const originalMessageId = specialRequest.messageId || null;
+      const voiceResult = appendVoiceEgressMessage({
+        text: specialRequest.content,
+        messageId: originalMessageId ? `${originalMessageId}-voice-egress` : null,
+        sessionId: specialRequest.sessionId || null,
+        source: 'hm-send-user-voice-egress',
+        metadata: {
+          ...(specialRequest.metadata && typeof specialRequest.metadata === 'object' ? specialRequest.metadata : {}),
+          originalMessageId,
+          fallbackTarget: normalized,
+          fallbackSuppressed: 'telegram',
+          wrapper: 'cli_voice_egress',
+        },
+      });
+      if (voiceResult?.ok) {
+        return {
+          ok: true,
+          channel: 'voice',
+          mode: 'egress',
+          messageId: voiceResult.message?.messageId || specialRequest.messageId || null,
+        };
+      }
+      voiceFallbackFailure = voiceResult?.reason || voiceResult?.error || 'voice_egress_failed';
+    }
     const sendOperation = photoPath
       ? sendTelegramPhoto(photoPath, specialRequest.content, process.env, {
         messageId: specialRequest.messageId || null,
@@ -1141,6 +1197,10 @@ async function sendSpecialTargetFallback(targetInput, request = null) {
       ok: true,
       channel: 'telegram',
       mode: photoPath ? 'photo' : 'message',
+      status: voiceFallbackFailure ? 'voice_failed_telegram_backup_used' : 'telegram_fallback_used',
+      fallbackUsed: true,
+      primaryChannel: voiceFallbackFailure ? 'voice' : null,
+      primaryFailure: voiceFallbackFailure,
       chatId: result.chatId || null,
       statusCode: result.statusCode || null,
       messageId: result.messageId || null,
@@ -1177,6 +1237,42 @@ async function sendTelegramPhotoDirect(envelope) {
 
 function isTelegramPhotoModeActive() {
   return Boolean(telegramPhotoPath) && isSpecialTarget(target);
+}
+
+async function sendTelegramTextDirect(envelope) {
+  const specialRequest = buildSpecialTargetRequest(envelope);
+  try {
+    const result = await sendTelegram(specialRequest.content, process.env, {
+      messageId: specialRequest.messageId || null,
+      senderRole: specialRequest.senderRole || role || 'system',
+      sessionId: specialRequest.sessionId || null,
+      metadata: {
+        ...(specialRequest.metadata || {}),
+        directTarget: 'telegram',
+        routeMethod: 'hm-send-telegram-direct',
+      },
+      chatId: telegramChatIdOverride || null,
+    });
+    if (!result?.ok) {
+      console.error(`Telegram send failed: ${result?.error || 'telegram_delivery_failed'}`);
+      closeCommsJournalStores();
+      process.exit(1);
+    }
+    console.log(
+      `Delivered to telegram: ${previewMessage(message)}`
+      + ` (ack: telegram_delivered${result.messageId ? `, message_id: ${result.messageId}` : ''}, attempt 1)`
+    );
+    closeCommsJournalStores();
+    process.exit(0);
+  } catch (err) {
+    console.error(`Telegram send failed: ${err?.message || 'telegram_delivery_exception'}`);
+    closeCommsJournalStores();
+    process.exit(1);
+  }
+}
+
+function isTelegramTextDirectModeActive() {
+  return !telegramPhotoPath && isExplicitTelegramTarget(target);
 }
 
 function appendProjectContextMarker(content, metadata = null) {
@@ -1312,7 +1408,17 @@ function shouldFallbackForUnverifiedSend(result, targetInput) {
     || status.includes('timeout')
     || status.includes('pending')
     || status.includes('routed')
+    || status === 'delivered.websocket'
   );
+}
+
+function ackIndicatesVisibleDelivery(ack = null) {
+  if (!ack || ack.ok !== true) return false;
+  const status = String(ack.status || '').toLowerCase();
+  return ack.verified === true
+    || ack.userVisible === true
+    || status === 'delivered.verified'
+    || status === 'telegram_delivered';
 }
 
 function normalizeConnectedDevices(input) {
@@ -1625,10 +1731,11 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
       });
 
       if (ack.ok) {
+        const delivered = ackIndicatesVisibleDelivery(ack);
         await closeSocket(ws);
         traceComplete({
           success: true,
-          delivered: true,
+          delivered,
           accepted: true,
           status: ack.status || 'delivered',
           ackReceivedAtMs,
@@ -1636,7 +1743,7 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
         });
         return {
           ok: true,
-          delivered: true,
+          delivered,
           accepted: true,
           messageId: envelope.message_id,
           ack,
@@ -1696,10 +1803,11 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
     getDeliveryCheckOptions(ackTimeoutMs)
   );
   if (deliveryCheck?.known && (deliveryCheck?.ack?.ok || deliveryCheck?.ack?.accepted === true)) {
+    const delivered = ackIndicatesVisibleDelivery(deliveryCheck.ack);
     await closeSocket(ws);
     traceComplete({
       success: true,
-      delivered: Boolean(deliveryCheck?.ack?.ok),
+      delivered,
       accepted: true,
       status: 'delivery_check_confirmed',
       attemptsUsed: attempts,
@@ -1707,7 +1815,7 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
     });
     return {
       ok: true,
-      delivered: Boolean(deliveryCheck?.ack?.ok),
+      delivered,
       accepted: true,
       messageId: envelope.message_id,
       ack: deliveryCheck.ack,
@@ -1776,6 +1884,9 @@ async function main() {
   });
   if (isTelegramPhotoModeActive()) {
     await sendTelegramPhotoDirect(envelope);
+  }
+  if (isTelegramTextDirectModeActive()) {
+    await sendTelegramTextDirect(envelope);
   }
   const envelopeMetadata = buildCanonicalEnvelopeMetadata(envelope);
   const preSendJournal = appendCommsJournalEntry({
@@ -1895,7 +2006,9 @@ async function main() {
               : (sendResult?.error || wsError?.message || 'no_ack');
         console.warn(
           `WebSocket send unverified (${reason}). `
-          + `Sent ${target} via Telegram fallback${fallbackResult.chatId ? ` (chat ${fallbackResult.chatId})` : ''}.`
+          + `Sent ${target} via ${fallbackResult.channel || 'fallback'} fallback`
+          + `${fallbackResult.status ? ` (${fallbackResult.status})` : ''}`
+          + `${fallbackResult.chatId ? ` (chat ${fallbackResult.chatId})` : ''}.`
         );
         closeCommsJournalStores();
         process.exit(0);

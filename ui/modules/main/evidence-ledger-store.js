@@ -273,7 +273,7 @@ CREATE TABLE IF NOT EXISTS comms_journal (
   session_id TEXT,
   sender_role TEXT,
   target_role TEXT,
-  channel TEXT NOT NULL CHECK (channel IN ('ws', 'telegram', 'sms', 'user')),
+  channel TEXT NOT NULL CHECK (channel IN ('ws', 'telegram', 'sms', 'user', 'voice')),
   direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
   sent_at_ms INTEGER,
   brokered_at_ms INTEGER,
@@ -298,7 +298,7 @@ CREATE INDEX IF NOT EXISTS idx_comms_journal_sender_brokered
   ON comms_journal(sender_role, brokered_at_ms);
 `;
 
-const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user']);
+const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
   recorded: 1,
@@ -520,6 +520,58 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V2_SQL);
     this.db.exec(SCHEMA_V3_SQL);
     this.db.exec(SCHEMA_V4_SQL);
+    this._migrateCommsJournalVoiceChannel();
+    this.db.exec(SCHEMA_V4_SQL);
+  }
+
+  _migrateCommsJournalVoiceChannel() {
+    if (!this.db) return;
+    const row = this.db.prepare(`
+      SELECT sql FROM sqlite_master
+      WHERE type = 'table' AND name = 'comms_journal'
+    `).get();
+    const sql = String(row?.sql || '');
+    if (!sql || sql.includes("'voice'")) return;
+
+    this.db.exec(`
+      PRAGMA foreign_keys=OFF;
+      BEGIN TRANSACTION;
+      DROP TABLE IF EXISTS comms_journal_voice_migration_old;
+      ALTER TABLE comms_journal RENAME TO comms_journal_voice_migration_old;
+      CREATE TABLE comms_journal (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL UNIQUE,
+        session_id TEXT,
+        sender_role TEXT,
+        target_role TEXT,
+        channel TEXT NOT NULL CHECK (channel IN ('ws', 'telegram', 'sms', 'user', 'voice')),
+        direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+        sent_at_ms INTEGER,
+        brokered_at_ms INTEGER,
+        raw_body TEXT,
+        body_hash TEXT,
+        body_bytes INTEGER,
+        status TEXT NOT NULL CHECK (status IN ('recorded', 'brokered', 'routed', 'acked', 'failed')),
+        ack_status TEXT,
+        error_code TEXT,
+        attempt INTEGER,
+        metadata_json TEXT DEFAULT '{}',
+        updated_at_ms INTEGER NOT NULL
+      );
+      INSERT INTO comms_journal (
+        row_id, message_id, session_id, sender_role, target_role, channel, direction,
+        sent_at_ms, brokered_at_ms, raw_body, body_hash, body_bytes, status,
+        ack_status, error_code, attempt, metadata_json, updated_at_ms
+      )
+      SELECT
+        row_id, message_id, session_id, sender_role, target_role, channel, direction,
+        sent_at_ms, brokered_at_ms, raw_body, body_hash, body_bytes, status,
+        ack_status, error_code, attempt, metadata_json, updated_at_ms
+      FROM comms_journal_voice_migration_old;
+      DROP TABLE comms_journal_voice_migration_old;
+      COMMIT;
+      PRAGMA foreign_keys=ON;
+    `);
   }
 
   isAvailable() {

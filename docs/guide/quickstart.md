@@ -107,4 +107,4 @@ Use [docs/troubleshooting.md](./troubleshooting.md) for common first-run issues:
 - `hm-send` not found
 - Node mismatch
 - Bridge not connected
-- Manual Enter needed on macOS
+- Manual Enter / visible input not submitted

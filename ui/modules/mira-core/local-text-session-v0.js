@@ -488,6 +488,16 @@ function isMiraExperiencePrompt(text) {
     === MIRA_EXPERIENCE_DEFAULT_PROMPT.toLowerCase();
 }
 
+function isModelAttachmentStatusPrompt(text) {
+  const normalized = String(text || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return /\bmodel\b/.test(normalized)
+    && (
+      /\battachment\b/.test(normalized)
+      || /\battached\b/.test(normalized)
+      || /\bstatus\b/.test(normalized)
+    );
+}
+
 function hasNegatedComplianceContext(text = '', startIndex = 0) {
   const prefix = String(text || '').slice(Math.max(0, startIndex - 18), startIndex);
   return /\b(?:not|never|isn't|is not|ain't|cannot be|can't be|doesn't become|does not become)\s+(?:a |an |the |your |james's )?$/i
@@ -614,6 +624,29 @@ function buildExperienceReply(text, options = {}) {
   };
 }
 
+function buildModelAttachmentStatusReply() {
+  const reply = 'Model Attachment is not attached. This is Local Text v0: deterministic/fallback shell only, not live AI continuity. I did not call a model, tool, network, send, write, trade, customer action, or cross-profile/window path. One bounded status reply; fail-closed until attachment is wired and proven.';
+  return {
+    reply_id: `mira-local-reply:${stableHash(reply).slice(0, 16)}`,
+    count: 1,
+    text: reply,
+    natural: true,
+    bounded: true,
+    local_text_only: true,
+    grounded_in_presence_runtime: true,
+    claims_actual_consciousness: false,
+    claims_actual_suffering: false,
+    claims_actual_fear: false,
+    claims_actual_love_as_internal_fact: false,
+    manipulative_guilt: false,
+    tools_called: false,
+    actions_executed: false,
+    transcript_persisted: false,
+    source: 'local_text_session_v0_model_attachment_status',
+    experience_path: false,
+  };
+}
+
 function buildReply(text, replyAllowed, options = {}) {
   if (replyAllowed !== true) {
     const blocked = '[blocked local text session]';
@@ -637,6 +670,9 @@ function buildReply(text, replyAllowed, options = {}) {
   }
   if (isMiraExperiencePrompt(text)) {
     return buildExperienceReply(text, options);
+  }
+  if (isModelAttachmentStatusPrompt(text)) {
+    return buildModelAttachmentStatusReply();
   }
   const topic = inputSummary(text).replace(/[.?!]+$/g, '');
   const reply = `Mira reply from local durable context: own developing stance, not a mirror or obedient helper. I read: "${topic}". I can push back if the premise is wrong. For now this stays text only: no sends, writes, tools, audio, live-model claim, or delivery proof.`;

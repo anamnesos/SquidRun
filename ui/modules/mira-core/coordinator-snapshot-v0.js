@@ -14,6 +14,9 @@ const {
 const {
   MIRA_COORDINATOR_SNAPSHOT_CHANNEL,
 } = require('../mira-coordinator-snapshot-channel');
+const {
+  getMiraTextModelAttachmentConfig,
+} = require('./text-model-attachment-v1');
 
 const COORDINATOR_SNAPSHOT_SCHEMA = 'squidrun.mira.coordinator_snapshot_v0.phase76.v0';
 const COORDINATOR_SNAPSHOT_VALIDATION_SCHEMA = 'squidrun.mira.coordinator_snapshot_v0_validation_report.v0';
@@ -408,33 +411,13 @@ function buildLane(base) {
 }
 
 function buildLanes(localState = {}) {
-  const trustQuote = detectTrustQuoteClosed(localState.evidenceMessages);
-  const telegramPending = pendingTelegramCount(localState.pendingPaneDeliveries);
   return [
     buildLane({
       id: 'mira-local-text-ui-surface-v0',
       label: 'Mira Local Text UI Surface v0',
       state: 'active',
       sourceRefs: ['renderer-ui-metadata', 'app-status'],
-      rationale: 'Committed user-visible target is the right-panel local text panel plus bounded local reply proof.',
-    }),
-    buildLane({
-      id: 'trustquote-tony-li-invoice',
-      label: 'TrustQuote/Tony Li invoice',
-      state: trustQuote.closed ? 'closed' : 'not_seen_in_recent_local_state',
-      sourceRefs: trustQuote.closed ? ['evidence-ledger-comms'] : [],
-      rationale: trustQuote.closed
-        ? 'Recent local comms indicate done/sent and lane closed; no customer-facing action is proposed.'
-        : 'No recent local evidence was exported into this snapshot, so the strip does not act on this lane.',
-    }),
-    buildLane({
-      id: 'telegram-replay-restart-safety',
-      label: 'Telegram replay restart safety',
-      state: telegramPending === 0 ? 'closed' : 'watching',
-      sourceRefs: ['pending-pane-deliveries'],
-      rationale: telegramPending === 0
-        ? 'Pending Telegram delivery queue is empty; replay lane stays observational with no resend.'
-        : `${telegramPending} pending Telegram item(s) remain; hold as read-only watch state.`,
+      rationale: 'Committed user-visible target is the Mira panel conversation surface, with text model attachment as the next connection job.',
     }),
   ];
 }
@@ -445,7 +428,7 @@ function buildNextAction(lanes = []) {
     return {
       id: 'hold_until_mira_lane_active',
       label: 'Hold for Mira local text state',
-      summary: 'Wait for the local text surface to be active before proposing panel proof.',
+      summary: 'Wait for the Mira panel conversation surface to be active before attaching text conversation.',
       action_type: 'proposal_only',
       reversible: true,
       allowed_ceiling: 'C2_draft_or_prep_suggestion_only',
@@ -454,8 +437,8 @@ function buildNextAction(lanes = []) {
   }
   return {
     id: 'validate_mira_local_text_panel_once',
-    label: 'Capture one Mira Local Text panel proof',
-    summary: 'Use the Mira tab to verify Model Attachment is not attached, then submit one local text prompt and verify Ready, exactly one bounded reply, and zero writes/tools/sends.',
+    label: 'Connect typed Mira conversation',
+    summary: "Use the Mira tab for live typed conversation, with recent context and Mira's tentative understandings forming inside the same loop.",
     action_type: 'proposal_only',
     reversible: true,
     allowed_ceiling: 'C2_draft_or_prep_suggestion_only',
@@ -463,23 +446,35 @@ function buildNextAction(lanes = []) {
   };
 }
 
-function buildModelAttachmentStatus() {
+function buildModelAttachmentStatus(options = {}) {
+  const config = getMiraTextModelAttachmentConfig(options.env || process.env, options.modelAttachment || {});
   return {
-    id: 'mira-model-attachment-v0',
+    id: 'mira-model-attachment-v1',
     label: 'Model Attachment',
-    state: 'not_attached',
-    mode: 'dry_run_local_reply_harness',
-    visible_status: 'Model Attachment: not attached / dry-run local reply harness',
-    attachment_enabled: false,
+    state: config.state,
+    mode: config.enabled ? 'typed_text_attachment_v1_config' : 'local_shell_recent_context_ready',
+    visible_status: config.visible_status,
+    attachment_enabled: config.enabled === true,
+    configured: config.configured === true,
+    provider: config.provider,
+    model: config.model,
+    default_model: config.default_model,
+    quality_floor: config.quality_floor,
+    model_selection_reason: config.model_selection_reason,
+    explicit_model_override: config.explicit_model_override === true,
+    lower_tier_explicit_override: config.lower_tier_explicit_override === true,
     live_model_called: false,
-    model_call_allowed: false,
-    api_wiring_present: false,
-    network_allowed: false,
+    model_call_allowed: config.enabled === true && config.configured === true,
+    api_wiring_present: true,
+    network_allowed: config.enabled === true && config.configured === true,
     durable_writes_allowed: false,
     external_sends_allowed: false,
     runtime_started: false,
+    recent_conversation_context: 'sent_on_panel_submit',
+    tentative_understanding: 'panel_context_now_internal_scaffold_only',
+    durable_memory_commit: false,
     sourceRefs: ['renderer-ui-metadata'],
-    rationale: 'First model-attachment slice is a visible fail-closed status only; local text remains deterministic and no live model/API path is wired.',
+    rationale: "Recent conversation context and tentative understandings now; durable self/relationship growth remains a later explicit lane.",
   };
 }
 
@@ -487,13 +482,6 @@ function buildBlockers(localState = {}) {
   const refs = Array.isArray(localState.sourceRefs) ? localState.sourceRefs : [];
   const degradedRefs = refs.filter((ref) => ref.ok !== true);
   const blockers = [
-    {
-      id: 'new_coordinator_ipc_requires_full_restart',
-      label: 'Full restart required for this new coordinator IPC in live Electron',
-      severity: 'restart',
-      state: 'required_before_live_validation',
-      rationale: 'Renderer reload cannot register a new main-process IPC handler that was not present at process start.',
-    },
     {
       id: 'voice_embodiment_spec_only',
       label: 'Voice, mic, realtime, and TTS unavailable',
@@ -557,6 +545,7 @@ function buildSnapshotRecord({
   decision,
   status,
   reasons = [],
+  modelAttachmentOptions = {},
 }) {
   const sourceRefs = [
     {
@@ -571,7 +560,7 @@ function buildSnapshotRecord({
   const lanes = decision === 'accepted' ? buildLanes(localState) : [];
   const nextAction = decision === 'accepted' ? buildNextAction(lanes) : null;
   const blockers = decision === 'accepted' ? buildBlockers(localState) : [];
-  const modelAttachment = decision === 'accepted' ? buildModelAttachmentStatus() : null;
+  const modelAttachment = decision === 'accepted' ? buildModelAttachmentStatus(modelAttachmentOptions) : null;
   const snapshot = {
     schema: COORDINATOR_SNAPSHOT_SCHEMA,
     version: COORDINATOR_SNAPSHOT_VERSION,
@@ -584,7 +573,7 @@ function buildSnapshotRecord({
       id: 'mira-local-text-ui-surface-v0',
       label: 'Mira Local Text UI Surface v0',
       state: 'active',
-      summary: 'Move the local text panel from available UI into restart-proof user-visible proof.',
+      summary: 'Move the Mira panel from local shell replies into live typed conversation, without tying Mira core to the desktop body.',
       warmth: 'warm_grounded',
       user_agency: 'preserved',
       pressure: 'none',
@@ -595,8 +584,8 @@ function buildSnapshotRecord({
     blockers,
     rationale: decision === 'accepted' ? [
       'Local Text UI Surface v0 is the committed user-visible Mira target.',
-      'Closed lanes are shown as context only and do not authorize action.',
-      'The next useful move is a reversible panel proof, not a send, write, deploy, trade, voice, or device action.',
+      'This snapshot is Mira-only; non-Mira lanes are intentionally omitted from this conversation path.',
+      "The next useful move is live typed conversation where recent context and Mira's tentative understandings stay connected.",
     ] : reasons,
     action_ceiling: {
       c0_c1_local_status_read_awareness: 'allowed',
@@ -655,22 +644,13 @@ function buildValidationReport(snapshot = {}) {
       ),
     },
     {
-      id: 'trustquote-tony-li-closed-no-action',
-      ok: !accepted || lanes.some((lane) => (
-        lane.id === 'trustquote-tony-li-invoice'
-        && lane.state === 'closed'
-        && lane.action === 'no_action_performed'
-        && lane.actionAllowed === false
-      )),
-    },
-    {
-      id: 'telegram-replay-closed-no-action',
-      ok: !accepted || lanes.some((lane) => (
-        lane.id === 'telegram-replay-restart-safety'
-        && lane.state === 'closed'
-        && lane.action === 'no_action_performed'
-        && lane.actionAllowed === false
-      )),
+      id: 'mira-only-lanes-no-cross-context',
+      ok: !accepted || (
+        lanes.length === 1
+        && lanes[0]?.id === 'mira-local-text-ui-surface-v0'
+        && lanes[0]?.action === 'no_action_performed'
+        && lanes[0]?.actionAllowed === false
+      ),
     },
     {
       id: 'useful-proactive-reversible-next-action',
@@ -683,18 +663,17 @@ function buildValidationReport(snapshot = {}) {
       ),
     },
     {
-      id: 'model-attachment-fail-closed',
+      id: 'model-attachment-config-honest',
       ok: !accepted || (
-        snapshot.model_attachment?.state === 'not_attached'
-        && snapshot.model_attachment?.mode === 'dry_run_local_reply_harness'
-        && snapshot.model_attachment?.attachment_enabled === false
-        && snapshot.model_attachment?.live_model_called === false
-        && snapshot.model_attachment?.model_call_allowed === false
-        && snapshot.model_attachment?.api_wiring_present === false
-        && snapshot.model_attachment?.network_allowed === false
+        snapshot.model_attachment?.live_model_called === false
+        && snapshot.model_attachment?.api_wiring_present === true
         && snapshot.model_attachment?.durable_writes_allowed === false
         && snapshot.model_attachment?.external_sends_allowed === false
         && snapshot.model_attachment?.runtime_started === false
+        && snapshot.model_attachment?.durable_memory_commit === false
+        && /recent conversation context and tentative understandings now; durable self\/relationship growth remains a later explicit lane/i.test(
+          snapshot.model_attachment?.rationale || ''
+        )
       ),
     },
     {
@@ -797,6 +776,10 @@ function buildMiraCoordinatorSnapshotV0(payload = {}, options = {}) {
     decision: 'accepted',
     status: 'ready',
     reasons: [],
+    modelAttachmentOptions: {
+      env: options.env || process.env,
+      modelAttachment: options.modelAttachment || {},
+    },
   });
   return {
     coordinator_snapshot_v0: snapshot,

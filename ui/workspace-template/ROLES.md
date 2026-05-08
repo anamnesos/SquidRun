@@ -70,7 +70,7 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 
 **Architect (pane 1) — returning sessions only:**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
-2. Auto-promote pending Memory PRs via `node ui/scripts/hm-memory-promote.js approve --all` so staged facts flow into `workspace/knowledge/` before review.
+2. Review pending Memory PR candidates with `hm-memory-promote list`. Keep legacy `pending-pr` rows separate from live claim-graph contradictions. Approve only reviewed, current, safe classes; do not blanket `approve --all`.
 3. Read `.squidrun/app-status.json`.
 4. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent architect --limit 4` and review the returned nodes alongside the flat files.
 5. Check `.squidrun/build/startup-health.md` for current test/module/runtime health, then review `.squidrun/build/blockers.md` and `.squidrun/build/errors.md` only if they actually exist.

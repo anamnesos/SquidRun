@@ -31,6 +31,37 @@ function readNonNegativeIntFromQuery(params, key, fallback) {
   }
 }
 
+function readJsonObjectFromQuery(params, key) {
+  try {
+    const raw = params.get(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRuntimeHint(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return {
+      runtime: trimmed.toLowerCase(),
+      command: trimmed,
+    };
+  }
+  const hint = value && typeof value === 'object' ? value : {};
+  return {
+    runtime: String(hint.runtime || '').trim().toLowerCase(),
+    command: String(hint.command || '').trim(),
+  };
+}
+
+function isCodexRuntimeHint(value) {
+  const hint = normalizeRuntimeHint(value);
+  return hint.runtime === 'codex' || hint.command.toLowerCase().includes('codex');
+}
+
 function detectDarwin() {
   const platform = String(
     navigator.userAgentData?.platform
@@ -97,6 +128,59 @@ function formatHmSendForPrompt(text, promptKind) {
     .join('\n');
 }
 
+function normalizePendingProbeText(value) {
+  return String(value || '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function getPendingInputFragments(text) {
+  const normalized = normalizePendingProbeText(text)
+    .replace(/^\[\d{2}:\d{2}\s+local\]\s*/i, '');
+  const fragments = [];
+  const candidates = [
+    normalized,
+    ...normalized.split(/[#.?!]\s+/),
+  ];
+  for (const candidate of candidates) {
+    const compact = candidate.trim();
+    if (compact.length < 8) continue;
+    fragments.push(compact.slice(0, 80));
+    if (compact.length > 80) {
+      fragments.push(compact.slice(-80));
+    }
+  }
+  return [...new Set(fragments)].slice(0, 6);
+}
+
+function probePendingInputLine(lineText = '', pendingInputText = '') {
+  const line = String(lineText || '');
+  if (!line) {
+    return { pending: false, lineText: '' };
+  }
+  const normalizedLine = normalizePendingProbeText(line);
+  const hasPromptPrefix = (
+    /(?:^|[\s>])(?:codex|claude|gemini|cursor)>\s+\S/i.test(line)
+    || /(?:^|[\s>])PS\s+[^>\n]*>\s+\S/i.test(line)
+    || /(?:^|[\s>])[A-Za-z]:\\[^>\n]*>\s+\S/.test(line)
+    || /(?:^|[\w./~:-]+)[$#]\s+\S/.test(line)
+  );
+  if (!hasPromptPrefix) {
+    return { pending: false, lineText: line };
+  }
+
+  const fragment = getPendingInputFragments(pendingInputText)
+    .find((candidate) => normalizedLine.includes(candidate));
+  return {
+    pending: Boolean(fragment),
+    lineText: line,
+    fragment: fragment || null,
+  };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -127,7 +211,13 @@ function getUtf8ByteLength(value) {
   return text.length;
 }
 
-function resolvePostEnterDeliveryResult({ outputObserved = false, enterSucceeded = false } = {}) {
+function resolvePostEnterDeliveryResult({
+  outputObserved = false,
+  enterSucceeded = false,
+  strictSubmitRequired = false,
+  pendingInputObserved = false,
+  submitSignal = null,
+} = {}) {
   if (outputObserved) {
     return { ack: true };
   }
@@ -144,6 +234,22 @@ function resolvePostEnterDeliveryResult({ outputObserved = false, enterSucceeded
     };
   }
 
+  if (strictSubmitRequired) {
+    const reason = pendingInputObserved
+      ? 'input_buffer_pending'
+      : (submitSignal || 'no_acceptance_signal');
+    return {
+      ack: false,
+      outcome: {
+        accepted: false,
+        verified: false,
+        status: 'submit_not_accepted',
+        reason,
+        pendingInputObserved: Boolean(pendingInputObserved),
+      },
+    };
+  }
+
   return {
     ack: false,
     outcome: {
@@ -153,6 +259,16 @@ function resolvePostEnterDeliveryResult({ outputObserved = false, enterSucceeded
       reason: 'post_enter_output_timeout',
     },
   };
+}
+
+function shouldWriteCodexPasteEnd(runtimeHint = null, payloadMeta = null) {
+  const meta = payloadMeta && typeof payloadMeta === 'object' ? payloadMeta : {};
+  const payloadRuntimeHint = normalizeRuntimeHint(meta.runtimeHint || null);
+  return Boolean(
+    meta.codexPane === true
+    || isCodexRuntimeHint(payloadRuntimeHint)
+    || isCodexRuntimeHint(runtimeHint)
+  );
 }
 
 // SYSTEM INVARIANT: broker payload bytes are DATA, never terminal-control input.
@@ -236,6 +352,7 @@ function createPaneRuntime(paneId, terminal, fitAddon) {
     paneId,
     terminal,
     fitAddon,
+    runtimeHint: { runtime: 'unknown', command: '' },
     injectedScrollback: false,
     injectChain: Promise.resolve(),
     ptyOutputTick: 0,
@@ -252,8 +369,15 @@ if (typeof module !== 'undefined' && module.exports) {
     _internals: {
       buildPtyWriteDispatchPlan,
       formatHmSendForPrompt,
+      getPendingInputFragments,
       getPromptKindFromLine,
+      isCodexRuntimeHint,
+      normalizePendingProbeText,
+      normalizeRuntimeHint,
+      probePendingInputLine,
+      readJsonObjectFromQuery,
       resolvePostEnterDeliveryResult,
+      shouldWriteCodexPasteEnd,
       stripInternalRoutingWrappers,
     },
   };
@@ -263,6 +387,7 @@ if (typeof window !== 'undefined') {
   (function bootPaneHost() {
   const params = new URLSearchParams(window.location.search || '');
   const paneIds = readPaneIdsFromQuery(params);
+  const paneRuntimeHints = readJsonObjectFromQuery(params, 'paneRuntimeHints');
   const isDarwin = detectDarwin();
   const api = window.squidrun;
   const TerminalCtor = window.Terminal;
@@ -398,16 +523,24 @@ if (typeof window !== 'undefined') {
     });
   }
 
-  function getCurrentPromptKind(terminal) {
+  function getCurrentLineText(terminal) {
     try {
       const buffer = terminal?.buffer?.active;
-      if (!buffer || typeof buffer.getLine !== 'function') return 'unknown';
+      if (!buffer || typeof buffer.getLine !== 'function') return '';
       const line = buffer.getLine(buffer.cursorY + buffer.viewportY);
-      if (!line || typeof line.translateToString !== 'function') return 'unknown';
-      return getPromptKindFromLine(line.translateToString(true));
+      if (!line || typeof line.translateToString !== 'function') return '';
+      return line.translateToString(true);
     } catch {
-      return 'unknown';
+      return '';
     }
+  }
+
+  function getCurrentPromptKind(terminal) {
+    return getPromptKindFromLine(getCurrentLineText(terminal));
+  }
+
+  function probePendingInputBuffer(runtime, pendingInputText = '') {
+    return probePendingInputLine(getCurrentLineText(runtime?.terminal), pendingInputText);
   }
 
   function waitForPtyOutputAfter(runtime, baselineTick, timeoutMs = POST_ENTER_VERIFY_TIMEOUT_MS) {
@@ -569,9 +702,28 @@ if (typeof window !== 'undefined') {
       1,
       Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
     );
+    const codexPasteEndNeeded = shouldWriteCodexPasteEnd(runtime.runtimeHint, payload?.meta || null);
+    const strictSubmitRequired = Boolean(hmSendTrace && isLongPayload && codexPasteEndNeeded);
     const deferMaxWaitMs = isLongPayload
       ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
       : SUBMIT_DEFER_MAX_WAIT_MS;
+    const writeCodexPasteEnd = async (label = 'pane-host codex bracketed-paste-end') => {
+      if (!codexPasteEndNeeded) return false;
+      try {
+        await withTimeout(
+          api.pty.write(runtime.paneId, '\u001b[201~', traceContext || null),
+          ENTER_TIMEOUT_MS,
+          label
+        );
+        return true;
+      } catch (err) {
+        console.warn(
+          `[PaneHost] Codex paste-end pre-Enter write failed for pane ${runtime.paneId} (continuing):`,
+          err?.message || err
+        );
+        return false;
+      }
+    };
 
     try {
       // Match the visible renderer path: wait for active pane output to settle
@@ -639,6 +791,7 @@ if (typeof window !== 'undefined') {
       await sleep(minDelay);
 
       const outputBaseline = runtime.ptyOutputTick;
+      await writeCodexPasteEnd();
       const enterResult = await withTimeout(
         sendPaneHostAction('dispatch-enter', runtime.paneId),
         ENTER_TIMEOUT_MS,
@@ -659,10 +812,44 @@ if (typeof window !== 'undefined') {
             : DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
         )
         : POST_ENTER_VERIFY_TIMEOUT_MS;
-      const outputObserved = await waitForPtyOutputAfter(runtime, outputBaseline, postEnterVerifyTimeoutMs);
+      let outputObserved = await waitForPtyOutputAfter(runtime, outputBaseline, postEnterVerifyTimeoutMs);
+      let pendingInputProbe = { pending: false, lineText: '' };
+      let retryAttempted = false;
+
+      if (!outputObserved && enterResult?.success && hmSendTrace) {
+        pendingInputProbe = probePendingInputBuffer(runtime, text);
+        if (strictSubmitRequired || pendingInputProbe.pending) {
+          retryAttempted = true;
+          await sleep(350);
+          const retryBaseline = runtime.ptyOutputTick;
+          await writeCodexPasteEnd('pane-host codex bracketed-paste-end retry');
+          const retryEnterResult = await withTimeout(
+            sendPaneHostAction('dispatch-enter', runtime.paneId),
+            ENTER_TIMEOUT_MS,
+            'pane-host dispatch-enter retry'
+          );
+          if (!retryEnterResult || !retryEnterResult.success) {
+            console.error(
+              `[PaneHost] pane-host dispatch-enter retry FAILED for pane ${runtime.paneId}:`,
+              retryEnterResult?.reason || 'unknown'
+            );
+          }
+          outputObserved = await waitForPtyOutputAfter(runtime, retryBaseline, postEnterVerifyTimeoutMs);
+          if (!outputObserved) {
+            const retryPendingInputProbe = probePendingInputBuffer(runtime, text);
+            if (retryPendingInputProbe.pending) {
+              pendingInputProbe = retryPendingInputProbe;
+            }
+          }
+        }
+      }
+
       const deliveryResult = resolvePostEnterDeliveryResult({
         outputObserved,
         enterSucceeded: Boolean(enterResult?.success),
+        strictSubmitRequired: strictSubmitRequired || pendingInputProbe.pending,
+        pendingInputObserved: pendingInputProbe.pending,
+        submitSignal: retryAttempted ? 'no_acceptance_signal' : null,
       });
 
       if (deliveryId) {
@@ -678,7 +865,12 @@ if (typeof window !== 'undefined') {
         }
       }
 
-      if (!outputObserved && hmSendTrace && enterResult?.success) {
+      if (!outputObserved && hmSendTrace && (strictSubmitRequired || pendingInputProbe.pending) && enterResult?.success) {
+        console.warn(
+          `[PaneHost] hm-send submit not accepted for pane ${runtime.paneId}; `
+          + `retry=${retryAttempted ? 'yes' : 'no'} pendingInput=${pendingInputProbe.pending ? 'yes' : 'no'}`
+        );
+      } else if (!outputObserved && hmSendTrace && enterResult?.success) {
         console.warn(
           `[PaneHost] hm-send trace remained unverified for pane ${runtime.paneId} without immediate PTY output `
           + `(${postEnterVerifyTimeoutMs}ms window)`
@@ -771,6 +963,7 @@ if (typeof window !== 'undefined') {
 
   for (const paneId of paneIds) {
     const runtime = createPaneTerminal(paneId);
+    runtime.runtimeHint = normalizeRuntimeHint(paneRuntimeHints[paneId]);
     paneRuntimeById.set(paneId, runtime);
 
     runtime.disposeDataListener = api.pty.onData(paneId, (data) => {

@@ -104,6 +104,10 @@ describe('voice-broker', () => {
       SQUIDRUN_VOICE_BROKER_PORT: '43123',
       SQUIDRUN_REALTIME_MODEL: 'gpt-realtime',
       SQUIDRUN_REALTIME_VOICE: 'marin',
+      SQUIDRUN_VOICE_LIVE_TRANSCRIPTION_MODEL: 'gpt-realtime-whisper',
+      SQUIDRUN_VOICE_TRANSCRIPTION_MODEL: 'gpt-4o-transcribe',
+      SQUIDRUN_VOICE_VAD_MODE: 'semantic_vad',
+      SQUIDRUN_VOICE_VAD_EAGERNESS: 'low',
     });
 
     expect(config).toEqual(expect.objectContaining({
@@ -112,7 +116,10 @@ describe('voice-broker', () => {
       port: 43123,
       model: 'gpt-realtime',
       voice: 'marin',
+      liveTranscriptionModel: 'gpt-realtime-whisper',
       transcriptionModel: 'gpt-4o-transcribe',
+      vadMode: 'semantic_vad',
+      vadEagerness: 'low',
       vadPrefixPaddingMs: 700,
       vadSilenceDurationMs: 2200,
       openaiApiKeyPresent: true,
@@ -233,7 +240,12 @@ describe('voice-broker', () => {
   test('defaults to the flagship realtime voice model', () => {
     const config = voiceBroker.getVoiceBrokerConfig({}, {});
 
-    expect(config.model).toBe('gpt-realtime-1.5');
+    expect(config.model).toBe('gpt-realtime-2');
+    expect(config.voice).toBe('marin');
+    expect(config.liveTranscriptionModel).toBe('gpt-realtime-whisper');
+    expect(config.transcriptionModel).toBe('gpt-4o-transcribe');
+    expect(config.vadMode).toBe('server_vad');
+    expect(config.vadEagerness).toBe('auto');
   });
 
   test('mints Realtime client secret through injected fetch without exposing server API key', async () => {
@@ -273,7 +285,7 @@ describe('voice-broker', () => {
     const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(requestBody.session).toEqual(expect.objectContaining({
       type: 'realtime',
-      model: 'gpt-realtime-1.5',
+      model: 'gpt-realtime-2',
       instructions: 'Voice panel test',
     }));
   });
@@ -783,7 +795,7 @@ describe('voice-broker', () => {
         messageId: 'mira-reply-1',
         senderRole: 'architect',
         targetRole: 'user',
-        rawBody: '(ARCH #35): Yep, I am here through voice now.',
+        rawBody: '[AGENT MSG - reply via hm-send.js] (MIRA/ARCH #35): Mira: Yep, I am here through voice now.',
         brokeredAtMs: 1777883000000,
       },
       {
@@ -805,16 +817,19 @@ describe('voice-broker', () => {
       const response = await getJson(port, '/v1/voice/egress?sinceMs=1777882999000');
 
       expect(response.statusCode).toBe(200);
-      expect(response.body).toEqual(expect.objectContaining({
-        ok: true,
-        messages: [
-          expect.objectContaining({
-            messageId: 'mira-reply-1',
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      messages: [
+        expect.objectContaining({
+          messageId: 'mira-reply-1',
             speaker: 'Mira',
-            text: 'Yep, I am here through voice now.',
-          }),
-        ],
-      }));
+          text: 'Yep, I am here through voice now.',
+        }),
+      ],
+    }));
+      expect(response.body.messages[0].text).not.toContain('Mira:');
+      expect(response.body.messages[0].text).not.toContain('MIRA/ARCH');
+      expect(response.body.messages[0].text).not.toContain('AGENT MSG');
       expect(queryCommsJournalEntries).toHaveBeenCalledWith(expect.objectContaining({
         senderRole: 'architect',
         targetRole: 'user',
@@ -836,7 +851,7 @@ describe('voice-broker', () => {
 
     try {
       const response = await postJson(port, '/v1/voice/egress', {
-        text: '(ARCH #36): I can speak this as Mira.',
+        text: '[AGENT MSG - reply via hm-send.js] (ARCH #36): (MIRA): I can speak this as Mira.',
         messageId: 'voice-egress-post-1',
       });
 
@@ -849,13 +864,15 @@ describe('voice-broker', () => {
           text: 'I can speak this as Mira.',
         }),
       }));
+      expect(response.body.message.text).not.toContain('(MIRA):');
+      expect(response.body.message.text).not.toContain('ARCH #36');
       expect(appendCommsJournalEntry).toHaveBeenCalledWith(expect.objectContaining({
         messageId: 'voice-egress-post-1',
         senderRole: 'architect',
         targetRole: 'user',
         channel: 'voice',
         direction: 'outbound',
-        rawBody: '(ARCH #36): I can speak this as Mira.',
+        rawBody: '[AGENT MSG - reply via hm-send.js] (ARCH #36): (MIRA): I can speak this as Mira.',
       }));
     } finally {
       await broker.stop();

@@ -512,6 +512,48 @@ describe('triggers.js module', () => {
         failureReason: 'accepted.unverified',
       }));
     });
+
+    test('sendDirectMessage awaitDelivery treats legacy delivery ack as unverified without submit proof', async () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      const pendingResult = triggers.sendDirectMessage(
+        ['2'],
+        'Direct msg',
+        'architect',
+        { awaitDelivery: true, deliveryTimeoutMs: 5000 }
+      );
+
+      jest.advanceTimersByTime(0);
+
+      const injectCall = global.window.webContents.send.mock.calls.find(
+        ([channel, payload]) => channel === 'inject-message' && payload?.deliveryId
+      );
+      expect(injectCall).toBeDefined();
+      const deliveryId = injectCall[1].deliveryId;
+
+      triggers.handleDeliveryAck(deliveryId, '2');
+
+      const result = await pendingResult;
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.unverified',
+        mode: 'pty',
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        unverifiedPanes: ['2'],
+        failedPanes: [],
+        failureReason: 'accepted.unverified',
+        failureByPane: {
+          '2': expect.objectContaining({
+            status: 'accepted.unverified',
+            reason: 'legacy_delivery_ack_without_submit_proof',
+          }),
+        },
+      }));
+    });
   });
 
   describe('3. Workflow Gate (checkWorkflowGate)', () => {

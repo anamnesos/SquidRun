@@ -227,8 +227,9 @@ function handleDeliveryOutcome(deliveryId, paneId, outcome = {}) {
 function handleDeliveryAck(deliveryId, paneId) {
   handleDeliveryOutcome(deliveryId, paneId, {
     accepted: true,
-    verified: true,
-    status: 'delivered.verified',
+    verified: false,
+    status: 'accepted.unverified',
+    reason: 'legacy_delivery_ack_without_submit_proof',
   });
 }
 

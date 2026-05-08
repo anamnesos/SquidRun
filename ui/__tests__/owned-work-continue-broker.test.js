@@ -4,20 +4,16 @@ const path = require('path');
 
 describe('owned-work-continue-broker', () => {
   let tempRoot;
+  let queuePath;
   let queue;
   let broker;
 
   beforeEach(() => {
     jest.resetModules();
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'owned-work-continue-'));
-    fs.mkdirSync(path.join(tempRoot, 'runtime'), { recursive: true });
+    queuePath = path.join(tempRoot, 'runtime', 'agent-task-queue.json');
     jest.doMock('../config', () => ({
       ...require('./helpers/mock-config').mockDefaultConfig,
-      WORKSPACE_PATH: tempRoot,
-      PROJECT_ROOT: tempRoot,
-      getActiveProfile: () => 'main',
-      resolveCoordRoot: () => tempRoot,
-      getProjectRoot: () => tempRoot,
       resolveCoordPath: (relPath) => path.join(
         tempRoot,
         String(relPath || '').replace(/^[/\\]+/, '').replace(/[/\\]+/g, path.sep),
@@ -32,92 +28,86 @@ describe('owned-work-continue-broker', () => {
     jest.dontMock('../config');
   });
 
-  test('returns the next safe owned-work continuation card', () => {
-    const enqueued = queue.enqueueTask({
+  test('returns one safe/caution next-action card from due owned work', () => {
+    const nowMs = Date.parse('2026-05-04T12:00:00Z');
+    queue.writeQueue({
+      agents: {
+        builder: {
+          pending: [
+            {
+              taskId: 'builder-safe-1',
+              owner: 'builder',
+              state: 'queued',
+              riskClass: 'safe',
+              title: 'Docs pass',
+              message: 'Update docs and tests',
+              nextStep: 'Write the missing workflow note.',
+              wakeTrigger: 'post-wake',
+              lastAdvancedAt: nowMs - 1000,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+      },
+    }, queuePath);
+
+    const result = broker.buildOwnedWorkContinueCard({
+      queuePath,
+      nowMs,
+      wakeTrigger: 'post-wake',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      hasNextAction: true,
+      queuePath,
+    }));
+    expect(result.nextAction).toEqual(expect.objectContaining({
+      action: 'continue_owned_work',
       agent: 'builder',
-      title: 'Docs follow-up',
-      message: 'Write docs for voice route',
+      taskId: 'builder-safe-1',
       riskClass: 'safe',
-      nextStep: 'Summarize voice route in docs',
-      wakeTrigger: 'post-wake',
-      source: 'architect',
-    });
-
-    const plan = broker.buildContinueBrokerPlan({
-      nowMs: 1777887000000,
-      trigger: 'post-wake',
-    });
-
-    expect(plan).toEqual(expect.objectContaining({
-      ok: true,
-      reason: 'continue_ready',
-      profileName: 'main',
-      counts: expect.objectContaining({
-        ready: 1,
-        held: 0,
-      }),
-      nextAction: expect.objectContaining({
-        kind: 'owned_work_continue',
-        agent: 'builder',
-        taskId: enqueued.task.taskId,
-        riskClass: 'safe',
-        nextStep: 'Summarize voice route in docs',
-        source: 'architect',
-      }),
+      nextStep: 'Write the missing workflow note.',
+      resumeCommand: 'node ui/scripts/hm-task-queue.js wake --dispatch --agent builder --trigger post-wake',
     }));
-    expect(plan.nextAction.resumeCommand).toContain('hm-task-queue.js continue');
-    expect(plan.nextAction.resumeCommand).toContain(enqueued.task.taskId);
+    expect(result.nextAction.prompt).toContain('[OWNED-WORK CONTINUE]');
   });
 
-  test('holds approval-required work instead of selecting it', () => {
-    queue.enqueueTask({
-      agent: 'architect',
-      title: 'Customer send',
-      message: 'Send email to customer about invoice',
-      nextStep: 'Send the email',
+  test('does not offer approval-required work as the next action', () => {
+    const nowMs = Date.parse('2026-05-04T12:00:00Z');
+    queue.writeQueue({
+      agents: {
+        builder: {
+          pending: [
+            {
+              taskId: 'builder-invoice-1',
+              owner: 'builder',
+              state: 'queued',
+              riskClass: 'approval_required',
+              message: 'Send customer invoice email',
+              wakeTrigger: 'post-wake',
+              lastAdvancedAt: nowMs - 1000,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+      },
+    }, queuePath);
+
+    const result = broker.buildOwnedWorkContinueCard({
+      queuePath,
+      nowMs,
       wakeTrigger: 'post-wake',
     });
 
-    const plan = broker.buildContinueBrokerPlan({
-      nowMs: 1777887000000,
-      trigger: 'post-wake',
-    });
-
-    expect(plan.nextAction).toBeNull();
-    expect(plan.reason).toBe('only_held_work');
-    expect(plan.held).toEqual([
-      expect.objectContaining({
-        agent: 'architect',
-        riskClass: 'approval_required',
-        holdReason: 'approval_required',
-      }),
-    ]);
-  });
-
-  test('reports no due continuation when wake trigger does not match', () => {
-    queue.enqueueTask({
-      agent: 'oracle',
-      title: 'Later eval',
-      message: 'Run read-only eval later',
-      riskClass: 'safe',
-      nextStep: 'Inspect eval harness',
-      wakeTrigger: 'manual',
-    });
-
-    const plan = broker.buildContinueBrokerPlan({
-      nowMs: 1777887000000,
-      trigger: 'post-wake',
-    });
-
-    expect(plan).toEqual(expect.objectContaining({
-      ok: true,
-      reason: 'no_due_work',
-      nextAction: null,
-      counts: expect.objectContaining({
-        ready: 0,
-        held: 0,
-      }),
+    expect(result.hasNextAction).toBe(false);
+    expect(result.reason).toBe('no_dispatch_ready_owned_work');
+    expect(result.counts.approvalRequired).toBe(1);
+    expect(result.held[0]).toEqual(expect.objectContaining({
+      riskClass: 'approval_required',
+      dispatchReady: false,
     }));
-    expect(broker.formatContinueBrokerPlan(plan)).toBe('No due owned-work continuation right now.');
   });
 });

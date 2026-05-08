@@ -136,3 +136,17 @@
 .mira-local-text-reply[hidden] {
   display: none;
 }
+
+.mira-developmental-understanding {
+  padding: var(--space-3);
+  border-left: 3px solid rgba(154, 240, 189, 0.58);
+  background: rgba(18, 33, 31, 0.46);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mira-developmental-understanding[hidden] {
+  display: none;
+}

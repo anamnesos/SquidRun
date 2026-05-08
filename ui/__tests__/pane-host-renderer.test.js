@@ -128,7 +128,7 @@ describe('pane-host-renderer internals', () => {
     }));
   });
 
-  test('keeps hm-send deliveries unverified when Enter succeeds without output', () => {
+  test('keeps non-strict deliveries unverified when Enter succeeds without output', () => {
     expect(
       _internals.resolvePostEnterDeliveryResult({
         outputObserved: false,
@@ -141,6 +141,52 @@ describe('pane-host-renderer internals', () => {
         verified: false,
         status: 'accepted.unverified',
         reason: 'post_enter_output_timeout',
+      },
+    });
+  });
+
+  test('fails closed for strict hm-send delivery when Enter has no model-output proof', () => {
+    expect(
+      _internals.resolvePostEnterDeliveryResult({
+        outputObserved: false,
+        enterSucceeded: true,
+        strictSubmitRequired: true,
+      })
+    ).toEqual({
+      ack: false,
+      outcome: {
+        accepted: false,
+        verified: false,
+        status: 'submit_not_accepted',
+        reason: 'no_acceptance_signal',
+        pendingInputObserved: false,
+      },
+    });
+  });
+
+  test('reports pending input when hidden-host prompt still contains injected text', () => {
+    const payload = '(ARCH #19): OBJECTIVE: Fix or pin the first-shot long delegation delivery-to-processing defect.';
+    const probe = _internals.probePendingInputLine(`codex> ${payload}`, payload);
+
+    expect(probe).toEqual(expect.objectContaining({
+      pending: true,
+      fragment: expect.stringContaining('objective: fix or pin'),
+    }));
+    expect(
+      _internals.resolvePostEnterDeliveryResult({
+        outputObserved: false,
+        enterSucceeded: true,
+        strictSubmitRequired: true,
+        pendingInputObserved: probe.pending,
+      })
+    ).toEqual({
+      ack: false,
+      outcome: {
+        accepted: false,
+        verified: false,
+        status: 'submit_not_accepted',
+        reason: 'input_buffer_pending',
+        pendingInputObserved: true,
       },
     });
   });
@@ -169,5 +215,28 @@ describe('pane-host-renderer internals', () => {
         reason: 'enter_dispatch_failed',
       },
     });
+  });
+
+  test('detects Codex pane runtime hints from explicit runtime or command', () => {
+    expect(_internals.isCodexRuntimeHint({ runtime: 'codex', command: '' })).toBe(true);
+    expect(_internals.isCodexRuntimeHint({ runtime: 'unknown', command: 'codex --yolo' })).toBe(true);
+    expect(_internals.isCodexRuntimeHint('codex')).toBe(true);
+    expect(_internals.isCodexRuntimeHint({ runtime: 'claude', command: 'claude' })).toBe(false);
+    expect(_internals.normalizeRuntimeHint(null)).toEqual({ runtime: '', command: '' });
+  });
+
+  test('writes Codex paste-end when hidden-host payload carries Codex metadata', () => {
+    expect(
+      _internals.shouldWriteCodexPasteEnd(
+        { runtime: 'unknown', command: '' },
+        { runtimeHint: 'codex', codexPane: true }
+      )
+    ).toBe(true);
+    expect(
+      _internals.shouldWriteCodexPasteEnd(
+        { runtime: 'unknown', command: '' },
+        { runtimeHint: 'claude', codexPane: false }
+      )
+    ).toBe(false);
   });
 });

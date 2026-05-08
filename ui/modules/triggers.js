@@ -590,9 +590,9 @@ function handleDeliveryAck(deliveryId, paneId) {
     try {
       listener(deliveryId, paneId, {
         accepted: true,
-        verified: true,
-        status: 'delivered.verified',
-        reason: null,
+        verified: false,
+        status: 'accepted.unverified',
+        reason: 'legacy_delivery_ack_without_submit_proof',
       });
     } catch (err) {
       log.warn('Trigger', `Delivery ack listener failed: ${err.message}`);

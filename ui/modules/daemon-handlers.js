@@ -542,6 +542,13 @@ async function removePanesSatisfiedByDirectSnapshot(panesNeedingSpawn) {
   return panesNeedingSpawn;
 }
 
+function isRendererReloadReplay(data = {}) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.replayed === true || data.replay === true) return true;
+  const source = typeof data.source === 'string' ? data.source.toLowerCase() : '';
+  return source.includes('reload') || source.includes('reattach') || source.includes('snapshot');
+}
+
 // ============================================================
 // SYNC STATE MANAGEMENT
 // ============================================================
@@ -624,7 +631,9 @@ async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattach
       }
     }
 
-    if (panesNeedingSpawn.size > 0 && data?.replayed !== true) {
+    const rendererReloadReplay = isRendererReloadReplay(data);
+
+    if (panesNeedingSpawn.size > 0) {
       await removePanesSatisfiedByDirectSnapshot(panesNeedingSpawn);
     }
 
@@ -667,6 +676,14 @@ async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattach
       for (const paneId of missingPanes) {
         panesNeedingSpawn.add(String(paneId));
       }
+    }
+
+    if (panesNeedingSpawn.size > 0 && rendererReloadReplay) {
+      log.info(
+        'Daemon',
+        `Suppressing auto-spawn during renderer reload replay for panes: ${[...panesNeedingSpawn].join(', ')}`
+      );
+      panesNeedingSpawn.clear();
     }
 
     if (panesNeedingSpawn.size > 0) {
@@ -1188,13 +1205,34 @@ function processThrottleQueue(paneId) {
         const reason = typeof result?.reason === 'string' ? result.reason : '';
         const statusLower = status.toLowerCase();
         const reasonLower = reason.toLowerCase();
+        const routePending = (
+          result?.routePending === true
+          || statusLower === 'pane_host_route_pending'
+          || reasonLower === 'hidden_pane_host_delivery_pending'
+        );
+        if (routePending) {
+          log.info(
+            'Daemon',
+            `Trigger delivery routed to hidden pane host for pane ${paneId}; awaiting pane-host delivery outcome`
+          );
+          uiView.showDeliveryIndicator(paneId, 'pending');
+          finalizeQueueProcessing();
+          return;
+        }
         const submitUnverified = (
           reasonLower === 'submit_not_accepted'
           || statusLower === 'submit_not_accepted'
           || statusLower.includes('unverified')
           || (result?.verified === false && result?.success !== false)
         );
-        const accepted = submitUnverified || !result || result.success !== false;
+        const submitNotAccepted = (
+          reasonLower === 'submit_not_accepted'
+          || reasonLower === 'input_buffer_pending'
+          || statusLower === 'submit_not_accepted'
+        );
+        const accepted = submitNotAccepted
+          ? false
+          : (submitUnverified || !result || result.success !== false);
         if (!accepted) {
           log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
           uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
@@ -1205,7 +1243,7 @@ function processThrottleQueue(paneId) {
               paneId,
               accepted: false,
               verified: false,
-              status: result?.status || result?.reason || 'delivery_failed',
+              status: submitNotAccepted ? 'submit_not_accepted' : (result?.status || result?.reason || 'delivery_failed'),
               reason: result?.reason || null,
             });
           }

@@ -669,6 +669,7 @@ function getPaneInjectionCapabilities(paneId) {
   const base = getRuntimeInjectionCapabilityDefault(runtimeKey, {
     isDarwin: IS_DARWIN,
     codexEnterDelayMs: CODEX_ENTER_DELAY_MS,
+    codexVerifySubmitAccepted: true,
     geminiEnterDelayMs: GEMINI_ENTER_DELAY_MS,
     claudeEnterDelayMs: 50,
   });
@@ -680,13 +681,15 @@ function getPaneInjectionCapabilities(paneId) {
   // In hidden pane host mode, trusted-enter runtimes (Claude) must submit
   // through raw PTY Enter to avoid browser key-event delivery issues.
   if (isHiddenPaneHostPane(paneId) && base.enterMethod === 'trusted') {
+    const hiddenHostNeedsSubmitProof = String(base.displayName || '').toLowerCase() === 'codex'
+      || String(base.modeLabel || '').toLowerCase().includes('codex');
     Object.assign(base, {
       submitMethod: 'hidden-pane-host-pty-enter',
       bypassGlobalLock: true,
       applyCompactionGate: false,
       requiresFocusForEnter: false,
       enterMethod: 'pty',
-      verifySubmitAccepted: false,
+      verifySubmitAccepted: hiddenHostNeedsSubmitProof,
       deferSubmitWhilePaneActive: false,
       typingGuardWhenBypassing: true,
       enterFailureReason: 'pty_enter_failed',
@@ -1028,7 +1031,7 @@ async function sendStartupIdentityViaInjection(paneId, identityMsg) {
         priority: true,
         immediate: true,
         startupInjection: true,
-        verifySubmitAccepted: false,
+        verifySubmitAccepted: true,
         onComplete: settle,
       });
     } catch (err) {
@@ -1579,22 +1582,31 @@ function sendToPane(paneId, message, options = {}) {
     && options?.startupInjection !== true
   );
   if (useHiddenPaneHostRoute) {
+    const hiddenPaneRuntimeKey = classifyRuntimeFromIdentity(id);
+    const hiddenPaneCodex = hiddenPaneRuntimeKey === 'codex' || isCodexPane(id);
     Promise.resolve(window.squidrun.paneHost.inject(id, {
       message: String(message || ''),
       traceContext: options?.traceContext || null,
       deliveryId: options?.deliveryId || null,
-      meta: options?.meta || null,
+      meta: {
+        ...((options?.meta && typeof options.meta === 'object') ? options.meta : {}),
+        runtimeHint: hiddenPaneRuntimeKey,
+        codexPane: hiddenPaneCodex,
+      },
     }))
       .then((result) => {
         if (result?.success === false) {
           return injectionController.sendToPane(id, message, options);
         }
         if (typeof options?.onComplete === 'function') {
+          const verified = result?.verified === true;
           options.onComplete({
             success: true,
-            verified: true,
+            verified,
+            routePending: !verified,
             signal: 'pane_host_inject',
-            status: 'delivered.verified',
+            status: verified ? (result?.status || 'delivered.verified') : 'pane_host_route_pending',
+            reason: verified ? null : (result?.reason || 'hidden_pane_host_delivery_pending'),
           });
         }
       })

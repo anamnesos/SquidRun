@@ -109,11 +109,40 @@ function normalizeIngressEnvelope(input = {}, options = {}) {
       topic: toNonEmptyString(input.topic),
       language: toNonEmptyString(input.language),
       channelMessageId: toNonEmptyString(input.channelMessageId) || toNonEmptyString(input.messageId),
+      chatId: toNonEmptyString(input.chatId) || toNonEmptyString(input.telegramChatId),
     },
     targetIntent: normalizeTargetIntent(input.targetIntent || input),
     routePolicy: normalizeRoutePolicy(input.routePolicy || input),
     receivedAtMs,
   };
+}
+
+function normalizeVoiceIngress(input = {}, options = {}) {
+  return normalizeIngressEnvelope({
+    ...input,
+    source: 'voice',
+    transcript: input.transcript || input.text || input.message,
+    target: input.target || 'architect',
+  }, options);
+}
+
+function normalizeTelegramIngress(input = {}, options = {}) {
+  return normalizeIngressEnvelope({
+    ...input,
+    source: 'telegram',
+    message: input.message || input.text || input.caption,
+    target: input.target || 'architect',
+  }, options);
+}
+
+function normalizeWakeIngress(input = {}, options = {}) {
+  return normalizeIngressEnvelope({
+    ...input,
+    source: 'wake',
+    message: input.message || input.text || input.nextStep,
+    target: input.target || input.agent || 'architect',
+    riskClass: input.riskClass || 'safe',
+  }, options);
 }
 
 function summarizeIngressEnvelope(envelope = {}) {
@@ -130,5 +159,8 @@ module.exports = {
   normalizeRoutePolicy,
   normalizeScope,
   normalizeSource,
+  normalizeTelegramIngress,
+  normalizeVoiceIngress,
+  normalizeWakeIngress,
   summarizeIngressEnvelope,
 };

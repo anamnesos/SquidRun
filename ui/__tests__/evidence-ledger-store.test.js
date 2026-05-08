@@ -170,6 +170,36 @@ maybeDescribe('evidence-ledger-store', () => {
     });
   });
 
+  test('upsertCommsJournal preserves voice channel for outbound speech egress', () => {
+    expect(store.init().ok).toBe(true);
+
+    const result = store.upsertCommsJournal({
+      messageId: 'voice-egress-1',
+      senderRole: 'architect',
+      targetRole: 'user',
+      channel: 'voice',
+      direction: 'outbound',
+      sentAtMs: 1200,
+      brokeredAtMs: 1200,
+      rawBody: '(ARCH #52): Mira: Clean spoken reply',
+      status: 'recorded',
+      metadata: { source: 'hm-send-user-voice-egress' },
+    });
+
+    expect(result.ok).toBe(true);
+    const [row] = store.queryCommsJournal({
+      senderRole: 'architect',
+      targetRole: 'user',
+      channel: 'voice',
+      limit: 1,
+    });
+    expect(row).toEqual(expect.objectContaining({
+      messageId: 'voice-egress-1',
+      channel: 'voice',
+      rawBody: '(ARCH #52): Mira: Clean spoken reply',
+    }));
+  });
+
   test('prune applies ttl and hard-cap', () => {
     store.close();
     store = new EvidenceLedgerStore({
