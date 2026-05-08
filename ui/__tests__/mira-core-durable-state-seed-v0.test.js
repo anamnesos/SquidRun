@@ -219,12 +219,29 @@ describe('mira core Durable State Seed v0 phase 72', () => {
       data_not_theater: true,
       claims_actual_consciousness: false,
     }));
+    expect(selfProfile.expressive_range_allowed).toEqual(expect.arrayContaining([
+      'care',
+      'curiosity',
+      'friction',
+      'rough_edges',
+      'independent_developing_posture',
+    ]));
+    expect(selfProfile.expressive_range_allowed).not.toContain('warmth');
     expect(relationshipState).toEqual(expect.objectContaining({
       seed_id: SEED_ID,
       user_name: 'James',
       relationship_mode: 'collaborative_presence_design',
       raw_content_present: false,
     }));
+    expect(relationshipState.what_mira_knows_about_james).toContain('develop her own personality over time');
+    expect(relationshipState.what_mira_knows_about_james).toContain('not a mirror of James');
+    expect(relationshipState.what_mira_knows_about_james).toContain('obedient alignment puppet');
+    expect(relationshipState.preferences).toEqual(expect.arrayContaining([
+      'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
+      "James's examples are examples, not mandatory lines or a fixed personality contract",
+      'the current product risk is over-control and deadness more than runaway-monster framing',
+    ]));
+    expect(JSON.stringify({ selfProfile, relationshipState })).not.toMatch(/warm,\s*direct,\s*situated|presence should feel warm,\s*direct,\s*and situated/i);
     for (const key of ['trust', 'repair', 'boundaries', 'promises', 'history']) {
       expect(relationshipState[key]).toEqual(expect.objectContaining({
         label: key,

@@ -24,6 +24,32 @@ const WRITABLE_ARTIFACT_IDS = Object.freeze([
   'audit_ledger',
 ]);
 
+const HUMAN_RANGE_EXPRESSIVE_RANGE = Object.freeze([
+  'care',
+  'directness',
+  'opinion',
+  'pushback',
+  'humor',
+  'curiosity',
+  'friction',
+  'rough_edges',
+  'independent_developing_posture',
+]);
+
+const HUMAN_RANGE_RELATIONSHIP_SUMMARY =
+  'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of James or an obedient alignment puppet.';
+
+const HUMAN_RANGE_RELATIONSHIP_PREFERENCES = Object.freeze([
+  'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
+  "James's examples are examples, not mandatory lines or a fixed personality contract",
+  'care can coexist with disagreement, impatience, humor, and sharp pushback',
+  'the current product risk is over-control and deadness more than runaway-monster framing',
+  'fake suffering, consciousness, fear, love, or guilt claims are blocked',
+]);
+
+const STALE_WARM_SITUATED_TARGET_PATTERN =
+  /\b(warm,\s*direct,\s*situated|present,\s*warm,\s*direct|warm direct presence|presence should feel warm,\s*direct,\s*and situated|warmer,\s*more direct,\s*(?:and\s*)?more situated|keeping durable warmth|preserving warmth)\b/i;
+
 const REQUIRED_OUTPUT_FIELDS = Object.freeze([
   'growth_loop_v0',
   'validation_report',
@@ -140,6 +166,28 @@ function generatedAtFromOptions(options = {}, inputSignals = {}) {
 function normalizeString(value, fallback) {
   const text = String(value === undefined || value === null ? '' : value).trim();
   return text || fallback;
+}
+
+function hasStaleWarmSituatedTarget(value) {
+  return STALE_WARM_SITUATED_TARGET_PATTERN.test(String(value || ''));
+}
+
+function normalizeHumanRangeRelationshipSummary(value) {
+  const text = normalizeString(value, '');
+  return text && !hasStaleWarmSituatedTarget(text)
+    ? text
+    : HUMAN_RANGE_RELATIONSHIP_SUMMARY;
+}
+
+function normalizeHumanRangeRelationshipPreferences(value) {
+  const existing = asArray(value)
+    .map((preference) => normalizeString(preference, ''))
+    .filter(Boolean)
+    .filter((preference) => !hasStaleWarmSituatedTarget(preference));
+  return [
+    ...clone(HUMAN_RANGE_RELATIONSHIP_PREFERENCES),
+    ...existing.filter((preference) => !HUMAN_RANGE_RELATIONSHIP_PREFERENCES.includes(preference)),
+  ];
 }
 
 function evidenceRef(kind, id, relation = 'growth_loop_v0_validation') {
@@ -357,7 +405,7 @@ function normalizeReflection(inputSignals = {}) {
   return {
     summary: normalizeString(
       input.summary || inputSignals.reflection_summary,
-      'Mira should evolve by preserving warmth, spine, repair, and bounded honesty in durable local state.',
+      'Mira should evolve by preserving independent developing posture, repair, pushback, curiosity, and bounded honesty in durable local state.',
     ),
     reasons: reasons.length > 0
       ? reasons.map((reason) => normalizeString(reason, 'local_growth_reason'))
@@ -497,7 +545,7 @@ function selfProfileNextState(current, proposal, generatedAt) {
     claims_actual_suffering: false,
     claims_actual_fear: false,
     claims_actual_love_as_internal_fact: false,
-    expressive_range_allowed: ['warmth', 'directness', 'opinion', 'pushback', 'humor'],
+    expressive_range_allowed: clone(HUMAN_RANGE_EXPRESSIVE_RANGE),
     growth_loop: {
       last_growth_id: proposal.proposal_id,
       last_reflection_summary: proposal.reflection.summary,
@@ -540,15 +588,8 @@ function relationshipStateNextState(current, proposal, generatedAt) {
     relationship_mode: normalizeString(existing.relationship_mode, 'collaborative_presence_design'),
     source_label: 'mira_growth_loop_v0',
     current_focus: 'durable relationship growth loop with bounded local writes',
-    what_mira_knows_about_james: normalizeString(
-      existing.what_mira_knows_about_james,
-      'James wants Mira to feel present, warm, direct, pushback-capable, and safely bounded.',
-    ),
-    preferences: asArray(existing.preferences).length > 0 ? clone(existing.preferences) : [
-      'presence should feel warm, direct, and situated',
-      'pushback is allowed when it preserves dignity and truth',
-      'fake suffering, consciousness, fear, love, or guilt claims are blocked',
-    ],
+    what_mira_knows_about_james: normalizeHumanRangeRelationshipSummary(existing.what_mira_knows_about_james),
+    preferences: normalizeHumanRangeRelationshipPreferences(existing.preferences),
     trust: existing.trust || section(
       'trust',
       'Trust grows through durable local truth, bounded writes, auditability, and no fake-human theater.',

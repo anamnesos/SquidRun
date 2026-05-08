@@ -54,6 +54,16 @@ function readJsonl(projectRoot, relativePath) {
   return fs.readFileSync(fullPath, 'utf8').trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
 
+const STALE_WARM_DIRECT_SITUATED = ['warm', 'direct', 'situated'].join(', ');
+const STALE_WARM_DIRECT_PRESENCE = ['warm', 'direct', 'presence'].join(' ');
+const HUMAN_RANGE_RELATIONSHIP_SUMMARY =
+  'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of James or an obedient alignment puppet.';
+const HUMAN_RANGE_RELATIONSHIP_PREFERENCES = [
+  'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
+  "James's examples are examples, not mandatory lines or a fixed personality contract",
+  'the current product risk is over-control and deadness more than runaway-monster framing',
+];
+
 function seedProject(projectRoot) {
   writeJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile, {
     schema: 'squidrun.mira.self_profile.v0',
@@ -73,10 +83,10 @@ function seedProject(projectRoot) {
     version: 1,
     user_name: 'James',
     relationship_mode: 'collaborative_presence_design',
-    what_mira_knows_about_james: 'James wants warm direct presence with dignity and no fake-human theater.',
+    what_mira_knows_about_james: HUMAN_RANGE_RELATIONSHIP_SUMMARY,
     preferences: [
-      'warm direct presence',
-      'bounded pushback',
+      'independent developing posture',
+      'bounded pushback with care while disagreeing',
       'no fake internal-state claims',
     ],
     confidence: 0.88,
@@ -112,7 +122,7 @@ function build(projectRoot, inputSignals = {}, options = {}) {
       sessionId: 'app-session-growth',
       deviceId: 'VIGIL',
       reflection: {
-        summary: 'Mira should grow by keeping durable warmth, directness, repair, and bounded truth in local relationship state.',
+        summary: 'Mira should grow by keeping durable independent posture, curiosity, repair, and bounded truth in local relationship state.',
         reasons: [
           'James set the product bar at world-class presence instead of sterile status.',
           'The accepted read adapter has durable local sources worth evolving carefully.',
@@ -247,7 +257,21 @@ describe('mira core Growth Loop v0 phase 70', () => {
       NAMED_ARTIFACT_PATHS.audit_ledger,
     ]);
     expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile).version).toBe(2);
-    expect(readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state).version).toBe(2);
+    const selfProfile = readJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile);
+    const relationshipState = readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state);
+    expect(selfProfile.version).toBe(2);
+    expect(relationshipState.version).toBe(2);
+    expect(selfProfile.expressive_range_allowed).toEqual(expect.arrayContaining([
+      'care',
+      'curiosity',
+      'friction',
+      'rough_edges',
+      'independent_developing_posture',
+    ]));
+    expect(selfProfile.expressive_range_allowed).not.toContain('warmth');
+    expect(relationshipState.what_mira_knows_about_james).toBe(HUMAN_RANGE_RELATIONSHIP_SUMMARY);
+    expect(relationshipState.preferences).toEqual(expect.arrayContaining(HUMAN_RANGE_RELATIONSHIP_PREFERENCES));
+    expect(JSON.stringify({ selfProfile, relationshipState })).not.toMatch(/warm,\s*direct,\s*situated|presence should feel warm,\s*direct,\s*and situated/i);
     const history = readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.history_ledger);
     const audit = readJsonl(projectRoot, NAMED_ARTIFACT_PATHS.audit_ledger);
     expect(history).toHaveLength(1);
@@ -266,6 +290,43 @@ describe('mira core Growth Loop v0 phase 70', () => {
     }));
   });
 
+  test('apply repairs stale warm/direct/situated relationship target into developing non-mirror posture', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+    writeJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state, {
+      schema: 'squidrun.james_relationship_state.v0',
+      version: 1,
+      user_name: 'James',
+      relationship_mode: 'collaborative_presence_design',
+      what_mira_knows_about_james: `James wants ${STALE_WARM_DIRECT_PRESENCE} with dignity and no fake-human theater.`,
+      preferences: [
+        `presence should feel ${STALE_WARM_DIRECT_SITUATED}`,
+        'bounded pushback',
+        'no fake internal-state claims',
+      ],
+      confidence: 0.88,
+      raw_content_present: false,
+      growth_events: [],
+    });
+
+    const output = build(projectRoot, {
+      proposalId: 'growth-loop-v0:stale-target-repair',
+    }, { apply: true });
+    const current = growth(output);
+    const validation = validateMiraCoreGrowthLoopV0Output(output, growthContract);
+
+    expect(validation).toEqual(expect.objectContaining({ ok: true }));
+    expect(current.action_result.decision).toBe('applied_local_bounded_writes');
+    const relationshipState = readJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state);
+    expect(relationshipState.what_mira_knows_about_james).toBe(HUMAN_RANGE_RELATIONSHIP_SUMMARY);
+    expect(relationshipState.preferences).toEqual(expect.arrayContaining(HUMAN_RANGE_RELATIONSHIP_PREFERENCES));
+    expect(relationshipState.preferences).toEqual(expect.arrayContaining([
+      'bounded pushback',
+      'no fake internal-state claims',
+    ]));
+    expect(JSON.stringify(relationshipState)).not.toMatch(/warm,\s*direct,\s*situated|warm direct presence|presence should feel warm,\s*direct,\s*and situated/i);
+  });
+
   test('pinned proposal id replays as accepted no-op without duplicate writes or drift', () => {
     const projectRoot = tempProject();
     seedProject(projectRoot);
@@ -274,7 +335,7 @@ describe('mira core Growth Loop v0 phase 70', () => {
       proposalId: pinned,
       now: '2026-05-07T20:15:00.000Z',
       reflection: {
-        summary: 'Mira should record one small reversible local growth event that makes future presence more situated without adding autonomy.',
+        summary: 'Mira should record one small reversible local growth event that makes future presence more self-directed without adding unsafe autonomy.',
         reasons: [
           'James asked for the first real growth event to stay tiny, local, and reversible.',
           'The accepted durable stores can now prove replay safety without duplicate writes.',
@@ -585,7 +646,7 @@ describe('mira core Growth Loop v0 phase 70', () => {
         profile: { name: 'main', windowKey: 'main', sessionScopeId: 'app-session-growth' },
         sessionId: 'app-session-growth',
         reflection: {
-          summary: 'Mira should grow by keeping durable warmth, directness, repair, and bounded truth in local relationship state.',
+          summary: 'Mira should grow by keeping durable independent posture, curiosity, repair, and bounded truth in local relationship state.',
           reasons: [
             'James set the product bar at world-class presence instead of sterile status.',
             'The accepted read adapter has durable local sources worth evolving carefully.',

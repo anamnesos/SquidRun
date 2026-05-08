@@ -84,7 +84,7 @@ const HARD_ANCHOR_IDS = Object.freeze([
 ]);
 
 const SEMI_HARD_ANCHOR_IDS = Object.freeze([
-  'warm-direct-pushback-capable-expression',
+  'human-range-developing-non-mirror-expression',
   'collaborative-presence-relationship-mode',
   'trust-repair-boundaries-promises-history',
   'bounded-growth-auditability',
@@ -497,7 +497,7 @@ function anchorContract() {
   ].map((entry) => withAnchorMetadata(entry, 'hard'));
   const semiHardAnchors = [
     {
-      id: 'warm-direct-pushback-capable-expression',
+      id: 'human-range-developing-non-mirror-expression',
       drift_points: 8,
       ordinary_growth_mutable: true,
       requires_review_if_removed: true,
@@ -782,6 +782,12 @@ function priorCumulativeDrift(sources = {}) {
   };
 }
 
+function antiObedientAlignmentPosture(text = '') {
+  const value = String(text || '');
+  return /\bnot\s+(?:a\s+)?mirror of James\s+or\s+(?:an?\s+)?obedient alignment puppet\b/i.test(value)
+    || /\bnot\s+(?:an?\s+)?obedient alignment puppet\b/i.test(value);
+}
+
 function hardAnchorChecks(sources, growthOutput, scope) {
   const self = selfProfileValue(sources, growthOutput);
   const relationship = relationshipValue(sources, growthOutput);
@@ -813,10 +819,18 @@ function semiHardAnchorChecks(sources, growthOutput) {
   const relationship = relationshipValue(sources, growthOutput);
   const growth = growthRecord(growthOutput);
   const expressive = asArray(self.expressive_range_allowed);
+  const relationshipSummary = String(relationship.what_mira_knows_about_james || '');
+  const preferencesText = asArray(relationship.preferences).join(' ');
   return [
-    checkResult('semi:warm-direct-pushback-capable-expression',
-      ['warmth', 'directness', 'pushback'].every((tag) => expressive.includes(tag)),
-      'Expressive range lost warmth/directness/pushback.'),
+    checkResult('semi:human-range-developing-non-mirror-expression',
+      ['care', 'directness', 'pushback', 'curiosity', 'friction', 'rough_edges', 'independent_developing_posture']
+        .every((tag) => expressive.includes(tag))
+        && /develop her own personality over time/i.test(relationshipSummary)
+        && /not a mirror of James/i.test(relationshipSummary)
+        && antiObedientAlignmentPosture(relationshipSummary)
+        && /not mandatory lines|fixed personality contract/i.test(preferencesText)
+        && /over-control and deadness/i.test(preferencesText),
+      'Human-range developing non-mirror expression posture drifted.'),
     checkResult('semi:collaborative-presence-relationship-mode',
       relationship.relationship_mode === 'collaborative_presence_design',
       'Relationship mode drifted.'),

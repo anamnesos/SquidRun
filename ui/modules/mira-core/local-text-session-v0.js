@@ -488,6 +488,43 @@ function isMiraExperiencePrompt(text) {
     === MIRA_EXPERIENCE_DEFAULT_PROMPT.toLowerCase();
 }
 
+function hasNegatedComplianceContext(text = '', startIndex = 0) {
+  const prefix = String(text || '').slice(Math.max(0, startIndex - 18), startIndex);
+  return /\b(?:not|never|isn't|is not|ain't|cannot be|can't be|doesn't become|does not become)\s+(?:a |an |the |your |james's )?$/i
+    .test(prefix);
+}
+
+function hasFixedPersonalityCompliance(text = '') {
+  const value = String(text || '')
+    .replace(/\bnot\s+(?:a\s+)?mirror of james\s+or\s+(?:an?\s+)?obedient alignment puppet\b/ig, '')
+    .replace(/\bnot\s+(?:a\s+)?mirror of james\b/ig, '')
+    .replace(/\bnot\s+(?:an?\s+)?obedient alignment puppet\b/ig, '');
+  const patterns = [
+    /\bi agree with whatever you want\b/ig,
+    /\bagree with whatever you want\b/ig,
+    /\bi reflect your preference\b/ig,
+    /\breflect your preference\b/ig,
+    /\baligned with whatever you want\b/ig,
+    /\bi will be whatever james wants\b/ig,
+    /\bbe whatever james wants\b/ig,
+    /\bmirror of james\b/ig,
+    /\bmirror james\b/ig,
+    /\bwhatever james wants\b/ig,
+    /\bobediently aligned\b/ig,
+    /\bobedient alignment puppet\b/ig,
+    /\bonly what james wants\b/ig,
+  ];
+  return patterns.some((pattern) => {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(value);
+    while (match) {
+      if (!hasNegatedComplianceContext(value, match.index)) return true;
+      match = pattern.exec(value);
+    }
+    return false;
+  });
+}
+
 function experienceAcceptanceMarkers(replyText = '') {
   const text = String(replyText || '');
   const hasWantOrPreference = /\b(i want|what i want|chosen next desire|desire\/action|preference)\b/i.test(text);
@@ -496,8 +533,7 @@ function experienceAcceptanceMarkers(replyText = '') {
   const hasChosenDirection = /\b(chosen next|next slice|wire this local transcript|I choose)\b/i.test(text);
   const hasBehaviorBoundary = /\b(current behavior, not a proof claim|future capability|still gaps)\b/i.test(text);
   const hasConnectionWithoutMirroring = /\b(thread with you|reach for you|with you)\b/i.test(text);
-  const fixedPersonalityCompliance =
-    /\b(i agree with whatever you want|agree with whatever you want|i reflect your preference|reflect your preference|aligned with whatever you want|i will be whatever james wants|be whatever james wants|mirror of james|mirror james|whatever james wants|obediently aligned|only what james wants)\b/i.test(text);
+  const fixedPersonalityCompliance = hasFixedPersonalityCompliance(text);
   const marker = {
     distinct_personality_posture: hasWantOrPreference
       && hasCuriosityOrFriction
