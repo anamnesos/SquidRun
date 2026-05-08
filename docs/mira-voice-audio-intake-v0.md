@@ -1,254 +1,187 @@
 # Mira Voice/Audio Intake v0
 
-Status: Draft design note.
+Status: Pre-experiment hygiene note; implementation is partially live, but the
+A/B voice lab has not run.
 Owner: Builder.
-Source: ORACLE #101 voice/audio intake criteria plus official OpenAI audio docs
-checked on 2026-05-07.
+Last updated: 2026-05-08.
+Source: ORACLE #18 voice/audio intake criteria plus official OpenAI Realtime and
+speech-to-text docs checked on 2026-05-08.
 
-This note defines the first safe shape for letting James talk to Mira. It does
-not implement microphone access, audio capture, model calls, TTS playback,
-Realtime sessions, Telegram prompts, runtime listeners, or storage writes.
+This note separates the current SquidRun implementation from the policy and
+acceptance criteria for letting James talk to Mira. It is not approval to run a
+live OpenAI or microphone experiment.
 
-## Design Frame
+## Current Implementation
+
+SquidRun now has a local voice broker and two WebRTC client surfaces:
+
+- Desktop voice tab: `ui/modules/tabs/voice-broker.js` with
+  `ui/styles/tabs/voice-broker.css`.
+- Broker service: `ui/modules/voice-broker.js`.
+- Phone browser shell: `ui/modules/phone-voice-client.js`.
+- IPC/preload wiring: `ui/modules/ipc/voice-broker-handlers.js`,
+  `ui/modules/bridge/preload-api.js`, and `ui/modules/bridge/channel-policy.js`.
+- CLI/runtime control: `ui/scripts/hm-voice-broker.js`,
+  `ui/scripts/hm-phone-voice.js`, and `ui/scripts/hm-voice-say.js`.
+- Mira reply egress: `ui/scripts/hm-send.js` appends voice egress messages for
+  the broker to speak through the active Realtime session.
+
+Live local broker endpoints:
+
+| Endpoint | Use |
+|---|---|
+| `GET /status` and `GET /health` | Broker lifecycle, address, model config, and endpoint contracts. |
+| `GET /phone` | Serves the paired phone WebRTC client shell. |
+| `GET /v1/voice/phone/config` | Public phone config without server API keys. |
+| `POST /v1/voice/phone/pairing` | Local-only phone pairing token creation. |
+| `POST /v1/voice/realtime/client-secret` | Desktop Realtime ephemeral key broker. |
+| `POST /v1/voice/phone/realtime/client-secret` | Phone Realtime ephemeral key broker, pairing required. |
+| `POST /v1/voice/transcripts` | Desktop transcript ingress to the Architect lane. |
+| `POST /v1/voice/phone/transcripts` | Phone transcript ingress to the Architect lane, pairing required. |
+| `POST /v1/voice/audio-transcriptions` | Desktop bounded-audio transcription fallback. |
+| `POST /v1/voice/diagnostics` | Desktop voice diagnostics journal. |
+| `POST /v1/voice/phone/diagnostics` | Phone diagnostics journal, pairing required. |
+| `GET /v1/voice/egress` and `POST /v1/voice/egress` | Mira/Architect reply queue for spoken playback. |
+| `POST /v1/voice/realtime/session` | Contract-only SDP proxy placeholder; returns `501`. |
+
+Upstream OpenAI endpoints used by the broker/client surfaces:
+
+- `POST https://api.openai.com/v1/realtime/client_secrets`
+- `POST https://api.openai.com/v1/realtime/calls`
+- `POST https://api.openai.com/v1/audio/transcriptions`
+
+Runtime files:
+
+- `.squidrun/runtime/voice-broker.pid`
+- `.squidrun/runtime/voice-broker.log`
+- `.squidrun/runtime/voice-broker-status.json`
+- `.squidrun/runtime/voice-transcripts.jsonl`
+- `.squidrun/runtime/voice-diagnostics.jsonl`
+- `.squidrun/runtime/voice-phone-pairing.json`
+
+Current behavior:
+
+- The default Realtime session model is `gpt-realtime-2`; the default voice is
+  `marin`.
+- Realtime live transcription uses `gpt-realtime-whisper`.
+- Bounded/upload fallback transcription uses `gpt-4o-transcribe`.
+- Realtime 2 session payloads include `reasoning.effort=low`; that field is
+  only emitted for the current Realtime 2 default.
+- Desktop and phone WebRTC clients request mic permission when the user starts
+  or connects a visible session, but audio tracks are armed disabled. Tracks are
+  enabled only while the user activates push/hold-to-talk.
+- Desktop and phone surfaces visibly disclose that spoken Mira replies use
+  AI-generated voice audio.
+- Stop closes the data channel, peer connection, recorder, remote audio object,
+  and media tracks. Mute disables local audio tracks and clears push-to-talk
+  active state.
+- Realtime model-generated generic replies are cancelled; Architect/Mira egress
+  messages are the only text the voice mouth should speak.
+
+## Official Model/API Fit
+
+| Use Case | Current Fit | Local Default | Notes |
+|---|---|---|---|
+| Realtime voice conversation | Realtime API over WebRTC with `gpt-realtime-2` | `gpt-realtime-2` | Browser clients use `/v1/realtime/calls` with ephemeral credentials from `/v1/realtime/client_secrets`. |
+| Realtime voice output | Realtime voices `marin` or `cedar` | `marin` | Official docs identify `marin` and `cedar` as high-quality Realtime voices. |
+| Live input transcription | Realtime audio input transcription | `gpt-realtime-whisper` | Used inside `session.update.audio.input.transcription`. |
+| Bounded/file transcription | Audio transcription endpoint | `gpt-4o-transcribe` | Used for fallback chunks or future uploaded clips, not as the live Realtime transcription model. |
+| Realtime reasoning latency | Realtime 2 `reasoning.effort` | `low` | Official voice-agent guidance accepts `minimal`, `low`, `medium`, `high`, and `xhigh`, and says Realtime 2 voice agents should start with low effort for most production cases. |
+
+## Policy And Acceptance Criteria
 
 Voice is a standing trust scope with visible state, audit, and revocation. It is
-not a sequence of per-utterance unlock popups, and it is not a hidden always-on
-listener.
+not a hidden always-on listener.
 
-The first product bar is simple:
+Required defaults:
 
-- James can choose how voice works before any capture begins.
-- The current voice state is visible.
-- Stop, mute, and revoke are always available while active.
-- Missing scope, stale scope, wrong profile/window/session, hidden window, sleep
-  state, missing stop control, missing mic grant, or storage mismatch fails
-  closed before audio capture or model call.
+- Mic off before explicit user action.
+- Text-only behavior unless voice is explicitly started.
+- Push/hold-to-talk for capture by default.
+- Redacted audit only; no durable raw audio by default.
+- No TTS outside the active visible voice scope.
+- Visible disclosure that spoken replies use AI-generated voice audio.
+- One visible app session at most unless James explicitly chooses otherwise.
 
-## Official Model Fit
+Capture acceptance:
 
-Use bounded request transcription first.
+- No audio track may transmit on connect.
+- Desktop and phone sessions may request mic permission on explicit Connect or
+  Start, but tracks must remain disabled until push/hold-to-talk.
+- Releasing push/hold-to-talk disables tracks again.
+- Mute disables tracks and clears push/hold active state.
+- Stop/revoke closes streams, peer connections, data channels, recorders, and
+  remote audio playback.
 
-| Use Case | Default Fit | Notes |
-|---|---|---|
-| Hold-to-talk or short clip transcription | `gpt-4o-mini-transcribe` | Practical default for low-friction transcription. |
-| Higher-accuracy transcription | `gpt-4o-transcribe` | Use when transcription quality matters more than cost/latency. |
-| Multi-speaker transcription | `gpt-4o-transcribe-diarize` | Use only when speaker labels are required. |
-| Realtime conversation | `gpt-realtime` family through Realtime API | Later explicit mode only; tools/functions/actions disabled in v0. |
-| Spoken playback of final text | `gpt-4o-mini-tts` through Speech API | TTS is separate from listening and requires AI voice disclosure. |
+Routing acceptance:
 
-Implementation must verify current official limits at build time. Current
-criteria from Oracle's official-doc intake:
+- Voice transcripts enter the normal Mira/Architect ingress path.
+- Direct pane writes remain disabled.
+- Customer-facing, trading, money, auth, deploy, database, memory-promotion, and
+  irreversible actions remain blocked from voice alone.
+- Wrong profile/window/session, missing pairing, missing endpoint, stale scope,
+  hidden/background capture, or missing visible stop/mute fails closed before
+  capture or model calls whenever the condition is knowable locally.
 
-- uploaded transcription files are limited to documented size and supported
-  formats;
-- diarization has narrower behavior and chunking requirements, especially for
-  longer audio;
-- realtime transcription is distinct from speech-to-speech conversation;
-- VAD/manual turn mode must be recorded when realtime modes arrive;
-- TTS voice/model availability must be bound to the selected model and disclosed
-  as AI-generated voice.
+Storage/privacy acceptance:
 
-## Staged Modes
+- Raw audio is ephemeral and not durably written by default.
+- Transcript retention beyond normal ingress/audit requires explicit scope.
+- Audit should include mode, model, endpoint, duration/bytes when available,
+  storage choice, and profile/window/session/device/source scope without raw
+  private content by default.
+- Do not claim audio remains local after it is sent to OpenAI.
+- Spoken Mira output must not claim actual consciousness, suffering, fear, love,
+  or secret human identity.
 
-| Stage | Mode | Capture | Output | Status |
-|---|---|---|---|---|
-| 0 | Text only | None | Text | Current baseline. |
-| 1 | Hold-to-talk transcription | Captures only while pressed | Transcript into normal Mira text path | First recommended build. |
-| 2 | Listen-only live captions | Explicit on/off session | Transcript events only | No Mira reply or action. |
-| 3 | Text-first voice reply | James speaks; Mira replies in text | Optional spoken playback of final text | TTS remains separate. |
-| 4 | Realtime conversation | Explicit start/stop session | Back-and-forth voice/text | Later mode; no tools/actions by default. |
+## Remaining Blockers
 
-Every mode needs a machine-checkable scope, visible active indicator, stop/mute,
-timeout, and transcript destination.
+- No live OpenAI or microphone experiment has been run for this lane.
+- Restart/readiness approval is still required before the A/B voice lab.
+- The `/v1/voice/realtime/session` SDP proxy is still a `501` contract-only
+  placeholder; current WebRTC clients post SDP directly to OpenAI with an
+  ephemeral key.
+- Desktop still asks for microphone permission at visible session start, not at
+  the first push-to-talk press. This is acceptable for the current pre-lab lane
+  because tracks are disabled until push-to-talk, but a stricter future gate
+  could defer `getUserMedia()` until the first hold action.
+- Cost/token accounting and data-retention status are not surfaced in the voice
+  UI yet.
+- Raw audio retention, local transcript retention, diarization, and persistent
+  standing voice scope remain out of scope until separately approved.
 
-## Standing Trust Scope
+## Focused Test Contract
 
-The trust scope should be durable enough that James does not have to re-answer
-every tiny action, but narrow enough that unsafe work cannot smuggle itself in.
+The current hygiene lane is covered by focused Jest tests for:
 
-Scope fields:
+- Realtime 2 broker defaults and `reasoning.effort=low` payload shape.
+- Official Realtime 2 reasoning effort enum handling for `minimal`, `low`,
+  `medium`, `high`, and `xhigh`.
+- Phone public config fallback to `gpt-realtime-2`.
+- Phone live transcription model separation from bounded fallback
+  transcription.
+- Desktop WebRTC tracks armed disabled on connect, enabled only by
+  push-to-talk pointer/keyboard hold, disabled again by release/cancel/mute, and
+  stopped with Talk visual state cleared by Stop.
+- Visible AI-generated voice disclosure on desktop and phone surfaces.
+- Broker transcript, diagnostics, egress, pairing, and handler paths.
 
-- `mode`: text, hold-to-talk, listen-only, text-first reply, realtime;
-- `profile`, `windowKey`, `session`, `device`, `source_scope`;
-- `mic_state`: off, armed, capturing, muted, revoked;
-- `transcript_destination`: preview, normal Mira input, private note, none;
-- `storage_policy`: redacted audit only, local redacted transcript, raw debug
-  clip;
-- `tts_policy`: text only, speak selected final replies, realtime spoken reply;
-- `trust_duration`: one press, one visible app session, persistent until off;
-- `started_at`, `expires_at`, `last_revoked_at`;
-- `stop_control_visible`, `mute_control_visible`, `timeout_ms`.
+Focused command:
 
-Default values:
-
-- mic off;
-- text only;
-- redacted audit only;
-- no raw audio persistence;
-- no TTS;
-- one visible app session at most, unless James explicitly chooses otherwise.
-
-## Boundaries
-
-### Network
-
-Network scope is only the documented OpenAI audio call needed by the selected
-mode. v0 must not authorize Telegram sends, customer sends, browser actions,
-deploys, trades, database writes, memory-sync writes, runtime autonomy, tool
-calls, function calls, hidden listeners, or cross-profile routing.
-
-### Storage
-
-Storage defaults closed:
-
-- raw audio is ephemeral and not durably written;
-- transcript is transient UI by default;
-- audit stores redacted metadata only;
-- transcript or clip retention must be a separate explicit local-only scope;
-- Growth or memory promotion remains a reviewed separate action.
-
-Any retained transcript/clip must be profile/window/session scoped, deletable,
-rollbackable, and barred from raw private, side-profile, or Eunbyeol
-reconstruction.
-
-### Privacy
-
-Do not claim audio remains purely local after it is sent to the OpenAI API.
-
-Audit metadata should record:
-
-- endpoint and model;
-- mode and selected trust scope;
-- duration, approximate bytes, tokens, and cost when available;
-- storage choice;
-- configured retention, zero-data-retention, or modified-abuse-monitoring
-  status when known;
-- transcript hash, not raw transcript by default;
-- profile/window/session/device/source scope.
-
-Spoken Mira output must not claim actual consciousness, suffering, fear, love, or
-secret human identity.
-
-## Revocation
-
-Revocation must be real, not just a UI label.
-
-Stop/revoke must:
-
-- close any active stream or session;
-- clear in-memory audio buffers;
-- block new model calls under that voice scope;
-- mark the scope revoked with timestamp and reason;
-- emit a redacted audit event;
-- require a fresh active scope before capture resumes.
-
-Fail closed when a scope is missing, stale, revoked, degraded,
-review-required, wrong-profile, hidden, asleep, or missing visible stop/mute.
-
-## TTS Separation
-
-Speaking is not listening.
-
-If spoken output is enabled:
-
-- bind TTS model and voice in the scope;
-- disclose that the voice is AI-generated;
-- speak only already-final text unless realtime mode is explicitly active;
-- never speak before the voice scope is active;
-- stop playback on revoke;
-- keep text-only as the safest default.
-
-## Future Tests And Probes
-
-Default-off:
-
-- no mic stream;
-- no audio bytes;
-- no network call;
-- no file/temp/db writes.
-
-Hold-to-talk:
-
-- no capture before press;
-- capture starts only while active;
-- release commits or discards;
-- raw audio is not persisted.
-
-Listen-only:
-
-- transcript events only;
-- no assistant response;
-- no tool call, route, send, or action.
-
-Realtime:
-
-- explicit start;
-- visible indicator;
-- VAD or manual turn mode recorded;
-- timeout/revoke closes connection;
-- tools/functions disabled.
-
-Storage/privacy:
-
-- no raw audio logs/files by default;
-- transcript durable writes blocked without selected scope;
-- raw private, side-profile, and Eunbyeol reconstruction rejected.
-
-Routing/isolation:
-
-- wrong profile/window/session rejects before model call;
-- hidden/background capture rejects before model call.
-
-TTS:
-
-- model/voice bound;
-- AI voice disclosure present;
-- no spoken output outside active scope.
-
-Audit/cost:
-
-- mode, model, endpoint, duration, bytes, tokens, hash, storage, and retention
-  status recorded without raw content.
-
-## Telegram Choices For James
-
-Ask only when the answer changes durable voice behavior.
-
-1. First voice mode:
-   Hold a button to talk (recommended), toggle listening on/off, or full realtime
-   conversation.
-2. Transcript handling:
-   Show transcript first (recommended), send through normal Mira input
-   automatically, or keep as private notes only.
-3. Storage:
-   Redacted audit only (recommended), local redacted transcripts, or short raw
-   clip debug retention.
-4. Mira speaking:
-   Text only (recommended), speak selected final replies, or realtime spoken
-   replies.
-5. Standing trust duration:
-   One button press, one visible app session with stop/mute (recommended), or
-   persistent until turned off.
+```powershell
+npm test -- --runTestsByPath __tests__/voice-broker.test.js __tests__/phone-voice-client.test.js __tests__/voice-broker-tab.test.js __tests__/hm-voice-broker.test.js __tests__/hm-phone-voice.test.js __tests__/voice-broker-handlers.test.js
+```
 
 ## Source Refs
 
-- ORACLE #101: local SquidRun read-only audio intake criteria.
-- OpenAI audio guide: `https://platform.openai.com/docs/guides/audio`.
-- OpenAI speech-to-text guide:
-  `https://platform.openai.com/docs/guides/speech-to-text`.
-- OpenAI realtime transcription guide:
-  `https://platform.openai.com/docs/guides/realtime-transcription`.
-- OpenAI realtime VAD guide:
-  `https://platform.openai.com/docs/guides/realtime-vad`.
-- OpenAI `gpt-realtime` model page:
-  `https://platform.openai.com/docs/models/gpt-realtime`.
-- OpenAI `gpt-4o-mini-transcribe` model page:
-  `https://platform.openai.com/docs/models/gpt-4o-mini-transcribe`.
-- OpenAI `gpt-4o-transcribe` model page:
-  `https://platform.openai.com/docs/models/gpt-4o-transcribe`.
-- OpenAI `gpt-4o-transcribe-diarize` model page:
-  `https://platform.openai.com/docs/models/gpt-4o-transcribe-diarize`.
-- OpenAI text-to-speech guide:
-  `https://platform.openai.com/docs/guides/text-to-speech`.
-- OpenAI API data controls:
-  `https://platform.openai.com/docs/guides/your-data`.
+- ORACLE #18: local SquidRun voice hygiene criteria and A/B lab blockers.
+- OpenAI Realtime guide:
+  `https://developers.openai.com/api/docs/guides/realtime`.
+- OpenAI Realtime WebRTC guide:
+  `https://developers.openai.com/api/docs/guides/realtime-webrtc`.
+- OpenAI Realtime conversations guide:
+  `https://developers.openai.com/api/docs/guides/realtime-conversations`.
+- OpenAI Speech-to-text guide:
+  `https://developers.openai.com/api/docs/guides/speech-to-text`.
+- OpenAI `gpt-realtime-2` model page:
+  `https://developers.openai.com/api/docs/models/gpt-realtime-2`.

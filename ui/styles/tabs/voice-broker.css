@@ -96,6 +96,12 @@
   color: #9af0bd;
 }
 
+.voice-disclosure {
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
 .voice-session-log {
   min-height: 44px;
   max-height: 96px;

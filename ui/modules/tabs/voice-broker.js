@@ -316,6 +316,11 @@ function setSessionButtonState() {
   if (stop) stop.disabled = !sessionActive;
 }
 
+function setPushButtonActive(active) {
+  const button = getEl(IDS.sessionPush);
+  if (button) button.dataset.active = active ? 'true' : 'false';
+}
+
 function renderVoiceBrokerStatus(status) {
   lastStatus = status;
   const panel = getEl(IDS.panel);
@@ -497,12 +502,14 @@ function cancelGenericRealtimeResponse(session, reason = 'generic_response') {
 
 function setTrackEnabled(session, enabled) {
   const tracks = session?.stream?.getAudioTracks?.() || [];
+  const nextEnabled = Boolean(enabled);
   tracks.forEach((track) => {
-    track.enabled = enabled;
+    track.enabled = nextEnabled;
   });
 }
 
 function stopVoiceSession() {
+  setPushButtonActive(false);
   if (!activeSession) {
     setSessionStatus('Idle', 'idle');
     setSessionButtonState();
@@ -510,6 +517,9 @@ function stopVoiceSession() {
   }
   const session = activeSession;
   activeSession = null;
+  setTrackEnabled(session, false);
+  session.fallbackSpeechActive = false;
+  session.lastSpeechActivityMs = Date.now();
   if (session.egressPollTimer) {
     clearInterval(session.egressPollTimer);
     session.egressPollTimer = null;
@@ -797,8 +807,12 @@ async function createVoiceRealtimeSession(options = {}) {
 
   const stream = await mediaDevices.getUserMedia({ audio: true });
   const initialTracks = stream.getAudioTracks?.() || stream.getTracks?.() || [];
+  initialTracks.forEach((track) => {
+    track.enabled = false;
+  });
   void postVoiceDiagnostic('voice.mic.granted', {
     audioTrackCount: initialTracks.length,
+    holdToTalkArmed: true,
     tracks: initialTracks.map((track) => ({
       enabled: Boolean(track.enabled),
       muted: Boolean(track.muted),
@@ -817,10 +831,10 @@ async function createVoiceRealtimeSession(options = {}) {
 
   const tracks = stream.getAudioTracks?.() || stream.getTracks?.() || [];
   tracks.forEach((track) => {
-    track.enabled = true;
+    track.enabled = false;
     peerConnection.addTrack(track, stream);
   });
-  void postVoiceDiagnostic('voice.mic.tracks_enabled', {
+  void postVoiceDiagnostic('voice.mic.tracks_armed', {
     audioTrackCount: tracks.length,
     enabledCount: tracks.filter((track) => track.enabled !== false).length,
   }, { status, fetchImpl });
@@ -971,9 +985,9 @@ async function startVoiceSession(options = {}) {
       fetchImpl: sessionOptions.fetchImpl,
       intervalMs: sessionOptions.egressPollIntervalMs,
     });
-    setSessionStatus('Listening', 'talking');
+    setSessionStatus('Connected', 'connected');
     appendSessionLog('Realtime session connected');
-    appendSessionLog('Mic listening');
+    appendSessionLog('Mic armed; push to talk when ready');
     setSessionButtonState();
     return activeSession;
   } catch (err) {
@@ -986,16 +1000,21 @@ async function startVoiceSession(options = {}) {
 
 function setPushToTalk(active) {
   if (!activeSession) return false;
-  setTrackEnabled(activeSession, Boolean(active));
-  setSessionStatus(active ? 'Talking' : 'Connected', active ? 'talking' : 'connected');
-  const button = getEl(IDS.sessionPush);
-  if (button) button.dataset.active = active ? 'true' : 'false';
+  const isActive = Boolean(active);
+  setTrackEnabled(activeSession, isActive);
+  activeSession.fallbackSpeechActive = isActive;
+  activeSession.lastSpeechActivityMs = Date.now();
+  setSessionStatus(isActive ? 'Talking' : 'Connected', isActive ? 'talking' : 'connected');
+  setPushButtonActive(isActive);
   return true;
 }
 
 function muteVoiceSession() {
   if (!activeSession) return false;
   setTrackEnabled(activeSession, false);
+  activeSession.fallbackSpeechActive = false;
+  activeSession.lastSpeechActivityMs = Date.now();
+  setPushButtonActive(false);
   setSessionStatus('Muted', 'muted');
   return true;
 }
@@ -1019,6 +1038,54 @@ function bindButton(id, handler) {
   cleanupFns.push(() => button.removeEventListener('click', handler));
 }
 
+function isTalkKey(event) {
+  return event?.key === ' ' || event?.key === 'Spacebar' || event?.key === 'Enter';
+}
+
+function bindHoldToTalkButton() {
+  const button = getEl(IDS.sessionPush);
+  if (!button) return;
+  const holdStart = (event = {}) => {
+    if (button.disabled) return;
+    event.preventDefault?.();
+    if (event.pointerId !== undefined) {
+      try { button.setPointerCapture?.(event.pointerId); } catch (_) {}
+    }
+    setPushToTalk(true);
+  };
+  const holdEnd = (event = {}) => {
+    if (event.pointerId !== undefined) {
+      try { button.releasePointerCapture?.(event.pointerId); } catch (_) {}
+    }
+    event.preventDefault?.();
+    setPushToTalk(false);
+  };
+  const keyStart = (event = {}) => {
+    if (!isTalkKey(event) || event.repeat === true || button.disabled) return;
+    event.preventDefault?.();
+    setPushToTalk(true);
+  };
+  const keyEnd = (event = {}) => {
+    if (!isTalkKey(event)) return;
+    event.preventDefault?.();
+    setPushToTalk(false);
+  };
+  const bindings = [
+    ['pointerdown', holdStart],
+    ['pointerup', holdEnd],
+    ['pointercancel', holdEnd],
+    ['pointerleave', holdEnd],
+    ['lostpointercapture', holdEnd],
+    ['keydown', keyStart],
+    ['keyup', keyEnd],
+    ['blur', holdEnd],
+  ];
+  for (const [event, handler] of bindings) {
+    button.addEventListener(event, handler);
+    cleanupFns.push(() => button.removeEventListener(event, handler));
+  }
+}
+
 function setupVoiceBrokerTab() {
   destroyVoiceBrokerTab();
   bindButton(IDS.refresh, () => { void refreshVoiceBrokerStatus(); });
@@ -1026,10 +1093,7 @@ function setupVoiceBrokerTab() {
   bindButton(IDS.stop, () => { void controlVoiceBroker('stop'); });
   bindButton(IDS.restart, () => { void controlVoiceBroker('restart'); });
   bindButton(IDS.sessionStart, () => { void startVoiceSession(); });
-  bindButton(IDS.sessionPush, () => {
-    const isActive = getEl(IDS.sessionPush)?.dataset.active === 'true';
-    setPushToTalk(!isActive);
-  });
+  bindHoldToTalkButton();
   bindButton(IDS.sessionMute, () => { muteVoiceSession(); });
   bindButton(IDS.sessionInterrupt, () => { interruptVoiceSession(); });
   bindButton(IDS.sessionStop, () => { stopVoiceSession(); });

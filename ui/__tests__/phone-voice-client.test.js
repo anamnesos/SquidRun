@@ -35,8 +35,9 @@ describe('phone-voice-client', () => {
       status: {
         running: true,
         config: {
-          model: 'gpt-realtime-1.5',
+          model: 'gpt-realtime-2',
           voice: 'marin',
+          liveTranscriptionModel: 'gpt-realtime-whisper',
           transcriptionModel: 'gpt-4o-transcribe',
           openaiApiKeyPresent: true,
         },
@@ -46,6 +47,8 @@ describe('phone-voice-client', () => {
     expect(config.status.openaiApiKeyPresent).toBe(true);
     expect(config).not.toHaveProperty('openaiApiKey');
     expect(JSON.stringify(config)).not.toContain('sk-');
+    expect(config.status.model).toBe('gpt-realtime-2');
+    expect(config.status.liveTranscriptionModel).toBe('gpt-realtime-whisper');
     expect(config.safety).toMatchObject({
       routesTo: 'architect',
       directPaneWrites: false,
@@ -58,7 +61,7 @@ describe('phone-voice-client', () => {
       status: {
         running: true,
         config: {
-          model: 'gpt-realtime-1.5',
+          model: 'gpt-realtime-2',
           voice: 'marin',
         },
       },
@@ -67,11 +70,27 @@ describe('phone-voice-client', () => {
     expect(html).toContain('Mira Voice');
     expect(html).toContain('/v1/voice/phone/realtime/client-secret');
     expect(html).toContain('Hold to Talk');
+    expect(html).toContain('AI-generated voice audio');
     expect(html).toContain('SQUIDRUN_PHONE_VOICE');
     expect(html).toContain('RTCPeerConnection');
     expect(html).toContain('navigator.mediaDevices.getUserMedia');
+    expect(html).toContain('gpt-realtime-whisper');
     expect(html).toContain('phone-web-client');
     expect(html).toContain('Missing phone pairing token');
+  });
+
+  test('falls back to the current Realtime 2 model in public status', () => {
+    const config = buildPhoneClientConfig({
+      status: {
+        running: true,
+        config: {},
+      },
+    });
+
+    expect(config.status.model).toBe('gpt-realtime-2');
+    expect(config.status.voice).toBe('marin');
+    expect(config.status.liveTranscriptionModel).toBe('gpt-realtime-whisper');
+    expect(config.status.transcriptionModel).toBe('gpt-4o-transcribe');
   });
 
   test('extracts and validates bearer pairing tokens', () => {
