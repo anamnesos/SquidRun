@@ -156,6 +156,158 @@ describe('telegram-poller', () => {
     );
   });
 
+  test('restart loads durable cursor so old media updates are ignored and newer updates are accepted', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-cursor-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+    const env = {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+    };
+    const firstOnMessage = jest.fn();
+
+    try {
+      telegramPoller.start({
+        env,
+        onMessage: firstOnMessage,
+        statePath,
+      });
+
+      mockTelegramUpdates([
+        {
+          update_id: 50,
+          message: {
+            message_id: 5,
+            chat: { id: 123456 },
+            from: { username: 'james' },
+            text: 'first run',
+          },
+        },
+      ]);
+
+      await telegramPoller._internals.pollNow();
+      expect(firstOnMessage).toHaveBeenCalledTimes(1);
+
+      let persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      expect(Object.values(persisted.cursors)[0]).toEqual(expect.objectContaining({
+        nextOffset: 51,
+        lastUpdateId: 50,
+        lastAction: 'delivered',
+      }));
+
+      telegramPoller.stop();
+      const secondOnMessage = jest.fn();
+      telegramPoller.start({
+        env,
+        onMessage: secondOnMessage,
+        statePath,
+      });
+
+      mockTelegramRequestSequence({
+        '/bot123456789:fake_telegram_bot_token_do_not_use/getUpdates?offset=51&timeout=0': {
+          body: JSON.stringify({
+            ok: true,
+            result: [
+              {
+                update_id: 50,
+                message: {
+                  message_id: 5,
+                  chat: { id: 123456 },
+                  from: { username: 'james' },
+                  photo: [{ file_id: 'old-photo' }],
+                },
+              },
+              {
+                update_id: 52,
+                message: {
+                  message_id: 7,
+                  chat: { id: 123456 },
+                  from: { username: 'james' },
+                  text: 'fresh after restart',
+                },
+              },
+            ],
+          }),
+        },
+      });
+
+      await telegramPoller._internals.pollNow();
+
+      expect(secondOnMessage).toHaveBeenCalledTimes(1);
+      expect(secondOnMessage).toHaveBeenCalledWith(
+        'fresh after restart',
+        '@james',
+        expect.objectContaining({
+          updateId: 52,
+          messageId: 7,
+        })
+      );
+      persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      expect(Object.values(persisted.cursors)[0]).toEqual(expect.objectContaining({
+        nextOffset: 53,
+        lastUpdateId: 52,
+        lastAction: 'delivered',
+      }));
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('startup drain drops stale Telegram backlog while accepting fresh updates', async () => {
+    const onMessage = jest.fn();
+    const startedAtMs = Date.parse('2026-05-08T04:00:00.000Z');
+
+    telegramPoller.start({
+      env: {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      },
+      onMessage,
+      downloadMedia: false,
+      startedAtMs,
+      startupGraceMs: 60 * 1000,
+    });
+
+    mockTelegramUpdates([
+      {
+        update_id: 60,
+        message: {
+          message_id: 8,
+          date: Math.floor(Date.parse('2026-05-08T03:00:00.000Z') / 1000),
+          chat: { id: 123456 },
+          from: { username: 'james' },
+          photo: [{ file_id: 'stale-photo' }],
+        },
+      },
+      {
+        update_id: 61,
+        message: {
+          message_id: 9,
+          date: Math.floor(Date.parse('2026-05-08T04:00:05.000Z') / 1000),
+          chat: { id: 123456 },
+          from: { username: 'james' },
+          text: 'fresh after startup',
+        },
+      },
+    ]);
+
+    await telegramPoller._internals.pollNow();
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledWith(
+      'fresh after startup',
+      '@james',
+      expect.objectContaining({
+        updateId: 61,
+        messageId: 9,
+      })
+    );
+    expect(log.warn).toHaveBeenCalledWith(
+      'Telegram',
+      expect.stringContaining('Dropped stale inbound Telegram update 60')
+    );
+  });
+
   test('requestTelegram preserves UTF-8 characters split across response chunks', async () => {
     const smile = '🙂';
     const bodyText = JSON.stringify({

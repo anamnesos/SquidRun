@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 const { resolveCoordPath } = require('../config');
 const log = require('./logger');
 
@@ -13,6 +14,8 @@ const DEFAULT_POLL_INTERVAL_MS = 5000;
 const MIN_POLL_INTERVAL_MS = 1000;
 const DEFAULT_INBOUND_MEDIA_DIR = path.join('runtime', 'telegram-inbound-media');
 const DEFAULT_LATEST_SCREENSHOT_PATH = path.join('screenshots', 'latest.png');
+const DEFAULT_POLLER_STATE_PATH = path.join('runtime', 'telegram-poller-state.json');
+const DEFAULT_STARTUP_GRACE_MS = 10 * 60 * 1000;
 
 let running = false;
 let pollTimer = null;
@@ -24,6 +27,9 @@ let nextOffset = 0;
 let mediaDownloadEnabled = true;
 let mediaDownloadRoot = null;
 let latestScreenshotPath = null;
+let statePath = null;
+let cursorKey = null;
+let startupDropBeforeMs = 0;
 
 function getTelegramConfig(env = process.env) {
   const botToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -141,6 +147,33 @@ function parseUpdateId(update) {
   return Number.isFinite(value) ? value : null;
 }
 
+function normalizeOffset(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function getConfigCursorKey(currentConfig) {
+  if (!currentConfig) return 'telegram:unknown';
+  const tokenHash = crypto
+    .createHash('sha256')
+    .update(String(currentConfig.botToken || ''))
+    .digest('hex')
+    .slice(0, 16);
+  const profile = String(currentConfig.profile || 'main').trim().toLowerCase() || 'main';
+  const scopedIds = Array.isArray(currentConfig.scopedChatIds)
+    ? currentConfig.scopedChatIds.slice().sort((left, right) => left - right).join(',')
+    : '';
+  const scopeMode = currentConfig.acceptScopedChatIds ? 'accept-scoped' : 'own-chat';
+  return [
+    'telegram',
+    tokenHash,
+    profile,
+    String(currentConfig.chatId || ''),
+    scopedIds,
+    scopeMode,
+  ].join(':');
+}
+
 function getAuthorizedChatId(message) {
   const value = Number.parseInt(String(message?.chat?.id ?? ''), 10);
   return Number.isFinite(value) ? value : null;
@@ -196,6 +229,13 @@ function parseMessageTimestampMs(message) {
   return Math.floor(dateSeconds * 1000);
 }
 
+function shouldDropStaleStartupMessage(message, dropBeforeMs = startupDropBeforeMs) {
+  if (!Number.isFinite(dropBeforeMs) || dropBeforeMs <= 0) return false;
+  const timestampMs = parseMessageTimestampMs(message);
+  if (timestampMs === null) return false;
+  return timestampMs < dropBeforeMs;
+}
+
 function resolveWritableCoordPath(relPath) {
   try {
     return resolveCoordPath(relPath, { forWrite: true });
@@ -204,8 +244,104 @@ function resolveWritableCoordPath(relPath) {
   }
 }
 
+function resolveDefaultStatePath(env = process.env) {
+  if (env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test') return null;
+  return resolveWritableCoordPath(DEFAULT_POLLER_STATE_PATH);
+}
+
+function resolveStatePath(options = {}) {
+  const explicit = typeof options.statePath === 'string' && options.statePath.trim()
+    ? options.statePath.trim()
+    : (typeof options.env?.TELEGRAM_POLLER_STATE_PATH === 'string' && options.env.TELEGRAM_POLLER_STATE_PATH.trim()
+      ? options.env.TELEGRAM_POLLER_STATE_PATH.trim()
+      : null);
+  if (explicit) return path.resolve(explicit);
+  return resolveDefaultStatePath(options.env || process.env);
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function readPollerState(filePath) {
+  if (!filePath) return null;
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    log.warn('Telegram', `Telegram poller state read failed (${filePath}): ${err.message}`);
+    return null;
+  }
+}
+
+function writePollerState(filePath, state) {
+  if (!filePath) return false;
+  try {
+    ensureDir(path.dirname(filePath));
+    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    fs.renameSync(tempPath, filePath);
+    return true;
+  } catch (err) {
+    log.warn('Telegram', `Telegram poller state write failed (${filePath}): ${err.message}`);
+    return false;
+  }
+}
+
+function readPersistedOffset(filePath, key) {
+  if (!filePath || !key) return null;
+  const state = readPollerState(filePath);
+  const cursor = state?.cursors?.[key];
+  const offset = normalizeOffset(cursor?.nextOffset);
+  return offset;
+}
+
+function persistNextOffset(filePath, key, offset, details = {}) {
+  const normalized = normalizeOffset(offset);
+  if (!filePath || !key || normalized === null) return false;
+
+  const existing = readPollerState(filePath);
+  const state = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? existing
+    : {};
+  const cursors = state.cursors && typeof state.cursors === 'object' && !Array.isArray(state.cursors)
+    ? state.cursors
+    : {};
+  const prior = cursors[key] && typeof cursors[key] === 'object' && !Array.isArray(cursors[key])
+    ? cursors[key]
+    : {};
+  const hasMediaFileId = Object.prototype.hasOwnProperty.call(details, 'mediaFileId');
+
+  state.version = 1;
+  state.updatedAt = new Date().toISOString();
+  state.cursors = {
+    ...cursors,
+    [key]: {
+      ...prior,
+      nextOffset: normalized,
+      updatedAt: state.updatedAt,
+      profile: details.profile || prior.profile || null,
+      chatId: details.chatId ?? prior.chatId ?? null,
+      lastUpdateId: details.updateId ?? prior.lastUpdateId ?? null,
+      lastMessageId: details.messageId ?? prior.lastMessageId ?? null,
+      lastMediaFileId: hasMediaFileId ? (details.mediaFileId || null) : (prior.lastMediaFileId || null),
+      lastAction: details.action || prior.lastAction || 'seen',
+    },
+  };
+
+  return writePollerState(filePath, state);
+}
+
+function resolveStartupGraceMs(options = {}) {
+  const candidates = [
+    options.startupGraceMs,
+    options.env?.TELEGRAM_INBOUND_STARTUP_GRACE_MS,
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return DEFAULT_STARTUP_GRACE_MS;
 }
 
 function resolveDefaultMediaDownloadRoot(env = process.env) {
@@ -336,6 +472,13 @@ function selectInboundMedia(message) {
   }
 
   return null;
+}
+
+function getMediaFileId(message) {
+  const media = selectInboundMedia(message);
+  return typeof media?.fileId === 'string' && media.fileId.trim()
+    ? media.fileId.trim()
+    : null;
 }
 
 function buildInboundDisplayText(message, selectedMedia = null) {
@@ -515,6 +658,21 @@ async function pollNow() {
 
       const inbound = extractInboundMessage(update);
       const message = inbound.message;
+      const messageId = Number.isFinite(Number(message?.message_id))
+        ? Number(message.message_id)
+        : null;
+      const parsedChatId = message ? getAuthorizedChatId(message) : null;
+      const mediaFileId = message ? getMediaFileId(message) : null;
+
+      persistNextOffset(statePath, cursorKey, nextOffset, {
+        action: 'seen',
+        chatId: parsedChatId,
+        mediaFileId,
+        messageId,
+        profile: config.profile || 'main',
+        updateId,
+      });
+
       if (!message) continue;
       if (!isAuthorizedChat(message, config)) {
         log.warn(
@@ -524,11 +682,24 @@ async function pollNow() {
         continue;
       }
 
+      if (shouldDropStaleStartupMessage(message)) {
+        persistNextOffset(statePath, cursorKey, nextOffset, {
+          action: 'dropped_stale_startup',
+          chatId: parsedChatId,
+          mediaFileId,
+          messageId,
+          profile: config.profile || 'main',
+          updateId,
+        });
+        log.warn(
+          'Telegram',
+          `Dropped stale inbound Telegram update ${updateId} during startup drain (message=${messageId ?? 'unknown'} chat=${parsedChatId ?? 'unknown'} timestamp=${parseMessageTimestampMs(message) ?? 'unknown'} dropBefore=${startupDropBeforeMs})`
+        );
+        continue;
+      }
+
       const photoArray = Array.isArray(message.photo) ? message.photo : null;
       const document = message.document && typeof message.document === 'object' ? message.document : null;
-      const messageId = Number.isFinite(Number(message?.message_id))
-        ? Number(message.message_id)
-        : null;
       const selectedMedia = selectInboundMedia(message);
       if (selectedMedia) {
         log.info(
@@ -582,7 +753,23 @@ async function pollNow() {
             document: document || null,
             media: downloadedMedia,
           }));
+          persistNextOffset(statePath, cursorKey, nextOffset, {
+            action: 'delivered',
+            chatId: parsedChatId,
+            mediaFileId,
+            messageId,
+            profile: config.profile || 'main',
+            updateId,
+          });
         } catch (err) {
+          persistNextOffset(statePath, cursorKey, nextOffset, {
+            action: 'callback_failed',
+            chatId: parsedChatId,
+            mediaFileId,
+            messageId,
+            profile: config.profile || 'main',
+            updateId,
+          });
           log.warn('Telegram', `Telegram callback failed: ${err.message}`);
         }
       }
@@ -616,10 +803,24 @@ function start(options = {}) {
   latestScreenshotPath = typeof options.latestScreenshotPath === 'string' && options.latestScreenshotPath.trim()
     ? path.resolve(options.latestScreenshotPath)
     : resolveDefaultLatestScreenshotPath();
-  nextOffset = 0;
+  statePath = resolveStatePath(options);
+  cursorKey = getConfigCursorKey(config);
+  nextOffset = readPersistedOffset(statePath, cursorKey) ?? normalizeOffset(options.initialOffset) ?? 0;
+  const startedAtMs = Number.isFinite(options.startedAtMs) ? options.startedAtMs : Date.now();
+  startupDropBeforeMs = Math.max(0, startedAtMs - resolveStartupGraceMs(options));
   pollInFlight = false;
   running = true;
 
+  log.info(
+    'Telegram',
+    `Telegram poller cursor loaded (offset=${nextOffset}, state=${statePath || 'disabled'})`
+  );
+  if (startupDropBeforeMs > 0) {
+    log.info(
+      'Telegram',
+      `Telegram startup stale-message drain enabled (dropBefore=${new Date(startupDropBeforeMs).toISOString()})`
+    );
+  }
   log.info(
     'Telegram',
     `Telegram inbound media downloads ${mediaDownloadEnabled ? 'enabled' : 'disabled'} (root=${mediaDownloadRoot || 'n/a'})`
@@ -650,6 +851,9 @@ function stop() {
   mediaDownloadEnabled = true;
   mediaDownloadRoot = null;
   latestScreenshotPath = null;
+  statePath = null;
+  cursorKey = null;
+  startupDropBeforeMs = 0;
 }
 
 function isRunning() {
@@ -668,10 +872,17 @@ const _internals = {
   extractInboundMessage,
   pollNow,
   parseUpdateId,
+  normalizeOffset,
+  getConfigCursorKey,
   isAuthorizedChat,
   isImageDocument,
   isVideoDocument,
   resolveDefaultMediaDownloadRoot,
+  resolveDefaultStatePath,
+  resolveStatePath,
+  readPersistedOffset,
+  persistNextOffset,
+  shouldDropStaleStartupMessage,
 };
 
 module.exports = {

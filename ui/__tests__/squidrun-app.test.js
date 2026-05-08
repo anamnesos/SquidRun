@@ -4496,6 +4496,112 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('drops prior-session Telegram pending deliveries instead of flushing them into the current session', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-stale-session-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-330';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-808497185',
+            paneId: '1',
+            message: '[Telegram from @jaymz6435]: stale Tony Lu task',
+            messageId: 'telegram-in-808497185',
+            channel: 'telegram',
+            sender: '@jaymz6435',
+            createdAt: '2026-05-08T00:45:48.915Z',
+            attemptCount: 3,
+            meta: {
+              updateId: 808497185,
+              messageId: 17488,
+              windowKey: 'main',
+              sessionScopeId: 'app-session-329',
+              media: {
+                kind: 'photo',
+                fileId: 'photo-file-id',
+              },
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'startup-replay' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'telegram-in-808497185' }),
+          expect.objectContaining({
+            reason: 'stale_telegram_pending_session_scope',
+            expectedSessionScopeId: 'app-session-330',
+            itemSessionScopeId: 'app-session-329',
+          })
+        );
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('drops old Telegram pending deliveries without session metadata before startup replay', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-stale-age-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      mockManagers.settings.readAppStatus.mockReturnValue({
+        session: 330,
+        started: '2026-05-08T04:00:00.000Z',
+      });
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-no-scope',
+            paneId: '1',
+            message: '[Telegram from @jaymz6435]: stale no-scope task',
+            messageId: 'telegram-in-no-scope',
+            channel: 'telegram',
+            sender: '@jaymz6435',
+            createdAt: '2026-05-08T03:00:00.000Z',
+            attemptCount: 1,
+            meta: {
+              updateId: 808497100,
+              windowKey: 'main',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'startup-replay' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          deliveredCount: 0,
+          droppedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'telegram-in-no-scope' }),
+          expect.objectContaining({
+            reason: 'stale_telegram_pending_before_current_start',
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
     it('stores pending pane deliveries in the canonical runtime directory', () => {
       expect(app.getPendingPaneDeliveryQueuePath()).toBe('/test/workspace/runtime/pending-pane-deliveries.json');
       expect(app.getPendingPaneDeliveryQueuePath()).not.toContain('/.squidrun/runtime/');
