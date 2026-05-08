@@ -44,6 +44,7 @@ const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const { resolveRuntimeInt } = require('../runtime-config');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TEAM_MEMORY_BELIEF_SWEEP_ENABLED = process.env.SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP === '1';
+const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 
 // Import sub-modules
 const triggers = require('../triggers');
@@ -5450,6 +5451,113 @@ class SquidRunApp {
     };
   }
 
+  isTelegramPendingPaneDelivery(item = {}) {
+    const channel = toNonEmptyString(item.channel).toLowerCase();
+    if (channel === 'telegram') return true;
+    const messageId = toNonEmptyString(item.messageId) || toNonEmptyString(item.queueKey);
+    if (/^telegram-in-/i.test(messageId || '')) return true;
+    return /^\[Telegram from /i.test(toNonEmptyString(item.message));
+  }
+
+  getPendingPaneDeliveryWindowKey(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    return toNonEmptyString(meta.windowKey) || 'main';
+  }
+
+  getPendingPaneDeliverySessionScopeId(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    return toNonEmptyString(meta.sessionScopeId)
+      || toNonEmptyString(meta.session_id)
+      || toNonEmptyString(meta.sessionId)
+      || null;
+  }
+
+  getCurrentAppStartedAtMs() {
+    try {
+      if (!this.settings || typeof this.settings.readAppStatus !== 'function') return null;
+      const status = this.settings.readAppStatus();
+      const started = toNonEmptyString(status?.started);
+      if (!started) return null;
+      const parsed = Date.parse(started);
+      return Number.isFinite(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  getPendingPaneDeliveryTimestampMs(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    const metadataTimestamp = Number(meta.timestampMs);
+    if (Number.isFinite(metadataTimestamp) && metadataTimestamp > 0) return metadataTimestamp;
+    const createdAtMs = Date.parse(toNonEmptyString(item.createdAt));
+    return Number.isFinite(createdAtMs) ? createdAtMs : null;
+  }
+
+  shouldDropPendingPaneDeliveryForReplay(item = {}) {
+    if (!this.isTelegramPendingPaneDelivery(item)) {
+      return { drop: false };
+    }
+
+    const windowKey = this.getPendingPaneDeliveryWindowKey(item);
+    const expectedSessionScopeId = this.getWindowSessionScopeId(windowKey);
+    const itemSessionScopeId = this.getPendingPaneDeliverySessionScopeId(item);
+    if (
+      itemSessionScopeId
+      && expectedSessionScopeId
+      && itemSessionScopeId !== expectedSessionScopeId
+    ) {
+      return {
+        drop: true,
+        reason: 'stale_telegram_pending_session_scope',
+        expectedSessionScopeId,
+        itemSessionScopeId,
+        windowKey,
+      };
+    }
+
+    const appStartedAtMs = this.getCurrentAppStartedAtMs();
+    const itemTimestampMs = this.getPendingPaneDeliveryTimestampMs(item);
+    if (
+      !itemSessionScopeId
+      && Number.isFinite(appStartedAtMs)
+      && Number.isFinite(itemTimestampMs)
+      && itemTimestampMs < appStartedAtMs - TELEGRAM_PENDING_REPLAY_GRACE_MS
+    ) {
+      return {
+        drop: true,
+        reason: 'stale_telegram_pending_before_current_start',
+        appStartedAtMs,
+        itemTimestampMs,
+        windowKey,
+      };
+    }
+
+    return { drop: false };
+  }
+
+  recordPendingPaneDeliveryDrop(item = {}, decision = {}) {
+    try {
+      const quarantinePath = resolveCoordPath('runtime/pending-pane-deliveries-quarantine.jsonl', { forWrite: true });
+      fs.mkdirSync(path.dirname(quarantinePath), { recursive: true });
+      fs.appendFileSync(quarantinePath, `${JSON.stringify({
+        droppedAt: new Date().toISOString(),
+        reason: decision.reason || 'pending_delivery_dropped',
+        queueKey: item.queueKey || null,
+        messageId: item.messageId || null,
+        channel: item.channel || null,
+        paneId: item.paneId || null,
+        sender: item.sender || null,
+        createdAt: item.createdAt || null,
+        lastAttemptAt: item.lastAttemptAt || null,
+        attemptCount: item.attemptCount || 0,
+        meta: item.meta || null,
+        messagePreview: toNonEmptyString(item.message).slice(0, 240),
+      })}\n`, 'utf8');
+    } catch (err) {
+      log.warn('PendingPaneDelivery', `Failed to record dropped pending delivery ${item.queueKey || item.messageId || 'unknown'}: ${err.message}`);
+    }
+  }
+
   readPendingPaneDeliveries() {
     const payload = this.readJsonFileSafe(this.getPendingPaneDeliveryQueuePath(), null);
     const items = Array.isArray(payload?.items) ? payload.items : [];
@@ -5770,11 +5878,22 @@ class SquidRunApp {
       }
 
       let deliveredCount = 0;
+      let droppedCount = 0;
       const remaining = [];
       const MAX_PENDING_DELIVERY_RETRIES = 5;
       for (const item of items) {
         if (normalizedPaneId && item.paneId !== normalizedPaneId) {
           remaining.push(item);
+          continue;
+        }
+        const dropDecision = this.shouldDropPendingPaneDeliveryForReplay(item);
+        if (dropDecision.drop) {
+          droppedCount += 1;
+          this.recordPendingPaneDeliveryDrop(item, dropDecision);
+          log.warn(
+            'PendingPaneDelivery',
+            `Dropping stale pending Telegram delivery ${item.queueKey || item.messageId || 'unknown'} (${dropDecision.reason || 'stale_pending_delivery'})`
+          );
           continue;
         }
         if ((item.attemptCount || 0) >= MAX_PENDING_DELIVERY_RETRIES) {
@@ -5807,9 +5926,13 @@ class SquidRunApp {
       if (deliveredCount > 0) {
         log.info('PendingPaneDelivery', `Replayed ${deliveredCount} queued delivery(s) (${reason})`);
       }
+      if (droppedCount > 0) {
+        log.warn('PendingPaneDelivery', `Dropped ${droppedCount} stale queued delivery(s) (${reason})`);
+      }
       return {
         ok: true,
         deliveredCount,
+        droppedCount,
         remainingCount: remaining.length,
         reason,
       };
