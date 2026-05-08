@@ -80,7 +80,17 @@ If this command shows recent messages but pane output is still frozen, treat it 
 - **Fix:**
   Verify `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in your `.env` file. Check the Architect's terminal pane for fetch errors or connection refused logs.
 
-### 7) Experimental Warning Cluttering Output
+### 7) Old Telegram Messages Replay After Restart
+
+- **Symptom:** After a restart, Architect receives older Telegram messages that the user did not just send.
+- **Likely Cause:** Stale local retry state in `.squidrun/runtime/pending-pane-deliveries.json`, or a Telegram poller cursor that did not persist before the previous shutdown.
+- **Exact Fix:**
+  1. Check `.squidrun/runtime/pending-pane-deliveries.json`; if old Telegram entries remain, quarantine/drop them before restarting panes.
+  2. Check `.squidrun/logs/app.log` for `Telegram poller cursor loaded` and `Telegram startup stale-message drain enabled` after the poller starts.
+  3. Confirm the queue is empty and stale items are recorded in `.squidrun/runtime/pending-pane-deliveries-quarantine.jsonl`.
+  4. Use logs, queue state, and focused tests as the verification harness. Do not ask the user to send or watch Telegram messages just to prove routing safety.
+
+### 8) Experimental Warning Cluttering Output
 
 - **Symptom:** `(node:XXXXX) ExperimentalWarning: SQLite is an experimental feature...`
 - **Cause:** Node.js 22/24 marks the built-in `node:sqlite` driver as experimental. SquidRun uses this for the zero-dependency Evidence Ledger.
