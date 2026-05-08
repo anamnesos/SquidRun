@@ -1,5 +1,6 @@
 const {
   LOCAL_TEXT_UI_CHANNEL,
+  MIRA_COORDINATOR_SNAPSHOT_CHANNEL,
   createMiraLocalTextController,
 } = require('../modules/tabs/mira-local-text');
 
@@ -25,8 +26,8 @@ function makeElement(id, value = '') {
   };
 }
 
-function makeElements(initialText = '') {
-  return {
+function makeElements(initialText = '', options = {}) {
+  const elements = {
     panel: makeElement('miraLocalTextPanel'),
     status: makeElement('miraLocalTextStatus'),
     scope: makeElement('miraLocalTextScope'),
@@ -36,6 +37,17 @@ function makeElements(initialText = '') {
     meta: makeElement('miraLocalTextMeta'),
     counters: makeElement('miraLocalTextCounters'),
   };
+  if (options.coordinator) {
+    elements.coordinatorStrip = makeElement('miraCoordinatorStrip');
+    elements.coordinatorStatus = makeElement('miraCoordinatorStatus');
+    elements.coordinatorRefresh = makeElement('miraCoordinatorRefreshBtn');
+    elements.coordinatorFocus = makeElement('miraCoordinatorFocus');
+    elements.coordinatorLanes = makeElement('miraCoordinatorLanes');
+    elements.coordinatorNext = makeElement('miraCoordinatorNext');
+    elements.coordinatorBlockers = makeElement('miraCoordinatorBlockers');
+    elements.coordinatorRationale = makeElement('miraCoordinatorRationale');
+  }
+  return elements;
 }
 
 function acceptedResult(text = 'Mira reply from local text session.') {
@@ -96,6 +108,35 @@ function blockedResult(reason = 'blocked_by_local_text_session') {
     },
     validation_report: {
       decision: 'blocked',
+    },
+  };
+}
+
+function coordinatorSnapshotResult() {
+  return {
+    coordinator_snapshot_v0: {
+      decision: 'accepted',
+      status: 'ready',
+      current_focus: {
+        summary: 'Move the local text panel from available UI into restart-proof user-visible proof.',
+      },
+      lanes: [
+        { id: 'mira-local-text-ui-surface-v0', label: 'Mira Local Text UI Surface v0', state: 'active' },
+        { id: 'trustquote-tony-li-invoice', label: 'TrustQuote/Tony Li invoice', state: 'closed' },
+        { id: 'telegram-replay-restart-safety', label: 'Telegram replay restart safety', state: 'closed' },
+      ],
+      next_recommended_action: {
+        summary: 'Use the Mira tab to submit one local text prompt and verify Ready, exactly one bounded reply, and zero writes/tools/sends.',
+      },
+      blockers: [
+        { id: 'external_actions_blocked', label: 'Writes, sends, customer actions, deploy, and trade blocked', state: 'blocked' },
+      ],
+      rationale: [
+        'Closed lanes are shown as context only and do not authorize action.',
+      ],
+    },
+    validation_report: {
+      decision: 'accepted_coordinator_snapshot_ready',
     },
   };
 }
@@ -224,5 +265,42 @@ describe('Mira local text tab controller', () => {
     });
 
     expect(nextElements.input.value).toBe('Keep this draft.');
+  });
+
+  test('coordinator snapshot refresh renders closed lanes and one reversible next action', async () => {
+    const elements = makeElements('', { coordinator: true });
+    const invoke = jest.fn(async (channel) => {
+      if (channel === MIRA_COORDINATOR_SNAPSHOT_CHANNEL) return coordinatorSnapshotResult();
+      return acceptedResult();
+    });
+    const controller = createMiraLocalTextController({
+      elements,
+      invoke,
+      getSessionId: () => 'app-session-330',
+      autoLoadCoordinator: false,
+    });
+
+    const result = await controller.refreshCoordinatorSnapshot();
+
+    expect(result.validation_report.decision).toBe('accepted_coordinator_snapshot_ready');
+    expect(invoke).toHaveBeenCalledWith(MIRA_COORDINATOR_SNAPSHOT_CHANNEL, expect.objectContaining({
+      profileName: 'main',
+      windowKey: 'main',
+      sourceScope: 'main',
+      deviceId: 'VIGIL',
+      sessionId: 'app-session-330',
+      activeState: 'open',
+      visibleIndicatorPresent: true,
+    }));
+    expect(elements.coordinatorStatus.textContent).toBe('Ready');
+    expect(elements.coordinatorFocus.textContent).toContain('local text panel');
+    expect(elements.coordinatorLanes.textContent).toContain('TrustQuote/Tony Li invoice: closed');
+    expect(elements.coordinatorLanes.textContent).toContain('Telegram replay restart safety: closed');
+    expect(elements.coordinatorNext.textContent).toContain('zero writes/tools/sends');
+    expect(elements.coordinatorBlockers.textContent).toContain('Writes, sends');
+    expect(elements.panel.dataset.coordinatorStatus).toBe('ready');
+    expect(elements.panel.dataset.writeCount).toBe('0');
+    expect(elements.panel.dataset.toolCallCount).toBe('0');
+    expect(elements.panel.dataset.externalSendCount).toBe('0');
   });
 });

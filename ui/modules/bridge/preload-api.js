@@ -122,6 +122,7 @@ function createPreloadApi(ipcRenderer) {
     },
 
     mira: {
+      coordinatorSnapshot: (payload = {}) => ipc.invoke('mira:coordinator-snapshot', payload),
       localTextSession: (payload = {}) => ipc.invoke('mira:local-text-session', payload),
     },
 

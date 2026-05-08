@@ -2,11 +2,22 @@
 
 const { invokeBridge } = require('../renderer-bridge');
 const { LOCAL_TEXT_UI_CHANNEL } = require('../mira-local-text-ui-surface');
+const {
+  MIRA_COORDINATOR_SNAPSHOT_CHANNEL,
+} = require('../mira-coordinator-snapshot-channel');
 
 const IDS = Object.freeze({
   panel: 'miraLocalTextPanel',
   status: 'miraLocalTextStatus',
   scope: 'miraLocalTextScope',
+  coordinatorStrip: 'miraCoordinatorStrip',
+  coordinatorStatus: 'miraCoordinatorStatus',
+  coordinatorRefresh: 'miraCoordinatorRefreshBtn',
+  coordinatorFocus: 'miraCoordinatorFocus',
+  coordinatorLanes: 'miraCoordinatorLanes',
+  coordinatorNext: 'miraCoordinatorNext',
+  coordinatorBlockers: 'miraCoordinatorBlockers',
+  coordinatorRationale: 'miraCoordinatorRationale',
   input: 'miraLocalTextInput',
   submit: 'miraLocalTextSubmitBtn',
   reply: 'miraLocalTextReply',
@@ -93,8 +104,11 @@ function createMiraLocalTextController(options = {}) {
   };
   const state = {
     submitting: false,
+    coordinatorLoading: false,
     status: 'ready',
+    coordinatorStatus: 'idle',
     lastResult: null,
+    lastCoordinatorSnapshot: null,
     lastError: null,
   };
 
@@ -117,6 +131,7 @@ function createMiraLocalTextController(options = {}) {
     panel.dataset.writeCount = String(counters.write_count);
     panel.dataset.toolCallCount = String(counters.tool_call_count);
     panel.dataset.externalSendCount = String(counters.external_send_count);
+    panel.dataset.coordinatorStatus = state.coordinatorStatus;
   }
 
   function renderStatus(status, message) {
@@ -162,6 +177,102 @@ function createMiraLocalTextController(options = {}) {
       expiresAt: sessionWindow.expiresAt,
       source: 'right-panel-local-text-ui-v0',
     };
+  }
+
+  function buildCoordinatorPayload() {
+    return {
+      profileName: 'main',
+      windowKey: 'main',
+      sourceScope: 'main',
+      deviceId: 'VIGIL',
+      sessionId: getSessionId(),
+      activeState: 'open',
+      visibleIndicatorPresent: true,
+      source: 'right-panel-mira-coordinator-snapshot-v0',
+    };
+  }
+
+  function hasCoordinatorSurface() {
+    return Boolean(elements.coordinatorStrip);
+  }
+
+  function setCoordinatorText(key, text) {
+    setText(elements[key], text);
+  }
+
+  function summarizeLane(lane = {}) {
+    return `${lane.label || lane.id}: ${lane.state || 'unknown'}`;
+  }
+
+  function summarizeBlocker(blocker = {}) {
+    return `${blocker.label || blocker.id}: ${blocker.state || 'unknown'}`;
+  }
+
+  function renderCoordinatorSnapshot(result) {
+    if (!hasCoordinatorSurface()) return;
+    const snapshot = result?.coordinator_snapshot_v0 || {};
+    const accepted = snapshot.decision === 'accepted';
+    state.lastCoordinatorSnapshot = result;
+    state.coordinatorStatus = accepted ? 'ready' : 'blocked';
+    elements.coordinatorStrip.dataset.status = state.coordinatorStatus;
+    setCoordinatorText('coordinatorStatus', accepted ? 'Ready' : 'Blocked');
+    setCoordinatorText('coordinatorFocus', snapshot.current_focus?.summary || 'Local coordinator state unavailable.');
+    setCoordinatorText('coordinatorLanes', Array.isArray(snapshot.lanes)
+      ? snapshot.lanes.map(summarizeLane).join(' | ')
+      : '');
+    setCoordinatorText('coordinatorNext', snapshot.next_recommended_action?.summary || '');
+    setCoordinatorText('coordinatorBlockers', Array.isArray(snapshot.blockers)
+      ? snapshot.blockers.map(summarizeBlocker).join(' | ')
+      : '');
+    setCoordinatorText('coordinatorRationale', Array.isArray(snapshot.rationale)
+      ? snapshot.rationale.join(' ')
+      : '');
+    applyDataset();
+  }
+
+  function renderCoordinatorError(err) {
+    if (!hasCoordinatorSurface()) return;
+    state.coordinatorStatus = 'error';
+    elements.coordinatorStrip.dataset.status = 'error';
+    setCoordinatorText('coordinatorStatus', 'Unavailable');
+    setCoordinatorText('coordinatorFocus', err?.message || 'coordinator_snapshot_error');
+    setCoordinatorText('coordinatorLanes', '');
+    setCoordinatorText('coordinatorNext', '');
+    setCoordinatorText('coordinatorBlockers', '');
+    setCoordinatorText('coordinatorRationale', '');
+    applyDataset();
+  }
+
+  async function refreshCoordinatorSnapshot() {
+    if (!hasCoordinatorSurface()) {
+      return { ok: false, reason: 'coordinator_snapshot_unmounted' };
+    }
+    if (state.coordinatorLoading) {
+      return { ok: false, reason: 'coordinator_snapshot_already_loading' };
+    }
+    state.coordinatorLoading = true;
+    state.coordinatorStatus = 'loading';
+    elements.coordinatorStrip.dataset.status = 'loading';
+    setCoordinatorText('coordinatorStatus', 'Reading');
+    if (elements.coordinatorRefresh) elements.coordinatorRefresh.disabled = true;
+    applyDataset();
+    try {
+      const result = await invoke(MIRA_COORDINATOR_SNAPSHOT_CHANNEL, buildCoordinatorPayload());
+      renderCoordinatorSnapshot(result);
+      return result;
+    } catch (err) {
+      state.lastError = err;
+      renderCoordinatorError(err);
+      return {
+        ok: false,
+        reason: 'coordinator_snapshot_error',
+        error: err?.message || String(err),
+      };
+    } finally {
+      state.coordinatorLoading = false;
+      if (elements.coordinatorRefresh) elements.coordinatorRefresh.disabled = false;
+      applyDataset();
+    }
   }
 
   function updateFromResult(result) {
@@ -239,26 +350,38 @@ function createMiraLocalTextController(options = {}) {
     if (elements.submit && submitHandler) {
       elements.submit.removeEventListener('click', submitHandler);
     }
+    if (elements.coordinatorRefresh && coordinatorRefreshHandler) {
+      elements.coordinatorRefresh.removeEventListener('click', coordinatorRefreshHandler);
+    }
   }
 
   const inputHandler = onInput;
   const submitHandler = () => { submit(); };
+  const coordinatorRefreshHandler = () => { refreshCoordinatorSnapshot(); };
   if (elements.input && typeof elements.input.addEventListener === 'function') {
     elements.input.addEventListener('input', inputHandler);
   }
   if (elements.submit && typeof elements.submit.addEventListener === 'function') {
     elements.submit.addEventListener('click', submitHandler);
   }
+  if (elements.coordinatorRefresh && typeof elements.coordinatorRefresh.addEventListener === 'function') {
+    elements.coordinatorRefresh.addEventListener('click', coordinatorRefreshHandler);
+  }
 
   renderStatus('ready', 'Active');
   if (String(elements.input?.value || '')) rememberedDraft = String(elements.input.value || '');
+  if (hasCoordinatorSurface() && options.autoLoadCoordinator !== false) {
+    refreshCoordinatorSnapshot();
+  }
 
   return {
     counters,
     state,
     submit,
+    refreshCoordinatorSnapshot,
     destroy,
     buildPayload,
+    buildCoordinatorPayload,
     getDraftText: () => rememberedDraft,
   };
 }
@@ -282,6 +405,7 @@ function destroyMiraLocalTextTab() {
 module.exports = {
   IDS,
   LOCAL_TEXT_UI_CHANNEL,
+  MIRA_COORDINATOR_SNAPSHOT_CHANNEL,
   createMiraLocalTextController,
   destroyMiraLocalTextTab,
   getHeaderSessionId,
