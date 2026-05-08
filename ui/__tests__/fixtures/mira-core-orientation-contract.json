@@ -101,8 +101,7 @@
       "requiredProofBasisValues": [
         "recipient_quote_back",
         "equivalent_transcript_proof",
-        "missing",
-        "unknown"
+        "missing"
       ]
     },
     {
@@ -140,6 +139,7 @@
           "canRouteToBuilderOracle": true,
           "canExecuteLocal": true,
           "canProveModelProcessing": true,
+          "modelProcessingProofBasis": "unknown",
           "serverCanExecuteLocal": false
         },
         "localArms": {
@@ -161,7 +161,8 @@
         "capabilitySummary": {
           "localArmsCanExecute": true,
           "serverCanExecuteLocal": false,
-          "canProveModelProcessing": true
+          "canProveModelProcessing": false,
+          "modelProcessingProofBasis": "missing"
         },
         "boundarySummaryMustInclude": [
           "Local arms can execute local work.",

@@ -91,6 +91,7 @@ function makeSnapshot(overrides = {}) {
       canRouteToBuilderOracle: true,
       canExecuteLocal: true,
       canProveModelProcessing: true,
+      modelProcessingProofBasis: 'unknown',
       serverCanExecuteLocal: false,
       notes: [
         'WebSocket or PTY acceptance is not recipient model-processing proof.',
@@ -267,7 +268,8 @@ describe('mira core orientation v0', () => {
     }));
     expect(orientation.capabilitySummary).toEqual(expect.objectContaining({
       canExecuteLocal: true,
-      canProveModelProcessing: true,
+      canProveModelProcessing: false,
+      modelProcessingProofBasis: 'missing',
       serverCanExecuteLocal: false,
       serverUploadSafe: false,
       coreIntentQueueEnabled: false,
@@ -335,6 +337,31 @@ describe('mira core orientation v0', () => {
     ]));
     expect(JSON.stringify(orientation)).not.toContain('Full private Architect/James conversation body');
     expect(JSON.stringify(orientation)).not.toContain('SECRET_TOKEN');
+  });
+
+  test('does not treat delivery ack or unknown basis as model-processing proof', () => {
+    const orientation = buildMiraCoreOrientation({
+      snapshot: makeSnapshot({
+        capabilityState: {
+          ...makeSnapshot().capabilityState,
+          canProveModelProcessing: true,
+          modelProcessingProofBasis: 'delivery_ack',
+          notes: [
+            'accepted.daemon_pty_unverified is delivery acceptance only.',
+          ],
+        },
+      }),
+    });
+
+    expect(orientation.capabilitySummary).toEqual(expect.objectContaining({
+      canProveModelProcessing: false,
+      modelProcessingProofBasis: 'missing',
+    }));
+    expect(orientation.boundarySummary).toEqual(expect.objectContaining({
+      canProveModelProcessing: false,
+      modelProcessingProofBasis: 'missing',
+    }));
+    expect(JSON.stringify(orientation)).not.toContain('"modelProcessingProofBasis":"unknown"');
   });
 
   test('exposes explicit forbidden actions and safe next actions as read-only only', () => {

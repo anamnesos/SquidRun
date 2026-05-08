@@ -85,6 +85,7 @@
 }
 
 .mira-coordinator-lanes,
+.mira-coordinator-model-attachment,
 .mira-coordinator-blockers,
 .mira-coordinator-rationale {
   color: var(--color-text-dim);

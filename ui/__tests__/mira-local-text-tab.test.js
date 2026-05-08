@@ -43,6 +43,7 @@ function makeElements(initialText = '', options = {}) {
     elements.coordinatorRefresh = makeElement('miraCoordinatorRefreshBtn');
     elements.coordinatorFocus = makeElement('miraCoordinatorFocus');
     elements.coordinatorLanes = makeElement('miraCoordinatorLanes');
+    elements.coordinatorModelAttachment = makeElement('miraCoordinatorModelAttachment');
     elements.coordinatorNext = makeElement('miraCoordinatorNext');
     elements.coordinatorBlockers = makeElement('miraCoordinatorBlockers');
     elements.coordinatorRationale = makeElement('miraCoordinatorRationale');
@@ -125,8 +126,23 @@ function coordinatorSnapshotResult() {
         { id: 'trustquote-tony-li-invoice', label: 'TrustQuote/Tony Li invoice', state: 'closed' },
         { id: 'telegram-replay-restart-safety', label: 'Telegram replay restart safety', state: 'closed' },
       ],
+      model_attachment: {
+        id: 'mira-model-attachment-v0',
+        label: 'Model Attachment',
+        state: 'not_attached',
+        mode: 'dry_run_local_reply_harness',
+        visible_status: 'Model Attachment: not attached / dry-run local reply harness',
+        attachment_enabled: false,
+        live_model_called: false,
+        model_call_allowed: false,
+        api_wiring_present: false,
+        network_allowed: false,
+        durable_writes_allowed: false,
+        external_sends_allowed: false,
+        runtime_started: false,
+      },
       next_recommended_action: {
-        summary: 'Use the Mira tab to submit one local text prompt and verify Ready, exactly one bounded reply, and zero writes/tools/sends.',
+        summary: 'Use the Mira tab to verify Model Attachment is not attached, then submit one local text prompt and verify Ready, exactly one bounded reply, and zero writes/tools/sends.',
       },
       blockers: [
         { id: 'external_actions_blocked', label: 'Writes, sends, customer actions, deploy, and trade blocked', state: 'blocked' },
@@ -296,6 +312,7 @@ describe('Mira local text tab controller', () => {
     expect(elements.coordinatorFocus.textContent).toContain('local text panel');
     expect(elements.coordinatorLanes.textContent).toContain('TrustQuote/Tony Li invoice: closed');
     expect(elements.coordinatorLanes.textContent).toContain('Telegram replay restart safety: closed');
+    expect(elements.coordinatorModelAttachment.textContent).toBe('Model Attachment: not attached / dry-run local reply harness');
     expect(elements.coordinatorNext.textContent).toContain('zero writes/tools/sends');
     expect(elements.coordinatorBlockers.textContent).toContain('Writes, sends');
     expect(elements.panel.dataset.coordinatorStatus).toBe('ready');
