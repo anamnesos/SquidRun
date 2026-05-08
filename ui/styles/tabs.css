@@ -10,6 +10,7 @@
 @import "./tabs/oracle.css";
 @import "./tabs/api-keys.css";
 @import "./tabs/voice-broker.css";
+@import "./tabs/mira-local-text.css";
 
 /* Shared common styles for all tabs */
 [title] {

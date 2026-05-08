@@ -121,6 +121,10 @@ function createPreloadApi(ipcRenderer) {
       brokerStatusLocal: () => readVoiceBrokerStatusSnapshot(),
     },
 
+    mira: {
+      localTextSession: (payload = {}) => ipc.invoke('mira:local-text-session', payload),
+    },
+
     broadcast: null,
 
     workflow: {

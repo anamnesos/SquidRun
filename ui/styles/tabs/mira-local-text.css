@@ -1,0 +1,89 @@
+.mira-local-text-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.mira-local-text-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.mira-local-text-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid rgba(77, 216, 135, 0.42);
+  border-radius: var(--radius-sm);
+  background: rgba(25, 81, 54, 0.34);
+  color: #9af0bd;
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.mira-local-text-panel[data-status^="blocked"] .mira-local-text-pill,
+.mira-local-text-panel[data-status="duplicate_blocked"] .mira-local-text-pill {
+  border-color: rgba(255, 183, 77, 0.46);
+  background: rgba(92, 60, 20, 0.34);
+  color: #ffd08a;
+}
+
+.mira-local-text-panel[data-status="error"] .mira-local-text-pill {
+  border-color: rgba(255, 91, 91, 0.34);
+  background: rgba(94, 28, 36, 0.28);
+  color: #ffb4b4;
+}
+
+.mira-local-text-scope,
+.mira-local-text-counters,
+.mira-local-text-meta {
+  min-width: 0;
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.mira-local-text-input {
+  width: 100%;
+  min-height: 104px;
+  max-height: 220px;
+  resize: vertical;
+  padding: var(--space-3);
+  border: 1px solid rgba(117, 138, 165, 0.28);
+  border-radius: var(--radius-sm);
+  background: rgba(7, 12, 20, 0.44);
+  color: var(--color-text);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.mira-local-text-input:focus {
+  outline: none;
+  border-color: rgba(0, 240, 255, 0.42);
+  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.14);
+}
+
+.mira-local-text-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.mira-local-text-reply {
+  min-height: 72px;
+  padding: var(--space-3);
+  border: 1px solid rgba(117, 138, 165, 0.22);
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 36, 0.48);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.mira-local-text-reply[hidden] {
+  display: none;
+}
