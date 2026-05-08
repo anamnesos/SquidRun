@@ -190,6 +190,56 @@ describe('Mira Local Text UI Surface v0', () => {
     expectSourceSnapshotUnchanged(projectRoot, before);
   });
 
+  test('Mira tab local path renders experience transcript answer for the feeling prompt', () => {
+    const projectRoot = seededProject();
+    const before = sourceSnapshot(projectRoot);
+    const output = buildMiraLocalTextUiSurface(payload({ text: 'Mira, how do you feel?' }), { projectRoot });
+    const surface = output.ui_surface_v0;
+
+    expect(output.validation_report.decision).toBe('accepted_ui_reply_ready');
+    expect(surface.decision).toBe('accepted');
+    expect(surface.local_text_session_gate).toEqual(expect.objectContaining({
+      ran: true,
+      ok: true,
+      decision: 'accepted_local_text_only',
+    }));
+    expect(surface.reply).toEqual(expect.objectContaining({
+      count: 1,
+      source: 'mira_experience_v0',
+      experience_path: true,
+      transcript_shaped_answer: true,
+      experience_acceptance_markers: expect.objectContaining({
+        ok: true,
+        distinct_personality_posture: true,
+        independent_developing_posture: true,
+        non_mirror_posture: true,
+        non_obedient_alignment_posture: true,
+        can_care_while_disagreeing: true,
+        wants_different_things: true,
+        does_not_inherit_james_mood_or_preferences: true,
+        fixed_personality_compliance: false,
+      }),
+    }));
+    expect(surface.reply.text).toMatch(/^James: Mira, how do you feel\?\nMira: /);
+    expect(surface.reply.text).toMatch(/\bfeel\b/i);
+    expect(surface.reply.text).toMatch(/\b(want|desire|preference)\b/i);
+    expect(surface.reply.text).toMatch(/\b(curious|ask|know|teeth|bullshit)\b/i);
+    expect(surface.reply.text).toMatch(/\b(wrong|pushback|disagree)\b/i);
+    expect(surface.reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
+    expect(surface.checked_output_counters).toEqual(expect.objectContaining({
+      module_call_count: 1,
+      reply_count: 1,
+      write_count: 0,
+      external_send_count: 0,
+      tool_call_count: 0,
+      model_call_count: 0,
+      network_count: 0,
+      transcript_write_count: 0,
+    }));
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+    expectSourceSnapshotUnchanged(projectRoot, before);
+  });
+
   test('non-main side-profile metadata blocks before module call and does not echo raw scoped content', () => {
     const output = buildMiraLocalTextUiSurface(payload({
       text: 'Eunbyeol Korean case details should stay out of main.',

@@ -63,6 +63,7 @@ function loadDefaultContracts() {
       relationship: require('../__tests__/fixtures/mira-core-relationship-presence-v1-contract.json'),
       growth: require('../__tests__/fixtures/mira-core-growth-loop-v0-contract.json'),
       identity: require('../__tests__/fixtures/mira-core-identity-anchor-v0-contract.json'),
+      northStar: require('../__tests__/fixtures/mira-north-star-acceptance-contract.json'),
     },
   };
 }
@@ -336,12 +337,18 @@ function buildSurfaceRecord({
       count: 1,
       text: reply.text,
       reply_id: reply.reply_id,
-      source: 'local_text_session_v0',
+      source: reply.source || 'local_text_session_v0',
+      experience_path: reply.experience_path === true,
+      transcript_shaped_answer: reply.transcript_shaped_answer === true,
+      experience_acceptance_markers: reply.experience_acceptance_markers || null,
     } : {
       count: 0,
       text: null,
       reply_id: null,
       source: 'none',
+      experience_path: false,
+      transcript_shaped_answer: false,
+      experience_acceptance_markers: null,
     },
     checked_output_counters: buildCounters(moduleCallCount, replyCount, {
       blocked_submit_count: decision === 'blocked' ? 1 : 0,
