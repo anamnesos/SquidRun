@@ -90,7 +90,7 @@ describe('Mira Coordinator Snapshot v0', () => {
       id: 'mira-model-attachment-v1',
       state: 'not_attached',
       mode: 'local_shell_recent_context_ready',
-      visible_status: 'Conversation in local shell: model not attached',
+      visible_status: 'Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach',
       attachment_enabled: false,
       configured: false,
       model: 'gpt-5.5',

@@ -208,6 +208,361 @@ describe('auto-handoff-materializer', () => {
     expect(pendingSection).not.toContain('m-inbound-recorded');
   });
 
+  test('later quote-back and cleanup rows close stale timeout delivery rows', () => {
+    const rows = [
+      {
+        messageId: 'm-task-timeout',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        errorCode: 'routed_unverified_timeout',
+        rawBody: '(ARCHITECT #12): TASK: startup-health bridge probe accuracy.',
+        brokeredAtMs: 1000,
+      },
+      {
+        messageId: 'm-builder-ack',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #5): ACK ARCHITECT #12. Proceeding on the focused patch.',
+        brokeredAtMs: 2000,
+      },
+      {
+        messageId: 'm-builder-complete',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #6): ARCHITECT #12 complete. Validation passed.',
+        brokeredAtMs: 3000,
+      },
+      {
+        messageId: 'm-cancel-timeout',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        errorCode: 'routed_unverified_timeout',
+        rawBody: '(ARCHITECT #17): Cancel ARCH #15 and stop this lane now.',
+        brokeredAtMs: 4000,
+      },
+      {
+        messageId: 'm-cleanup',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #7): ACK ARCHITECT #17. Cleanup complete; patch reverted.',
+        brokeredAtMs: 5000,
+      },
+    ];
+
+    const markdown = buildSessionHandoffMarkdown(rows, {
+      sessionId: 's-stale-resolver',
+      nowMs: 6000,
+    });
+    const failedSection = markdown.split('## Failed Deliveries')[1].split('## Pending Deliveries')[0];
+    const pendingSection = markdown.split('## Pending Deliveries')[1].split('## Recent Messages')[0];
+
+    expect(markdown).toContain('- failed_rows: 0');
+    expect(markdown).toContain('- pending_rows: 0');
+    expect(failedSection).not.toContain('m-task-timeout');
+    expect(failedSection).not.toContain('m-cancel-timeout');
+    expect(pendingSection).not.toContain('m-task-timeout');
+    expect(pendingSection).not.toContain('m-cancel-timeout');
+  });
+
+  test('materialization writes current lane and keeps resolved stale tasks out of live work', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const rows = [
+      {
+        messageId: 'm-task-timeout',
+        sessionId: 'app-session-336',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        errorCode: 'routed_unverified_timeout',
+        rawBody: '(ARCHITECT #12): TASK: startup-health bridge probe accuracy.',
+        brokeredAtMs: 1000,
+      },
+      {
+        messageId: 'm-builder-complete',
+        sessionId: 'app-session-336',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #6): ARCHITECT #12 complete. Validation passed.',
+        brokeredAtMs: 2000,
+      },
+      {
+        messageId: 'm-cancel-timeout',
+        sessionId: 'app-session-336',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        errorCode: 'routed_unverified_timeout',
+        rawBody: '(ARCHITECT #17): Cancel ARCH #15 and stop this lane now.',
+        brokeredAtMs: 3000,
+      },
+      {
+        messageId: 'm-cleanup',
+        sessionId: 'app-session-336',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #7): ACK ARCHITECT #17. Cleanup complete; patch reverted.',
+        brokeredAtMs: 4000,
+      },
+      {
+        messageId: 'm-mira-lane',
+        sessionId: 'app-session-336',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #25): CURRENT LANE: New Mira implementation seam. TASK: Fix startup/restart live-truth resolver and tests.',
+        brokeredAtMs: 5000,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-336',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 6000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeLane: expect.objectContaining({
+        objective: expect.stringContaining('New Mira'),
+        sourceMessageId: 'm-mira-lane',
+      }),
+      resolvedOrSupersededCount: 1,
+    }));
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.activeLane.objective).toContain('New Mira');
+    expect(handoff).toContain('- failed_rows: 0');
+    expect(handoff).toContain('- pending_rows: 0');
+    expect(handoff.indexOf('## Current Lane (machine-readable)')).toBeLessThan(handoff.indexOf('## Failed Deliveries'));
+    expect(handoff).toContain('"sourceMessageId": "m-mira-lane"');
+  });
+
+  test('natural current-lane Mira priority supersedes stale unclosed startup task', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const defaultCurrentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const rows = [
+      {
+        messageId: 'm-arch-8',
+        sessionId: 'app-session-336',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #8): TASK: Oracle delivery path + startup residual triage.\n\nOBJECTIVE: determine why Oracle checked in but did not quote back ARCH #6/#7, and give the smallest safe fix/next action for startup degraded health.',
+        brokeredAtMs: 1000,
+      },
+      {
+        messageId: 'm-arch-31',
+        sessionId: 'app-session-336',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #31): New user-facing priority: Mira panel is showing fallback text like "Mira reply from local durable context... no sends, writes, tools, audio, live-model claim, or delivery proof" instead of an attached live model. Treat as current lane over stale startup cleanup if you need to sequence. Investigate the model attachment/config path for the Mira panel.',
+        brokeredAtMs: 3000,
+      },
+      {
+        messageId: 'm-arch-33',
+        sessionId: 'app-session-336',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #33): Oracle found root cause for Mira panel fallback. OpenAI key exists, but typed Mira live text is disabled because SQUIDRUN_MIRA_TEXT_MODEL_ENABLED is missing/off. Relevant path: mira-local-text -> mira:local-text-session -> mira-local-text-ui-surface -> build local v0 then optional text-model-attachment-v1. Please make this current-lane implementation: expose/bridge the attachment state so the panel is not ambiguous, enable or document the env path cleanly, and verify one safe in-panel model reply reports source=mira_text_model_attachment_v1 with model_call_count=1/network_count=1/tools-sends-writes=0.',
+        brokeredAtMs: 4000,
+      },
+      {
+        messageId: 'm-builder-9',
+        sessionId: 'app-session-336',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #9): FINDINGS: Mira text had key present but SQUIDRUN_MIRA_TEXT_MODEL_ENABLED missing/off. FIX: panel fails closed and exposes attachment state. VALIDATION: focused suites pass.',
+        brokeredAtMs: 5000,
+      },
+      {
+        messageId: 'm-builder-11',
+        sessionId: 'app-session-336',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #11): FIX\n- Patched `ui/modules/main/agent-task-resolution.js` so natural current-priority language is authoritative: `New user-facing priority: ...`, `Treat as current lane ...`, and `Please make this current-lane implementation: ...` now outrank stale unclosed TASK lanes.\n\nVALIDATION\n- real app-session-336 smoke selected architect#33.',
+        brokeredAtMs: 5500,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-336',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 6500,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane.activeLane).toEqual(expect.objectContaining({
+      objective: expect.stringContaining('Mira panel model attachment'),
+      sourceMessageId: 'm-arch-33',
+      sourceRef: 'architect#33',
+    }));
+    expect(result.currentLane.activeLane.objective).not.toContain('Oracle delivery path');
+
+    expect(fs.existsSync(defaultCurrentLanePath)).toBe(true);
+    const currentLane = JSON.parse(fs.readFileSync(defaultCurrentLanePath, 'utf8'));
+    expect(currentLane.activeLane.sourceMessageId).toBe('m-arch-33');
+    expect(currentLane.activeLane.objective).toContain('Mira panel model attachment');
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(handoff).toContain('"sourceMessageId": "m-arch-33"');
+    expect(handoff).not.toContain('"sourceMessageId": "m-arch-8"');
+    expect(handoff).not.toContain('"sourceMessageId": "m-builder-11"');
+  });
+
+  test('role-addressed casual tasking materializes a live current lane', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const rows = [
+      {
+        messageId: 'm-arch-65',
+        sessionId: 'app-session-337',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCH #65): User requested full mess/unfinished sweep across comms/history/worktree. Builder task: do a package/source audit, not a feature expansion. Inspect staged vs unstaged changes, missing docs/tests, Lab registration boundaries, typed-panel reload-smoke readiness, startup-health parked work, memory drift status, and any obvious broken workflow.',
+        brokeredAtMs: 1000,
+      },
+      {
+        messageId: 'm-builder-41',
+        sessionId: 'app-session-337',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #41): ACK ARCH #65. I am auditing package state now.',
+        brokeredAtMs: 1500,
+      },
+      {
+        messageId: 'm-arch-69',
+        sessionId: 'app-session-337',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCH #69): Additional audit item for ARCH #65/#66. Builder: classify/fix if obvious in agent-task-resolution/materializer scope; otherwise list as unresolved workflow risk.',
+        brokeredAtMs: 2000,
+      },
+      {
+        messageId: 'm-arch-71-status-check',
+        sessionId: 'app-session-337',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCH #71): Builder status check on ARCH #65/#67/#69. Need concise delta: package/staging audit result, memory repair status/post-check, stale startup-health reference status, current-lane materialization/fix status, tests/diff check running or done, and any remaining blocker.',
+        brokeredAtMs: 2500,
+      },
+      {
+        messageId: 'm-builder-44-status-delta',
+        sessionId: 'app-session-337',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #44): Current exact state for ARCH #65/#67/#69/#72: memory backup/repair/post-check completed. Source fixes completed but not yet final-tested. Tests/diff after these latest fixes have not run yet.',
+        brokeredAtMs: 3000,
+      },
+      {
+        messageId: 'm-arch-66',
+        sessionId: 'app-session-337',
+        senderRole: 'architect',
+        targetRole: 'oracle',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCH #66): User requested full mess/unfinished sweep across comms/history/worktree. Oracle task: independent read-only reconciliation. Review current-session comms/history, handoff index, worktree/staged state, tests/gates already run, startup-health parked task, and memory drift.',
+        brokeredAtMs: 3500,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-337',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeLane: expect.objectContaining({
+        kind: 'role_task',
+        objective: 'do a package/source audit, not a feature expansion.',
+        sourceMessageId: 'm-arch-65',
+        sourceRef: 'architect#65',
+      }),
+    }));
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.status).toBe('active');
+    expect(currentLane.activeLane.objective).toContain('package/source audit');
+    expect(currentLane.activeLane.sourceMessageId).toBe('m-arch-65');
+  });
+
   test('materializeSessionHandoff writes once and skips rewrite when unchanged', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const rows = [

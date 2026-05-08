@@ -150,6 +150,11 @@ jest.mock('../modules/main/pane-host-window-manager', () => ({
   }),
 }));
 
+jest.mock('../modules/main/comms-journal', () => ({
+  closeCommsJournalStores: jest.fn(),
+  queryCommsJournalEntries: jest.fn(() => []),
+}));
+
 jest.mock('../modules/bridge-client', () => {
   const actual = jest.requireActual('../modules/bridge-client');
   return {
@@ -398,6 +403,7 @@ jest.mock('../modules/local-model-capabilities', () => ({
 
 // Now require the module under test
 const { spawn } = require('child_process');
+const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const SquidRunApp = require('../modules/main/squidrun-app');
 
 describe('SquidRunApp', () => {
@@ -406,6 +412,7 @@ describe('SquidRunApp', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    queryCommsJournalEntries.mockReturnValue([]);
     const windows = new Map();
 
     // Create mock app context
@@ -2335,6 +2342,57 @@ describe('SquidRunApp', () => {
       jest.advanceTimersByTime(90 * 1000);
 
       expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses a stale watchdog when later comms quote back the timed-out task', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          messageId: 'm-builder-ack',
+          senderRole: 'builder',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'brokered',
+          rawBody: '(BUILDER #5): ACK ARCHITECT #12. Proceeding on the focused patch.',
+          brokeredAtMs: new Date('2026-03-28T10:10:15').getTime(),
+        },
+        {
+          messageId: 'm-builder-cleanup',
+          senderRole: 'builder',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'brokered',
+          rawBody: '(BUILDER #7): ACK ARCHITECT #17. Cleanup complete; patch reverted.',
+          brokeredAtMs: new Date('2026-03-28T10:12:00').getTime(),
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-336';
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '(ARCHITECT #12): TASK: startup-health bridge probe accuracy.',
+        sentAtMs: new Date('2026-03-28T10:10:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+        sessionId: 'app-session-336',
+        sinceMs: new Date('2026-03-28T10:10:00').getTime(),
+        order: 'asc',
+        limit: 500,
+      });
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
 
       jest.useRealTimers();
     });

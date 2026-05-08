@@ -1,0 +1,144 @@
+(function () {
+  'use strict';
+
+  const TURN_CHANNEL = 'mira:lab-turn';
+  const EXPORT_CHANNEL = 'mira:lab-export';
+  const sessionId = `mira-lab-${new Date().toISOString().slice(0, 10)}`;
+
+  function bridgeInvoke(channel, payload) {
+    const api = window.squidrunAPI || window.squidrun || {};
+    const invoke = typeof api.invoke === 'function'
+      ? api.invoke.bind(api)
+      : (api.ipc && typeof api.ipc.invoke === 'function' ? api.ipc.invoke.bind(api.ipc) : null);
+    if (!invoke) return Promise.resolve({ ok: false, reason: 'bridge_unavailable' });
+    return invoke(channel, payload);
+  }
+
+  function targetAgents(value) {
+    return String(value || '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => ['architect', 'builder', 'oracle'].includes(item));
+  }
+
+  function lineClass(role) {
+    if (role === 'mira') return 'mira';
+    if (['architect', 'builder', 'oracle'].includes(role)) return 'agent';
+    return 'james';
+  }
+
+  function appendLine(role, text) {
+    const transcript = document.getElementById('miraLabTranscript');
+    if (!transcript) return;
+    const line = document.createElement('p');
+    line.className = `mira-lab-line ${lineClass(role)}`;
+    line.textContent = text;
+    transcript.appendChild(line);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function updateEvalPacket(packet) {
+    const evalNode = document.getElementById('miraLabEvalPacket');
+    if (!evalNode) return;
+    evalNode.textContent = JSON.stringify(packet || {}, null, 2);
+  }
+
+  function setupComposer() {
+    const form = document.getElementById('miraLabComposer');
+    const input = document.getElementById('miraLabInput');
+    const speaker = document.getElementById('miraLabSpeaker');
+    const targets = document.getElementById('miraLabTargets');
+    const state = document.getElementById('miraLabState');
+    if (!form || !input || !speaker) return;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      const speakerRole = speaker.value;
+      const targetAgentsValue = targetAgents(targets && targets.value);
+      appendLine(speakerRole, text);
+      input.value = '';
+      if (state) state.textContent = 'recording transcript / diagnostics hidden';
+      const result = await bridgeInvoke(TURN_CHANNEL, {
+        sessionId,
+        speakerRole,
+        targetAgents: targetAgentsValue,
+        text,
+      });
+      updateEvalPacket(result.eval_packet);
+      if (state) {
+        state.textContent = result.ok
+          ? 'transcript recorded / diagnostics hidden'
+          : `lab bridge ${result.reason || 'unavailable'}`;
+      }
+    });
+  }
+
+  function setupField() {
+    const canvas = document.getElementById('miraLabField');
+    if (!canvas) return;
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const lowPower = (navigator.hardwareConcurrency || 8) < 8;
+    if (reduced || lowPower) {
+      canvas.hidden = true;
+      const shell = document.getElementById('miraLabShell');
+      if (shell) shell.dataset.rendering = 'low-power-static';
+      return;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    let width = 0;
+    let height = 0;
+    let frame = 0;
+    function resize() {
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = Math.floor(width * ratio);
+      canvas.height = Math.floor(height * ratio);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    }
+    function draw() {
+      frame += 1;
+      ctx.clearRect(0, 0, width, height);
+      const t = frame / 90;
+      const gradient = ctx.createRadialGradient(
+        width * (0.52 + Math.sin(t * 0.7) * 0.08),
+        height * (0.52 + Math.cos(t * 0.5) * 0.08),
+        30,
+        width * 0.5,
+        height * 0.54,
+        Math.max(width, height) * 0.72,
+      );
+      gradient.addColorStop(0, 'rgba(154, 240, 189, 0.26)');
+      gradient.addColorStop(0.36, 'rgba(80, 170, 210, 0.12)');
+      gradient.addColorStop(1, 'rgba(5, 7, 6, 0.95)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = 'rgba(237, 247, 243, 0.09)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 9; i += 1) {
+        ctx.beginPath();
+        const y = height * (0.18 + i * 0.085);
+        for (let x = 0; x <= width; x += 18) {
+          const wave = Math.sin((x / 120) + t + i * 0.8) * 11;
+          if (x === 0) ctx.moveTo(x, y + wave);
+          else ctx.lineTo(x, y + wave);
+        }
+        ctx.stroke();
+      }
+      window.requestAnimationFrame(draw);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    setupField();
+    setupComposer();
+    bridgeInvoke(EXPORT_CHANNEL, { sessionId }).then((result) => updateEvalPacket(result.eval_packet));
+  });
+}());

@@ -181,6 +181,17 @@ describe('mira core Presence Runtime Read Path v0 phase 73', () => {
       drift_points: 0,
       hard_anchor_violations: 0,
     }));
+    expect(current.speakable_mira_brief).toEqual(expect.objectContaining({
+      schema: 'squidrun.mira.speakable_brief.v1',
+      source: 'durable_redacted_self_relationship_growth',
+      loaded_source_count: 5,
+      raw_content_included: false,
+      side_profile_reconstruction: false,
+    }));
+    expect(current.speakable_mira_brief.relationship.continuity).toContain('not a mirror');
+    expect(current.speakable_mira_brief.cadence_contract.join(' ')).toContain('particularity');
+    expect(JSON.stringify(current.speakable_mira_brief)).not.toMatch(/\bwarm\b|warmth/i);
+    expect(current.speakable_mira_brief.recent_growth.join(' ')).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
     expect(current.natural_status_next_action_line).toContain('safe next move');
     expect(current.natural_status_next_action_line.split(/\r?\n/)).toHaveLength(1);
     expect(current.next_action).toEqual(expect.objectContaining({

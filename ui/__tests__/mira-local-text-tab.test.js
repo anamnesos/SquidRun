@@ -27,6 +27,14 @@ function makeElement(id, value = '') {
   };
 }
 
+function visibleText(elements) {
+  return Object.values(elements)
+    .filter((element) => element && element.hidden !== true)
+    .map((element) => element.textContent || '')
+    .filter(Boolean)
+    .join(' ');
+}
+
 function makeElements(initialText = '', options = {}) {
   const elements = {
     panel: makeElement('miraLocalTextPanel'),
@@ -70,6 +78,13 @@ function acceptedResult(text = 'Mira reply from local text session.') {
         text,
         reply_id: 'mira-local-reply:test',
       },
+      model_attachment: {
+        enabled: true,
+        configured: true,
+        state: 'attached',
+        visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+        fallback_used: false,
+      },
       checked_output_counters: {
         module_call_count: 1,
         reply_count: 1,
@@ -85,7 +100,7 @@ function acceptedResult(text = 'Mira reply from local text session.') {
 }
 
 function acceptedResultWithTentativeUnderstanding() {
-  const result = acceptedResult('I hear the thread. I can hold this as tentative and keep revising it with you.');
+  const result = acceptedResult('I hear the thread. I can answer it directly and let the friction stay visible.');
   result.ui_surface_v0.developmental_understanding = {
     status: 'tentative_understandings_present',
     mode: 'integrated_conversation_memory_self_relationship_desire_growth_loop',
@@ -158,6 +173,12 @@ function degradedResult(reason = 'model_request_failed') {
         source: 'none',
       },
       model_attachment: {
+        enabled: reason !== 'model_attachment_disabled',
+        configured: reason !== 'missing_openai_api_key' && reason !== 'model_attachment_disabled',
+        state: reason === 'model_attachment_disabled' ? 'not_attached' : 'missing_openai_api_key',
+        visible_status: reason === 'model_attachment_disabled'
+          ? 'Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach'
+          : 'Conversation waiting for OPENAI_API_KEY',
         degraded_reason: reason,
         fallback_used: false,
         primary_status: 'degraded',
@@ -195,7 +216,7 @@ function coordinatorSnapshotResult() {
         label: 'Model Attachment',
         state: 'not_attached',
         mode: 'local_shell_recent_context_ready',
-        visible_status: 'Conversation in local shell: model not attached',
+        visible_status: 'Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach',
         attachment_enabled: false,
         live_model_called: false,
         model_call_allowed: false,
@@ -297,6 +318,10 @@ describe('Mira local text tab controller', () => {
     expect(elements.reply.textContent).toBe('First local reply.');
     expect(elements.reply.dataset.count).toBe('1');
     expect(elements.panel.dataset.replyCount).toBe('1');
+    expect(elements.status.hidden).toBe(true);
+    expect(elements.scope.hidden).toBe(true);
+    expect(elements.meta.hidden).toBe(true);
+    expect(elements.meta.textContent).toBe('');
     expect(elements.input.value).toBe('');
     expect(controller.getDraftText()).toBe('');
 
@@ -310,7 +335,7 @@ describe('Mira local text tab controller', () => {
     expect(controller.getDraftText()).toBe('');
   });
 
-  test('accepted result renders Mira tentative understandings without memory settings controls', async () => {
+  test('accepted result hides tentative-understanding chrome from the conversation surface', async () => {
     const elements = makeElements('Talk with me and remember direct pushback as tentative.');
     const invoke = jest.fn().mockResolvedValue(acceptedResultWithTentativeUnderstanding());
     const controller = createMiraLocalTextController({
@@ -321,15 +346,55 @@ describe('Mira local text tab controller', () => {
 
     await controller.submit();
 
-    expect(elements.developmental.hidden).toBe(false);
-    expect(elements.developmental.dataset.count).toBe('1');
-    expect(elements.developmental.dataset.mode).toBe('integrated_conversation_memory_self_relationship_desire_growth_loop');
-    expect(elements.developmental.textContent).toContain('Mira is tentatively noticing');
-    expect(elements.developmental.textContent).toContain('I prefer direct pushback when my premise is wrong.');
-    expect(elements.developmental.textContent).toContain('revise');
+    expect(elements.reply.textContent).toBe('I hear the thread. I can answer it directly and let the friction stay visible.');
+    expect(elements.status.hidden).toBe(true);
+    expect(elements.scope.hidden).toBe(true);
+    expect(elements.meta.hidden).toBe(true);
+    expect(elements.meta.textContent).toBe('');
+    expect(elements.developmental.hidden).toBe(true);
+    expect(elements.developmental.dataset.count).toBe('0');
+    expect(elements.developmental.textContent).toBe('');
+    expect(visibleText(elements)).not.toMatch(/Mira is tentatively noticing|confidence|revise|memory settings|tentative understandings|Conversation connected|gpt-5\.5|model attachment/i);
     expect(elements.developmental.textContent).not.toMatch(/approve|reject|delete|settings|queue/i);
     expect(elements.panel.dataset.tentativeUnderstandingWriteCount).toBe('1');
     expect(elements.panel.dataset.writeCount).toBe('1');
+  });
+
+  test('accepted reply hides coordinator diagnostics, counters, and checklist chrome', async () => {
+    const elements = makeElements('Just answer me, not the dashboard.', { coordinator: true });
+    const invoke = jest.fn(async (channel) => {
+      if (channel === MIRA_COORDINATOR_SNAPSHOT_CHANNEL) return coordinatorSnapshotResult();
+      return acceptedResult('No dashboard voice. The point is the reply, so I am staying with the sentence you handed me.');
+    });
+    const controller = createMiraLocalTextController({
+      elements,
+      invoke,
+      getSessionId: () => 'app-session-329',
+      autoLoadCoordinator: false,
+    });
+
+    await controller.refreshCoordinatorSnapshot();
+    expect(elements.coordinatorStrip.hidden).toBe(false);
+    expect(elements.coordinatorLanes.textContent).toContain('Mira Local Text UI Surface v0: active');
+
+    await controller.submit();
+
+    expect(elements.reply.textContent).toBe('No dashboard voice. The point is the reply, so I am staying with the sentence you handed me.');
+    expect(elements.status.hidden).toBe(true);
+    expect(elements.status.textContent).toBe('');
+    expect(elements.scope.hidden).toBe(true);
+    expect(elements.meta.hidden).toBe(true);
+    expect(elements.meta.textContent).toBe('');
+    expect(elements.counters.hidden).toBe(true);
+    expect(elements.coordinatorStrip.hidden).toBe(true);
+    expect(elements.coordinatorStatus.textContent).toBe('');
+    expect(elements.coordinatorFocus.textContent).toBe('');
+    expect(elements.coordinatorLanes.textContent).toBe('');
+    expect(elements.coordinatorModelAttachment.textContent).toBe('');
+    expect(elements.coordinatorNext.textContent).toBe('');
+    expect(elements.coordinatorBlockers.textContent).toBe('');
+    expect(elements.coordinatorRationale.textContent).toBe('');
+    expect(visibleText(elements)).not.toMatch(/Ready|Conversation connected|gpt-5\.5|reply_ready|attached|module \d|writes \d|tools \d|sends \d|Mira Local Text UI Surface|Model Attachment|next recommended|blockers|rationale|checklist|tentative understandings|confidence|revise/i);
   });
 
   test('follow-up submit carries bounded recent panel conversation context', async () => {
@@ -419,9 +484,9 @@ describe('Mira local text tab controller', () => {
     expect(elements.panel.dataset.moduleCallCount).toBe('1');
   });
 
-  test('degraded model attachment shows connection status without local fallback reply', async () => {
+  test('degraded model attachment shows explicit attachment status without local fallback reply', async () => {
     const elements = makeElements('Try live Mira text.');
-    const invoke = jest.fn().mockResolvedValue(degradedResult('missing_openai_api_key'));
+    const invoke = jest.fn().mockResolvedValue(degradedResult('model_attachment_disabled'));
     const controller = createMiraLocalTextController({
       elements,
       invoke,
@@ -431,10 +496,14 @@ describe('Mira local text tab controller', () => {
     await controller.submit();
 
     expect(elements.panel.dataset.status).toBe('degraded');
-    expect(elements.status.textContent).toBe('Model unavailable');
+    expect(elements.status.textContent).toBe('Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach');
+    expect(elements.panel.dataset.modelAttachmentState).toBe('not_attached');
+    expect(elements.panel.dataset.modelAttachmentEnabled).toBe('false');
+    expect(elements.panel.dataset.modelAttachmentConfigured).toBe('false');
+    expect(elements.panel.dataset.modelAttachmentFallbackUsed).toBe('false');
     expect(elements.reply.hidden).toBe(true);
     expect(elements.reply.textContent).toBe('');
-    expect(elements.meta.textContent).toBe('missing_openai_api_key');
+    expect(elements.meta.textContent).toBe('Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach (model_attachment_disabled)');
     expect(elements.panel.dataset.replyCount).toBe('0');
     expect(elements.input.value).toBe('Try live Mira text.');
   });
@@ -495,7 +564,7 @@ describe('Mira local text tab controller', () => {
     expect(elements.coordinatorLanes.textContent).toContain('Mira Local Text UI Surface v0: active');
     expect(elements.coordinatorLanes.textContent).not.toContain('TrustQuote/Tony Li invoice');
     expect(elements.coordinatorLanes.textContent).not.toContain('Telegram replay restart safety');
-    expect(elements.coordinatorModelAttachment.textContent).toBe('Conversation in local shell: model not attached');
+    expect(elements.coordinatorModelAttachment.textContent).toBe('Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach');
     expect(elements.coordinatorNext.textContent).toContain('live typed conversation');
     expect(elements.coordinatorNext.textContent).toContain('tentative understandings');
     expect(elements.coordinatorBlockers.textContent).toContain('Writes, sends');

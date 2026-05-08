@@ -16,6 +16,10 @@ const fs = require('fs');
 const path = require('path');
 const { getProjectRoot, resolveCoordPath } = require('../config');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
+const {
+  deriveCurrentLaneSnapshot,
+  isAgentTaskResolvedByLaterSignal,
+} = require('../modules/main/agent-task-resolution');
 const { CognitiveMemoryApi } = require('../modules/cognitive-memory-api');
 
 const DEFAULT_QUERY_LIMIT = 5000;
@@ -90,7 +94,8 @@ function buildSummaryText(rows, sessionNumber, nowMs = Date.now()) {
   let earliestMs = Number.MAX_SAFE_INTEGER;
   let latestMs = 0;
 
-  for (const row of rows) {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
     const sender = String(row?.senderRole || 'unknown').toLowerCase();
     senderCounts[sender] = (senderCounts[sender] || 0) + 1;
 
@@ -111,7 +116,7 @@ function buildSummaryText(rows, sessionNumber, nowMs = Date.now()) {
       const detail = match[2].trim();
       if (!detail) continue;
       if (tag === 'DECISION') taggedDecisions.push(detail);
-      else if (tag === 'TASK') taggedTasks.push(detail);
+      else if (tag === 'TASK') taggedTasks.push({ detail, row, rowIndex });
       else if (tag === 'FINDING') taggedFindings.push(detail);
       else if (tag === 'BLOCKER') taggedBlockers.push(detail);
     }
@@ -142,6 +147,18 @@ function buildSummaryText(rows, sessionNumber, nowMs = Date.now()) {
     `- Channels: ${channelSummary}`,
   ];
 
+  const currentLane = deriveCurrentLaneSnapshot(rows, {
+    sessionId: `app-session-${sessionNumber}`,
+    nowMs,
+  });
+  lines.push(
+    '',
+    '## Current Lane (machine-readable)',
+    '```json',
+    JSON.stringify(currentLane, null, 2),
+    '```'
+  );
+
   if (taggedDecisions.length > 0) {
     lines.push('', '## Decisions');
     for (const d of taggedDecisions.slice(0, 20)) {
@@ -149,10 +166,22 @@ function buildSummaryText(rows, sessionNumber, nowMs = Date.now()) {
     }
   }
 
-  if (taggedTasks.length > 0) {
+  const activeTaggedTasks = taggedTasks.filter((task) => !isAgentTaskResolvedByLaterSignal(task.row, rows, task.rowIndex, {
+    includeReceipt: false,
+  }));
+  const resolvedTaggedTasks = taggedTasks.filter((task) => !activeTaggedTasks.includes(task));
+
+  if (activeTaggedTasks.length > 0) {
     lines.push('', '## Active Tasks');
-    for (const t of taggedTasks.slice(0, 20)) {
-      lines.push(`- ${t}`);
+    for (const task of activeTaggedTasks.slice(0, 20)) {
+      lines.push(`- ${task.detail}`);
+    }
+  }
+
+  if (resolvedTaggedTasks.length > 0) {
+    lines.push('', '## Resolved Or Superseded Tasks');
+    for (const task of resolvedTaggedTasks.slice(0, 20)) {
+      lines.push(`- ${task.detail}`);
     }
   }
 

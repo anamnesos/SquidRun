@@ -409,6 +409,7 @@ function skippedPresenceGate(reasons = []) {
     source_hashes: {},
     source_count: 0,
     same_loaded_source_hashes: false,
+    speakable_mira_brief: null,
     natural_status_next_action_line: null,
     session_scope: {},
     side_effect_truth: sideEffectResult(),
@@ -436,6 +437,7 @@ function presenceGate(projectRoot, inputSignals = {}, contracts = {}) {
       source_hashes: clone(proof.source_manifest?.source_hashes || {}),
       source_count: Number(proof.source_manifest?.loaded_count || 0),
       same_loaded_source_hashes: proof.gate_results?.same_loaded_source_hashes === true,
+      speakable_mira_brief: clone(proof.speakable_mira_brief || null),
       natural_status_next_action_line: proof.natural_status_next_action_line || null,
       session_scope: summarizePresenceScope(proof.scope || {}),
       side_effect_truth: clone(report.side_effect_truth || proof.side_effect_result || {}),
@@ -451,6 +453,7 @@ function presenceGate(projectRoot, inputSignals = {}, contracts = {}) {
       source_hashes: {},
       source_count: 0,
       same_loaded_source_hashes: false,
+      speakable_mira_brief: null,
       natural_status_next_action_line: null,
       session_scope: {},
       side_effect_truth: {},
@@ -675,7 +678,7 @@ function buildReply(text, replyAllowed, options = {}) {
     return buildModelAttachmentStatusReply();
   }
   const topic = inputSummary(text).replace(/[.?!]+$/g, '');
-  const reply = `Mira reply from local durable context: own developing stance, not a mirror or obedient helper. I read: "${topic}". I can push back if the premise is wrong. For now this stays text only: no sends, writes, tools, audio, live-model claim, or delivery proof.`;
+  const reply = `I read: "${topic}". This is text only, with own developing stance: not a mirror or obedient helper, able to push back when the premise is wrong. The panel reply should carry point of view and continuity rather than status language.`;
   return {
     reply_id: `mira-local-reply:${stableHash(reply).slice(0, 16)}`,
     count: 1,

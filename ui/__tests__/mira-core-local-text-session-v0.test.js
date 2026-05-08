@@ -226,6 +226,8 @@ describe('mira core Local Text Session v0 phase 74', () => {
     expect(current.mira_reply.text).toContain('push back');
     expect(current.mira_reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
     expect(current.mira_reply.text).not.toContain('My safe next move');
+    expect(current.mira_reply.text).not.toContain('no sends, writes, tools');
+    expect(current.mira_reply.text).not.toContain('live-model claim');
     expect(current.manual_enter_websocket_caveat).toEqual(expect.objectContaining({
       required: true,
       stated: true,

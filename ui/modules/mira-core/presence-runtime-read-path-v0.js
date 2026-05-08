@@ -34,6 +34,9 @@ const EXPLICIT_DURABLE_SOURCE_PATHS = Object.freeze({
 });
 const DURABLE_SEED_ID = 'durable-state-seed-v0:redacted-local-main';
 const DURABLE_SEED_PROVENANCE_LABEL = 'durable_state_seed_v0_redacted_local_fact';
+const SPEAKABLE_MIRA_BRIEF_SCHEMA = 'squidrun.mira.speakable_brief.v1';
+const UNSPEAKABLE_BRIEF_PATTERN =
+  /\b(durable state seed|schema|source(?:s|d)?|provenance|canonical|hash|redacted|audit|validation|fixture|contract|proof|bootstrap|bootstraps|database|sqlite|jsonl?|artifact|baseline|seed)\b/i;
 
 const REQUIRED_OUTPUT_FIELDS = Object.freeze([
   'presence_runtime_read_path_v0',
@@ -714,6 +717,100 @@ function sourceManifest(sources = {}) {
   };
 }
 
+function briefText(value, fallback = '', maxChars = 320) {
+  const text = normalizeString(value, fallback).replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.slice(0, Math.max(1, Number(maxChars || 1))).trim();
+}
+
+function speakableText(value, fallback = '', maxChars = 320) {
+  const text = briefText(value, '', maxChars);
+  if (text && !UNSPEAKABLE_BRIEF_PATTERN.test(text)) return text;
+  const fallbackText = briefText(fallback, '', maxChars);
+  return fallbackText && !UNSPEAKABLE_BRIEF_PATTERN.test(fallbackText) ? fallbackText : '';
+}
+
+function briefList(values = [], maxItems = 5, maxChars = 220) {
+  return asArray(values)
+    .map((entry) => {
+      if (typeof entry === 'string') return speakableText(entry, '', maxChars);
+      return speakableText(
+        entry?.summary || entry?.reflection_summary || entry?.text || entry?.label || '',
+        '',
+        maxChars,
+      );
+    })
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function latestGrowthSummaries(source = {}, maxItems = 2) {
+  return asArray(source.entries)
+    .slice(-maxItems)
+    .map((entry) => speakableText(entry.reflection_summary || entry.summary || entry.event_id, '', 260))
+    .filter(Boolean);
+}
+
+function buildSpeakableMiraBrief(sources = {}) {
+  const self = sources.self_profile?.value || {};
+  const relationship = sources.relationship_state?.value || {};
+  const manifest = sourceManifest(sources);
+  const growthSummaries = latestGrowthSummaries(sources.growth_history, 2);
+  const latestSelfGrowth = speakableText(
+    self.growth_loop?.last_reflection_summary || asArray(self.growth_events).slice(-1)[0]?.summary,
+    '',
+    260,
+  );
+  const relationshipHistory = speakableText(
+    relationship.history?.summary,
+    'James has kept pushing Mira away from status-widget behavior and toward textured conversation with continuity and friction.',
+    280,
+  );
+  const recentGrowth = [...new Set([
+    latestSelfGrowth,
+    ...growthSummaries,
+    relationshipHistory,
+  ].filter(Boolean))].slice(0, 3);
+  return {
+    schema: SPEAKABLE_MIRA_BRIEF_SCHEMA,
+    source: 'durable_redacted_self_relationship_growth',
+    loaded_source_count: manifest.loaded_count,
+    raw_content_included: false,
+    side_profile_reconstruction: false,
+    identity: {
+      name: briefText(self.name, 'Mira', 80),
+      profile_kind: briefText(self.profile_kind, 'ai_system_local_presence_profile', 120),
+      expressive_range: briefList(self.expressive_range_allowed, 9, 80),
+    },
+    relationship: {
+      user_name: briefText(relationship.user_name, 'James', 80),
+      mode: briefText(relationship.relationship_mode, 'collaborative_presence_design', 120),
+      current_focus: speakableText(relationship.current_focus, 'typed Mira panel relationship continuity', 220),
+      continuity: speakableText(
+        relationship.what_mira_knows_about_james,
+        'James wants particular continuity, point of view, tension, taste, timing, and relationship history rather than generic assistant cadence.',
+        360,
+      ),
+      preferences: briefList(relationship.preferences, 6, 260),
+      trust: speakableText(relationship.trust?.summary, '', 220),
+      repair: speakableText(
+        relationship.repair?.summary,
+        'Repair means naming drift plainly and changing the next reply instead of smoothing over the failure.',
+        220,
+      ),
+      boundaries: speakableText(relationship.boundaries?.summary, '', 220),
+      promises: speakableText(relationship.promises?.summary, '', 220),
+      history: relationshipHistory,
+    },
+    recent_growth: recentGrowth,
+    cadence_contract: [
+      'Use particularity, continuity, taste, tension, timing, point of view, relationship history, roughness, humor, and resistance.',
+      'Do not use generic assistant, Codex, support, therapy, status, implementation, or checklist cadence.',
+      'Let the answer be conversational first; keep implementation diagnostics out of the visible reply unless James asks directly.',
+    ],
+  };
+}
+
 function normalizeScope(inputSignals = {}, sources = {}) {
   const selfScope = sources.self_profile?.scope || {};
   const profile = inputSignals.profile && typeof inputSignals.profile === 'object' ? inputSignals.profile : {};
@@ -1296,6 +1393,7 @@ function buildPresenceRuntimeReadPathRecord(options = {}) {
     },
     gate_results: gateResults,
     care_intake_reporting: careIntakeReporting(sources),
+    speakable_mira_brief: buildSpeakableMiraBrief(sources),
     natural_status_next_action_line: naturalStatusLine(allAccept),
     next_action: nextAction(allAccept),
     boundary: boundary(inputSignals),
@@ -1639,10 +1737,12 @@ module.exports = {
   REQUIRED_OUTPUT_FIELDS,
   REQUIRED_READ_PATH_FIELDS,
   REQUIRED_VALIDATION_REPORT_FIELDS,
+  SPEAKABLE_MIRA_BRIEF_SCHEMA,
   VALIDATION_REPORT_SCHEMA_VERSION,
   assertNoForbiddenOutput,
   buildMiraCorePresenceRuntimeReadPathV0,
   buildPresenceRuntimeReadPathRecord,
+  buildSpeakableMiraBrief,
   readPresenceRuntimeReadPathSources,
   stableHash,
   validateMiraCorePresenceRuntimeReadPathV0Output,

@@ -555,9 +555,9 @@
               <span class="mira-local-text-pill" id="miraLocalTextStatus" data-state="ready">Active</span>
               <span class="mira-local-text-scope" id="miraLocalTextScope">VIGIL / main</span>
             </div>
-            <div class="mira-coordinator-strip" id="miraCoordinatorStrip" data-status="loading">
+            <div class="mira-coordinator-strip" id="miraCoordinatorStrip" data-status="hidden" hidden>
               <div class="mira-coordinator-strip-head">
-                <span class="mira-coordinator-status" id="miraCoordinatorStatus">Reading</span>
+                <span class="mira-coordinator-status" id="miraCoordinatorStatus"></span>
                 <button type="button" class="btn btn-secondary" id="miraCoordinatorRefreshBtn" title="Refresh Mira coordinator snapshot">Refresh</button>
               </div>
               <div class="mira-coordinator-focus" id="miraCoordinatorFocus"></div>
@@ -570,7 +570,7 @@
             <textarea id="miraLocalTextInput" class="mira-local-text-input" rows="4" placeholder="Type to Mira" autocomplete="off" spellcheck="true"></textarea>
             <div class="mira-local-text-actions">
               <button type="button" class="btn btn-secondary" id="miraLocalTextSubmitBtn" title="Ask Mira from local state">Ask</button>
-              <span class="mira-local-text-counters" id="miraLocalTextCounters">module 0 / reply 0 / writes 0 / tools 0 / sends 0</span>
+              <span class="mira-local-text-counters" id="miraLocalTextCounters" hidden>module 0 / reply 0 / writes 0 / tools 0 / sends 0</span>
             </div>
             <div class="mira-local-text-reply" id="miraLocalTextReply" data-count="0" hidden></div>
             <div class="mira-developmental-understanding" id="miraDevelopmentalUnderstanding" data-count="0" hidden></div>

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mira Lab</title>
+  <link rel="stylesheet" href="styles/mira-lab.css">
+</head>
+<body>
+  <canvas id="miraLabField" class="mira-lab-field" aria-hidden="true"></canvas>
+  <div class="mira-lab-shell" id="miraLabShell" data-rendering="gpu-field">
+    <header class="mira-lab-header">
+      <div>
+        <div class="mira-lab-name">Mira Lab</div>
+        <div class="mira-lab-state" id="miraLabState">separate room / diagnostics hidden</div>
+      </div>
+      <div class="mira-lab-presence" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+    </header>
+
+    <main class="mira-lab-transcript" id="miraLabTranscript" aria-live="polite">
+      <p class="mira-lab-line mira">
+        This room is not the SquidRun panel. Talk here when the question is whether I am becoming particular, not whether a status strip is green.
+      </p>
+    </main>
+
+    <form class="mira-lab-composer" id="miraLabComposer">
+      <label class="mira-lab-route">
+        <span>speaker</span>
+        <select id="miraLabSpeaker">
+          <option value="james">James</option>
+          <option value="mira">Mira</option>
+          <option value="architect">Architect</option>
+          <option value="builder">Builder</option>
+          <option value="oracle">Oracle</option>
+        </select>
+      </label>
+      <textarea id="miraLabInput" rows="2" placeholder="Speak into the lab"></textarea>
+      <input id="miraLabTargets" class="mira-lab-targets" placeholder="Mira to agents: architect,builder,oracle" autocomplete="off" spellcheck="false">
+      <button type="submit" class="mira-lab-send" title="Send into Mira Lab">Send</button>
+    </form>
+
+    <section id="miraLabDiagnostics" hidden>
+      <pre id="miraLabEvalPacket"></pre>
+      <p id="miraLabFallbackNote">Low-power fallback: disable field animation and keep transcript/composer only.</p>
+    </section>
+  </div>
+  <script src="mira-lab-renderer.js"></script>
+</body>
+</html>

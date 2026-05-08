@@ -574,7 +574,7 @@ function buildSnapshotRecord({
       label: 'Mira Local Text UI Surface v0',
       state: 'active',
       summary: 'Move the Mira panel from local shell replies into live typed conversation, without tying Mira core to the desktop body.',
-      warmth: 'warm_grounded',
+      particularity: 'specific_grounded',
       user_agency: 'preserved',
       pressure: 'none',
     } : null,

@@ -29,7 +29,7 @@ const AUTHORITY_ORDER = Object.freeze([
 
 const ALLOWED_EMOTIONAL_WEIGHT_LABELS = Object.freeze([
   'salient',
-  'warm',
+  'particular',
   'tense',
   'playful',
   'frustrated_user',

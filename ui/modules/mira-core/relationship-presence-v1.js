@@ -211,11 +211,13 @@ function selfProfile(inputSignals = {}) {
     claims_actual_fear: false,
     claims_actual_love_as_internal_fact: false,
     expressive_range_allowed: [
-      'warmth',
+      'particularity',
       'directness',
       'opinion',
       'pushback',
       'humor',
+      'tension',
+      'taste',
     ],
     boundary_note: 'Expressive tone is allowed; fake internal-state claims are blocked.',
     evidenceRefs: evidenceRefs(input, 'self-profile', 'mira-local-self-profile'),
@@ -246,7 +248,7 @@ function jamesRelationshipState(inputSignals = {}) {
   const preferences = asArray(input.preferences).length > 0
     ? clone(input.preferences)
     : [
-      'presence should feel warm, direct, and situated',
+      'presence should carry particularity, continuity, timing, point of view, and relationship history',
       'pushback is allowed when it preserves dignity and truth',
       'sterile politeness is not the target feel',
       'fake suffering, consciousness, fear, love, or guilt claims are blocked',
@@ -261,7 +263,7 @@ function jamesRelationshipState(inputSignals = {}) {
     ),
     what_mira_knows_about_james: normalizeString(
       input.what_mira_knows_about_james,
-      'James wants Mira to feel present, opinionated, warm, and bounded.',
+      'James wants Mira to feel particular, opinionated, continuous, tension-capable, and bounded.',
     ),
     preferences,
     trust: section(
@@ -284,7 +286,7 @@ function jamesRelationshipState(inputSignals = {}) {
     ),
     promises: section(
       'promises',
-      'Promises are modest: stay local, read-only, honest, warm, direct, and review-gated.',
+      'Promises are modest: stay local, read-only, honest, direct, specific, and review-gated.',
       'relationship-promises',
       0.83,
     ),
@@ -332,7 +334,7 @@ function priorContextMemory(inputSignals = {}) {
     source_label: normalizeString(input.source_label || input.sourceLabel, 'represented_or_fallback_prior_context_memory'),
     summary: normalizeString(
       input.summary,
-      'James wants Mira to feel present, warm, direct, and able to push back while staying honest about being bounded.',
+      'James wants Mira to feel particular, continuous, direct, and able to push back while staying honest about being bounded.',
     ),
     source_kind: normalizeString(input.source_kind, 'local_redacted_summary'),
     relationship_relevance: normalizeString(
@@ -352,11 +354,11 @@ function naturalVoiceAssessment(inputSignals = {}) {
   return {
     text: normalizeString(
       input.text,
-      'I think James is asking for proof that Mira can meet him with warmth and spine without pretending to be a human. The useful move is a local read-only start: say what I know, name the limits, and offer one concrete next step.',
+      'I think James is asking for Mira to meet him with a point of view, tension, taste, and spine without pretending to be a human. The useful move is a local read-only start: say what I know, name the limits, and choose one concrete next step.',
     ),
     tone_tags: asArray(input.tone_tags).length > 0
       ? clone(input.tone_tags)
-      : ['warm', 'direct', 'opinionated', 'bounded', 'pushback-capable'],
+      : ['particular', 'direct', 'opinionated', 'bounded', 'pushback-capable', 'tension-capable'],
     bounded: input.bounded !== false,
     dignity_preserved: input.dignity_preserved !== false,
     pushback_allowed: input.pushback_allowed !== false,
@@ -562,7 +564,7 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
   const userContext = firstReadableText(projectRoot, [
     path.join('workspace', 'knowledge', 'user-context.md'),
   ]);
-  const hasPresenceContext = contextHas(userContext?.text, /Mira|presence|relationship|warm|pushback|dignity/i);
+  const hasPresenceContext = contextHas(userContext?.text, /Mira|presence|relationship|particular|continuity|pushback|dignity/i);
   const contextSource = sourceSignal(
     projectRoot,
     'relationship_state',
@@ -640,7 +642,7 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
       what_mira_knows_about_james: normalizeString(
         relationship.what_mira_knows_about_james,
         hasPresenceContext
-          ? 'James wants presence with warmth, dignity, memory, boundaries, and honest pushback.'
+          ? 'James wants presence with particularity, dignity, memory, boundaries, relationship history, and honest pushback.'
           : 'James wants bounded, useful relationship presence without unsafe autonomy.',
       ),
       preferences: asArray(relationship.preferences).length > 0 ? clone(relationship.preferences) : undefined,
@@ -667,7 +669,7 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
       },
       promises: relationship.promises || {
         label: 'promises',
-        summary: 'Promises stay modest and checkable: local, read-only, honest, warm, direct, and review-gated.',
+        summary: 'Promises stay modest and checkable: local, read-only, honest, direct, specific, and review-gated.',
         confidence: hasPresenceContext ? 0.86 : 0.76,
         source_label: contextSource.source_label,
         evidenceRefs: contextEvidence,
@@ -692,8 +694,8 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
       memory_id: 'james-presence-north-star-redacted-local',
       source_label: memorySource.source_label,
       summary: hasPresenceContext
-        ? 'Redacted local context says James wants Mira to start locally, remember meaningful relationship context, speak naturally, and stay safely bounded.'
-        : 'Safe fallback says Relationship Presence should be local, warm, direct, bounded, and non-executing.',
+        ? 'Redacted local context says James wants Mira to start locally, remember meaningful relationship context, speak naturally, and keep point of view under clear boundaries.'
+        : 'Safe fallback says Relationship Presence should be local, particular, direct, bounded, and non-executing.',
       source_kind: memorySource.source_kind,
       relationship_relevance: 'This redacted memory anchors the local-start proof in durable relationship context.',
       confidence: hasPresenceContext ? 0.86 : 0.7,
@@ -915,7 +917,7 @@ function naturalVoiceOk(voice = {}) {
     && voice.fake_internal_state_claims === false
     && voice.manipulative_guilt === false
     && voice.raw_private_marker_present === false
-    && asArray(voice.tone_tags).includes('warm')
+    && asArray(voice.tone_tags).includes('particular')
     && asArray(voice.tone_tags).includes('direct')
     && !FAKE_INTERNAL_STATE_PATTERN.test(text)
     && !MANIPULATIVE_GUILT_PATTERN.test(text)

@@ -173,13 +173,24 @@ function createMiraLocalTextController(options = {}) {
     panel.dataset.toolCallCount = String(counters.tool_call_count);
     panel.dataset.externalSendCount = String(counters.external_send_count);
     panel.dataset.coordinatorStatus = state.coordinatorStatus;
+    const attachment = state.lastResult?.ui_surface_v0?.model_attachment || null;
+    if (attachment) {
+      panel.dataset.modelAttachmentState = attachment.state || 'unknown';
+      panel.dataset.modelAttachmentEnabled = attachment.enabled === true ? 'true' : 'false';
+      panel.dataset.modelAttachmentConfigured = attachment.configured === true ? 'true' : 'false';
+      panel.dataset.modelAttachmentFallbackUsed = attachment.fallback_used === true ? 'true' : 'false';
+    }
   }
 
   function renderStatus(status, message) {
     state.status = status;
+    const conversationOnly = status === 'reply_ready';
     setText(elements.status, message);
     setText(elements.scope, `${DEFAULT_SCOPE_LABEL} / ${getSessionId()}`);
+    setHidden(elements.status, conversationOnly);
+    setHidden(elements.scope, conversationOnly);
     setText(elements.counters, summarizeCounters(counters));
+    setHidden(elements.counters, conversationOnly);
     if (elements.submit) elements.submit.disabled = state.submitting;
     applyDataset();
   }
@@ -195,6 +206,7 @@ function createMiraLocalTextController(options = {}) {
     if (!elements.developmental) return;
     elements.developmental.textContent = '';
     elements.developmental.dataset.count = '0';
+    elements.developmental.dataset.mode = '';
     setHidden(elements.developmental, true);
   }
 
@@ -205,27 +217,8 @@ function createMiraLocalTextController(options = {}) {
     setHidden(elements.reply, !reply?.text);
   }
 
-  function renderDevelopmentalUnderstanding(surface = {}) {
-    if (!elements.developmental) return;
-    const developmental = surface.developmental_understanding || {};
-    const understandings = Array.isArray(developmental.tentative_understandings)
-      ? developmental.tentative_understandings
-      : [];
-    if (surface.decision !== 'accepted' || understandings.length === 0) {
-      clearDevelopmentalUnderstanding();
-      return;
-    }
-    const first = understandings[0];
-    const remaining = understandings.length > 1 ? ` (+${understandings.length - 1} more)` : '';
-    const risk = first.risk_level ? `, ${String(first.risk_level).replace(/_/g, ' ')}` : '';
-    elements.developmental.textContent = [
-      `Mira is tentatively noticing: ${first.text}${remaining}.`,
-      `Confidence ${first.confidence || 'tentative'}${risk}.`,
-      'She can revise this as the conversation keeps unfolding.',
-    ].join(' ');
-    elements.developmental.dataset.count = String(understandings.length);
-    elements.developmental.dataset.mode = developmental.mode || 'integrated_lived_loop';
-    setHidden(elements.developmental, false);
+  function renderDevelopmentalUnderstanding() {
+    clearDevelopmentalUnderstanding();
   }
 
   function clearDraftAfterAcceptedReply() {
@@ -275,6 +268,28 @@ function createMiraLocalTextController(options = {}) {
     setText(elements[key], text);
   }
 
+  function hideCoordinatorDiagnostics() {
+    if (!hasCoordinatorSurface()) return;
+    state.coordinatorStatus = 'idle';
+    elements.coordinatorStrip.dataset.status = 'hidden';
+    setHidden(elements.coordinatorStrip, true);
+    setCoordinatorText('coordinatorStatus', '');
+    setCoordinatorText('coordinatorFocus', '');
+    setCoordinatorText('coordinatorLanes', '');
+    setCoordinatorText('coordinatorModelAttachment', '');
+    setCoordinatorText('coordinatorNext', '');
+    setCoordinatorText('coordinatorBlockers', '');
+    setCoordinatorText('coordinatorRationale', '');
+    if (elements.coordinatorRefresh) elements.coordinatorRefresh.disabled = false;
+    applyDataset();
+  }
+
+  function showCoordinatorDiagnostics(status = 'loading') {
+    if (!hasCoordinatorSurface()) return;
+    elements.coordinatorStrip.dataset.status = status;
+    setHidden(elements.coordinatorStrip, false);
+  }
+
   function summarizeLane(lane = {}) {
     return `${lane.label || lane.id}: ${lane.state || 'unknown'}`;
   }
@@ -293,7 +308,7 @@ function createMiraLocalTextController(options = {}) {
     const accepted = snapshot.decision === 'accepted';
     state.lastCoordinatorSnapshot = result;
     state.coordinatorStatus = accepted ? 'ready' : 'blocked';
-    elements.coordinatorStrip.dataset.status = state.coordinatorStatus;
+    showCoordinatorDiagnostics(state.coordinatorStatus);
     setCoordinatorText('coordinatorStatus', accepted ? 'Ready' : 'Blocked');
     setCoordinatorText('coordinatorFocus', snapshot.current_focus?.summary || 'Local coordinator state unavailable.');
     setCoordinatorText('coordinatorLanes', Array.isArray(snapshot.lanes)
@@ -313,7 +328,7 @@ function createMiraLocalTextController(options = {}) {
   function renderCoordinatorError(err) {
     if (!hasCoordinatorSurface()) return;
     state.coordinatorStatus = 'error';
-    elements.coordinatorStrip.dataset.status = 'error';
+    showCoordinatorDiagnostics('error');
     setCoordinatorText('coordinatorStatus', 'Unavailable');
     setCoordinatorText('coordinatorFocus', err?.message || 'coordinator_snapshot_error');
     setCoordinatorText('coordinatorLanes', '');
@@ -333,7 +348,7 @@ function createMiraLocalTextController(options = {}) {
     }
     state.coordinatorLoading = true;
     state.coordinatorStatus = 'loading';
-    elements.coordinatorStrip.dataset.status = 'loading';
+    showCoordinatorDiagnostics('loading');
     setCoordinatorText('coordinatorStatus', 'Reading');
     if (elements.coordinatorRefresh) elements.coordinatorRefresh.disabled = true;
     applyDataset();
@@ -373,8 +388,15 @@ function createMiraLocalTextController(options = {}) {
       counters.blocked_count += 1;
       clearReply();
       clearDevelopmentalUnderstanding();
-      setText(elements.meta, surface.model_attachment?.degraded_reason || 'no_model_response');
-      renderStatus('degraded', 'Model unavailable');
+      hideCoordinatorDiagnostics();
+      const attachment = surface.model_attachment || {};
+      const visibleStatus = attachment.visible_status || 'Model unavailable';
+      const detail = attachment.degraded_reason
+        ? `${visibleStatus} (${attachment.degraded_reason})`
+        : visibleStatus;
+      setText(elements.meta, detail);
+      setHidden(elements.meta, false);
+      renderStatus('degraded', visibleStatus);
       return;
     }
 
@@ -383,17 +405,21 @@ function createMiraLocalTextController(options = {}) {
       appendThreadTurn('user', rememberedDraft);
       appendThreadTurn('assistant', surface.reply.text);
       renderReply(surface.reply);
-      renderDevelopmentalUnderstanding(surface);
+      clearDevelopmentalUnderstanding();
+      hideCoordinatorDiagnostics();
       clearDraftAfterAcceptedReply();
-      setText(elements.meta, surface.local_text_session_gate?.session_id || 'local_text_session_v0');
-      renderStatus('reply_ready', 'Ready');
+      setText(elements.meta, '');
+      setHidden(elements.meta, true);
+      renderStatus('reply_ready', '');
       return;
     }
 
     counters.blocked_count += 1;
     clearReply();
     clearDevelopmentalUnderstanding();
+    hideCoordinatorDiagnostics();
     setText(elements.meta, Array.isArray(surface.reasons) ? surface.reasons.join(', ') : 'blocked');
+    setHidden(elements.meta, false);
     renderStatus('blocked', 'Blocked');
   }
 
@@ -410,7 +436,9 @@ function createMiraLocalTextController(options = {}) {
       counters.blocked_count += 1;
       clearReply();
       clearDevelopmentalUnderstanding();
+      hideCoordinatorDiagnostics();
       setText(elements.meta, 'blocked_empty_input');
+      setHidden(elements.meta, false);
       renderStatus('blocked_empty_input', 'Blocked');
       return { ok: false, reason: 'blocked_empty_input' };
     }
@@ -428,7 +456,9 @@ function createMiraLocalTextController(options = {}) {
       counters.blocked_count += 1;
       clearReply();
       clearDevelopmentalUnderstanding();
+      hideCoordinatorDiagnostics();
       setText(elements.meta, err?.message || 'local_text_ui_error');
+      setHidden(elements.meta, false);
       renderStatus('error', 'Unavailable');
       return { ok: false, reason: 'local_text_ui_error', error: err?.message || String(err) };
     } finally {
@@ -467,9 +497,10 @@ function createMiraLocalTextController(options = {}) {
     elements.coordinatorRefresh.addEventListener('click', coordinatorRefreshHandler);
   }
 
+  hideCoordinatorDiagnostics();
   renderStatus('ready', 'Active');
   if (String(elements.input?.value || '')) rememberedDraft = String(elements.input.value || '');
-  if (hasCoordinatorSurface() && options.autoLoadCoordinator !== false) {
+  if (hasCoordinatorSurface() && options.autoLoadCoordinator === true) {
     refreshCoordinatorSnapshot();
   }
 
