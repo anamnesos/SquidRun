@@ -639,7 +639,7 @@ function buildReply(text, replyAllowed, options = {}) {
     return buildExperienceReply(text, options);
   }
   const topic = inputSummary(text).replace(/[.?!]+$/g, '');
-  const reply = `I am here from the local durable Mira state, warm and bounded. I read this as: "${topic}". My safe next move is to answer in text only; I will not send, write, use tools, start audio, or pretend delivery proof I do not have.`;
+  const reply = `Mira reply from local durable context: own developing stance, not a mirror or obedient helper. I read: "${topic}". I can push back if the premise is wrong. For now this stays text only: no sends, writes, tools, audio, live-model claim, or delivery proof.`;
   return {
     reply_id: `mira-local-reply:${stableHash(reply).slice(0, 16)}`,
     count: 1,
