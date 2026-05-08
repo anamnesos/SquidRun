@@ -6,6 +6,10 @@ const fs = require('fs');
 const path = require('path');
 const { getProjectRoot, resolveCoordPath } = require('../config');
 const { resolveClaudeTranscriptProjectsDir } = require('./transcript-index');
+const { queryCommsJournalEntries } = require('./main/comms-journal');
+const {
+  isAgentTaskResolvedByLaterSignal,
+} = require('./main/agent-task-resolution');
 
 const DEFAULT_MODEL = String(process.env.SQUIDRUN_STARTUP_BRIEFING_MODEL || 'claude-opus-4-6').trim();
 const DEFAULT_BASE_URL = String(process.env.SQUIDRUN_ANTHROPIC_BASE_URL || 'https://api.anthropic.com').trim();
@@ -13,7 +17,9 @@ const DEFAULT_MAX_TRANSCRIPTS = 3;
 const DEFAULT_MAX_CHARS_PER_TRANSCRIPT = 80000;
 const DEFAULT_MAX_TOTAL_CHARS = 220000;
 const DEFAULT_OUTPUT_RELATIVE_PATH = path.join('handoffs', 'ai-briefing.md');
+const DEFAULT_CURRENT_LANE_RELATIVE_PATH = path.join('handoffs', 'current-lane.json');
 const DEFAULT_STATUS_RELATIVE_PATH = path.join('runtime', 'startup-briefing-status.json');
+const DEFAULT_RECENT_COMMS_LIMIT = 50;
 const RECALL_BLOCK_RE = /\[SQUIDRUN RECALL START\][\s\S]*?\[SQUIDRUN RECALL END\]\s*/gi;
 const CANONICAL_SOURCE_RELATIVE_PATHS = [
   path.join('workspace', 'knowledge', 'case-operations.md'),
@@ -36,6 +42,16 @@ function resolveCoordFile(relativePath, options = {}) {
 
 function resolveBriefingPath(options = {}) {
   return path.resolve(String(options.outputPath || resolveCoordFile(DEFAULT_OUTPUT_RELATIVE_PATH, options)));
+}
+
+function resolveCurrentLanePath(options = {}) {
+  if (options.currentLanePath) {
+    return path.resolve(String(options.currentLanePath));
+  }
+  if (options.outputPath && !options.projectRoot) {
+    return path.join(path.dirname(resolveBriefingPath(options)), 'current-lane.json');
+  }
+  return path.resolve(String(options.currentLanePath || resolveCoordFile(DEFAULT_CURRENT_LANE_RELATIVE_PATH, options)));
 }
 
 function resolveStatusPath(options = {}) {
@@ -63,6 +79,167 @@ function readStartupBriefing(options = {}) {
   }
 }
 
+function formatStartupBriefingFailureReason(reason) {
+  const text = toText(reason, 'unknown_error');
+  if (/^ANTHROPIC_API_KEY is not set$/i.test(text)) {
+    return 'startup generator process could not see ANTHROPIC_API_KEY';
+  }
+  return text;
+}
+
+function normalizeAppSessionScopeId(value) {
+  const text = toText(value, '').toLowerCase();
+  if (!text) return null;
+  const match = text.match(/^app-session-(\d+)/);
+  if (match) return `app-session-${Number.parseInt(match[1], 10)}`;
+  if (/^\d+$/.test(text)) return `app-session-${Number.parseInt(text, 10)}`;
+  return text;
+}
+
+function resolveCurrentSessionScopeId(options = {}) {
+  const explicit = normalizeAppSessionScopeId(options.sessionId || options.currentSessionId || options.sessionScopeId);
+  if (explicit) return explicit;
+  if (options.outputPath && !options.projectRoot && !options.appStatusPath) return null;
+
+  const appStatusPath = options.appStatusPath || resolveCoordFile('app-status.json', options);
+  const appStatus = safeReadJson(appStatusPath);
+  return normalizeAppSessionScopeId(
+    appStatus?.session_id
+    || appStatus?.sessionId
+    || appStatus?.session
+    || appStatus?.sessionNumber
+    || appStatus?.session_number
+  );
+}
+
+function readCurrentLaneSnapshot(options = {}) {
+  const lanePath = resolveCurrentLanePath(options);
+  const snapshot = safeReadJson(lanePath);
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  if (String(snapshot.status || '').toLowerCase() !== 'active') return null;
+  if (!snapshot.activeLane || typeof snapshot.activeLane !== 'object') return null;
+  return snapshot;
+}
+
+function toEventTsMs(row) {
+  const candidates = [
+    row?.brokeredAtMs,
+    row?.sentAtMs,
+    row?.updatedAtMs,
+  ];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric >= 0) return Math.floor(numeric);
+  }
+  return 0;
+}
+
+function toIso(ms) {
+  const numeric = Number(ms);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '-';
+  try {
+    return new Date(numeric).toISOString();
+  } catch (_) {
+    return '-';
+  }
+}
+
+function normalizeInline(value, limit = 180) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+function escapeMarkdownCell(value) {
+  return String(value || '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+function isStartupContinuityRow(row = {}) {
+  const senderRole = String(row?.senderRole || '').toLowerCase();
+  const targetRole = String(row?.targetRole || '').toLowerCase();
+  return ['user', 'architect', 'builder', 'oracle'].includes(senderRole)
+    || ['user', 'architect', 'builder', 'oracle'].includes(targetRole);
+}
+
+function readRecentCurrentScopeComms(options = {}) {
+  const limit = Math.max(1, Math.min(200, Number(options.recentCommsLimit) || DEFAULT_RECENT_COMMS_LIMIT));
+  if (Array.isArray(options.recentCommsRows)) {
+    const filtered = options.recentCommsRows
+      .filter((row) => isStartupContinuityRow(row))
+      .sort((left, right) => toEventTsMs(left) - toEventTsMs(right));
+    return filtered.slice(Math.max(0, filtered.length - limit));
+  }
+
+  const sessionId = resolveCurrentSessionScopeId(options);
+  if (!sessionId) return [];
+  const queryFn = typeof options.queryCommsJournal === 'function'
+    ? options.queryCommsJournal
+    : queryCommsJournalEntries;
+  try {
+    const rows = queryFn({
+      sessionId,
+      order: 'desc',
+      limit: Math.max(limit * 4, limit),
+    }, {
+      dbPath: options.dbPath || null,
+    });
+    return (Array.isArray(rows) ? rows : [])
+      .filter((row) => isStartupContinuityRow(row))
+      .slice(0, limit)
+      .sort((left, right) => toEventTsMs(left) - toEventTsMs(right));
+  } catch (_) {
+    return [];
+  }
+}
+
+function formatCurrentLaneBlock(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== 'object') return '';
+  if (String(snapshot.status || '').toLowerCase() !== 'active') return '';
+  return [
+    '## Live Current Lane (machine-readable)',
+    '',
+    '```json',
+    JSON.stringify(snapshot, null, 2),
+    '```',
+  ].join('\n');
+}
+
+function formatRecentCommsWindow(rows = [], options = {}) {
+  const orderedRows = (Array.isArray(rows) ? rows : [])
+    .filter((row) => isStartupContinuityRow(row))
+    .sort((left, right) => toEventTsMs(left) - toEventTsMs(right));
+  if (orderedRows.length === 0) return '';
+
+  const lines = [
+    `## Recent Current-Scope Comms (last ${orderedRows.length})`,
+    '',
+    '| sent_at | sender | target | status | live_state | excerpt |',
+    '| --- | --- | --- | --- | --- | --- |',
+  ];
+  for (let index = 0; index < orderedRows.length; index += 1) {
+    const row = orderedRows[index];
+    const liveState = isAgentTaskResolvedByLaterSignal(row, orderedRows, index, {
+      includeReceipt: false,
+    }) ? 'history_resolved_or_superseded' : 'current_scope';
+    lines.push([
+      '|',
+      escapeMarkdownCell(toIso(toEventTsMs(row))),
+      '|',
+      escapeMarkdownCell(row?.senderRole || '-'),
+      '|',
+      escapeMarkdownCell(row?.targetRole || '-'),
+      '|',
+      escapeMarkdownCell(row?.status || '-'),
+      '|',
+      escapeMarkdownCell(liveState),
+      '|',
+      escapeMarkdownCell(normalizeInline(row?.rawBody || '', options.excerptLimit || 180)),
+      '|',
+    ].join(' '));
+  }
+  return lines.join('\n');
+}
+
 function stripLiveAccountBlocks(markdown) {
   const out = [];
   let skip = false;
@@ -88,16 +265,26 @@ function resolveNowMs(options = {}) {
 
 function readStartupBriefingForInjection(options = {}) {
   let body = readStartupBriefing(options).trim();
-  if (!body) return '';
-
   const status = safeReadJson(resolveStatusPath(options));
+  const currentLaneBlock = formatCurrentLaneBlock(readCurrentLaneSnapshot(options));
+  const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
+  const continuityBlock = [currentLaneBlock, recentCommsBlock].filter(Boolean).join('\n\n');
+  if (!body && !continuityBlock) return '';
+  if (!body && continuityBlock) {
+    return `LIVE STARTUP CONTINUITY from current-scope data.\n\n${continuityBlock}\n`;
+  }
+
   const generatedAtMs = Date.parse(status?.generatedAt || '');
   const ageMinutes = Number.isFinite(generatedAtMs)
     ? Math.max(0, Math.round((resolveNowMs(options) - generatedAtMs) / 60000))
     : null;
 
   const notes = [];
-  if (ageMinutes === null) {
+  if (status?.ok === false) {
+    const reason = formatStartupBriefingFailureReason(status.error || status.reason);
+    notes.push(`UNTRUSTED AI BRIEFING: latest generation failed (${reason}); old ai-briefing.md omitted so historical prose cannot create live blockers.`);
+    body = '';
+  } else if (ageMinutes === null) {
     notes.push('STALE SNAPSHOT generated at unknown time, account values may have moved.');
   } else if (ageMinutes > 60) {
     notes.push(`STALE SNAPSHOT generated ${ageMinutes} minutes ago; live-account block omitted, account values may have moved.`);
@@ -108,7 +295,7 @@ function readStartupBriefingForInjection(options = {}) {
     notes.push(`AI startup briefing age: ${ageMinutes} minutes.`);
   }
 
-  return `${notes.join('\n')}\n\n${body}\n`;
+  return `${notes.join('\n')}\n\n${[continuityBlock, body].filter(Boolean).join('\n\n')}\n`;
 }
 
 function readFileIfExists(filePath) {
@@ -713,6 +900,13 @@ module.exports = {
     extractTranscriptContentText,
     buildBriefingPrompt,
     formatBriefingDocument,
+    resolveCurrentLanePath,
+    readCurrentLaneSnapshot,
+    readRecentCurrentScopeComms,
+    formatCurrentLaneBlock,
+    formatRecentCommsWindow,
+    resolveCurrentSessionScopeId,
+    formatStartupBriefingFailureReason,
     requestStartupBriefing,
     resolveLiveAccountSnapshot,
     formatLiveSnapshotBlock,

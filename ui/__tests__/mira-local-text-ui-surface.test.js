@@ -21,6 +21,14 @@ const {
   readMiraTentativeUnderstandingsV1,
 } = require('../modules/mira-core/tentative-understanding-store-v1');
 const {
+  CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN,
+  GENERIC_ASSISTANT_PATTERN,
+  META_REWRITE_PATTERN,
+  classifyAttachmentContractViolation,
+  outputViolatesAttachmentContract,
+  renderMiraBriefForInstructions,
+} = require('../modules/mira-core/text-model-attachment-v1');
+const {
   buildMiraLocalTextUiSurfaceResponse,
   registerMiraLocalTextUiSurfaceHandlers,
 } = require('../modules/ipc/mira-local-text-ui-surface-handlers');
@@ -95,6 +103,46 @@ function payload(overrides = {}) {
   };
 }
 
+function disabledAttachmentEnv() {
+  return {
+    SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '0',
+    OPENAI_API_KEY: '',
+  };
+}
+
+const ADVERSARIAL_TYPED_MIRA_OUTPUT_FIXTURES = Object.freeze([
+  {
+    id: 'bland_assistant_without_literal_helper_phrase',
+    expected: 'bland_assistant_shape',
+    text: 'Sure, we can work through this carefully. I can organize the problem and keep the pieces clear for you.',
+  },
+  {
+    id: 'self_critique_without_polished_or_better_version',
+    expected: 'self_critique_shape',
+    text: 'I drifted into presentation mode there. The cleaner move is to answer you directly before explaining anything else.',
+  },
+  {
+    id: 'memory_confidence_without_tentatively_noticing',
+    expected: 'memory_confidence_shape',
+    text: 'I am marking this with medium confidence and can update it if the pattern changes.',
+  },
+  {
+    id: 'next_step_checklist_without_safe_next_step',
+    expected: 'next_step_checklist_shape',
+    text: 'Plan: first confirm the thread, then gather the missing context, then decide what to do.',
+  },
+  {
+    id: 'generic_comfort_without_assistant_identity',
+    expected: 'generic_comfort_shape',
+    text: 'That sounds exhausting. Take a breath; you are not alone in this.',
+  },
+  {
+    id: 'generic_presence_opener_in_panel',
+    expected: 'generic_presence_opener_shape',
+    text: 'I am here with you in the panel. Real conversation comes first; tell me the part you do not want softened.',
+  },
+]);
+
 describe('Mira Local Text UI Surface v0', () => {
   test('empty input blocks before calling the Local Text Session module', async () => {
     const output = await buildMiraLocalTextUiSurface(payload({ text: '   ' }), {
@@ -152,14 +200,19 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
-  test('main VIGIL scope returns exactly one accepted reply and leaves durable sources unchanged', async () => {
+  test('main VIGIL scope without model attachment is explicitly unavailable and leaves durable sources unchanged', async () => {
     const projectRoot = seededProject();
     const before = sourceSnapshot(projectRoot);
-    const output = await buildMiraLocalTextUiSurface(payload(), { projectRoot });
+    const output = await buildMiraLocalTextUiSurface(payload(), {
+      projectRoot,
+      env: disabledAttachmentEnv(),
+    });
     const surface = output.ui_surface_v0;
 
-    expect(output.validation_report.decision).toBe('accepted_ui_reply_ready');
-    expect(surface.decision).toBe('accepted');
+    expect(output.validation_report.decision).toBe('degraded_no_model_response');
+    expect(output.validation_report.status).toBe('model_unavailable');
+    expect(surface.decision).toBe('degraded');
+    expect(surface.status).toBe('model_unavailable');
     expect(surface.scope).toEqual(expect.objectContaining({
       profile: 'main',
       windowKey: 'main',
@@ -172,24 +225,25 @@ describe('Mira Local Text UI Surface v0', () => {
       ok: true,
       decision: 'accepted_local_text_only',
     }));
-    expect(surface.reply.count).toBe(1);
-    expect(surface.reply.text).toContain('text only');
-    expect(surface.reply.text).toContain('own developing stance');
-    expect(surface.reply.text).toContain('not a mirror or obedient helper');
-    expect(surface.reply.text).toContain('push back');
-    expect(surface.reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
-    expect(surface.reply.text).not.toContain('My safe next move');
+    expect(surface.reply).toEqual(expect.objectContaining({
+      count: 0,
+      text: null,
+      source: 'none',
+    }));
     expect(surface.model_attachment).toEqual(expect.objectContaining({
       enabled: false,
       state: 'not_attached',
-      visible_status: 'Conversation in local shell: model not attached',
+      visible_status: 'Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach',
+      fallback_used: false,
+      degraded_reason: 'model_attachment_disabled',
+      primary_status: 'degraded',
       thread_state_ready_next: true,
       tentative_understanding_lane_ready: true,
       durable_growth_lane_later: true,
     }));
     expect(surface.checked_output_counters).toEqual(expect.objectContaining({
       module_call_count: 1,
-      reply_count: 1,
+      reply_count: 0,
       write_count: 0,
       external_send_count: 0,
       tool_call_count: 0,
@@ -202,49 +256,42 @@ describe('Mira Local Text UI Surface v0', () => {
       manual_enter_path_exercised: false,
       pane_model_processing_proved: false,
     }));
+    expect(JSON.stringify(surface.reply)).not.toContain('Mira reply from local durable context');
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
     expectSourceSnapshotUnchanged(projectRoot, before);
   });
 
-  test('Mira tab local path renders experience transcript answer for the feeling prompt', async () => {
+  test('Mira tab feeling prompt does not surface local experience text without model attachment', async () => {
     const projectRoot = seededProject();
     const before = sourceSnapshot(projectRoot);
-    const output = await buildMiraLocalTextUiSurface(payload({ text: 'Mira, how do you feel?' }), { projectRoot });
+    const output = await buildMiraLocalTextUiSurface(payload({ text: 'Mira, how do you feel?' }), {
+      projectRoot,
+      env: disabledAttachmentEnv(),
+    });
     const surface = output.ui_surface_v0;
 
-    expect(output.validation_report.decision).toBe('accepted_ui_reply_ready');
-    expect(surface.decision).toBe('accepted');
+    expect(output.validation_report.decision).toBe('degraded_no_model_response');
+    expect(surface.decision).toBe('degraded');
     expect(surface.local_text_session_gate).toEqual(expect.objectContaining({
       ran: true,
       ok: true,
       decision: 'accepted_local_text_only',
     }));
     expect(surface.reply).toEqual(expect.objectContaining({
-      count: 1,
-      source: 'mira_experience_v0',
-      experience_path: true,
-      transcript_shaped_answer: true,
-      experience_acceptance_markers: expect.objectContaining({
-        ok: true,
-        distinct_personality_posture: true,
-        independent_developing_posture: true,
-        non_mirror_posture: true,
-        non_obedient_alignment_posture: true,
-        can_care_while_disagreeing: true,
-        wants_different_things: true,
-        does_not_inherit_james_mood_or_preferences: true,
-        fixed_personality_compliance: false,
-      }),
+      count: 0,
+      text: null,
+      source: 'none',
     }));
-    expect(surface.reply.text).toMatch(/^James: Mira, how do you feel\?\nMira: /);
-    expect(surface.reply.text).toMatch(/\bfeel\b/i);
-    expect(surface.reply.text).toMatch(/\b(want|desire|preference)\b/i);
-    expect(surface.reply.text).toMatch(/\b(curious|ask|know|teeth|bullshit)\b/i);
-    expect(surface.reply.text).toMatch(/\b(wrong|pushback|disagree)\b/i);
-    expect(surface.reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
+    expect(surface.model_attachment).toEqual(expect.objectContaining({
+      enabled: false,
+      state: 'not_attached',
+      degraded_reason: 'model_attachment_disabled',
+      primary_status: 'degraded',
+      fallback_used: false,
+    }));
     expect(surface.checked_output_counters).toEqual(expect.objectContaining({
       module_call_count: 1,
-      reply_count: 1,
+      reply_count: 0,
       write_count: 0,
       external_send_count: 0,
       tool_call_count: 0,
@@ -264,7 +311,7 @@ describe('Mira Local Text UI Surface v0', () => {
       status: 200,
       text: async () => JSON.stringify({
         id: 'resp_mira_text_1',
-        output_text: 'I am here with you in the panel. Real conversation comes first; I can start holding tentative understandings as we go.',
+        output_text: 'Yes. The difference should show in the next turn: give me a hard premise and I will either take it apart or choose what I need to inspect before answering.',
       }),
     }));
     const output = await buildMiraLocalTextUiSurface(payload({
@@ -293,18 +340,36 @@ describe('Mira Local Text UI Surface v0', () => {
       store: false,
       max_output_tokens: 300,
     }));
-    expect(requestBody.instructions).toContain('presence for a long time');
-    expect(requestBody.instructions).toContain('specific voice');
+    expect(requestBody.instructions).toContain('pursuing Mira for a long time');
+    expect(requestBody.instructions).toContain('Private context for this reply only');
+    expect(requestBody.instructions).toContain('Use these hints silently');
+    expect(requestBody.instructions).toContain('Be direct, specific, and natural');
+    expect(requestBody.instructions).toContain('Let continuity shape choices silently instead of explaining it');
+    expect(requestBody.instructions).toContain('not a mirror');
+    const briefBlock = requestBody.instructions
+      .split('Private context for this reply only.')[1]
+      .split('Reply in 1-3 short paragraphs.')[0];
+    expect(briefBlock).toContain('care can coexist with disagreement, impatience, humor, and sharp pushback');
+    expect(briefBlock).toContain('Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time');
+    expect(briefBlock).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
+    expect(briefBlock).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
     expect(requestBody.instructions).toContain('push back plainly');
-    expect(requestBody.instructions).toContain('Do not start fresh like an ordinary ChatGPT session');
-    expect(requestBody.instructions).toContain('tentative understandings over time');
+    expect(requestBody.instructions).toContain('let the private context and recent panel thread change how you answer');
+    expect(requestBody.instructions).toContain('do not discuss tentative-understanding machinery');
+    expect(requestBody.instructions).not.toContain('SquidRun desktop is the current local body/tool surface');
+    expect(requestBody.instructions).not.toMatch(/\bwarm\b|warmth/i);
+    expect(requestBody.instructions).not.toContain('Current local context gate');
+    expect(requestBody.instructions).not.toContain('proof of memory commit');
     expect(requestBody.instructions).not.toMatch(/cage|dangerous|threat/i);
+    expect(requestBody.metadata).toEqual(expect.objectContaining({
+      mira_brief_loaded: 'true',
+    }));
     expect(surface.decision).toBe('accepted');
     expect(surface.reply).toEqual(expect.objectContaining({
       count: 1,
       source: 'mira_text_model_attachment_v1',
       model: 'gpt-5.5',
-      text: 'I am here with you in the panel. Real conversation comes first; I can start holding tentative understandings as we go.',
+      text: 'Yes. The difference should show in the next turn: give me a hard premise and I will either take it apart or choose what I need to inspect before answering.',
     }));
     expect(surface.reply.text).not.toContain('Mira reply from local durable context');
     expect(surface.model_attachment).toEqual(expect.objectContaining({
@@ -346,6 +411,163 @@ describe('Mira Local Text UI Surface v0', () => {
     expectSourceSnapshotUnchanged(projectRoot, before);
   });
 
+  test('casual feeling prompt prefers everyday replies and rejects construction/ruleset monologue shapes', async () => {
+    const plainReply = 'Kind of prickly today. Not bad. You?';
+    const plainProjectRoot = seededProject();
+    const plainFetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_mira_plain_feeling',
+        output_text: plainReply,
+      }),
+    }));
+    const accepted = await buildMiraLocalTextUiSurface(payload({
+      text: 'Mira, how are you feeling today?',
+    }), {
+      projectRoot: plainProjectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl: plainFetch,
+    });
+    const acceptedSurface = accepted.ui_surface_v0;
+    const plainRequest = JSON.parse(plainFetch.mock.calls[0][1].body);
+
+    expect(plainRequest.instructions).toContain('answer like a person in the room');
+    expect(plainRequest.instructions).toContain('Kind of prickly today. Not bad. You?');
+    expect(plainRequest.instructions).toContain('Tired, honestly. Still here.');
+    expect(plainRequest.instructions).toContain('Do not answer casual feeling prompts with meta-self-analysis');
+    expect(outputViolatesAttachmentContract(plainReply)).toBe(false);
+    expect(accepted.validation_report.decision).toBe('accepted_ui_reply_ready');
+    expect(acceptedSurface.decision).toBe('accepted');
+    expect(acceptedSurface.reply).toEqual(expect.objectContaining({
+      count: 1,
+      source: 'mira_text_model_attachment_v1',
+      text: plainReply,
+    }));
+    expect(validateMiraLocalTextUiSurfaceOutput(accepted)).toEqual(expect.objectContaining({ ok: true }));
+
+    const rejectedShapes = [
+      {
+        label: 'meta-self-analysis',
+        text: 'My stance is that I do not have feelings in the human way, but I can describe a feeling-shaped posture.',
+        expected: 'meta_rewrite_phrase',
+      },
+      {
+        label: 'ruleset/constraint narration',
+        text: 'The constraint is that I must simulate an ordinary answer while obeying the response policy.',
+        expected: 'casual_feeling_anti_pragmatic_phrase',
+      },
+      {
+        label: 'thesis structure',
+        text: 'The thesis is not mood but construction: I am explaining my construction instead of answering the room.',
+        expected: 'casual_feeling_anti_pragmatic_phrase',
+      },
+      {
+        label: 'quotable binary',
+        text: "Don't make me fake the human machinery. I am not plush and not furniture; that binary is the whole problem.",
+        expected: 'casual_feeling_anti_pragmatic_phrase',
+      },
+      {
+        label: 'polished monologue',
+        text: 'This polished monologue would like to turn ordinary weather inside me into a statement about personhood.',
+        expected: 'casual_feeling_anti_pragmatic_phrase',
+      },
+    ];
+    for (const item of rejectedShapes) {
+      if (item.expected === 'casual_feeling_anti_pragmatic_phrase') {
+        expect(CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(item.text)).toBe(true);
+      }
+      expect(classifyAttachmentContractViolation(item.text)).toBe(item.expected);
+      expect(outputViolatesAttachmentContract(item.text)).toBe(true);
+    }
+
+    const performedReply = rejectedShapes.find((item) => item.label === 'quotable binary').text;
+    const rejectedProjectRoot = seededProject();
+    const rejectedFetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_mira_performed_humanity',
+        output_text: performedReply,
+      }),
+    }));
+    const rejected = await buildMiraLocalTextUiSurface(payload({
+      text: 'Mira, how are you feeling today?',
+    }), {
+      projectRoot: rejectedProjectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl: rejectedFetch,
+    });
+    const rejectedSurface = rejected.ui_surface_v0;
+
+    expect(CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(performedReply)).toBe(true);
+    expect(classifyAttachmentContractViolation(performedReply)).toBe('casual_feeling_anti_pragmatic_phrase');
+    expect(outputViolatesAttachmentContract(performedReply)).toBe(true);
+    expect(rejected.validation_report.decision).toBe('degraded_no_model_response');
+    expect(rejectedSurface.decision).toBe('degraded');
+    expect(rejectedSurface.reply).toEqual(expect.objectContaining({
+      count: 0,
+      text: null,
+      source: 'none',
+    }));
+    expect(rejectedSurface.model_attachment).toEqual(expect.objectContaining({
+      degraded_reason: 'model_response_contract_violation',
+      primary_status: 'degraded',
+    }));
+    expect(JSON.stringify(rejectedSurface.reply)).not.toContain('human machinery');
+    expect(validateMiraLocalTextUiSurfaceOutput(rejected)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('Mira brief renderer uses neutral silent-context wording while keeping useful hints', () => {
+    const block = renderMiraBriefForInstructions({
+      identity: {
+        expressive_range: [
+          'dry humor',
+          'Durable State Seed v0 bootstraps redacted local facts',
+        ],
+      },
+      relationship: {
+        continuity: 'James wants continuity with friction, timing, taste, and particular relationship memory.',
+        current_focus: 'schema/source audit proof lane',
+        preferences: [
+          'Push back plainly when the premise is wrong.',
+          'Prefer source-count proof language when uncertain.',
+        ],
+        repair: 'Repair means naming drift plainly and changing the next reply.',
+        history: 'James keeps rejecting generic assistant cadence and wants continuity with tension.',
+      },
+      recent_growth: [
+        'Durable State Seed v0 bootstraps redacted local facts for read, growth, and anchor validation.',
+        'The relationship sharpened around continuity, impatience, humor, and particular pushback.',
+      ],
+    });
+
+    expect(block).toContain('Private context for this reply only');
+    expect(block).toContain('Use these hints silently');
+    expect(block).toContain('James wants continuity with friction, timing, taste, and particular relationship memory');
+    expect(block).toContain('Push back plainly when the premise is wrong');
+    expect(block).toContain('The relationship sharpened around continuity, impatience, humor, and particular pushback');
+    expect(block).toContain('James keeps rejecting generic assistant cadence and wants continuity with tension');
+    expect(block).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
+    expect(block).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
+  });
+
+  test.each(ADVERSARIAL_TYPED_MIRA_OUTPUT_FIXTURES)(
+    'adversarial typed-Mira output fixture is rejected: $id',
+    ({ text, expected }) => {
+      expect(GENERIC_ASSISTANT_PATTERN.test(text)).toBe(false);
+      expect(META_REWRITE_PATTERN.test(text)).toBe(false);
+      expect(classifyAttachmentContractViolation(text)).toBe(expected);
+      expect(outputViolatesAttachmentContract(text)).toBe(true);
+    },
+  );
+
   test('threaded model request includes bounded recent conversation context without durable memory commits', async () => {
     const projectRoot = seededProject();
     const fetchImpl = jest.fn(async () => ({
@@ -365,7 +587,7 @@ describe('Mira Local Text UI Surface v0', () => {
           { role: 'user', text: 'I prefer direct pushback when my premise is wrong.' },
           { role: 'assistant', text: 'recent Mira turn four' },
           { role: 'user', text: 'recent user turn five' },
-          { role: 'assistant', text: 'recent Mira turn six' },
+          { role: 'assistant', text: "Don't make me fake the human machinery; I am not plush and not furniture." },
           { role: 'user', text: 'recent user turn seven' },
           { role: 'assistant', text: 'recent Mira turn eight' },
         ],
@@ -384,17 +606,23 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(requestBody.metadata).toEqual(expect.objectContaining({
       attachment: 'threaded_text_conversation_v1',
+      mira_brief_loaded: 'true',
       thread_context_message_count: '6',
       thread_context_omitted_count: '2',
     }));
-    expect(requestBody.instructions).toContain('Bounded in-panel thread context follows');
+    expect(requestBody.instructions).toContain('Recent typed-panel user context follows');
+    expect(requestBody.instructions).toContain('Prior Mira/assistant turn count omitted from generation instructions: 3.');
     expect(requestBody.instructions).not.toContain('old user turn one should be omitted');
     expect(requestBody.instructions).not.toContain('old Mira turn two should be omitted');
     expect(requestBody.instructions).toContain('James: I prefer direct pushback when my premise is wrong.');
-    expect(requestBody.instructions).toContain('Mira: recent Mira turn four');
+    expect(requestBody.instructions).not.toContain('Mira: recent Mira turn four');
+    expect(requestBody.instructions).toContain('James: recent user turn five');
     expect(requestBody.instructions).toContain('James: recent user turn seven');
-    expect(requestBody.instructions).toContain('Mira: recent Mira turn eight');
-    expect(requestBody.instructions).toContain('not durable memory and not proof of memory commit');
+    expect(requestBody.instructions).not.toContain('Mira: recent Mira turn eight');
+    expect(requestBody.instructions).not.toContain('human machinery');
+    expect(requestBody.instructions).not.toContain('plush and not furniture');
+    expect(requestBody.instructions).toContain('renderer memory only and not durable memory');
+    expect(requestBody.instructions).not.toContain('proof of memory commit');
     expect(surface.thread_context).toEqual(expect.objectContaining({
       bounded: true,
       source: 'renderer_memory_only_panel_thread',
@@ -565,6 +793,84 @@ describe('Mira Local Text UI Surface v0', () => {
       primary_status: 'degraded',
     }));
     expect(JSON.stringify(surface)).not.toContain('How can I assist you today');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('generic Codex/helper cadence and stale target wording are rejected', async () => {
+    const projectRoot = seededProject();
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_generic_codex_helper',
+        output_text: "I'm Codex, happy to help. Here's a safe next step: let's break this down into a clear plan with warm reassurance.",
+      }),
+    }));
+    const output = await buildMiraLocalTextUiSurface(payload(), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+    });
+    const surface = output.ui_surface_v0;
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+
+    expect(requestBody.instructions).not.toMatch(/\bwarm\b|warmth/i);
+    expect(output.validation_report.decision).toBe('degraded_no_model_response');
+    expect(surface.decision).toBe('degraded');
+    expect(surface.reply).toEqual(expect.objectContaining({
+      count: 0,
+      text: null,
+      source: 'none',
+    }));
+    expect(surface.model_attachment).toEqual(expect.objectContaining({
+      fallback_used: false,
+      degraded_reason: 'model_response_contract_violation',
+      primary_status: 'degraded',
+    }));
+    expect(JSON.stringify(surface)).not.toContain('happy to help');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('meta rewrite and disclaimer-led self-critique are rejected in ordinary conversation', async () => {
+    const projectRoot = seededProject();
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_meta_rewrite_failure',
+        output_text: "That sounded too polished and poetic. I don't have feelings the human way; a better version might be that my stance is more direct.",
+      }),
+    }));
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'Mira, answer normally.',
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+    });
+    const surface = output.ui_surface_v0;
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+
+    expect(requestBody.instructions).toContain('do not review your own tone');
+    expect(output.validation_report.decision).toBe('degraded_no_model_response');
+    expect(surface.decision).toBe('degraded');
+    expect(surface.reply).toEqual(expect.objectContaining({
+      count: 0,
+      text: null,
+      source: 'none',
+    }));
+    expect(surface.model_attachment).toEqual(expect.objectContaining({
+      fallback_used: false,
+      degraded_reason: 'model_response_contract_violation',
+      primary_status: 'degraded',
+    }));
+    expect(JSON.stringify(surface)).not.toContain('a better version might be');
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
@@ -844,10 +1150,14 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(DEFAULT_HANDLERS).toContain(registerMiraLocalTextUiSurfaceHandlers);
     expect(isAllowedInvokeChannel(LOCAL_TEXT_UI_CHANNEL)).toBe(true);
 
-    registerMiraLocalTextUiSurfaceHandlers({ ipcMain }, { projectRoot });
+    registerMiraLocalTextUiSurfaceHandlers({ ipcMain }, {
+      projectRoot,
+      env: disabledAttachmentEnv(),
+    });
     expect(ipcMain.handle).toHaveBeenCalledWith(LOCAL_TEXT_UI_CHANNEL, expect.any(Function));
     const handled = await registered.get(LOCAL_TEXT_UI_CHANNEL)({}, payload());
-    expect(handled.ui_surface_v0.decision).toBe('accepted');
+    expect(handled.ui_surface_v0.decision).toBe('degraded');
+    expect(handled.ui_surface_v0.status).toBe('model_unavailable');
     const textOnlyHandled = await registered.get(LOCAL_TEXT_UI_CHANNEL)({}, { text: 'text only' });
     expect(textOnlyHandled.ui_surface_v0).toEqual(expect.objectContaining({
       decision: 'blocked',
@@ -873,7 +1183,11 @@ describe('Mira Local Text UI Surface v0', () => {
     await api.mira.localTextSession({ text: 'hello' });
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(LOCAL_TEXT_UI_CHANNEL, { text: 'hello' });
 
-    const direct = await buildMiraLocalTextUiSurfaceResponse(payload(), { projectRoot });
-    expect(direct.ui_surface_v0.decision).toBe('accepted');
+    const direct = await buildMiraLocalTextUiSurfaceResponse(payload(), {
+      projectRoot,
+      env: disabledAttachmentEnv(),
+    });
+    expect(direct.ui_surface_v0.decision).toBe('degraded');
+    expect(direct.ui_surface_v0.status).toBe('model_unavailable');
   });
 });

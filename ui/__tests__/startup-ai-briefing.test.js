@@ -139,6 +139,93 @@ describe('startup-ai-briefing', () => {
     }
   });
 
+  test('prepends current lane and recent current-scope comms before older briefing prose', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-continuity-'));
+    const outputPath = path.join(tempRoot, 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
+    const currentLanePath = path.join(tempRoot, 'current-lane.json');
+
+    try {
+      fs.writeFileSync(outputPath, '# AI Startup Briefing\n\n- Historical handoff prose comes later.\n');
+      fs.writeFileSync(statusPath, JSON.stringify({
+        ok: true,
+        generatedAt: '2026-05-08T17:00:00.000Z',
+      }));
+      fs.writeFileSync(currentLanePath, JSON.stringify({
+        version: 1,
+        status: 'active',
+        activeLane: {
+          laneId: 'app-session-336:architect-25:m-mira-lane',
+          objective: 'New Mira implementation seam',
+          sourceMessageId: 'm-mira-lane',
+        },
+      }));
+
+      const guarded = readStartupBriefingForInjection({
+        outputPath,
+        statusPath,
+        currentLanePath,
+        nowMs: Date.parse('2026-05-08T17:05:00.000Z'),
+        recentCommsRows: [
+          {
+            messageId: 'm-old',
+            senderRole: 'architect',
+            targetRole: 'builder',
+            status: 'routed',
+            rawBody: '(ARCHITECT #12): TASK: stale startup-health bridge probe.',
+            brokeredAtMs: 1000,
+          },
+          {
+            messageId: 'm-new',
+            senderRole: 'architect',
+            targetRole: 'builder',
+            status: 'brokered',
+            rawBody: '(ARCHITECT #25): CURRENT LANE: New Mira implementation seam.',
+            brokeredAtMs: 2000,
+          },
+        ],
+      });
+
+      expect(guarded).toContain('AI startup briefing age: 5 minutes.');
+      expect(guarded).toContain('## Live Current Lane (machine-readable)');
+      expect(guarded).toContain('## Recent Current-Scope Comms (last 2)');
+      expect(guarded).toContain('New Mira implementation seam');
+      expect(guarded.indexOf('## Live Current Lane')).toBeLessThan(guarded.indexOf('# AI Startup Briefing'));
+      expect(guarded.indexOf('## Recent Current-Scope Comms')).toBeLessThan(guarded.indexOf('# AI Startup Briefing'));
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('omits old briefing prose and scopes missing Anthropic key wording to the startup process when latest generation failed', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-untrusted-'));
+    const outputPath = path.join(tempRoot, 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
+
+    try {
+      fs.writeFileSync(outputPath, '# AI Startup Briefing\n\n- Bridge is the current live blocker.\n');
+      fs.writeFileSync(statusPath, JSON.stringify({
+        ok: false,
+        generatedAt: '2026-05-08T17:00:00.000Z',
+        error: 'ANTHROPIC_API_KEY is not set',
+      }));
+
+      const guarded = readStartupBriefingForInjection({
+        outputPath,
+        statusPath,
+        nowMs: Date.parse('2026-05-08T17:05:00.000Z'),
+      });
+
+      expect(guarded).toContain('UNTRUSTED AI BRIEFING');
+      expect(guarded).toContain('startup generator process could not see ANTHROPIC_API_KEY');
+      expect(guarded).not.toContain('ANTHROPIC_API_KEY is not set');
+      expect(guarded).not.toContain('Bridge is the current live blocker.');
+      expect(guarded).not.toContain('# AI Startup Briefing');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('strips live account blocks when injected briefing is older than sixty minutes', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-61m-'));
     const outputPath = path.join(tempRoot, 'ai-briefing.md');

@@ -243,6 +243,7 @@ describe('hm-health-snapshot', () => {
       expect(exitCode).toBe(0);
       expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('Usage: node ui/scripts/hm-health-snapshot.js'));
       expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('--profile <name>'));
+      expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('--markdown'));
       expect(stderr.write).not.toHaveBeenCalled();
     }
     expect(execFileSync).not.toHaveBeenCalled();
@@ -271,13 +272,33 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.bridge).toEqual(expect.objectContaining({
       enabled: true,
       configured: true,
-      mode: 'connecting',
+      mode: 'pending',
       relayUrl: 'wss://relay.example.test',
       deviceId: 'LOCAL',
-      state: 'unknown',
+      state: 'pending_live_discovery',
+      pending: true,
+      lowFidelity: true,
     }));
-    expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:unknown');
-    expect(snapshot.status.penalties).toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+    expect(snapshot.status.label).toBe('OK');
+    expect(snapshot.status.warnings).toContain('bridge_connectivity_pending:live_discovery_not_available');
+    expect(snapshot.status.penalties).not.toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+  });
+
+  test('main can print the compact startup health markdown summary', () => {
+    const { main } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const stdout = { write: jest.fn() };
+    const stderr = { write: jest.fn() };
+    const exitCode = main([tempDir, '--markdown'], { stdout, stderr });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.write).not.toHaveBeenCalled();
+    expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('STARTUP HEALTH'));
+    expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('BRIDGE HEALTH'));
   });
 
   test('normalizes ui and .squidrun roots back to the project root', () => {

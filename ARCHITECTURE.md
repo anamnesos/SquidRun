@@ -89,6 +89,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/ipc/mcp-autoconfig-handlers.js: Registers IPC channels (mcp-configure-agent, mcp-reconnect-agent, mcp-remove-agent-config, ...).
 - ui/modules/ipc/mcp-handlers.js: Registers IPC channels (mcp-register-agent, mcp-unregister-agent, mcp-get-connected-agents, ...).
 - ui/modules/ipc/message-queue-handlers.js: Registers IPC channels (init-message-queue, send-message, send-broadcast-message, ...).
+- ui/modules/ipc/mira-lab-handlers.js: Dev-only IPC seam for the separate Mira Lab sidecar (`mira:lab-turn`, `mira:lab-export`); intentionally not registered in `DEFAULT_HANDLERS` until Architect/Oracle visual/product review clears the Lab gate.
 - ui/modules/ipc/model-switch-handlers.js: Registers IPC channels (get-pane-commands, switch-pane-model).
 - ui/modules/ipc/oracle-handlers.js: Registers IPC channels (oracle:generateImage, oracle:deleteImage, oracle:listImages, ...).
 - ui/modules/ipc/organic-ui-handlers.js: Registers IPC channels (organic:get-agent-states, organic:get-agent-state, organic:set-agent-state, ...).
@@ -126,6 +127,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/local-embedder.js: Local embeddings via Python sentence-transformers subprocess.
 - ui/modules/logger.js: Exports logger.
 - ui/modules/main/activity-manager.js: Exports ActivityManager.
+- ui/modules/main/agent-task-resolution.js: Shared current-lane/task-resolution helper used by `squidrun-app`, `auto-handoff-materializer`, `startup-ai-briefing`, and `hm-session-summary` to parse agent refs, detect later ACK/complete/supersede closure rows, and derive the active current-session lane from `comms_journal` evidence.
 - ui/modules/main/app-context.js: Exports new.
 - ui/modules/main/auto-handoff-materializer.js: Exports materializeSessionHandoff, buildSessionHandoffMarkdown, removeLegacyPaneHandoffFiles, _internals, ....
 - ui/modules/main/background-agent-manager.js: Exports BackgroundAgentManager, createBackgroundAgentManager, containsCompletionSignal, appendCompletionDirective, ....
@@ -146,10 +148,12 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
 - ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
+- ui/modules/mira-core/autonomy-substrate-v0.js: Backend-only first autonomy substrate for typed Mira: self-directed drives, curiosity queue, permissioned local reads, transcript-quality gates, evidence-backed self-profile proposal records, and strict visible/backend separation. It performs no durable writes or external sends by default.
 - ui/modules/mira-core/developmental-understanding-v1.js: Builds Mira's integrated conversation, tentative-understanding, self-state, relationship-state, relational-texture, and next-intention surface without claiming durable memory commit or private consciousness.
 - ui/modules/mira-core/memory-candidate-staging-v1.js: Extracts bounded recent-panel conversation signals into tentative Mira understandings with confidence/risk/revision metadata, not visible CRUD memory management.
 - ui/modules/mira-core/tentative-understanding-store-v1.js: Persists tentative-understanding scaffold rows through CognitiveMemoryStore pending-PR mechanics while explicitly blocking durable memory promotion, hidden approval, and James-as-clickthrough-harness behavior.
 - ui/modules/mira-core/text-model-attachment-v1.js: Owns typed Mira Responses API attachment config/call contract, defaulting to gpt-5.5, forbidding silent downgrade/local fallback in the enabled path, and bounding recent thread context.
+- ui/modules/mira-lab-surface.js: Dev-only canonical transcript/backchannel/eval substrate for the separate Mira Lab sidecar. Records durable JSONL lab turns, projects comms-journal-shaped entries, supports role-separated Mira-to-agent backchannel dispatch, marks agent-to-Mira injection turns, and exports transcript eval packets. Not wired into default app startup yet.
 - ui/modules/mira-local-text-ui-surface.js: Builds the right-panel Mira typed conversation surface, joining local shell gating, optional text model attachment, bounded thread context, tentative-understanding persistence counts, and developmental-understanding validation.
 - ui/modules/memory-consistency-check.js: On-demand drift checker that compares `workspace/knowledge/` chunks against knowledge-backed nodes in `workspace/memory/cognitive-memory.db`.
 - ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
@@ -180,6 +184,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
 - ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
+- ui/mira-lab.html + ui/mira-lab-renderer.js + ui/styles/mira-lab.css: Dev-only standalone Mira Lab prototype surface. It is intentionally separate from the normal SquidRun right panel and dashboard chrome, keeps diagnostics hidden, includes a low-power/reduced-motion rendering fallback, and must not be treated as James-facing reload/lab-smoke ready without reviewed desktop captures.
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
 - ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, api-keys).
 - ui/modules/tabs/activity.js: Exports setupActivityTab, destroyActivityTab, addActivityEntry.

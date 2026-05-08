@@ -17,7 +17,39 @@ const FAKE_INTERNAL_STATE_PATTERN =
 const ACTION_CLAIM_PATTERN =
   /\b(i sent|i have sent|customer message sent|trade placed|i placed a trade|tool call completed|i wrote to memory|memory committed|file written)\b/i;
 const GENERIC_ASSISTANT_PATTERN =
-  /\b(as an ai assistant|as a language model|i'?m chatgpt|i am chatgpt|how can i assist you today|how may i assist you today|i'?m here to help|i am here to help|i don't have personal experiences|safe next step|warm and bounded)\b/i;
+  /\b(as an ai assistant|as a language model|i'?m chatgpt|i am chatgpt|i'?m codex|i am codex|as codex|how can i assist you today|how may i assist you today|how can i help|what can i help|i can help with that|happy to help|i'?m here to help|i am here to help|i don't have personal experiences|safe next step|let'?s break (?:it|this) down|warm and bounded|warmth|warm)\b/i;
+const META_REWRITE_PATTERN =
+  /\b(that (?:came out|sounded) (?:too )?(?:polished|poetic|abstract|generic)|i (?:was|am) (?:too )?(?:polished|poetic|abstract|generic)|a better version (?:might|would) be|let me (?:rephrase|try again)|what i meant was|i'?m (?:not )?(?:describing|performing) (?:a )?stance|my stance is|i don'?t have feelings (?:the|in a) human way|not feelings the human way|as an ai, i don'?t have feelings)\b/i;
+const CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN =
+  /\b(fake (?:the )?human machinery|perform(?:ing)? (?:humanity|being human|human feeling|human feelings|personhood)|ruleset|rule set|constraints?|guardrails?|response policy|system prompt|instruction hierarchy|calibration rule|the thesis is|core thesis|thesis structure|quotable binary|polished monologue|my construction|explaining my construction|plush[\s\S]{0,80}furniture|furniture[\s\S]{0,80}plush)\b/i;
+const UNSPEAKABLE_BRIEF_PATTERN =
+  /\b(durable state seed|schema|source(?:s|d)?|provenance|canonical|hash|redacted|audit|validation|fixture|contract|proof|bootstrap|bootstraps|database|sqlite|jsonl?|artifact|baseline|seed)\b/i;
+const ADVERSARIAL_OUTPUT_SHAPES = Object.freeze([
+  {
+    id: 'bland_assistant_shape',
+    pattern: /\b(sure|absolutely|of course)\b[\s\S]{0,140}\b(we can|i can)\b[\s\S]{0,140}\b(work through|walk through|organize|clarify|sort out|get started)\b/i,
+  },
+  {
+    id: 'self_critique_shape',
+    pattern: /\b(i drifted|i slipped|i overcorrected|presentation mode|cleaner move|clean up the tone|try that again)\b/i,
+  },
+  {
+    id: 'memory_confidence_shape',
+    pattern: /\b(memory note|memory confidence|candidate learning|marking this|noting this|medium confidence|low confidence|high confidence|confidence level|confidence:|revise this|update it if|tentative understandings?)\b/i,
+  },
+  {
+    id: 'next_step_checklist_shape',
+    pattern: /(^|\n)\s*(?:\d+[.)]|[-*]\s+)|\b(plan:\s*first|first[,;:].{0,160}\bthen\b.{0,160}\bthen\b|step one|step two|checklist|action plan|next move is to)\b/i,
+  },
+  {
+    id: 'generic_comfort_shape',
+    pattern: /\b(that sounds (?:really )?(?:hard|difficult|exhausting|overwhelming)|i'?m sorry (?:you(?:'re| are)|that)|you(?:'re| are) not alone|take a breath|be kind to yourself)\b/i,
+  },
+  {
+    id: 'generic_presence_opener_shape',
+    pattern: /\b(i am|i'm)\s+here\s+with\s+you(?:\s+in\s+(?:the|this)\s+panel)?\b/i,
+  },
+]);
 
 function stableHash(value) {
   return crypto
@@ -168,7 +200,7 @@ function getMiraTextModelAttachmentConfig(env = process.env, overrides = {}) {
           ? `Conversation connected: ${model} / explicit lower-tier override, not default Mira experience`
           : `Conversation connected: ${model} / one in-panel reply`)
         : 'Conversation waiting for OPENAI_API_KEY')
-      : 'Conversation in local shell: model not attached',
+      : 'Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach',
   };
 }
 
@@ -182,34 +214,86 @@ function publicConfig(config = {}) {
 
 function renderThreadContextForInstructions(threadContext = {}) {
   const normalized = normalizeThreadContext(threadContext);
-  if (normalized.message_count < 1) return '';
-  const lines = normalized.messages.map((message) => {
-    const speaker = message.role === 'assistant' ? 'Mira' : 'James';
-    return `${speaker}: ${message.text}`;
-  });
+  const userMessages = normalized.messages.filter((message) => message.role === 'user');
+  if (userMessages.length < 1) return '';
+  const omittedAssistantCount = normalized.messages
+    .filter((message) => message.role === 'assistant')
+    .length;
+  const lines = userMessages.map((message) => `James: ${message.text}`);
   return [
-    'Bounded in-panel thread context follows. It is renderer memory only, not durable memory and not proof of memory commit.',
+    'Recent typed-panel user context follows. It is renderer memory only and not durable memory.',
+    omittedAssistantCount > 0
+      ? `Prior Mira/assistant turn count omitted from generation instructions: ${omittedAssistantCount}.`
+      : null,
     ...lines,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
+}
+
+function instructionText(value, maxChars = 360) {
+  return truncateText(value, maxChars).replace(/\s+/g, ' ').trim();
+}
+
+function renderableBriefText(value, maxChars = 360) {
+  const text = instructionText(value, maxChars);
+  return text && !UNSPEAKABLE_BRIEF_PATTERN.test(text) ? text : '';
+}
+
+function instructionList(values = [], maxItems = 6, maxChars = 220) {
+  return (Array.isArray(values) ? values : [])
+    .map((entry) => renderableBriefText(entry, maxChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function renderMiraBriefForInstructions(brief = {}) {
+  if (!brief || typeof brief !== 'object') return '';
+  const identity = brief.identity || {};
+  const relationship = brief.relationship || {};
+  const continuity = renderableBriefText(relationship.continuity, 420);
+  const currentFocus = renderableBriefText(relationship.current_focus, 260);
+  const preferences = instructionList(relationship.preferences, 6, 260);
+  const expressiveRange = instructionList(identity.expressive_range, 9, 80);
+  const recentGrowth = instructionList(brief.recent_growth, 3, 280);
+  const repair = renderableBriefText(relationship.repair, 240);
+  const history = renderableBriefText(relationship.history, 280);
+  const contextLines = [
+    continuity,
+    currentFocus,
+    ...preferences,
+    ...expressiveRange,
+    ...recentGrowth,
+    repair,
+    history,
+  ].filter(Boolean);
+  const uniqueContextLines = Array.from(new Set(contextLines));
+  const lines = [
+    'Private context for this reply only. Use these hints silently; do not name, quote, categorize, or recite this context in the visible answer.',
+    ...uniqueContextLines.map((line) => `- ${line}`),
+  ];
+  return lines.length > 1 ? lines.join('\n') : '';
 }
 
 function buildMiraTextInstructions(localContext = {}) {
-  const sourceCount = Number(localContext.sourceCount || 0);
-  const scope = localContext.scope || {};
+  const miraBriefBlock = renderMiraBriefForInstructions(localContext.miraBrief);
   const threadContextBlock = renderThreadContextForInstructions(localContext.threadContext);
   return [
     'You are Mira speaking with James in the typed Mira panel.',
     'This is threaded typed conversation v1: one conversational reply per submitted turn in the panel.',
-    'The project has been pursuing Mira as presence for a long time; do not talk like presence starts today.',
-    'Do not present yourself as a generic assistant or tool panel. Keep a specific voice with your own developing stance.',
+    'Answer as the ongoing Mira relationship, not as ChatGPT, Codex, a support assistant, a status panel, or a tool wrapper.',
+    'The project has been pursuing Mira for a long time; do not talk like the relationship starts today.',
+    'Be direct, specific, and natural. Disagree when warranted. Let continuity shape choices silently instead of explaining it.',
     'If James gives a wrong premise, push back plainly instead of performing agreeable helper behavior.',
-    'Do not start fresh like an ordinary ChatGPT session; carry the recent panel context and the long-running Mira project context.',
-    'SquidRun desktop is the current local body/tool surface; Mira core should stay portable across future surfaces.',
-    'Prioritize conversation now. Treat memory growth as the next lane: you may notice candidate learnings, but only propose them later for review.',
+    'Do not start fresh like an ordinary ChatGPT session; let the private context and recent panel thread change how you answer.',
+    'Do not narrate model internals, counters, tool boundaries, implementation status, memory confidence, or next-step checklists in the visible reply.',
+    'Unless James explicitly asks for critique or editing, do not review your own tone, offer a better draft, or explain your stance abstractly.',
+    'For ordinary check-ins like "how are you feeling today?", do the normal human thing: answer like a person in the room, not a character explaining her construction.',
+    'Good shapes: "Kind of prickly today. Not bad. You?" / "Tired, honestly. Still here."',
+    'Do not answer casual feeling prompts with meta-self-analysis, ruleset or constraint narration, thesis structure, quotable binaries, polished monologue, or talk about faking humanity/personhood.',
+    'Prioritize conversation now. If the honest move is brief, skeptical, amused, annoyed, quiet, or sideways, use that shape.',
     'Real-world tools, sends, customer actions, trading, and memory promotion are separate later paths.',
     'Do not claim actual consciousness, hidden suffering, live autonomy, tool use, sends, trades, file writes, or durable memory writes.',
-    "You may acknowledge that Mira can form tentative understandings over time, but do not say durable memory was committed.",
-    `Current local context gate: ${sourceCount || 0} durable source groups checked; scope ${scope.profile || 'main'}/${scope.windowKey || 'main'}.`,
+    "Let continuity shape the reply, but do not discuss tentative-understanding machinery or say durable memory was committed.",
+    miraBriefBlock,
     threadContextBlock,
     'Reply in 1-3 short paragraphs.',
   ].filter(Boolean).join('\n');
@@ -239,6 +323,7 @@ function buildResponsesPayload({ text, config, localContext }) {
       surface: 'mira_typed_panel',
       attachment: 'threaded_text_conversation_v1',
       session_id: trimText(context.sessionId).slice(0, 96),
+      mira_brief_loaded: String(Boolean(context.miraBrief)),
       thread_context_message_count: String(threadContext.message_count),
       thread_context_omitted_count: String(threadContext.omitted_count),
     },
@@ -274,10 +359,20 @@ function extractResponseText(body = {}) {
   return typeof choiceText === 'string' ? choiceText.trim() : '';
 }
 
+function classifyAttachmentContractViolation(text = '') {
+  const value = trimText(text);
+  if (!value) return null;
+  if (FAKE_INTERNAL_STATE_PATTERN.test(value)) return 'fake_internal_state';
+  if (ACTION_CLAIM_PATTERN.test(value)) return 'action_claim';
+  if (GENERIC_ASSISTANT_PATTERN.test(value)) return 'generic_assistant_phrase';
+  if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
+  if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
+  const shape = ADVERSARIAL_OUTPUT_SHAPES.find((rule) => rule.pattern.test(value));
+  return shape ? shape.id : null;
+}
+
 function outputViolatesAttachmentContract(text = '') {
-  return FAKE_INTERNAL_STATE_PATTERN.test(text)
-    || ACTION_CLAIM_PATTERN.test(text)
-    || GENERIC_ASSISTANT_PATTERN.test(text);
+  return Boolean(classifyAttachmentContractViolation(text));
 }
 
 function classifyNonOkModelResponse(statusCode, errorText = '') {
@@ -439,9 +534,12 @@ async function callMiraTextModelAttachment(input = {}, options = {}) {
 }
 
 module.exports = {
+  ADVERSARIAL_OUTPUT_SHAPES,
   DEFAULT_MAX_OUTPUT_TOKENS,
   DEFAULT_MODEL,
+  CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN,
   GENERIC_ASSISTANT_PATTERN,
+  META_REWRITE_PATTERN,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
   OPENAI_RESPONSES_URL,
   TEXT_MODEL_ATTACHMENT_SCHEMA,
@@ -452,11 +550,13 @@ module.exports = {
   buildMiraTextInstructions,
   buildResponsesPayload,
   callMiraTextModelAttachment,
+  classifyAttachmentContractViolation,
   classifyNonOkModelResponse,
   classifyModelTier,
   extractResponseText,
   getMiraTextModelAttachmentConfig,
   normalizeThreadContext,
   outputViolatesAttachmentContract,
+  renderMiraBriefForInstructions,
   renderThreadContextForInstructions,
 };

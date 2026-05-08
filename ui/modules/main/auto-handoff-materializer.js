@@ -7,6 +7,10 @@ const {
 const {
   queryCommsJournalEntries,
 } = require('./comms-journal');
+const {
+  isAgentTaskResolvedByLaterSignal,
+  deriveCurrentLaneSnapshot,
+} = require('./agent-task-resolution');
 const { executeTeamMemoryOperation } = require('../team-memory/runtime');
 const {
   parseSessionNumber,
@@ -24,6 +28,7 @@ const DEFAULT_TAGGED_LIMIT = 120;
 const DEFAULT_CROSS_SESSION_LIMIT = 120;
 const DEFAULT_FAILURE_LIMIT = 80;
 const DEFAULT_PENDING_LIMIT = 80;
+const DEFAULT_CURRENT_LANE_FILE = 'current-lane.json';
 const PREVIEW_LIMIT = 180;
 const CLAIM_STATEMENT_LIMIT = 100;
 const PENDING_DELIVERY_STATUSES = new Set(['recorded', 'routed']);
@@ -688,6 +693,9 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
   const failureLimit = Math.max(1, Number(options.failureLimit) || DEFAULT_FAILURE_LIMIT);
   const pendingLimit = Math.max(1, Number(options.pendingLimit) || DEFAULT_PENDING_LIMIT);
   const recentRows = orderedRows.slice(Math.max(0, orderedRows.length - recentLimit));
+  const currentLane = options.currentLane && typeof options.currentLane === 'object'
+    ? options.currentLane
+    : deriveCurrentLaneSnapshot(orderedRows, { sessionId, nowMs });
 
   const statusCounts = {};
   const channelCounts = {};
@@ -705,23 +713,26 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
   const crossSessionTaggedRows = [];
   const failedRows = [];
   const pendingRows = [];
-  for (const row of orderedRows) {
+  for (let index = 0; index < orderedRows.length; index += 1) {
+    const row = orderedRows[index];
     const status = normalizeDeliveryToken(row?.status) || 'unknown';
     const direction = toOptionalString(row?.direction, 'unknown') || 'unknown';
     const ackStatus = normalizeDeliveryToken(row?.ackStatus);
     const errorCode = toOptionalString(row?.errorCode, null);
     const tag = extractTag(row?.rawBody || '');
     const failed = status === 'failed' || hasFailureDeliverySignal(ackStatus, errorCode);
+    const resolvedByLaterSignal = isAgentTaskResolvedByLaterSignal(row, orderedRows, index);
     if (tag) {
       taggedRows.push({ row, tag });
     }
-    if (failed) {
+    if (failed && !resolvedByLaterSignal) {
       failedRows.push(row);
     }
     // Pending deliveries are unresolved outbound rows and must exclude failed outcomes.
     const pending =
       direction === 'outbound'
       && !failed
+      && !resolvedByLaterSignal
       && (
         PENDING_DELIVERY_STATUSES.has(status)
         || (status === 'brokered' && hasPendingDeliverySignal(ackStatus))
@@ -763,6 +774,13 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     `- decision_digest_sessions: ${decisionDigestGroups.length}`,
     `- failed_rows: ${failedRows.length}`,
     `- pending_rows: ${pendingRows.length}`,
+    `- current_lane_status: ${toOptionalString(currentLane?.status, 'none')}`,
+    `- current_lane_objective: ${toOptionalString(currentLane?.activeLane?.objective, '-') || '-'}`,
+    '',
+    '## Current Lane (machine-readable)',
+    '```json',
+    JSON.stringify(currentLane, null, 2),
+    '```',
   ];
 
   const priorContextRows = sortByEventTsAsc(
@@ -1077,6 +1095,10 @@ function resolveLastSessionHandoffPath(primaryPath) {
   return path.join(path.dirname(primaryPath), 'last-session.md');
 }
 
+function resolveCurrentLanePath(primaryPath) {
+  return path.join(path.dirname(primaryPath), DEFAULT_CURRENT_LANE_FILE);
+}
+
 async function ensureParentDir(targetPath) {
   await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
 }
@@ -1215,6 +1237,11 @@ async function materializeSessionHandoff(options = {}) {
     };
   }
 
+  const currentLane = deriveCurrentLaneSnapshot(sourceSession.rows, {
+    sessionId: sourceSession.sessionId || sessionId || null,
+    nowMs: options.nowMs,
+  });
+
   const markdown = buildSessionHandoffMarkdown(sourceSession.rows, {
     sessionId: sourceSession.sessionId || sessionId || '-',
     nowMs: options.nowMs,
@@ -1233,6 +1260,7 @@ async function materializeSessionHandoff(options = {}) {
     unresolvedClaims,
     unresolvedClaimsMax: options.unresolvedClaimsMax,
     priorSessionSummaries: normalizedPriorSessionSummaries,
+    currentLane,
   });
 
   const legacyMirrorPath = options.legacyMirrorPath === false
@@ -1269,6 +1297,21 @@ async function materializeSessionHandoff(options = {}) {
     writes.push({ path: legacyMirrorPath, changed: mirrorWrite.changed });
   }
 
+  if (options.currentLanePath !== false) {
+    const currentLanePath = toOptionalString(options.currentLanePath, null) || resolveCurrentLanePath(primaryPath);
+    const laneWrite = await writeTextIfChanged(currentLanePath, `${JSON.stringify(currentLane, null, 2)}\n`);
+    if (laneWrite.error) {
+      return {
+        ok: false,
+        reason: 'write_failed',
+        error: laneWrite.error,
+        outputPath: currentLanePath,
+        rowsScanned: Array.isArray(rows) ? rows.length : 0,
+      };
+    }
+    writes.push({ path: currentLanePath, changed: laneWrite.changed });
+  }
+
   return {
     ok: true,
     outputPath: primaryPath,
@@ -1279,6 +1322,7 @@ async function materializeSessionHandoff(options = {}) {
     sourceSessionId: sourceSession.sessionId || sessionId || null,
     fallbackSourceSessionId: sourceSession.fallbackSessionId || null,
     usedFallbackSession: sourceSession.usedFallback === true,
+    currentLane,
   };
 }
 
@@ -1345,6 +1389,7 @@ module.exports = {
     resolveEffectiveSessionScopeId,
     resolvePrimarySessionHandoffPath,
     resolveLastSessionHandoffPath,
+    resolveCurrentLanePath,
     isMeaningfulHandoffRow,
     filterMeaningfulRows,
     selectSourceSessionRows,

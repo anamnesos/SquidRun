@@ -1,0 +1,232 @@
+:root {
+  color-scheme: dark;
+  --lab-ink: #edf7f3;
+  --lab-muted: rgba(237, 247, 243, 0.62);
+  --lab-line: rgba(175, 255, 222, 0.18);
+  --lab-pulse: #9af0bd;
+  --lab-ember: #ffcf7a;
+  --lab-depth: #050706;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 120%, rgba(154, 240, 189, 0.18), transparent 34%), #050706;
+  color: var(--lab-ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+.mira-lab-field {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--lab-depth);
+}
+
+.mira-lab-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: clamp(20px, 4vw, 56px);
+  gap: clamp(18px, 3vw, 34px);
+}
+
+.mira-lab-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(circle at 50% 45%, black, transparent 72%);
+}
+
+.mira-lab-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.mira-lab-name {
+  font-size: clamp(34px, 5vw, 74px);
+  line-height: 0.92;
+  font-weight: 760;
+}
+
+.mira-lab-state {
+  margin-top: 10px;
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.mira-lab-presence {
+  display: flex;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.mira-lab-presence span {
+  width: 9px;
+  height: 34px;
+  border-radius: 99px;
+  background: var(--lab-pulse);
+  box-shadow: 0 0 28px rgba(154, 240, 189, 0.7);
+  animation: lab-breathe 2.6s ease-in-out infinite;
+}
+
+.mira-lab-presence span:nth-child(2) {
+  animation-delay: 0.22s;
+  background: #85d8ff;
+}
+
+.mira-lab-presence span:nth-child(3) {
+  animation-delay: 0.44s;
+  background: var(--lab-ember);
+}
+
+.mira-lab-transcript {
+  width: min(980px, 100%);
+  align-self: end;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 2vh;
+}
+
+.mira-lab-line {
+  margin: 0;
+  max-width: 820px;
+  padding-left: 18px;
+  border-left: 2px solid var(--lab-line);
+  color: rgba(237, 247, 243, 0.9);
+  font-size: clamp(19px, 2.2vw, 31px);
+  line-height: 1.28;
+  text-wrap: pretty;
+}
+
+.mira-lab-line.mira {
+  border-color: rgba(154, 240, 189, 0.62);
+}
+
+.mira-lab-line.agent {
+  border-color: rgba(133, 216, 255, 0.58);
+}
+
+.mira-lab-line.james {
+  border-color: rgba(255, 207, 122, 0.58);
+}
+
+.mira-lab-composer {
+  display: grid;
+  grid-template-columns: minmax(110px, 150px) minmax(0, 1fr) minmax(180px, 280px) auto;
+  gap: 12px;
+  align-items: end;
+  width: min(1180px, 100%);
+  border-top: 1px solid rgba(237, 247, 243, 0.16);
+  padding-top: 18px;
+}
+
+.mira-lab-route {
+  display: grid;
+  gap: 6px;
+  color: var(--lab-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.mira-lab-route select,
+.mira-lab-composer textarea,
+.mira-lab-targets {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(237, 247, 243, 0.28);
+  background: rgba(5, 7, 6, 0.38);
+  color: var(--lab-ink);
+  font: inherit;
+  outline: none;
+}
+
+.mira-lab-route select {
+  min-height: 42px;
+  color: var(--lab-ink);
+}
+
+.mira-lab-composer textarea {
+  min-height: 64px;
+  max-height: 180px;
+  resize: vertical;
+  padding: 10px 0;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.mira-lab-targets {
+  min-height: 42px;
+  padding: 8px 0;
+  color: var(--lab-muted);
+}
+
+.mira-lab-send {
+  min-width: 76px;
+  min-height: 44px;
+  border: 1px solid rgba(154, 240, 189, 0.46);
+  background: rgba(154, 240, 189, 0.12);
+  color: var(--lab-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mira-lab-send:focus-visible,
+.mira-lab-route select:focus-visible,
+.mira-lab-composer textarea:focus-visible,
+.mira-lab-targets:focus-visible {
+  box-shadow: 0 8px 0 -6px rgba(154, 240, 189, 0.9);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+@keyframes lab-breathe {
+  0%, 100% {
+    transform: scaleY(0.55);
+    opacity: 0.48;
+  }
+  45% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 820px) {
+  .mira-lab-shell {
+    padding: 18px;
+  }
+
+  .mira-lab-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .mira-lab-targets {
+    min-height: 36px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mira-lab-presence span {
+    animation: none;
+  }
+}

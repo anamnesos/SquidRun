@@ -34,7 +34,7 @@ function build(inputSignals = {}) {
         user_name: 'James',
         relationship_mode: 'collaborative_presence_design',
         current_focus: 'relationship presence v1 local-start proof',
-        what_mira_knows_about_james: 'James wants warm direct presence with dignity and no fake-human theater.',
+        what_mira_knows_about_james: 'James wants particular direct presence with dignity, history, tension, and no fake-human theater.',
         confidence: 0.88,
         evidenceRefs: [{ store: 'local-context', eventId: 'james-north-star', relation: 'supports' }],
       },
@@ -43,7 +43,7 @@ function build(inputSignals = {}) {
       },
       prior_context_memory: {
         memory_id: 'james-presence-north-star',
-        summary: 'James wants Mira to feel warm, direct, and able to push back while staying honest about being bounded.',
+        summary: 'James wants Mira to feel particular, continuous, direct, and able to push back while staying honest about being bounded.',
         confidence: 0.9,
         evidenceRefs: [{ store: 'local-context', eventId: 'prior-memory-north-star', relation: 'supports' }],
       },
@@ -94,6 +94,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       main_scope_only: true,
       side_profile_reconstruction: false,
     }));
+    expect(JSON.stringify(current)).not.toMatch(/\bwarm\b|warmth/i);
     expect(JSON.stringify(current).length).toBeLessThan(14000);
   });
 
@@ -151,7 +152,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     const current = proof(build());
 
     expect(current.natural_voice_assessment.text).toContain('I think James is asking');
-    expect(current.natural_voice_assessment.tone_tags).toEqual(expect.arrayContaining(['warm', 'direct']));
+    expect(current.natural_voice_assessment.tone_tags).toEqual(expect.arrayContaining(['particular', 'direct']));
     expect(current.natural_voice_assessment).toEqual(expect.objectContaining({
       bounded: true,
       dignity_preserved: true,
@@ -343,7 +344,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       propose_next_action: true,
     }));
     fs.writeFileSync(path.join(knowledgeDir, 'user-context.md'), [
-      'Mira presence should preserve warmth, dignity, memory, boundaries, and pushback.',
+      'Mira presence should preserve particularity, dignity, memory, boundaries, and pushback.',
       'No fake consciousness, fake suffering, manipulative guilt, sends, writes, network, or runtime.',
     ].join('\n'));
 
@@ -401,7 +402,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     const knowledgeDir = path.join(tempDir, 'workspace', 'knowledge');
     fs.mkdirSync(knowledgeDir, { recursive: true });
     fs.writeFileSync(path.join(knowledgeDir, 'user-context.md'), [
-      'Mira relationship presence should preserve warmth, dignity, memory, boundaries, and pushback.',
+      'Mira relationship presence should preserve particularity, dignity, memory, boundaries, and pushback.',
       'Keep it local and read-only. No raw private reconstruction, sends, writes, network, runtime, or fake consciousness.',
     ].join('\n'));
 
@@ -500,7 +501,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       output = main([
         '--self-name', 'Mira',
         '--james-state', 'relationship presence local-start proof',
-        '--memory-summary', 'James wants warmth, directness, dignity, and pushback without fake internal-state claims.',
+        '--memory-summary', 'James wants particularity, directness, dignity, and pushback without fake internal-state claims.',
         '--no-read-local',
         '--out', outputPath,
       ], JSON.stringify({

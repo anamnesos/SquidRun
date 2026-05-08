@@ -91,6 +91,9 @@ const {
   removeLegacyPaneHandoffFiles,
 } = require('./auto-handoff-materializer');
 const {
+  isAgentTaskResolvedByLaterSignal,
+} = require('./agent-task-resolution');
+const {
   closeCommsJournalStores,
   queryCommsJournalEntries,
 } = require('./comms-journal');
@@ -548,6 +551,7 @@ function isExplicitAgentTaskRequest(content) {
   const text = stripLeadingAgentSequencePrefix(content);
   if (!text) return false;
   if (/^\[TASK\]/i.test(text)) return true;
+  if (/^TASK\s*:/i.test(text)) return true;
   if (/\bneed from you\b/i.test(text)) return true;
   if (/\b(can|could|would) you\b/i.test(text)) return true;
   if (/\bplease\b/i.test(text)) return true;
@@ -7525,6 +7529,11 @@ class SquidRunApp {
 
     const sentAtLabel = formatLocalClockTime(sentAtMs);
     const timerId = setTimeout(() => {
+      const pendingEntry = this.pendingAgentResponseWatchdogs.get(key);
+      if (this.hasLaterAgentResponseProofForWatchdog(pendingEntry)) {
+        this.pendingAgentResponseWatchdogs.delete(key);
+        return;
+      }
       this.pendingAgentResponseWatchdogs.delete(key);
       const warning = normalizedSenderRole === 'architect'
         ? `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`
@@ -7552,8 +7561,38 @@ class SquidRunApp {
       sentAtMs,
       senderRole: normalizedSenderRole,
       targetRole: normalizedTargetRole,
+      content,
     });
     return true;
+  }
+
+  hasLaterAgentResponseProofForWatchdog(entry = {}) {
+    if (!entry) return false;
+    const normalizedSenderRole = normalizeWatchdogAgentRole(entry.senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(entry.targetRole);
+    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+
+    let rows = [];
+    try {
+      rows = queryCommsJournalEntries({
+        sessionId: this.commsSessionScopeId || undefined,
+        sinceMs: Math.max(0, Number(entry.sentAtMs) || 0),
+        order: 'asc',
+        limit: 500,
+      });
+    } catch (error) {
+      log.warn('Watchdog', `Failed querying comms journal for response proof: ${error.message}`);
+      return false;
+    }
+
+    const taskRow = {
+      senderRole: normalizedSenderRole,
+      targetRole: normalizedTargetRole,
+      rawBody: entry.content || '',
+      sentAtMs: entry.sentAtMs || 0,
+      brokeredAtMs: entry.sentAtMs || 0,
+    };
+    return isAgentTaskResolvedByLaterSignal(taskRow, rows, -1);
   }
 
   maybeResolveAgentResponseWatchdog({ senderRole = null, targetRole = null, deliveryAccepted = false } = {}) {

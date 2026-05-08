@@ -54,6 +54,12 @@
   background: rgba(10, 18, 28, 0.52);
 }
 
+.mira-coordinator-strip[hidden],
+.mira-local-text-counters[hidden],
+.mira-local-text-meta[hidden] {
+  display: none;
+}
+
 .mira-coordinator-strip-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

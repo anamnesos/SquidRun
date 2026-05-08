@@ -502,11 +502,20 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
     : null;
   const enabled = source.enabled === true;
   const configured = source.configured === true || Boolean(relayUrl && deviceId);
+  const requestedMode = typeof source.mode === 'string' && source.mode.trim()
+    ? source.mode.trim().toLowerCase()
+    : null;
+  const pending = source.pending === true
+    || requestedMode === 'pending'
+    || state === 'pending_live_discovery'
+    || status === 'pending_live_discovery';
   const mode = enabled !== true
     ? 'disabled'
-    : ((state === 'connected' || status === 'relay_connected')
+    : (pending
+      ? 'pending'
+      : ((state === 'connected' || status === 'relay_connected' || requestedMode === 'connected')
       ? 'connected'
-      : 'connecting');
+      : 'connecting'));
 
   return {
     enabled,
@@ -517,6 +526,8 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
     deviceId,
     state,
     status,
+    pending,
+    lowFidelity: source.lowFidelity === true,
   };
 }
 
@@ -530,7 +541,10 @@ function buildBridgeSnapshotFromEnv(projectRoot, runtimeEnv = process.env) {
     configured: Boolean(relayUrl && deviceId),
     relayUrl,
     deviceId,
-    state: enabled ? 'unknown' : null,
+    state: enabled && relayUrl && deviceId ? 'pending_live_discovery' : (enabled ? 'unknown' : null),
+    mode: enabled && relayUrl && deviceId ? 'pending' : null,
+    pending: Boolean(enabled && relayUrl && deviceId),
+    lowFidelity: true,
   });
 }
 
@@ -670,6 +684,8 @@ function buildHealthStatus(snapshot) {
   if (bridge.enabled === true && bridge.configured !== true) {
     warnings.push('bridge_enabled_unconfigured');
     addPenalty('bridge_enabled_unconfigured');
+  } else if (bridge.enabled === true && bridge.mode === 'pending') {
+    warnings.push('bridge_connectivity_pending:live_discovery_not_available');
   } else if (bridge.enabled === true && bridge.mode !== 'connected') {
     warnings.push(`bridge_enabled_not_connected:${bridge.state || bridge.status || bridge.mode || 'unknown'}`);
     addPenalty('bridge_enabled_not_connected');
@@ -815,6 +831,8 @@ function renderStartupHealthMarkdown(snapshot = {}) {
       ? 'degraded (enabled but disconnected)'
       : (bridgePenalty.code === 'bridge_enabled_unconfigured' ? 'degraded (enabled but unconfigured)' : `degraded (${bridgePenalty.code})`);
     lines.push(`- Probe: ${bridgeProbeStatus}; penalty=${Number(bridgePenalty.points || 0)}`);
+  } else if (bridge.enabled === true && bridge.mode === 'pending') {
+    lines.push('- Probe: pending (live discovery not available in standalone snapshot); penalty=0');
   }
 
   const warnings = Array.isArray(snapshot.status?.warnings) ? snapshot.status.warnings : [];
@@ -841,6 +859,8 @@ function renderUsage() {
     'Options:',
     '  -h, --help          Show this help and exit.',
     '  --profile <name>    Use a profile-scoped coordination namespace.',
+    '  --markdown          Print the compact startup markdown summary.',
+    '  --json              Print the raw JSON snapshot (default).',
     '',
   ].join('\n');
 }
@@ -850,6 +870,7 @@ function parseCliArgs(argv = []) {
     help: false,
     projectRoot: null,
     profileName: null,
+    format: 'json',
     errors: [],
   };
   const args = Array.isArray(argv) ? argv : [];
@@ -858,6 +879,14 @@ function parseCliArgs(argv = []) {
     if (!token) continue;
     if (token === '--help' || token === '-h') {
       parsed.help = true;
+      continue;
+    }
+    if (token === '--markdown') {
+      parsed.format = 'markdown';
+      continue;
+    }
+    if (token === '--json') {
+      parsed.format = 'json';
       continue;
     }
     if (token === '--profile') {
@@ -908,7 +937,11 @@ function main(argv = process.argv.slice(2), io = {}) {
     projectRoot: parsed.projectRoot || null,
     profileName: parsed.profileName || DEFAULT_PROFILE,
   });
-  stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+  if (parsed.format === 'markdown') {
+    stdout.write(renderStartupHealthMarkdown(snapshot));
+  } else {
+    stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+  }
   return 0;
 }
 

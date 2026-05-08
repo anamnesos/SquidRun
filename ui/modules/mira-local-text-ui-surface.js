@@ -17,6 +17,9 @@ const {
   persistMiraTentativeUnderstandingsV1,
 } = require('./mira-core/tentative-understanding-store-v1');
 const {
+  buildMiraAutonomySubstrateV0,
+} = require('./mira-core/autonomy-substrate-v0');
+const {
   callMiraTextModelAttachment,
   getMiraTextModelAttachmentConfig,
   normalizeThreadContext,
@@ -409,6 +412,7 @@ function buildSurfaceRecord({
   threadContext = null,
   memoryCandidateStaging = null,
   developmentalUnderstanding = null,
+  autonomySubstrate = null,
 }) {
   const replyCount = reply ? 1 : 0;
   const attachment = modelAttachment || getMiraTextModelAttachmentConfig({}, { enabled: false });
@@ -463,6 +467,7 @@ function buildSurfaceRecord({
     },
     memory_candidate_staging: candidateStaging,
     developmental_understanding: integratedUnderstanding,
+    autonomy_substrate: autonomySubstrate,
     local_text_session_gate: sessionOutput ? {
       ran: true,
       ok: validation?.ok === true,
@@ -512,7 +517,7 @@ function buildSurfaceRecord({
       model_selection_reason: attachment.model_selection_reason || null,
       explicit_model_override: attachment.explicit_model_override === true,
       lower_tier_explicit_override: attachment.lower_tier_explicit_override === true,
-      visible_status: attachment.visible_status || 'Conversation in local shell: model not attached',
+      visible_status: attachment.visible_status || 'Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach',
       live_model_called: Number(modelCallCount || 0) > 0 && attachment.state !== 'not_attached',
       fallback_used: fallbackUsed === true,
       fallback_reason: fallbackUsed === true ? degradedReason : null,
@@ -830,7 +835,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
       localContext: {
         sessionId: scope.sessionId,
         scope,
-        sourceCount: session.presence_runtime_read_path_gate?.source_count || 0,
+        miraBrief: session.presence_runtime_read_path_gate?.speakable_mira_brief || null,
         threadContext: payload.threadContext || payload.thread_context || {},
       },
     }, {
@@ -840,12 +845,10 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     });
     attachment = modelResult.attachment || attachment;
   }
-  const reply = modelResult.ok === true
-    ? modelResult.reply
-    : (attachment.enabled === true ? null : localReply);
+  const reply = modelResult.ok === true ? modelResult.reply : null;
   const accepted = Boolean(reply);
   const fallbackUsed = false;
-  const degraded = attachment.enabled === true && modelResult.ok !== true;
+  const degraded = modelResult.ok !== true;
   const decision = degraded ? 'degraded' : (accepted ? 'accepted' : 'blocked');
   const reasons = accepted ? [] : (
     Array.isArray(sessionOutput.validation_report?.reasons)
@@ -879,6 +882,21 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     currentUserText: text,
     currentAssistantText: reply?.text || '',
   });
+  const autonomySubstrate = buildMiraAutonomySubstrateV0({
+    projectRoot,
+    inputSignals: {
+      currentUserText: text,
+      currentAssistantText: reply?.text || '',
+      threadContext: payload.threadContext || payload.thread_context || {},
+      evidenceRefs: [{
+        store: 'mira-local-text-ui-surface',
+        eventId: `typed-panel:${scope.sessionId}`,
+        relation: 'current_turn_backend_autonomy_substrate',
+      }],
+    },
+    executeReads: false,
+    generatedAt,
+  });
   const surface = buildSurfaceRecord({
     generatedAt,
     projectRoot,
@@ -901,6 +919,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     threadContext: payload.threadContext || payload.thread_context || {},
     memoryCandidateStaging: persistedMemoryCandidateStaging,
     developmentalUnderstanding,
+    autonomySubstrate,
   });
   return {
     ui_surface_v0: surface,
