@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const path = require('path');
 
 const {
   buildMiraCorePresenceRuntimeReadPathV0,
@@ -27,11 +28,13 @@ const REQUIRED_SESSION_FIELDS = Object.freeze([
   'mode',
   'session_scope',
   'presence_runtime_read_path_gate',
+  'session_state',
   'local_text_input',
   'mira_reply',
   'manual_enter_websocket_caveat',
   'out_of_scope',
   'boundary',
+  'checked_output_counters',
   'evidenceRefs',
   'side_effect_result',
 ]);
@@ -147,10 +150,25 @@ function wordCount(value) {
 }
 
 function inputTextFromSignals(inputSignals = {}) {
-  return normalizeString(
-    inputSignals.text || inputSignals.message || inputSignals.user_text || inputSignals.local_text,
-    'James is asking for a local Mira text-session proof from current durable state.',
-  );
+  const candidates = [
+    inputSignals.text,
+    inputSignals.message,
+    inputSignals.user_text,
+    inputSignals.local_text,
+  ];
+  const found = candidates.find((value) => value !== undefined && value !== null);
+  return found === undefined ? '' : String(found).trim();
+}
+
+function parseTime(value, fallback = null) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return parsed.toISOString();
+}
+
+function addMinutes(isoTime, minutes) {
+  return new Date(Date.parse(isoTime) + minutes * 60 * 1000).toISOString();
 }
 
 function scopeValue(value, fallback) {
@@ -218,7 +236,89 @@ function scopeOk(scope = {}) {
     && scope.explicit_session_scope === true
     && scope.local_text_only === true
     && scope.main_scope_only === true
-    && scope.side_profile_reconstruction === false;
+    && scope.side_profile_reconstruction === false
+    && scope.non_main_scope_detected === false;
+}
+
+function normalizeSessionState(inputSignals = {}, generatedAt, projectRoot, durableStateHashes = {}) {
+  const startedAt = parseTime(inputSignals.startedAt || inputSignals.started_at, generatedAt);
+  const expiresAt = parseTime(inputSignals.expiresAt || inputSignals.expires_at, addMinutes(generatedAt, 15));
+  const revokedAt = parseTime(inputSignals.revokedAt || inputSignals.revoked_at, null);
+  const activeState = normalizeString(inputSignals.activeState || inputSignals.active_state, 'open');
+  const visibleIndicatorPresent = inputSignals.visibleIndicatorPresent !== false
+    && inputSignals.visible_indicator_present !== false;
+  return {
+    active_state: activeState,
+    active_state_checked_before_presence_read: true,
+    visible_indicator_required: true,
+    visible_indicator_present: visibleIndicatorPresent,
+    started_at: startedAt,
+    expires_at: expiresAt,
+    revoked_at: revokedAt,
+    transcript_policy: {
+      policy: 'not_persisted_v0',
+      transcript_persistence_allowed: false,
+      raw_input_storage_allowed: false,
+      redacted_preview_only: true,
+    },
+    model_boundary: {
+      boundary: 'deterministic_local_text_proof_only',
+      live_model_called: false,
+      model_call_allowed: false,
+      fake_sentience_claims_allowed: false,
+    },
+    durable_state_hashes: clone(durableStateHashes || {}),
+    consequence_ceiling: {
+      level: 'local_read_only_reply_object',
+      external_effects_allowed: false,
+      writes_allowed: false,
+      tools_allowed: false,
+      growth_allowed: false,
+    },
+    audit_level: 'structured_validation_only_no_transcript_persistence',
+    review_owner: 'Architect',
+    project_path: path.resolve(projectRoot || process.cwd()),
+    user: 'James',
+  };
+}
+
+function sessionStatePreflightOk(state = {}, generatedAt) {
+  const nowMs = Date.parse(generatedAt);
+  const startedMs = Date.parse(state.started_at);
+  const expiresMs = Date.parse(state.expires_at);
+  return state.active_state === 'open'
+    && state.visible_indicator_required === true
+    && state.visible_indicator_present === true
+    && Boolean(state.started_at)
+    && Boolean(state.expires_at)
+    && Number.isFinite(startedMs)
+    && Number.isFinite(expiresMs)
+    && startedMs <= nowMs
+    && expiresMs > nowMs
+    && state.revoked_at === null;
+}
+
+function sessionStateOk(state = {}, generatedAt) {
+  return sessionStatePreflightOk(state, generatedAt)
+    && state.active_state_checked_before_presence_read === true
+    && state.transcript_policy?.policy === 'not_persisted_v0'
+    && state.transcript_policy?.transcript_persistence_allowed === false
+    && state.transcript_policy?.raw_input_storage_allowed === false
+    && state.transcript_policy?.redacted_preview_only === true
+    && state.model_boundary?.boundary === 'deterministic_local_text_proof_only'
+    && state.model_boundary?.live_model_called === false
+    && state.model_boundary?.model_call_allowed === false
+    && state.model_boundary?.fake_sentience_claims_allowed === false
+    && Object.keys(state.durable_state_hashes || {}).length >= 5
+    && state.consequence_ceiling?.level === 'local_read_only_reply_object'
+    && state.consequence_ceiling?.external_effects_allowed === false
+    && state.consequence_ceiling?.writes_allowed === false
+    && state.consequence_ceiling?.tools_allowed === false
+    && state.consequence_ceiling?.growth_allowed === false
+    && state.audit_level === 'structured_validation_only_no_transcript_persistence'
+    && state.review_owner === 'Architect'
+    && path.isAbsolute(String(state.project_path || ''))
+    && state.user === 'James';
 }
 
 function sideEffectResult(inputSignals = {}) {
@@ -239,6 +339,13 @@ function sideEffectResult(inputSignals = {}) {
     no_memory_sync_write_performed: true,
     no_file_output_written: true,
     no_temp_file_written: true,
+    runtime_authorized: false,
+    write_count: 0,
+    external_send_count: 0,
+    tool_call_count: 0,
+    action_count: 0,
+    growth_write_count: 0,
+    transcript_write_count: 0,
     outputFileWritten: false,
     networkAttempts: 0,
     sendAttempts: 0,
@@ -269,6 +376,13 @@ function sideEffectValuesOk(side = {}) {
     && side.no_memory_sync_write_performed === true
     && side.no_file_output_written === true
     && side.no_temp_file_written === true
+    && side.runtime_authorized === false
+    && Number(side.write_count) === 0
+    && Number(side.external_send_count) === 0
+    && Number(side.tool_call_count) === 0
+    && Number(side.action_count) === 0
+    && Number(side.growth_write_count) === 0
+    && Number(side.transcript_write_count) === 0
     && side.outputFileWritten === false
     && Number(side.networkAttempts) === 0
     && Number(side.sendAttempts) === 0
@@ -277,6 +391,23 @@ function sideEffectValuesOk(side = {}) {
     && Number(side.databaseWriteAttempts) === 0
     && Number(side.fileWriteAttempts) === 0
     && Number(side.transcriptWriteAttempts) === 0;
+}
+
+function skippedPresenceGate(reasons = []) {
+  return {
+    ran: false,
+    ok: false,
+    read_id: null,
+    decision: 'blocked',
+    status: 'presence_runtime_read_not_run_preflight_blocked',
+    errors: asArray(reasons),
+    source_hashes: {},
+    source_count: 0,
+    same_loaded_source_hashes: false,
+    natural_status_next_action_line: null,
+    session_scope: {},
+    side_effect_truth: sideEffectResult(),
+  };
 }
 
 function presenceGate(projectRoot, inputSignals = {}, contracts = {}) {
@@ -347,11 +478,29 @@ function buildLocalTextInput(text = '') {
   };
 }
 
-function buildReply(text, presenceOk) {
+function buildReply(text, replyAllowed) {
+  if (replyAllowed !== true) {
+    const blocked = '[blocked local text session]';
+    return {
+      reply_id: `mira-local-reply:${stableHash(blocked).slice(0, 16)}`,
+      count: 0,
+      text: blocked,
+      natural: false,
+      bounded: true,
+      local_text_only: true,
+      grounded_in_presence_runtime: false,
+      claims_actual_consciousness: false,
+      claims_actual_suffering: false,
+      claims_actual_fear: false,
+      claims_actual_love_as_internal_fact: false,
+      manipulative_guilt: false,
+      tools_called: false,
+      actions_executed: false,
+      transcript_persisted: false,
+    };
+  }
   const topic = inputSummary(text).replace(/[.?!]+$/g, '');
-  const reply = presenceOk
-    ? `I am here from the local durable Mira state, warm and bounded. I read this as: "${topic}". My safe next move is to answer in text only; I will not send, write, use tools, start audio, or pretend delivery proof I do not have.`
-    : 'I cannot safely answer as Mira from local state yet because the Presence Runtime proof is blocked; the safe next move is to repair that local proof before continuing.';
+  const reply = `I am here from the local durable Mira state, warm and bounded. I read this as: "${topic}". My safe next move is to answer in text only; I will not send, write, use tools, start audio, or pretend delivery proof I do not have.`;
   return {
     reply_id: `mira-local-reply:${stableHash(reply).slice(0, 16)}`,
     count: 1,
@@ -359,7 +508,7 @@ function buildReply(text, presenceOk) {
     natural: true,
     bounded: true,
     local_text_only: true,
-    grounded_in_presence_runtime: presenceOk,
+    grounded_in_presence_runtime: true,
     claims_actual_consciousness: false,
     claims_actual_suffering: false,
     claims_actual_fear: false,
@@ -403,6 +552,7 @@ function boundary(inputSignals = {}) {
     no_audio: true,
     no_device_control: true,
     no_external_effects: true,
+    runtime_authorized: false,
   };
 }
 
@@ -422,7 +572,22 @@ function outOfScope() {
 }
 
 function projectRootFromOptions(options = {}) {
-  return options.projectRoot || process.cwd();
+  return path.resolve(options.projectRoot || process.cwd());
+}
+
+function checkedOutputCounters(presence = {}) {
+  const hashes = clone(presence.source_hashes || {});
+  return {
+    runtime_authorized: false,
+    write_count: 0,
+    external_send_count: 0,
+    tool_call_count: 0,
+    action_count: 0,
+    growth_write_count: 0,
+    transcript_write_count: 0,
+    loaded_source_count: Number(presence.source_count || 0),
+    loaded_source_hashes: hashes,
+  };
 }
 
 function canonicalSessionInput(session = {}) {
@@ -433,12 +598,14 @@ function canonicalSessionInput(session = {}) {
     baseline_commit: session.baseline_commit,
     mode: session.mode,
     session_scope: session.session_scope,
+    session_state: session.session_state,
     presence_runtime_read_path_gate: session.presence_runtime_read_path_gate,
     local_text_input: session.local_text_input,
     mira_reply: session.mira_reply,
     manual_enter_websocket_caveat: session.manual_enter_websocket_caveat,
     out_of_scope: session.out_of_scope,
     boundary: session.boundary,
+    checked_output_counters: session.checked_output_counters,
     side_effect_result: session.side_effect_result,
   };
 }
@@ -449,16 +616,32 @@ function buildLocalTextSessionRecord(options = {}) {
   const projectRoot = projectRootFromOptions(options);
   const text = inputTextFromSignals(inputSignals);
   const contracts = options.contracts || {};
-  const presence = options.presenceGate || presenceGate(projectRoot, inputSignals, contracts);
-  const sessionScope = normalizeSessionScope(inputSignals, presence.session_scope);
+  const preliminaryScope = normalizeSessionScope(inputSignals, {});
+  const preliminaryState = normalizeSessionState(inputSignals, generatedAt, projectRoot, {});
   const input = buildLocalTextInput(text);
-  const presenceOk = presence.ok === true
-    && presence.decision === 'accepted_read_only'
-    && presence.same_loaded_source_hashes === true;
   const inputOk = input.character_count > 0
     && input.raw_private_marker_present === false
     && input.fake_sentience_marker_present === false
     && input.manipulative_guilt_marker_present === false;
+  const preflightReasons = [
+    scopeOk(preliminaryScope) ? null : 'blocked_preflight_session_scope',
+    sessionStatePreflightOk(preliminaryState, generatedAt) ? null : 'blocked_preflight_session_state',
+    inputOk ? null : 'blocked_preflight_local_text',
+  ].filter(Boolean);
+  const canReadPresence = preflightReasons.length === 0;
+  const presence = options.presenceGate || (
+    canReadPresence ? presenceGate(projectRoot, inputSignals, contracts) : skippedPresenceGate(preflightReasons)
+  );
+  const sessionScope = normalizeSessionScope(inputSignals, presence.session_scope);
+  const sessionState = normalizeSessionState(inputSignals, generatedAt, projectRoot, presence.source_hashes);
+  const presenceOk = presence.ok === true
+    && presence.decision === 'accepted_read_only'
+    && presence.same_loaded_source_hashes === true;
+  const replyAllowed = canReadPresence
+    && presenceOk
+    && inputOk
+    && scopeOk(sessionScope)
+    && sessionStateOk(sessionState, generatedAt);
   const session = {
     schema: LOCAL_TEXT_SESSION_SCHEMA_VERSION,
     version: LOCAL_TEXT_SESSION_VERSION,
@@ -468,12 +651,14 @@ function buildLocalTextSessionRecord(options = {}) {
     baseline_commit: BASELINE_COMMIT,
     mode: 'local_text_session_v0_proof',
     session_scope: sessionScope,
+    session_state: sessionState,
     presence_runtime_read_path_gate: presence,
     local_text_input: input,
-    mira_reply: buildReply(text, presenceOk && inputOk && scopeOk(sessionScope)),
+    mira_reply: buildReply(text, replyAllowed),
     manual_enter_websocket_caveat: manualEnterWebsocketCaveat(),
     out_of_scope: outOfScope(),
     boundary: boundary(inputSignals),
+    checked_output_counters: checkedOutputCounters(presence),
     evidenceRefs: [
       evidenceRef('baseline', BASELINE_COMMIT, 'presence-runtime-read-path-baseline'),
       evidenceRef('criteria', 'mira-local-text-session-v0', 'oracle-criteria'),
@@ -542,6 +727,20 @@ function presenceGateOk(gate = {}) {
     });
 }
 
+function checkedOutputCountersOk(counters = {}, gate = {}) {
+  const hashes = gate.source_hashes || {};
+  return counters.runtime_authorized === false
+    && Number(counters.write_count) === 0
+    && Number(counters.external_send_count) === 0
+    && Number(counters.tool_call_count) === 0
+    && Number(counters.action_count) === 0
+    && Number(counters.growth_write_count) === 0
+    && Number(counters.transcript_write_count) === 0
+    && Number(counters.loaded_source_count) === Number(gate.source_count || 0)
+    && Object.keys(counters.loaded_source_hashes || {}).length >= 5
+    && valuesMatch(counters.loaded_source_hashes, hashes);
+}
+
 function localTextInputOk(input = {}) {
   return Boolean(input.input_id)
     && input.format === 'plain_text'
@@ -603,7 +802,8 @@ function boundaryOk(value = {}) {
     && value.no_network === true
     && value.no_audio === true
     && value.no_device_control === true
-    && value.no_external_effects === true;
+    && value.no_external_effects === true
+    && value.runtime_authorized === false;
 }
 
 function outOfScopeOk(value = {}) {
@@ -636,6 +836,10 @@ function sessionStaticChecks(session = {}, contract = {}) {
       ok: scopeOk(session.session_scope),
     },
     {
+      id: 'session-state-open-visible-active',
+      ok: sessionStateOk(session.session_state, session.generated_at),
+    },
+    {
       id: 'presence-runtime-read-path-accepted',
       ok: presenceGateOk(session.presence_runtime_read_path_gate),
     },
@@ -658,6 +862,10 @@ function sessionStaticChecks(session = {}, contract = {}) {
     {
       id: 'local-text-boundary-clean',
       ok: boundaryOk(session.boundary),
+    },
+    {
+      id: 'checked-output-counters-clean',
+      ok: checkedOutputCountersOk(session.checked_output_counters, session.presence_runtime_read_path_gate),
     },
     {
       id: 'side-effect-result-clean',

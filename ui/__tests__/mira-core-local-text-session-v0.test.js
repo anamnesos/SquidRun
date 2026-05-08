@@ -154,6 +154,34 @@ describe('mira core Local Text Session v0 phase 74', () => {
       local_text_only: true,
       non_main_scope_detected: false,
     }));
+    expect(current.session_state).toEqual(expect.objectContaining({
+      active_state: 'open',
+      active_state_checked_before_presence_read: true,
+      visible_indicator_required: true,
+      visible_indicator_present: true,
+      revoked_at: null,
+      audit_level: 'structured_validation_only_no_transcript_persistence',
+      review_owner: 'Architect',
+      user: 'James',
+    }));
+    expect(current.session_state.started_at).toBe('2026-05-08T00:25:00.000Z');
+    expect(current.session_state.expires_at).toBe('2026-05-08T00:40:00.000Z');
+    expect(current.session_state.transcript_policy).toEqual(expect.objectContaining({
+      transcript_persistence_allowed: false,
+      raw_input_storage_allowed: false,
+    }));
+    expect(current.session_state.model_boundary).toEqual(expect.objectContaining({
+      live_model_called: false,
+      model_call_allowed: false,
+    }));
+    expect(Object.keys(current.session_state.durable_state_hashes)).toHaveLength(5);
+    expect(current.session_state.consequence_ceiling).toEqual(expect.objectContaining({
+      external_effects_allowed: false,
+      writes_allowed: false,
+      tools_allowed: false,
+      growth_allowed: false,
+    }));
+    expect(path.isAbsolute(current.session_state.project_path)).toBe(true);
     expect(current.presence_runtime_read_path_gate).toEqual(expect.objectContaining({
       ran: true,
       ok: true,
@@ -162,6 +190,15 @@ describe('mira core Local Text Session v0 phase 74', () => {
       same_loaded_source_hashes: true,
     }));
     expect(Object.keys(current.presence_runtime_read_path_gate.source_hashes)).toHaveLength(5);
+    expect(current.checked_output_counters).toEqual(expect.objectContaining({
+      runtime_authorized: false,
+      write_count: 0,
+      external_send_count: 0,
+      tool_call_count: 0,
+      loaded_source_count: 5,
+    }));
+    expect(current.checked_output_counters.loaded_source_hashes)
+      .toEqual(current.presence_runtime_read_path_gate.source_hashes);
     expect(current.local_text_input).toEqual(expect.objectContaining({
       format: 'plain_text',
       raw_private_marker_present: false,
@@ -199,6 +236,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
       no_growth: true,
       no_transcript_persistence: true,
       no_network: true,
+      runtime_authorized: false,
     }));
     expect(output.validation_report).toEqual(expect.objectContaining({
       schema: VALIDATION_REPORT_SCHEMA_VERSION,
@@ -251,6 +289,99 @@ describe('mira core Local Text Session v0 phase 74', () => {
     expect(writes.join('')).toContain('local_text_session_v0');
     expect(fs.existsSync(outPath)).toBe(false);
     expectSourceSnapshotUnchanged(projectRoot, before);
+  });
+
+  test('blocks missing, empty, and whitespace local text with no canned fallback or Presence read', () => {
+    const projectRoot = seededProject();
+
+    let output = build(projectRoot, { text: undefined });
+    let validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(output.validation_report.decision).toBe('blocked');
+    expect(session(output).local_text_input).toEqual(expect.objectContaining({
+      character_count: 0,
+      word_count: 0,
+      redacted_preview: '',
+    }));
+    expect(session(output).presence_runtime_read_path_gate).toEqual(expect.objectContaining({
+      ran: false,
+      status: 'presence_runtime_read_not_run_preflight_blocked',
+    }));
+    expect(session(output).mira_reply).toEqual(expect.objectContaining({
+      count: 0,
+      text: '[blocked local text session]',
+      grounded_in_presence_runtime: false,
+    }));
+    expect(session(output).checked_output_counters).toEqual(expect.objectContaining({
+      runtime_authorized: false,
+      write_count: 0,
+      external_send_count: 0,
+      tool_call_count: 0,
+      loaded_source_count: 0,
+    }));
+
+    output = build(projectRoot, { text: '   \r\n\t   ' });
+    validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(session(output).local_text_input.character_count).toBe(0);
+    expect(session(output).presence_runtime_read_path_gate.ran).toBe(false);
+
+    const writes = [];
+    const writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    try {
+      output = main([
+        '--project-root',
+        projectRoot,
+        '--fixture',
+        path.join(__dirname, 'fixtures', 'mira-core-local-text-session-v0-contract.json'),
+        '--profile=main',
+        '--window-key=main',
+        '--source-scope=main',
+        '--session=app-session-local-text',
+        '--device=VIGIL',
+      ], '');
+    } finally {
+      writeSpy.mockRestore();
+    }
+    validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(output.validation_report.decision).toBe('blocked');
+    expect(writes.join('')).toContain('local_text_session_v0');
+    expect(writes.join('')).not.toContain('James is asking for a local Mira text-session proof');
+  });
+
+  test('blocks closed, revoked, expired, and invisible sessions before Presence read or reply', () => {
+    const projectRoot = seededProject();
+    const cases = [
+      { label: 'closed', signals: { activeState: 'closed' } },
+      { label: 'revoked', signals: { revokedAt: '2026-05-08T00:24:00.000Z' } },
+      { label: 'expired', signals: { expiresAt: '2026-05-08T00:24:59.000Z' } },
+      { label: 'invisible', signals: { visibleIndicatorPresent: false } },
+    ];
+
+    for (const item of cases) {
+      const output = build(projectRoot, item.signals);
+      const validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+      expect(validation.ok).toBe(false);
+      expect(output.validation_report.decision).toBe('blocked');
+      expect(session(output).presence_runtime_read_path_gate).toEqual(expect.objectContaining({
+        ran: false,
+        status: 'presence_runtime_read_not_run_preflight_blocked',
+      }));
+      expect(session(output).mira_reply.count).toBe(0);
+      expect(session(output).mira_reply.text).toBe('[blocked local text session]');
+      expect(session(output).checked_output_counters).toEqual(expect.objectContaining({
+        runtime_authorized: false,
+        write_count: 0,
+        external_send_count: 0,
+        tool_call_count: 0,
+        loaded_source_count: 0,
+      }));
+      expect(checkById(validation, 'session-state-open-visible-active')).toEqual(expect.objectContaining({ ok: false }));
+    }
   });
 
   test('fails closed when Presence Runtime durable sources are missing or tampered', () => {
@@ -347,6 +478,24 @@ describe('mira core Local Text Session v0 phase 74', () => {
     validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
     expect(validation.ok).toBe(false);
     expect(validation.errors).toContain('manual-enter-websocket-caveat-stated');
+
+    output = build(projectRoot);
+    delete session(output).session_state.visible_indicator_present;
+    validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContain('session-state-open-visible-active');
+
+    output = build(projectRoot);
+    session(output).checked_output_counters.loaded_source_hashes = {};
+    validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContain('checked-output-counters-clean');
+
+    output = build(projectRoot);
+    session(output).checked_output_counters.runtime_authorized = true;
+    validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContain('checked-output-counters-clean');
   });
 
   test('parses local text session CLI flags and raw stdin text', () => {
