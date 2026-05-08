@@ -60,6 +60,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'list-friction',
   'list-processes',
   'list-screenshots',
+  'mira:local-text-session',
   'notify-external-test',
   'open-app-window',
   'oracle:deleteImage',

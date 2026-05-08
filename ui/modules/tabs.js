@@ -10,6 +10,7 @@ const screenshots = require('./tabs/screenshots');
 const oracle = require('./tabs/oracle');
 const commsConsole = require('./tabs/comms-console');
 const voiceBroker = require('./tabs/voice-broker');
+const miraLocalText = require('./tabs/mira-local-text');
 
 const apiKeys = require('./tabs/api-keys');
 const bridge = require('./tabs/bridge');
@@ -98,6 +99,7 @@ function destroyAllTabs() {
   if (typeof oracle.destroyOracleTab === 'function') oracle.destroyOracleTab();
   if (typeof commsConsole.destroy === 'function') commsConsole.destroy();
   if (typeof voiceBroker.destroyVoiceBrokerTab === 'function') voiceBroker.destroyVoiceBrokerTab();
+  if (typeof miraLocalText.destroyMiraLocalTextTab === 'function') miraLocalText.destroyMiraLocalTextTab();
 
   if (typeof apiKeys.destroyApiKeysTab === 'function') apiKeys.destroyApiKeysTab();
   if (typeof bridge.destroy === 'function') bridge.destroy();
@@ -128,6 +130,7 @@ function setupRightPanel(handleResizeFn, busInstance) {
   oracle.setupOracleTab(updateConnectionStatus);
   if (busInstance) commsConsole.setupCommsConsoleTab(busInstance);
   voiceBroker.setupVoiceBrokerTab();
+  miraLocalText.setupMiraLocalTextTab();
 
   apiKeys.setupApiKeysTab();
   if (busInstance) bridge.setupBridgeTab(busInstance);

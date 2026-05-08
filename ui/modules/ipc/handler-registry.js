@@ -44,6 +44,7 @@ const { registerWorkflowHandlers } = require('./workflow-handlers');
 const { registerTaskPoolHandlers } = require('./task-pool-handlers');
 const { registerOwnedWorkHandlers } = require('./owned-work-handlers');
 const { registerVoiceBrokerHandlers } = require('./voice-broker-handlers');
+const { registerMiraLocalTextUiSurfaceHandlers } = require('./mira-local-text-ui-surface-handlers');
 const { registerOracleHandlers } = require('./oracle-handlers');
 const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
@@ -104,6 +105,7 @@ const DEFAULT_HANDLERS = [
   registerTaskPoolHandlers,
   registerOwnedWorkHandlers,
   registerVoiceBrokerHandlers,
+  registerMiraLocalTextUiSurfaceHandlers,
   registerOracleHandlers,
   registerModelSwitchHandlers,
   registerOrganicUIHandlers,
