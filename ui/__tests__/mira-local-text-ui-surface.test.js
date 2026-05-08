@@ -86,6 +86,8 @@ function payload(overrides = {}) {
     deviceId: 'VIGIL',
     activeState: 'open',
     visibleIndicatorPresent: true,
+    startedAt: '2026-05-08T00:25:00.000Z',
+    expiresAt: '2026-05-08T00:40:00.000Z',
     ...overrides,
   };
 }
@@ -100,6 +102,47 @@ describe('Mira Local Text UI Surface v0', () => {
 
     expect(surface.decision).toBe('blocked');
     expect(surface.status).toBe('blocked_empty_input');
+    expect(surface.local_text_session_gate.ran).toBe(false);
+    expect(surface.checked_output_counters.module_call_count).toBe(0);
+    expect(surface.reply).toEqual(expect.objectContaining({ count: 0, text: null, source: 'none' }));
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('text-only payload blocks before Local Text Session gate because UI metadata is missing', () => {
+    const output = buildMiraLocalTextUiSurface({
+      text: 'Plain text without renderer metadata must not default into main.',
+      now: '2026-05-08T00:25:00.000Z',
+    }, { projectRoot: tempProject() });
+    const surface = output.ui_surface_v0;
+
+    expect(surface.decision).toBe('blocked');
+    expect(surface.status).toBe('blocked_missing_ui_metadata');
+    expect(surface.ui_bound_metadata.missing_fields).toEqual(expect.arrayContaining([
+      'profileName',
+      'windowKey',
+      'sourceScope',
+      'deviceId',
+      'sessionId',
+      'activeState',
+      'visibleIndicatorPresent',
+      'startedAt',
+      'expiresAt',
+    ]));
+    expect(surface.local_text_session_gate.ran).toBe(false);
+    expect(surface.checked_output_counters.module_call_count).toBe(0);
+    expect(surface.reply).toEqual(expect.objectContaining({ count: 0, text: null, source: 'none' }));
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('missing visible indicator blocks before Local Text Session gate', () => {
+    const { visibleIndicatorPresent, ...withoutVisibleIndicator } = payload();
+    const output = buildMiraLocalTextUiSurface(withoutVisibleIndicator, { projectRoot: tempProject() });
+    const surface = output.ui_surface_v0;
+
+    expect(visibleIndicatorPresent).toBe(true);
+    expect(surface.decision).toBe('blocked');
+    expect(surface.status).toBe('blocked_missing_visible_indicator');
+    expect(surface.ui_bound_metadata.missing_fields).toContain('visibleIndicatorPresent');
     expect(surface.local_text_session_gate.ran).toBe(false);
     expect(surface.checked_output_counters.module_call_count).toBe(0);
     expect(surface.reply).toEqual(expect.objectContaining({ count: 0, text: null, source: 'none' }));
@@ -171,17 +214,17 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(JSON.stringify(output)).not.toContain('Korean case details');
   });
 
-  test('closed visible state calls the accepted module gate but renders no fabricated reply', () => {
+  test('closed visible state blocks before Local Text Session gate and renders no fabricated reply', () => {
     const projectRoot = seededProject();
     const output = buildMiraLocalTextUiSurface(payload({ activeState: 'closed' }), { projectRoot });
     const surface = output.ui_surface_v0;
 
     expect(surface.decision).toBe('blocked');
-    expect(surface.status).toBe('blocked_by_local_text_session');
-    expect(surface.local_text_session_gate.ran).toBe(true);
-    expect(surface.local_text_session_gate.decision).toBe('blocked');
+    expect(surface.status).toBe('blocked_inactive_ui_state');
+    expect(surface.local_text_session_gate.ran).toBe(false);
+    expect(surface.local_text_session_gate.decision).toBe('not_called');
     expect(surface.reply).toEqual(expect.objectContaining({ count: 0, text: null, source: 'none' }));
-    expect(surface.checked_output_counters.module_call_count).toBe(1);
+    expect(surface.checked_output_counters.module_call_count).toBe(0);
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
@@ -203,6 +246,20 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(ipcMain.handle).toHaveBeenCalledWith(LOCAL_TEXT_UI_CHANNEL, expect.any(Function));
     const handled = await registered.get(LOCAL_TEXT_UI_CHANNEL)({}, payload());
     expect(handled.ui_surface_v0.decision).toBe('accepted');
+    const textOnlyHandled = await registered.get(LOCAL_TEXT_UI_CHANNEL)({}, { text: 'text only' });
+    expect(textOnlyHandled.ui_surface_v0).toEqual(expect.objectContaining({
+      decision: 'blocked',
+      status: 'blocked_missing_ui_metadata',
+    }));
+    expect(textOnlyHandled.ui_surface_v0.local_text_session_gate.ran).toBe(false);
+    const { visibleIndicatorPresent, ...withoutVisibleIndicator } = payload();
+    const missingVisibleHandled = await registered.get(LOCAL_TEXT_UI_CHANNEL)({}, withoutVisibleIndicator);
+    expect(visibleIndicatorPresent).toBe(true);
+    expect(missingVisibleHandled.ui_surface_v0).toEqual(expect.objectContaining({
+      decision: 'blocked',
+      status: 'blocked_missing_visible_indicator',
+    }));
+    expect(missingVisibleHandled.ui_surface_v0.local_text_session_gate.ran).toBe(false);
 
     const ipcRenderer = {
       invoke: jest.fn(async () => ({ ok: true })),

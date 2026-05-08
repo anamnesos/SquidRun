@@ -128,10 +128,12 @@ describe('Mira local text tab controller', () => {
       elements,
       invoke,
       getSessionId: () => 'app-session-329',
+      nowMs: Date.parse('2026-05-08T00:25:00.000Z'),
     });
 
     const first = controller.submit();
     const second = await controller.submit();
+    expect(elements.input.value).toBe('Say this from local Mira state.');
     resolveInvoke(acceptedResult());
     await first;
 
@@ -143,11 +145,16 @@ describe('Mira local text tab controller', () => {
       sourceScope: 'main',
       deviceId: 'VIGIL',
       sessionId: 'app-session-329',
+      activeState: 'open',
+      visibleIndicatorPresent: true,
+      startedAt: '2026-05-08T00:25:00.000Z',
+      expiresAt: '2026-05-08T00:40:00.000Z',
     }));
     expect(elements.panel.dataset.duplicateSubmitBlockCount).toBe('1');
+    expect(elements.input.value).toBe('');
   });
 
-  test('accepted result renders exactly one reply and does not append a transcript', async () => {
+  test('accepted result renders exactly one reply, clears draft, and does not append a transcript', async () => {
     const elements = makeElements('Answer in text.');
     const invoke = jest.fn()
       .mockResolvedValueOnce(acceptedResult('First local reply.'))
@@ -162,11 +169,17 @@ describe('Mira local text tab controller', () => {
     expect(elements.reply.textContent).toBe('First local reply.');
     expect(elements.reply.dataset.count).toBe('1');
     expect(elements.panel.dataset.replyCount).toBe('1');
+    expect(elements.input.value).toBe('');
+    expect(controller.getDraftText()).toBe('');
 
+    elements.input.value = 'Second answer in text.';
+    elements.input.dispatch('input');
     await controller.submit();
     expect(elements.reply.textContent).toBe('Second local reply.');
     expect(elements.reply.textContent).not.toContain('First local reply.');
     expect(elements.panel.dataset.replyCount).toBe('2');
+    expect(elements.input.value).toBe('');
+    expect(controller.getDraftText()).toBe('');
   });
 
   test('blocked result shows status only and does not fabricate the module blocked placeholder', async () => {

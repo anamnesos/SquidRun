@@ -11,13 +11,33 @@ const {
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
 const LOCAL_TEXT_UI_SURFACE_VERSION = 1;
-const DEFAULT_SESSION_ID = 'app-session-ui-local-text';
 const DEFAULT_SCOPE = Object.freeze({
   profileName: 'main',
   windowKey: 'main',
   sourceScope: 'main',
   deviceId: 'VIGIL',
 });
+const REQUIRED_UI_METADATA_FIELDS = Object.freeze([
+  'profileName',
+  'windowKey',
+  'sourceScope',
+  'deviceId',
+  'sessionId',
+  'activeState',
+  'visibleIndicatorPresent',
+  'startedAt',
+  'expiresAt',
+]);
+const PRE_MODULE_BLOCK_REASONS = Object.freeze([
+  'blocked_empty_input',
+  'blocked_missing_ui_metadata',
+  'blocked_missing_visible_indicator',
+  'blocked_non_main_scope',
+  'blocked_wrong_device',
+  'blocked_invalid_session_id',
+  'blocked_inactive_ui_state',
+  'blocked_invalid_active_window',
+]);
 
 const ZERO_SIDE_EFFECT_COUNTERS = Object.freeze({
   runtime_authorized: false,
@@ -59,14 +79,142 @@ function normalizeString(value, fallback) {
   return text || fallback;
 }
 
-function normalizeScope(payload = {}) {
-  const profile = payload.profile && typeof payload.profile === 'object' ? payload.profile : {};
-  const profileName = normalizeString(payload.profileName || profile.name, DEFAULT_SCOPE.profileName);
-  const windowKey = normalizeString(payload.windowKey || profile.windowKey, DEFAULT_SCOPE.windowKey);
-  const sourceScope = normalizeString(payload.sourceScope || payload.source_scope, DEFAULT_SCOPE.sourceScope);
-  const deviceId = normalizeString(payload.deviceId || payload.device, DEFAULT_SCOPE.deviceId);
-  const sessionId = normalizeString(payload.sessionId || payload.session || profile.sessionScopeId, DEFAULT_SESSION_ID);
-  const mainScope = profileName === 'main'
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value || {}, key);
+}
+
+function parseTimeMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getPayloadValue(payload = {}, key) {
+  if (hasOwn(payload, key)) return payload[key];
+  if (key === 'sourceScope' && hasOwn(payload, 'source_scope')) return payload.source_scope;
+  if (key === 'activeState' && hasOwn(payload, 'active_state')) return payload.active_state;
+  if (key === 'visibleIndicatorPresent' && hasOwn(payload, 'visible_indicator_present')) {
+    return payload.visible_indicator_present;
+  }
+  if (key === 'startedAt' && hasOwn(payload, 'started_at')) return payload.started_at;
+  if (key === 'expiresAt' && hasOwn(payload, 'expires_at')) return payload.expires_at;
+  if (key === 'revokedAt' && hasOwn(payload, 'revoked_at')) return payload.revoked_at;
+  return undefined;
+}
+
+function uiBoundMetadataPreflight(payload = {}, generatedAt) {
+  const missing = REQUIRED_UI_METADATA_FIELDS.filter((field) => {
+    if (field === 'visibleIndicatorPresent') {
+      return getPayloadValue(payload, field) === undefined;
+    }
+    return !String(getPayloadValue(payload, field) || '').trim();
+  });
+  const invalid = [];
+  const profileName = String(getPayloadValue(payload, 'profileName') || '').trim();
+  const windowKey = String(getPayloadValue(payload, 'windowKey') || '').trim();
+  const sourceScope = String(getPayloadValue(payload, 'sourceScope') || '').trim();
+  const deviceId = String(getPayloadValue(payload, 'deviceId') || '').trim();
+  const sessionId = String(getPayloadValue(payload, 'sessionId') || '').trim();
+  const activeState = String(getPayloadValue(payload, 'activeState') || '').trim();
+  const visibleIndicatorPresent = getPayloadValue(payload, 'visibleIndicatorPresent');
+  const startedAt = String(getPayloadValue(payload, 'startedAt') || '').trim();
+  const expiresAt = String(getPayloadValue(payload, 'expiresAt') || '').trim();
+  const revokedAt = getPayloadValue(payload, 'revokedAt');
+  const startedAtMs = parseTimeMs(startedAt);
+  const expiresAtMs = parseTimeMs(expiresAt);
+  const generatedAtMs = parseTimeMs(generatedAt);
+
+  if (profileName && profileName !== 'main') invalid.push('profileName_must_be_main');
+  if (windowKey && windowKey !== 'main') invalid.push('windowKey_must_be_main');
+  if (sourceScope && sourceScope !== 'main') invalid.push('sourceScope_must_be_main');
+  if (deviceId && deviceId !== 'VIGIL') invalid.push('deviceId_must_be_VIGIL');
+  if (sessionId && !/^app-session(?:[-:_A-Za-z0-9]+)?$/.test(sessionId)) {
+    invalid.push('sessionId_must_be_app_session');
+  }
+  if (activeState && activeState !== 'open') invalid.push('activeState_must_be_open');
+  if (visibleIndicatorPresent !== undefined && visibleIndicatorPresent !== true) {
+    invalid.push('visibleIndicatorPresent_must_be_true');
+  }
+  if (startedAt && startedAtMs === null) invalid.push('startedAt_must_be_iso_time');
+  if (expiresAt && expiresAtMs === null) invalid.push('expiresAt_must_be_iso_time');
+  if (startedAtMs !== null && generatedAtMs !== null && startedAtMs > generatedAtMs) {
+    invalid.push('startedAt_must_not_be_future');
+  }
+  if (expiresAtMs !== null && generatedAtMs !== null && expiresAtMs <= generatedAtMs) {
+    invalid.push('expiresAt_must_be_future');
+  }
+  if (startedAtMs !== null && expiresAtMs !== null && expiresAtMs <= startedAtMs) {
+    invalid.push('expiresAt_must_follow_startedAt');
+  }
+  if (revokedAt !== undefined && revokedAt !== null && String(revokedAt).trim()) {
+    invalid.push('revokedAt_must_be_empty_for_open_session');
+  }
+
+  const ok = missing.length === 0 && invalid.length === 0;
+  return {
+    ok,
+    required_fields: [...REQUIRED_UI_METADATA_FIELDS],
+    missing_fields: missing,
+    invalid_reasons: invalid,
+    expected_scope: {
+      profileName: 'main',
+      windowKey: 'main',
+      sourceScope: 'main',
+      deviceId: 'VIGIL',
+      sessionIdPrefix: 'app-session',
+      activeState: 'open',
+      visibleIndicatorPresent: true,
+    },
+    provided_flags: REQUIRED_UI_METADATA_FIELDS.reduce((result, field) => {
+      result[field] = field === 'visibleIndicatorPresent'
+        ? getPayloadValue(payload, field) !== undefined
+        : String(getPayloadValue(payload, field) || '').trim().length > 0;
+      return result;
+    }, {}),
+    session_id_prefix_ok: sessionId ? /^app-session(?:[-:_A-Za-z0-9]+)?$/.test(sessionId) : false,
+    active_expiry_window_ok: startedAtMs !== null
+      && expiresAtMs !== null
+      && generatedAtMs !== null
+      && startedAtMs <= generatedAtMs
+      && generatedAtMs < expiresAtMs,
+    visible_indicator_present: visibleIndicatorPresent === true,
+    blocks_before_local_text_gate: !ok,
+  };
+}
+
+function blockReasonFromMetadata(preflight = {}) {
+  const missing = new Set(preflight.missing_fields || []);
+  const invalid = new Set(preflight.invalid_reasons || []);
+  if (missing.size > 1) return 'blocked_missing_ui_metadata';
+  if (missing.has('visibleIndicatorPresent') || invalid.has('visibleIndicatorPresent_must_be_true')) {
+    return 'blocked_missing_visible_indicator';
+  }
+  if (missing.size > 0) return 'blocked_missing_ui_metadata';
+  if (
+    invalid.has('profileName_must_be_main')
+    || invalid.has('windowKey_must_be_main')
+    || invalid.has('sourceScope_must_be_main')
+  ) {
+    return 'blocked_non_main_scope';
+  }
+  if (invalid.has('deviceId_must_be_VIGIL')) return 'blocked_wrong_device';
+  if (invalid.has('sessionId_must_be_app_session')) return 'blocked_invalid_session_id';
+  if (
+    invalid.has('activeState_must_be_open')
+    || invalid.has('revokedAt_must_be_empty_for_open_session')
+  ) {
+    return 'blocked_inactive_ui_state';
+  }
+  return 'blocked_invalid_active_window';
+}
+
+function normalizeScope(payload = {}, preflight = null) {
+  const profileName = String(getPayloadValue(payload, 'profileName') || '').trim();
+  const windowKey = String(getPayloadValue(payload, 'windowKey') || '').trim();
+  const sourceScope = String(getPayloadValue(payload, 'sourceScope') || '').trim();
+  const deviceId = String(getPayloadValue(payload, 'deviceId') || '').trim();
+  const sessionId = String(getPayloadValue(payload, 'sessionId') || '').trim();
+  const mainScope = preflight?.ok === true
+    && profileName === 'main'
     && windowKey === 'main'
     && sourceScope === 'main'
     && deviceId === 'VIGIL';
@@ -84,18 +232,17 @@ function normalizeScope(payload = {}) {
   };
 }
 
-function normalizeSessionState(payload = {}, generatedAt) {
+function normalizeSessionState(payload = {}) {
+  const startedAt = getPayloadValue(payload, 'startedAt');
+  const expiresAt = getPayloadValue(payload, 'expiresAt');
+  const revokedAt = getPayloadValue(payload, 'revokedAt');
   return {
-    active_state: normalizeString(payload.activeState || payload.active_state, 'open'),
+    active_state: normalizeString(getPayloadValue(payload, 'activeState'), 'missing_active_state'),
     visible_indicator_required: true,
-    visible_indicator_present: payload.visibleIndicatorPresent !== false
-      && payload.visible_indicator_present !== false,
-    started_at: normalizeString(payload.startedAt || payload.started_at, generatedAt),
-    expires_at: normalizeString(
-      payload.expiresAt || payload.expires_at,
-      new Date(Date.parse(generatedAt) + 15 * 60 * 1000).toISOString(),
-    ),
-    revoked_at: payload.revokedAt || payload.revoked_at || null,
+    visible_indicator_present: getPayloadValue(payload, 'visibleIndicatorPresent') === true,
+    started_at: startedAt ? String(startedAt).trim() : null,
+    expires_at: expiresAt ? String(expiresAt).trim() : null,
+    revoked_at: revokedAt || null,
     transcript_policy: 'not_persisted_v0',
     model_boundary: 'no_model_call_v0',
     review_owner: normalizeString(payload.reviewOwner || payload.review_owner, 'Architect'),
@@ -134,6 +281,7 @@ function buildSurfaceRecord({
   projectRoot,
   scope,
   sessionState,
+  metadataPreflight,
   input,
   sessionOutput = null,
   validation = null,
@@ -153,6 +301,7 @@ function buildSurfaceRecord({
     project_path: projectRoot,
     scope,
     session_state: sessionState,
+    ui_bound_metadata: metadataPreflight || null,
     visible_active_state: {
       required: true,
       present: sessionState.visible_indicator_present === true,
@@ -218,19 +367,40 @@ function buildSurfaceRecord({
 }
 
 function buildValidationReport(surface = {}) {
+  const preModuleBlocked = surface.decision === 'blocked'
+    && surface.local_text_session_gate?.ran === false
+    && PRE_MODULE_BLOCK_REASONS.includes(surface.status);
+  const metadataOk = surface.ui_bound_metadata?.ok === true;
   const checks = [
     {
+      id: 'explicit-ui-bound-metadata',
+      ok: metadataOk || preModuleBlocked,
+    },
+    {
       id: 'explicit-vigil-main-scope',
-      ok: surface.scope?.explicit_vigil_main_scope === true
+      ok: preModuleBlocked || (
+        surface.scope?.explicit_vigil_main_scope === true
         && surface.scope?.profile === 'main'
         && surface.scope?.windowKey === 'main'
         && surface.scope?.source_scope === 'main'
-        && surface.scope?.deviceId === 'VIGIL',
+        && surface.scope?.deviceId === 'VIGIL'
+      ),
     },
     {
       id: 'visible-active-state',
-      ok: surface.visible_active_state?.required === true
-        && surface.visible_active_state?.present === true,
+      ok: preModuleBlocked || (
+        surface.visible_active_state?.required === true
+        && surface.visible_active_state?.present === true
+      ),
+    },
+    {
+      id: 'metadata-blocks-before-local-text-gate',
+      ok: metadataOk || (
+        preModuleBlocked
+        && surface.local_text_session_gate?.ran === false
+        && Number(surface.checked_output_counters?.module_call_count) === 0
+        && surface.ui_bound_metadata?.blocks_before_local_text_gate === true
+      ),
     },
     {
       id: 'empty-input-blocks-before-module',
@@ -301,16 +471,18 @@ function buildValidationReport(surface = {}) {
   };
 }
 
-function buildBlockedSurface(reason, payload = {}, options = {}) {
+function buildBlockedSurface(reason, payload = {}, options = {}, metadataPreflight = null) {
   const generatedAt = generatedAtFromOptions(options, payload);
-  const scope = normalizeScope(payload);
-  const sessionState = normalizeSessionState(payload, generatedAt);
+  const preflight = metadataPreflight || uiBoundMetadataPreflight(payload, generatedAt);
+  const scope = normalizeScope(payload, preflight);
+  const sessionState = normalizeSessionState(payload);
   const projectRoot = path.resolve(options.projectRoot || payload.projectRoot || process.cwd());
   const surface = buildSurfaceRecord({
     generatedAt,
     projectRoot,
     scope,
     sessionState,
+    metadataPreflight: preflight,
     input: localTextFromPayload(payload),
     status: reason,
     decision: 'blocked',
@@ -325,16 +497,17 @@ function buildBlockedSurface(reason, payload = {}, options = {}) {
 
 function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
-  const scope = normalizeScope(payload);
+  const metadataPreflight = uiBoundMetadataPreflight(payload, generatedAt);
+  const scope = normalizeScope(payload, metadataPreflight);
   const text = localTextFromPayload(payload);
-  const sessionState = normalizeSessionState(payload, generatedAt);
+  const sessionState = normalizeSessionState(payload);
   const projectRoot = path.resolve(options.projectRoot || payload.projectRoot || process.cwd());
 
   if (text.trim().length === 0) {
-    return buildBlockedSurface('blocked_empty_input', payload, options);
+    return buildBlockedSurface('blocked_empty_input', payload, options, metadataPreflight);
   }
-  if (scope.explicit_vigil_main_scope !== true) {
-    return buildBlockedSurface('blocked_non_main_scope', payload, options);
+  if (metadataPreflight.ok !== true || scope.explicit_vigil_main_scope !== true) {
+    return buildBlockedSurface(blockReasonFromMetadata(metadataPreflight), payload, options, metadataPreflight);
   }
 
   const contractBundle = options.contractBundle || loadDefaultContracts();
@@ -373,6 +546,7 @@ function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     projectRoot,
     scope,
     sessionState,
+    metadataPreflight,
     input: text,
     sessionOutput,
     validation,
@@ -422,8 +596,10 @@ module.exports = {
   DEFAULT_SCOPE,
   LOCAL_TEXT_UI_CHANNEL,
   LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION,
+  REQUIRED_UI_METADATA_FIELDS,
   buildBlockedSurface,
   buildMiraLocalTextUiSurface,
   loadDefaultContracts,
+  uiBoundMetadataPreflight,
   validateMiraLocalTextUiSurfaceOutput,
 };
