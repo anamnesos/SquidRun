@@ -323,7 +323,19 @@ function extractCurrentLaneDirective(rawBody) {
     }
     if (insideReportSection) continue;
 
-    let match = stripped.match(/^(?:[-*]\s*)?(?:CURRENT\s+(?:LANE|PRIORITY|FOCUS)|ACTIVE\s+LANE|FOCUS)\s*:\s*(.+)$/i);
+    let match = stripped.match(/^(?:[-*]\s*)?CURRENT[-\s]+SESSION\s+TASK\s*:\s*(.+)$/i);
+    if (match) {
+      const objective = normalizeLaneObjective(match[1]);
+      if (objective) {
+        bestDirective = selectHigherPriorityDirective(bestDirective, {
+          kind: 'current_session_task',
+          objective,
+          priority: 115,
+        });
+      }
+    }
+
+    match = stripped.match(/^(?:[-*]\s*)?(?:CURRENT\s+(?:LANE|PRIORITY|FOCUS)|ACTIVE\s+LANE|FOCUS)\s*:\s*(.+)$/i);
     if (match) {
       const objective = normalizeLaneObjective(match[1]);
       if (objective) {

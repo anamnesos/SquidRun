@@ -8,6 +8,9 @@ const {
   removeLegacyPaneHandoffFiles,
   _internals,
 } = require('../modules/main/auto-handoff-materializer');
+const {
+  extractCurrentLaneDirective,
+} = require('../modules/main/agent-task-resolution');
 
 describe('auto-handoff-materializer', () => {
   let tempDir;
@@ -373,6 +376,60 @@ describe('auto-handoff-materializer', () => {
     expect(handoff).toContain('- pending_rows: 0');
     expect(handoff.indexOf('## Current Lane (machine-readable)')).toBeLessThan(handoff.indexOf('## Failed Deliveries'));
     expect(handoff).toContain('"sourceMessageId": "m-mira-lane"');
+  });
+
+  test('current-session task materializes as current lane and current lane syntax still extracts', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const currentSessionTaskBody = '(ARCHITECT #22): CURRENT-SESSION TASK: restart gate for committed Mira/startup package d414bfa';
+    const currentLaneBody = '(ARCHITECT #23): CURRENT LANE: verify restart continuity';
+
+    expect(extractCurrentLaneDirective(currentSessionTaskBody)).toEqual(expect.objectContaining({
+      kind: 'current_session_task',
+      objective: 'restart gate for committed Mira/startup package d414bfa',
+    }));
+    expect(extractCurrentLaneDirective(currentLaneBody)).toEqual(expect.objectContaining({
+      kind: 'current_lane',
+      objective: 'verify restart continuity',
+    }));
+
+    const rows = [
+      {
+        messageId: 'm-current-session-task',
+        sessionId: 'app-session-338',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: currentSessionTaskBody,
+        brokeredAtMs: 1000,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-338',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 2000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeLane: expect.objectContaining({
+        kind: 'current_session_task',
+        objective: 'restart gate for committed Mira/startup package d414bfa',
+        sourceMessageId: 'm-current-session-task',
+        sourceRef: 'architect#22',
+      }),
+    }));
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.activeLane.objective).toBe('restart gate for committed Mira/startup package d414bfa');
   });
 
   test('natural current-lane Mira priority supersedes stale unclosed startup task', async () => {
