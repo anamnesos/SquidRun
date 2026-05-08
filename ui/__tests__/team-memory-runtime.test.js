@@ -88,6 +88,86 @@ maybeDescribe('team-memory runtime phase0', () => {
     expect(second.duplicateClaims).toBeGreaterThan(0);
   });
 
+  test('backfill keeps pattern-hook delivery and lifecycle telemetry out of durable claims', () => {
+    evidenceStore.appendBatch([
+      {
+        eventId: 'evt-pattern-delivery-ok',
+        traceId: 'trc-pattern-delivery-ok',
+        type: 'delivery.outcome',
+        stage: 'team_memory',
+        source: 'team-memory.pattern-hook',
+        role: 'architect',
+        payload: {
+          status: 'delivered.verified',
+          outcome: 'delivered',
+          message: 'delivery verified',
+        },
+        meta: { ingestSource: 'team-memory-pattern-hook' },
+      },
+      {
+        eventId: 'evt-pattern-delivery-fail',
+        traceId: 'trc-pattern-delivery-fail',
+        type: 'delivery.failed',
+        stage: 'team_memory',
+        source: 'team-memory.pattern-hook',
+        role: 'architect',
+        payload: {
+          status: 'routed_unverified_timeout',
+          outcome: 'failed',
+          message: 'delivery timed out',
+        },
+        meta: { ingestSource: 'team-memory-pattern-hook' },
+      },
+      {
+        eventId: 'evt-pattern-session',
+        traceId: 'trc-pattern-session',
+        type: 'session.lifecycle',
+        stage: 'team_memory',
+        source: 'team-memory.pattern-hook',
+        role: 'builder',
+        payload: {
+          status: 'ended',
+          message: 'Session ended for pane 2',
+        },
+        meta: { ingestSource: 'team-memory-pattern-hook' },
+      },
+    ]);
+
+    const init = runtime.initializeTeamMemoryRuntime({
+      runtimeOptions: {
+        storeOptions: {
+          dbPath: path.join(tempDir, 'team-memory.sqlite'),
+        },
+      },
+      forceRuntimeRecreate: true,
+    });
+    expect(init.ok).toBe(true);
+
+    const result = runtime.executeTeamMemoryOperation('run-backfill', {
+      evidenceLedgerDbPath: path.join(tempDir, 'evidence-ledger.db'),
+      limit: 100,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.skippedEventOnlyClaims).toBe(3);
+    expect(result.insertedClaims).toBe(2);
+
+    const patternScopeClaims = runtime.executeTeamMemoryOperation('query-claims', {
+      scope: 'team-memory.pattern-hook',
+      limit: 10,
+    });
+    expect(patternScopeClaims.ok).toBe(true);
+    expect(patternScopeClaims.total).toBe(0);
+
+    const allClaims = runtime.executeTeamMemoryOperation('query-claims', {
+      limit: 20,
+    });
+    expect(allClaims.ok).toBe(true);
+    const statements = allClaims.claims.map((claim) => claim.statement).join('\n');
+    expect(statements).not.toContain('delivery verified');
+    expect(statements).not.toContain('delivery timed out');
+    expect(statements).not.toContain('Session ended for pane 2');
+  });
+
   test('routes search-claims action with combined filters', () => {
     const init = runtime.initializeTeamMemoryRuntime({
       runtimeOptions: {

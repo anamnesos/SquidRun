@@ -203,7 +203,7 @@ describe('memory consistency check', () => {
     const beforeCount = Number(db.prepare('SELECT COUNT(*) AS count FROM nodes').get().count || 0);
     db.close();
 
-    const result = planMemoryConsistencyRepair({ projectRoot: tempDir });
+    const result = planMemoryConsistencyRepair({ projectRoot: tempDir, allowOrphanDeletes: true });
 
     expect(result.mode).toBe('dry_run');
     expect(result.summary.insertCount).toBe(1);
@@ -253,6 +253,7 @@ describe('memory consistency check', () => {
     const result = runMemoryConsistencyRepair({
       projectRoot: tempDir,
       evidenceLedgerDbPath,
+      allowOrphanDeletes: true,
     });
 
     expect(result.ok).toBe(true);
@@ -270,6 +271,61 @@ describe('memory consistency check', () => {
     const auditCount = Number(evidenceDb.prepare('SELECT COUNT(*) AS count FROM ledger_events').get().count || 0);
     evidenceDb.close();
     expect(auditCount).toBe(2);
+  });
+
+  test('missing-only repair inserts canonical chunks without deleting orphans', () => {
+    const {
+      collectKnowledgeEntries,
+      runMemoryConsistencyRepair,
+    } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+    const entries = collectKnowledgeEntries(paths);
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+    const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
+    fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
+
+    const db = createDatabase(dbPath);
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'node-match',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: entries[0].content,
+      contentHash: entries[0].contentHash,
+      metadata: entries[0].metadata,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'node-orphan',
+      sourcePath: entries[1].sourcePath,
+      title: entries[1].title,
+      heading: entries[1].heading,
+      content: 'Old communication guidance.',
+      metadata: { old: true },
+    }, helpers);
+    db.close();
+
+    const result = runMemoryConsistencyRepair({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath,
+      repairScope: 'missing-only',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.repairScope).toBe('missing-only');
+    expect(result.execution.insertedNodes).toBe(1);
+    expect(result.execution.deletedNodes).toBe(0);
+    expect(result.summary.deferredActionCount).toBe(0);
+    expect(result.summary.deferredSkippedCount).toBe(1);
+    expect(result.postCheck.summary.missingInCognitiveCount).toBe(0);
+    expect(result.postCheck.summary.orphanedNodeCount).toBe(1);
+
+    const verifyDb = createDatabase(dbPath);
+    const orphan = verifyDb.prepare('SELECT node_id FROM nodes WHERE node_id = ?').get('node-orphan');
+    verifyDb.close();
+    expect(orphan.node_id).toBe('node-orphan');
   });
 
   test('repair skips deleted-source orphans with an explanation', () => {
@@ -526,5 +582,230 @@ describe('memory consistency check', () => {
     verifyDb.close();
 
     expect(Number(row.is_immune || 0)).toBe(1);
+  });
+
+  test('orphan migration moves relations, dedups repeated edges, merges metadata, deletes mapped orphan, and audits', () => {
+    const {
+      collectKnowledgeEntries,
+      runOrphanMigration,
+    } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+    const entries = collectKnowledgeEntries(paths);
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+    const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
+    fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
+
+    const db = createDatabase(dbPath);
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'target-node',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: entries[0].content,
+      contentHash: entries[0].contentHash,
+      metadata: entries[0].metadata,
+      accessCount: 3,
+      lastAccessedAt: '2026-01-02T00:00:00.000Z',
+      salienceScore: 0.4,
+      currentVersion: 2,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'helper-node',
+      sourcePath: entries[1].sourcePath,
+      title: entries[1].title,
+      heading: entries[1].heading,
+      content: entries[1].content,
+      contentHash: entries[1].contentHash,
+      metadata: entries[1].metadata,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'orphan-node',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: 'Older preference guidance with relational state.',
+      accessCount: 2,
+      lastAccessedAt: '2026-02-03T00:00:00.000Z',
+      salienceScore: 0.7,
+      currentVersion: 4,
+      isImmune: true,
+    }, helpers);
+    db.prepare(`
+      INSERT INTO edges (source_node_id, target_node_id, relation_type, weight)
+      VALUES (?, ?, ?, ?)
+    `).run('target-node', 'helper-node', 'supports', 1.5);
+    db.prepare(`
+      INSERT INTO edges (source_node_id, target_node_id, relation_type, weight)
+      VALUES (?, ?, ?, ?)
+    `).run('orphan-node', 'helper-node', 'supports', 2.5);
+    db.prepare(`
+      INSERT INTO edges (source_node_id, target_node_id, relation_type, weight)
+      VALUES (?, ?, ?, ?)
+    `).run('orphan-node', 'helper-node', 'supports', 3.5);
+    db.prepare(`
+      INSERT INTO edges (source_node_id, target_node_id, relation_type, weight)
+      VALUES (?, ?, ?, ?)
+    `).run('helper-node', 'orphan-node', 'references', 0.5);
+    db.prepare(`
+      INSERT INTO traces (node_id, trace_id, extracted_at)
+      VALUES (?, ?, ?)
+    `).run('target-node', 'shared-trace', '2026-01-01T00:00:00.000Z');
+    db.prepare(`
+      INSERT INTO traces (node_id, trace_id, extracted_at)
+      VALUES (?, ?, ?)
+    `).run('orphan-node', 'shared-trace', '2026-02-01T00:00:00.000Z');
+    db.prepare(`
+      INSERT INTO traces (node_id, trace_id, extracted_at)
+      VALUES (?, ?, ?)
+    `).run('orphan-node', 'unique-trace', '2026-02-02T00:00:00.000Z');
+    db.prepare(`
+      INSERT INTO memory_leases (
+        lease_id, node_id, agent_id, query_text, expires_at_ms, version_at_lease, created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('lease-1', 'orphan-node', 'builder', 'preference', 2000, 1, 1000, 1000);
+    db.close();
+
+    const result = runOrphanMigration({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath,
+      dryRun: false,
+      mappings: [{ oldNodeId: 'orphan-node', targetNodeId: 'target-node' }],
+      nowMs: Date.parse('2026-05-08T20:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.execution.appliedActions).toBe(1);
+    expect(result.execution.deletedNodes).toBe(1);
+    expect(result.execution.movedEdges).toBe(3);
+    expect(result.execution.dedupedEdges).toBe(2);
+    expect(result.execution.movedTraces).toBe(1);
+    expect(result.execution.dedupedTraces).toBe(1);
+    expect(result.execution.movedLeases).toBe(1);
+    expect(result.execution.auditEventsWritten).toBe(1);
+
+    const verifyDb = createDatabase(dbPath);
+    const orphan = verifyDb.prepare('SELECT node_id FROM nodes WHERE node_id = ?').get('orphan-node');
+    const target = verifyDb.prepare(`
+      SELECT access_count, last_accessed_at, salience_score, is_immune, current_version
+      FROM nodes
+      WHERE node_id = ?
+    `).get('target-node');
+    const supportEdges = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM edges
+      WHERE source_node_id = ? AND target_node_id = ? AND relation_type = ?
+    `).get('target-node', 'helper-node', 'supports').count || 0);
+    const supportWeight = Number(verifyDb.prepare(`
+      SELECT weight
+      FROM edges
+      WHERE source_node_id = ? AND target_node_id = ? AND relation_type = ?
+    `).get('target-node', 'helper-node', 'supports').weight || 0);
+    const reverseEdges = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM edges
+      WHERE source_node_id = ? AND target_node_id = ? AND relation_type = ?
+    `).get('helper-node', 'target-node', 'references').count || 0);
+    const sharedTraceCount = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM traces
+      WHERE node_id = ? AND trace_id = ?
+    `).get('target-node', 'shared-trace').count || 0);
+    const uniqueTraceCount = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM traces
+      WHERE node_id = ? AND trace_id = ?
+    `).get('target-node', 'unique-trace').count || 0);
+    const lease = verifyDb.prepare('SELECT node_id FROM memory_leases WHERE lease_id = ?').get('lease-1');
+    verifyDb.close();
+
+    expect(orphan).toBeUndefined();
+    expect(Number(target.access_count || 0)).toBe(5);
+    expect(target.last_accessed_at).toBe('2026-02-03T00:00:00.000Z');
+    expect(Number(target.salience_score || 0)).toBeCloseTo(0.7);
+    expect(Number(target.is_immune || 0)).toBe(1);
+    expect(Number(target.current_version || 0)).toBe(4);
+    expect(supportEdges).toBe(1);
+    expect(supportWeight).toBeCloseTo(3.5);
+    expect(reverseEdges).toBe(1);
+    expect(sharedTraceCount).toBe(1);
+    expect(uniqueTraceCount).toBe(1);
+    expect(lease.node_id).toBe('target-node');
+
+    const evidenceDb = createDatabase(evidenceLedgerDbPath);
+    const auditCount = Number(evidenceDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM ledger_events
+      WHERE type = ?
+    `).get('memory.consistency.repair').count || 0);
+    evidenceDb.close();
+    expect(auditCount).toBe(1);
+  });
+
+  test('orphan migration review skips ambiguous, missing-target, and deleted-source nodes', () => {
+    const {
+      collectKnowledgeEntries,
+      planOrphanMigration,
+    } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+    const entries = collectKnowledgeEntries(paths);
+    const db = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'target-one',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: entries[0].content,
+      contentHash: entries[0].contentHash,
+      metadata: entries[0].metadata,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'target-two',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: entries[0].content,
+      contentHash: entries[0].contentHash,
+      metadata: entries[0].metadata,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'ambiguous-orphan',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: 'Older content needing review.',
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'mapped-no-target',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: 'Older content with an invalid mapping.',
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'deleted-source-orphan',
+      sourcePath: 'knowledge/deleted.md',
+      title: 'Deleted',
+      heading: 'Removed Section',
+      content: 'This file no longer exists.',
+    }, helpers);
+    db.close();
+
+    const result = planOrphanMigration({
+      projectRoot: tempDir,
+      mappings: [{ oldNodeId: 'mapped-no-target', targetNodeId: 'missing-target' }],
+    });
+
+    expect(result.actions).toEqual([]);
+    expect(result.skipped).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'ambiguous_multi_target', nodeId: 'ambiguous-orphan' }),
+      expect.objectContaining({ kind: 'no_target', nodeId: 'mapped-no-target' }),
+      expect.objectContaining({ kind: 'deleted_source_review', nodeId: 'deleted-source-orphan' }),
+    ]));
   });
 });

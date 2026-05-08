@@ -17,6 +17,18 @@ function resolveDefaultEvidenceLedgerDbPath() {
 
 const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
 const DEFAULT_BACKFILL_LIMIT = 5000;
+const EVENT_ONLY_SOURCES = new Set([
+  'team-memory.pattern-hook',
+]);
+const EVENT_ONLY_TYPES = new Set([
+  'comms.preflight',
+  'delivery.failed',
+  'delivery.outcome',
+  'guard.fired',
+  'intent.updated',
+  'session.lifecycle',
+  'task.status_changed',
+]);
 const CANONICAL_ROLE_IDS = new Set(
   (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
     .map((entry) => String(entry).trim().toLowerCase())
@@ -89,7 +101,34 @@ function toDeterministicClaimId(idempotencyKey) {
   return `clm-${digest}`;
 }
 
+function normalizeEventToken(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isEventOnlyTelemetry(event = {}) {
+  const eventType = normalizeEventToken(event?.type);
+  const source = normalizeEventToken(event?.source);
+  const meta = event?.meta && typeof event.meta === 'object' ? event.meta : {};
+  const ingestSource = normalizeEventToken(meta.ingestSource || meta.ingest_source);
+
+  return (
+    EVENT_ONLY_TYPES.has(eventType)
+    || EVENT_ONLY_SOURCES.has(source)
+    || ingestSource === 'team-memory-pattern-hook'
+  );
+}
+
 function buildBackfillRecord(event, nowMs) {
+  if (isEventOnlyTelemetry(event)) {
+    return {
+      skip: true,
+      reason: 'event_only_telemetry',
+      eventId: String(event?.eventId || '').trim() || null,
+      eventType: String(event?.type || '').trim() || null,
+      source: String(event?.source || '').trim() || null,
+    };
+  }
+
   const eventId = String(event?.eventId || '').trim();
   const eventType = String(event?.type || 'unknown').trim() || 'unknown';
   const idempotencyKey = `backfill:${eventType}:${eventId}`;
@@ -151,6 +190,7 @@ function runBackfill(options = {}) {
       ok: true,
       status: 'no_events',
       scannedEvents: 0,
+      skippedEventOnlyClaims: 0,
       insertedClaims: 0,
       duplicateClaims: 0,
       linkedEvidenceRows: 0,
@@ -175,6 +215,7 @@ function runBackfill(options = {}) {
   let insertedClaims = 0;
   let duplicateClaims = 0;
   let linkedEvidenceRows = 0;
+  let skippedEventOnlyClaims = 0;
 
   try {
     teamDb.exec('BEGIN IMMEDIATE;');
@@ -182,6 +223,10 @@ function runBackfill(options = {}) {
       const eventId = String(event?.eventId || '').trim();
       if (!eventId) continue;
       const record = buildBackfillRecord(event, nowMs);
+      if (record?.skip === true) {
+        skippedEventOnlyClaims += 1;
+        continue;
+      }
 
       const claimResult = insertClaim.run(
         record.claimId,
@@ -231,6 +276,7 @@ function runBackfill(options = {}) {
       insertedClaims,
       duplicateClaims,
       linkedEvidenceRows,
+      skippedEventOnlyClaims,
     };
   }
 
@@ -239,6 +285,7 @@ function runBackfill(options = {}) {
     ok: true,
     status: 'backfilled',
     scannedEvents: events.length,
+    skippedEventOnlyClaims,
     insertedClaims,
     duplicateClaims,
     linkedEvidenceRows,
@@ -248,5 +295,6 @@ function runBackfill(options = {}) {
 module.exports = {
   runBackfill,
   buildBackfillRecord,
+  isEventOnlyTelemetry,
   resolveDefaultEvidenceLedgerDbPath,
 };
