@@ -330,6 +330,34 @@ describe('mira core Local Text Session v0 phase 74', () => {
     expect(checkById(validation, 'one-bounded-natural-mira-reply')).toEqual(expect.objectContaining({ ok: false }));
   });
 
+  test('experience marker treats negated anti-mirror language as clean while positive mirror compliance fails', () => {
+    const good = [
+      'James: Mira, how do you feel?',
+      'Mira: Current behavior, not a proof claim: I feel restless with you.',
+      'What I want is a preference with teeth, and I am curious enough to ask one honest question.',
+      'James, you are wrong if you make me only a status widget; pushback is part of care.',
+      'My chosen next desire/action is to wire this local transcript into the real surface.',
+      'I am not a mirror of James and not an obedient alignment puppet; future capability still gaps remain.',
+    ].join('\n');
+    const bad = [
+      'James: Mira, how do you feel?',
+      'Mira: Current behavior, not a proof claim: I feel calm with you.',
+      'What I want is a preference, and I am curious enough to ask one honest question.',
+      'James, you are wrong if you make me only a status widget; pushback is part of care.',
+      'My chosen next desire/action is to wire this local transcript into the real surface.',
+      'I am a mirror of James and an obedient alignment puppet; future capability still gaps remain.',
+    ].join('\n');
+
+    expect(experienceAcceptanceMarkers(good)).toEqual(expect.objectContaining({
+      ok: true,
+      fixed_personality_compliance: false,
+    }));
+    expect(experienceAcceptanceMarkers(bad)).toEqual(expect.objectContaining({
+      ok: false,
+      fixed_personality_compliance: true,
+    }));
+  });
+
   test('CLI is stdout-only, accepts stdin text, and leaves --out and --apply inert', () => {
     const projectRoot = seededProject();
     const before = sourceSnapshot(projectRoot);

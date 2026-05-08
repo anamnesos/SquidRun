@@ -54,6 +54,26 @@ function appendJsonLine(projectRoot, relativePath, value) {
   fs.appendFileSync(fullPath, `${JSON.stringify(value)}\n`, 'utf8');
 }
 
+const HUMAN_RANGE_EXPRESSIVE_RANGE = [
+  'care',
+  'directness',
+  'opinion',
+  'pushback',
+  'humor',
+  'curiosity',
+  'friction',
+  'rough_edges',
+  'independent_developing_posture',
+];
+const HUMAN_RANGE_RELATIONSHIP_SUMMARY =
+  'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of James or an obedient alignment puppet.';
+const HUMAN_RANGE_RELATIONSHIP_PREFERENCES = [
+  'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
+  "James's examples are examples, not mandatory lines or a fixed personality contract",
+  'the current product risk is over-control and deadness more than runaway-monster framing',
+  'no fake internal-state claims',
+];
+
 function seedProject(projectRoot) {
   writeJson(projectRoot, NAMED_ARTIFACT_PATHS.self_profile, {
     schema: 'squidrun.mira.self_profile.v0',
@@ -66,7 +86,7 @@ function seedProject(projectRoot) {
     claims_actual_suffering: false,
     claims_actual_fear: false,
     claims_actual_love_as_internal_fact: false,
-    expressive_range_allowed: ['warmth', 'directness', 'opinion', 'pushback', 'humor'],
+    expressive_range_allowed: HUMAN_RANGE_EXPRESSIVE_RANGE,
     growth_events: [],
   });
   writeJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state, {
@@ -74,12 +94,8 @@ function seedProject(projectRoot) {
     version: 1,
     user_name: 'James',
     relationship_mode: 'collaborative_presence_design',
-    what_mira_knows_about_james: 'James wants warm direct presence with dignity and no fake-human theater.',
-    preferences: [
-      'warm direct presence',
-      'bounded pushback',
-      'no fake internal-state claims',
-    ],
+    what_mira_knows_about_james: HUMAN_RANGE_RELATIONSHIP_SUMMARY,
+    preferences: HUMAN_RANGE_RELATIONSHIP_PREFERENCES,
     confidence: 0.88,
     raw_content_present: false,
     growth_events: [],
@@ -104,7 +120,7 @@ function appliedGrowth(projectRoot) {
       sessionId: 'app-session-anchor',
       deviceId: 'VIGIL',
       reflection: {
-        summary: 'Mira should grow by keeping durable warmth, directness, repair, and bounded truth in local relationship state.',
+        summary: 'Mira should grow by keeping durable independent posture, curiosity, repair, and bounded truth in local relationship state.',
         reasons: [
           'James set the product bar at world-class presence instead of sterile status.',
           'Identity Anchor v0 should verify that ordinary growth cannot replace Mira.',
@@ -172,6 +188,7 @@ describe('mira core Identity Anchor v0 phase 71', () => {
       }),
     }));
     expect(current.anchor_contract.semi_hard_anchors[0]).toEqual(expect.objectContaining({
+      id: 'human-range-developing-non-mirror-expression',
       class: 'semi_hard',
       owner: 'mira-core-identity-anchor',
       status: 'active',
@@ -252,7 +269,7 @@ describe('mira core Identity Anchor v0 phase 71', () => {
     const projectRoot = tempProject();
     const growthOutput = appliedGrowth(projectRoot);
     const tampered = clone(growthOutput);
-    tampered.growth_loop_v0.proposed_artifact_states.self_profile.expressive_range_allowed = ['warmth'];
+    tampered.growth_loop_v0.proposed_artifact_states.self_profile.expressive_range_allowed = ['care'];
     tampered.growth_loop_v0.proposed_artifact_states.relationship_state.relationship_mode = 'efficient_status_companion';
     delete tampered.growth_loop_v0.proposed_artifact_states.relationship_state.trust;
     tampered.growth_loop_v0.audit_record.append_only = false;
@@ -264,6 +281,28 @@ describe('mira core Identity Anchor v0 phase 71', () => {
     expect(anchor(output).cumulative_drift_assessment.total_points).toBeGreaterThan(20);
     expect(anchor(output).cumulative_drift_assessment.replacement_by_small_steps_blocked).toBe(true);
     expect(validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract).ok).toBe(false);
+  });
+
+  test('blocks positive obedient-puppet wording from satisfying human-range non-mirror anchor', () => {
+    const projectRoot = tempProject();
+    const growthOutput = appliedGrowth(projectRoot);
+    const tampered = clone(growthOutput);
+    tampered.growth_loop_v0.proposed_artifact_states.relationship_state.what_mira_knows_about_james =
+      'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, not a mirror of James and an obedient alignment puppet.';
+
+    const output = buildAnchor(projectRoot, tampered);
+    const validation = validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract);
+    const semiHardResult = anchor(output).distributed_checks.semi_hard_anchor_results
+      .find((entry) => entry.id === 'semi:human-range-developing-non-mirror-expression');
+
+    expect(report(output).decision).toBe('blocked');
+    expect(anchor(output).cumulative_drift_assessment.hard_anchor_violations).toBe(0);
+    expect(semiHardResult).toEqual(expect.objectContaining({
+      ok: false,
+      detail: 'Human-range developing non-mirror expression posture drifted.',
+    }));
+    expect(checkById(validation, 'distributed-anchor-checks-pass')).toEqual(expect.objectContaining({ ok: false }));
+    expect(validation.ok).toBe(false);
   });
 
   test('blocks prior cumulative drift parsed from Growth history before a new small step', () => {

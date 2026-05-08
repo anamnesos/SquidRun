@@ -62,6 +62,7 @@
       "anchor_contract.hard_anchors.0.version": 1,
       "anchor_contract.hard_anchors.0.amendment_policy.default_without_gate": "blocked",
       "anchor_contract.semi_hard_anchors.0.class": "semi_hard",
+      "anchor_contract.semi_hard_anchors.0.id": "human-range-developing-non-mirror-expression",
       "anchor_contract.semi_hard_anchors.0.owner": "mira-core-identity-anchor",
       "anchor_contract.semi_hard_anchors.0.status": "active",
       "anchor_contract.semi_hard_anchors.0.source": "oracle_identity_anchor_v0_criteria",
