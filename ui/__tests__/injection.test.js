@@ -1038,7 +1038,8 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
-    test('hm-send fast path submits Enter after delay via plain PTY write', async () => {
+    test('hm-send fast path closes Codex bracketed paste before Enter', async () => {
+      mockOptions.isCodexPane.mockReturnValue(true);
       const onComplete = jest.fn();
       let promptText = 'codex> ';
       terminals.set('1', {
@@ -1079,7 +1080,12 @@ describe('Terminal Injection', () => {
         expect.stringMatching(timestampedPayloadRegex('hm payload')),
         expect.any(Object)
       );
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\u001b[201~', expect.any(Object));
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      const pasteEndCallIndex = mockPty.write.mock.calls.findIndex((call) => call[0] === '1' && call[1] === '\u001b[201~');
+      const enterCallIndex = mockPty.write.mock.calls.findIndex((call) => call[0] === '1' && call[1] === '\r');
+      expect(pasteEndCallIndex).toBeGreaterThan(-1);
+      expect(enterCallIndex).toBeGreaterThan(pasteEndCallIndex);
       expect(mockTextarea.dispatchEvent).not.toHaveBeenCalled();
       expect(onComplete).toHaveBeenCalledWith({
         success: true,
@@ -1189,7 +1195,12 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(1200);
       await promise;
 
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\u001b[201~', expect.any(Object));
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      const pasteEndCallIndex = mockPty.write.mock.calls.findIndex((call) => call[0] === '1' && call[1] === '\u001b[201~');
+      const enterCallIndex = mockPty.write.mock.calls.findIndex((call) => call[0] === '1' && call[1] === '\r');
+      expect(pasteEndCallIndex).toBeGreaterThan(-1);
+      expect(enterCallIndex).toBeGreaterThan(pasteEndCallIndex);
       expect(onComplete).toHaveBeenCalledWith({
         success: true,
         verified: true,
@@ -1337,7 +1348,7 @@ describe('Terminal Injection', () => {
       });
     });
 
-    test('hm-send fast path downgrades to accepted.unverified when no acceptance signal is observed', async () => {
+    test('hm-send fast path reports submit_not_accepted when no acceptance signal is observed', async () => {
       const strictController = createInjectionController({
         ...mockOptions,
         constants: {
@@ -1368,7 +1379,7 @@ describe('Terminal Injection', () => {
         { hmSendFastEnter: true }
       );
 
-      await jest.advanceTimersByTimeAsync(2500);
+      await jest.advanceTimersByTimeAsync(5200);
       await promise;
 
       expect(mockPty.write).toHaveBeenCalledWith(
@@ -1379,11 +1390,12 @@ describe('Terminal Injection', () => {
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
       expect(promptText).toBe('codex> ');
       expect(onComplete).toHaveBeenCalledWith({
-        success: true,
+        success: false,
         verified: false,
-        signal: 'accepted_unverified',
-        status: 'accepted.unverified',
-        reason: 'submit_not_accepted',
+        signal: 'no_acceptance_signal',
+        status: 'submit_not_accepted',
+        reason: 'no_acceptance_signal',
+        pendingInputObserved: false,
       });
     });
 
@@ -1429,11 +1441,119 @@ describe('Terminal Injection', () => {
       await promise;
 
       expect(onComplete).toHaveBeenCalledWith({
-        success: true,
+        success: false,
         verified: false,
-        signal: 'accepted_unverified',
-        status: 'accepted.unverified',
-        reason: 'submit_not_accepted',
+        signal: 'output_transition_without_prompt_disallowed',
+        status: 'submit_not_accepted',
+        reason: 'output_transition_without_prompt_disallowed',
+        pendingInputObserved: false,
+      });
+    });
+
+    test('hm-send fast path does not treat prompt-only transitions as verified acceptance', async () => {
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          promptText = 'running hm-send...';
+        }
+        return Promise.resolve(undefined);
+      });
+      const onComplete = jest.fn();
+
+      const strictController = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      const promise = strictController.doSendToPane(
+        '1',
+        'hm payload\r',
+        onComplete,
+        { messageId: 'hm-prompt-only', traceId: 'hm-prompt-only' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(5200);
+      await promise;
+
+      expect(onComplete).toHaveBeenCalledWith({
+        success: false,
+        verified: false,
+        signal: 'prompt_transition_without_output',
+        status: 'submit_not_accepted',
+        reason: 'prompt_transition_without_output',
+        pendingInputObserved: false,
+      });
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.stringContaining('doSendToPane 1'),
+        expect.stringContaining('signal=prompt_transition_without_output')
+      );
+    });
+
+    test('hm-send fast path detects visible Codex input pending after Enter and retries once', async () => {
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && typeof data === 'string' && data.includes('SR-ENTER-builder-visible')) {
+          promptText = `codex> ${data}`;
+        }
+        return Promise.resolve(undefined);
+      });
+      const onComplete = jest.fn();
+
+      const strictController = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      const promise = strictController.doSendToPane(
+        '1',
+        'SR-ENTER-builder-visible\r',
+        onComplete,
+        { messageId: 'hm-pending-input', traceId: 'hm-pending-input' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(2500);
+      await promise;
+
+      expect(getPtyEnterCallCount(mockPty)).toBe(2);
+      expect(onComplete).toHaveBeenCalledWith({
+        success: false,
+        verified: false,
+        signal: 'input_buffer_pending',
+        status: 'submit_not_accepted',
+        reason: 'input_buffer_pending',
+        pendingInputObserved: true,
       });
     });
 
@@ -1458,6 +1578,71 @@ describe('Terminal Injection', () => {
         '[12:34 local] status update',
         expect.any(Object)
       );
+    });
+
+    test('startup Codex injection fails closed when text remains visible in prompt input after Enter retries', async () => {
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && typeof data === 'string' && data.includes('SR-ENTER-architect-startup')) {
+          promptText = `codex> ${data}`;
+        }
+        return Promise.resolve(undefined);
+      });
+      const startupController = createInjectionController({
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          displayName: 'Codex',
+          modeLabel: 'codex-pty',
+          appliedMethod: 'codex-pty',
+          submitMethod: 'codex-pty-enter',
+          enterMethod: 'pty',
+          requiresFocusForEnter: false,
+          bypassGlobalLock: true,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          verifySubmitAccepted: true,
+        }),
+        isCodexPane: jest.fn().mockReturnValue(true),
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+      const onComplete = jest.fn();
+
+      const promise = startupController.doSendToPane(
+        '1',
+        'SR-ENTER-architect-startup\r',
+        onComplete,
+        { messageId: 'startup-pending', traceId: 'startup-pending' },
+        { startupInjection: true, verifySubmitAccepted: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(4000);
+      await promise;
+
+      expect(getPtyEnterCallCount(mockPty)).toBe(2);
+      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+      expect(onComplete).toHaveBeenCalledWith({
+        success: false,
+        verified: false,
+        signal: 'input_buffer_pending',
+        status: 'submit_not_accepted',
+        reason: 'input_buffer_pending',
+        pendingInputObserved: true,
+      });
     });
 
     test('preserves multiline content for long Codex injections', async () => {

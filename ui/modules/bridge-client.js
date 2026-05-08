@@ -151,6 +151,11 @@ function normalizeRoleList(input) {
   return Array.from(normalized).sort();
 }
 
+function normalizeAvailableRoles(input) {
+  const roles = normalizeRoleList(input);
+  return roles.length > 0 ? roles : ['architect'];
+}
+
 function normalizeDiscoveryEntry(input = {}) {
   const entry = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};
   const deviceId = normalizeDeviceId(entry.device_id || entry.deviceId || entry.id);
@@ -265,6 +270,7 @@ class BridgeClient {
     this.pendingDiscoveries = new Map();
     this.pendingPairingInit = null;
     this.pendingPairingJoin = null;
+    this.availableRoles = normalizeAvailableRoles(options.availableRoles || options.roles || options.currentRoleMetadata);
   }
 
   emitStatus(status = {}) {
@@ -426,6 +432,8 @@ class BridgeClient {
         type: 'register',
         deviceId: this.deviceId,
         sharedSecret: this.sharedSecret,
+        availableRoles: this.availableRoles,
+        roles: this.availableRoles,
       });
     });
 
@@ -789,6 +797,7 @@ class BridgeClient {
     const messageId = asNonEmptyString(message.messageId);
     const fromDevice = normalizeDeviceId(message.fromDevice) || 'UNKNOWN';
     const content = asNonEmptyString(message.content);
+    const targetRole = (asNonEmptyString(message.targetRole) || 'architect').toLowerCase();
     const normalizedMetadata = normalizeBridgeMetadata(message.metadata, content, {
       ensureStructured: true,
     });
@@ -799,6 +808,18 @@ class BridgeClient {
     };
 
     if (typeof this.onMessage === 'function') {
+      if (targetRole !== 'architect') {
+        result = buildAckResult({
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'bridge_architect_only',
+          error: 'Cross-device bridge inbound targets are architect-to-architect only',
+          fromDevice,
+          toDevice: this.deviceId,
+        });
+      } else {
       try {
         const inboundResult = await this.onMessage({
           messageId,
@@ -826,6 +847,7 @@ class BridgeClient {
           fromDevice,
           toDevice: this.deviceId,
         });
+      }
       }
     }
 
@@ -874,6 +896,17 @@ class BridgeClient {
         ok: false,
         status: 'bridge_empty_content',
         error: 'content is required',
+      }));
+    }
+    if (targetRole !== 'architect') {
+      return Promise.resolve(buildAckResult({
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_architect_only',
+        error: 'Cross-device bridge targets are architect-to-architect only',
+        toDevice,
       }));
     }
     if (!this.isReady()) {
@@ -1104,4 +1137,5 @@ module.exports = {
   normalizeStructuredBridgeType,
   normalizeStructuredBridgeMessage,
   normalizeBridgeMetadata,
+  normalizeAvailableRoles,
 };

@@ -702,6 +702,40 @@ describe('daemon-handlers.js module', () => {
 
         delete global.window.squidrun.daemon;
       });
+
+      test('treats renderer reload main resend as reattach-only when terminal metadata is sparse', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        delete global.window.squidrun.daemon;
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        const data = {
+          replay: true,
+          source: 'main-reload-resend',
+          terminals: [
+            { paneId: '1', alive: true, scrollback: '', cwd: '/project/instances/architect' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/builder' },
+            { paneId: '3', alive: true, scrollback: '', cwd: '/project/instances/oracle' },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(reattachTerminalFn).toHaveBeenCalledTimes(3);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+        expect(invokeBridge).not.toHaveBeenCalledWith('get-settings');
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(false);
+      });
     });
 
     describe('claude-state-changed handler', () => {
@@ -1005,6 +1039,36 @@ describe('daemon-handlers.js module', () => {
         expect(sendBridge).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '3' });
       });
 
+      test('does not emit delivery outcome for hidden pane-host route-pending callback', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({
+            success: true,
+            verified: false,
+            routePending: true,
+            status: 'pane_host_route_pending',
+            reason: 'hidden_pane_host_delivery_pending',
+          }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-pending-1' });
+        jest.advanceTimersByTime(0);
+
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'pending');
+        expect(sendBridge).not.toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          expect.objectContaining({ deliveryId: 'delivery-pending-1' })
+        );
+        expect(sendBridge).not.toHaveBeenCalledWith(
+          'trigger-delivery-ack',
+          expect.objectContaining({ deliveryId: 'delivery-pending-1' })
+        );
+      });
+
       test('should emit trigger-delivery-ack when terminal delivery is verified', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {
@@ -1026,7 +1090,7 @@ describe('daemon-handlers.js module', () => {
         });
       });
 
-      test('should emit accepted.unverified outcome when terminal reports submit_not_accepted', () => {
+      test('should emit failed outcome when terminal reports submit_not_accepted', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
@@ -1044,14 +1108,14 @@ describe('daemon-handlers.js module', () => {
         injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-failed-1' });
         jest.runAllTimers();
 
-        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
+        expect(uiView.showDeliveryFailed).toHaveBeenCalledWith('3', 'submit_not_accepted');
         expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-outcome', {
           deliveryId: 'delivery-failed-1',
           messageId: 'delivery-failed-1',
           paneId: '3',
-          accepted: true,
+          accepted: false,
           verified: false,
-          status: 'accepted.unverified',
+          status: 'submit_not_accepted',
           reason: 'submit_not_accepted',
         });
         expect(sendBridge).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '3' });

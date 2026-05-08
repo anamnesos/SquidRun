@@ -2,6 +2,7 @@ const {
   LOCAL_TEXT_UI_CHANNEL,
   MIRA_COORDINATOR_SNAPSHOT_CHANNEL,
   createMiraLocalTextController,
+  resetMiraLocalTextMemoryForTests,
 } = require('../modules/tabs/mira-local-text');
 
 function makeElement(id, value = '') {
@@ -34,6 +35,7 @@ function makeElements(initialText = '', options = {}) {
     input: makeElement('miraLocalTextInput', initialText),
     submit: makeElement('miraLocalTextSubmitBtn'),
     reply: makeElement('miraLocalTextReply'),
+    developmental: makeElement('miraDevelopmentalUnderstanding'),
     meta: makeElement('miraLocalTextMeta'),
     counters: makeElement('miraLocalTextCounters'),
   };
@@ -82,6 +84,31 @@ function acceptedResult(text = 'Mira reply from local text session.') {
   };
 }
 
+function acceptedResultWithTentativeUnderstanding() {
+  const result = acceptedResult('I hear the thread. I can hold this as tentative and keep revising it with you.');
+  result.ui_surface_v0.developmental_understanding = {
+    status: 'tentative_understandings_present',
+    mode: 'integrated_conversation_memory_self_relationship_desire_growth_loop',
+    visible_label: "Mira's tentative understandings",
+    visible_as_memory_settings_panel: false,
+    james_clickthrough_required: false,
+    integrated_lived_loop: true,
+    tentative_understandings: [{
+      text: 'I prefer direct pushback when my premise is wrong.',
+      confidence: 'tentative',
+      risk_level: 'relationship_shaping',
+      revisable: true,
+      durable_memory_commit: false,
+    }],
+  };
+  result.ui_surface_v0.checked_output_counters.tentative_understanding_write_count = 1;
+  result.ui_surface_v0.checked_output_counters.write_count = 1;
+  result.ui_surface_v0.checked_output_counters.file_write_count = 1;
+  result.ui_surface_v0.checked_output_counters.database_write_count = 1;
+  result.ui_surface_v0.checked_output_counters.non_tentative_write_count = 0;
+  return result;
+}
+
 function blockedResult(reason = 'blocked_by_local_text_session') {
   return {
     ui_surface_v0: {
@@ -113,36 +140,76 @@ function blockedResult(reason = 'blocked_by_local_text_session') {
   };
 }
 
+function degradedResult(reason = 'model_request_failed') {
+  return {
+    ui_surface_v0: {
+      decision: 'degraded',
+      status: 'model_unavailable',
+      reasons: [reason],
+      local_text_session_gate: {
+        ran: true,
+        ok: true,
+        decision: 'accepted_local_text_only',
+      },
+      reply: {
+        count: 0,
+        text: null,
+        reply_id: null,
+        source: 'none',
+      },
+      model_attachment: {
+        degraded_reason: reason,
+        fallback_used: false,
+        primary_status: 'degraded',
+      },
+      checked_output_counters: {
+        module_call_count: 1,
+        reply_count: 0,
+        write_count: 0,
+        tool_call_count: 0,
+        external_send_count: 0,
+        model_call_count: 1,
+        network_count: 1,
+        fallback_used_count: 0,
+      },
+    },
+    validation_report: {
+      decision: 'degraded_no_model_response',
+    },
+  };
+}
+
 function coordinatorSnapshotResult() {
   return {
     coordinator_snapshot_v0: {
       decision: 'accepted',
       status: 'ready',
       current_focus: {
-        summary: 'Move the local text panel from available UI into restart-proof user-visible proof.',
+        summary: 'Move the Mira panel from local shell replies into live typed conversation.',
       },
       lanes: [
         { id: 'mira-local-text-ui-surface-v0', label: 'Mira Local Text UI Surface v0', state: 'active' },
-        { id: 'trustquote-tony-li-invoice', label: 'TrustQuote/Tony Li invoice', state: 'closed' },
-        { id: 'telegram-replay-restart-safety', label: 'Telegram replay restart safety', state: 'closed' },
       ],
       model_attachment: {
-        id: 'mira-model-attachment-v0',
+        id: 'mira-model-attachment-v1',
         label: 'Model Attachment',
         state: 'not_attached',
-        mode: 'dry_run_local_reply_harness',
-        visible_status: 'Model Attachment: not attached / dry-run local reply harness',
+        mode: 'local_shell_recent_context_ready',
+        visible_status: 'Conversation in local shell: model not attached',
         attachment_enabled: false,
         live_model_called: false,
         model_call_allowed: false,
-        api_wiring_present: false,
+        api_wiring_present: true,
         network_allowed: false,
         durable_writes_allowed: false,
         external_sends_allowed: false,
         runtime_started: false,
+        recent_conversation_context: 'sent_on_panel_submit',
+        tentative_understanding: 'panel_context_now_internal_scaffold_only',
+        durable_memory_commit: false,
       },
       next_recommended_action: {
-        summary: 'Use the Mira tab to verify Model Attachment is not attached, then submit one local text prompt and verify Ready, exactly one bounded reply, and zero writes/tools/sends.',
+        summary: "Use the Mira tab for live typed conversation, with recent context and Mira's tentative understandings forming inside the same loop.",
       },
       blockers: [
         { id: 'external_actions_blocked', label: 'Writes, sends, customer actions, deploy, and trade blocked', state: 'blocked' },
@@ -158,6 +225,10 @@ function coordinatorSnapshotResult() {
 }
 
 describe('Mira local text tab controller', () => {
+  beforeEach(() => {
+    resetMiraLocalTextMemoryForTests();
+  });
+
   test('empty input blocks locally without invoking the module and preserves the draft', async () => {
     const elements = makeElements('   ');
     const invoke = jest.fn();
@@ -239,6 +310,97 @@ describe('Mira local text tab controller', () => {
     expect(controller.getDraftText()).toBe('');
   });
 
+  test('accepted result renders Mira tentative understandings without memory settings controls', async () => {
+    const elements = makeElements('Talk with me and remember direct pushback as tentative.');
+    const invoke = jest.fn().mockResolvedValue(acceptedResultWithTentativeUnderstanding());
+    const controller = createMiraLocalTextController({
+      elements,
+      invoke,
+      getSessionId: () => 'app-session-329',
+    });
+
+    await controller.submit();
+
+    expect(elements.developmental.hidden).toBe(false);
+    expect(elements.developmental.dataset.count).toBe('1');
+    expect(elements.developmental.dataset.mode).toBe('integrated_conversation_memory_self_relationship_desire_growth_loop');
+    expect(elements.developmental.textContent).toContain('Mira is tentatively noticing');
+    expect(elements.developmental.textContent).toContain('I prefer direct pushback when my premise is wrong.');
+    expect(elements.developmental.textContent).toContain('revise');
+    expect(elements.developmental.textContent).not.toMatch(/approve|reject|delete|settings|queue/i);
+    expect(elements.panel.dataset.tentativeUnderstandingWriteCount).toBe('1');
+    expect(elements.panel.dataset.writeCount).toBe('1');
+  });
+
+  test('follow-up submit carries bounded recent panel conversation context', async () => {
+    const elements = makeElements('First question.');
+    const invoke = jest.fn()
+      .mockResolvedValueOnce(acceptedResult('First answer.'))
+      .mockResolvedValueOnce(acceptedResult('Second answer.'));
+    const controller = createMiraLocalTextController({
+      elements,
+      invoke,
+      getSessionId: () => 'app-session-329',
+    });
+
+    await controller.submit();
+    elements.input.value = 'Second question.';
+    elements.input.dispatch('input');
+    await controller.submit();
+
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke.mock.calls[0][1].threadContext.messages).toEqual([]);
+    expect(invoke.mock.calls[1][1].threadContext).toEqual(expect.objectContaining({
+      source: 'renderer_memory_only_panel_thread',
+      messages: [
+        { role: 'user', text: 'First question.' },
+        { role: 'assistant', text: 'First answer.' },
+      ],
+    }));
+    expect(controller.getThreadTurns()).toEqual([
+      { role: 'user', text: 'First question.' },
+      { role: 'assistant', text: 'First answer.' },
+      { role: 'user', text: 'Second question.' },
+      { role: 'assistant', text: 'Second answer.' },
+    ]);
+    expect(elements.panel.dataset.writeCount).toBe('0');
+    expect(elements.panel.dataset.toolCallCount).toBe('0');
+    expect(elements.panel.dataset.externalSendCount).toBe('0');
+  });
+
+  test('renderer thread context payload is capped to 3600 chars before IPC', async () => {
+    const longUser = 'u'.repeat(900);
+    const longMira = 'm'.repeat(900);
+    const elements = makeElements(longUser);
+    const invoke = jest.fn()
+      .mockResolvedValueOnce(acceptedResult(longMira))
+      .mockResolvedValueOnce(acceptedResult(longMira))
+      .mockResolvedValueOnce(acceptedResult(longMira))
+      .mockResolvedValueOnce(acceptedResult(longMira))
+      .mockResolvedValueOnce(acceptedResult(longMira));
+    const controller = createMiraLocalTextController({
+      elements,
+      invoke,
+      getSessionId: () => 'app-session-329',
+    });
+
+    for (let index = 0; index < 5; index += 1) {
+      elements.input.value = longUser;
+      elements.input.dispatch('input');
+      await controller.submit();
+    }
+
+    const lastPayload = invoke.mock.calls[invoke.mock.calls.length - 1][1];
+    const rawThreadChars = lastPayload.threadContext.messages
+      .reduce((total, message) => total + message.text.length, 0);
+
+    expect(lastPayload.threadContext.messages.length).toBeLessThanOrEqual(6);
+    expect(rawThreadChars).toBeLessThanOrEqual(3600);
+    expect(lastPayload.threadContext.messages).toHaveLength(4);
+    expect(controller.getThreadTurns().reduce((total, message) => total + message.text.length, 0))
+      .toBeLessThanOrEqual(3600);
+  });
+
   test('blocked result shows status only and does not fabricate the module blocked placeholder', async () => {
     const elements = makeElements('Try while closed.');
     const invoke = jest.fn().mockResolvedValue(blockedResult('session-state-open-visible-active'));
@@ -255,6 +417,26 @@ describe('Mira local text tab controller', () => {
     expect(elements.reply.textContent).toBe('');
     expect(elements.meta.textContent).toBe('session-state-open-visible-active');
     expect(elements.panel.dataset.moduleCallCount).toBe('1');
+  });
+
+  test('degraded model attachment shows connection status without local fallback reply', async () => {
+    const elements = makeElements('Try live Mira text.');
+    const invoke = jest.fn().mockResolvedValue(degradedResult('missing_openai_api_key'));
+    const controller = createMiraLocalTextController({
+      elements,
+      invoke,
+      getSessionId: () => 'app-session-329',
+    });
+
+    await controller.submit();
+
+    expect(elements.panel.dataset.status).toBe('degraded');
+    expect(elements.status.textContent).toBe('Model unavailable');
+    expect(elements.reply.hidden).toBe(true);
+    expect(elements.reply.textContent).toBe('');
+    expect(elements.meta.textContent).toBe('missing_openai_api_key');
+    expect(elements.panel.dataset.replyCount).toBe('0');
+    expect(elements.input.value).toBe('Try live Mira text.');
   });
 
   test('draft survives bridge failure and controller reinitialization without durable writes', async () => {
@@ -309,11 +491,13 @@ describe('Mira local text tab controller', () => {
       visibleIndicatorPresent: true,
     }));
     expect(elements.coordinatorStatus.textContent).toBe('Ready');
-    expect(elements.coordinatorFocus.textContent).toContain('local text panel');
-    expect(elements.coordinatorLanes.textContent).toContain('TrustQuote/Tony Li invoice: closed');
-    expect(elements.coordinatorLanes.textContent).toContain('Telegram replay restart safety: closed');
-    expect(elements.coordinatorModelAttachment.textContent).toBe('Model Attachment: not attached / dry-run local reply harness');
-    expect(elements.coordinatorNext.textContent).toContain('zero writes/tools/sends');
+    expect(elements.coordinatorFocus.textContent).toContain('live typed conversation');
+    expect(elements.coordinatorLanes.textContent).toContain('Mira Local Text UI Surface v0: active');
+    expect(elements.coordinatorLanes.textContent).not.toContain('TrustQuote/Tony Li invoice');
+    expect(elements.coordinatorLanes.textContent).not.toContain('Telegram replay restart safety');
+    expect(elements.coordinatorModelAttachment.textContent).toBe('Conversation in local shell: model not attached');
+    expect(elements.coordinatorNext.textContent).toContain('live typed conversation');
+    expect(elements.coordinatorNext.textContent).toContain('tentative understandings');
     expect(elements.coordinatorBlockers.textContent).toContain('Writes, sends');
     expect(elements.panel.dataset.coordinatorStatus).toBe('ready');
     expect(elements.panel.dataset.writeCount).toBe('0');

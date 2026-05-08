@@ -334,7 +334,7 @@ describe('Terminal Events', () => {
         priority: true,
         immediate: true,
         startupInjection: true,
-        verifySubmitAccepted: false,
+        verifySubmitAccepted: true,
         onComplete: expect.any(Function),
       }));
     });
@@ -365,7 +365,7 @@ describe('Terminal Events', () => {
         priority: true,
         immediate: true,
         startupInjection: true,
-        verifySubmitAccepted: false,
+        verifySubmitAccepted: true,
         onComplete: expect.any(Function),
       }));
     });

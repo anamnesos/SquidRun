@@ -15,7 +15,7 @@ Current non-production areas:
 
 1. **Reliability edge cases in interactive CLI flows**
 - Some prompts and submit timing paths can still be brittle under specific runtime/platform combinations.
-- Known example: intermittent manual Enter workaround on macOS Claude pane.
+- Known examples include historical macOS Claude manual-Enter workarounds and the newer Windows Codex failure class where text is visibly written into the recipient pane input/textarea but is not submitted until the pane is unlocked/focused and Enter is pressed. A bus ACK, PTY write, or paneHost success is not proof that the model processed the message.
 
 2. **Operational UX maturity**
 - Troubleshooting and error recovery are improving but still require technical comfort.

@@ -26,7 +26,12 @@ const VOICE_DATA_CHANNEL_CONTRACT = Object.freeze({
   ]),
 });
 const AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
+const COMPOUND_AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:(?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)(?:\s*\/\s*)?)+\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
+const PAREN_AGENT_LABEL_PREFIX_RE = /^\s*\((?:MIRA|ARCH|ARCHITECT)\)\s*:?\s*/i;
 const BARE_AGENT_SEQUENCE_PREFIX_RE = /^\s*(?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\s*:?\s*/i;
+const AGENT_MSG_PREFIX_RE = /^\s*\[(?:AGENT\s+MSG|TRIGGER)[^\]]*\]\s*/i;
+const VOICE_FROM_PREFIX_RE = /^\s*\[Voice\s+from\s+[^\]]+\]\s*:?\s*/i;
+const SPEAKER_LABEL_PREFIX_RE = /^\s*(?:MIRA|ARCH|ARCHITECT)\s*:\s*/i;
 const QUIET_GENERIC_CANCEL_REASONS = new Set([
   'user_transcript_routed',
   'response.created',
@@ -141,23 +146,52 @@ function getDiagnosticsUrl(status) {
 }
 
 function getModelLabel(status) {
-  const model = status?.config?.model || 'gpt-realtime-1.5';
+  const model = status?.config?.model || 'gpt-realtime-2';
   const voice = status?.config?.voice || 'marin';
-  const transcription = status?.config?.transcriptionModel || 'gpt-4o-transcribe';
-  return `${model} / ${voice} / STT ${transcription}`;
+  const liveTranscription = status?.config?.liveTranscriptionModel || 'gpt-realtime-whisper';
+  const fallbackTranscription = status?.config?.transcriptionModel || 'gpt-4o-transcribe';
+  const vad = status?.config?.vadMode || 'server_vad';
+  return `${model} voice wrapper / ${voice} / live STT ${liveTranscription} / fallback STT ${fallbackTranscription} / ${vad}`;
 }
 
 function getTranscriptionModel(status) {
-  return status?.config?.transcriptionModel || 'gpt-4o-transcribe';
+  return status?.config?.liveTranscriptionModel
+    || status?.config?.transcriptionModel
+    || 'gpt-realtime-whisper';
 }
 
 function getVadConfig(status) {
   const config = status?.config || {};
   const prefix = Number.parseInt(String(config.vadPrefixPaddingMs ?? ''), 10);
   const silence = Number.parseInt(String(config.vadSilenceDurationMs ?? ''), 10);
+  const threshold = Number.parseFloat(String(config.vadThreshold ?? ''));
+  const mode = String(config.vadMode || 'server_vad').trim().toLowerCase();
+  const eagerness = String(config.vadEagerness || 'auto').trim().toLowerCase();
   return {
+    mode: ['server_vad', 'semantic_vad'].includes(mode) ? mode : 'server_vad',
+    eagerness: ['low', 'medium', 'high', 'auto'].includes(eagerness) ? eagerness : 'auto',
+    threshold: Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? threshold : 0.5,
     prefixPaddingMs: Number.isInteger(prefix) && prefix >= 0 ? prefix : 700,
     silenceDurationMs: Number.isInteger(silence) && silence >= 0 ? silence : 2200,
+  };
+}
+
+function buildTurnDetectionConfig(vadConfig) {
+  if (vadConfig.mode === 'semantic_vad') {
+    return {
+      type: 'semantic_vad',
+      eagerness: vadConfig.eagerness,
+      create_response: false,
+      interrupt_response: true,
+    };
+  }
+  return {
+    type: 'server_vad',
+    threshold: vadConfig.threshold,
+    prefix_padding_ms: vadConfig.prefixPaddingMs,
+    silence_duration_ms: vadConfig.silenceDurationMs,
+    create_response: false,
+    interrupt_response: true,
   };
 }
 
@@ -197,10 +231,15 @@ function appendSessionLog(text) {
 
 function stripAgentSequencePrefix(value) {
   let text = String(value || '').trim();
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 5; i += 1) {
     const next = text
+      .replace(AGENT_MSG_PREFIX_RE, '')
+      .replace(VOICE_FROM_PREFIX_RE, '')
+      .replace(COMPOUND_AGENT_SEQUENCE_PREFIX_RE, '')
       .replace(AGENT_SEQUENCE_PREFIX_RE, '')
+      .replace(PAREN_AGENT_LABEL_PREFIX_RE, '')
       .replace(BARE_AGENT_SEQUENCE_PREFIX_RE, '')
+      .replace(SPEAKER_LABEL_PREFIX_RE, '')
       .trim();
     if (next === text) break;
     text = next;
@@ -819,12 +858,7 @@ async function createVoiceRealtimeSession(options = {}) {
         audio: {
           input: {
             transcription: { model: getTranscriptionModel(status) },
-            turn_detection: {
-              type: 'server_vad',
-              prefix_padding_ms: vadConfig.prefixPaddingMs,
-              silence_duration_ms: vadConfig.silenceDurationMs,
-              create_response: false,
-            },
+            turn_detection: buildTurnDetectionConfig(vadConfig),
           },
         },
       },
@@ -1021,8 +1055,12 @@ module.exports = {
   getEgressUrl,
   getDiagnosticsUrl,
   getAudioTranscriptionUrl,
+  getModelLabel,
+  getTranscriptionModel,
+  getVadConfig,
   getReadinessLabel,
   getStateLabel,
+  buildTurnDetectionConfig,
   getClientSecretUrl,
   getTranscriptUrl,
   interruptVoiceSession,

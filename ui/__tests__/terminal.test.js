@@ -418,7 +418,7 @@ describe('terminal.js module', () => {
       expect(caps.requiresFocusForEnter).toBe(false);
     });
 
-    test('disables submit verification by default for Codex runtime', () => {
+    test('enables submit verification by default for Codex runtime', () => {
       mockSettings.getSettings.mockReturnValue({
         paneCommands: { '2': 'codex --yolo' },
       });
@@ -427,8 +427,21 @@ describe('terminal.js module', () => {
       const isDarwin = process.platform === 'darwin';
       expect(caps.mode).toBe('pty');
       expect(caps.modeLabel).toBe(isDarwin ? 'codex-pty' : 'codex-trusted');
-      expect(caps.verifySubmitAccepted).toBe(false);
+      expect(caps.verifySubmitAccepted).toBe(true);
       expect(caps.enterMethod).toBe(isDarwin ? 'pty' : 'trusted');
+    });
+
+    test('keeps Codex submit verification on when hidden pane host uses PTY Enter', () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: true,
+        paneCommands: { '2': 'codex --yolo' },
+      });
+
+      const caps = terminal.getPaneInjectionCapabilities('2');
+      expect(caps.enterMethod).toBe('pty');
+      expect(caps.submitMethod).toBe('hidden-pane-host-pty-enter');
+      expect(caps.requiresFocusForEnter).toBe(false);
+      expect(caps.verifySubmitAccepted).toBe(true);
     });
 
     test('returns safe generic defaults for unknown runtimes', () => {
@@ -468,7 +481,7 @@ describe('terminal.js module', () => {
   });
 
   describe('sendToPane', () => {
-    test('uses pane host injection in hidden host mode even when pane is unlocked', async () => {
+    test('uses pane host injection in hidden host mode without claiming verified model submit', async () => {
       mockSettings.getSettings.mockReturnValue({
         hiddenPaneHostsEnabled: true,
         paneCommands: { '1': 'claude --dangerously-skip-permissions' },
@@ -485,10 +498,42 @@ describe('terminal.js module', () => {
 
       expect(mockSquidRun.paneHost.inject).toHaveBeenCalledWith('1', expect.objectContaining({
         message: 'test message',
+        meta: expect.objectContaining({
+          runtimeHint: 'claude',
+          codexPane: false,
+        }),
       }));
       expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({
         success: true,
+        verified: false,
+        routePending: true,
         signal: 'pane_host_inject',
+        status: 'pane_host_route_pending',
+        reason: 'hidden_pane_host_delivery_pending',
+      }));
+    });
+
+    test('passes Codex runtime metadata to hidden pane host injection', async () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: true,
+        paneCommands: { '1': 'codex' },
+      });
+      mockSquidRun.paneHost = {
+        inject: jest.fn().mockResolvedValue({ success: true }),
+      };
+      terminal.setInputLocked('1', false);
+
+      terminal.sendToPane('1', 'codex message', { meta: { deliverySource: 'hm-send' } });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockSquidRun.paneHost.inject).toHaveBeenCalledWith('1', expect.objectContaining({
+        message: 'codex message',
+        meta: expect.objectContaining({
+          deliverySource: 'hm-send',
+          runtimeHint: 'codex',
+          codexPane: true,
+        }),
       }));
     });
 

@@ -207,6 +207,7 @@ describe('hm-health-snapshot', () => {
       projectRoot: tempDir,
       profileName: 'eunbyeol',
       jestTimeoutMs: 1000,
+      env: {},
     });
 
     expect(snapshot.profileName).toBe('eunbyeol');
@@ -231,6 +232,54 @@ describe('hm-health-snapshot', () => {
     expect(renderStartupHealthMarkdown(snapshot)).toContain('App Session: session 777');
   });
 
+  test('prints usage and exits zero for help flags without building a snapshot', () => {
+    const { main } = require('../scripts/hm-health-snapshot');
+    for (const flag of ['--help', '-h']) {
+      const stdout = { write: jest.fn() };
+      const stderr = { write: jest.fn() };
+
+      const exitCode = main([flag], { stdout, stderr });
+
+      expect(exitCode).toBe(0);
+      expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('Usage: node ui/scripts/hm-health-snapshot.js'));
+      expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('--profile <name>'));
+      expect(stderr.write).not.toHaveBeenCalled();
+    }
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  test('uses project env bridge config when runtime bridge status is not injected', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    fs.writeFileSync(path.join(tempDir, '.env'), [
+      'SQUIDRUN_CROSS_DEVICE=1',
+      'SQUIDRUN_DEVICE_ID=LOCAL',
+      'SQUIDRUN_RELAY_URL=wss://relay.example.test',
+      'SQUIDRUN_RELAY_SECRET=secret-value',
+      '',
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+
+    expect(snapshot.bridge).toEqual(expect.objectContaining({
+      enabled: true,
+      configured: true,
+      mode: 'connecting',
+      relayUrl: 'wss://relay.example.test',
+      deviceId: 'LOCAL',
+      state: 'unknown',
+    }));
+    expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:unknown');
+    expect(snapshot.status.penalties).toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+  });
+
   test('normalizes ui and .squidrun roots back to the project root', () => {
     const { createHealthSnapshot, normalizeProjectRoot } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
@@ -244,10 +293,12 @@ describe('hm-health-snapshot', () => {
     const uiSnapshot = createHealthSnapshot({
       projectRoot: path.join(tempDir, 'ui'),
       jestTimeoutMs: 1000,
+      env: {},
     });
     const coordSnapshot = createHealthSnapshot({
       projectRoot: path.join(tempDir, '.squidrun'),
       jestTimeoutMs: 1000,
+      env: {},
     });
 
     expect(uiSnapshot.projectRoot).toBe(tempDir);
@@ -372,6 +423,7 @@ describe('hm-health-snapshot', () => {
     const snapshot = createHealthSnapshot({
       projectRoot: tempDir,
       jestTimeoutMs: 1000,
+      env: {},
       memoryConsistency: {
         ok: true,
         checkedAt: '2026-03-15T00:00:00.000Z',

@@ -8,6 +8,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
+const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 
@@ -59,7 +60,7 @@ function runHmSend(args, env = {}, options = {}) {
         ...env,
       },
       cwd: options.cwd || path.join(__dirname, '..'),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     let stdout = '';
@@ -73,6 +74,11 @@ function runHmSend(args, env = {}, options = {}) {
     });
 
     child.on('error', reject);
+    if (options.stdin !== undefined) {
+      child.stdin.end(String(options.stdin));
+    } else {
+      child.stdin.end();
+    }
     child.on('close', (code) => {
       resolve({ code, stdout, stderr });
     });
@@ -93,6 +99,61 @@ function createLinkedProject() {
     version: 1,
   }, null, 2));
   return tempProject;
+}
+
+function createTelegramHttpsMockPreload() {
+  const tempRoot = fs.mkdtempSync(path.join(path.parse(__dirname).root, 'hm-send-telegram-mock-'));
+  const preloadPath = path.join(tempRoot, 'mock-telegram-https.js');
+fs.writeFileSync(preloadPath, `
+const https = require('https');
+const fs = require('fs');
+const { EventEmitter } = require('events');
+const originalRequest = https.request;
+https.request = function patchedTelegramRequest(options, callback) {
+  const hostname = typeof options === 'string'
+    ? new URL(options).hostname
+    : (options && options.hostname);
+  if (hostname !== 'api.telegram.org') {
+    return originalRequest.apply(this, arguments);
+  }
+  const request = new EventEmitter();
+  let body = '';
+  request.write = (chunk) => {
+    body += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+  };
+  request.end = () => {
+    const response = new EventEmitter();
+    response.statusCode = Number(process.env.HM_SEND_TELEGRAM_MOCK_STATUS_CODE || 200);
+    process.nextTick(() => {
+      if (process.env.HM_SEND_TELEGRAM_MOCK_LOG) {
+        fs.appendFileSync(process.env.HM_SEND_TELEGRAM_MOCK_LOG, JSON.stringify({
+          path: options && options.path,
+          body,
+        }) + '\\n');
+      }
+      callback(response);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        let parsed = {};
+        try { parsed = JSON.parse(body || '{}'); } catch {}
+        response.emit('data', JSON.stringify({
+          ok: true,
+          result: { message_id: 77, chat: { id: parsed.chat_id || 12345 } },
+        }));
+      } else {
+        response.emit('data', JSON.stringify({
+          ok: false,
+          description: 'mock telegram failure',
+        }));
+      }
+      response.emit('end');
+    });
+  };
+  request.setTimeout = () => request;
+  request.destroy = () => {};
+  return request;
+};
+`, 'utf8');
+  return { tempRoot, preloadPath };
 }
 
 async function startAckServer(sendAttempts = []) {
@@ -130,7 +191,11 @@ async function startAckServer(sendAttempts = []) {
           type: 'send-ack',
           messageId: msg.messageId,
           ok: true,
-          status: 'routed',
+          accepted: true,
+          queued: true,
+          verified: true,
+          userVisible: true,
+          status: 'delivered.verified',
           timestamp: Date.now(),
         }));
       }
@@ -819,6 +884,235 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('ack: routed_unverified');
   });
 
+  test('does not trigger fallback for accepted-but-unverified delivery by default', async () => {
+    const tempProject = createLinkedProject();
+    const triggerPath = path.join(tempProject, '.squidrun', 'triggers', 'builder.txt');
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: false,
+            userVisible: false,
+            status: 'routed_unverified_timeout',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #2c2): accepted-unverified no fallback', '--timeout', '80', '--retries', '0'],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('Accepted by builder but unverified');
+      expect(result.stderr).not.toContain('Forced trigger fallback');
+      expect(result.stderr).not.toContain('Wrote trigger fallback');
+      expect(fs.existsSync(triggerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('does not report websocket-only ack as visible delivery', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: false,
+            userVisible: false,
+            status: 'delivered.websocket',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['builder', '(TEST #2d): websocket-only', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(0);
+    expect(sendAttempts).toHaveLength(1);
+    expect(result.stdout).toContain('Accepted by builder but unverified');
+    expect(result.stdout).toContain('ack: delivered.websocket');
+    expect(result.stdout).not.toContain('Delivered to builder');
+  });
+
+  test('does not report accepted.unverified ack as visible delivery', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: false,
+            userVisible: false,
+            status: 'accepted.unverified',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['builder', '(TEST #2e): accepted unverified', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(0);
+    expect(sendAttempts).toHaveLength(1);
+    expect(result.stdout).toContain('Accepted by builder but unverified');
+    expect(result.stdout).toContain('ack: accepted.unverified');
+    expect(result.stdout).not.toContain('Delivered to builder');
+  });
+
   test('blocks websocket send attempts when target health is invalid_target', async () => {
     const sendAttempts = [];
     let server;
@@ -939,123 +1233,186 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('ack: telegram_delivered');
   });
 
-  test('allows telegram target even when health-check reports invalid_target', async () => {
-    const sendAttempts = [];
-    let server;
-
-    await new Promise((resolve, reject) => {
-      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
-      server.once('listening', resolve);
-      server.once('error', reject);
-    });
-
-    const port = server.address().port;
-
-    server.on('connection', (ws) => {
-      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
-
-      ws.on('message', (raw) => {
-        const msg = JSON.parse(raw.toString());
-        if (msg.type === 'register') {
-          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
-          return;
-        }
-        if (msg.type === 'health-check') {
-          ws.send(JSON.stringify({
-            type: 'health-check-result',
-            requestId: msg.requestId,
-            target: msg.target,
-            healthy: false,
-            status: 'invalid_target',
-            staleThresholdMs: 60000,
-            timestamp: Date.now(),
-          }));
-          return;
-        }
-        if (msg.type === 'send') {
-          sendAttempts.push(msg);
-          ws.send(JSON.stringify({
-            type: 'send-ack',
-            messageId: msg.messageId,
-            ok: true,
-            status: 'telegram_delivered',
-            timestamp: Date.now(),
-          }));
-        }
-      });
-    });
+  test('explicit telegram --stdin uses Bot API direct delivery and does not append voice egress', async () => {
+    const tempProject = createLinkedProject();
+    const telegramMock = createTelegramHttpsMockPreload();
+    const mockLogPath = path.join(telegramMock.tempRoot, 'telegram-requests.jsonl');
+    const evidenceDbPath = path.join(tempProject, '.squidrun', 'runtime', 'evidence-ledger.db');
+    const message = '(ARCH #54): Clean Telegram proof path';
 
     const result = await runHmSend(
-      ['telegram', '(TEST #2e): telegram special target', '--timeout', '80', '--retries', '1', '--no-fallback'],
-      { HM_SEND_PORT: String(port) }
+      ['telegram', '--stdin', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '12345',
+        TELEGRAM_CHAT_ALLOWLIST: '12345',
+        HM_SEND_TELEGRAM_MOCK_LOG: mockLogPath,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+      },
+      { cwd: tempProject, stdin: message }
     );
 
-    await new Promise((resolve) => server.close(resolve));
+    let store;
+    try {
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Delivered to telegram');
+      expect(result.stdout).toContain('ack: telegram_delivered');
+      expect(result.stdout).toContain('message_id: 77');
+      expect(result.stderr).not.toContain('voice fallback');
+      expect(result.stderr).not.toContain('via voice');
+      expect(fs.existsSync(mockLogPath)).toBe(true);
+      const [request] = fs.readFileSync(mockLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(request.path).toContain('/sendMessage');
+      expect(JSON.parse(request.body)).toEqual(expect.objectContaining({
+        chat_id: '12345',
+        text: message,
+      }));
 
-    expect(result.code).toBe(0);
-    expect(sendAttempts).toHaveLength(1);
-    expect(sendAttempts[0].target).toBe('telegram');
-    expect(result.stdout).toContain('ack: telegram_delivered');
+      store = new EvidenceLedgerStore({ dbPath: evidenceDbPath, enabled: true });
+      expect(store.init().ok).toBe(true);
+      expect(store.queryCommsJournal({ channel: 'voice', limit: 1 })).toEqual([]);
+      expect(store.queryCommsJournal({ channel: 'telegram', limit: 1 })[0]).toEqual(expect.objectContaining({
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        rawBody: message,
+        status: 'acked',
+      }));
+    } finally {
+      if (store) store.close();
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      fs.rmSync(telegramMock.tempRoot, { recursive: true, force: true });
+    }
   });
 
-  test('passes --chat-id through the websocket telegram path', async () => {
-    const sendAttempts = [];
-    let server;
-
-    await new Promise((resolve, reject) => {
-      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
-      server.once('listening', resolve);
-      server.once('error', reject);
-    });
-
-    const port = server.address().port;
-
-    server.on('connection', (ws) => {
-      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
-
-      ws.on('message', (raw) => {
-        const msg = JSON.parse(raw.toString());
-        if (msg.type === 'register') {
-          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
-          return;
-        }
-        if (msg.type === 'health-check') {
-          ws.send(JSON.stringify({
-            type: 'health-check-result',
-            requestId: msg.requestId,
-            target: msg.target,
-            healthy: false,
-            status: 'invalid_target',
-            staleThresholdMs: 60000,
-            timestamp: Date.now(),
-          }));
-          return;
-        }
-        if (msg.type === 'send') {
-          sendAttempts.push(msg);
-          ws.send(JSON.stringify({
-            type: 'send-ack',
-            messageId: msg.messageId,
-            ok: true,
-            status: 'telegram_delivered',
-            timestamp: Date.now(),
-          }));
-        }
-      });
-    });
+  test('routes architect user fallback into voice egress before Telegram fallback', async () => {
+    const tempProject = createLinkedProject();
+    const evidenceDbPath = path.join(tempProject, '.squidrun', 'runtime', 'evidence-ledger.db');
 
     const result = await runHmSend(
-      ['telegram', '--chat-id', '2222222222', '(TEST #2f): telegram override', '--timeout', '80', '--retries', '0', '--no-fallback'],
-      { HM_SEND_PORT: String(port) }
+      ['user', '(ARCH #52): Mira: Clean spoken reply', '--role', 'architect', '--timeout', '80', '--retries', '0'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+      },
+      { cwd: tempProject }
     );
 
-    await new Promise((resolve) => server.close(resolve));
+    let store;
+    try {
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('voice fallback');
+      expect(result.stderr).not.toContain('Telegram fallback');
+      expect(fs.existsSync(evidenceDbPath)).toBe(true);
 
-    expect(result.code).toBe(0);
-    expect(sendAttempts).toHaveLength(1);
-    expect(sendAttempts[0].metadata.chatId).toBe('2222222222');
-    expect(sendAttempts[0].metadata.telegram).toEqual({ chatId: '2222222222' });
-    expect(result.stdout).toContain('ack: telegram_delivered');
+      store = new EvidenceLedgerStore({ dbPath: evidenceDbPath, enabled: true });
+      expect(store.init().ok).toBe(true);
+      const [entry] = store.queryCommsJournal({
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'voice',
+        limit: 1,
+      });
+      expect(entry).toEqual(expect.objectContaining({
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'voice',
+        rawBody: '(ARCH #52): Mira: Clean spoken reply',
+      }));
+    } finally {
+      if (store) store.close();
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
+  test('marks Telegram backup as degraded when architect voice egress fails', async () => {
+    const tempProject = createLinkedProject();
+    const telegramMock = createTelegramHttpsMockPreload();
+    const result = await runHmSend(
+      ['user', '(ARCH #53): Voice backup should be explicit', '--role', 'architect', '--timeout', '80', '--retries', '0'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+        SQUIDRUN_EVIDENCE_LEDGER_ENABLED: '0',
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '12345',
+        TELEGRAM_CHAT_ALLOWLIST: '12345',
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+      },
+      { cwd: tempProject }
+    );
+
+    try {
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('voice_failed_telegram_backup_used');
+      expect(result.stderr).toContain('via telegram fallback');
+      expect(result.stderr).not.toContain('via voice fallback');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      fs.rmSync(telegramMock.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit telegram direct delivery makes Bot API failure visible', async () => {
+    const tempProject = createLinkedProject();
+    const telegramMock = createTelegramHttpsMockPreload();
+    const result = await runHmSend(
+      ['telegram', '(TEST #2e-fail): telegram should fail visibly', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '12345',
+        TELEGRAM_CHAT_ALLOWLIST: '12345',
+        HM_SEND_TELEGRAM_MOCK_STATUS_CODE: '500',
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+      },
+      { cwd: tempProject }
+    );
+
+    try {
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Telegram send failed: mock telegram failure');
+      expect(result.stdout).not.toContain('Delivered to telegram');
+      expect(result.stdout).not.toContain('ack: telegram_delivered');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      fs.rmSync(telegramMock.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('passes --chat-id through the direct telegram Bot API path', async () => {
+    const tempProject = createLinkedProject();
+    const telegramMock = createTelegramHttpsMockPreload();
+    const mockLogPath = path.join(telegramMock.tempRoot, 'telegram-override-requests.jsonl');
+    const result = await runHmSend(
+      ['telegram', '--chat-id', '2222222222', '(TEST #2f): telegram override', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '12345',
+        TELEGRAM_CHAT_ALLOWLIST: '12345,2222222222',
+        HM_SEND_TELEGRAM_MOCK_LOG: mockLogPath,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+      },
+      { cwd: tempProject }
+    );
+
+    try {
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('ack: telegram_delivered');
+      const [request] = fs.readFileSync(mockLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(JSON.parse(request.body)).toEqual(expect.objectContaining({
+        chat_id: '2222222222',
+        text: '(TEST #2f): telegram override',
+      }));
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      fs.rmSync(telegramMock.tempRoot, { recursive: true, force: true });
+    }
   });
 
   test('continues with websocket send when health-check is unsupported', async () => {
@@ -1592,6 +1949,8 @@ describe('hm-send retry behavior', () => {
               type: 'send-ack',
               messageId: msg.messageId,
               ok: true,
+              verified: true,
+              userVisible: true,
               status: 'delivered.websocket',
               timestamp: Date.now(),
             },
@@ -1806,6 +2165,10 @@ describe('hm-send retry behavior', () => {
             type: 'send-ack',
             messageId: msg.messageId,
             ok: true,
+            accepted: true,
+            queued: true,
+            verified: true,
+            userVisible: true,
             status: 'bridge_delivered',
             timestamp: Date.now(),
           }));

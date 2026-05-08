@@ -59,6 +59,32 @@ function buildPaneHostQueryFromEnv(paneId) {
   return query;
 }
 
+function classifyPaneRuntimeFromCommand(command) {
+  const normalized = String(command || '').trim().toLowerCase();
+  if (!normalized) return 'unknown';
+  if (normalized.includes('codex')) return 'codex';
+  if (normalized.includes('gemini')) return 'gemini';
+  if (normalized.includes('claude')) return 'claude';
+  return 'unknown';
+}
+
+function buildPaneRuntimeHints(paneIds = [], settings = {}) {
+  const paneCommands = settings?.paneCommands && typeof settings.paneCommands === 'object'
+    ? settings.paneCommands
+    : {};
+  const hints = {};
+  for (const paneId of paneIds || []) {
+    const id = String(paneId || '').trim();
+    if (!id) continue;
+    const command = typeof paneCommands[id] === 'string' ? paneCommands[id] : '';
+    hints[id] = {
+      command,
+      runtime: classifyPaneRuntimeFromCommand(command),
+    };
+  }
+  return hints;
+}
+
 function createPaneHostWindowManager(options = {}) {
   const {
     getCurrentSettings = () => ({}),
@@ -105,7 +131,15 @@ function createPaneHostWindowManager(options = {}) {
   }
 
   function buildPaneHostQuery(paneId) {
-    return buildPaneHostQueryFromEnv(paneId);
+    const query = buildPaneHostQueryFromEnv(paneId);
+    const paneIds = Array.isArray(paneId)
+      ? paneId.map((value) => String(value || '').trim()).filter(Boolean)
+      : [String(paneId || '').trim()].filter(Boolean);
+    const runtimeHints = buildPaneRuntimeHints(paneIds, getCurrentSettings() || {});
+    if (Object.keys(runtimeHints).length > 0) {
+      query.paneRuntimeHints = JSON.stringify(runtimeHints);
+    }
+    return query;
   }
 
   function getPaneWindow(paneId) {
@@ -328,5 +362,7 @@ function createPaneHostWindowManager(options = {}) {
 module.exports = { createPaneHostWindowManager };
 module.exports._internals = {
   buildPaneHostQueryFromEnv,
+  buildPaneRuntimeHints,
+  classifyPaneRuntimeFromCommand,
   DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES,
 };

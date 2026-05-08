@@ -61,10 +61,11 @@ function localState(overrides = {}) {
 }
 
 describe('Mira Coordinator Snapshot v0', () => {
-  test('builds useful read-only VIGIL/main coordinator state with closed lanes and zero effects', () => {
+  test('builds useful read-only VIGIL/main Mira-only coordinator state with zero effects', () => {
     const output = buildMiraCoordinatorSnapshotV0(payload(), {
       projectRoot: tempProject(),
       localState: localState(),
+      env: {},
     });
     const snapshot = output.coordinator_snapshot_v0;
 
@@ -76,34 +77,36 @@ describe('Mira Coordinator Snapshot v0', () => {
       deviceId: 'VIGIL',
       explicit_vigil_main_scope: true,
     }));
-    expect(snapshot.current_focus.summary).toContain('local text panel');
-    expect(snapshot.lanes).toEqual(expect.arrayContaining([
+    expect(snapshot.current_focus.summary).toContain('live typed conversation');
+    expect(snapshot.lanes).toEqual([
       expect.objectContaining({
-        id: 'trustquote-tony-li-invoice',
-        state: 'closed',
+        id: 'mira-local-text-ui-surface-v0',
+        state: 'active',
         action: 'no_action_performed',
         actionAllowed: false,
       }),
-      expect.objectContaining({
-        id: 'telegram-replay-restart-safety',
-        state: 'closed',
-        action: 'no_action_performed',
-        actionAllowed: false,
-      }),
-    ]));
+    ]);
     expect(snapshot.model_attachment).toEqual(expect.objectContaining({
-      id: 'mira-model-attachment-v0',
+      id: 'mira-model-attachment-v1',
       state: 'not_attached',
-      mode: 'dry_run_local_reply_harness',
-      visible_status: 'Model Attachment: not attached / dry-run local reply harness',
+      mode: 'local_shell_recent_context_ready',
+      visible_status: 'Conversation in local shell: model not attached',
       attachment_enabled: false,
+      configured: false,
+      model: 'gpt-5.5',
+      default_model: 'gpt-5.5',
+      quality_floor: 'gpt-5.5',
+      model_selection_reason: 'default_trust_quality',
       live_model_called: false,
       model_call_allowed: false,
-      api_wiring_present: false,
+      api_wiring_present: true,
       network_allowed: false,
       durable_writes_allowed: false,
       external_sends_allowed: false,
       runtime_started: false,
+      recent_conversation_context: 'sent_on_panel_submit',
+      tentative_understanding: 'panel_context_now_internal_scaffold_only',
+      durable_memory_commit: false,
     }));
     expect(snapshot.next_recommended_action).toEqual(expect.objectContaining({
       id: 'validate_mira_local_text_panel_once',
@@ -111,7 +114,8 @@ describe('Mira Coordinator Snapshot v0', () => {
       reversible: true,
       performs_action: false,
     }));
-    expect(snapshot.next_recommended_action.summary).toContain('Model Attachment is not attached');
+    expect(snapshot.next_recommended_action.summary).toContain('live typed conversation');
+    expect(snapshot.next_recommended_action.summary).toContain('tentative understandings');
     expect(snapshot.action_ceiling).toEqual(expect.objectContaining({
       c0_c1_local_status_read_awareness: 'allowed',
       c2_draft_or_prep: 'suggestion_only',
@@ -133,8 +137,44 @@ describe('Mira Coordinator Snapshot v0', () => {
       growth_write_count: 0,
     }));
     expect(output.validation_report.static_rule_results).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'model-attachment-fail-closed', ok: true }),
+      expect.objectContaining({ id: 'model-attachment-config-honest', ok: true }),
+      expect.objectContaining({ id: 'mira-only-lanes-no-cross-context', ok: true }),
     ]));
+    expect(validateMiraCoordinatorSnapshotV0Output(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('coordinator model attachment status reflects enabled typed config without making a model call', () => {
+    const output = buildMiraCoordinatorSnapshotV0(payload(), {
+      projectRoot: tempProject(),
+      localState: localState(),
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+    });
+    const snapshot = output.coordinator_snapshot_v0;
+
+    expect(output.validation_report.decision).toBe('accepted_coordinator_snapshot_ready');
+    expect(snapshot.model_attachment).toEqual(expect.objectContaining({
+      state: 'ready',
+      mode: 'typed_text_attachment_v1_config',
+      visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+      attachment_enabled: true,
+      configured: true,
+      model: 'gpt-5.5',
+      model_call_allowed: true,
+      api_wiring_present: true,
+      network_allowed: true,
+      live_model_called: false,
+      durable_memory_commit: false,
+      rationale: "Recent conversation context and tentative understandings now; durable self/relationship growth remains a later explicit lane.",
+    }));
+    expect(snapshot.side_effect_counters).toEqual(expect.objectContaining({
+      model_call_count: 0,
+      network_count: 0,
+      write_count: 0,
+      growth_write_count: 0,
+    }));
     expect(validateMiraCoordinatorSnapshotV0Output(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
@@ -142,10 +182,12 @@ describe('Mira Coordinator Snapshot v0', () => {
     const output = buildMiraCoordinatorSnapshotV0(payload(), {
       projectRoot: tempProject(),
       localState: localState(),
+      env: {},
     });
     const serialized = JSON.stringify(output);
 
-    expect(serialized).toContain('TrustQuote/Tony Li invoice');
+    expect(serialized).not.toContain('TrustQuote/Tony Li invoice');
+    expect(serialized).not.toContain('telegram-replay-restart-safety');
     expect(serialized).not.toContain('Eunbyeol private side-profile text');
     expect(serialized).not.toMatch(/\bi am conscious\b/i);
     expect(serialized).not.toMatch(/\bi have feelings\b/i);
@@ -202,6 +244,7 @@ describe('Mira Coordinator Snapshot v0', () => {
     registerMiraCoordinatorSnapshotHandlers({ ipcMain }, {
       projectRoot,
       localState: localState(),
+      env: {},
     });
     expect(ipcMain.handle).toHaveBeenCalledWith(MIRA_COORDINATOR_SNAPSHOT_CHANNEL, expect.any(Function));
     const handled = await registered.get(MIRA_COORDINATOR_SNAPSHOT_CHANNEL)({}, payload());
@@ -223,6 +266,7 @@ describe('Mira Coordinator Snapshot v0', () => {
     const direct = buildMiraCoordinatorSnapshotResponse(payload(), {
       projectRoot,
       localState: localState(),
+      env: {},
     });
     expect(direct.validation_report.decision).toBe('accepted_coordinator_snapshot_ready');
   });

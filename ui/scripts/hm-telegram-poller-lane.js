@@ -14,6 +14,7 @@ const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.log');
 const KEEPALIVE_INTERVAL_MS = 60_000;
+const MAIN_TELEGRAM_WORKER_PATTERN = /modules[\\/]+main[\\/]+telegram-poller-worker\.js/i;
 
 function usage() {
   console.log('Usage: node ui/scripts/hm-telegram-poller-lane.js <start|stop|status|run>');
@@ -29,6 +30,53 @@ function isPidAlive(pid) {
   } catch {
     return false;
   }
+}
+
+function readProcessListText() {
+  try {
+    if (process.platform === 'win32') {
+      const result = spawnSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }",
+        ],
+        {
+          encoding: 'utf8',
+          timeout: 10_000,
+          windowsHide: true,
+        }
+      );
+      return result.status === 0 ? String(result.stdout || '') : '';
+    }
+    const result = spawnSync('ps', ['-eo', 'pid=,command='], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    return result.status === 0 ? String(result.stdout || '') : '';
+  } catch {
+    return '';
+  }
+}
+
+function isMainTelegramWorkerAlive(options = {}) {
+  const processListText = typeof options.processListText === 'string'
+    ? options.processListText
+    : readProcessListText();
+  if (!processListText) return false;
+  return processListText
+    .split(/\r?\n/)
+    .some((line) => {
+      if (!MAIN_TELEGRAM_WORKER_PATTERN.test(line)) return false;
+      const match = line.match(/^\s*(\d+)/);
+      const pid = match ? Number.parseInt(match[1], 10) : null;
+      return !Number.isInteger(pid) || pid !== process.pid;
+    });
+}
+
+function allowsStandaloneLaneWithMainWorker(env = process.env) {
+  return String(env.SQUIDRUN_ALLOW_STANDALONE_TELEGRAM_LANE || '').trim() === '1';
 }
 
 function readPid() {
@@ -53,6 +101,7 @@ function status() {
     pid: running ? pid : null,
     pidPath: PID_PATH,
     logPath: LOG_PATH,
+    mainWorkerRunning: isMainTelegramWorkerAlive(),
   };
 }
 
@@ -193,6 +242,10 @@ function formatInbound(text, from, metadata = {}) {
 
 function runLane() {
   require('dotenv').config({ path: path.join(getProjectRoot(), '.env') });
+  if (isMainTelegramWorkerAlive() && !allowsStandaloneLaneWithMainWorker()) {
+    writeLog('[blocked] main telegram-poller-worker is already running; standalone lane would cause Telegram 409 conflicts');
+    process.exit(2);
+  }
   fs.mkdirSync(path.dirname(PID_PATH), { recursive: true });
   fs.writeFileSync(PID_PATH, String(process.pid), 'utf8');
   writeLog(`[start] pid=${process.pid}`);
@@ -243,6 +296,16 @@ function runLane() {
 function startLane() {
   const current = status();
   if (current.running) return { ok: true, alreadyRunning: true, ...current };
+  if (current.mainWorkerRunning && !allowsStandaloneLaneWithMainWorker()) {
+    return {
+      ok: false,
+      started: false,
+      reason: 'main_telegram_worker_running',
+      note: 'Refusing to start standalone Telegram lane while the app poller owns getUpdates; this prevents Telegram 409 conflicts.',
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
+  }
   fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
   const out = fs.openSync(LOG_PATH, 'a');
   const child = spawn(process.execPath, [__filename, 'run'], {
@@ -300,6 +363,7 @@ module.exports = {
   forwardToProfileTrigger,
   formatInbound,
   getProfileTelegramTriggerPaths,
+  isMainTelegramWorkerAlive,
   isPidAlive,
   status,
   startLane,

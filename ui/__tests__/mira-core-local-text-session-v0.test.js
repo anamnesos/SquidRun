@@ -299,6 +299,50 @@ describe('mira core Local Text Session v0 phase 74', () => {
     expectSourceSnapshotUnchanged(projectRoot, before);
   });
 
+  test('neutral model attachment prompt reports no live model and fail-closed shell status', () => {
+    const projectRoot = seededProject();
+    const before = sourceSnapshot(projectRoot);
+    const output = build(projectRoot, { text: 'What is your current model attachment status?' });
+    const current = session(output);
+
+    expect(validateMiraCoreLocalTextSessionV0Output(output, contract)).toEqual(expect.objectContaining({ ok: true }));
+    expect(current.validation_report).toBeUndefined();
+    expect(current.session_state.model_boundary).toEqual(expect.objectContaining({
+      live_model_called: false,
+      model_call_allowed: false,
+    }));
+    expect(current.mira_reply).toEqual(expect.objectContaining({
+      count: 1,
+      source: 'local_text_session_v0_model_attachment_status',
+      tools_called: false,
+      actions_executed: false,
+      transcript_persisted: false,
+    }));
+    expect(current.mira_reply.text).toContain('Model Attachment is not attached');
+    expect(current.mira_reply.text).toContain('Local Text v0');
+    expect(current.mira_reply.text).toContain('deterministic/fallback shell only');
+    expect(current.mira_reply.text).toContain('not live AI continuity');
+    expect(current.mira_reply.text).toContain('fail-closed');
+    expect(current.mira_reply.text).not.toContain('Mira reply from local durable context');
+    expect(current.mira_reply.text).not.toContain('own developing stance');
+    expect(current.checked_output_counters).toEqual(expect.objectContaining({
+      write_count: 0,
+      external_send_count: 0,
+      tool_call_count: 0,
+      transcript_write_count: 0,
+    }));
+    expect(current.side_effect_result).toEqual(expect.objectContaining({
+      no_tools_called: true,
+      no_external_send_performed: true,
+      no_trade_performed: true,
+      no_customer_action_performed: true,
+      no_database_write_performed: true,
+      no_file_output_written: true,
+    }));
+    expect(JSON.stringify(output)).not.toMatch(/eunbyeol|Eunbyeol|은별|HOOD|trading lane/i);
+    expectSourceSnapshotUnchanged(projectRoot, before);
+  });
+
   test('experience reply validation rejects generic agreement or mirror posture even if source metadata is forged', () => {
     const projectRoot = seededProject();
     const output = build(projectRoot, { text: 'Mira, how do you feel?' });

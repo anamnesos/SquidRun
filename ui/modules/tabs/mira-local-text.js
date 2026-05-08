@@ -22,14 +22,19 @@ const IDS = Object.freeze({
   input: 'miraLocalTextInput',
   submit: 'miraLocalTextSubmitBtn',
   reply: 'miraLocalTextReply',
+  developmental: 'miraDevelopmentalUnderstanding',
   meta: 'miraLocalTextMeta',
   counters: 'miraLocalTextCounters',
 });
 const SESSION_WINDOW_MS = 15 * 60 * 1000;
+const THREAD_MAX_TURNS = 6;
+const THREAD_MAX_MESSAGE_CHARS = 900;
+const THREAD_MAX_TOTAL_CHARS = 3600;
 
 let cleanupFns = [];
 let activeController = null;
 let rememberedDraft = '';
+let rememberedThreadTurns = [];
 
 function getEl(id, doc = document) {
   if (!doc || typeof doc.getElementById !== 'function') return null;
@@ -53,6 +58,39 @@ function setText(el, text) {
 
 function setHidden(el, hidden) {
   if (el) el.hidden = Boolean(hidden);
+}
+
+function truncateThreadText(value) {
+  const text = String(value || '').trim();
+  return text.length > THREAD_MAX_MESSAGE_CHARS ? text.slice(0, THREAD_MAX_MESSAGE_CHARS).trim() : text;
+}
+
+function boundedThreadTurns(turns = rememberedThreadTurns) {
+  const normalized = (Array.isArray(turns) ? turns : [])
+    .map((turn) => ({
+      role: turn.role,
+      text: truncateThreadText(turn.text),
+    }))
+    .filter((turn) => ['user', 'assistant'].includes(turn.role) && turn.text)
+    .slice(-THREAD_MAX_TURNS);
+  let totalChars = 0;
+  const bounded = [];
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    const turn = normalized[index];
+    if (totalChars + turn.text.length > THREAD_MAX_TOTAL_CHARS) break;
+    bounded.unshift(turn);
+    totalChars += turn.text.length;
+  }
+  return bounded;
+}
+
+function appendThreadTurn(role, text) {
+  const turn = {
+    role,
+    text: truncateThreadText(text),
+  };
+  if (!turn.text || !['user', 'assistant'].includes(role)) return;
+  rememberedThreadTurns = [...rememberedThreadTurns, turn].slice(-THREAD_MAX_TURNS);
 }
 
 function summarizeCounters(counters = {}) {
@@ -100,6 +138,7 @@ function createMiraLocalTextController(options = {}) {
     blocked_count: 0,
     duplicate_submit_block_count: 0,
     write_count: 0,
+    tentative_understanding_write_count: 0,
     tool_call_count: 0,
     external_send_count: 0,
   };
@@ -130,6 +169,7 @@ function createMiraLocalTextController(options = {}) {
     panel.dataset.blockedCount = String(counters.blocked_count);
     panel.dataset.duplicateSubmitBlockCount = String(counters.duplicate_submit_block_count);
     panel.dataset.writeCount = String(counters.write_count);
+    panel.dataset.tentativeUnderstandingWriteCount = String(counters.tentative_understanding_write_count);
     panel.dataset.toolCallCount = String(counters.tool_call_count);
     panel.dataset.externalSendCount = String(counters.external_send_count);
     panel.dataset.coordinatorStatus = state.coordinatorStatus;
@@ -151,11 +191,41 @@ function createMiraLocalTextController(options = {}) {
     setHidden(elements.reply, true);
   }
 
+  function clearDevelopmentalUnderstanding() {
+    if (!elements.developmental) return;
+    elements.developmental.textContent = '';
+    elements.developmental.dataset.count = '0';
+    setHidden(elements.developmental, true);
+  }
+
   function renderReply(reply) {
     if (!elements.reply) return;
     elements.reply.textContent = reply?.text || '';
     elements.reply.dataset.count = reply?.text ? '1' : '0';
     setHidden(elements.reply, !reply?.text);
+  }
+
+  function renderDevelopmentalUnderstanding(surface = {}) {
+    if (!elements.developmental) return;
+    const developmental = surface.developmental_understanding || {};
+    const understandings = Array.isArray(developmental.tentative_understandings)
+      ? developmental.tentative_understandings
+      : [];
+    if (surface.decision !== 'accepted' || understandings.length === 0) {
+      clearDevelopmentalUnderstanding();
+      return;
+    }
+    const first = understandings[0];
+    const remaining = understandings.length > 1 ? ` (+${understandings.length - 1} more)` : '';
+    const risk = first.risk_level ? `, ${String(first.risk_level).replace(/_/g, ' ')}` : '';
+    elements.developmental.textContent = [
+      `Mira is tentatively noticing: ${first.text}${remaining}.`,
+      `Confidence ${first.confidence || 'tentative'}${risk}.`,
+      'She can revise this as the conversation keeps unfolding.',
+    ].join(' ');
+    elements.developmental.dataset.count = String(understandings.length);
+    elements.developmental.dataset.mode = developmental.mode || 'integrated_lived_loop';
+    setHidden(elements.developmental, false);
   }
 
   function clearDraftAfterAcceptedReply() {
@@ -176,6 +246,10 @@ function createMiraLocalTextController(options = {}) {
       visibleIndicatorPresent: true,
       startedAt: sessionWindow.startedAt,
       expiresAt: sessionWindow.expiresAt,
+      threadContext: {
+        source: 'renderer_memory_only_panel_thread',
+        messages: boundedThreadTurns(),
+      },
       source: 'right-panel-local-text-ui-v0',
     };
   }
@@ -287,14 +361,29 @@ function createMiraLocalTextController(options = {}) {
     const surfaceCounters = surface.checked_output_counters || {};
     counters.module_call_count += Number(surfaceCounters.module_call_count || 0);
     counters.write_count += Number(surfaceCounters.write_count || 0);
+    counters.tentative_understanding_write_count += Number(
+      surfaceCounters.tentative_understanding_write_count || 0
+    );
     counters.tool_call_count += Number(surfaceCounters.tool_call_count || 0);
     counters.external_send_count += Number(surfaceCounters.external_send_count || 0);
     state.lastResult = result;
     state.lastError = null;
 
+    if (surface.decision === 'degraded') {
+      counters.blocked_count += 1;
+      clearReply();
+      clearDevelopmentalUnderstanding();
+      setText(elements.meta, surface.model_attachment?.degraded_reason || 'no_model_response');
+      renderStatus('degraded', 'Model unavailable');
+      return;
+    }
+
     if (surface.decision === 'accepted' && surface.reply?.count === 1 && surface.reply?.text) {
       counters.reply_count += 1;
+      appendThreadTurn('user', rememberedDraft);
+      appendThreadTurn('assistant', surface.reply.text);
       renderReply(surface.reply);
+      renderDevelopmentalUnderstanding(surface);
       clearDraftAfterAcceptedReply();
       setText(elements.meta, surface.local_text_session_gate?.session_id || 'local_text_session_v0');
       renderStatus('reply_ready', 'Ready');
@@ -303,6 +392,7 @@ function createMiraLocalTextController(options = {}) {
 
     counters.blocked_count += 1;
     clearReply();
+    clearDevelopmentalUnderstanding();
     setText(elements.meta, Array.isArray(surface.reasons) ? surface.reasons.join(', ') : 'blocked');
     renderStatus('blocked', 'Blocked');
   }
@@ -319,6 +409,7 @@ function createMiraLocalTextController(options = {}) {
     if (!text.trim()) {
       counters.blocked_count += 1;
       clearReply();
+      clearDevelopmentalUnderstanding();
       setText(elements.meta, 'blocked_empty_input');
       renderStatus('blocked_empty_input', 'Blocked');
       return { ok: false, reason: 'blocked_empty_input' };
@@ -326,7 +417,7 @@ function createMiraLocalTextController(options = {}) {
 
     counters.submit_count += 1;
     state.submitting = true;
-    renderStatus('submitting', 'Reading local state');
+    renderStatus('submitting', 'Connecting');
 
     try {
       const result = await invoke(LOCAL_TEXT_UI_CHANNEL, buildPayload(text));
@@ -336,6 +427,7 @@ function createMiraLocalTextController(options = {}) {
       state.lastError = err;
       counters.blocked_count += 1;
       clearReply();
+      clearDevelopmentalUnderstanding();
       setText(elements.meta, err?.message || 'local_text_ui_error');
       renderStatus('error', 'Unavailable');
       return { ok: false, reason: 'local_text_ui_error', error: err?.message || String(err) };
@@ -390,6 +482,7 @@ function createMiraLocalTextController(options = {}) {
     buildPayload,
     buildCoordinatorPayload,
     getDraftText: () => rememberedDraft,
+    getThreadTurns: () => boundedThreadTurns(),
   };
 }
 
@@ -409,6 +502,11 @@ function destroyMiraLocalTextTab() {
   activeController = null;
 }
 
+function resetMiraLocalTextMemoryForTests() {
+  rememberedDraft = '';
+  rememberedThreadTurns = [];
+}
+
 module.exports = {
   IDS,
   LOCAL_TEXT_UI_CHANNEL,
@@ -416,5 +514,6 @@ module.exports = {
   createMiraLocalTextController,
   destroyMiraLocalTextTab,
   getHeaderSessionId,
+  resetMiraLocalTextMemoryForTests,
   setupMiraLocalTextTab,
 };

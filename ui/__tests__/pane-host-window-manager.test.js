@@ -70,6 +70,25 @@ describe('pane-host-window-manager query defaults', () => {
 
     expect(query.hmSendChunkThresholdBytes).toBe('1536');
   });
+
+  test('builds pane runtime hints from pane commands without Claude fallback', () => {
+    const { _internals } = require('../modules/main/pane-host-window-manager');
+
+    expect(_internals.buildPaneRuntimeHints(['1', '2', '3', '4'], {
+      paneCommands: {
+        '1': 'codex',
+        '2': 'codex --yolo',
+        '3': 'gemini',
+        '4': '',
+      },
+    })).toEqual({
+      '1': { command: 'codex', runtime: 'codex' },
+      '2': { command: 'codex --yolo', runtime: 'codex' },
+      '3': { command: 'gemini', runtime: 'gemini' },
+      '4': { command: '', runtime: 'unknown' },
+    });
+    expect(_internals.classifyPaneRuntimeFromCommand('')).toBe('unknown');
+  });
 });
 
 describe('pane-host-window-manager multiplexing', () => {

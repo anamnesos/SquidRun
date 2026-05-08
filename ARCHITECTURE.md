@@ -146,6 +146,11 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
 - ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
+- ui/modules/mira-core/developmental-understanding-v1.js: Builds Mira's integrated conversation, tentative-understanding, self-state, relationship-state, relational-texture, and next-intention surface without claiming durable memory commit or private consciousness.
+- ui/modules/mira-core/memory-candidate-staging-v1.js: Extracts bounded recent-panel conversation signals into tentative Mira understandings with confidence/risk/revision metadata, not visible CRUD memory management.
+- ui/modules/mira-core/tentative-understanding-store-v1.js: Persists tentative-understanding scaffold rows through CognitiveMemoryStore pending-PR mechanics while explicitly blocking durable memory promotion, hidden approval, and James-as-clickthrough-harness behavior.
+- ui/modules/mira-core/text-model-attachment-v1.js: Owns typed Mira Responses API attachment config/call contract, defaulting to gpt-5.5, forbidding silent downgrade/local fallback in the enabled path, and bounding recent thread context.
+- ui/modules/mira-local-text-ui-surface.js: Builds the right-panel Mira typed conversation surface, joining local shell gating, optional text model attachment, bounded thread context, tentative-understanding persistence counts, and developmental-understanding validation.
 - ui/modules/memory-consistency-check.js: On-demand drift checker that compares `workspace/knowledge/` chunks against knowledge-backed nodes in `workspace/memory/cognitive-memory.db`.
 - ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
 - ui/modules/memory-ingest/journal.js: Shared ingest journal / retry queue / dedupe state backing Phases 1-4 of the memory contract.

@@ -974,8 +974,41 @@ describe('WebSocket Delivery Audit', () => {
     const [ack, received] = await Promise.all([ackPromise, delivery]);
     expect(ack.ok).toBe(true);
     expect(ack.status).toBe('delivered.websocket');
+    expect(ack.verified).toBe(false);
+    expect(ack.userVisible).toBe(false);
     expect(ack.traceId).toBe(messageId);
     expect(received.from).toBe('architect');
+  });
+
+  test('does not count a self-targeted transient websocket client as pane-visible delivery', async () => {
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    const messageId = 'self-target-not-visible-1';
+    const ackPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'self-target should fall through to handler, not echo to transient client',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('unrouted');
+    expect(ack.wsDeliveryCount).toBe(0);
+    expect(ack.verified).toBe(false);
+    expect(ack.userVisible).toBe(false);
+    expect(onMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: expect.any(Number),
+      role: 'architect',
+      message: expect.objectContaining({
+        target: 'architect',
+        messageId,
+      }),
+    }));
   });
 
   test('forwards trace context to message handler for routed send', async () => {
@@ -1317,6 +1350,78 @@ describe('WebSocket Delivery Audit', () => {
       profileName: 'eunbyeol',
       windowKey: 'eunbyeol',
     }));
+  });
+
+  test('side-profile health does not count the probing client as its own target route', async () => {
+    const scopedProbe = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedProbe);
+
+    const requestId = 'health-side-self-route-1';
+    const healthPromise = waitForMessage(
+      scopedProbe,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === requestId
+    );
+    scopedProbe.send(JSON.stringify({
+      type: 'health-check',
+      target: 'architect',
+      requestId,
+    }));
+
+    const health = await healthPromise;
+    expect(health.healthy).toBe(true);
+    expect(health.status).toBe('handler_route_available');
+    expect(health.source).toBe('local_message_handler');
+    expect(health.role).toBe('architect');
+    expect(health.paneId).toBe('1');
+  });
+
+  test('side-profile send to same role uses local handler instead of websocket self-ack', async () => {
+    onMessageSpy.mockResolvedValue({
+      ok: true,
+      accepted: true,
+      queued: true,
+      verified: true,
+      status: 'delivered.verified',
+    });
+    const scopedSender = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedSender);
+
+    const messageId = 'self-route-handler-1';
+    const ackPromise = waitForMessage(
+      scopedSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+    scopedSender.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'must reach pane handler, not sender websocket',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.verified');
+    expect(ack.wsDeliveryCount).toBe(0);
+    const sendCalls = onMessageSpy.mock.calls
+      .map((call) => call[0])
+      .filter((payload) => payload?.message?.type === 'send');
+    expect(sendCalls).toHaveLength(1);
+    expect(sendCalls[0].message.target).toBe('architect');
   });
 
   test('treats background alias targets as valid for health checks', async () => {

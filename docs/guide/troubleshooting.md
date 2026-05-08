@@ -66,12 +66,14 @@ If this command shows recent messages but pane output is still frozen, treat it 
   3. Confirm both devices are online and running SquidRun.
   4. Retry message to architect target format only: `hm-send @<DEVICE>-architect "(ARCHITECT #N): test"`
 
-### 5) Manual Enter Needed on Mac (Claude Pane)
+### 5) Manual Enter / Visible Input Not Submitted
 
-- **Symptom:** On macOS, pane 1 (Claude) sometimes shows message text typed but not submitted until you manually press Enter.
-- **Likely Cause:** Known macOS-specific PTY submit timing issue on Claude path.
+- **Symptom:** A pane shows message text typed into the target CLI input/textarea, but the model does not process it until the pane is unlocked/focused and Enter is pressed. This can appear on macOS Claude paths and Windows Codex paths.
+- **Likely Cause:** PTY submit timing, focus/input-mode, or CLI buffering accepted the text write but did not produce a model turn.
 - **Exact Fix:**
-  Press Enter once in pane 1 to submit buffered text. If this repeats, use pane header "Send Enter" after large injected messages.
+  1. Treat `delivered.daemon_pty`, `delivered.verified`, renderer writes, and paneHost success as insufficient proof by themselves.
+  2. For diagnosis, send a unique nonce and require the recipient model to quote it back via `hm-send`.
+  3. If the nonce remains visible in the recipient input area with no model turn, the route is not green; use pane header "Send Enter" once to recover the live pane and file a delivery proof bug.
 
 ### 6) Telegram Bot Not Responding
 

@@ -1,4 +1,8 @@
-const { dispatchInboundTelegramMessage, formatInbound } = require('../scripts/hm-telegram-poller-lane');
+const {
+  dispatchInboundTelegramMessage,
+  formatInbound,
+  isMainTelegramWorkerAlive,
+} = require('../scripts/hm-telegram-poller-lane');
 
 describe('hm-telegram-poller-lane', () => {
   test('formats inbound videos with saved media path for Architect', () => {
@@ -81,5 +85,22 @@ describe('hm-telegram-poller-lane', () => {
     }));
     expect(sendToArchitect).not.toHaveBeenCalled();
     expect(forwardToProfileTrigger).not.toHaveBeenCalled();
+  });
+
+  test('detects a running main app Telegram worker so standalone lane does not fight getUpdates', () => {
+    expect(isMainTelegramWorkerAlive({
+      processListText: [
+        '1234 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+      ].join('\n'),
+    })).toBe(true);
+  });
+
+  test('does not treat unrelated Telegram Desktop as the main app poller', () => {
+    expect(isMainTelegramWorkerAlive({
+      processListText: [
+        '1234 C:\\Program Files\\Telegram Desktop\\Telegram.exe',
+        '2345 node D:\\projects\\squidrun\\ui\\scripts\\hm-telegram-poller-lane.js run',
+      ].join('\n'),
+    })).toBe(false);
   });
 });

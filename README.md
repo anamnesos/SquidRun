@@ -113,6 +113,8 @@ Full documentation is available in the `docs/guide/` directory:
 - [Troubleshooting](docs/guide/troubleshooting.md)
 - [Limitations (Alpha)](docs/guide/limitations.md)
 
+Operational protocol details live in [docs/protocol-spec.md](docs/protocol-spec.md). For agent-to-agent delivery, pane writes and ACKs are not treated as end-to-end model proof by themselves; critical messages need recipient processing evidence such as an `hm-send` quote-back.
+
 ## Architecture Overview
 
 ```text

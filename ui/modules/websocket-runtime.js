@@ -481,9 +481,10 @@ function resolveTargetIdentity(target) {
   };
 }
 
-function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.now(), routeScope = null) {
+function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.now(), routeScope = null, options = {}) {
   const staleThresholdMs = coerceStaleAfterMs(staleAfterMs);
   const identity = resolveTargetIdentity(target);
+  const excludeClientId = options?.excludeClientId == null ? null : String(options.excludeClientId);
   if (!identity.role && !identity.paneId) {
     return {
       healthy: false,
@@ -499,8 +500,9 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
 
   const hasLocalHandlerRoute = canUseScopedLocalHandlerRoute(routeScope);
   let route = null;
-  for (const info of clients.values()) {
+  for (const [candidateClientId, info] of clients) {
     if (!info) continue;
+    if (excludeClientId !== null && String(candidateClientId) === excludeClientId) continue;
     if (routeScope && !clientMatchesRouteScope(info, routeScope)) continue;
     if (identity.role && info.role === identity.role) {
       route = info;
@@ -812,11 +814,13 @@ function buildOutboundPayload(content, meta = {}) {
   });
 }
 
-function matchClientsForTarget(target, routeScope = null) {
+function matchClientsForTarget(target, routeScope = null, options = {}) {
   const targetStr = String(target);
   const targetRole = targetStr.toLowerCase();
+  const excludeClientId = options?.excludeClientId == null ? null : String(options.excludeClientId);
   const matched = [];
   for (const [clientId, info] of clients) {
+    if (excludeClientId !== null && String(clientId) === excludeClientId) continue;
     if (routeScope && !clientMatchesRouteScope(info, routeScope)) continue;
     const paneMatch = info.paneId !== null && String(info.paneId) === targetStr;
     const roleMatch = typeof info.role === 'string' && info.role.toLowerCase() === targetRole;
@@ -830,7 +834,8 @@ function matchClientsForTarget(target, routeScope = null) {
 function deliverToTargetNow(target, content, meta = {}) {
   const payload = buildOutboundPayload(content, meta);
   let sent = false;
-  const matched = matchClientsForTarget(target, meta.routeScope || null);
+  const excludeClientId = meta?.excludeClientId || null;
+  const matched = matchClientsForTarget(target, meta.routeScope || null, { excludeClientId });
   for (const [clientId, info] of matched) {
     if (info.ws.readyState !== 1) continue;
     try {
@@ -1478,7 +1483,9 @@ async function handleMessage(clientId, rawData) {
       });
       return;
     }
-    const health = getRoutingHealth(message.target, message.staleAfterMs, Date.now(), routeScope);
+    const health = getRoutingHealth(message.target, message.staleAfterMs, Date.now(), routeScope, {
+      excludeClientId: clientId,
+    });
     if (routeScope.failClosed && health.status === 'no_route') {
       health.status = 'scope_route_unavailable';
       health.failClosed = true;
@@ -1753,7 +1760,7 @@ async function handleMessage(clientId, rawData) {
       finalizeAckTracking(ackPayload);
       return;
     }
-    const matched = matchClientsForTarget(target, routeScope);
+    const matched = matchClientsForTarget(target, routeScope, { excludeClientId: clientId });
     if (routeScope.failClosed && matched.length === 0 && !canUseScopedLocalHandlerRoute(routeScope)) {
       const ackPayload = buildRoutingErrorAck(
         message,
@@ -1780,6 +1787,7 @@ async function handleMessage(clientId, rawData) {
       traceContext: dispatchTraceContext,
       routeScope,
       persistIfOffline: false,
+      excludeClientId: clientId,
     })) {
       wsDeliveryCount = 1;
       // Prevent duplicate delivery via both WebSocket route and terminal injection route.
@@ -1863,7 +1871,7 @@ async function handleMessage(clientId, rawData) {
     const websocketDelivered = wsDeliveryCount > 0;
     const accepted = websocketDelivered || Boolean(handlerAck?.accepted || handlerAck?.ok);
     const queued = websocketDelivered || Boolean(handlerAck?.queued || handlerAck?.accepted || handlerAck?.ok);
-    const verified = websocketDelivered || Boolean(handlerAck?.verified);
+    const verified = Boolean(handlerAck?.verified);
     const ok = accepted || verified;
     const routeScope = message.type === 'send'
       ? resolveRouteScope(clientInfo, message)
@@ -1876,8 +1884,8 @@ async function handleMessage(clientId, rawData) {
       && !verified;
 
     let status = verified
-      ? (websocketDelivered ? 'delivered.websocket' : 'delivered.verified')
-      : (accepted ? 'accepted.unverified' : 'unrouted');
+      ? 'delivered.verified'
+      : (websocketDelivered ? 'delivered.websocket' : (accepted ? 'accepted.unverified' : 'unrouted'));
     if (scopedHandlerMiss) {
       status = 'scoped_route_not_ready';
     }
@@ -1897,6 +1905,7 @@ async function handleMessage(clientId, rawData) {
       verified,
       status,
       wsDeliveryCount,
+      userVisible: verified === true,
       handlerResult: handlerAck?.details || null,
       failClosed: scopedHandlerMiss ? true : undefined,
       routeScope: scopedHandlerMiss ? routeScope.targetScope : undefined,

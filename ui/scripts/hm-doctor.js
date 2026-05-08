@@ -15,6 +15,13 @@ const DEFAULT_WS_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const DEFAULT_WS_TIMEOUT_MS = 2500;
 const DEFAULT_DAEMON_TIMEOUT_MS = 2500;
 const APP_LOG_TAIL_LINES = 80;
+const RUNTIME_ENV_OVERRIDE_KEYS = Object.freeze([
+  'SQUIDRUN_CROSS_DEVICE',
+  'SQUIDRUN_DEVICE_ID',
+  'SQUIDRUN_RELAY_URL',
+  'SQUIDRUN_RELAY_SECRET',
+  'SQUIDRUN_PROFILE',
+]);
 const PANE_ROLE_MAP = Object.freeze({
   '1': 'architect',
   '2': 'builder',
@@ -90,6 +97,24 @@ function readEnvMap(envPath) {
   } catch {
     return {};
   }
+}
+
+function readEffectiveEnvMap(envPath, runtimeEnv = process.env) {
+  const envMap = readEnvMap(envPath);
+  for (const key of RUNTIME_ENV_OVERRIDE_KEYS) {
+    if (typeof runtimeEnv?.[key] === 'string') {
+      envMap[key] = runtimeEnv[key];
+    }
+  }
+  return envMap;
+}
+
+function resolveAppLogPath(rootDir = ROOT_DIR) {
+  const candidates = [
+    path.join(rootDir, '.squidrun', 'logs', 'app.log'),
+    path.join(rootDir, 'workspace', 'logs', 'app.log'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
 }
 
 function tailFile(filePath, maxLines = APP_LOG_TAIL_LINES) {
@@ -509,7 +534,7 @@ function printSection(title, payload) {
 async function main() {
   const appStatusPath = path.join(ROOT_DIR, '.squidrun', 'app-status.json');
   const envPath = path.join(ROOT_DIR, '.env');
-  const appLogPath = path.join(ROOT_DIR, 'workspace', 'logs', 'app.log');
+  const appLogPath = resolveAppLogPath(ROOT_DIR);
   const evidencePath = path.join(ROOT_DIR, '.squidrun', 'runtime', 'evidence-ledger.db');
   const settingsPath = path.join(ROOT_DIR, 'ui', 'settings.json');
   const userProfilePath = path.join(ROOT_DIR, 'workspace', 'user-profile.json');
@@ -539,7 +564,7 @@ async function main() {
   const supervisorStatus = readJsonFileSafe(supervisorStatusPath);
   const sessionState = readJsonFileSafe(sessionStatePath);
   const knownDevices = readJsonFileSafe(knownDevicesPath);
-  const envMap = readEnvMap(envPath);
+  const envMap = readEffectiveEnvMap(envPath, process.env);
   const envKeys = parseEnvKeys(envPath);
   const appLogTail = tailFile(appLogPath, APP_LOG_TAIL_LINES);
   const [wsTest, paneStatus] = await Promise.all([

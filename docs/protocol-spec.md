@@ -95,9 +95,11 @@ SquidRun uses a dual-path delivery system to ensure no message is lost.
 - Invalid names still return `invalid_target`.
 
 ### 3.4 ACK & Delivery Semantics
-- **`delivered.verified`:** The target agent's runtime acknowledged receipt of the message.
-- **`accepted.unverified`:** The message was accepted by the bus but the target agent hasn't acknowledged it yet (common during high load or sleep/wake cycles).
+- **`delivered.verified`:** Reserved for delivery paths that can prove more than a raw WebSocket/PTY write. For Codex panes, operational green still requires the recipient model to process the message without manual unlock/focus/Enter and quote back a nonce/head/tail via `hm-send`.
+- **`accepted.unverified`:** The message was accepted by the bus or pane path, but end-to-end model processing has not been proven. This includes legacy/simple delivery ACKs, `delivered.daemon_pty`, renderer writes, and paneHost successes without submit proof.
 - **`fallback.triggered`:** WebSocket failed; the message was written to a trigger file.
+
+Treat older docs, logs, or ledger rows that use `delivered.verified` as "target runtime/pane path acknowledged" unless they also include model quote-back or transcript proof.
 
 ---
 

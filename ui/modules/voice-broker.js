@@ -17,9 +17,13 @@ const {
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 0;
-const DEFAULT_MODEL = 'gpt-realtime-1.5';
+const DEFAULT_MODEL = 'gpt-realtime-2';
 const DEFAULT_VOICE = 'marin';
+const DEFAULT_LIVE_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper';
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe';
+const DEFAULT_VAD_MODE = 'server_vad';
+const DEFAULT_VAD_EAGERNESS = 'auto';
+const DEFAULT_VAD_THRESHOLD = 0.5;
 const DEFAULT_VAD_PREFIX_PADDING_MS = 700;
 const DEFAULT_VAD_SILENCE_DURATION_MS = 2200;
 const DEFAULT_TRANSCRIPT_RELATIVE_PATH = path.join('runtime', 'voice-transcripts.jsonl');
@@ -42,7 +46,12 @@ const DEFAULT_MIRA_VOICE_INSTRUCTIONS = [
   'Give James room to finish thoughts; do not rush into a response after a short pause.',
 ].join(' ');
 const AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
+const COMPOUND_AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:(?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)(?:\s*\/\s*)?)+\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
+const PAREN_AGENT_LABEL_PREFIX_RE = /^\s*\((?:MIRA|ARCH|ARCHITECT)\)\s*:?\s*/i;
 const BARE_AGENT_SEQUENCE_PREFIX_RE = /^\s*(?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\s*:?\s*/i;
+const AGENT_MSG_PREFIX_RE = /^\s*\[(?:AGENT\s+MSG|TRIGGER)[^\]]*\]\s*/i;
+const VOICE_FROM_PREFIX_RE = /^\s*\[Voice\s+from\s+[^\]]+\]\s*:?\s*/i;
+const SPEAKER_LABEL_PREFIX_RE = /^\s*(?:MIRA|ARCH|ARCHITECT)\s*:\s*/i;
 
 function safeReadJson(filePath) {
   try {
@@ -188,10 +197,15 @@ function trimText(value) {
 
 function stripAgentSequencePrefix(value) {
   let text = String(value || '').trim();
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 5; i += 1) {
     const next = text
+      .replace(AGENT_MSG_PREFIX_RE, '')
+      .replace(VOICE_FROM_PREFIX_RE, '')
+      .replace(COMPOUND_AGENT_SEQUENCE_PREFIX_RE, '')
       .replace(AGENT_SEQUENCE_PREFIX_RE, '')
+      .replace(PAREN_AGENT_LABEL_PREFIX_RE, '')
       .replace(BARE_AGENT_SEQUENCE_PREFIX_RE, '')
+      .replace(SPEAKER_LABEL_PREFIX_RE, '')
       .trim();
     if (next === text) break;
     text = next;
@@ -202,6 +216,16 @@ function stripAgentSequencePrefix(value) {
 function toPositiveInt(value, fallback) {
   const numeric = Number.parseInt(String(value ?? ''), 10);
   return Number.isInteger(numeric) && numeric >= 0 ? numeric : fallback;
+}
+
+function toFiniteNumber(value, fallback) {
+  const numeric = Number.parseFloat(String(value ?? ''));
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeEnum(value, allowed, fallback) {
+  const text = String(value ?? '').trim().toLowerCase();
+  return allowed.includes(text) ? text : fallback;
 }
 
 function toBoolean(value, fallback = false) {
@@ -237,10 +261,28 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     || trimText(env.SQUIDRUN_REALTIME_VOICE)
     || trimText(env.OPENAI_REALTIME_VOICE)
     || DEFAULT_VOICE;
+  const liveTranscriptionModel = trimText(overrides.liveTranscriptionModel)
+    || trimText(env.SQUIDRUN_VOICE_LIVE_TRANSCRIPTION_MODEL)
+    || trimText(env.OPENAI_REALTIME_TRANSCRIPTION_MODEL)
+    || DEFAULT_LIVE_TRANSCRIPTION_MODEL;
   const transcriptionModel = trimText(overrides.transcriptionModel)
     || trimText(env.SQUIDRUN_VOICE_TRANSCRIPTION_MODEL)
     || trimText(env.OPENAI_TRANSCRIPTION_MODEL)
     || DEFAULT_TRANSCRIPTION_MODEL;
+  const vadMode = normalizeEnum(
+    overrides.vadMode ?? env.SQUIDRUN_VOICE_VAD_MODE,
+    ['server_vad', 'semantic_vad'],
+    DEFAULT_VAD_MODE
+  );
+  const vadEagerness = normalizeEnum(
+    overrides.vadEagerness ?? env.SQUIDRUN_VOICE_VAD_EAGERNESS,
+    ['low', 'medium', 'high', 'auto'],
+    DEFAULT_VAD_EAGERNESS
+  );
+  const vadThreshold = Math.min(1, Math.max(0, toFiniteNumber(
+    overrides.vadThreshold ?? env.SQUIDRUN_VOICE_VAD_THRESHOLD,
+    DEFAULT_VAD_THRESHOLD
+  )));
   const vadPrefixPaddingMs = toPositiveInt(
     overrides.vadPrefixPaddingMs
       ?? overrides.vadPrefixMs
@@ -272,7 +314,11 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     port,
     model,
     voice,
+    liveTranscriptionModel,
     transcriptionModel,
+    vadMode,
+    vadEagerness,
+    vadThreshold,
     vadPrefixPaddingMs,
     vadSilenceDurationMs,
     openaiApiKey: apiKey,
@@ -926,7 +972,11 @@ class VoiceBrokerService {
         port: this.config.port,
         model: this.config.model,
         voice: this.config.voice,
+        liveTranscriptionModel: this.config.liveTranscriptionModel,
         transcriptionModel: this.config.transcriptionModel,
+        vadMode: this.config.vadMode,
+        vadEagerness: this.config.vadEagerness,
+        vadThreshold: this.config.vadThreshold,
         openaiApiKeyPresent: this.config.openaiApiKeyPresent,
         transcriptJournalPath: this.config.transcriptJournalPath,
         diagnosticsJournalPath: this.config.diagnosticsJournalPath,
@@ -1193,11 +1243,15 @@ class VoiceBrokerService {
 
 module.exports = {
   DEFAULT_DIAGNOSTICS_RELATIVE_PATH,
+  DEFAULT_LIVE_TRANSCRIPTION_MODEL,
   DEFAULT_MODEL,
   DEFAULT_MIRA_VOICE_INSTRUCTIONS,
   DEFAULT_PHONE_PAIRING_RELATIVE_PATH,
   DEFAULT_TRANSCRIPTION_MODEL,
   DEFAULT_TRANSCRIPT_RELATIVE_PATH,
+  DEFAULT_VAD_EAGERNESS,
+  DEFAULT_VAD_MODE,
+  DEFAULT_VAD_THRESHOLD,
   DEFAULT_VOICE,
   OPENAI_CALLS_URL,
   OPENAI_CLIENT_SECRETS_URL,

@@ -11,7 +11,7 @@ function getRuntimeInjectionCapabilityDefaults(options = {}) {
   const claudeEnterDelayMs = toNonNegativeNumber(options.claudeEnterDelayMs, 50);
   const codexVerifySubmitAccepted = typeof options.codexVerifySubmitAccepted === 'boolean'
     ? options.codexVerifySubmitAccepted
-    : false;
+    : true;
 
   return {
     codex: {

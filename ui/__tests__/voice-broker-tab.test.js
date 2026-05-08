@@ -125,6 +125,9 @@ describe('voice-broker tab', () => {
 
     expect(elements.voiceBrokerState.textContent).toBe('Running');
     expect(elements.voiceBrokerEndpoint.textContent).toBe('POST http://127.0.0.1:43123/v1/voice/realtime/client-secret');
+    expect(elements.voiceBrokerModel.textContent).toContain('voice wrapper');
+    expect(elements.voiceBrokerModel.textContent).not.toContain('live Mira brain');
+    expect(elements.voiceBrokerModel.textContent).not.toContain('native audio brain');
     expect(elements.voiceBrokerStartBtn.disabled).toBe(true);
     expect(elements.voiceBrokerStopBtn.disabled).toBe(false);
     expect(elements.voiceBrokerRestartBtn.disabled).toBe(false);
@@ -245,6 +248,10 @@ describe('voice-broker tab', () => {
         running: true,
         lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
         config: {
+          liveTranscriptionModel: 'gpt-realtime-whisper',
+          transcriptionModel: 'gpt-4o-transcribe',
+          vadMode: 'semantic_vad',
+          vadEagerness: 'low',
           vadPrefixPaddingMs: 900,
           vadSilenceDurationMs: 2600,
           endpointShape: {
@@ -280,17 +287,17 @@ describe('voice-broker tab', () => {
         audio: expect.objectContaining({
           input: expect.objectContaining({
             transcription: expect.objectContaining({
-              model: 'gpt-4o-transcribe',
+              model: 'gpt-realtime-whisper',
             }),
           }),
         }),
       }),
     }));
     expect(dataChannel.sent[0].session.audio.input.turn_detection).toEqual(expect.objectContaining({
-      type: 'server_vad',
-      prefix_padding_ms: 900,
-      silence_duration_ms: 2600,
+      type: 'semantic_vad',
+      eagerness: 'low',
       create_response: false,
+      interrupt_response: true,
     }));
   });
 
@@ -818,7 +825,10 @@ describe('voice-broker tab', () => {
       },
     };
 
-    expect(tab.speakMiraReply({ dataChannel }, '(ARCH #35): This is Mira speaking through the voice mouth.')).toBe(true);
+    expect(tab.speakMiraReply(
+      { dataChannel },
+      '[AGENT MSG - reply via hm-send.js] (MIRA/ARCH #35): This is Mira speaking through the voice mouth.'
+    )).toBe(true);
 
     expect(dataChannel.sent).toEqual([
       expect.objectContaining({
@@ -831,6 +841,29 @@ describe('voice-broker tab', () => {
       }),
     ]);
     expect(dataChannel.sent[0].response.instructions).not.toContain('(ARCH #35)');
+    expect(dataChannel.sent[0].response.instructions).not.toContain('MIRA/ARCH');
+    expect(dataChannel.sent[0].response.instructions).not.toContain('AGENT MSG');
+  });
+
+  test('strips leading persona and voice-routing labels from spoken egress only', () => {
+    const dataChannel = {
+      readyState: 'open',
+      sent: [],
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+    };
+
+    expect(tab.speakMiraReply(
+      { dataChannel },
+      '[Voice from James] (MIRA): Mira: Please keep Mira in the actual sentence.'
+    )).toBe(true);
+
+    const spoken = dataChannel.sent[0].response.instructions;
+    expect(spoken).toContain('Please keep Mira in the actual sentence.');
+    expect(spoken).not.toContain('[Voice from James]');
+    expect(spoken).not.toContain('(MIRA):');
+    expect(spoken).not.toContain('Mira: Please');
   });
 
   test('polls voice egress and speaks new Architect messages once', async () => {

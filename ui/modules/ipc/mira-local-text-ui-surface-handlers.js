@@ -6,7 +6,7 @@ const {
   buildMiraLocalTextUiSurface,
 } = require('../mira-local-text-ui-surface');
 
-function buildMiraLocalTextUiSurfaceResponse(payload = {}, options = {}) {
+async function buildMiraLocalTextUiSurfaceResponse(payload = {}, options = {}) {
   return buildMiraLocalTextUiSurface(payload, {
     ...options,
     projectRoot: options.projectRoot || getProjectRoot(),
