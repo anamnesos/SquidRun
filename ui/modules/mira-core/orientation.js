@@ -197,6 +197,9 @@ function buildCapabilitySummary(snapshot = {}) {
   const queue = snapshot.queue || {};
   const serverMigration = snapshot.serverMigration || {};
   const localArmsCanExecute = capability.canExecuteLocal === true;
+  const proofBasis = String(capability.modelProcessingProofBasis || '').trim();
+  const hasRecipientProof = capability.canProveModelProcessing === true
+    && ['recipient_quote_back', 'equivalent_transcript_proof'].includes(proofBasis);
   return {
     status: capability.serverCanExecuteLocal === true
       ? 'invalid'
@@ -207,8 +210,8 @@ function buildCapabilitySummary(snapshot = {}) {
     canRouteToBuilderOracle: capability.canRouteToBuilderOracle === true,
     canExecuteLocal: localArmsCanExecute,
     localArmsCanExecute,
-    canProveModelProcessing: capability.canProveModelProcessing === true,
-    modelProcessingProofBasis: capability.canProveModelProcessing === true ? 'unknown' : 'missing',
+    canProveModelProcessing: hasRecipientProof,
+    modelProcessingProofBasis: hasRecipientProof ? proofBasis : 'missing',
     serverCanExecuteLocal: false,
     coreIntentQueueEnabled: queue.coreIntentQueue?.enabled === true,
     serverUploadSafe: false,

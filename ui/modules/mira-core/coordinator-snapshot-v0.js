@@ -455,11 +455,31 @@ function buildNextAction(lanes = []) {
   return {
     id: 'validate_mira_local_text_panel_once',
     label: 'Capture one Mira Local Text panel proof',
-    summary: 'Use the Mira tab to submit one local text prompt and verify Ready, exactly one bounded reply, and zero writes/tools/sends.',
+    summary: 'Use the Mira tab to verify Model Attachment is not attached, then submit one local text prompt and verify Ready, exactly one bounded reply, and zero writes/tools/sends.',
     action_type: 'proposal_only',
     reversible: true,
     allowed_ceiling: 'C2_draft_or_prep_suggestion_only',
     performs_action: false,
+  };
+}
+
+function buildModelAttachmentStatus() {
+  return {
+    id: 'mira-model-attachment-v0',
+    label: 'Model Attachment',
+    state: 'not_attached',
+    mode: 'dry_run_local_reply_harness',
+    visible_status: 'Model Attachment: not attached / dry-run local reply harness',
+    attachment_enabled: false,
+    live_model_called: false,
+    model_call_allowed: false,
+    api_wiring_present: false,
+    network_allowed: false,
+    durable_writes_allowed: false,
+    external_sends_allowed: false,
+    runtime_started: false,
+    sourceRefs: ['renderer-ui-metadata'],
+    rationale: 'First model-attachment slice is a visible fail-closed status only; local text remains deterministic and no live model/API path is wired.',
   };
 }
 
@@ -551,6 +571,7 @@ function buildSnapshotRecord({
   const lanes = decision === 'accepted' ? buildLanes(localState) : [];
   const nextAction = decision === 'accepted' ? buildNextAction(lanes) : null;
   const blockers = decision === 'accepted' ? buildBlockers(localState) : [];
+  const modelAttachment = decision === 'accepted' ? buildModelAttachmentStatus() : null;
   const snapshot = {
     schema: COORDINATOR_SNAPSHOT_SCHEMA,
     version: COORDINATOR_SNAPSHOT_VERSION,
@@ -569,6 +590,7 @@ function buildSnapshotRecord({
       pressure: 'none',
     } : null,
     lanes,
+    model_attachment: modelAttachment,
     next_recommended_action: nextAction,
     blockers,
     rationale: decision === 'accepted' ? [
@@ -589,6 +611,7 @@ function buildSnapshotRecord({
     boundary: {
       read_only: true,
       no_model: true,
+      no_live_model_attachment: true,
       no_tools: true,
       no_network: true,
       no_writes: true,
@@ -657,6 +680,21 @@ function buildValidationReport(snapshot = {}) {
         && nextAction.reversible === true
         && nextAction.action_type === 'proposal_only'
         && nextAction.performs_action === false
+      ),
+    },
+    {
+      id: 'model-attachment-fail-closed',
+      ok: !accepted || (
+        snapshot.model_attachment?.state === 'not_attached'
+        && snapshot.model_attachment?.mode === 'dry_run_local_reply_harness'
+        && snapshot.model_attachment?.attachment_enabled === false
+        && snapshot.model_attachment?.live_model_called === false
+        && snapshot.model_attachment?.model_call_allowed === false
+        && snapshot.model_attachment?.api_wiring_present === false
+        && snapshot.model_attachment?.network_allowed === false
+        && snapshot.model_attachment?.durable_writes_allowed === false
+        && snapshot.model_attachment?.external_sends_allowed === false
+        && snapshot.model_attachment?.runtime_started === false
       ),
     },
     {

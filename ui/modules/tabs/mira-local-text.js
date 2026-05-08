@@ -15,6 +15,7 @@ const IDS = Object.freeze({
   coordinatorRefresh: 'miraCoordinatorRefreshBtn',
   coordinatorFocus: 'miraCoordinatorFocus',
   coordinatorLanes: 'miraCoordinatorLanes',
+  coordinatorModelAttachment: 'miraCoordinatorModelAttachment',
   coordinatorNext: 'miraCoordinatorNext',
   coordinatorBlockers: 'miraCoordinatorBlockers',
   coordinatorRationale: 'miraCoordinatorRationale',
@@ -208,6 +209,10 @@ function createMiraLocalTextController(options = {}) {
     return `${blocker.label || blocker.id}: ${blocker.state || 'unknown'}`;
   }
 
+  function summarizeModelAttachment(modelAttachment = {}) {
+    return modelAttachment.visible_status || `${modelAttachment.label || 'Model Attachment'}: ${modelAttachment.state || 'unknown'}`;
+  }
+
   function renderCoordinatorSnapshot(result) {
     if (!hasCoordinatorSurface()) return;
     const snapshot = result?.coordinator_snapshot_v0 || {};
@@ -220,6 +225,7 @@ function createMiraLocalTextController(options = {}) {
     setCoordinatorText('coordinatorLanes', Array.isArray(snapshot.lanes)
       ? snapshot.lanes.map(summarizeLane).join(' | ')
       : '');
+    setCoordinatorText('coordinatorModelAttachment', summarizeModelAttachment(snapshot.model_attachment));
     setCoordinatorText('coordinatorNext', snapshot.next_recommended_action?.summary || '');
     setCoordinatorText('coordinatorBlockers', Array.isArray(snapshot.blockers)
       ? snapshot.blockers.map(summarizeBlocker).join(' | ')
@@ -237,6 +243,7 @@ function createMiraLocalTextController(options = {}) {
     setCoordinatorText('coordinatorStatus', 'Unavailable');
     setCoordinatorText('coordinatorFocus', err?.message || 'coordinator_snapshot_error');
     setCoordinatorText('coordinatorLanes', '');
+    setCoordinatorText('coordinatorModelAttachment', '');
     setCoordinatorText('coordinatorNext', '');
     setCoordinatorText('coordinatorBlockers', '');
     setCoordinatorText('coordinatorRationale', '');

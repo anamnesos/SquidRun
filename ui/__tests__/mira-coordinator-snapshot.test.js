@@ -91,12 +91,27 @@ describe('Mira Coordinator Snapshot v0', () => {
         actionAllowed: false,
       }),
     ]));
+    expect(snapshot.model_attachment).toEqual(expect.objectContaining({
+      id: 'mira-model-attachment-v0',
+      state: 'not_attached',
+      mode: 'dry_run_local_reply_harness',
+      visible_status: 'Model Attachment: not attached / dry-run local reply harness',
+      attachment_enabled: false,
+      live_model_called: false,
+      model_call_allowed: false,
+      api_wiring_present: false,
+      network_allowed: false,
+      durable_writes_allowed: false,
+      external_sends_allowed: false,
+      runtime_started: false,
+    }));
     expect(snapshot.next_recommended_action).toEqual(expect.objectContaining({
       id: 'validate_mira_local_text_panel_once',
       action_type: 'proposal_only',
       reversible: true,
       performs_action: false,
     }));
+    expect(snapshot.next_recommended_action.summary).toContain('Model Attachment is not attached');
     expect(snapshot.action_ceiling).toEqual(expect.objectContaining({
       c0_c1_local_status_read_awareness: 'allowed',
       c2_draft_or_prep: 'suggestion_only',
@@ -117,6 +132,9 @@ describe('Mira Coordinator Snapshot v0', () => {
       model_call_count: 0,
       growth_write_count: 0,
     }));
+    expect(output.validation_report.static_rule_results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'model-attachment-fail-closed', ok: true }),
+    ]));
     expect(validateMiraCoordinatorSnapshotV0Output(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
