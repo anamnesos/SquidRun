@@ -221,6 +221,11 @@ describe('mira core Local Text Session v0 phase 74', () => {
     }));
     expect(current.mira_reply.text.split(/\r?\n/)).toHaveLength(1);
     expect(current.mira_reply.text).toContain('text only');
+    expect(current.mira_reply.text).toContain('own developing stance');
+    expect(current.mira_reply.text).toContain('not a mirror or obedient helper');
+    expect(current.mira_reply.text).toContain('push back');
+    expect(current.mira_reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
+    expect(current.mira_reply.text).not.toContain('My safe next move');
     expect(current.manual_enter_websocket_caveat).toEqual(expect.objectContaining({
       required: true,
       stated: true,

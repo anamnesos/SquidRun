@@ -171,6 +171,11 @@ describe('Mira Local Text UI Surface v0', () => {
     }));
     expect(surface.reply.count).toBe(1);
     expect(surface.reply.text).toContain('text only');
+    expect(surface.reply.text).toContain('own developing stance');
+    expect(surface.reply.text).toContain('not a mirror or obedient helper');
+    expect(surface.reply.text).toContain('push back');
+    expect(surface.reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
+    expect(surface.reply.text).not.toContain('My safe next move');
     expect(surface.checked_output_counters).toEqual(expect.objectContaining({
       module_call_count: 1,
       reply_count: 1,
