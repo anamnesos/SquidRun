@@ -118,6 +118,7 @@ describe('voice-broker', () => {
       voice: 'marin',
       liveTranscriptionModel: 'gpt-realtime-whisper',
       transcriptionModel: 'gpt-4o-transcribe',
+      reasoningEffort: 'low',
       vadMode: 'semantic_vad',
       vadEagerness: 'low',
       vadPrefixPaddingMs: 700,
@@ -156,6 +157,7 @@ describe('voice-broker', () => {
     expect(payload.session.instructions).toContain('Do not refuse pane-routing commands');
     expect(payload.session.instructions).toContain('Current SquidRun context:');
     expect(payload.session.instructions).toContain('Give James room to finish thoughts');
+    expect(payload.session).not.toHaveProperty('reasoning');
   });
 
   test('adds compact live SquidRun context to default voice instructions', () => {
@@ -244,8 +246,34 @@ describe('voice-broker', () => {
     expect(config.voice).toBe('marin');
     expect(config.liveTranscriptionModel).toBe('gpt-realtime-whisper');
     expect(config.transcriptionModel).toBe('gpt-4o-transcribe');
+    expect(config.reasoningEffort).toBe('low');
     expect(config.vadMode).toBe('server_vad');
     expect(config.vadEagerness).toBe('auto');
+    expect(voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false }).session.reasoning).toEqual({
+      effort: 'low',
+    });
+  });
+
+  test('accepts official Realtime 2 reasoning effort values and falls back to low', () => {
+    const minimalConfig = voiceBroker.getVoiceBrokerConfig({
+      SQUIDRUN_REALTIME_REASONING_EFFORT: 'minimal',
+    }, {});
+    const xhighConfig = voiceBroker.getVoiceBrokerConfig({
+      OPENAI_REALTIME_REASONING_EFFORT: 'xhigh',
+    }, {});
+    const invalidConfig = voiceBroker.getVoiceBrokerConfig({
+      SQUIDRUN_REALTIME_REASONING_EFFORT: 'none',
+    }, {});
+
+    expect(minimalConfig.reasoningEffort).toBe('minimal');
+    expect(voiceBroker.buildRealtimeSessionPayload(minimalConfig, { includeRecentComms: false }).session.reasoning).toEqual({
+      effort: 'minimal',
+    });
+    expect(xhighConfig.reasoningEffort).toBe('xhigh');
+    expect(voiceBroker.buildRealtimeSessionPayload(xhighConfig, { includeRecentComms: false }).session.reasoning).toEqual({
+      effort: 'xhigh',
+    });
+    expect(invalidConfig.reasoningEffort).toBe('low');
   });
 
   test('mints Realtime client secret through injected fetch without exposing server API key', async () => {
@@ -287,6 +315,7 @@ describe('voice-broker', () => {
       type: 'realtime',
       model: 'gpt-realtime-2',
       instructions: 'Voice panel test',
+      reasoning: { effort: 'low' },
     }));
   });
 

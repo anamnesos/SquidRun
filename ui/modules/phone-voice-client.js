@@ -39,8 +39,9 @@ function sanitizePublicStatus(status = {}) {
   const config = status.config || {};
   return {
     running: Boolean(status.running),
-    model: toNonEmptyString(config.model) || 'gpt-realtime-1.5',
+    model: toNonEmptyString(config.model) || 'gpt-realtime-2',
     voice: toNonEmptyString(config.voice) || 'marin',
+    liveTranscriptionModel: toNonEmptyString(config.liveTranscriptionModel) || 'gpt-realtime-whisper',
     transcriptionModel: toNonEmptyString(config.transcriptionModel) || 'gpt-4o-transcribe',
     vadPrefixPaddingMs: toPositiveInt(config.vadPrefixPaddingMs, 700),
     vadSilenceDurationMs: toPositiveInt(config.vadSilenceDurationMs, 2200),
@@ -139,6 +140,7 @@ function renderPhoneVoiceClientPage(input = {}) {
     .talk:disabled { background: #3a4652; color: #aab4c0; }
     .row { display: flex; gap: 10px; }
     .row button { flex: 1; min-height: 48px; border: 1px solid #334252; border-radius: 8px; background: #18212a; color: #f5f7fa; }
+    .disclosure { color: #9ea9b5; font-size: 13px; }
     code { color: #d8e7ff; }
   </style>
 </head>
@@ -153,6 +155,7 @@ function renderPhoneVoiceClientPage(input = {}) {
       <button id="mute" type="button" disabled>Mute</button>
       <button id="interrupt" type="button" disabled>Interrupt</button>
     </div>
+    <p class="disclosure">Spoken Mira replies use AI-generated voice audio. Audio may be sent to OpenAI while this paired session is active.</p>
     <p id="log">Ready to connect when this broker is reachable from your phone.</p>
   </main>
   <script>
@@ -299,7 +302,7 @@ function renderPhoneVoiceClientPage(input = {}) {
             output_modalities: ['audio'],
             audio: {
               input: {
-                transcription: { model: window.SQUIDRUN_PHONE_VOICE.status.transcriptionModel },
+                transcription: { model: window.SQUIDRUN_PHONE_VOICE.status.liveTranscriptionModel || 'gpt-realtime-whisper' },
                 turn_detection: {
                   type: 'server_vad',
                   prefix_padding_ms: window.SQUIDRUN_PHONE_VOICE.status.vadPrefixPaddingMs || 700,

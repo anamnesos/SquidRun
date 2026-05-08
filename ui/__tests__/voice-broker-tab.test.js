@@ -1,3 +1,6 @@
+const fs = require('fs');
+const path = require('path');
+
 describe('voice-broker tab', () => {
   let tab;
   let invokeBridge;
@@ -131,6 +134,15 @@ describe('voice-broker tab', () => {
     expect(elements.voiceBrokerStartBtn.disabled).toBe(true);
     expect(elements.voiceBrokerStopBtn.disabled).toBe(false);
     expect(elements.voiceBrokerRestartBtn.disabled).toBe(false);
+  });
+
+  test('desktop voice surface includes hold control and AI voice disclosure', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+
+    expect(html).toContain('id="voicePushToTalkBtn"');
+    expect(html).toContain('Hold to Talk');
+    expect(html).toContain('id="voiceDisclosure"');
+    expect(html).toContain('AI-generated voice audio');
   });
 
   test('setup refreshes status and wires restart through IPC control channel', async () => {
@@ -278,7 +290,8 @@ describe('voice-broker tab', () => {
       }),
     }));
     expect(peer.setRemoteDescription).toHaveBeenCalledWith({ type: 'answer', sdp: 'answer-sdp' });
-    expect(track.enabled).toBe(true);
+    expect(peer.addTrack).toHaveBeenCalledWith(track, stream);
+    expect(track.enabled).toBe(false);
     dataChannel.handlers.open();
     expect(dataChannel.sent).toContainEqual(expect.objectContaining({
       type: 'session.update',
@@ -543,8 +556,12 @@ describe('voice-broker tab', () => {
       })),
     });
 
+    expect(track.enabled).toBe(false);
+    expect(elements.voiceSessionStatus.textContent).toBe('Connected');
     expect(tab.setPushToTalk(true)).toBe(true);
     expect(track.enabled).toBe(true);
+    expect(tab.setPushToTalk(false)).toBe(true);
+    expect(track.enabled).toBe(false);
     expect(tab.muteVoiceSession()).toBe(true);
     expect(track.enabled).toBe(false);
     expect(tab.interruptVoiceSession()).toBe(true);
@@ -552,6 +569,88 @@ describe('voice-broker tab', () => {
     tab.stopVoiceSession();
     expect(track.stop).toHaveBeenCalled();
     expect(peer.close).toHaveBeenCalled();
+  });
+
+  test('desktop hold-to-talk handlers enable only while held and stop clears active state', async () => {
+    const track = { enabled: true, stop: jest.fn() };
+    const dataChannel = {
+      readyState: 'open',
+      sent: [],
+      addEventListener: jest.fn(),
+      send(payload) {
+        this.sent.push(JSON.parse(payload));
+      },
+      close: jest.fn(),
+    };
+    const peer = { close: jest.fn() };
+    tab.setupVoiceBrokerTab();
+
+    await tab.startVoiceSession({
+      status: {
+        ok: true,
+        ready: true,
+        running: true,
+        lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
+        config: { endpointShape: { clientSecret: { path: '/token' } } },
+      },
+      fetchImpl: jest.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ value: 'eph_test' }) })
+        .mockResolvedValueOnce({ ok: true, text: async () => 'answer-sdp' }),
+      mediaDevices: {
+        getUserMedia: jest.fn(async () => ({
+          getAudioTracks: () => [track],
+          getTracks: () => [track],
+        })),
+      },
+      RTCPeerConnection: jest.fn(() => ({
+        addTrack: jest.fn(),
+        createDataChannel: () => dataChannel,
+        createOffer: async () => ({ sdp: 'offer-sdp' }),
+        setLocalDescription: jest.fn(),
+        setRemoteDescription: jest.fn(),
+        close: peer.close,
+      })),
+    });
+
+    const push = elements.voicePushToTalkBtn;
+    const pointerDown = push.listeners.get('pointerdown');
+    const pointerUp = push.listeners.get('pointerup');
+    const pointerCancel = push.listeners.get('pointercancel');
+    const pointerLeave = push.listeners.get('pointerleave');
+    const keyDown = push.listeners.get('keydown');
+    const keyUp = push.listeners.get('keyup');
+    const event = () => ({ preventDefault: jest.fn(), pointerId: 7 });
+
+    expect(track.enabled).toBe(false);
+    pointerDown(event());
+    expect(track.enabled).toBe(true);
+    expect(push.dataset.active).toBe('true');
+    pointerUp(event());
+    expect(track.enabled).toBe(false);
+    expect(push.dataset.active).toBe('false');
+
+    pointerDown(event());
+    expect(track.enabled).toBe(true);
+    pointerCancel(event());
+    expect(track.enabled).toBe(false);
+
+    pointerDown(event());
+    expect(track.enabled).toBe(true);
+    pointerLeave(event());
+    expect(track.enabled).toBe(false);
+
+    keyDown({ key: ' ', repeat: false, preventDefault: jest.fn() });
+    expect(track.enabled).toBe(true);
+    keyUp({ key: ' ', preventDefault: jest.fn() });
+    expect(track.enabled).toBe(false);
+
+    keyDown({ key: 'Enter', repeat: false, preventDefault: jest.fn() });
+    expect(track.enabled).toBe(true);
+    tab.stopVoiceSession();
+    expect(track.enabled).toBe(false);
+    expect(track.stop).toHaveBeenCalled();
+    expect(peer.close).toHaveBeenCalled();
+    expect(push.dataset.active).toBe('false');
   });
 
   test('connect refreshes broker status so stale dynamic ports are not reused', async () => {

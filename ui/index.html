@@ -674,11 +674,12 @@
               </div>
               <div class="voice-broker-controls">
                 <button type="button" class="btn btn-secondary" id="voiceSessionStartBtn" title="Connect live voice session">Connect</button>
-                <button type="button" class="btn btn-secondary" id="voicePushToTalkBtn" title="Toggle push-to-talk">Talk</button>
+                <button type="button" class="btn btn-secondary" id="voicePushToTalkBtn" title="Hold to talk">Hold to Talk</button>
                 <button type="button" class="btn btn-secondary" id="voiceMuteBtn" title="Mute microphone">Mute</button>
                 <button type="button" class="btn btn-secondary" id="voiceInterruptBtn" title="Interrupt voice response">Interrupt</button>
                 <button type="button" class="btn btn-secondary" id="voiceSessionStopBtn" title="Stop live voice session">End</button>
               </div>
+              <div class="voice-disclosure" id="voiceDisclosure">Spoken Mira replies use AI-generated voice audio. Audio may be sent to OpenAI while a voice session is active.</div>
               <pre class="voice-session-log" id="voiceSessionLog" aria-live="polite"></pre>
             </div>
             <div class="voice-broker-error" id="voiceBrokerError" hidden></div>

@@ -21,6 +21,7 @@ const DEFAULT_MODEL = 'gpt-realtime-2';
 const DEFAULT_VOICE = 'marin';
 const DEFAULT_LIVE_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper';
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe';
+const DEFAULT_REASONING_EFFORT = 'low';
 const DEFAULT_VAD_MODE = 'server_vad';
 const DEFAULT_VAD_EAGERNESS = 'auto';
 const DEFAULT_VAD_THRESHOLD = 0.5;
@@ -32,6 +33,7 @@ const DEFAULT_PHONE_PAIRING_RELATIVE_PATH = path.join('runtime', 'voice-phone-pa
 const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 const OPENAI_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
+const REALTIME_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
 const DEFAULT_MIRA_VOICE_INSTRUCTIONS = [
   'You are Mira, the SquidRun Architect voice companion for James.',
   'You are not a generic AI assistant and you should not introduce yourself that way.',
@@ -269,6 +271,13 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     || trimText(env.SQUIDRUN_VOICE_TRANSCRIPTION_MODEL)
     || trimText(env.OPENAI_TRANSCRIPTION_MODEL)
     || DEFAULT_TRANSCRIPTION_MODEL;
+  const reasoningEffort = normalizeEnum(
+    overrides.reasoningEffort
+      ?? env.SQUIDRUN_REALTIME_REASONING_EFFORT
+      ?? env.OPENAI_REALTIME_REASONING_EFFORT,
+    REALTIME_REASONING_EFFORTS,
+    DEFAULT_REASONING_EFFORT
+  );
   const vadMode = normalizeEnum(
     overrides.vadMode ?? env.SQUIDRUN_VOICE_VAD_MODE,
     ['server_vad', 'semantic_vad'],
@@ -316,6 +325,7 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
     voice,
     liveTranscriptionModel,
     transcriptionModel,
+    reasoningEffort,
     vadMode,
     vadEagerness,
     vadThreshold,
@@ -376,22 +386,37 @@ function getVoiceBrokerConfig(env = process.env, overrides = {}) {
   };
 }
 
+function modelSupportsReasoningEffort(model) {
+  return String(model || '').trim().toLowerCase() === DEFAULT_MODEL;
+}
+
 function buildRealtimeSessionPayload(config = {}, overrides = {}) {
   const model = trimText(overrides.model) || config.model || DEFAULT_MODEL;
   const voice = trimText(overrides.voice) || config.voice || DEFAULT_VOICE;
+  const reasoningEffort = normalizeEnum(
+    overrides.reasoningEffort ?? config.reasoningEffort,
+    REALTIME_REASONING_EFFORTS,
+    DEFAULT_REASONING_EFFORT
+  );
   const instructions = trimText(overrides.instructions)
     || buildMiraVoiceInstructions(overrides);
-  return {
-    session: {
-      type: 'realtime',
-      model,
-      instructions,
-      audio: {
-        output: {
-          voice,
-        },
+  const session = {
+    type: 'realtime',
+    model,
+    instructions,
+    audio: {
+      output: {
+        voice,
       },
     },
+  };
+  if (modelSupportsReasoningEffort(model)) {
+    session.reasoning = {
+      effort: reasoningEffort,
+    };
+  }
+  return {
+    session,
   };
 }
 
@@ -974,6 +999,7 @@ class VoiceBrokerService {
         voice: this.config.voice,
         liveTranscriptionModel: this.config.liveTranscriptionModel,
         transcriptionModel: this.config.transcriptionModel,
+        reasoningEffort: this.config.reasoningEffort,
         vadMode: this.config.vadMode,
         vadEagerness: this.config.vadEagerness,
         vadThreshold: this.config.vadThreshold,
@@ -1247,6 +1273,7 @@ module.exports = {
   DEFAULT_MODEL,
   DEFAULT_MIRA_VOICE_INSTRUCTIONS,
   DEFAULT_PHONE_PAIRING_RELATIVE_PATH,
+  DEFAULT_REASONING_EFFORT,
   DEFAULT_TRANSCRIPTION_MODEL,
   DEFAULT_TRANSCRIPT_RELATIVE_PATH,
   DEFAULT_VAD_EAGERNESS,
