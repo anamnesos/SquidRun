@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
 const path = require('path');
+const fs = require('fs');
 const {
   planMemoryConsistencyRepair,
+  planOrphanMigration,
   runMemoryConsistencyCheck,
   runMemoryConsistencyRepair,
+  runOrphanMigration,
 } = require('../modules/memory-consistency-check');
 
 function parseArgs(argv) {
@@ -32,9 +35,21 @@ function parseArgs(argv) {
 function printUsage() {
   process.stdout.write([
     'Usage:',
-    '  node scripts/hm-memory-consistency.js [--json] [--repair | --dry-run] [--project-root <path>] [--workspace-dir <path>] [--db-path <path>] [--sample-limit <n>] [--evidence-ledger-db-path <path>]',
+    '  node scripts/hm-memory-consistency.js [--json] [--repair | --dry-run] [--repair-scope missing-only] [--allow-orphan-deletes] [--project-root <path>] [--workspace-dir <path>] [--db-path <path>] [--sample-limit <n>] [--evidence-ledger-db-path <path>]',
+    '  node scripts/hm-memory-consistency.js [--json] --orphan-migration-review [--mapping-file <path>]',
+    '  node scripts/hm-memory-consistency.js [--json] --migrate-orphans --mapping-file <path>',
     '',
   ].join('\n'));
+}
+
+function readMappingFile(filePath) {
+  if (!filePath) return undefined;
+  const resolved = path.resolve(String(filePath));
+  const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
+    return parsed.mappings || parsed;
+  }
+  return undefined;
 }
 
 function renderBaseReport(result) {
@@ -90,6 +105,7 @@ function renderRepairSections(lines, result) {
   lines.push(
     '',
     `repair_mode: ${result.mode}`,
+    `repair_scope: ${result.repairScope || 'all'}`,
     `planned_actions: ${result.summary.actionCount}`,
     `planned_inserts: ${result.summary.insertCount}`,
     `planned_duplicate_merges: ${result.summary.duplicateMergeCount}`,
@@ -97,6 +113,10 @@ function renderRepairSections(lines, result) {
     `planned_total_deletes: ${result.summary.deleteCount}`,
     `planned_skips: ${result.summary.skippedCount}`
   );
+  if (Number(result.summary.deferredActionCount || 0) > 0 || Number(result.summary.deferredSkippedCount || 0) > 0) {
+    lines.push(`deferred_actions: ${Number(result.summary.deferredActionCount || 0)}`);
+    lines.push(`deferred_skips: ${Number(result.summary.deferredSkippedCount || 0)}`);
+  }
 
   if (result.actions.length > 0) {
     lines.push('', 'Planned Actions:');
@@ -150,7 +170,54 @@ function renderRepairSections(lines, result) {
   return lines;
 }
 
+function renderOrphanMigrationReport(result) {
+  const lines = [
+    `Orphan migration: ${result.mode}`,
+    `workspace: ${result.workspaceDir}`,
+    `cognitive_db: ${result.cognitiveDbPath}`,
+    `planned_migrations: ${result.summary.mappedMigrationCount}`,
+    `skipped: ${result.summary.skippedCount}`,
+    `deleted_source_review: ${result.summary.deletedSourceReviewCount}`,
+    `ambiguous_targets: ${result.summary.ambiguousTargetCount}`,
+    `no_target: ${result.summary.noTargetCount}`,
+    `mapping_required: ${result.summary.mappingRequiredCount}`,
+  ];
+
+  if (result.actions.length > 0) {
+    lines.push('', 'Planned Migrations:');
+    for (const action of result.actions) {
+      lines.push(`- MIGRATE ${action.oldNodeId} -> ${action.targetNodeId} :: ${action.sourcePath || '(no path)'}`);
+    }
+  }
+
+  if (result.skipped.length > 0) {
+    lines.push('', 'Review Items:');
+    for (const entry of result.skipped) {
+      lines.push(`- ${entry.kind} ${entry.nodeId} :: ${entry.reason}`);
+    }
+  }
+
+  if (result.execution) {
+    lines.push(
+      '',
+      `applied_migrations: ${result.execution.appliedActions}`,
+      `deleted_nodes: ${result.execution.deletedNodes}`,
+      `moved_edges: ${result.execution.movedEdges}`,
+      `deduped_edges: ${result.execution.dedupedEdges}`,
+      `moved_traces: ${result.execution.movedTraces}`,
+      `deduped_traces: ${result.execution.dedupedTraces}`,
+      `moved_leases: ${result.execution.movedLeases}`,
+      `audit_events_written: ${result.execution.auditEventsWritten}`
+    );
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
 function renderTextReport(result) {
+  if (result.mode === 'migrate' || result.summary?.mappedMigrationCount != null) {
+    return renderOrphanMigrationReport(result);
+  }
   const base = result.detection || result;
   const lines = renderBaseReport(base);
   renderDriftSections(lines, base);
@@ -172,13 +239,20 @@ function main(argv = process.argv.slice(2)) {
     workspaceDir: flags['workspace-dir'] ? path.resolve(String(flags['workspace-dir'])) : undefined,
     dbPath: flags['db-path'] ? path.resolve(String(flags['db-path'])) : undefined,
     sampleLimit: flags['sample-limit'],
+    repairScope: flags['repair-scope'] || (flags['insert-missing-only'] ? 'missing-only' : undefined),
+    allowOrphanDeletes: flags['allow-orphan-deletes'] === true,
+    orphanMappings: flags['mapping-file'] ? readMappingFile(flags['mapping-file']) : undefined,
     evidenceLedgerDbPath: flags['evidence-ledger-db-path']
       ? path.resolve(String(flags['evidence-ledger-db-path']))
       : undefined,
   };
-  const result = flags['dry-run']
-    ? planMemoryConsistencyRepair(options)
-    : (flags.repair ? runMemoryConsistencyRepair(options) : runMemoryConsistencyCheck(options));
+  const result = flags['orphan-migration-review']
+    ? planOrphanMigration(options)
+    : (flags['migrate-orphans']
+      ? runOrphanMigration({ ...options, dryRun: false })
+      : (flags['dry-run']
+        ? planMemoryConsistencyRepair(options)
+        : (flags.repair ? runMemoryConsistencyRepair(options) : runMemoryConsistencyCheck(options))));
 
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

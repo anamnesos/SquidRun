@@ -102,6 +102,7 @@ const BRIDGE_ENV_KEYS = Object.freeze([
   'SQUIDRUN_RELAY_SECRET',
   'SQUIDRUN_PROFILE',
 ]);
+const DEFAULT_BRIDGE_DISCOVERY_MAX_AGE_MS = 10 * 60 * 1000;
 
 let SQLITE_DRIVER = undefined;
 let resolveDefaultCognitiveMemoryDbPathFn = null;
@@ -229,6 +230,26 @@ function asNonEmptyString(value) {
   return trimmed ? trimmed : null;
 }
 
+function isFiniteNumberValue(value) {
+  if (value === null || value === undefined || value === '') return false;
+  return Number.isFinite(Number(value));
+}
+
+function normalizeBridgeDeviceId(value) {
+  const normalized = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  return normalized || null;
+}
+
+function normalizeBridgeRoles(input) {
+  if (!Array.isArray(input)) return [];
+  const roles = new Set();
+  for (const value of input) {
+    const role = String(value || '').trim().toLowerCase();
+    if (role) roles.add(role);
+  }
+  return Array.from(roles).sort();
+}
+
 function envFlagTruthy(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return ['1', 'true', 'yes', 'on', 'enabled'].includes(normalized);
@@ -262,6 +283,84 @@ function readEffectiveProjectEnv(projectRoot, runtimeEnv = process.env) {
     }
   }
   return envMap;
+}
+
+function normalizeBridgeDiscoveryDevice(input = {}) {
+  const entry = input && typeof input === 'object' && !Array.isArray(input)
+    ? input
+    : {};
+  const deviceId = normalizeBridgeDeviceId(entry.device_id || entry.deviceId || entry.id);
+  if (!deviceId) return null;
+  return {
+    device_id: deviceId,
+    roles: normalizeBridgeRoles(entry.roles),
+    connected_since: asNonEmptyString(entry.connected_since || entry.connectedSince || entry.connected_at || entry.connectedAt),
+  };
+}
+
+function normalizeBridgeDiscoveryDevices(input) {
+  if (!Array.isArray(input)) return [];
+  const devices = new Map();
+  for (const entry of input) {
+    const device = normalizeBridgeDiscoveryDevice(entry);
+    if (!device) continue;
+    devices.set(device.device_id, device);
+  }
+  return Array.from(devices.values()).sort((a, b) => a.device_id.localeCompare(b.device_id));
+}
+
+function readBridgeKnownDevicesCache(projectRoot, options = {}) {
+  const cachePath = options.bridgeKnownDevicesPath
+    ? path.resolve(String(options.bridgeKnownDevicesPath))
+    : path.join(projectRoot, '.squidrun', 'bridge', 'known-devices.json');
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+  const maxAgeMs = Number.isFinite(Number(options.bridgeDiscoveryMaxAgeMs))
+    ? Math.max(0, Math.floor(Number(options.bridgeDiscoveryMaxAgeMs)))
+    : DEFAULT_BRIDGE_DISCOVERY_MAX_AGE_MS;
+
+  if (!safeStat(cachePath)?.isFile()) {
+    return {
+      ok: false,
+      path: cachePath,
+      status: 'missing',
+      error: null,
+      updatedAt: null,
+      ageMs: null,
+      maxAgeMs,
+      devices: [],
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    const updatedAt = asNonEmptyString(parsed.updated_at || parsed.updatedAt);
+    const updatedAtMs = updatedAt ? Date.parse(updatedAt) : NaN;
+    const ageMs = Number.isFinite(updatedAtMs) ? Math.max(0, nowMs - updatedAtMs) : null;
+    const devices = normalizeBridgeDiscoveryDevices(parsed.devices);
+    const fresh = ageMs !== null && ageMs <= maxAgeMs;
+    return {
+      ok: fresh,
+      path: cachePath,
+      status: fresh ? 'fresh' : (ageMs === null ? 'invalid_timestamp' : 'stale'),
+      error: null,
+      updatedAt,
+      ageMs,
+      maxAgeMs,
+      source: asNonEmptyString(parsed.source) || 'unknown',
+      devices,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      path: cachePath,
+      status: 'read_error',
+      error: err.message,
+      updatedAt: null,
+      ageMs: null,
+      maxAgeMs,
+      devices: [],
+    };
+  }
 }
 
 function walkFiles(rootPath, predicate = null, results = []) {
@@ -528,6 +627,62 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
     status,
     pending,
     lowFidelity: source.lowFidelity === true,
+    discoveredRoles: normalizeBridgeRoles(source.discoveredRoles || source.roles),
+    architectRoleDiscovery: source.architectRoleDiscovery === 'registered' ? 'registered' : 'unknown',
+    liveDiscovery: source.liveDiscovery && typeof source.liveDiscovery === 'object' && !Array.isArray(source.liveDiscovery)
+      ? source.liveDiscovery
+      : null,
+  };
+}
+
+function applyBridgeDiscoveryToSnapshot(snapshot = {}, discovery = {}, options = {}) {
+  const bridge = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? { ...snapshot }
+    : {};
+  const cache = discovery && typeof discovery === 'object' && !Array.isArray(discovery)
+    ? discovery
+    : {};
+  const targetDeviceId = normalizeBridgeDeviceId(bridge.deviceId);
+  const devices = normalizeBridgeDiscoveryDevices(cache.devices);
+  const matched = targetDeviceId
+    ? devices.find((device) => device.device_id === targetDeviceId)
+    : null;
+  const roles = matched ? normalizeBridgeRoles(matched.roles) : [];
+  const architectOnline = cache.ok === true && Boolean(matched) && roles.includes('architect');
+  const liveDiscovery = {
+    ok: architectOnline,
+    source: 'known-devices-cache',
+    status: architectOnline
+      ? 'architect_online'
+      : (cache.status || (cache.ok === true ? 'no_matching_architect' : 'unavailable')),
+    path: cache.path || null,
+    updatedAt: cache.updatedAt || null,
+    ageMs: isFiniteNumberValue(cache.ageMs) ? Number(cache.ageMs) : null,
+    maxAgeMs: isFiniteNumberValue(cache.maxAgeMs) ? Number(cache.maxAgeMs) : DEFAULT_BRIDGE_DISCOVERY_MAX_AGE_MS,
+    deviceId: targetDeviceId,
+    matchedDeviceId: matched?.device_id || null,
+    roles,
+    error: cache.error || null,
+  };
+
+  const allowUpgrade = options.allowUpgrade !== false;
+  if (!architectOnline || !allowUpgrade) {
+    return {
+      ...bridge,
+      liveDiscovery,
+    };
+  }
+
+  return {
+    ...bridge,
+    mode: 'connected',
+    state: 'connected',
+    status: 'relay_connected',
+    pending: false,
+    lowFidelity: false,
+    discoveredRoles: roles,
+    architectRoleDiscovery: 'registered',
+    liveDiscovery,
   };
 }
 
@@ -549,10 +704,16 @@ function buildBridgeSnapshotFromEnv(projectRoot, runtimeEnv = process.env) {
 }
 
 function resolveBridgeSnapshot(projectRoot, options = {}) {
-  if (options.bridgeStatus && typeof options.bridgeStatus === 'object' && !Array.isArray(options.bridgeStatus)) {
-    return normalizeBridgeSnapshot(options.bridgeStatus);
-  }
-  return buildBridgeSnapshotFromEnv(projectRoot, options.env || process.env);
+  const hasExplicitBridgeStatus = options.bridgeStatus && typeof options.bridgeStatus === 'object' && !Array.isArray(options.bridgeStatus);
+  const baseSnapshot = hasExplicitBridgeStatus
+    ? normalizeBridgeSnapshot(options.bridgeStatus)
+    : buildBridgeSnapshotFromEnv(projectRoot, options.env || process.env);
+  const discovery = options.bridgeDiscovery && typeof options.bridgeDiscovery === 'object' && !Array.isArray(options.bridgeDiscovery)
+    ? options.bridgeDiscovery
+    : readBridgeKnownDevicesCache(projectRoot, options);
+  return applyBridgeDiscoveryToSnapshot(baseSnapshot, discovery, {
+    allowUpgrade: !hasExplicitBridgeStatus,
+  });
 }
 
 function summarizeMemoryConsistency(result = null) {
@@ -823,6 +984,22 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push(`- Device ID: ${bridge.deviceId ? String(bridge.deviceId) : 'missing'}`);
   lines.push(`- Relay URL: ${bridge.relayUrl ? String(bridge.relayUrl) : 'unconfigured'}`);
   lines.push(`- Runtime: mode=${bridge.mode || 'unknown'}, enabled=${bridge.enabled === true ? 'yes' : 'no'}, configured=${bridge.configured === true ? 'yes' : 'no'}`);
+  if (bridge.liveDiscovery && typeof bridge.liveDiscovery === 'object') {
+    const discovery = bridge.liveDiscovery;
+    const ageText = isFiniteNumberValue(discovery.ageMs)
+      ? `${Math.round(Number(discovery.ageMs) / 1000)}s old`
+      : 'age unknown';
+    const roleText = Array.isArray(discovery.roles) && discovery.roles.length > 0
+      ? discovery.roles.join(',')
+      : 'none';
+    lines.push(
+      `- Live Discovery: ${discovery.ok === true ? 'verified' : 'not verified'}`
+      + ` (${discovery.status || 'unknown'}; source=${discovery.source || 'unknown'}; ${ageText}; roles=${roleText})`
+    );
+    if (discovery.error) {
+      lines.push(`- Live Discovery Error: ${discovery.error}`);
+    }
+  }
   const bridgePenalty = Array.isArray(snapshot.status?.penalties)
     ? snapshot.status.penalties.find((entry) => String(entry?.code || '').startsWith('bridge_'))
     : null;
@@ -965,11 +1142,13 @@ module.exports = {
   countModuleFiles,
   countTestFiles,
   createHealthSnapshot,
+  applyBridgeDiscoveryToSnapshot,
   buildBridgeSnapshotFromEnv,
   getPenaltyPoints,
   inspectSqliteDb,
   listJestTests,
   loadSqliteDriver,
+  readBridgeKnownDevicesCache,
   normalizeProjectRoot,
   parseCliArgs,
   readEffectiveProjectEnv,

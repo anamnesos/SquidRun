@@ -284,6 +284,208 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.status.penalties).not.toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
   });
 
+  test('upgrades pending bridge status when fresh live discovery proves the architect role online', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    fs.writeFileSync(path.join(tempDir, '.env'), [
+      'SQUIDRUN_CROSS_DEVICE=1',
+      'SQUIDRUN_DEVICE_ID=VIGIL',
+      'SQUIDRUN_RELAY_URL=wss://relay.example.test',
+      '',
+    ].join('\n'));
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'bridge'), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'bridge', 'known-devices.json'), JSON.stringify({
+      updated_at: '2026-03-17T07:44:45.000Z',
+      source: 'relay',
+      devices: [
+        {
+          device_id: 'VIGIL',
+          roles: ['architect'],
+          connected_since: '2026-03-17T07:40:00.000Z',
+        },
+      ],
+    }));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: Date.parse('2026-03-17T07:45:00.000Z'),
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.bridge).toEqual(expect.objectContaining({
+      enabled: true,
+      configured: true,
+      mode: 'connected',
+      state: 'connected',
+      status: 'relay_connected',
+      pending: false,
+      lowFidelity: false,
+      deviceId: 'VIGIL',
+      discoveredRoles: ['architect'],
+      architectRoleDiscovery: 'registered',
+      liveDiscovery: expect.objectContaining({
+        ok: true,
+        source: 'known-devices-cache',
+        status: 'architect_online',
+        matchedDeviceId: 'VIGIL',
+        roles: ['architect'],
+      }),
+    }));
+    expect(snapshot.status.warnings).not.toContain('bridge_connectivity_pending:live_discovery_not_available');
+    expect(snapshot.status.penalties).not.toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+    expect(markdown).toContain('Connection: connected');
+    expect(markdown).toContain('Live Discovery: verified (architect_online; source=known-devices-cache; 15s old; roles=architect)');
+  });
+
+  test('keeps explicit disconnected bridge status authoritative over fresh known-devices proof', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'bridge'), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'bridge', 'known-devices.json'), JSON.stringify({
+      updated_at: '2026-03-17T07:44:45.000Z',
+      devices: [
+        {
+          device_id: 'VIGIL',
+          roles: ['architect'],
+        },
+      ],
+    }));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: Date.parse('2026-03-17T07:45:00.000Z'),
+      jestTimeoutMs: 1000,
+      bridgeStatus: {
+        enabled: true,
+        configured: true,
+        running: false,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'VIGIL',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+      },
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.bridge).toEqual(expect.objectContaining({
+      mode: 'connecting',
+      state: 'disconnected',
+      status: 'relay_disconnected',
+      pending: false,
+      deviceId: 'VIGIL',
+      architectRoleDiscovery: 'unknown',
+      liveDiscovery: expect.objectContaining({
+        ok: true,
+        status: 'architect_online',
+        matchedDeviceId: 'VIGIL',
+        roles: ['architect'],
+      }),
+    }));
+    expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:disconnected');
+    expect(snapshot.status.penalties).toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+    expect(markdown).toContain('Connection: disconnected');
+    expect(markdown).toContain('Live Discovery: verified (architect_online; source=known-devices-cache; 15s old; roles=architect)');
+    expect(markdown).toContain('Probe: degraded (enabled but disconnected); penalty=15');
+  });
+
+  test('keeps bridge pending and reports discovery failure when known-devices proof is stale', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    fs.writeFileSync(path.join(tempDir, '.env'), [
+      'SQUIDRUN_CROSS_DEVICE=1',
+      'SQUIDRUN_DEVICE_ID=VIGIL',
+      'SQUIDRUN_RELAY_URL=wss://relay.example.test',
+      '',
+    ].join('\n'));
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'bridge'), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'bridge', 'known-devices.json'), JSON.stringify({
+      updated_at: '2026-03-17T07:20:00.000Z',
+      source: 'relay',
+      devices: [
+        {
+          device_id: 'VIGIL',
+          roles: ['architect'],
+        },
+      ],
+    }));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: Date.parse('2026-03-17T07:45:00.000Z'),
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.bridge).toEqual(expect.objectContaining({
+      mode: 'pending',
+      state: 'pending_live_discovery',
+      pending: true,
+      architectRoleDiscovery: 'unknown',
+      liveDiscovery: expect.objectContaining({
+        ok: false,
+        status: 'stale',
+        matchedDeviceId: 'VIGIL',
+        roles: ['architect'],
+      }),
+    }));
+    expect(snapshot.status.warnings).toContain('bridge_connectivity_pending:live_discovery_not_available');
+    expect(markdown).toContain('Live Discovery: not verified (stale; source=known-devices-cache; 1500s old; roles=architect)');
+  });
+
+  test('keeps bridge pending and renders known-devices read errors explicitly', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      bridgeStatus: {
+        enabled: true,
+        configured: true,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'VIGIL',
+        state: 'pending_live_discovery',
+        pending: true,
+      },
+      bridgeDiscovery: {
+        ok: false,
+        status: 'read_error',
+        error: 'Unexpected token',
+        devices: [],
+      },
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.bridge).toEqual(expect.objectContaining({
+      mode: 'pending',
+      state: 'pending_live_discovery',
+      liveDiscovery: expect.objectContaining({
+        ok: false,
+        status: 'read_error',
+        error: 'Unexpected token',
+        roles: [],
+      }),
+    }));
+    expect(snapshot.status.warnings).toContain('bridge_connectivity_pending:live_discovery_not_available');
+    expect(markdown).toContain('Live Discovery: not verified (read_error; source=known-devices-cache; age unknown; roles=none)');
+    expect(markdown).toContain('Live Discovery Error: Unexpected token');
+  });
+
   test('main can print the compact startup health markdown summary', () => {
     const { main } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([

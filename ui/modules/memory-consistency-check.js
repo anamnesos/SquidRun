@@ -20,6 +20,8 @@ const REQUIRED_NODE_COLUMNS = Object.freeze([
 
 const DEFAULT_SAMPLE_LIMIT = 10;
 const MAX_SAMPLE_LIMIT = 100;
+const REPAIR_SCOPE_ALL = 'all';
+const REPAIR_SCOPE_MISSING_ONLY = 'missing-only';
 const ROUTINE_TRACE_PREFIXES = Object.freeze([
   'memory-document:',
 ]);
@@ -157,8 +159,8 @@ function mapKnowledgeNodeRow(row) {
   return mapped;
 }
 
-function loadKnowledgeNodes(db, availableColumns) {
-  const selectColumns = [
+function buildKnowledgeNodeSelectColumns(availableColumns) {
+  return [
     'node_id',
     availableColumns.includes('category') ? 'category' : 'NULL AS category',
     'source_type',
@@ -178,6 +180,10 @@ function loadKnowledgeNodes(db, availableColumns) {
     availableColumns.includes('confidence_score') ? 'confidence_score' : '0.5 AS confidence_score',
     availableColumns.includes('last_reconsolidated_at') ? 'last_reconsolidated_at' : 'NULL AS last_reconsolidated_at',
   ];
+}
+
+function loadKnowledgeNodes(db, availableColumns) {
+  const selectColumns = buildKnowledgeNodeSelectColumns(availableColumns);
 
   return db.prepare(`
     SELECT ${selectColumns.join(', ')}
@@ -185,6 +191,18 @@ function loadKnowledgeNodes(db, availableColumns) {
     WHERE COALESCE(source_type, '') = 'knowledge'
     ORDER BY updated_at_ms DESC, node_id ASC
   `).all().map(mapKnowledgeNodeRow);
+}
+
+function loadKnowledgeNodeById(db, availableColumns, nodeId) {
+  const selectColumns = buildKnowledgeNodeSelectColumns(availableColumns);
+  const row = db.prepare(`
+    SELECT ${selectColumns.join(', ')}
+    FROM nodes
+    WHERE node_id = ?
+      AND COALESCE(source_type, '') = 'knowledge'
+    LIMIT 1
+  `).get(nodeId);
+  return row ? mapKnowledgeNodeRow(row) : null;
 }
 
 function finalizeAnalysisResult(result, missingKnowledgeEntries, orphanedKnowledgeNodes, duplicateKnowledgeHashes, sampleLimit) {
@@ -583,6 +601,60 @@ function buildPlanSummary(actions = [], skipped = []) {
   };
 }
 
+function normalizeRepairScope(value) {
+  const normalized = normalizeWhitespace(value || REPAIR_SCOPE_ALL).toLowerCase().replace(/_/g, '-');
+  if (
+    normalized === 'missing'
+    || normalized === 'missing-only'
+    || normalized === 'insert-missing'
+    || normalized === 'insert-missing-only'
+  ) {
+    return REPAIR_SCOPE_MISSING_ONLY;
+  }
+  return REPAIR_SCOPE_ALL;
+}
+
+function summarizeDeferredAction(action = {}) {
+  return {
+    id: action.id || null,
+    kind: action.kind || 'unknown',
+    driftType: action.driftType || null,
+    deleteCount: Number(action.deleteCount || 0),
+    reason: action.reason || null,
+  };
+}
+
+function applyRepairScopeToPlan(plan, scopeValue) {
+  const repairScope = normalizeRepairScope(scopeValue);
+  plan.repairScope = repairScope;
+  plan.deferredActions = [];
+  plan.deferredSkipped = [];
+
+  if (repairScope !== REPAIR_SCOPE_MISSING_ONLY) {
+    return plan;
+  }
+
+  const scopedActions = [];
+  const deferredActions = [];
+  for (const action of plan.actions) {
+    if (action.kind === 'insert_missing_chunk') {
+      scopedActions.push(action);
+    } else {
+      deferredActions.push(action);
+    }
+  }
+  plan.actions = scopedActions;
+  plan.deferredActions = deferredActions.map(summarizeDeferredAction);
+  plan.deferredSkipped = plan.skipped.map((entry) => ({ ...entry }));
+  plan.skipped = [];
+  plan.summary = {
+    ...buildPlanSummary(plan.actions, plan.skipped),
+    deferredActionCount: plan.deferredActions.length,
+    deferredSkippedCount: plan.deferredSkipped.length,
+  };
+  return plan;
+}
+
 function planMemoryConsistencyRepair(options = {}) {
   const analysis = analyzeMemoryConsistency(options);
   const plan = {
@@ -613,7 +685,7 @@ function planMemoryConsistencyRepair(options = {}) {
     || analysis.result.status === 'schema_incomplete'
   ) {
     plan.summary = buildPlanSummary(plan.actions, plan.skipped);
-    return plan;
+    return applyRepairScopeToPlan(plan, options.repairScope || options.scope);
   }
 
   let db = null;
@@ -624,6 +696,7 @@ function planMemoryConsistencyRepair(options = {}) {
     const traceRows = loadNodeTraceRows(db, availableTables);
     const leaseCounts = loadNodeLeaseCounts(db, availableTables);
     const replacementIndex = buildReplacementIndex(analysis.knowledgeEntries);
+    const allowOrphanDeletes = options.allowOrphanDeletes === true || options.repairOrphans === true;
 
     const duplicateLoserIds = new Set();
     const survivorProfileOverrides = new Map();
@@ -679,6 +752,19 @@ function planMemoryConsistencyRepair(options = {}) {
           || buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts);
         const classification = classifyOrphanNode(node, analysis.paths, relationalProfile, replacementIndex);
         if (classification.repairable) {
+          if (!allowOrphanDeletes) {
+            plan.skipped.push({
+              kind: 'revision_skew_review_required',
+              driftType: classification.classification,
+              nodeId: node.nodeId,
+              sourcePath: node.sourcePath,
+              heading: node.heading,
+              contentHash: node.contentHash,
+              reason: 'Orphan deletion is disabled without explicit approval; review or mapped migration is required.',
+              blockers: ['orphan_delete_requires_explicit_approval'],
+            });
+            return;
+          }
           plan.actions.push({
             id: `action-${orphanActionOffset + index + 1}`,
             kind: 'delete_revision_skew_orphan',
@@ -715,7 +801,7 @@ function planMemoryConsistencyRepair(options = {}) {
       });
 
     plan.summary = buildPlanSummary(plan.actions, plan.skipped);
-    return plan;
+    return applyRepairScopeToPlan(plan, options.repairScope || options.scope);
   } finally {
     try {
       db?.close();
@@ -947,6 +1033,569 @@ function deleteNodeWithRelations(db, availableTables, nodeId) {
   };
 }
 
+function normalizeOrphanMigrationMappings(value) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) && Array.isArray(value.mappings)
+    ? value.mappings
+    : value;
+  if (!raw) return [];
+
+  if (Array.isArray(raw)) {
+    return raw
+      .map((entry) => ({
+        oldNodeId: normalizeWhitespace(entry?.oldNodeId || entry?.orphanNodeId || entry?.from || entry?.old || ''),
+        targetNodeId: normalizeWhitespace(entry?.targetNodeId || entry?.target || entry?.to || entry?.newNodeId || ''),
+      }))
+      .filter((entry) => entry.oldNodeId && entry.targetNodeId);
+  }
+
+  if (typeof raw === 'object') {
+    return Object.entries(raw)
+      .map(([oldNodeId, targetNodeId]) => ({
+        oldNodeId: normalizeWhitespace(oldNodeId),
+        targetNodeId: normalizeWhitespace(targetNodeId),
+      }))
+      .filter((entry) => entry.oldNodeId && entry.targetNodeId);
+  }
+
+  return [];
+}
+
+function buildExplicitOrphanMappingMap(options = {}) {
+  const entries = normalizeOrphanMigrationMappings(
+    options.orphanMappings || options.mappings || options.mapping || options.orphanMigrationMappings
+  );
+  return new Map(entries.map((entry) => [entry.oldNodeId, entry.targetNodeId]));
+}
+
+function buildNodesByContentHash(nodes = []) {
+  const byHash = new Map();
+  for (const node of nodes) {
+    const hash = normalizeWhitespace(node.contentHash || '');
+    if (!hash) continue;
+    const list = byHash.get(hash) || [];
+    list.push(node);
+    byHash.set(hash, list);
+  }
+  return byHash;
+}
+
+function findOrphanTargetCandidates(orphanNode, classification, nodesByHash) {
+  const seen = new Set();
+  const candidates = [];
+  const replacements = classification.replacementCandidates || [];
+  const orphanHeading = normalizeWhitespace(orphanNode.heading || '');
+  const headingMatches = replacements.filter((candidate) => (
+    orphanHeading
+    && normalizeWhitespace(candidate.heading || '') === orphanHeading
+  ));
+  const candidateEntries = headingMatches.length > 0 ? headingMatches : replacements;
+
+  for (const candidate of candidateEntries) {
+    const nodes = nodesByHash.get(normalizeWhitespace(candidate.contentHash || '')) || [];
+    for (const node of nodes) {
+      if (node.nodeId === orphanNode.nodeId || seen.has(node.nodeId)) continue;
+      seen.add(node.nodeId);
+      candidates.push({
+        nodeId: node.nodeId,
+        sourcePath: node.sourcePath,
+        heading: node.heading,
+        contentHash: node.contentHash,
+      });
+    }
+  }
+  return candidates.sort((left, right) => String(left.nodeId).localeCompare(String(right.nodeId)));
+}
+
+function buildOrphanMigrationSummary(actions = [], skipped = []) {
+  return {
+    actionCount: actions.length,
+    mappedMigrationCount: actions.filter((action) => action.kind === 'migrate_orphan_node').length,
+    skippedCount: skipped.length,
+    deletedSourceReviewCount: skipped.filter((entry) => entry.kind === 'deleted_source_review').length,
+    ambiguousTargetCount: skipped.filter((entry) => entry.kind === 'ambiguous_multi_target').length,
+    noTargetCount: skipped.filter((entry) => entry.kind === 'no_target').length,
+    mappingRequiredCount: skipped.filter((entry) => entry.kind === 'mapping_required').length,
+  };
+}
+
+function createOrphanMigrationAction(actionId, orphanNode, targetNode, classification, relationalProfile) {
+  return {
+    id: actionId,
+    kind: 'migrate_orphan_node',
+    oldNodeId: orphanNode.nodeId,
+    targetNodeId: targetNode.nodeId,
+    sourcePath: orphanNode.sourcePath,
+    heading: orphanNode.heading,
+    contentHash: orphanNode.contentHash,
+    target: {
+      nodeId: targetNode.nodeId,
+      sourcePath: targetNode.sourcePath,
+      heading: targetNode.heading,
+      contentHash: targetNode.contentHash,
+    },
+    classification: classification.classification,
+    reason: 'Explicit old-node -> target-node mapping provided for review/approved migration.',
+    expectedMoves: {
+      edges: Number(relationalProfile.edgeCount || 0),
+      traces: Number(relationalProfile.traceCount || 0),
+      leases: Number(relationalProfile.leaseCount || 0),
+    },
+  };
+}
+
+function buildOrphanMigrationSkip(kind, orphanNode, reason, extra = {}) {
+  return {
+    kind,
+    nodeId: orphanNode.nodeId,
+    sourcePath: orphanNode.sourcePath,
+    heading: orphanNode.heading,
+    contentHash: orphanNode.contentHash,
+    reason,
+    ...extra,
+  };
+}
+
+function planOrphanMigration(options = {}) {
+  const analysis = analyzeMemoryConsistency(options);
+  const result = {
+    ok: analysis.ok,
+    mode: 'dry_run',
+    dryRun: true,
+    checkedAt: new Date().toISOString(),
+    workspaceDir: analysis.paths.workspaceDir,
+    knowledgeDir: analysis.paths.knowledgeDir,
+    cognitiveDbPath: analysis.cognitiveDbPath,
+    detection: analysis.result,
+    actions: [],
+    skipped: [],
+    summary: buildOrphanMigrationSummary(),
+  };
+
+  if (
+    analysis.result.drift.issues.length > 0
+    || analysis.result.status === 'cognitive_memory_missing'
+    || analysis.result.status === 'nodes_table_missing'
+    || analysis.result.status === 'schema_incomplete'
+  ) {
+    return result;
+  }
+
+  const explicitMappings = buildExplicitOrphanMappingMap(options);
+  const allowDeletedSource = options.allowDeletedSourceOrphans === true || options.allowDeletedSource === true;
+  let db = null;
+  try {
+    db = new DatabaseSync(analysis.cognitiveDbPath);
+    const availableColumns = listNodeColumns(db);
+    const availableTables = listTables(db);
+    const edgeCounts = loadNodeEdgeCounts(db, availableTables);
+    const traceRows = loadNodeTraceRows(db, availableTables);
+    const leaseCounts = loadNodeLeaseCounts(db, availableTables);
+    const replacementIndex = buildReplacementIndex(analysis.knowledgeEntries);
+    const nodesByHash = buildNodesByContentHash(analysis.knowledgeNodes);
+
+    analysis.orphanedKnowledgeNodes
+      .slice()
+      .sort((left, right) => String(left.nodeId).localeCompare(String(right.nodeId)))
+      .forEach((orphanNode, index) => {
+        const relationalProfile = buildNodeRelationalProfile(orphanNode, edgeCounts, traceRows, leaseCounts);
+        const classification = classifyOrphanNode(orphanNode, analysis.paths, relationalProfile, replacementIndex);
+        const candidates = findOrphanTargetCandidates(orphanNode, classification, nodesByHash);
+        const explicitTargetNodeId = explicitMappings.get(orphanNode.nodeId);
+
+        if (classification.classification === 'deleted_source' && !allowDeletedSource) {
+          result.skipped.push(buildOrphanMigrationSkip(
+            'deleted_source_review',
+            orphanNode,
+            'Deleted-source orphan requires explicit review and is skipped by default.',
+            { candidates, blockers: classification.blockers }
+          ));
+          return;
+        }
+
+        if (explicitTargetNodeId) {
+          const targetNode = loadKnowledgeNodeById(db, availableColumns, explicitTargetNodeId);
+          if (!targetNode) {
+            result.skipped.push(buildOrphanMigrationSkip(
+              'no_target',
+              orphanNode,
+              `Explicit target node not found: ${explicitTargetNodeId}.`,
+              { requestedTargetNodeId: explicitTargetNodeId, candidates }
+            ));
+            return;
+          }
+          if (targetNode.nodeId === orphanNode.nodeId) {
+            result.skipped.push(buildOrphanMigrationSkip(
+              'invalid_mapping',
+              orphanNode,
+              'Orphan migration target must be a different node.',
+              { requestedTargetNodeId: explicitTargetNodeId, candidates }
+            ));
+            return;
+          }
+          result.actions.push(createOrphanMigrationAction(
+            `orphan-migration-${index + 1}`,
+            orphanNode,
+            targetNode,
+            classification,
+            relationalProfile
+          ));
+          return;
+        }
+
+        if (candidates.length === 0) {
+          result.skipped.push(buildOrphanMigrationSkip(
+            'no_target',
+            orphanNode,
+            'No canonical target node was found; explicit mapping review required.',
+            { candidates, blockers: classification.blockers }
+          ));
+          return;
+        }
+
+        if (candidates.length > 1) {
+          result.skipped.push(buildOrphanMigrationSkip(
+            'ambiguous_multi_target',
+            orphanNode,
+            'Multiple canonical target nodes are plausible; explicit mapping review required.',
+            { candidates, blockers: classification.blockers }
+          ));
+          return;
+        }
+
+        result.skipped.push(buildOrphanMigrationSkip(
+          'mapping_required',
+          orphanNode,
+          'Canonical target candidate found; migration still requires explicit old-node -> target-node mapping approval.',
+          { candidates, suggestedTargetNodeId: candidates[0].nodeId, blockers: classification.blockers }
+        ));
+      });
+
+    result.summary = buildOrphanMigrationSummary(result.actions, result.skipped);
+    return result;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // best effort
+    }
+  }
+}
+
+function maxLastAccessedAt(left, right) {
+  const leftMs = parseIsoMs(left);
+  const rightMs = parseIsoMs(right);
+  if (leftMs >= rightMs) return left || right || null;
+  return right || left || null;
+}
+
+function mergeMappedOrphanTargetMetadata(db, availableNodeColumns, orphanNode, targetNode, nowMs) {
+  const updates = [];
+  const values = [];
+  const setColumn = (column, value) => {
+    if (!availableNodeColumns.includes(column)) return;
+    updates.push(`${column} = ?`);
+    values.push(value);
+  };
+
+  setColumn('access_count', Number(targetNode.accessCount || 0) + Number(orphanNode.accessCount || 0));
+  setColumn('last_accessed_at', maxLastAccessedAt(targetNode.lastAccessedAt, orphanNode.lastAccessedAt));
+  setColumn('salience_score', Math.max(Number(targetNode.salienceScore || 0), Number(orphanNode.salienceScore || 0)));
+  setColumn('is_immune', targetNode.isImmune || orphanNode.isImmune ? 1 : 0);
+  setColumn('current_version', Math.max(Number(targetNode.currentVersion || 1), Number(orphanNode.currentVersion || 1)));
+  setColumn('updated_at_ms', nowMs);
+
+  if (updates.length === 0) {
+    return { merged: false };
+  }
+
+  values.push(targetNode.nodeId);
+  db.prepare(`
+    UPDATE nodes
+    SET ${updates.join(', ')}
+    WHERE node_id = ?
+  `).run(...values);
+  return { merged: true };
+}
+
+function moveMappedOrphanTraces(db, availableTables, oldNodeId, targetNodeId) {
+  if (!availableTables.has('traces')) return { moved: 0, deduped: 0 };
+  const rows = db.prepare(`
+    SELECT rowid, trace_id, extracted_at
+    FROM traces
+    WHERE node_id = ?
+    ORDER BY rowid ASC
+  `).all(oldNodeId);
+  let moved = 0;
+  let deduped = 0;
+  for (const row of rows) {
+    const duplicate = db.prepare(`
+      SELECT rowid
+      FROM traces
+      WHERE node_id = ? AND trace_id = ?
+      ORDER BY rowid ASC
+      LIMIT 1
+    `).get(targetNodeId, row.trace_id);
+    if (duplicate) {
+      db.prepare('DELETE FROM traces WHERE rowid = ?').run(row.rowid);
+      deduped += 1;
+      continue;
+    }
+    db.prepare('UPDATE traces SET node_id = ? WHERE rowid = ?').run(targetNodeId, row.rowid);
+    moved += 1;
+  }
+  return { moved, deduped };
+}
+
+function moveMappedOrphanEdges(db, availableTables, oldNodeId, targetNodeId) {
+  if (!availableTables.has('edges')) return { moved: 0, deduped: 0, droppedSelfEdges: 0 };
+  const rows = db.prepare(`
+    SELECT rowid, source_node_id, target_node_id, relation_type, weight
+    FROM edges
+    WHERE source_node_id = ? OR target_node_id = ?
+    ORDER BY rowid ASC
+  `).all(oldNodeId, oldNodeId);
+  let moved = 0;
+  let deduped = 0;
+  let droppedSelfEdges = 0;
+
+  for (const row of rows) {
+    const current = db.prepare(`
+      SELECT rowid, source_node_id, target_node_id, relation_type, weight
+      FROM edges
+      WHERE rowid = ?
+      LIMIT 1
+    `).get(row.rowid);
+    if (!current) continue;
+
+    const nextSource = current.source_node_id === oldNodeId ? targetNodeId : current.source_node_id;
+    const nextTarget = current.target_node_id === oldNodeId ? targetNodeId : current.target_node_id;
+    if (nextSource === nextTarget) {
+      const deleted = db.prepare('DELETE FROM edges WHERE rowid = ?').run(current.rowid);
+      if (Number(deleted?.changes || 0) > 0) {
+        droppedSelfEdges += 1;
+      }
+      continue;
+    }
+
+    const duplicates = db.prepare(`
+      SELECT rowid, weight
+      FROM edges
+      WHERE source_node_id = ?
+        AND target_node_id = ?
+        AND relation_type = ?
+        AND rowid != ?
+      ORDER BY rowid ASC
+    `).all(nextSource, nextTarget, current.relation_type, current.rowid);
+
+    if (duplicates.length === 0) {
+      const updated = db.prepare(`
+        UPDATE edges
+        SET source_node_id = ?, target_node_id = ?
+        WHERE rowid = ?
+      `).run(nextSource, nextTarget, current.rowid);
+      if (Number(updated?.changes || 0) > 0) {
+        moved += 1;
+      }
+      continue;
+    }
+
+    const rowsToMerge = [{ rowid: current.rowid, weight: current.weight }, ...duplicates]
+      .sort((left, right) => Number(left.rowid || 0) - Number(right.rowid || 0));
+    const keepRow = rowsToMerge[0];
+    const nextWeight = Math.max(...rowsToMerge.map((entry) => Number(entry.weight || 0)));
+    const updated = db.prepare(`
+      UPDATE edges
+      SET source_node_id = ?, target_node_id = ?, weight = ?
+      WHERE rowid = ?
+    `).run(nextSource, nextTarget, nextWeight, keepRow.rowid);
+    for (const loser of rowsToMerge.slice(1)) {
+      const deleted = db.prepare('DELETE FROM edges WHERE rowid = ?').run(loser.rowid);
+      if (Number(deleted?.changes || 0) > 0) {
+        deduped += 1;
+      }
+    }
+    const currentSurvived = Number(keepRow.rowid || 0) === Number(current.rowid || 0)
+      && Number(updated?.changes || 0) > 0;
+    const currentDeduped = rowsToMerge.slice(1).some((entry) => Number(entry.rowid || 0) === Number(current.rowid || 0));
+    if (currentSurvived || currentDeduped) {
+      moved += 1;
+    }
+  }
+
+  return { moved, deduped, droppedSelfEdges };
+}
+
+function moveMappedOrphanLeases(db, availableTables, oldNodeId, targetNodeId) {
+  if (!availableTables.has('memory_leases')) return { moved: 0 };
+  const result = db.prepare(`
+    UPDATE memory_leases
+    SET node_id = ?
+    WHERE node_id = ?
+  `).run(targetNodeId, oldNodeId);
+  return { moved: Number(result?.changes || 0) };
+}
+
+function runOrphanMigration(options = {}) {
+  const dryRun = options.dryRun !== false;
+  const plan = planOrphanMigration(options);
+  if (dryRun) {
+    return plan;
+  }
+
+  const result = {
+    ...plan,
+    mode: 'migrate',
+    dryRun: false,
+    execution: {
+      attemptedActions: plan.actions.length,
+      appliedActions: 0,
+      deletedNodes: 0,
+      movedEdges: 0,
+      dedupedEdges: 0,
+      droppedSelfEdges: 0,
+      movedTraces: 0,
+      dedupedTraces: 0,
+      movedLeases: 0,
+      auditEventsWritten: 0,
+      failures: [],
+    },
+    postCheck: null,
+  };
+
+  if (plan.actions.length === 0) {
+    result.postCheck = runMemoryConsistencyCheck(options);
+    return result;
+  }
+
+  const ledgerState = openEvidenceLedgerStore(options);
+  if (!ledgerState.ok || !ledgerState.store) {
+    return {
+      ...result,
+      ok: false,
+      reason: ledgerState.reason || 'evidence_ledger_unavailable',
+      postCheck: runMemoryConsistencyCheck(options),
+    };
+  }
+
+  let db = null;
+  const auditQueue = [];
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+
+  try {
+    db = new DatabaseSync(plan.cognitiveDbPath);
+    const availableNodeColumns = listNodeColumns(db);
+    const availableTables = listTables(db);
+    db.exec('BEGIN IMMEDIATE;');
+
+    for (const action of plan.actions) {
+      const orphanNode = loadKnowledgeNodeById(db, availableNodeColumns, action.oldNodeId);
+      const targetNode = loadKnowledgeNodeById(db, availableNodeColumns, action.targetNodeId);
+      if (!orphanNode || !targetNode) {
+        result.execution.failures.push({
+          action: action.id,
+          reason: !orphanNode ? 'orphan_node_missing' : 'target_node_missing',
+        });
+        continue;
+      }
+
+      mergeMappedOrphanTargetMetadata(db, availableNodeColumns, orphanNode, targetNode, nowMs);
+      const edgeMoves = moveMappedOrphanEdges(db, availableTables, action.oldNodeId, action.targetNodeId);
+      const traceMoves = moveMappedOrphanTraces(db, availableTables, action.oldNodeId, action.targetNodeId);
+      const leaseMoves = moveMappedOrphanLeases(db, availableTables, action.oldNodeId, action.targetNodeId);
+      const deleted = db.prepare('DELETE FROM nodes WHERE node_id = ?').run(action.oldNodeId);
+      const deletedNodes = Number(deleted?.changes || 0);
+      if (deletedNodes === 0) {
+        result.execution.failures.push({
+          action: action.id,
+          reason: 'orphan_delete_failed',
+        });
+        continue;
+      }
+
+      result.execution.appliedActions += 1;
+      result.execution.deletedNodes += deletedNodes;
+      result.execution.movedEdges += edgeMoves.moved;
+      result.execution.dedupedEdges += edgeMoves.deduped;
+      result.execution.droppedSelfEdges += edgeMoves.droppedSelfEdges;
+      result.execution.movedTraces += traceMoves.moved;
+      result.execution.dedupedTraces += traceMoves.deduped;
+      result.execution.movedLeases += leaseMoves.moved;
+      auditQueue.push(buildAuditEvent('migrate_orphan_node', {
+        driftType: 'orphan_migration',
+        oldNodeId: action.oldNodeId,
+        targetNodeId: action.targetNodeId,
+        sourcePath: action.sourcePath,
+        heading: action.heading,
+        contentHash: action.contentHash,
+        movedEdges: edgeMoves.moved,
+        dedupedEdges: edgeMoves.deduped,
+        droppedSelfEdges: edgeMoves.droppedSelfEdges,
+        movedTraces: traceMoves.moved,
+        dedupedTraces: traceMoves.deduped,
+        movedLeases: leaseMoves.moved,
+        deletedNodes,
+      }, nowMs, options.sessionId || null));
+    }
+
+    if (result.execution.failures.length > 0) {
+      db.exec('ROLLBACK;');
+      result.ok = false;
+      result.reason = 'orphan_migration_failed';
+      result.postCheck = runMemoryConsistencyCheck(options);
+      return result;
+    }
+
+    db.exec('COMMIT;');
+
+    for (const event of auditQueue) {
+      const appendResult = ledgerState.store.appendEvent(event, {
+        nowMs,
+        sessionId: options.sessionId || null,
+      });
+      if (!appendResult?.ok) {
+        result.execution.failures.push({
+          action: event?.payload?.action || 'unknown',
+          reason: appendResult?.reason || appendResult?.status || 'audit_write_failed',
+        });
+      } else {
+        result.execution.auditEventsWritten += 1;
+      }
+    }
+
+    result.ok = result.execution.failures.length === 0;
+    if (!result.ok) {
+      result.reason = 'orphan_migration_completed_with_audit_failures';
+    }
+    result.postCheck = runMemoryConsistencyCheck(options);
+    return result;
+  } catch (err) {
+    try {
+      db?.exec('ROLLBACK;');
+    } catch {
+      // best effort
+    }
+    result.ok = false;
+    result.reason = err.message;
+    result.execution.failures.push({
+      action: 'orphan_migration',
+      reason: err.message,
+    });
+    result.postCheck = runMemoryConsistencyCheck(options);
+    return result;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // best effort
+    }
+    try {
+      ledgerState.store?.close();
+    } catch {
+      // best effort
+    }
+  }
+}
+
 function runMemoryConsistencyRepair(options = {}) {
   const dryRun = options.dryRun === true;
   const plan = planMemoryConsistencyRepair(options);
@@ -1131,8 +1780,10 @@ module.exports = {
   analyzeMemoryConsistency,
   collectKnowledgeEntries,
   hashKnowledgeNodeIdentity,
+  planOrphanMigration,
   planMemoryConsistencyRepair,
   resolveCognitiveMemoryDbPath,
   runMemoryConsistencyCheck,
   runMemoryConsistencyRepair,
+  runOrphanMigration,
 };
