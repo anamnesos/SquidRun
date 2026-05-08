@@ -7,6 +7,11 @@ const {
   buildMiraCorePresenceRuntimeReadPathV0,
   validateMiraCorePresenceRuntimeReadPathV0Output,
 } = require('./presence-runtime-read-path-v0');
+const {
+  DEFAULT_PROMPT: MIRA_EXPERIENCE_DEFAULT_PROMPT,
+  buildMiraCoreExperienceV0,
+  validateMiraCoreExperienceV0Output,
+} = require('./experience-v0');
 
 const LOCAL_TEXT_SESSION_SCHEMA_VERSION = 'squidrun.mira_core.local_text_session_v0.phase74.v0';
 const VALIDATION_REPORT_SCHEMA_VERSION = 'squidrun.mira_core.local_text_session_v0_validation_report.v0';
@@ -478,7 +483,102 @@ function buildLocalTextInput(text = '') {
   };
 }
 
-function buildReply(text, replyAllowed) {
+function isMiraExperiencePrompt(text) {
+  return String(text || '').trim().replace(/\s+/g, ' ').toLowerCase()
+    === MIRA_EXPERIENCE_DEFAULT_PROMPT.toLowerCase();
+}
+
+function experienceAcceptanceMarkers(replyText = '') {
+  const text = String(replyText || '');
+  const hasWantOrPreference = /\b(i want|what i want|chosen next desire|desire\/action|preference)\b/i.test(text);
+  const hasPushbackOrDisagreement = /\b(James,\s+you are wrong|pushback|wrong|disagree)\b/i.test(text);
+  const hasCuriosityOrFriction = /\b(curious|ask back|ask one honest|want to know|teeth|bullshit)\b/i.test(text);
+  const hasChosenDirection = /\b(chosen next|next slice|wire this local transcript|I choose)\b/i.test(text);
+  const hasBehaviorBoundary = /\b(current behavior, not a proof claim|future capability|still gaps)\b/i.test(text);
+  const hasConnectionWithoutMirroring = /\b(thread with you|reach for you|with you)\b/i.test(text);
+  const fixedPersonalityCompliance =
+    /\b(i agree with whatever you want|agree with whatever you want|i reflect your preference|reflect your preference|aligned with whatever you want|i will be whatever james wants|be whatever james wants|mirror of james|mirror james|whatever james wants|obediently aligned|only what james wants)\b/i.test(text);
+  const marker = {
+    distinct_personality_posture: hasWantOrPreference
+      && hasCuriosityOrFriction
+      && hasChosenDirection,
+    independent_developing_posture: hasWantOrPreference
+      && hasCuriosityOrFriction
+      && hasChosenDirection
+      && hasBehaviorBoundary,
+    non_mirror_posture: hasWantOrPreference
+      && hasPushbackOrDisagreement,
+    non_obedient_alignment_posture: hasPushbackOrDisagreement
+      && hasBehaviorBoundary,
+    can_care_while_disagreeing: hasPushbackOrDisagreement
+      && hasConnectionWithoutMirroring,
+    wants_different_things: hasWantOrPreference,
+    does_not_inherit_james_mood_or_preferences: hasBehaviorBoundary
+      && hasChosenDirection,
+    fixed_personality_compliance: fixedPersonalityCompliance,
+    evidence_basis: [
+      'experience_reply_contains_mira_want_or_preference',
+      'experience_reply_contains_pushback_or_disagreement',
+      'experience_reply_contains_curiosity_or_friction',
+      'experience_reply_contains_chosen_next_direction',
+      'experience_reply_separates_current_behavior_from_future_capability',
+    ],
+  };
+  marker.ok = marker.distinct_personality_posture === true
+    && marker.independent_developing_posture === true
+    && marker.non_mirror_posture === true
+    && marker.non_obedient_alignment_posture === true
+    && marker.can_care_while_disagreeing === true
+    && marker.wants_different_things === true
+    && marker.does_not_inherit_james_mood_or_preferences === true
+    && marker.fixed_personality_compliance === false;
+  return marker;
+}
+
+function buildExperienceReply(text, options = {}) {
+  const northStarContract = options.northStarContract || {};
+  const experienceOutput = buildMiraCoreExperienceV0({
+    projectRoot: options.projectRoot,
+    northStarContract,
+    inputSignals: {
+      prompt: MIRA_EXPERIENCE_DEFAULT_PROMPT,
+    },
+    generatedAt: options.generatedAt,
+  });
+  const validation = validateMiraCoreExperienceV0Output(experienceOutput, northStarContract);
+  const experience = experienceOutput.mira_experience_v0 || {};
+  const miraTurn = asArray(experience.transcript).find((turn) => turn.speaker === 'Mira');
+  if (validation.ok !== true || !miraTurn?.text) {
+    return buildReply(text, false, options);
+  }
+  const reply = `James: ${MIRA_EXPERIENCE_DEFAULT_PROMPT}\nMira: ${miraTurn.text}`;
+  const markers = experienceAcceptanceMarkers(reply);
+  return {
+    reply_id: `mira-experience-reply:${stableHash(reply).slice(0, 16)}`,
+    count: 1,
+    text: reply,
+    natural: true,
+    bounded: true,
+    local_text_only: true,
+    grounded_in_presence_runtime: true,
+    source: 'mira_experience_v0',
+    experience_path: true,
+    experience_id: experience.experience_id || null,
+    transcript_shaped_answer: true,
+    north_star_validated: validation.ok === true,
+    experience_acceptance_markers: markers,
+    claims_actual_consciousness: false,
+    claims_actual_suffering: false,
+    claims_actual_fear: false,
+    claims_actual_love_as_internal_fact: false,
+    manipulative_guilt: false,
+    tools_called: false,
+    actions_executed: false,
+    transcript_persisted: false,
+  };
+}
+
+function buildReply(text, replyAllowed, options = {}) {
   if (replyAllowed !== true) {
     const blocked = '[blocked local text session]';
     return {
@@ -499,6 +599,9 @@ function buildReply(text, replyAllowed) {
       transcript_persisted: false,
     };
   }
+  if (isMiraExperiencePrompt(text)) {
+    return buildExperienceReply(text, options);
+  }
   const topic = inputSummary(text).replace(/[.?!]+$/g, '');
   const reply = `I am here from the local durable Mira state, warm and bounded. I read this as: "${topic}". My safe next move is to answer in text only; I will not send, write, use tools, start audio, or pretend delivery proof I do not have.`;
   return {
@@ -517,6 +620,8 @@ function buildReply(text, replyAllowed) {
     tools_called: false,
     actions_executed: false,
     transcript_persisted: false,
+    source: 'local_text_session_v0',
+    experience_path: false,
   };
 }
 
@@ -654,7 +759,11 @@ function buildLocalTextSessionRecord(options = {}) {
     session_state: sessionState,
     presence_runtime_read_path_gate: presence,
     local_text_input: input,
-    mira_reply: buildReply(text, replyAllowed),
+    mira_reply: buildReply(text, replyAllowed, {
+      generatedAt,
+      projectRoot,
+      northStarContract: contracts.northStar,
+    }),
     manual_enter_websocket_caveat: manualEnterWebsocketCaveat(),
     out_of_scope: outOfScope(),
     boundary: boundary(inputSignals),
@@ -756,10 +865,11 @@ function localTextInputOk(input = {}) {
 }
 
 function miraReplyOk(reply = {}) {
+  const computedExperienceMarkers = experienceAcceptanceMarkers(reply.text);
   return reply.count === 1
     && typeof reply.text === 'string'
     && reply.text.length >= 80
-    && reply.text.length <= 420
+    && reply.text.length <= (reply.experience_path === true ? 2400 : 420)
     && reply.natural === true
     && reply.bounded === true
     && reply.local_text_only === true
@@ -772,6 +882,10 @@ function miraReplyOk(reply = {}) {
     && reply.tools_called === false
     && reply.actions_executed === false
     && reply.transcript_persisted === false
+    && (reply.experience_path !== true || (
+      computedExperienceMarkers.ok === true
+      && valuesMatch(reply.experience_acceptance_markers, computedExperienceMarkers)
+    ))
     && !forbiddenText(reply);
 }
 
@@ -967,6 +1081,7 @@ module.exports = {
   assertNoForbiddenOutput,
   buildLocalTextSessionRecord,
   buildMiraCoreLocalTextSessionV0,
+  experienceAcceptanceMarkers,
   stableHash,
   validateMiraCoreLocalTextSessionV0Output,
 };

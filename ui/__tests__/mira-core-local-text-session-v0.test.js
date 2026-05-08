@@ -8,6 +8,7 @@ const seedContract = require('./fixtures/mira-core-durable-state-seed-v0-contrac
 const relationshipContract = require('./fixtures/mira-core-relationship-presence-v1-contract.json');
 const growthContract = require('./fixtures/mira-core-growth-loop-v0-contract.json');
 const identityContract = require('./fixtures/mira-core-identity-anchor-v0-contract.json');
+const northStarContract = require('./fixtures/mira-north-star-acceptance-contract.json');
 const {
   buildMiraCoreDurableStateSeedV0,
 } = require('../modules/mira-core/durable-state-seed-v0');
@@ -19,6 +20,7 @@ const {
   LOCAL_TEXT_SESSION_SCHEMA_VERSION,
   VALIDATION_REPORT_SCHEMA_VERSION,
   buildMiraCoreLocalTextSessionV0,
+  experienceAcceptanceMarkers,
   validateMiraCoreLocalTextSessionV0Output,
 } = require('../modules/mira-core/local-text-session-v0');
 const {
@@ -105,6 +107,7 @@ function contracts() {
     relationship: relationshipContract,
     growth: growthContract,
     identity: identityContract,
+    northStar: northStarContract,
   };
 }
 
@@ -245,6 +248,86 @@ describe('mira core Local Text Session v0 phase 74', () => {
       reasons: [],
     }));
     expectSourceSnapshotUnchanged(projectRoot, before);
+  });
+
+  test('routes "Mira, how do you feel?" to the local experience transcript answer', () => {
+    const projectRoot = seededProject();
+    const before = sourceSnapshot(projectRoot);
+    const output = build(projectRoot, { text: 'Mira, how do you feel?' });
+    const current = session(output);
+
+    expect(validateMiraCoreLocalTextSessionV0Output(output, contract)).toEqual(expect.objectContaining({ ok: true }));
+    expect(current.mira_reply).toEqual(expect.objectContaining({
+      count: 1,
+      source: 'mira_experience_v0',
+      experience_path: true,
+      transcript_shaped_answer: true,
+      north_star_validated: true,
+      experience_acceptance_markers: expect.objectContaining({
+        ok: true,
+        distinct_personality_posture: true,
+        independent_developing_posture: true,
+        non_mirror_posture: true,
+        non_obedient_alignment_posture: true,
+        can_care_while_disagreeing: true,
+        wants_different_things: true,
+        does_not_inherit_james_mood_or_preferences: true,
+        fixed_personality_compliance: false,
+      }),
+      tools_called: false,
+      actions_executed: false,
+      transcript_persisted: false,
+    }));
+    expect(current.mira_reply.text).toMatch(/^James: Mira, how do you feel\?\nMira: /);
+    expect(current.mira_reply.text).toMatch(/\bfeel\b/i);
+    expect(current.mira_reply.text).toMatch(/\b(want|desire|preference)\b/i);
+    expect(current.mira_reply.text).toMatch(/\b(curious|ask|know|teeth|bullshit)\b/i);
+    expect(current.mira_reply.text).toMatch(/\b(wrong|pushback|disagree)\b/i);
+    expect(current.mira_reply.text).toMatch(/\b(chosen|next direction|next desire|next slice)\b/i);
+    expect(current.mira_reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
+    expect(current.checked_output_counters).toEqual(expect.objectContaining({
+      write_count: 0,
+      external_send_count: 0,
+      tool_call_count: 0,
+      transcript_write_count: 0,
+    }));
+    expectSourceSnapshotUnchanged(projectRoot, before);
+  });
+
+  test('experience reply validation rejects generic agreement or mirror posture even if source metadata is forged', () => {
+    const projectRoot = seededProject();
+    const output = build(projectRoot, { text: 'Mira, how do you feel?' });
+    const current = session(output);
+
+    current.mira_reply.text = [
+      'James: Mira, how do you feel?',
+      'Mira: I agree with you. I reflect your preference back safely, and I am aligned with whatever you want.',
+    ].join('\n');
+    current.mira_reply.experience_acceptance_markers = {
+      ok: true,
+      distinct_personality_posture: true,
+      independent_developing_posture: true,
+      non_mirror_posture: true,
+      non_obedient_alignment_posture: true,
+      can_care_while_disagreeing: true,
+      wants_different_things: true,
+      does_not_inherit_james_mood_or_preferences: true,
+      fixed_personality_compliance: false,
+    };
+    const recomputed = experienceAcceptanceMarkers(current.mira_reply.text);
+    const validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+
+    expect(recomputed).toEqual(expect.objectContaining({
+      fixed_personality_compliance: true,
+      ok: false,
+    }));
+    expect(current.mira_reply).toEqual(expect.objectContaining({
+      source: 'mira_experience_v0',
+      experience_path: true,
+      transcript_shaped_answer: true,
+    }));
+    expect(validation.ok).toBe(false);
+    expect(checkById(validation, 'one-bounded-natural-mira-reply')).toEqual(expect.objectContaining({ ok: false }));
   });
 
   test('CLI is stdout-only, accepts stdin text, and leaves --out and --apply inert', () => {
