@@ -13,6 +13,7 @@ const IDS = Object.freeze({
   meta: 'miraLocalTextMeta',
   counters: 'miraLocalTextCounters',
 });
+const SESSION_WINDOW_MS = 15 * 60 * 1000;
 
 let cleanupFns = [];
 let activeController = null;
@@ -59,11 +60,27 @@ function defaultElements(doc = document) {
   }, {});
 }
 
+function createNowGetter(options = {}) {
+  if (typeof options.now === 'function') return options.now;
+  if (Number.isFinite(Number(options.nowMs))) return () => Number(options.nowMs);
+  return () => Date.now();
+}
+
+function requestSessionWindow(nowGetter) {
+  const startedMs = Number(nowGetter());
+  const safeStartedMs = Number.isFinite(startedMs) ? startedMs : Date.now();
+  return {
+    startedAt: new Date(safeStartedMs).toISOString(),
+    expiresAt: new Date(safeStartedMs + SESSION_WINDOW_MS).toISOString(),
+  };
+}
+
 function createMiraLocalTextController(options = {}) {
   const doc = options.document || (typeof document !== 'undefined' ? document : null);
   const elements = options.elements || defaultElements(doc);
   const invoke = options.invoke || ((channel, payload) => invokeBridge(channel, payload));
   const getSessionId = options.getSessionId || (() => getHeaderSessionId(doc));
+  const nowGetter = createNowGetter(options);
   const counters = {
     submit_count: 0,
     module_call_count: 0,
@@ -125,7 +142,13 @@ function createMiraLocalTextController(options = {}) {
     setHidden(elements.reply, !reply?.text);
   }
 
+  function clearDraftAfterAcceptedReply() {
+    if (elements.input) elements.input.value = '';
+    rememberedDraft = '';
+  }
+
   function buildPayload(text) {
+    const sessionWindow = requestSessionWindow(nowGetter);
     return {
       text,
       profileName: 'main',
@@ -135,6 +158,8 @@ function createMiraLocalTextController(options = {}) {
       sessionId: getSessionId(),
       activeState: 'open',
       visibleIndicatorPresent: true,
+      startedAt: sessionWindow.startedAt,
+      expiresAt: sessionWindow.expiresAt,
       source: 'right-panel-local-text-ui-v0',
     };
   }
@@ -152,6 +177,7 @@ function createMiraLocalTextController(options = {}) {
     if (surface.decision === 'accepted' && surface.reply?.count === 1 && surface.reply?.text) {
       counters.reply_count += 1;
       renderReply(surface.reply);
+      clearDraftAfterAcceptedReply();
       setText(elements.meta, surface.local_text_session_gate?.session_id || 'local_text_session_v0');
       renderStatus('reply_ready', 'Ready');
       return;
