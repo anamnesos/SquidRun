@@ -35,6 +35,7 @@ const PENDING_DELIVERY_STATUSES = new Set(['recorded', 'routed']);
 const UNRESOLVED_CLAIMS_MAX = 10;
 const UNRESOLVED_STATUS_ORDER = ['contested', 'pending_proof', 'proposed'];
 const UNRESOLVED_STATUS_SET = new Set(UNRESOLVED_STATUS_ORDER);
+const UNRESOLVED_CLAIMS_FETCH_HARD_CAP = 5000;
 const CROSS_SESSION_TAGS = new Set(['DECISION', 'TASK', 'FINDING', 'BLOCKER']);
 const DIGEST_TAGS = new Set(['DECISION', 'FINDING']);
 const DIGEST_SESSION_LIMIT = 10;
@@ -535,7 +536,12 @@ function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MA
 }
 
 async function queryUnresolvedClaims(options = {}) {
-  const unresolvedLimit = Math.max(1, Number(options.unresolvedLimitPerStatus) || UNRESOLVED_CLAIMS_MAX);
+  const unresolvedLimit = Math.max(
+    1,
+    Math.min(UNRESOLVED_CLAIMS_FETCH_HARD_CAP, Number(options.unresolvedLimitPerStatus) || UNRESOLVED_CLAIMS_MAX)
+  );
+  const displayLimit = Math.max(1, Number(options.unresolvedClaimsMax) || UNRESOLVED_CLAIMS_MAX);
+  const fetchHardCap = UNRESOLVED_CLAIMS_FETCH_HARD_CAP;
   const queryFn = typeof options.queryClaims === 'function'
     ? options.queryClaims
     : (payload, queryOptions) => executeTeamMemoryOperation('query-claims', payload, queryOptions);
@@ -550,12 +556,21 @@ async function queryUnresolvedClaims(options = {}) {
 
   const claims = [];
   for (const status of UNRESOLVED_STATUS_ORDER) {
+    let requestedLimit = unresolvedLimit;
+    let rows = [];
     try {
-      const result = await Promise.resolve(queryFn({
-        status,
-        limit: unresolvedLimit,
-      }, queryOptions));
-      const rows = Array.isArray(result?.claims) ? result.claims : [];
+      while (true) {
+        const result = await Promise.resolve(queryFn({
+          status,
+          limit: requestedLimit,
+        }, queryOptions));
+        rows = Array.isArray(result?.claims) ? result.claims : [];
+        const normalizedRows = normalizeUnresolvedClaims(rows, displayLimit);
+        if (normalizedRows.length >= displayLimit || rows.length < requestedLimit || requestedLimit >= fetchHardCap) {
+          break;
+        }
+        requestedLimit = Math.min(fetchHardCap, Math.max(requestedLimit + 1, requestedLimit * 2));
+      }
       claims.push(...rows);
     } catch {
       // Best-effort only: unresolved claim rendering should never block handoff output.
