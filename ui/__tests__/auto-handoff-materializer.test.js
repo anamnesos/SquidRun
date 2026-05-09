@@ -844,6 +844,61 @@ describe('auto-handoff-materializer', () => {
     expect(contestedRow).toContain('...');
   });
 
+  test('materializeSessionHandoff suppresses only exact memory repair backfill claim noise', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session-memory-repair-filter.md');
+
+    const result = await materializeSessionHandoff({
+      rows: [],
+      outputPath,
+      legacyMirrorPath: false,
+      sessionId: 'session-memory-repair-filter',
+      nowMs: 6500,
+      queryClaims: ({ status }) => {
+        if (status !== 'proposed') return { ok: true, claims: [] };
+        return {
+          ok: true,
+          claims: [
+            {
+              id: 'clm_memory_repair_noise',
+              idempotencyKey: 'backfill:memory.consistency.repair:evt-1',
+              status: 'proposed',
+              statement: 'memory.consistency.repair',
+              confidence: 1,
+            },
+            {
+              id: 'clm_same_statement_not_backfill',
+              idempotencyKey: 'manual:memory.consistency.repair:evt-2',
+              status: 'proposed',
+              statement: 'memory.consistency.repair',
+              confidence: 0.99,
+            },
+            {
+              id: 'clm_same_prefix_different_statement',
+              idempotencyKey: 'backfill:memory.consistency.repair:evt-3',
+              status: 'proposed',
+              statement: 'Memory consistency repair needs review',
+              confidence: 0.98,
+            },
+            {
+              id: 'clm_regular',
+              status: 'proposed',
+              statement: 'Regular proposed claim',
+              confidence: 0.5,
+            },
+          ],
+        };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const content = fs.readFileSync(outputPath, 'utf8');
+    expect(content).toContain('## Unresolved Claims');
+    expect(content).not.toContain('clm_memory_repair_noise');
+    expect(content).toContain('| clm_same_statement_not_backfill | proposed | memory.consistency.repair |');
+    expect(content).toContain('| clm_same_prefix_different_statement | proposed | Memory consistency repair needs review |');
+    expect(content).toContain('| clm_regular | proposed | Regular proposed claim |');
+  });
+
   test('materializeSessionHandoff carries cross-session tagged decisions/tasks/findings/blockers', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const queryCalls = [];

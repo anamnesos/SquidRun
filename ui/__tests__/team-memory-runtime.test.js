@@ -131,6 +131,18 @@ maybeDescribe('team-memory runtime phase0', () => {
         },
         meta: { ingestSource: 'team-memory-pattern-hook' },
       },
+      {
+        eventId: 'evt-memory-consistency-repair',
+        traceId: 'trc-memory-consistency-repair',
+        type: 'memory.consistency.repair',
+        stage: 'memory_consistency',
+        source: 'hm-memory-consistency',
+        role: 'builder',
+        payload: {
+          action: 'insert_missing_chunk',
+          driftType: 'missing_chunk',
+        },
+      },
     ]);
 
     const init = runtime.initializeTeamMemoryRuntime({
@@ -148,7 +160,7 @@ maybeDescribe('team-memory runtime phase0', () => {
       limit: 100,
     });
     expect(result.ok).toBe(true);
-    expect(result.skippedEventOnlyClaims).toBe(3);
+    expect(result.skippedEventOnlyClaims).toBe(4);
     expect(result.insertedClaims).toBe(2);
 
     const patternScopeClaims = runtime.executeTeamMemoryOperation('query-claims', {
@@ -163,9 +175,12 @@ maybeDescribe('team-memory runtime phase0', () => {
     });
     expect(allClaims.ok).toBe(true);
     const statements = allClaims.claims.map((claim) => claim.statement).join('\n');
+    expect(statements).toContain('Use worker process for file watcher');
+    expect(statements).toContain('Message delivery failed during reconnect');
     expect(statements).not.toContain('delivery verified');
     expect(statements).not.toContain('delivery timed out');
     expect(statements).not.toContain('Session ended for pane 2');
+    expect(statements).not.toContain('memory.consistency.repair');
   });
 
   test('routes search-claims action with combined filters', () => {
