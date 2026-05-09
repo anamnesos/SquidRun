@@ -139,6 +139,168 @@ function getEgressUrl(status) {
   return base ? `${base}${path}` : null;
 }
 
+function getLeaseRegisterUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  return base ? `${base}/v1/voice/egress/lease/register` : null;
+}
+
+function getLeaseAcquireUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  return base ? `${base}/v1/voice/egress/lease/acquire` : null;
+}
+
+function getLeaseReleaseUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  return base ? `${base}/v1/voice/egress/lease/release` : null;
+}
+
+function getSpokenUrl(status) {
+  const base = getBrokerBaseUrl(status);
+  return base ? `${base}/v1/voice/egress/spoken` : null;
+}
+
+function getOrCreateVoiceConsumerId(session) {
+  if (!session) return null;
+  if (session.voiceConsumerId) return session.voiceConsumerId;
+  let id = null;
+  try {
+    if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
+      const stored = globalThis.localStorage.getItem('squidrun.voice.consumerId');
+      if (typeof stored === 'string' && stored.trim()) {
+        id = stored.trim();
+      }
+    }
+  } catch (_) {
+    id = null;
+  }
+  if (!id) {
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+      id = `desktop-${globalThis.crypto.randomUUID()}`;
+    } else {
+      id = `desktop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
+        globalThis.localStorage.setItem('squidrun.voice.consumerId', id);
+      }
+    } catch (_) {
+      // ignore storage failures
+    }
+  }
+  session.voiceConsumerId = id;
+  return id;
+}
+
+async function registerVoiceConsumer(session, status, fetchImpl) {
+  const url = getLeaseRegisterUrl(status);
+  if (!url || typeof fetchImpl !== 'function') return { ok: false, reason: 'register_endpoint_unavailable' };
+  const consumerId = getOrCreateVoiceConsumerId(session);
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ consumerId, consumerKind: 'desktop-tab' }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body || body.ok !== true) {
+      return { ok: false, reason: body?.reason || 'register_failed', statusCode: response.status };
+    }
+    session.voiceRegistrationToken = body.registrationToken;
+    session.voiceRegistrationExpiresAtMs = Number(body.expiresAtMs || 0);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: 'register_exception', error: err.message };
+  }
+}
+
+async function acquireOrRenewVoiceLease(session, status, fetchImpl) {
+  const url = getLeaseAcquireUrl(status);
+  if (!url || typeof fetchImpl !== 'function') return { ok: false, reason: 'acquire_endpoint_unavailable' };
+  const consumerId = getOrCreateVoiceConsumerId(session);
+  if (!session.voiceRegistrationToken) {
+    const reg = await registerVoiceConsumer(session, status, fetchImpl);
+    if (!reg.ok) return reg;
+  }
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-voice-registration-token': session.voiceRegistrationToken,
+      },
+      body: JSON.stringify({
+        consumerId,
+        consumerKind: 'desktop-tab',
+        lastUserActivityAtMs: Number(session.lastUserActivityAtMs || 0),
+      }),
+    });
+    const body = await response.json().catch(() => null);
+    if (response.status === 401 && body?.reason === 'registration_expired') {
+      session.voiceRegistrationToken = null;
+      const reg = await registerVoiceConsumer(session, status, fetchImpl);
+      if (!reg.ok) return reg;
+      return acquireOrRenewVoiceLease(session, status, fetchImpl);
+    }
+    if (!response.ok || !body || body.ok !== true) {
+      return { ok: false, reason: body?.reason || 'acquire_failed', statusCode: response.status };
+    }
+    session.voiceLeaseId = body.leaseState?.leaseId || null;
+    session.voiceLeaseExpiresAtMs = Number(body.leaseState?.expiresAtMs || 0);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: 'acquire_exception', error: err.message };
+  }
+}
+
+async function postVoiceSpokenAck(session, messageId, status, fetchImpl) {
+  const url = getSpokenUrl(status);
+  if (!url || typeof fetchImpl !== 'function' || !session?.voiceRegistrationToken || !session?.voiceLeaseId) {
+    return { ok: false, reason: 'spoken_ack_skipped' };
+  }
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-voice-registration-token': session.voiceRegistrationToken,
+      },
+      body: JSON.stringify({
+        consumerId: getOrCreateVoiceConsumerId(session),
+        leaseId: session.voiceLeaseId,
+        messageId,
+      }),
+    });
+    return { ok: response.ok, statusCode: response.status };
+  } catch (err) {
+    return { ok: false, reason: 'spoken_ack_exception', error: err.message };
+  }
+}
+
+async function releaseVoiceLease(session, status, fetchImpl) {
+  const url = getLeaseReleaseUrl(status);
+  if (!url || typeof fetchImpl !== 'function' || !session?.voiceRegistrationToken) {
+    return { ok: false, reason: 'release_skipped' };
+  }
+  try {
+    await fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-voice-registration-token': session.voiceRegistrationToken,
+      },
+      body: JSON.stringify({
+        consumerId: getOrCreateVoiceConsumerId(session),
+        leaseId: session.voiceLeaseId || null,
+      }),
+    });
+    session.voiceLeaseId = null;
+    session.voiceLeaseExpiresAtMs = 0;
+  } catch (_) {
+    // ignore release failures
+  }
+  return { ok: true };
+}
+
 function getDiagnosticsUrl(status) {
   const base = getBrokerBaseUrl(status);
   const path = status?.config?.endpointShape?.diagnostics?.path || null;
@@ -524,6 +686,11 @@ function stopVoiceSession() {
     clearInterval(session.egressPollTimer);
     session.egressPollTimer = null;
   }
+  if (session.voiceHeartbeatTimer) {
+    clearInterval(session.voiceHeartbeatTimer);
+    session.voiceHeartbeatTimer = null;
+  }
+  void releaseVoiceLease(session, lastStatus, globalThis.fetch);
   try { session.audioRecorder?.stop?.(); } catch (_) {}
   try { session.dataChannel?.close?.(); } catch (_) {}
   try { session.peerConnection?.close?.(); } catch (_) {}
@@ -664,11 +831,19 @@ async function pollVoiceEgressOnce(session, status = lastStatus, fetchImpl = glo
   if (!session || !egressUrl || typeof fetchImpl !== 'function') {
     return { ok: false, reason: 'voice_egress_endpoint_unavailable' };
   }
+  const acquired = await acquireOrRenewVoiceLease(session, status, fetchImpl);
+  if (!acquired.ok) {
+    return { ok: false, reason: acquired.reason || 'voice_lease_unavailable', statusCode: acquired.statusCode };
+  }
+  const consumerId = getOrCreateVoiceConsumerId(session);
   const sinceMs = Number.isFinite(Number(session.egressSinceMs))
     ? Math.floor(Number(session.egressSinceMs))
     : Date.now();
-  const url = `${egressUrl}?sinceMs=${encodeURIComponent(String(sinceMs))}&limit=10`;
-  const response = await fetchImpl(url, { method: 'GET' });
+  const url = `${egressUrl}?sinceMs=${encodeURIComponent(String(sinceMs))}&limit=10&consumerId=${encodeURIComponent(consumerId)}`;
+  const response = await fetchImpl(url, {
+    method: 'GET',
+    headers: { 'x-voice-registration-token': session.voiceRegistrationToken || '' },
+  });
   let body = null;
   try {
     body = await response.json();
@@ -682,6 +857,7 @@ async function pollVoiceEgressOnce(session, status = lastStatus, fetchImpl = glo
     if (messageId && session.spokenMessageIds.has(messageId)) continue;
     if (messageId) session.spokenMessageIds.add(messageId);
     speakMiraReply(session, message.text);
+    if (messageId) void postVoiceSpokenAck(session, messageId, status, fetchImpl);
     const timestampMs = Number(message.timestampMs || 0);
     if (Number.isFinite(timestampMs) && timestampMs >= sinceMs) {
       session.egressSinceMs = timestampMs + 1;
@@ -691,6 +867,7 @@ async function pollVoiceEgressOnce(session, status = lastStatus, fetchImpl = glo
     ok: response.ok,
     statusCode: response.status,
     messages,
+    meta: body?.meta || null,
   };
 }
 
@@ -708,6 +885,12 @@ function startVoiceEgressPolling(session, options = {}) {
       appendSessionLog(`Voice egress unavailable: ${err.message}`);
     });
   }, intervalMs);
+  const heartbeatMs = Math.max(1000, Number(options.heartbeatMs) || 5000);
+  session.voiceHeartbeatTimer = setInterval(() => {
+    void acquireOrRenewVoiceLease(session, status, fetchImpl).catch((err) => {
+      appendSessionLog(`Voice lease heartbeat failed: ${err.message}`);
+    });
+  }, heartbeatMs);
   return session;
 }
 

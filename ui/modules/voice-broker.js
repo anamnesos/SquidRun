@@ -969,6 +969,42 @@ function hasForwardedRequestHeaders(headers = {}) {
   );
 }
 
+const { VoiceLeaseStore } = require('./voice-broker-lease-store');
+
+function getDefaultLeasePersistencePath(config) {
+  const transcriptJournalPath = config && config.transcriptJournalPath;
+  if (!transcriptJournalPath || typeof transcriptJournalPath !== 'string') {
+    return null;
+  }
+  return path.join(path.dirname(transcriptJournalPath), 'voice-egress-active-lease.json');
+}
+
+function readVoiceRegistrationToken(req, body = {}) {
+  const headerToken = req && req.headers && (req.headers['x-voice-registration-token'] || req.headers['X-Voice-Registration-Token']);
+  if (typeof headerToken === 'string' && headerToken.trim()) return headerToken.trim();
+  if (body && typeof body.registrationToken === 'string' && body.registrationToken.trim()) {
+    return body.registrationToken.trim();
+  }
+  return null;
+}
+
+function readVoiceConsumerId(req, body = {}, url = null) {
+  if (body && typeof body.consumerId === 'string' && body.consumerId.trim()) {
+    return body.consumerId.trim();
+  }
+  if (url && url.searchParams) {
+    const queryConsumerId = url.searchParams.get('consumerId');
+    if (typeof queryConsumerId === 'string' && queryConsumerId.trim()) {
+      return queryConsumerId.trim();
+    }
+  }
+  const headerConsumerId = req && req.headers && (req.headers['x-voice-consumer-id'] || req.headers['X-Voice-Consumer-Id']);
+  if (typeof headerConsumerId === 'string' && headerConsumerId.trim()) {
+    return headerConsumerId.trim();
+  }
+  return null;
+}
+
 class VoiceBrokerService {
   constructor(options = {}) {
     this.config = options.config || getVoiceBrokerConfig(options.env || process.env, options);
@@ -983,6 +1019,10 @@ class VoiceBrokerService {
     this.startedAtMs = null;
     this.lastError = null;
     this.boundAddress = null;
+    this.leaseStore = options.leaseStore || new VoiceLeaseStore({
+      persistencePath: options.leasePersistencePath || getDefaultLeasePersistencePath(this.config),
+      env: options.env || process.env,
+    });
   }
 
   getStatus() {
@@ -1128,14 +1168,27 @@ class VoiceBrokerService {
           sendJson(res, 401, auth);
           return;
         }
-        const messages = queryVoiceEgressMessages({
+        const consumerId = readVoiceConsumerId(req, null, url);
+        const registrationToken = readVoiceRegistrationToken(req, null);
+        if (!consumerId) {
+          sendJson(res, 401, { ok: false, reason: 'consumer_id_required' });
+          return;
+        }
+        const authz = this.leaseStore.authorize({ consumerId, registrationToken });
+        if (!authz.ok) {
+          sendJson(res, 401, { ok: false, reason: authz.reason });
+          return;
+        }
+        const allMessages = queryVoiceEgressMessages({
           sinceMs: Number(url.searchParams.get('sinceMs') || 0),
           limit: Number(url.searchParams.get('limit') || 10),
           queryCommsJournalEntries: this.queryCommsJournalEntries || undefined,
         });
+        const messages = this.leaseStore.filterEgress({ rows: allMessages, consumerId });
         sendJson(res, 200, {
           ok: true,
           messages,
+          meta: this.leaseStore.getMeta(),
         });
         return;
       }
@@ -1186,15 +1239,114 @@ class VoiceBrokerService {
       }
 
       if (req.method === 'GET' && url.pathname === '/v1/voice/egress') {
-        const messages = queryVoiceEgressMessages({
+        const consumerId = readVoiceConsumerId(req, null, url);
+        const registrationToken = readVoiceRegistrationToken(req, null);
+        if (!consumerId) {
+          sendJson(res, 401, { ok: false, reason: 'consumer_id_required' });
+          return;
+        }
+        const authz = this.leaseStore.authorize({ consumerId, registrationToken });
+        if (!authz.ok) {
+          sendJson(res, 401, { ok: false, reason: authz.reason });
+          return;
+        }
+        const allMessages = queryVoiceEgressMessages({
           sinceMs: Number(url.searchParams.get('sinceMs') || 0),
           limit: Number(url.searchParams.get('limit') || 10),
           queryCommsJournalEntries: this.queryCommsJournalEntries || undefined,
         });
+        const messages = this.leaseStore.filterEgress({ rows: allMessages, consumerId });
         sendJson(res, 200, {
           ok: true,
           messages,
+          meta: this.leaseStore.getMeta(),
         });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/egress/lease/register') {
+        const body = parseJsonBody(await readRequestBody(req));
+        const result = this.leaseStore.register({
+          consumerId: body.consumerId,
+          consumerKind: body.consumerKind,
+        });
+        sendJson(res, result.ok ? 200 : 400, result);
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/egress/lease/acquire') {
+        const body = parseJsonBody(await readRequestBody(req));
+        const consumerId = readVoiceConsumerId(req, body, url);
+        const registrationToken = readVoiceRegistrationToken(req, body);
+        if (!consumerId) {
+          sendJson(res, 401, { ok: false, reason: 'consumer_id_required' });
+          return;
+        }
+        const authz = this.leaseStore.authorize({ consumerId, registrationToken });
+        if (!authz.ok) {
+          sendJson(res, 401, { ok: false, reason: authz.reason });
+          return;
+        }
+        const registeredKind = authz.registration?.consumerKind || 'arbitrary';
+        if (
+          typeof body.consumerKind === 'string'
+          && body.consumerKind.trim()
+          && body.consumerKind.trim() !== registeredKind
+        ) {
+          sendJson(res, 409, {
+            ok: false,
+            reason: 'consumer_kind_mismatch',
+            registeredKind,
+            attemptedKind: body.consumerKind.trim(),
+          });
+          return;
+        }
+        const result = this.leaseStore.acquire({
+          consumerId,
+          consumerKind: registeredKind,
+          lastUserActivityAtMs: Number(body.lastUserActivityAtMs || 0),
+        });
+        sendJson(res, result.ok ? 200 : 409, { ...result, meta: this.leaseStore.getMeta() });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/egress/lease/release') {
+        const body = parseJsonBody(await readRequestBody(req));
+        const consumerId = readVoiceConsumerId(req, body, url);
+        const registrationToken = readVoiceRegistrationToken(req, body);
+        if (!consumerId) {
+          sendJson(res, 401, { ok: false, reason: 'consumer_id_required' });
+          return;
+        }
+        const authz = this.leaseStore.authorize({ consumerId, registrationToken });
+        if (!authz.ok) {
+          sendJson(res, 401, { ok: false, reason: authz.reason });
+          return;
+        }
+        const result = this.leaseStore.release({ consumerId, leaseId: body.leaseId });
+        sendJson(res, result.ok ? 200 : 409, { ...result, meta: this.leaseStore.getMeta() });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/voice/egress/spoken') {
+        const body = parseJsonBody(await readRequestBody(req));
+        const consumerId = readVoiceConsumerId(req, body, url);
+        const registrationToken = readVoiceRegistrationToken(req, body);
+        if (!consumerId) {
+          sendJson(res, 401, { ok: false, reason: 'consumer_id_required' });
+          return;
+        }
+        const authz = this.leaseStore.authorize({ consumerId, registrationToken });
+        if (!authz.ok) {
+          sendJson(res, 401, { ok: false, reason: authz.reason });
+          return;
+        }
+        const result = this.leaseStore.recordSpoken({
+          consumerId,
+          leaseId: body.leaseId,
+          messageId: body.messageId,
+        });
+        sendJson(res, result.ok ? 200 : 409, result);
         return;
       }
 
