@@ -986,6 +986,69 @@ describe('auto-handoff-materializer', () => {
     expect(content).toContain('| clm_regular | proposed | Regular proposed claim |');
   });
 
+  test('materializeSessionHandoff suppresses only exact Offline intent telemetry claim noise', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session-offline-intent-filter.md');
+
+    const result = await materializeSessionHandoff({
+      rows: [],
+      outputPath,
+      legacyMirrorPath: false,
+      sessionId: 'session-offline-intent-filter',
+      nowMs: 6600,
+      queryClaims: ({ status }) => {
+        if (status !== 'proposed') return { ok: true, claims: [] };
+        return {
+          ok: true,
+          claims: [
+            {
+              id: 'clm_offline_intent_noise_camel',
+              idempotencyKey: 'backfill:intent.updated:evt-1',
+              status: 'proposed',
+              statement: 'Offline',
+              confidence: 1,
+            },
+            {
+              id: 'clm_offline_intent_noise_snake',
+              idempotency_key: 'backfill:intent.updated:evt-2',
+              status: 'proposed',
+              statement: 'Offline',
+              confidence: 1,
+            },
+            {
+              id: 'clm_same_statement_not_backfill',
+              idempotencyKey: 'manual:intent.updated:evt-3',
+              status: 'proposed',
+              statement: 'Offline',
+              confidence: 0.99,
+            },
+            {
+              id: 'clm_same_prefix_different_statement',
+              idempotencyKey: 'backfill:intent.updated:evt-4',
+              status: 'proposed',
+              statement: 'Offline remediation follow-up',
+              confidence: 0.98,
+            },
+            {
+              id: 'clm_regular',
+              status: 'proposed',
+              statement: 'Regular proposed claim',
+              confidence: 0.5,
+            },
+          ],
+        };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const content = fs.readFileSync(outputPath, 'utf8');
+    expect(content).toContain('## Unresolved Claims');
+    expect(content).not.toContain('clm_offline_intent_noise_camel');
+    expect(content).not.toContain('clm_offline_intent_noise_snake');
+    expect(content).toContain('| clm_same_statement_not_backfill | proposed | Offline |');
+    expect(content).toContain('| clm_same_prefix_different_statement | proposed | Offline remediation follow-up |');
+    expect(content).toContain('| clm_regular | proposed | Regular proposed claim |');
+  });
+
   test('materializeSessionHandoff carries cross-session tagged decisions/tasks/findings/blockers', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const queryCalls = [];

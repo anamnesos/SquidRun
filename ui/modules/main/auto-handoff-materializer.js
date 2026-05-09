@@ -54,6 +54,7 @@ const TRANSPORT_ARTIFACT_CLAIM_PATTERNS = [
   /\bsession started\b/i,
 ];
 const MEMORY_CONSISTENCY_REPAIR_BACKFILL_PREFIX = 'backfill:memory.consistency.repair:';
+const OFFLINE_INTENT_BACKFILL_PREFIX = 'backfill:intent.updated:';
 const LEGACY_BOOTSTRAP_SESSION_ID_PATTERN = /^app-\d+-\d+$/i;
 const SESSION_BOOTSTRAP_NOISE_PATTERNS = [
   /^\((?:architect|builder|oracle)\s+#\d+\):\s+.+\bonline\.\s+standing by\.?$/i,
@@ -498,6 +499,12 @@ function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MA
     if (
       rawStatementExact === 'memory.consistency.repair'
       && idempotencyKey.startsWith(MEMORY_CONSISTENCY_REPAIR_BACKFILL_PREFIX)
+    ) {
+      continue;
+    }
+    if (
+      rawStatementExact === 'Offline'
+      && idempotencyKey.startsWith(OFFLINE_INTENT_BACKFILL_PREFIX)
     ) {
       continue;
     }
