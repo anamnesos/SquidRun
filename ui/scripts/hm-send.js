@@ -1275,6 +1275,17 @@ function isTelegramTextDirectModeActive() {
   return !telegramPhotoPath && isExplicitTelegramTarget(target);
 }
 
+function formatSpecialTargetDeliveryLine(targetName, fallbackResult, options = {}) {
+  const channel = fallbackResult.channel || 'fallback';
+  const channelLabel = channel === 'voice' ? 'voice egress' : `${channel} fallback`;
+  const statusSuffix = fallbackResult.status ? ` (${fallbackResult.status})` : '';
+  const chatSuffix = fallbackResult.chatId ? ` (chat ${fallbackResult.chatId})` : '';
+  const messageIdSuffix = fallbackResult.messageId ? `, messageId: ${fallbackResult.messageId}` : '';
+  const wsContext = options.wsUnverifiedReason ? ` (WS context: ${options.wsUnverifiedReason})` : '';
+  const wsExpectedNote = ` WS direct route remains in use for '${targetName}' app-routing; any 'No connected client for target: ${targetName}' warn is expected when no WS client is registered as that target.`;
+  return `Delivered to ${targetName} via ${channelLabel}${statusSuffix}${chatSuffix}${messageIdSuffix}${wsContext}.${wsExpectedNote}`;
+}
+
 function appendProjectContextMarker(content, metadata = null) {
   const text = typeof content === 'string' ? content : String(content ?? '');
   if (!text) return text;
@@ -1997,19 +2008,14 @@ async function main() {
     if (isSpecialTarget(target)) {
       const fallbackResult = await sendSpecialTargetFallback(target, buildSpecialTargetRequest(envelope));
       if (fallbackResult.ok) {
-        const reason = sendResult?.ack
+        const wsUnverifiedReason = sendResult?.ack
           ? `ack=${sendResult.ack.status}`
           : sendResult?.deliveryCheck
             ? `delivery-check=${sendResult.deliveryCheck.status || 'unknown'}`
             : sendResult?.skippedByHealth
               ? `health=${sendResult?.health?.status || 'unknown'}`
               : (sendResult?.error || wsError?.message || 'no_ack');
-        console.warn(
-          `WebSocket send unverified (${reason}). `
-          + `Sent ${target} via ${fallbackResult.channel || 'fallback'} fallback`
-          + `${fallbackResult.status ? ` (${fallbackResult.status})` : ''}`
-          + `${fallbackResult.chatId ? ` (chat ${fallbackResult.chatId})` : ''}.`
-        );
+        console.log(formatSpecialTargetDeliveryLine(target, fallbackResult, { wsUnverifiedReason }));
         closeCommsJournalStores();
         process.exit(0);
       }
