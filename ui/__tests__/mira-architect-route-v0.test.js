@@ -240,24 +240,25 @@ describe('mira-architect-route-v0 / pending-intent JSONL durability', () => {
 });
 
 describe('mira-architect-route-v0 / event queue reply correlation', () => {
-  test('findMiraReplyEvent matches by mira_intent_id, kind=architect_reply, AND target=mira (target_role)', () => {
+  test('findMiraReplyEvent matches by mira_intent_id, kind=architect_reply, target=mira AND sender=architect', () => {
     const rows = [
-      { mira_intent_id: 'other', kind: 'architect_reply', target_role: 'mira', reply_text: 'no' },
+      { mira_intent_id: 'other', kind: 'architect_reply', target_role: 'mira', sender_role: 'architect', reply_text: 'no' },
       { mira_intent_id: 'a', kind: 'emitted' },
-      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', reply_text: 'yes' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', sender_role: 'architect', reply_text: 'yes' },
     ];
     const found = findMiraReplyEvent({ rows, miraIntentId: 'a' });
     expect(found).toEqual(expect.objectContaining({
       mira_intent_id: 'a',
       kind: 'architect_reply',
       target_role: 'mira',
+      sender_role: 'architect',
       reply_text: 'yes',
     }));
   });
 
   test('findMiraReplyEvent accepts the nested target.role: "mira" shape too', () => {
     const rows = [
-      { mira_intent_id: 'a', kind: 'architect_reply', target: { role: 'mira' }, reply_text: 'nested-ok' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target: { role: 'mira' }, sender_role: 'architect', reply_text: 'nested-ok' },
     ];
     const found = findMiraReplyEvent({ rows, miraIntentId: 'a' });
     expect(found?.reply_text).toBe('nested-ok');
@@ -265,19 +266,44 @@ describe('mira-architect-route-v0 / event queue reply correlation', () => {
 
   test('findMiraReplyEvent IGNORES rows missing the Mira target', () => {
     const rows = [
-      { mira_intent_id: 'a', kind: 'architect_reply', reply_text: 'no-target' },
-      { mira_intent_id: 'a', kind: 'architect_reply', target_role: '', reply_text: 'empty-target' },
+      { mira_intent_id: 'a', kind: 'architect_reply', sender_role: 'architect', reply_text: 'no-target' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: '', sender_role: 'architect', reply_text: 'empty-target' },
     ];
     expect(findMiraReplyEvent({ rows, miraIntentId: 'a' })).toBe(null);
   });
 
   test('findMiraReplyEvent IGNORES rows with the wrong target', () => {
     const rows = [
-      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'user', reply_text: 'wrong-flat' },
-      { mira_intent_id: 'a', kind: 'architect_reply', target: { role: 'architect' }, reply_text: 'wrong-nested' },
-      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'builder', reply_text: 'wrong-builder' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'user', sender_role: 'architect', reply_text: 'wrong-flat' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target: { role: 'architect' }, sender_role: 'architect', reply_text: 'wrong-nested' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'builder', sender_role: 'architect', reply_text: 'wrong-builder' },
     ];
     expect(findMiraReplyEvent({ rows, miraIntentId: 'a' })).toBe(null);
+  });
+
+  test('findMiraReplyEvent IGNORES rows with the wrong sender (must be architect)', () => {
+    const rows = [
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', sender_role: 'user', reply_text: 'spoof-user' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', sender_role: 'oracle', reply_text: 'spoof-oracle' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', sender_role: 'builder', reply_text: 'spoof-builder' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', sender_role: 'mira', reply_text: 'spoof-self' },
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', sender: { role: 'oracle' }, reply_text: 'spoof-nested' },
+    ];
+    expect(findMiraReplyEvent({ rows, miraIntentId: 'a' })).toBe(null);
+  });
+
+  test('findMiraReplyEvent IGNORES rows with no sender field at all', () => {
+    const rows = [
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', reply_text: 'no-sender' },
+    ];
+    expect(findMiraReplyEvent({ rows, miraIntentId: 'a' })).toBe(null);
+  });
+
+  test('findMiraReplyEvent accepts the nested sender.role: "architect" shape', () => {
+    const rows = [
+      { mira_intent_id: 'a', kind: 'architect_reply', target_role: 'mira', sender: { role: 'architect' }, reply_text: 'nested-sender-ok' },
+    ];
+    expect(findMiraReplyEvent({ rows, miraIntentId: 'a' })?.reply_text).toBe('nested-sender-ok');
   });
 
   test('findMiraReplyEvent ignores rows of other kinds for the same intent', () => {
@@ -314,14 +340,22 @@ describe('mira-architect-route-v0 / buildArchitectReplyRow', () => {
     });
   });
 
-  test('sender_role defaults to "architect" when not provided', () => {
+  test('sender_role is always "architect" (hardcoded — helper is Architect-only by contract)', () => {
     const built = buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', nowMs: 1 });
     expect(built.row.sender_role).toBe('architect');
   });
 
-  test('sender_role override is honored', () => {
-    const built = buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', senderRole: 'oracle', nowMs: 1 });
-    expect(built.row.sender_role).toBe('oracle');
+  test('senderRole override to non-architect is REJECTED', () => {
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', senderRole: 'oracle' }).reason).toBe('sender_role_must_be_architect');
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', senderRole: 'builder' }).reason).toBe('sender_role_must_be_architect');
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', senderRole: 'user' }).reason).toBe('sender_role_must_be_architect');
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', senderRole: 'mira' }).reason).toBe('sender_role_must_be_architect');
+  });
+
+  test('senderRole=architect explicit is accepted (idempotent with default)', () => {
+    const built = buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', senderRole: 'architect', nowMs: 1 });
+    expect(built.ok).toBe(true);
+    expect(built.row.sender_role).toBe('architect');
   });
 
   test('rejects empty / whitespace-only reply text', () => {

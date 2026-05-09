@@ -181,12 +181,20 @@ function rowTargetsMira(row) {
   return false;
 }
 
+function rowSenderIsArchitect(row) {
+  if (!row || typeof row !== 'object') return false;
+  if (row.sender_role === 'architect') return true;
+  if (row.sender && typeof row.sender === 'object' && row.sender.role === 'architect') return true;
+  return false;
+}
+
 function findMiraReplyEvent({ rows, miraIntentId }) {
   if (!Array.isArray(rows)) return null;
   for (const row of rows) {
     if (row?.mira_intent_id !== miraIntentId) continue;
     if (row?.kind !== 'architect_reply') continue;
     if (!rowTargetsMira(row)) continue;
+    if (!rowSenderIsArchitect(row)) continue;
     return row;
   }
   return null;
@@ -195,7 +203,7 @@ function findMiraReplyEvent({ rows, miraIntentId }) {
 function buildArchitectReplyRow({
   miraIntentId,
   replyText,
-  senderRole = 'architect',
+  senderRole,
   nowMs,
 }) {
   if (typeof miraIntentId !== 'string' || !/^mira-intent-/.test(miraIntentId)) {
@@ -205,7 +213,12 @@ function buildArchitectReplyRow({
   if (text.length === 0) {
     return { ok: false, reason: 'reply_text_required' };
   }
-  const sender = nonEmptyString(senderRole) ? senderRole.trim() : 'architect';
+  if (senderRole !== undefined && senderRole !== null) {
+    const requested = nonEmptyString(senderRole) ? senderRole.trim() : '';
+    if (requested && requested !== 'architect') {
+      return { ok: false, reason: 'sender_role_must_be_architect' };
+    }
+  }
   const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
   return {
     ok: true,
@@ -213,7 +226,7 @@ function buildArchitectReplyRow({
       mira_intent_id: miraIntentId,
       kind: 'architect_reply',
       target_role: 'mira',
-      sender_role: sender,
+      sender_role: 'architect',
       reply_text: text,
       occurred_at_ms: now,
     },
@@ -241,6 +254,7 @@ module.exports = {
   readJsonlRows,
   getIntentResolutionState,
   rowTargetsMira,
+  rowSenderIsArchitect,
   findMiraReplyEvent,
   buildArchitectReplyRow,
   isIntentAlreadyResolved,
