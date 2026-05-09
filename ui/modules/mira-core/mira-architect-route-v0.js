@@ -192,6 +192,34 @@ function findMiraReplyEvent({ rows, miraIntentId }) {
   return null;
 }
 
+function buildArchitectReplyRow({
+  miraIntentId,
+  replyText,
+  senderRole = 'architect',
+  nowMs,
+}) {
+  if (typeof miraIntentId !== 'string' || !/^mira-intent-/.test(miraIntentId)) {
+    return { ok: false, reason: 'mira_intent_id_required' };
+  }
+  const text = String(replyText == null ? '' : replyText).trim();
+  if (text.length === 0) {
+    return { ok: false, reason: 'reply_text_required' };
+  }
+  const sender = nonEmptyString(senderRole) ? senderRole.trim() : 'architect';
+  const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  return {
+    ok: true,
+    row: {
+      mira_intent_id: miraIntentId,
+      kind: 'architect_reply',
+      target_role: 'mira',
+      sender_role: sender,
+      reply_text: text,
+      occurred_at_ms: now,
+    },
+  };
+}
+
 function isIntentAlreadyResolved(pendingRows, miraIntentId) {
   const state = getIntentResolutionState(pendingRows, miraIntentId);
   return state.state === 'resolved' || state.state === 'failed' || state.state === 'timeout';
@@ -214,5 +242,6 @@ module.exports = {
   getIntentResolutionState,
   rowTargetsMira,
   findMiraReplyEvent,
+  buildArchitectReplyRow,
   isIntentAlreadyResolved,
 };

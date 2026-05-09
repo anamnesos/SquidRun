@@ -294,6 +294,188 @@ describe('mira-architect-route-v0 / event queue reply correlation', () => {
   });
 });
 
+describe('mira-architect-route-v0 / buildArchitectReplyRow', () => {
+  const { buildArchitectReplyRow } = route;
+
+  test('builds a row with target_role:"mira", kind:"architect_reply", and matching mira_intent_id', () => {
+    const built = buildArchitectReplyRow({
+      miraIntentId: 'mira-intent-fixed-1',
+      replyText: 'Lease landed. Phone fail-closed.',
+      nowMs: 5000,
+    });
+    expect(built.ok).toBe(true);
+    expect(built.row).toEqual({
+      mira_intent_id: 'mira-intent-fixed-1',
+      kind: 'architect_reply',
+      target_role: 'mira',
+      sender_role: 'architect',
+      reply_text: 'Lease landed. Phone fail-closed.',
+      occurred_at_ms: 5000,
+    });
+  });
+
+  test('sender_role defaults to "architect" when not provided', () => {
+    const built = buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', nowMs: 1 });
+    expect(built.row.sender_role).toBe('architect');
+  });
+
+  test('sender_role override is honored', () => {
+    const built = buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: 'ok', senderRole: 'oracle', nowMs: 1 });
+    expect(built.row.sender_role).toBe('oracle');
+  });
+
+  test('rejects empty / whitespace-only reply text', () => {
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: '' }).reason).toBe('reply_text_required');
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: '   ' }).reason).toBe('reply_text_required');
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: null }).reason).toBe('reply_text_required');
+    expect(buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: undefined }).reason).toBe('reply_text_required');
+  });
+
+  test('rejects malformed mira_intent_id', () => {
+    expect(buildArchitectReplyRow({ miraIntentId: '', replyText: 'ok' }).reason).toBe('mira_intent_id_required');
+    expect(buildArchitectReplyRow({ miraIntentId: 'not-prefixed', replyText: 'ok' }).reason).toBe('mira_intent_id_required');
+    expect(buildArchitectReplyRow({ miraIntentId: null, replyText: 'ok' }).reason).toBe('mira_intent_id_required');
+  });
+
+  test('always sets target_role to "mira" even if caller would try to spoof another target', () => {
+    const built = buildArchitectReplyRow({
+      miraIntentId: 'mira-intent-x',
+      replyText: 'ok',
+      nowMs: 1,
+    });
+    expect(built.row.target_role).toBe('mira');
+  });
+
+  test('row built by buildArchitectReplyRow is matchable by findMiraReplyEvent', () => {
+    const built = buildArchitectReplyRow({
+      miraIntentId: 'mira-intent-x',
+      replyText: 'ok',
+      nowMs: 1,
+    });
+    const found = route.findMiraReplyEvent({ rows: [built.row], miraIntentId: 'mira-intent-x' });
+    expect(found).toBe(built.row);
+  });
+
+  test('trims reply text', () => {
+    const built = buildArchitectReplyRow({ miraIntentId: 'mira-intent-x', replyText: '   short and grounded   ', nowMs: 1 });
+    expect(built.row.reply_text).toBe('short and grounded');
+  });
+});
+
+describe('hm-mira-reply.js CLI smoke', () => {
+  const { spawnSync } = require('child_process');
+
+  function runCli(args, options = {}) {
+    const cliPath = path.join(__dirname, '..', 'scripts', 'hm-mira-reply.js');
+    return spawnSync(process.execPath, [cliPath, ...args], {
+      encoding: 'utf8',
+      input: options.stdin || undefined,
+    });
+  }
+
+  test('writes a target_role:"mira" architect_reply row to the queue path', () => {
+    const dir = tempDir('hm-mira-reply-');
+    const queue = path.join(dir, 'mira-event-queue.jsonl');
+    const result = runCli([
+      'mira-intent-cli-1',
+      '--text',
+      'short, grounded reply',
+      '--queue-path',
+      queue,
+    ]);
+    expect(result.status).toBe(0);
+    const out = JSON.parse(result.stdout.trim());
+    expect(out.ok).toBe(true);
+    expect(out.target_role).toBe('mira');
+    expect(out.mira_intent_id).toBe('mira-intent-cli-1');
+    const rows = readJsonlRows({ filePath: queue });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(expect.objectContaining({
+      mira_intent_id: 'mira-intent-cli-1',
+      kind: 'architect_reply',
+      target_role: 'mira',
+      sender_role: 'architect',
+      reply_text: 'short, grounded reply',
+    }));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('CLI rejects malformed intent id with non-zero exit', () => {
+    const dir = tempDir('hm-mira-reply-');
+    const queue = path.join(dir, 'mira-event-queue.jsonl');
+    const result = runCli([
+      'not-a-real-intent-id',
+      '--text',
+      'reply',
+      '--queue-path',
+      queue,
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('mira_intent_id_required');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('CLI rejects empty reply with non-zero exit', () => {
+    const dir = tempDir('hm-mira-reply-');
+    const queue = path.join(dir, 'mira-event-queue.jsonl');
+    const result = runCli([
+      'mira-intent-cli-2',
+      '--text',
+      '   ',
+      '--queue-path',
+      queue,
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('reply_text_required');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('CLI --stdin path reads reply from stdin and writes a row', () => {
+    const dir = tempDir('hm-mira-reply-');
+    const queue = path.join(dir, 'mira-event-queue.jsonl');
+    const result = runCli(['mira-intent-cli-3', '--stdin', '--queue-path', queue], {
+      stdin: 'reply via stdin\n',
+    });
+    expect(result.status).toBe(0);
+    const rows = readJsonlRows({ filePath: queue });
+    expect(rows[0].reply_text).toBe('reply via stdin');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('CLI --lint flag prints violations to stderr but still writes the row', () => {
+    const dir = tempDir('hm-mira-reply-');
+    const queue = path.join(dir, 'mira-event-queue.jsonl');
+    const result = runCli([
+      'mira-intent-cli-4',
+      '--text',
+      'I understand. The lease is fine.',
+      '--lint',
+      '--queue-path',
+      queue,
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('Lint violations');
+    expect(result.stderr).toContain('preamble');
+    const rows = readJsonlRows({ filePath: queue });
+    expect(rows[0].reply_text).toBe('I understand. The lease is fine.');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('CLI without --lint does NOT run language gate (emit-side gate is the source of truth)', () => {
+    const dir = tempDir('hm-mira-reply-');
+    const queue = path.join(dir, 'mira-event-queue.jsonl');
+    const result = runCli([
+      'mira-intent-cli-5',
+      '--text',
+      'I understand. Hope that helps.',
+      '--queue-path',
+      queue,
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('Lint violations');
+  });
+});
+
 describe('mira-architect-route-v0 / newMiraIntentId', () => {
   test('produces a prefixed unique-ish id', () => {
     const a = newMiraIntentId();
