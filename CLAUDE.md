@@ -25,3 +25,4 @@ Before ANY agent states "we can't", "we don't have access", "there is no tool", 
 1. Read `ROLES.md` — it contains your role definition and startup baseline. Execute it.
 2. Main window: do NOT force-load private side-profile files by default. Scoped context belongs in the relevant private profile overlay.
 3. Internalize the fix-first rule from `ROLES.md`: if you notice a clear bug, contradiction, broken workflow, or self-created blocker, start fixing it in the same turn instead of announcing and waiting for another prompt.
+4. Broker distinction: Alpaca = PAPER MONEY. LiveOps/Hyperliquid-style wallet execution is real-risk context and must stay behind its explicit runtime gates.
