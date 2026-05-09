@@ -10,10 +10,20 @@ const {
   transcriptPath,
 } = require('../modules/mira-lab-surface');
 const {
+  MIRA_LAB_OPEN_CHANNEL,
   buildMiraLabTurnResponse,
   exportMiraLabTranscriptResponse,
+  openMiraLabWindowResponse,
   registerMiraLabHandlers,
 } = require('../modules/ipc/mira-lab-handlers');
+const { DEFAULT_HANDLERS } = require('../modules/ipc/handler-registry');
+const {
+  isAllowedInvokeChannel,
+} = require('../modules/bridge/channel-policy');
+const {
+  FORCED_WEB_PREFERENCES,
+  createMiraLabWindow,
+} = require('../modules/main/mira-lab-window');
 
 function tempProject() {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-mira-lab-'));
@@ -188,6 +198,102 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(turn.ok).toBe(true);
     expect(exported.transcript).toHaveLength(1);
+  });
+
+  test('handler-registry default set wires Mira Lab IPC into app startup', () => {
+    expect(DEFAULT_HANDLERS).toContain(registerMiraLabHandlers);
+  });
+
+  test('preload channel allowlist includes the three Mira Lab invoke channels', () => {
+    expect(isAllowedInvokeChannel(MIRA_LAB_TURN_CHANNEL)).toBe(true);
+    expect(isAllowedInvokeChannel('mira:lab-export')).toBe(true);
+    expect(isAllowedInvokeChannel(MIRA_LAB_OPEN_CHANNEL)).toBe(true);
+    expect(isAllowedInvokeChannel('mira:lab-undefined')).toBe(false);
+  });
+
+  test('createMiraLabWindow loads mira-lab.html with shared preload and isolation defaults', () => {
+    const calls = [];
+    const browserWindowCtor = jest.fn(function FakeBrowserWindow(options) {
+      calls.push(options);
+      this.options = options;
+      this.loadFile = jest.fn();
+      this.loadURL = jest.fn();
+      return this;
+    });
+
+    const { window: win, htmlPath, preloadPath, options } = createMiraLabWindow({
+      BrowserWindow: browserWindowCtor,
+    });
+
+    expect(browserWindowCtor).toHaveBeenCalledTimes(1);
+    expect(htmlPath).toMatch(/mira-lab\.html$/);
+    expect(preloadPath).toMatch(/preload\.js$/);
+    expect(options.webPreferences).toEqual(expect.objectContaining({
+      ...FORCED_WEB_PREFERENCES,
+      preload: preloadPath,
+    }));
+    expect(options.title).toBe('Mira Lab');
+    expect(win.loadFile).toHaveBeenCalledWith(htmlPath);
+  });
+
+  test('createMiraLabWindow refuses to weaken contextIsolation/nodeIntegration via overrides', () => {
+    const browserWindowCtor = jest.fn(function FakeBrowserWindow(options) {
+      this.options = options;
+      this.loadFile = jest.fn();
+      return this;
+    });
+
+    const { options } = createMiraLabWindow({
+      BrowserWindow: browserWindowCtor,
+      windowOptions: {
+        webPreferences: { contextIsolation: false, nodeIntegration: true },
+      },
+    });
+
+    expect(options.webPreferences.contextIsolation).toBe(true);
+    expect(options.webPreferences.nodeIntegration).toBe(false);
+  });
+
+  test('mira:lab-open IPC delegates to injected createMiraLabWindow factory', async () => {
+    projectRoot = tempProject();
+    const registered = new Map();
+    const ipcMain = {
+      handle: jest.fn((channel, handler) => registered.set(channel, handler)),
+      removeHandler: jest.fn(),
+    };
+    const factory = jest.fn(() => ({ htmlPath: '/abs/mira-lab.html', preloadPath: '/abs/preload.js' }));
+
+    registerMiraLabHandlers({ ipcMain }, { projectRoot, createMiraLabWindow: factory });
+    expect(ipcMain.handle).toHaveBeenCalledWith(MIRA_LAB_OPEN_CHANNEL, expect.any(Function));
+
+    const handler = registered.get(MIRA_LAB_OPEN_CHANNEL);
+    const result = await handler({}, { reason: 'open' });
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      ok: true,
+      channel: MIRA_LAB_OPEN_CHANNEL,
+      htmlPath: '/abs/mira-lab.html',
+      preloadPath: '/abs/preload.js',
+    });
+  });
+
+  test('mira:lab-open IPC reports a structured failure when the factory is missing', () => {
+    const result = openMiraLabWindowResponse({}, {});
+    expect(result).toEqual({
+      ok: false,
+      reason: 'mira_lab_window_factory_missing',
+      channel: MIRA_LAB_OPEN_CHANNEL,
+    });
+  });
+
+  test('live app wires createMiraLabWindow into setupIPCHandlers deps in squidrun-app.js', () => {
+    const appSource = fs.readFileSync(
+      path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+      'utf8',
+    );
+    expect(appSource).toMatch(/require\(['"]\.\/mira-lab-window['"]\)/);
+    expect(appSource).toMatch(/createMiraLabWindow:\s*\(opts[^)]*\)\s*=>\s*miraLabWindowModule\.createMiraLabWindow\(\{[^}]*BrowserWindow/);
+    expect(appSource).toMatch(/ipcHandlers\.setupIPCHandlers\(\{[\s\S]*createMiraLabWindow:[\s\S]*\}\);/);
   });
 
   test('sidecar prototype skeleton is conversation-first with hidden diagnostics, not dashboard chrome', () => {

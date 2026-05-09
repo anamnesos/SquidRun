@@ -24,6 +24,19 @@ describe('command-palette', () => {
     expect(openAppWindow).toHaveBeenCalledWith('scoped');
   });
 
+  test('includes the Mira Lab window command and routes it to the window opener', () => {
+    const openAppWindow = jest.fn();
+    const commands = getCommandPaletteCommands({ openAppWindow });
+    const miraLabCommand = commands.find((entry) => entry.id === 'open-mira-lab');
+
+    expect(miraLabCommand).toEqual(expect.objectContaining({
+      label: 'Open Mira Lab',
+      category: 'Windows',
+    }));
+    miraLabCommand.action();
+    expect(openAppWindow).toHaveBeenCalledWith('mira-lab');
+  });
+
   test('labels pane 1 navigation with Mira without changing the pane target', () => {
     const terminal = require('../modules/terminal');
     const commands = getCommandPaletteCommands();
