@@ -62,6 +62,10 @@ function buildPhoneClientConfig(input = {}) {
       transcripts: `${basePath}/v1/voice/phone/transcripts`,
       egress: `${basePath}/v1/voice/phone/egress`,
       diagnostics: `${basePath}/v1/voice/phone/diagnostics`,
+      leaseRegister: `${basePath}/v1/voice/egress/lease/register`,
+      leaseAcquire: `${basePath}/v1/voice/egress/lease/acquire`,
+      leaseRelease: `${basePath}/v1/voice/egress/lease/release`,
+      spoken: `${basePath}/v1/voice/egress/spoken`,
     },
     controls: {
       pushToTalk: true,
@@ -224,18 +228,126 @@ function renderPhoneVoiceClientPage(input = {}) {
       }
       return null;
     }
+    function getOrCreatePhoneConsumerId() {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const stored = localStorage.getItem('squidrun.voice.phoneConsumerId');
+          if (typeof stored === 'string' && stored.trim()) return stored.trim();
+        }
+      } catch (_) {}
+      let id;
+      try {
+        id = 'phone-' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)));
+      } catch (_) {
+        id = 'phone-' + Date.now().toString(36);
+      }
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('squidrun.voice.phoneConsumerId', id);
+        }
+      } catch (_) {}
+      return id;
+    }
+    async function registerPhoneVoiceConsumer() {
+      if (!session) return false;
+      const consumerId = session.voiceConsumerId || (session.voiceConsumerId = getOrCreatePhoneConsumerId());
+      const response = await fetch(window.SQUIDRUN_PHONE_VOICE.endpoints.leaseRegister, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + phoneToken,
+        },
+        body: JSON.stringify({ consumerId, consumerKind: 'phone-client' }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body || body.ok !== true) return false;
+      session.voiceRegistrationToken = body.registrationToken;
+      session.voiceRegistrationExpiresAtMs = Number(body.expiresAtMs || 0);
+      return true;
+    }
+    async function acquireOrRenewPhoneVoiceLease() {
+      if (!session) return false;
+      if (!session.voiceRegistrationToken) {
+        const ok = await registerPhoneVoiceConsumer();
+        if (!ok) return false;
+      }
+      const consumerId = session.voiceConsumerId;
+      const response = await fetch(window.SQUIDRUN_PHONE_VOICE.endpoints.leaseAcquire, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-voice-registration-token': session.voiceRegistrationToken,
+        },
+        body: JSON.stringify({
+          consumerId,
+          consumerKind: 'phone-client',
+          lastUserActivityAtMs: Number(session.lastUserActivityAtMs || 0),
+        }),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.status === 401 && body && body.reason === 'registration_expired') {
+        session.voiceRegistrationToken = null;
+        return acquireOrRenewPhoneVoiceLease();
+      }
+      if (!response.ok || !body || body.ok !== true) return false;
+      session.voiceLeaseId = (body.leaseState && body.leaseState.leaseId) || null;
+      session.voiceLeaseExpiresAtMs = Number(body.leaseState && body.leaseState.expiresAtMs || 0);
+      return true;
+    }
+    async function postPhoneVoiceSpokenAck(messageId) {
+      if (!session || !session.voiceRegistrationToken || !session.voiceLeaseId || !messageId) return;
+      try {
+        await fetch(window.SQUIDRUN_PHONE_VOICE.endpoints.spoken, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-voice-registration-token': session.voiceRegistrationToken,
+          },
+          body: JSON.stringify({
+            consumerId: session.voiceConsumerId,
+            leaseId: session.voiceLeaseId,
+            messageId,
+          }),
+        });
+      } catch (_) {}
+    }
+    async function releasePhoneVoiceLease() {
+      if (!session || !session.voiceRegistrationToken) return;
+      try {
+        await fetch(window.SQUIDRUN_PHONE_VOICE.endpoints.leaseRelease, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-voice-registration-token': session.voiceRegistrationToken,
+          },
+          body: JSON.stringify({
+            consumerId: session.voiceConsumerId,
+            leaseId: session.voiceLeaseId || null,
+          }),
+        });
+      } catch (_) {}
+      session.voiceLeaseId = null;
+      session.voiceLeaseExpiresAtMs = 0;
+    }
     async function pollEgressOnce() {
       if (!session) return;
+      const acquired = await acquireOrRenewPhoneVoiceLease();
+      if (!acquired) return;
       const sinceMs = session.egressSinceMs || Date.now();
+      const consumerId = session.voiceConsumerId;
       const response = await fetch(
-        window.SQUIDRUN_PHONE_VOICE.endpoints.egress + '?sinceMs=' + encodeURIComponent(String(sinceMs)) + '&limit=10',
-        { headers: { Authorization: 'Bearer ' + phoneToken } }
+        window.SQUIDRUN_PHONE_VOICE.endpoints.egress + '?sinceMs=' + encodeURIComponent(String(sinceMs)) + '&limit=10&consumerId=' + encodeURIComponent(consumerId),
+        { headers: {
+            Authorization: 'Bearer ' + phoneToken,
+            'x-voice-registration-token': session.voiceRegistrationToken,
+        } }
       );
       const body = await response.json().catch(() => null);
       const messages = Array.isArray(body && body.messages) ? body.messages : [];
       for (const message of messages) {
         if (session.spokenIds.has(message.messageId)) continue;
         session.spokenIds.add(message.messageId);
+        if (message.messageId) session.pendingSpokenMessageIds.push(message.messageId);
         sendEvent({
           type: 'response.create',
           response: {
@@ -250,6 +362,8 @@ function renderPhoneVoiceClientPage(input = {}) {
     function stopSession() {
       if (!session) return;
       clearInterval(session.egressTimer);
+      clearInterval(session.voiceHeartbeatTimer);
+      void releasePhoneVoiceLease();
       try { session.channel.close(); } catch (_) {}
       try { session.peer.close(); } catch (_) {}
       const tracks = session.stream && session.stream.getTracks ? session.stream.getTracks() : [];
@@ -293,7 +407,21 @@ function renderPhoneVoiceClientPage(input = {}) {
         peer.addTrack(track, stream);
       });
       const channel = peer.createDataChannel('oai-events');
-      session = { stream, peer, channel, audio, egressSinceMs: Date.now(), spokenIds: new Set(), egressTimer: null };
+      session = {
+        stream,
+        peer,
+        channel,
+        audio,
+        egressSinceMs: Date.now(),
+        spokenIds: new Set(),
+        egressTimer: null,
+        voiceConsumerId: null,
+        voiceRegistrationToken: null,
+        voiceLeaseId: null,
+        voiceHeartbeatTimer: null,
+        pendingSpokenMessageIds: [],
+        lastUserActivityAtMs: 0,
+      };
       channel.addEventListener('open', () => {
         sendEvent({
           type: 'session.update',
@@ -314,12 +442,29 @@ function renderPhoneVoiceClientPage(input = {}) {
           },
         });
         session.egressTimer = setInterval(() => { pollEgressOnce().catch((err) => setLog('Egress check failed: ' + err.message)); }, 1200);
+        session.voiceHeartbeatTimer = setInterval(() => {
+          acquireOrRenewPhoneVoiceLease().catch((err) => setLog('Voice lease heartbeat failed: ' + err.message));
+        }, 5000);
         setLog('Connected. Hold Talk when you want to speak.');
       });
       channel.addEventListener('message', (event) => {
         const payload = JSON.parse(event.data || '{}');
         const transcript = normalizeTranscriptEvent(payload);
         if (transcript) postTranscript(transcript).catch((err) => setLog('Transcript route failed: ' + err.message));
+        const payloadType = payload && typeof payload.type === 'string' ? payload.type : '';
+        if (
+          session
+          && Array.isArray(session.pendingSpokenMessageIds)
+          && session.pendingSpokenMessageIds.length > 0
+          && (
+            payloadType === 'response.audio.done'
+            || payloadType === 'response.output_audio.done'
+            || payloadType === 'response.done'
+          )
+        ) {
+          const ackMessageId = session.pendingSpokenMessageIds.shift();
+          if (ackMessageId) void postPhoneVoiceSpokenAck(ackMessageId);
+        }
       });
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
@@ -345,7 +490,12 @@ function renderPhoneVoiceClientPage(input = {}) {
       connectBtn.disabled = true;
     }
     connectBtn.addEventListener('click', () => { connect().catch((err) => { stopSession(); setLog(err.message); }); });
-    talkBtn.addEventListener('pointerdown', () => { setTracksEnabled(true); talkBtn.dataset.active = 'true'; setLog('Talking...'); });
+    talkBtn.addEventListener('pointerdown', () => {
+      if (session) session.lastUserActivityAtMs = Date.now();
+      setTracksEnabled(true);
+      talkBtn.dataset.active = 'true';
+      setLog('Talking...');
+    });
     talkBtn.addEventListener('pointerup', () => { setTracksEnabled(false); talkBtn.dataset.active = 'false'; setLog('Connected.'); });
     talkBtn.addEventListener('pointercancel', () => { setTracksEnabled(false); talkBtn.dataset.active = 'false'; setLog('Connected.'); });
     muteBtn.addEventListener('click', () => { setTracksEnabled(false); setLog('Muted.'); });
