@@ -844,6 +844,93 @@ describe('auto-handoff-materializer', () => {
     expect(contestedRow).toContain('...');
   });
 
+  test('materializeSessionHandoff overfetches unresolved claims before final noise filtering', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session-overfetch-claims.md');
+    const queryCalls = [];
+    const noisyProposedClaims = Array.from({ length: 10 }, (_, index) => ({
+      id: `clm_noise_init_${index}`,
+      status: 'proposed',
+      statement: 'Initializing session...',
+      confidence: 1,
+    }));
+    const meaningfulProposedClaims = [
+      {
+        id: 'clm_offline',
+        status: 'proposed',
+        statement: 'Offline',
+        confidence: 1,
+      },
+      {
+        id: 'clm_later_real_1',
+        status: 'proposed',
+        statement: 'Later proposed claim one',
+        confidence: 0.9,
+      },
+      {
+        id: 'clm_later_real_2',
+        status: 'proposed',
+        statement: 'Later proposed claim two',
+        confidence: 0.8,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows: [],
+      outputPath,
+      legacyMirrorPath: false,
+      sessionId: 'session-overfetch-claims',
+      nowMs: 6250,
+      unresolvedClaimsMax: 3,
+      queryClaims: ({ status, limit }) => {
+        queryCalls.push({ status, limit });
+        if (status === 'contested') {
+          return {
+            ok: true,
+            claims: [{
+              id: 'clm_contested_priority',
+              status: 'contested',
+              statement: 'Contested priority claim',
+              confidence: 0.1,
+            }],
+          };
+        }
+        if (status === 'pending_proof') {
+          return {
+            ok: true,
+            claims: [{
+              id: 'clm_pending_priority',
+              status: 'pending_proof',
+              statement: 'Pending priority claim',
+              confidence: 0.2,
+            }],
+          };
+        }
+        if (limit <= 10) {
+          return { ok: true, claims: noisyProposedClaims };
+        }
+        return { ok: true, claims: [...noisyProposedClaims, ...meaningfulProposedClaims] };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const content = fs.readFileSync(outputPath, 'utf8');
+    expect(content).toContain('## Unresolved Claims');
+    expect(content).toContain('| clm_offline | proposed | Offline |');
+    expect(content).not.toContain('Initializing session');
+    const unresolvedRows = content
+      .split('\n')
+      .filter((line) => line.startsWith('| clm_'));
+    expect(unresolvedRows).toHaveLength(3);
+    expect(unresolvedRows[0]).toContain('| clm_contested_priority | contested |');
+    expect(unresolvedRows[1]).toContain('| clm_pending_priority | pending_proof |');
+    expect(unresolvedRows[2]).toContain('| clm_offline | proposed | Offline |');
+
+    const proposedLimits = queryCalls
+      .filter((call) => call.status === 'proposed')
+      .map((call) => call.limit);
+    expect(proposedLimits).toEqual([10, 20]);
+  });
+
   test('materializeSessionHandoff suppresses only exact memory repair backfill claim noise', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session-memory-repair-filter.md');
 
