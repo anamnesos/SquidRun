@@ -41,6 +41,7 @@ const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
+const miraLabWindowModule = require('./mira-lab-window');
 const { resolveRuntimeInt } = require('../runtime-config');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TEAM_MEMORY_BELIEF_SWEEP_ENABLED = process.env.SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP === '1';
@@ -4098,6 +4099,46 @@ class SquidRunApp {
 
   async openAppWindow(rawWindowKey = 'main', options = {}) {
     const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    if (windowKey === 'mira-lab') {
+      const existing = this.getAppWindow(windowKey);
+      if (this.canSendToWindow(existing)) {
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'Mira Lab',
+          status: 'reused_existing',
+        };
+      }
+      try {
+        const result = miraLabWindowModule.createMiraLabWindow({ BrowserWindow }) || {};
+        const win = result.window || null;
+        if (!win) {
+          return {
+            ok: false,
+            windowKey,
+            reason: 'mira_lab_window_factory_returned_no_window',
+          };
+        }
+        this.registerAppWindow(windowKey, win);
+        this.enforceMenuSuppression(win);
+        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'Mira Lab',
+          htmlPath: result.htmlPath || null,
+          preloadPath: result.preloadPath || null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          windowKey,
+          reason: err?.message || 'mira_lab_window_open_failed',
+        };
+      }
+    }
     const windowTitle = windowKey === 'main'
       ? 'SquidRun'
       : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
@@ -4855,6 +4896,7 @@ class SquidRunApp {
       stopRuntimeLifecycle: (reason) => this.stopRuntimeServices(reason || 'ipc-stop'),
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
       performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
+      createMiraLabWindow: (opts = {}) => miraLabWindowModule.createMiraLabWindow({ BrowserWindow, ...opts }),
     });
 
     ipcMain.removeHandler('get-onboarding-state');

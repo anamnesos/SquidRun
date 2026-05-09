@@ -1040,6 +1040,79 @@ describe('SquidRunApp', () => {
       expect(app.ctx.mainWindow).toBe(primaryWindow);
     });
 
+    it('openAppWindow("mira-lab") creates the standalone Mira Lab window, registers it, suppresses menu chrome, and focuses it', async () => {
+      const enforceMenuSpy = jest.spyOn(app, 'enforceMenuSuppression');
+      const result = await app.openAppWindow('mira-lab');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'mira-lab',
+        title: 'Mira Lab',
+      }));
+      expect(result.htmlPath).toMatch(/mira-lab\.html$/);
+      expect(result.preloadPath).toMatch(/preload\.js$/);
+
+      expect(app.ctx.setWindow).toHaveBeenCalledWith('mira-lab', expect.any(Object));
+      const miraLabWindow = app.ctx.getWindow('mira-lab');
+      expect(miraLabWindow).toBeTruthy();
+      expect(miraLabWindow).not.toBe(app.ctx.mainWindow);
+      expect(miraLabWindow.loadFile).toHaveBeenCalledWith(expect.stringMatching(/mira-lab\.html$/));
+      expect(miraLabWindow.focus).toHaveBeenCalled();
+      expect(enforceMenuSpy).toHaveBeenCalledWith(miraLabWindow);
+      expect(app.setupWindowListeners).toHaveBeenCalledWith(
+        miraLabWindow,
+        expect.objectContaining({ windowKey: 'mira-lab', lifecycleRoot: false }),
+      );
+    });
+
+    it('openAppWindow("mira-lab") cleans the registry through the shared closed-window pipeline', async () => {
+      app.setupWindowListeners.mockRestore();
+
+      await app.openAppWindow('mira-lab');
+      const miraLabWindow = app.ctx.getWindow('mira-lab');
+      const closedHandler = miraLabWindow.on.mock.calls.find(([eventName]) => eventName === 'closed')?.[1];
+
+      expect(typeof closedHandler).toBe('function');
+      closedHandler();
+
+      expect(app.ctx.deleteWindow).toHaveBeenCalledWith('mira-lab');
+      expect(app.ctx.getWindow('mira-lab')).toBeNull();
+    });
+
+    it('openAppWindow("mira-lab") reuses an already-open Mira Lab window instead of duplicating it', async () => {
+      const first = await app.openAppWindow('mira-lab');
+      const miraLabWindow = app.ctx.getWindow('mira-lab');
+      miraLabWindow.focus.mockClear();
+
+      const second = await app.openAppWindow('mira-lab');
+
+      expect(second).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'mira-lab',
+        status: 'reused_existing',
+      }));
+      expect(miraLabWindow.focus).toHaveBeenCalled();
+      expect(app.ctx.getWindow('mira-lab')).toBe(miraLabWindow);
+      expect(first.htmlPath).toMatch(/mira-lab\.html$/);
+    });
+
+    it('openAppWindow("mira-lab") returns a structured failure when the factory yields no window', async () => {
+      const factoryModule = require('../modules/main/mira-lab-window');
+      const originalFactory = factoryModule.createMiraLabWindow;
+      factoryModule.createMiraLabWindow = jest.fn(() => ({}));
+      try {
+        const result = await app.openAppWindow('mira-lab');
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          windowKey: 'mira-lab',
+          reason: expect.stringContaining('mira_lab_window_factory_returned_no_window'),
+        }));
+        expect(app.ctx.setWindow).not.toHaveBeenCalledWith('mira-lab', expect.anything());
+      } finally {
+        factoryModule.createMiraLabWindow = originalFactory;
+      }
+    });
+
     it('closing a standalone Scoped profile window quits that profile process cleanly', async () => {
       app.setupWindowListeners.mockRestore();
       const shutdownSpy = jest.spyOn(app, 'performFullShutdown').mockResolvedValue({ success: true });
