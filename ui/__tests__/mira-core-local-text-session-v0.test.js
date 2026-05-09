@@ -220,10 +220,12 @@ describe('mira core Local Text Session v0 phase 74', () => {
       transcript_persisted: false,
     }));
     expect(current.mira_reply.text.split(/\r?\n/)).toHaveLength(1);
-    expect(current.mira_reply.text).toContain('text only');
-    expect(current.mira_reply.text).toContain('own developing stance');
-    expect(current.mira_reply.text).toContain('not a mirror or obedient helper');
-    expect(current.mira_reply.text).toContain('push back');
+    expect(current.mira_reply.text).toMatch(/text only/i);
+    expect(current.mira_reply.text).toContain('If the premise is wrong, I will say so');
+    expect(current.mira_reply.text).toContain('I will pick a lane');
+    expect(current.mira_reply.text).not.toContain('not a mirror or obedient helper');
+    expect(current.mira_reply.text).not.toContain('own developing stance');
+    expect(current.mira_reply.text).not.toContain('push back');
     expect(current.mira_reply.text).not.toContain('I am here from the local durable Mira state, warm and bounded');
     expect(current.mira_reply.text).not.toContain('My safe next move');
     expect(current.mira_reply.text).not.toContain('no sends, writes, tools');

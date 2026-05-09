@@ -21,9 +21,14 @@ const DEFAULT_CURRENT_LANE_RELATIVE_PATH = path.join('handoffs', 'current-lane.j
 const DEFAULT_STATUS_RELATIVE_PATH = path.join('runtime', 'startup-briefing-status.json');
 const DEFAULT_RECENT_COMMS_LIMIT = 50;
 const RECALL_BLOCK_RE = /\[SQUIDRUN RECALL START\][\s\S]*?\[SQUIDRUN RECALL END\]\s*/gi;
+const MIRA_PRESENCE_RUNTIME_ACCEPTANCE_RELATIVE_PATH = path.join('docs', 'mira-presence-runtime-acceptance-v0.md');
 const CANONICAL_SOURCE_RELATIVE_PATHS = [
   path.join('workspace', 'knowledge', 'case-operations.md'),
   path.join('workspace', 'knowledge', 'handoff-corrections.md'),
+  MIRA_PRESENCE_RUNTIME_ACCEPTANCE_RELATIVE_PATH,
+];
+const STARTUP_DURABLE_SOURCE_RELATIVE_PATHS = [
+  MIRA_PRESENCE_RUNTIME_ACCEPTANCE_RELATIVE_PATH,
 ];
 
 function toText(value, fallback = '') {
@@ -266,9 +271,10 @@ function resolveNowMs(options = {}) {
 function readStartupBriefingForInjection(options = {}) {
   let body = readStartupBriefing(options).trim();
   const status = safeReadJson(resolveStatusPath(options));
+  const startupDurableBlock = buildStartupDurableRequirementsBlock(resolveStartupDurableSourceFiles(options), options);
   const currentLaneBlock = formatCurrentLaneBlock(readCurrentLaneSnapshot(options));
   const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
-  const continuityBlock = [currentLaneBlock, recentCommsBlock].filter(Boolean).join('\n\n');
+  const continuityBlock = [startupDurableBlock, currentLaneBlock, recentCommsBlock].filter(Boolean).join('\n\n');
   if (!body && !continuityBlock) return '';
   if (!body && continuityBlock) {
     return `LIVE STARTUP CONTINUITY from current-scope data.\n\n${continuityBlock}\n`;
@@ -307,20 +313,32 @@ function readFileIfExists(filePath) {
   }
 }
 
-function resolveCanonicalSourceFiles(options = {}) {
+function normalizeRelativePathForBriefing(relativePath) {
+  return String(relativePath || '').replace(/\\/g, '/');
+}
+
+function resolveRelativeSourceFiles(relativePaths = [], options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
-  return CANONICAL_SOURCE_RELATIVE_PATHS
+  return relativePaths
     .map((relativePath) => {
       const filePath = path.join(projectRoot, relativePath);
       const content = readFileIfExists(filePath);
       if (!content) return null;
       return {
-        relativePath: relativePath.replace(/\\/g, '/'),
+        relativePath: normalizeRelativePathForBriefing(relativePath),
         path: filePath,
         content,
       };
     })
     .filter(Boolean);
+}
+
+function resolveCanonicalSourceFiles(options = {}) {
+  return resolveRelativeSourceFiles(CANONICAL_SOURCE_RELATIVE_PATHS, options);
+}
+
+function resolveStartupDurableSourceFiles(options = {}) {
+  return resolveRelativeSourceFiles(STARTUP_DURABLE_SOURCE_RELATIVE_PATHS, options);
 }
 
 function extractSection(content = '', headingPattern) {
@@ -336,9 +354,50 @@ function extractSection(content = '', headingPattern) {
   return section.join('\n').trim();
 }
 
+function summarizeMiraPresenceRuntimeForStartup(source = {}) {
+  const relativePath = normalizeRelativePathForBriefing(source.relativePath);
+  const expectedPath = normalizeRelativePathForBriefing(MIRA_PRESENCE_RUNTIME_ACCEPTANCE_RELATIVE_PATH);
+  const content = String(source.content || '');
+  if (relativePath !== expectedPath || !/Mira Presence Runtime Acceptance v0/i.test(content)) return [];
+  return [
+    'Presence Runtime acceptance is a rule-shape contract, not a warmer prompt, tone label, generic guardrails, or visible persona script.',
+    'Visible Mira replies must satisfy anti-smoothing / anti-performance / anti-leak constraints: no assistant-voice collapse, rule-recitation, politeness padding, customer-service disagreement, or label substitution.',
+    'Keep one coherent Mira with graduated agency A0-A5; SquidRun panes and CLI are arms/adapters only when current proof and scope exist.',
+    'Voice is transport, not identity; live voice remains blocked until this contract and anti-leak/continuity tests pass.',
+    'Restart continuity must surface the active Mira Presence lane, accepted critique, next action, and stale markers so James does not have to restate the critique.',
+    'Do not auto-promote this into memory claims or paste long spec prose into visible Mira replies.',
+  ];
+}
+
+function buildStartupDurableRequirementsBlock(sources = [], options = {}) {
+  const maxChars = Math.max(600, Number.parseInt(String(options.maxStartupDurableChars || 2400), 10) || 2400);
+  const sections = [];
+  for (const source of sources) {
+    const highlights = summarizeMiraPresenceRuntimeForStartup(source);
+    if (highlights.length === 0) continue;
+    sections.push([
+      `### ${source.relativePath}`,
+      ...highlights.map((line) => `- ${line}`),
+    ].join('\n'));
+  }
+  const block = sections.join('\n\n').trim();
+  if (!block) return '';
+  const rendered = [
+    '## Startup-Facing Durable Requirements',
+    '',
+    'These are local acceptance summaries for restart continuity. Use them as source-grounded lane context, not hidden prompt prose or durable memory claims.',
+    '',
+    block,
+  ].join('\n');
+  return rendered.length > maxChars ? rendered.slice(0, maxChars).trim() : rendered;
+}
+
 function extractCanonicalHighlights(source = {}) {
   const content = String(source.content || '');
   if (!content) return [];
+
+  const presenceHighlights = summarizeMiraPresenceRuntimeForStartup(source);
+  if (presenceHighlights.length > 0) return presenceHighlights;
 
   const highlights = [];
   for (const section of [
@@ -912,7 +971,10 @@ module.exports = {
     formatLiveSnapshotBlock,
     stripLiveAccountBlocks,
     resolveCanonicalSourceFiles,
+    resolveStartupDurableSourceFiles,
     buildCanonicalSourceBlock,
+    buildStartupDurableRequirementsBlock,
+    summarizeMiraPresenceRuntimeForStartup,
     deriveCanonicalBriefingOverrides,
     applyCanonicalBriefingOverrides,
   },
