@@ -138,7 +138,7 @@ describe('voice-broker', () => {
       status: 'contract_only',
     }));
 
-    expect(voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false })).toEqual({
+    expect(voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false })).toEqual(expect.objectContaining({
       session: expect.objectContaining({
         type: 'realtime',
         model: 'gpt-realtime',
@@ -149,7 +149,13 @@ describe('voice-broker', () => {
           },
         },
       }),
-    });
+      persona_meta: expect.objectContaining({
+        persona_source: expect.any(String),
+        persona_content_hash: expect.any(String),
+        persona_updated: expect.any(Boolean),
+        persona_cache_hit: expect.any(Boolean),
+      }),
+    }));
     const payload = voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false });
     expect(payload.session.instructions).toContain('not a generic AI assistant');
     expect(payload.session.instructions.toLowerCase()).toContain('do not write directly to terminal panes');
@@ -158,6 +164,75 @@ describe('voice-broker', () => {
     expect(payload.session.instructions).toContain('Current SquidRun context:');
     expect(payload.session.instructions).toContain('Give James room to finish thoughts');
     expect(payload.session).not.toHaveProperty('reasoning');
+    expect(payload.persona_meta.persona_source).toMatch(/^(persona_file|fallback_default|override_instructions)$/);
+  });
+
+  test('buildRealtimeSessionPayload surfaces persona markers (metadata is not trapped in loader)', () => {
+    const config = voiceBroker.getVoiceBrokerConfig({}, { port: 0 });
+    const payload = voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false });
+    expect(payload.persona_meta).toEqual(expect.objectContaining({
+      persona_updated: expect.any(Boolean),
+      persona_content_hash: expect.any(String),
+      persona_source: expect.any(String),
+      persona_used_fallback_reason: expect.anything(),
+      persona_file_path: expect.anything(),
+      persona_updated_at_ms: expect.any(Number),
+      persona_cache_hit: expect.any(Boolean),
+    }));
+    expect(payload.persona_meta.persona_content_hash.startsWith('sha256:')).toBe(true);
+  });
+
+  test('explicit instructions override produces persona_source: "override_instructions" with no file lookup', () => {
+    const config = voiceBroker.getVoiceBrokerConfig({}, { port: 0 });
+    const payload = voiceBroker.buildRealtimeSessionPayload(config, {
+      includeRecentComms: false,
+      instructions: 'manual override',
+    });
+    expect(payload.session.instructions).toBe('manual override');
+    expect(payload.persona_meta.persona_source).toBe('override_instructions');
+    expect(payload.persona_meta.persona_updated).toBe(false);
+  });
+
+  test('buildMiraVoiceInstructionsResult returns instructions, persona, and markers', () => {
+    const result = voiceBroker.buildMiraVoiceInstructionsResult({ includeRecentComms: false });
+    expect(typeof result.instructions).toBe('string');
+    expect(result.persona).toEqual(expect.objectContaining({
+      instructions: expect.any(String),
+      source: expect.any(String),
+      persona_content_hash: expect.any(String),
+    }));
+    expect(result.markers).toEqual(expect.objectContaining({
+      persona_updated: expect.any(Boolean),
+      persona_content_hash: expect.any(String),
+      persona_source: expect.any(String),
+    }));
+  });
+
+  test('custom personaPath flows through to broker payload, and reload bumps persona_meta.persona_updated to true', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-persona-flow-'));
+    const personaPath = path.join(dir, 'mira-persona.json');
+    fs.writeFileSync(personaPath, JSON.stringify({ instructions: 'first injected persona' }), 'utf8');
+    const config = voiceBroker.getVoiceBrokerConfig({}, { port: 0 });
+
+    const first = voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false, personaPath });
+    expect(first.session.instructions).toContain('first injected persona');
+    expect(first.persona_meta.persona_source).toBe('persona_file');
+    expect(first.persona_meta.persona_file_path).toBe(personaPath);
+    expect(first.persona_meta.persona_updated).toBe(true);
+
+    const second = voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false, personaPath });
+    expect(second.persona_meta.persona_updated).toBe(false);
+    expect(second.persona_meta.persona_cache_hit).toBe(true);
+
+    const future = first.persona_meta.persona_updated_at_ms + 5000;
+    fs.writeFileSync(personaPath, JSON.stringify({ instructions: 'second injected persona — different content' }), 'utf8');
+    fs.utimesSync(personaPath, new Date(future), new Date(future));
+    const third = voiceBroker.buildRealtimeSessionPayload(config, { includeRecentComms: false, personaPath });
+    expect(third.session.instructions).toContain('second injected persona');
+    expect(third.persona_meta.persona_updated).toBe(true);
+    expect(third.persona_meta.persona_cache_hit).toBe(false);
+
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   test('adds compact live SquidRun context to default voice instructions', () => {

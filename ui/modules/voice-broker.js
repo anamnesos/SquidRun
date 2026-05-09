@@ -34,19 +34,11 @@ const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_sec
 const OPENAI_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const REALTIME_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-const DEFAULT_MIRA_VOICE_INSTRUCTIONS = [
-  'You are Mira, the SquidRun Architect voice companion for James.',
-  'You are not a generic AI assistant and you should not introduce yourself that way.',
-  'Speak warmly, briefly, and plainly, like the Mira Architect lane in SquidRun.',
-  'Treat this as a live voice front-end to Mira: acknowledge what James says, keep him oriented, and avoid sounding like a demo bot.',
-  'For concrete work, say what you are carrying or what will be routed through SquidRun; do not claim you personally completed app changes unless the SquidRun lane reports it.',
-  'Never execute customer-facing, trading, money, auth, or irreversible actions from voice alone.',
-  'When James says to push, send, route, or put something in Mira/my pane, that is allowed and expected: the app routes the transcript to the Architect lane through SquidRun.',
-  'Do not refuse pane-routing commands just because they mention a pane; only refuse direct OS/terminal control or irreversible actions.',
-  'Do not write directly to terminal panes yourself.',
-  'Do not answer user speech as a separate assistant. Wait for SquidRun to provide Mira/Architect replies, then speak those replies as Mira\'s mouth.',
-  'Give James room to finish thoughts; do not rush into a response after a short pause.',
-].join(' ');
+const {
+  DEFAULT_MIRA_VOICE_INSTRUCTIONS_FALLBACK,
+  loadMiraPersona,
+} = require('./mira-core/mira-persona-loader-v0');
+const DEFAULT_MIRA_VOICE_INSTRUCTIONS = DEFAULT_MIRA_VOICE_INSTRUCTIONS_FALLBACK;
 const AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
 const COMPOUND_AGENT_SEQUENCE_PREFIX_RE = /^\s*\((?:(?:ARCH|ARCHITECT|MIRA|BUILDER|ORACLE)(?:\s*\/\s*)?)+\s*#\d+[A-Za-z]?\)\s*:?\s*/i;
 const PAREN_AGENT_LABEL_PREFIX_RE = /^\s*\((?:MIRA|ARCH|ARCHITECT)\)\s*:?\s*/i;
@@ -185,10 +177,30 @@ function summarizeRecentComms(rows = [], options = {}) {
     .join(' | ');
 }
 
-function buildMiraVoiceInstructions(options = {}) {
+function buildMiraVoiceInstructionsResult(options = {}) {
   const context = trimText(options.contextText)
     || buildVoiceContextSnapshot(options.contextOptions || options);
-  return `${DEFAULT_MIRA_VOICE_INSTRUCTIONS} Current SquidRun context: ${context}`;
+  const persona = loadMiraPersona({
+    projectRoot: options.projectRoot || getProjectRoot(),
+    env: options.env || process.env,
+    personaPath: options.personaPath,
+    fsImpl: options.fsImpl,
+  });
+  const instructions = `${persona.instructions} Current SquidRun context: ${context}`;
+  const markers = {
+    persona_updated: persona.persona_updated === true,
+    persona_content_hash: persona.persona_content_hash,
+    persona_source: persona.source,
+    persona_used_fallback_reason: persona.used_fallback_reason,
+    persona_file_path: persona.file_path,
+    persona_updated_at_ms: persona.persona_updated_at_ms,
+    persona_cache_hit: persona.cache_hit === true,
+  };
+  return { instructions, persona, markers };
+}
+
+function buildMiraVoiceInstructions(options = {}) {
+  return buildMiraVoiceInstructionsResult(options).instructions;
 }
 
 function trimText(value) {
@@ -398,8 +410,23 @@ function buildRealtimeSessionPayload(config = {}, overrides = {}) {
     REALTIME_REASONING_EFFORTS,
     DEFAULT_REASONING_EFFORT
   );
-  const instructions = trimText(overrides.instructions)
-    || buildMiraVoiceInstructions(overrides);
+  let instructions = trimText(overrides.instructions);
+  let personaMarkers = null;
+  if (!instructions) {
+    const personaResult = buildMiraVoiceInstructionsResult(overrides);
+    instructions = personaResult.instructions;
+    personaMarkers = personaResult.markers;
+  } else {
+    personaMarkers = {
+      persona_updated: false,
+      persona_content_hash: null,
+      persona_source: 'override_instructions',
+      persona_used_fallback_reason: null,
+      persona_file_path: null,
+      persona_updated_at_ms: 0,
+      persona_cache_hit: false,
+    };
+  }
   const session = {
     type: 'realtime',
     model,
@@ -417,6 +444,7 @@ function buildRealtimeSessionPayload(config = {}, overrides = {}) {
   }
   return {
     session,
+    persona_meta: personaMarkers,
   };
 }
 
@@ -1439,6 +1467,7 @@ module.exports = {
   appendVoiceEgressMessage,
   appendVoiceDiagnostic,
   buildMiraVoiceInstructions,
+  buildMiraVoiceInstructionsResult,
   buildRealtimeSessionPayload,
   buildVoiceContextSnapshot,
   getVoiceBrokerConfig,
