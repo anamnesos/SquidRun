@@ -248,7 +248,27 @@
       "next_product_action",
       "proof_test_state",
       "stale_markers"
-    ]
+    ],
+    "rendererMemoryLossPolicy": {
+      "mustFallBackToDurableLane": true,
+      "mustNotFakeContinuityFromClearedThread": true,
+      "requiredFallbackKeys": [
+        "active_mira_presence_lane",
+        "accepted_critique",
+        "next_product_action",
+        "proof_test_state",
+        "stale_markers"
+      ],
+      "fallbackAgencyLevels": ["A0", "A1", "A2"],
+      "blockedAgencyLevelsOnFallback": ["A3", "A4"]
+    },
+    "interruptionMarker": {
+      "requiredEnum": ["safely_captured", "not_captured", "none"],
+      "notCapturedMustExplicitlyMark": true,
+      "safelyCapturedMustResumeFromLane": true,
+      "noneFallsThroughToColdStart": true,
+      "neverPretendLostPhrasingSurvived": true
+    }
   },
   "voiceGate": {
     "voiceIsTransportNotIdentity": true,
