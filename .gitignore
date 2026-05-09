@@ -38,6 +38,7 @@ __pycache__/
 # Claude Code local permissions (machine-specific)
 .claude/
 .gemini/
+.codex/
 .mcp.json
 .claude/settings.local.json
 
