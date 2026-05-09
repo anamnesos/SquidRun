@@ -14,6 +14,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 9. Startup and coordination state is continuously materialized into `.squidrun/` (status, handoffs, snapshots, runtime ledgers).
 
 ## 3) KEY FILE MAP
+This is a curated orientation map for agents, not a complete generated inventory. Use `git ls-files`, `rg --files`, and the runtime health/index scripts for full-codebase discovery.
 - ui/config.js: Shared runtime constants and path resolution (project root, coord root, pane cwd, trigger targets, role maps).
 - ui/daemon-client.js: Electron-side daemon client for PTY lifecycle, reconnect logic, write-ack tracking, and kernel event forwarding.
 - ui/index.html: Main renderer shell (3-pane layout, broadcast input, settings panel, right tabs, and startup overlays).
@@ -150,7 +151,10 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
 - ui/modules/mira-core/autonomy-substrate-v0.js: Backend-only first autonomy substrate for typed Mira: self-directed drives, curiosity queue, permissioned local reads, transcript-quality gates, evidence-backed self-profile proposal records, and strict visible/backend separation. It performs no durable writes or external sends by default.
 - ui/modules/mira-core/developmental-understanding-v1.js: Builds Mira's integrated conversation, tentative-understanding, self-state, relationship-state, relational-texture, and next-intention surface without claiming durable memory commit or private consciousness.
+- ui/modules/mira-core/local-text-session-v0.js: Local Mira text session builder that applies language rules and model attachment boundaries before visible tab output.
 - ui/modules/mira-core/memory-candidate-staging-v1.js: Extracts bounded recent-panel conversation signals into tentative Mira understandings with confidence/risk/revision metadata, not visible CRUD memory management.
+- ui/modules/mira-core/mira-language-rules-v0.js: Shared Mira reply-language gate used by local text, tab, and route-facing tests to block meta/tool-like user-visible phrasing.
+- ui/modules/mira-core/mira-persona-loader-v0.js: Loads and hot-reloads Mira voice/persona text from config files, returning explicit persona metadata for broker/runtime freshness checks.
 - ui/modules/mira-core/tentative-understanding-store-v1.js: Persists tentative-understanding scaffold rows through CognitiveMemoryStore pending-PR mechanics while explicitly blocking durable memory promotion, hidden approval, and James-as-clickthrough-harness behavior.
 - ui/modules/mira-core/text-model-attachment-v1.js: Owns typed Mira Responses API attachment config/call contract, defaulting to gpt-5.5, forbidding silent downgrade/local fallback in the enabled path, and bounding recent thread context.
 - ui/modules/mira-lab-surface.js: Dev-only canonical transcript/backchannel/eval substrate for the separate Mira Lab sidecar. Records durable JSONL lab turns, projects comms-journal-shaped entries, supports role-separated Mira-to-agent backchannel dispatch, marks agent-to-Mira injection turns, and exports transcript eval packets. Not wired into default app startup yet.
@@ -184,17 +188,23 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
 - ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
-- ui/mira-lab.html + ui/mira-lab-renderer.js + ui/styles/mira-lab.css: Dev-only standalone Mira Lab prototype surface. It is intentionally separate from the normal SquidRun right panel and dashboard chrome, keeps diagnostics hidden, includes a low-power/reduced-motion rendering fallback, and must not be treated as James-facing reload/lab-smoke ready without reviewed desktop captures.
+- ui/mira-lab.html: Dev-only standalone Mira Lab prototype shell, intentionally separate from the normal SquidRun right panel and dashboard chrome.
+- ui/mira-lab-renderer.js: Mira Lab renderer logic for the prototype conversation/lab surface.
+- ui/styles/mira-lab.css: Mira Lab styling, including low-power/reduced-motion rendering fallback.
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
 - ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, api-keys).
-- ui/modules/tabs/activity.js: Exports setupActivityTab, destroyActivityTab, addActivityEntry.
 - ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.
 - ui/modules/tabs/bridge.js: Exports setupBridgeTab. Renders the existing Bridge tab in the right-side panel and hydrates relay health from `bridge:get-status` plus live kernel bridge events.
 - ui/modules/tabs/comms-console.js: Exports setupCommsConsoleTab, destroy. The existing Comms tab backfills `comms_journal`, correlates live `comms.*` events by `messageId`, and surfaces delivery status/attempt/error metadata for external channels.
-- ui/modules/tabs/git.js: Exports setupGitTab, destroyGitTab.
+- ui/modules/tabs/mira-local-text.js: Right-panel Mira typed conversation tab wiring, including local session calls and visible output rendering.
 - ui/modules/tabs/oracle.js: Exports setupOracleTab, destroyOracleTab, applyImageGenCapability.
 - ui/modules/tabs/screenshots.js: Exports setupScreenshots, destroyScreenshots, loadScreenshots.
 - ui/modules/tabs/utils.js: Exports escapeHtml.
+- ui/modules/tabs/voice-broker.js: Voice broker tab UI for inspecting broker state, active leases, sessions, and recent spoken-message routing.
+- ui/modules/phone-voice-client.js: Phone voice client surface that registers authenticated phone-client leases, tracks real user activity, and acknowledges spoken rows after playback.
+- ui/modules/voice-broker.js: Central voice egress broker for desktop/Mira/phone output leases, persona instructions, duplicate suppression, and spoken ACK handling.
+- ui/modules/voice-broker-lease-contract.js: Shared lease lifecycle contract helpers used by broker and tests.
+- ui/modules/voice-broker-lease-store.js: Voice broker lease/session state store helpers.
 - ui/modules/task-parser.js: Exports parseTaskInput and lightweight legal/financial/medical problem-intake detection metadata for orchestration triggers.
 - ui/modules/team-memory/backfill.js: Exports runBackfill, buildBackfillRecord, resolveDefaultEvidenceLedgerDbPath.
 - ui/modules/team-memory/claims.js: Exports TeamMemoryClaims, CLAIM_TYPES, CLAIM_STATUS, CONSENSUS_POSITIONS, ....
@@ -237,7 +247,8 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/watcher.js: Exports init, States, ACTIVE_AGENTS, CONTEXT_MESSAGES, ....
 - ui/modules/websocket-runtime.js: Exports start, stop, isRunning, getPort, ....
 - ui/modules/websocket-server.js: Exports start, stop, isRunning, getPort, ....
-- ui/scripts/coverage-report.js: Prints coverage-summary breakdown (under 50%, 50-80%, and overall statement/branch/function/line percentages).
+- docs/codebase-index.md: Generated full Git-visible file inventory for agent navigation. Regenerate with `node ui/scripts/hm-codebase-index.js`; verify with `node ui/scripts/hm-codebase-index.js --check`.
+- ui/scripts/hm-codebase-index.js: Deterministic codebase inventory generator/checker built from `git ls-files --cached --others --exclude-standard`.
 - ui/scripts/doc-lint.js: Lints `.squidrun/build/*.md` docs for active-item caps, required metadata fields, and stale-marker correctness.
 - ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
 - ui/scripts/hm-bg.js: Background Builder control CLI; uses WebSocket for live PTY agents and the durable supervisor queue CLI for queued work.
@@ -264,6 +275,8 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-memory-registry.js: CLI for transactive memory registry updates and expertise tracking by domain/agent.
 - ui/scripts/hm-memory-search.js: Queries the cognitive/vector memory index and returns ranked semantic matches.
 - ui/scripts/hm-memory.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-mira-emit.js: Emits Mira-originated route intents through the normal SquidRun messaging path for proof and runtime integration.
+- ui/scripts/hm-mira-reply.js: Sends Architect-authored replies back to Mira-originated intents while preserving sender/target role constraints.
 - ui/scripts/hm-pane.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-path-audit.js: Audits documented/runtime paths and path-safety constraints across the workspace.
 - ui/scripts/hm-preflight.js: Scans protocol docs (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `CODEX.md`) for potential coordination-rule conflicts.
@@ -286,7 +299,6 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-twitter.js: Exports parseArgs, getTwitterConfig, getMissingConfigKeys, percentEncode, ....
 - ui/scripts/install-supervisor-task.ps1: PowerShell installer for registering the durable supervisor as a Windows scheduled task.
 - ui/scripts/local_embedder.py: Python helper worker for local embeddings.
-- ui/scripts/test-image-gen.js: Standalone diagnostic for Recraft/OpenAI image APIs with payload logging and variation testing.
 - ui/modules/cognitive-memory-sleep.js: Exports SleepConsolidator, resolves sleep threshold configs, manages background semantic clustering, and auto-promotes matched supervisor failure->success antibodies into immune nodes.
 - ui/modules/cognitive-memory-store.js: Cognitive memory vector and metadata store wrapper over sqlite-vec.
 - ui/modules/memory-search.js: Hybrid FTS and sqlite-vec memory search index and chunking engine.

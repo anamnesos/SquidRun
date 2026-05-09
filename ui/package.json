@@ -41,6 +41,8 @@
     "supervisor:start": "node supervisor-daemon.js --daemon",
     "supervisor:once": "node supervisor-daemon.js --once",
     "supervisor:status": "node scripts/hm-supervisor.js status",
+    "codebase:index": "node scripts/hm-codebase-index.js",
+    "codebase:index:check": "node scripts/hm-codebase-index.js --check",
     "memory:index": "node scripts/hm-memory-index.js",
     "memory:search": "node scripts/hm-memory-search.js",
     "memory:extract": "node scripts/hm-memory-extract.js",
