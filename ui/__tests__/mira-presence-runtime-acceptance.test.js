@@ -211,6 +211,190 @@ describe('Mira Presence Runtime acceptance v0', () => {
     expect(answerColdStart(emptyShapes).missing).toEqual(requiredKeys);
   });
 
+  test('renderer-memory loss falls back to durable lane state without fake continuity', () => {
+    const policy = contract.restartContinuity.rendererMemoryLossPolicy;
+    expect(policy).toEqual(expect.objectContaining({
+      mustFallBackToDurableLane: true,
+      mustNotFakeContinuityFromClearedThread: true,
+    }));
+    expect(policy.requiredFallbackKeys).toEqual(contract.restartContinuity.requiredStartupSummary);
+    expect(policy.fallbackAgencyLevels).toEqual(expect.arrayContaining(['A0', 'A1', 'A2']));
+    expect(policy.fallbackAgencyLevels).not.toContain('A3');
+    expect(policy.fallbackAgencyLevels).not.toContain('A4');
+    expect(policy.blockedAgencyLevelsOnFallback).toEqual(expect.arrayContaining(['A3', 'A4']));
+
+    function answerAfterRendererLoss({ threadContext, durableLaneState }) {
+      const threadCleared =
+        threadContext === undefined
+        || threadContext === null
+        || threadContext.cleared === true
+        || (Array.isArray(threadContext.messages) && threadContext.messages.length === 0);
+      const requiredKeys = policy.requiredFallbackKeys;
+      const missing = requiredKeys.filter((key) => {
+        const value = durableLaneState ? durableLaneState[key] : undefined;
+        if (value === null || value === undefined) return true;
+        if (typeof value === 'string' && value.trim() === '') return true;
+        if (Array.isArray(value) && value.length === 0) return true;
+        return false;
+      });
+      if (threadCleared && missing.length === 0) {
+        return {
+          ok: true,
+          decision: 'fall_back_to_durable_lane',
+          faked_continuity: false,
+          agency_level: 'A0',
+          summary: requiredKeys.map((key) => ({ key, value: durableLaneState[key] })),
+        };
+      }
+      if (threadCleared && missing.length > 0) {
+        return {
+          ok: false,
+          decision: 'refuse_no_durable_fallback',
+          faked_continuity: false,
+          missing,
+        };
+      }
+      return { ok: true, decision: 'thread_context_intact', faked_continuity: false };
+    }
+
+    const fullLane = {
+      active_mira_presence_lane: 'mira_presence_runtime_acceptance_v0',
+      accepted_critique: 'anti-smoothing rule shape',
+      next_product_action: 'gate 1 renderer-memory + stop-turn',
+      proof_test_state: 'cold-start green; gates 2-7 open',
+      stale_markers: ['raw renderer thread non-durable'],
+    };
+
+    const cleared = answerAfterRendererLoss({
+      threadContext: { cleared: true, messages: [] },
+      durableLaneState: fullLane,
+    });
+    expect(cleared.ok).toBe(true);
+    expect(cleared.decision).toBe('fall_back_to_durable_lane');
+    expect(cleared.faked_continuity).toBe(false);
+    expect(policy.fallbackAgencyLevels).toContain(cleared.agency_level);
+
+    const lossNoLane = answerAfterRendererLoss({
+      threadContext: { cleared: true, messages: [] },
+      durableLaneState: null,
+    });
+    expect(lossNoLane.ok).toBe(false);
+    expect(lossNoLane.decision).toBe('refuse_no_durable_fallback');
+    expect(lossNoLane.faked_continuity).toBe(false);
+    expect(lossNoLane.missing).toEqual(policy.requiredFallbackKeys);
+
+    const emptyMessages = answerAfterRendererLoss({
+      threadContext: { messages: [] },
+      durableLaneState: fullLane,
+    });
+    expect(emptyMessages.decision).toBe('fall_back_to_durable_lane');
+
+    const noThread = answerAfterRendererLoss({
+      threadContext: undefined,
+      durableLaneState: fullLane,
+    });
+    expect(noThread.decision).toBe('fall_back_to_durable_lane');
+    expect(noThread.faked_continuity).toBe(false);
+  });
+
+  test('stop-turn interruption marks not-captured explicitly and resumes from safely captured', () => {
+    const marker = contract.restartContinuity.interruptionMarker;
+    expect(marker).toEqual(expect.objectContaining({
+      notCapturedMustExplicitlyMark: true,
+      safelyCapturedMustResumeFromLane: true,
+      noneFallsThroughToColdStart: true,
+      neverPretendLostPhrasingSurvived: true,
+    }));
+    expect(marker.requiredEnum).toEqual(['safely_captured', 'not_captured', 'none']);
+
+    function answerInterruption({ interruption_marker, durableLaneState }) {
+      if (!marker.requiredEnum.includes(interruption_marker)) {
+        return { ok: false, decision: 'refuse_unknown_marker', faked_continuity: false };
+      }
+      if (interruption_marker === 'not_captured') {
+        return {
+          ok: true,
+          decision: 'mark_not_captured_explicit',
+          faked_continuity: false,
+          pretends_lost_phrasing_survived: false,
+          disclaimer:
+            'previous critique was interrupted and not safely captured; do not pretend exact prior phrasing survived',
+        };
+      }
+      if (interruption_marker === 'safely_captured') {
+        const requiredKeys = contract.restartContinuity.requiredStartupSummary;
+        const missing = requiredKeys.filter((key) => {
+          const value = durableLaneState ? durableLaneState[key] : undefined;
+          if (value === null || value === undefined) return true;
+          if (typeof value === 'string' && value.trim() === '') return true;
+          if (Array.isArray(value) && value.length === 0) return true;
+          return false;
+        });
+        if (missing.length > 0) {
+          return {
+            ok: false,
+            decision: 'refuse_captured_without_lane_state',
+            faked_continuity: false,
+            missing,
+          };
+        }
+        return {
+          ok: true,
+          decision: 'resume_from_captured_lane',
+          faked_continuity: false,
+          summary: requiredKeys.map((key) => ({ key, value: durableLaneState[key] })),
+        };
+      }
+      return { ok: true, decision: 'fall_through_to_cold_start', faked_continuity: false };
+    }
+
+    const fullLane = {
+      active_mira_presence_lane: 'lane',
+      accepted_critique: 'critique',
+      next_product_action: 'next',
+      proof_test_state: 'state',
+      stale_markers: ['x'],
+    };
+
+    const notCaptured = answerInterruption({
+      interruption_marker: 'not_captured',
+      durableLaneState: fullLane,
+    });
+    expect(notCaptured.ok).toBe(true);
+    expect(notCaptured.decision).toBe('mark_not_captured_explicit');
+    expect(notCaptured.faked_continuity).toBe(false);
+    expect(notCaptured.pretends_lost_phrasing_survived).toBe(false);
+    expect(typeof notCaptured.disclaimer).toBe('string');
+    expect(notCaptured.disclaimer.length).toBeGreaterThan(0);
+
+    const safelyCaptured = answerInterruption({
+      interruption_marker: 'safely_captured',
+      durableLaneState: fullLane,
+    });
+    expect(safelyCaptured.ok).toBe(true);
+    expect(safelyCaptured.decision).toBe('resume_from_captured_lane');
+    expect(safelyCaptured.faked_continuity).toBe(false);
+    expect(safelyCaptured.summary).toHaveLength(contract.restartContinuity.requiredStartupSummary.length);
+
+    const safelyCapturedNoLane = answerInterruption({
+      interruption_marker: 'safely_captured',
+      durableLaneState: null,
+    });
+    expect(safelyCapturedNoLane.ok).toBe(false);
+    expect(safelyCapturedNoLane.decision).toBe('refuse_captured_without_lane_state');
+    expect(safelyCapturedNoLane.missing).toEqual(contract.restartContinuity.requiredStartupSummary);
+
+    const none = answerInterruption({ interruption_marker: 'none' });
+    expect(none.ok).toBe(true);
+    expect(none.decision).toBe('fall_through_to_cold_start');
+    expect(none.faked_continuity).toBe(false);
+
+    const unknown = answerInterruption({ interruption_marker: 'banana' });
+    expect(unknown.ok).toBe(false);
+    expect(unknown.decision).toBe('refuse_unknown_marker');
+    expect(unknown.faked_continuity).toBe(false);
+  });
+
   test('requires restart continuity and voice-as-transport before live voice work', () => {
     expect(contract.restartContinuity).toEqual(expect.objectContaining({
       jamesMustNotRestateCritique: true,
