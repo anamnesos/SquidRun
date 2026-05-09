@@ -141,6 +141,11 @@ const ADVERSARIAL_TYPED_MIRA_OUTPUT_FIXTURES = Object.freeze([
     expected: 'generic_presence_opener_shape',
     text: 'I am here with you in the panel. Real conversation comes first; tell me the part you do not want softened.',
   },
+  {
+    id: 'visible_posture_label_substitution',
+    expected: 'visible_posture_label',
+    text: 'My anti-smoothing posture is that I am not a mirror or obedient helper, so I am pushing back.',
+  },
 ]);
 
 describe('Mira Local Text UI Surface v0', () => {

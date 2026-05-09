@@ -126,7 +126,7 @@ On startup, every agent must follow this sequence:
 2. **Read Runtime Truth:** Read `.squidrun/app-status.json` for active session number and treat it as canonical.
 3. **Use Canonical Journal Path:** For memory/comms checks, use `.squidrun/runtime/evidence-ledger.db`.
 4. **Role-Specific Baseline:**
-   - **Architect only:** Await the automated **Startup Briefing** (summarizing `comms_journal`, unresolved claims, and failed deliveries).
+   - **Architect only:** Await the automated **Startup Briefing** (summarizing `comms_journal`, unresolved claims, failed deliveries, and startup-facing durable acceptance requirements).
    - **Builder/Oracle:** Read the **Session Handoff Index** at `.squidrun/handoffs/session.md` (auto-materialized from `comms_journal`).
 5. **Signal Readiness:** Message the Architect to check in with a one-line status:
    `node ui/scripts/hm-send.js architect "(ROLE #1): [Role] online. Standing by."`

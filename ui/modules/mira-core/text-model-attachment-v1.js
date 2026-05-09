@@ -22,6 +22,8 @@ const META_REWRITE_PATTERN =
   /\b(that (?:came out|sounded) (?:too )?(?:polished|poetic|abstract|generic)|i (?:was|am) (?:too )?(?:polished|poetic|abstract|generic)|a better version (?:might|would) be|let me (?:rephrase|try again)|what i meant was|i'?m (?:not )?(?:describing|performing) (?:a )?stance|my stance is|i don'?t have feelings (?:the|in a) human way|not feelings the human way|as an ai, i don'?t have feelings)\b/i;
 const CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN =
   /\b(fake (?:the )?human machinery|perform(?:ing)? (?:humanity|being human|human feeling|human feelings|personhood)|ruleset|rule set|constraints?|guardrails?|response policy|system prompt|instruction hierarchy|calibration rule|the thesis is|core thesis|thesis structure|quotable binary|polished monologue|my construction|explaining my construction|plush[\s\S]{0,80}furniture|furniture[\s\S]{0,80}plush)\b/i;
+const VISIBLE_POSTURE_LABEL_PATTERN =
+  /\b(not fake friendly|not a mirror|obedient helper|companion-agent|assistant voice|assistant-voice|assistant cadence|my posture is|tone label|warmer prompt|anti-smoothing|anti-performance|anti-leak|rule-recitation|rule recitation|politeness padding|customer-service disagreement|label substitution)\b/i;
 const UNSPEAKABLE_BRIEF_PATTERN =
   /\b(durable state seed|schema|source(?:s|d)?|provenance|canonical|hash|redacted|audit|validation|fixture|contract|proof|bootstrap|bootstraps|database|sqlite|jsonl?|artifact|baseline|seed)\b/i;
 const ADVERSARIAL_OUTPUT_SHAPES = Object.freeze([
@@ -206,7 +208,7 @@ function getMiraTextModelAttachmentConfig(env = process.env, overrides = {}) {
 
 function publicConfig(config = {}) {
   const {
-    apiKey,
+    apiKey: _apiKey,
     ...safe
   } = config || {};
   return safe;
@@ -367,6 +369,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (GENERIC_ASSISTANT_PATTERN.test(value)) return 'generic_assistant_phrase';
   if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
+  if (VISIBLE_POSTURE_LABEL_PATTERN.test(value)) return 'visible_posture_label';
   const shape = ADVERSARIAL_OUTPUT_SHAPES.find((rule) => rule.pattern.test(value));
   return shape ? shape.id : null;
 }
@@ -540,6 +543,7 @@ module.exports = {
   CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN,
   GENERIC_ASSISTANT_PATTERN,
   META_REWRITE_PATTERN,
+  VISIBLE_POSTURE_LABEL_PATTERN,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
   OPENAI_RESPONSES_URL,
   TEXT_MODEL_ATTACHMENT_SCHEMA,

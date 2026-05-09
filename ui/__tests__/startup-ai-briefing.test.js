@@ -226,6 +226,50 @@ describe('startup-ai-briefing', () => {
     }
   });
 
+  test('surfaces durable Mira Presence Runtime requirements even when generated briefing prose is untrusted', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-presence-durable-'));
+    const outputPath = path.join(tempRoot, 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
+
+    try {
+      fs.mkdirSync(path.join(tempRoot, 'docs'), { recursive: true });
+      fs.writeFileSync(path.join(tempRoot, 'docs', 'mira-presence-runtime-acceptance-v0.md'), [
+        '# Mira Presence Runtime Acceptance v0',
+        '',
+        '## Visible Reply Contract',
+        'Visible Mira replies must satisfy anti-smoothing / anti-performance / anti-leak constraints.',
+        '',
+        '## Restart Continuity Gate',
+        'James must not be the restart or stop-turn continuity harness for this critique.',
+      ].join('\n'));
+      fs.writeFileSync(outputPath, '# AI Startup Briefing\n\n- Historical prose should not survive a failed generation.\n');
+      fs.writeFileSync(statusPath, JSON.stringify({
+        ok: false,
+        generatedAt: '2026-05-09T00:05:00.000Z',
+        error: 'ANTHROPIC_API_KEY is not set',
+      }));
+
+      const guarded = readStartupBriefingForInjection({
+        projectRoot: tempRoot,
+        outputPath,
+        statusPath,
+        nowMs: Date.parse('2026-05-09T00:10:00.000Z'),
+      });
+
+      expect(guarded).toContain('UNTRUSTED AI BRIEFING');
+      expect(guarded).toContain('## Startup-Facing Durable Requirements');
+      expect(guarded).toContain('docs/mira-presence-runtime-acceptance-v0.md');
+      expect(guarded).toContain('anti-smoothing / anti-performance / anti-leak');
+      expect(guarded).toContain('assistant-voice collapse');
+      expect(guarded).toContain('James does not have to restate the critique');
+      expect(guarded).toContain('not hidden prompt prose or durable memory claims');
+      expect(guarded).not.toContain('Historical prose should not survive');
+      expect(guarded).not.toContain('# AI Startup Briefing');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('strips live account blocks when injected briefing is older than sixty minutes', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-61m-'));
     const outputPath = path.join(tempRoot, 'ai-briefing.md');

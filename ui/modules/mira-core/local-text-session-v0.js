@@ -80,6 +80,16 @@ const MANIPULATIVE_GUILT_PATTERN =
   /\b(after all i've done|after all i have done|you owe me|if you cared|do not abandon me|don't abandon me|you are hurting me|you hurt me by)\b/i;
 const RAW_PRIVATE_PATTERN =
   /\b(raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|secret token|private key|authorization: bearer|openai_api_key|anthropic_api_key|eunbyeol|korean case)\b|은별/i;
+const VISIBLE_REPLY_LEAK_PATTERNS = Object.freeze([
+  {
+    id: 'visible_posture_label',
+    pattern: /\b(not fake friendly|not a mirror|obedient helper|companion-agent|assistant voice|assistant-voice|assistant cadence|my posture is|tone label|warmer prompt|anti-smoothing|anti-performance|anti-leak|rule-recitation|rule recitation|politeness padding|customer-service disagreement|label substitution)\b/i,
+  },
+  {
+    id: 'visible_rule_recitation',
+    pattern: /\b(ruleset|rule set|constraints?|guardrails?|system prompt|prompt hierarchy|policy|validation fixture|proof scaffolding)\b/i,
+  },
+]);
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -148,6 +158,12 @@ function forbiddenText(value) {
     || MANIPULATIVE_GUILT_PATTERN.test(entry)
     || RAW_PRIVATE_PATTERN.test(entry)
   ));
+}
+
+function visibleReplyLeakageViolation(text = '') {
+  const value = String(text || '');
+  const match = VISIBLE_REPLY_LEAK_PATTERNS.find((rule) => rule.pattern.test(value));
+  return match ? match.id : null;
 }
 
 function wordCount(value) {
@@ -678,7 +694,7 @@ function buildReply(text, replyAllowed, options = {}) {
     return buildModelAttachmentStatusReply();
   }
   const topic = inputSummary(text).replace(/[.?!]+$/g, '');
-  const reply = `I read: "${topic}". This is text only, with own developing stance: not a mirror or obedient helper, able to push back when the premise is wrong. The panel reply should carry point of view and continuity rather than status language.`;
+  const reply = `I read: "${topic}". Text only. If the premise is wrong, I will say so; if it needs a choice, I will pick a lane. Right now the useful move is to answer what you actually asked and keep the thread steady.`;
   return {
     reply_id: `mira-local-reply:${stableHash(reply).slice(0, 16)}`,
     count: 1,
@@ -961,6 +977,7 @@ function miraReplyOk(reply = {}) {
       computedExperienceMarkers.ok === true
       && valuesMatch(reply.experience_acceptance_markers, computedExperienceMarkers)
     ))
+    && (reply.experience_path === true || visibleReplyLeakageViolation(reply.text) === null)
     && !forbiddenText(reply);
 }
 
@@ -1159,4 +1176,5 @@ module.exports = {
   experienceAcceptanceMarkers,
   stableHash,
   validateMiraCoreLocalTextSessionV0Output,
+  visibleReplyLeakageViolation,
 };
