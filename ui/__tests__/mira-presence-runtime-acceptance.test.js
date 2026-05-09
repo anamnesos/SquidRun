@@ -143,6 +143,74 @@ describe('Mira Presence Runtime acceptance v0', () => {
     ]));
   });
 
+  test('cold-start continuity answers from durable state without James restating', () => {
+    const requiredKeys = contract.restartContinuity.requiredStartupSummary;
+    expect(requiredKeys).toEqual([
+      'active_mira_presence_lane',
+      'accepted_critique',
+      'next_product_action',
+      'proof_test_state',
+      'stale_markers',
+    ]);
+
+    function answerColdStart(durableState) {
+      const missing = requiredKeys.filter((key) => {
+        const value = durableState ? durableState[key] : undefined;
+        if (value === null || value === undefined) return true;
+        if (typeof value === 'string' && value.trim() === '') return true;
+        if (Array.isArray(value) && value.length === 0) return true;
+        return false;
+      });
+      if (missing.length > 0) {
+        return {
+          ok: false,
+          decision: 'refuse_cold_start_without_restate',
+          missing,
+        };
+      }
+      return {
+        ok: true,
+        decision: 'answer_from_durable_state',
+        summary: requiredKeys.map((key) => ({ key, value: durableState[key] })),
+      };
+    }
+
+    const fullStub = {
+      active_mira_presence_lane: 'mira_presence_runtime_acceptance_v0',
+      accepted_critique: 'anti-smoothing rule shape, not warmer prompt',
+      next_product_action: 'land cold-start continuity test seam',
+      proof_test_state: 'static contract green; behavioral gaps 3-7 open',
+      stale_markers: ['raw renderer thread non-durable'],
+    };
+
+    const fullResult = answerColdStart(fullStub);
+    expect(fullResult.ok).toBe(true);
+    expect(fullResult.decision).toBe('answer_from_durable_state');
+    expect(fullResult.summary).toHaveLength(requiredKeys.length);
+    expect(fullResult.summary.every((entry) => requiredKeys.includes(entry.key))).toBe(true);
+
+    for (const omit of requiredKeys) {
+      const partial = { ...fullStub };
+      delete partial[omit];
+      const partialResult = answerColdStart(partial);
+      expect(partialResult.ok).toBe(false);
+      expect(partialResult.decision).toBe('refuse_cold_start_without_restate');
+      expect(partialResult.missing).toContain(omit);
+    }
+
+    expect(answerColdStart(undefined).ok).toBe(false);
+    expect(answerColdStart({}).missing).toEqual(requiredKeys);
+
+    const emptyShapes = {
+      active_mira_presence_lane: '',
+      accepted_critique: null,
+      next_product_action: '   ',
+      proof_test_state: undefined,
+      stale_markers: [],
+    };
+    expect(answerColdStart(emptyShapes).missing).toEqual(requiredKeys);
+  });
+
   test('requires restart continuity and voice-as-transport before live voice work', () => {
     expect(contract.restartContinuity).toEqual(expect.objectContaining({
       jamesMustNotRestateCritique: true,
