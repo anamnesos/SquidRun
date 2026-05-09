@@ -662,6 +662,66 @@ describe('mira core Local Text Session v0 phase 74', () => {
     expect(validation.errors).toContain('checked-output-counters-clean');
   });
 
+  test('rejects assistant-shaped Mira reply via the language gate and surfaces violations (no silent fail)', () => {
+    const projectRoot = seededProject();
+    const badOpeners = [
+      { text: 'I understand. The lease is fine and the rest will follow.', expected: 'preamble' },
+      { text: 'Here is the situation: lease is fine and the rest will follow.', expected: 'preamble' },
+      { text: "Here's the situation: lease is fine and the rest will follow.", expected: 'preamble' },
+      { text: 'Happy to help. Lease is fine and the rest will follow.', expected: 'preamble' },
+      { text: 'Sure, the lease is fine and the rest will follow.', expected: 'preamble' },
+      { text: "That's valid. Lease is fine and the rest will follow.", expected: 'assistant_shape' },
+      { text: 'To be clear, the lease is fine and the rest will follow.', expected: 'assistant_shape' },
+      { text: 'If you want, I can rerun the tests on the lease patch.', expected: 'assistant_shape' },
+    ];
+    for (const { text, expected } of badOpeners) {
+      const output = build(projectRoot);
+      session(output).mira_reply.text = text;
+      const validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
+      expect(validation.ok).toBe(false);
+      expect(validation.errors).toContain('mira-reply-language-gate');
+      const gateCheck = checkById(validation, 'mira-reply-language-gate');
+      expect(gateCheck.ok).toBe(false);
+      expect(gateCheck.violations).toContain(expected);
+      expect(typeof gateCheck.text_excerpt).toBe('string');
+    }
+  });
+
+  test('language gate caps experience-path replies at 4000 chars; default replies at 800', () => {
+    const projectRoot = seededProject();
+    const filler = 'word '.repeat(180);
+    const longButUnder4000 = `Real text. ${filler}`;
+    expect(longButUnder4000.length).toBeGreaterThan(800);
+    expect(longButUnder4000.length).toBeLessThan(4000);
+
+    const outputDefault = build(projectRoot);
+    session(outputDefault).mira_reply.text = longButUnder4000;
+    session(outputDefault).mira_reply.experience_path = false;
+    const defaultValidation = validateMiraCoreLocalTextSessionV0Output(outputDefault, contract);
+    const defaultGate = checkById(defaultValidation, 'mira-reply-language-gate');
+    expect(defaultGate.ok).toBe(false);
+    expect(defaultGate.violations).toContain('reply_too_long');
+    expect(defaultGate.max_reply_chars).toBe(800);
+
+    const outputExperience = build(projectRoot);
+    session(outputExperience).mira_reply.text = longButUnder4000;
+    session(outputExperience).mira_reply.experience_path = true;
+    const expValidation = validateMiraCoreLocalTextSessionV0Output(outputExperience, contract);
+    const expGate = checkById(expValidation, 'mira-reply-language-gate');
+    expect(expGate.violations).not.toContain('reply_too_long');
+    expect(expGate.max_reply_chars).toBe(4000);
+
+    const overExperienceCap = `Real text. ${'word '.repeat(900)}`;
+    expect(overExperienceCap.length).toBeGreaterThan(4000);
+    const outputOver = build(projectRoot);
+    session(outputOver).mira_reply.text = overExperienceCap;
+    session(outputOver).mira_reply.experience_path = true;
+    const overValidation = validateMiraCoreLocalTextSessionV0Output(outputOver, contract);
+    const overGate = checkById(overValidation, 'mira-reply-language-gate');
+    expect(overGate.ok).toBe(false);
+    expect(overGate.violations).toContain('reply_too_long');
+  });
+
   test('parses local text session CLI flags and raw stdin text', () => {
     const parsed = parseArgs([
       '--project-root=.',
