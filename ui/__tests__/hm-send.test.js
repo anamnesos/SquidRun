@@ -1303,8 +1303,12 @@ describe('hm-send retry behavior', () => {
     let store;
     try {
       expect(result.code).toBe(0);
-      expect(result.stderr).toContain('voice fallback');
-      expect(result.stderr).not.toContain('Telegram fallback');
+      const combinedOutput = `${result.stdout}\n${result.stderr}`;
+      expect(combinedOutput).toContain('voice egress');
+      expect(combinedOutput).toContain(`Delivered to user`);
+      expect(combinedOutput).not.toMatch(/^WebSocket send unverified/m);
+      expect(combinedOutput).not.toContain('Send failed');
+      expect(combinedOutput).not.toContain('telegram fallback');
       expect(fs.existsSync(evidenceDbPath)).toBe(true);
 
       store = new EvidenceLedgerStore({ dbPath: evidenceDbPath, enabled: true });
@@ -1346,9 +1350,11 @@ describe('hm-send retry behavior', () => {
 
     try {
       expect(result.code).toBe(0);
-      expect(result.stderr).toContain('voice_failed_telegram_backup_used');
-      expect(result.stderr).toContain('via telegram fallback');
-      expect(result.stderr).not.toContain('via voice fallback');
+      const combinedOutput = `${result.stdout}\n${result.stderr}`;
+      expect(combinedOutput).toContain('voice_failed_telegram_backup_used');
+      expect(combinedOutput).toContain('via telegram fallback');
+      expect(combinedOutput).not.toContain('via voice egress');
+      expect(combinedOutput).not.toMatch(/^WebSocket send unverified/m);
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
       fs.rmSync(telegramMock.tempRoot, { recursive: true, force: true });
