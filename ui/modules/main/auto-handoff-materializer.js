@@ -52,6 +52,7 @@ const TRANSPORT_ARTIFACT_CLAIM_PATTERNS = [
   /\binitializing session\b/i,
   /\bsession started\b/i,
 ];
+const MEMORY_CONSISTENCY_REPAIR_BACKFILL_PREFIX = 'backfill:memory.consistency.repair:';
 const LEGACY_BOOTSTRAP_SESSION_ID_PATTERN = /^app-\d+-\d+$/i;
 const SESSION_BOOTSTRAP_NOISE_PATTERNS = [
   /^\((?:architect|builder|oracle)\s+#\d+\):\s+.+\bonline\.\s+standing by\.?$/i,
@@ -491,6 +492,14 @@ function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MA
     if (!claimId) continue;
     const status = toOptionalString(claim?.status, '').toLowerCase();
     if (!UNRESOLVED_STATUS_SET.has(status)) continue;
+    const rawStatementExact = typeof claim?.statement === 'string' ? claim.statement : '';
+    const idempotencyKey = toOptionalString(claim?.idempotencyKey ?? claim?.idempotency_key, '');
+    if (
+      rawStatementExact === 'memory.consistency.repair'
+      && idempotencyKey.startsWith(MEMORY_CONSISTENCY_REPAIR_BACKFILL_PREFIX)
+    ) {
+      continue;
+    }
     const rawStatement = toOptionalString(claim?.statement, '');
     if (!rawStatement || isTransportArtifactClaimStatement(rawStatement)) continue;
     const normalized = {

@@ -26,6 +26,7 @@ const EVENT_ONLY_TYPES = new Set([
   'delivery.outcome',
   'guard.fired',
   'intent.updated',
+  'memory.consistency.repair',
   'session.lifecycle',
   'task.status_changed',
 ]);
