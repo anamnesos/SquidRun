@@ -21,6 +21,20 @@ jest.mock('../modules/memory-consistency-check', () => ({
       issueCount: 0,
     },
   })),
+  planMemoryConsistencyRepair: jest.fn(() => ({
+    ok: true,
+    mode: 'dry_run',
+    dryRun: true,
+    summary: {
+      actionCount: 0,
+      insertCount: 0,
+      duplicateMergeCount: 0,
+      orphanDeleteCount: 0,
+      deleteCount: 0,
+      skippedCount: 0,
+    },
+    skipped: [],
+  })),
 }));
 
 const { execFileSync } = require('child_process');
@@ -666,9 +680,163 @@ describe('hm-health-snapshot', () => {
 
     expect(snapshot.status.level).toBe('warn');
     expect(snapshot.status.label).toBe('WARN');
-    expect(snapshot.status.warnings).toContain('memory_consistency_drift:missing=2,orphans=6,duplicates=0');
+    expect(snapshot.status.warnings).toContain('memory_consistency_drift:missing=2,orphans=6,duplicates=0,actions=0,issues=0');
     expect(markdown).toContain('Sync Status: drift_detected (attention needed)');
     expect(markdown).toContain('Counts: entries=15, nodes=19, missing=2, orphans=6, duplicates=0');
+  });
+
+  test('keeps review-only memory consistency orphans visible without a startup score penalty', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    const {
+      planMemoryConsistencyRepair: currentPlanMemoryConsistencyRepair,
+      runMemoryConsistencyCheck: currentRunMemoryConsistencyCheck,
+    } = require('../modules/memory-consistency-check');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    currentRunMemoryConsistencyCheck.mockReturnValueOnce({
+      ok: true,
+      checkedAt: '2026-03-15T00:00:00.000Z',
+      status: 'drift_detected',
+      synced: false,
+      summary: {
+        knowledgeEntryCount: 167,
+        knowledgeNodeCount: 210,
+        missingInCognitiveCount: 0,
+        orphanedNodeCount: 43,
+        duplicateKnowledgeHashCount: 0,
+        issueCount: 0,
+      },
+    });
+    currentPlanMemoryConsistencyRepair.mockReturnValueOnce({
+      ok: true,
+      mode: 'dry_run',
+      dryRun: true,
+      summary: {
+        actionCount: 0,
+        insertCount: 0,
+        duplicateMergeCount: 0,
+        orphanDeleteCount: 0,
+        deleteCount: 0,
+        skippedCount: 43,
+      },
+      skippedByKind: {
+        relational_migration_required: 31,
+        revision_skew_review_required: 3,
+        deleted_source_orphan: 9,
+      },
+      skipped: [
+        { kind: 'relational_migration_required', driftType: 'relational_migration_required' },
+        { kind: 'revision_skew_review_required', driftType: 'revision_skew_orphan' },
+        { kind: 'deleted_source_orphan', driftType: 'deleted_source' },
+      ],
+    });
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(currentPlanMemoryConsistencyRepair).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: tempDir,
+      profileName: 'main',
+      sampleLimit: 5,
+    }));
+    expect(snapshot.status.level).toBe('ok');
+    expect(snapshot.status.label).toBe('OK');
+    expect(snapshot.status.score).toBe(100);
+    expect(snapshot.status.penalties).not.toContainEqual({ code: 'memory_consistency_drift', points: 12 });
+    expect(snapshot.status.warnings).toContain('memory_consistency_review_queue:orphans=43,actions=0,skips=43');
+    expect(markdown).toContain('Sync Status: drift_detected (attention needed)');
+    expect(markdown).toContain('Counts: entries=167, nodes=210, missing=0, orphans=43, duplicates=0');
+    expect(markdown).toContain('Review Queue: actions=0, skips=43, insert=0, merge=0, delete=0');
+    expect(markdown).toContain('Review Types: relational_migration_required=31, revision_skew_review_required=3, deleted_source_orphan=9');
+  });
+
+  test('keeps an unknown memory consistency skipped kind penalized', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      env: {},
+      memoryConsistency: {
+        ok: true,
+        checkedAt: '2026-03-15T00:00:00.000Z',
+        status: 'drift_detected',
+        synced: false,
+        summary: {
+          knowledgeEntryCount: 15,
+          knowledgeNodeCount: 16,
+          missingInCognitiveCount: 0,
+          orphanedNodeCount: 2,
+          duplicateKnowledgeHashCount: 0,
+          issueCount: 0,
+        },
+        repairPlan: {
+          mode: 'dry_run',
+          dryRun: true,
+          actionCount: 0,
+          skippedCount: 2,
+          skippedByKind: {
+            relational_migration_required: 1,
+            mystery_skip_kind: 1,
+          },
+        },
+      },
+    });
+
+    expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.warnings).toContain('memory_consistency_unclassified_drift:missing=0,orphans=2,duplicates=0,actions=0,issues=0,known_review_skips=no');
+    expect(snapshot.status.penalties).toContainEqual({ code: 'memory_consistency_unsynced', points: 10 });
+  });
+
+  test('degrades startup health when the memory dry-run has actionable repair work', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      env: {},
+      memoryConsistency: {
+        ok: true,
+        checkedAt: '2026-03-15T00:00:00.000Z',
+        status: 'drift_detected',
+        synced: false,
+        summary: {
+          knowledgeEntryCount: 15,
+          knowledgeNodeCount: 16,
+          missingInCognitiveCount: 0,
+          orphanedNodeCount: 1,
+          duplicateKnowledgeHashCount: 0,
+          issueCount: 0,
+        },
+        repairPlan: {
+          mode: 'dry_run',
+          dryRun: true,
+          actionCount: 1,
+          orphanDeleteCount: 1,
+          skippedCount: 0,
+        },
+      },
+    });
+
+    expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.warnings).toContain('memory_consistency_drift:missing=0,orphans=1,duplicates=0,actions=1,issues=0');
+    expect(snapshot.status.penalties).toContainEqual({ code: 'memory_consistency_drift', points: 12 });
   });
 
   test('exports an explicit startup health scoring contract', () => {

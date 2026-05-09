@@ -103,10 +103,19 @@ const BRIDGE_ENV_KEYS = Object.freeze([
   'SQUIDRUN_PROFILE',
 ]);
 const DEFAULT_BRIDGE_DISCOVERY_MAX_AGE_MS = 10 * 60 * 1000;
+const MEMORY_CONSISTENCY_REVIEW_SKIP_KIND_ALLOWLIST = Object.freeze([
+  'ambiguous_multi_target',
+  'deleted_source_orphan',
+  'deleted_source_review',
+  'mapping_required',
+  'relational_migration_required',
+  'revision_skew_review_required',
+]);
 
 let SQLITE_DRIVER = undefined;
 let resolveDefaultCognitiveMemoryDbPathFn = null;
 let runMemoryConsistencyCheckFn = null;
+let planMemoryConsistencyRepairFn = null;
 
 function getResolveDefaultCognitiveMemoryDbPath() {
   if (!resolveDefaultCognitiveMemoryDbPathFn) {
@@ -120,6 +129,13 @@ function getRunMemoryConsistencyCheck() {
     ({ runMemoryConsistencyCheck: runMemoryConsistencyCheckFn } = require('../modules/memory-consistency-check'));
   }
   return runMemoryConsistencyCheckFn;
+}
+
+function getPlanMemoryConsistencyRepair() {
+  if (!planMemoryConsistencyRepairFn) {
+    ({ planMemoryConsistencyRepair: planMemoryConsistencyRepairFn } = require('../modules/memory-consistency-check'));
+  }
+  return planMemoryConsistencyRepairFn;
 }
 
 function asPositiveInt(value, fallback) {
@@ -723,7 +739,7 @@ function summarizeMemoryConsistency(result = null) {
   const summary = source.summary && typeof source.summary === 'object' && !Array.isArray(source.summary)
     ? source.summary
     : {};
-  return {
+  const summarized = {
     checkedAt: typeof source.checkedAt === 'string' ? source.checkedAt : null,
     status: typeof source.status === 'string' && source.status.trim() ? source.status.trim() : 'unknown',
     synced: source.synced === true,
@@ -736,6 +752,49 @@ function summarizeMemoryConsistency(result = null) {
       duplicateKnowledgeHashCount: Number(summary.duplicateKnowledgeHashCount || 0),
       issueCount: Number(summary.issueCount || 0),
     },
+  };
+  const repairPlan = summarizeMemoryConsistencyRepairPlan(source.repairPlan || source.dryRunRepair || null);
+  if (repairPlan) {
+    summarized.repairPlan = repairPlan;
+  }
+  return summarized;
+}
+
+function summarizeItemsByKey(items = [], key) {
+  if (!Array.isArray(items)) return {};
+  return items.reduce((acc, item) => {
+    const value = item && typeof item === 'object'
+      ? String(item[key] || '').trim()
+      : '';
+    const bucket = value || 'unknown';
+    acc[bucket] = Number(acc[bucket] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function summarizeMemoryConsistencyRepairPlan(plan = null) {
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return null;
+  const summary = plan.summary && typeof plan.summary === 'object' && !Array.isArray(plan.summary)
+    ? plan.summary
+    : plan;
+  return {
+    mode: typeof plan.mode === 'string' && plan.mode.trim() ? plan.mode.trim() : null,
+    dryRun: plan.dryRun === true || plan.mode === 'dry_run',
+    actionCount: Number(summary.actionCount || 0),
+    insertCount: Number(summary.insertCount || 0),
+    duplicateMergeCount: Number(summary.duplicateMergeCount || 0),
+    orphanDeleteCount: Number(summary.orphanDeleteCount || 0),
+    deleteCount: Number(summary.deleteCount || 0),
+    skippedCount: Number(summary.skippedCount || 0),
+    deferredActionCount: Number(summary.deferredActionCount || 0),
+    deferredSkippedCount: Number(summary.deferredSkippedCount || 0),
+    skippedByKind: plan.skippedByKind && typeof plan.skippedByKind === 'object' && !Array.isArray(plan.skippedByKind)
+      ? { ...plan.skippedByKind }
+      : summarizeItemsByKey(plan.skipped, 'kind'),
+    skippedByDriftType: plan.skippedByDriftType && typeof plan.skippedByDriftType === 'object' && !Array.isArray(plan.skippedByDriftType)
+      ? { ...plan.skippedByDriftType }
+      : summarizeItemsByKey(plan.skipped, 'driftType'),
+    error: typeof plan.error === 'string' && plan.error.trim() ? plan.error.trim() : null,
   };
 }
 
@@ -765,13 +824,36 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
   }
 
   try {
-    return summarizeMemoryConsistency(getRunMemoryConsistencyCheck()({
+    const checkOptions = {
       projectRoot,
       profileName: normalizeProfileName(options.profileName || DEFAULT_PROFILE),
       sampleLimit: Number.isFinite(Number(options.memoryConsistencySampleLimit))
         ? Number(options.memoryConsistencySampleLimit)
         : 5,
-    }));
+    };
+    const check = getRunMemoryConsistencyCheck()(checkOptions);
+    if (check?.status !== 'drift_detected') {
+      return summarizeMemoryConsistency(check);
+    }
+
+    try {
+      const repairPlan = getPlanMemoryConsistencyRepair()(checkOptions);
+      return summarizeMemoryConsistency({
+        ...check,
+        repairPlan,
+      });
+    } catch (err) {
+      return summarizeMemoryConsistency({
+        ...check,
+        repairPlan: {
+          error: err.message,
+          summary: {
+            actionCount: 0,
+            skippedCount: 0,
+          },
+        },
+      });
+    }
   } catch (err) {
     return summarizeMemoryConsistency({
       status: 'check_failed',
@@ -798,6 +880,78 @@ function inspectSystemCapabilities(projectRoot, options = {}) {
         reason: 'not_detected',
       },
     },
+  };
+}
+
+function hasMemoryConsistencyCheckFailure(memoryConsistency = {}) {
+  const status = String(memoryConsistency.status || '').trim();
+  if (memoryConsistency.error) return true;
+  if (memoryConsistency.repairPlan?.error) return true;
+  if (!status || status === 'unknown') return memoryConsistency.synced === false;
+  if (status === 'in_sync' || status === 'drift_detected') return false;
+  return memoryConsistency.synced === false;
+}
+
+function positiveCountEntries(counts = {}) {
+  if (!counts || typeof counts !== 'object' || Array.isArray(counts)) return [];
+  return Object.entries(counts)
+    .map(([key, count]) => [String(key || '').trim(), Number(count || 0)])
+    .filter(([key, count]) => key && count > 0);
+}
+
+function countEntriesTotal(entries = []) {
+  return entries.reduce((sum, [, count]) => sum + Number(count || 0), 0);
+}
+
+function hasOnlyKnownMemoryConsistencyReviewSkips(repairPlan = null) {
+  if (!repairPlan || typeof repairPlan !== 'object' || Array.isArray(repairPlan)) return false;
+  const skippedCount = Number(repairPlan.skippedCount || 0);
+  if (skippedCount <= 0) return true;
+  const kindEntries = positiveCountEntries(repairPlan.skippedByKind);
+  const driftEntries = positiveCountEntries(repairPlan.skippedByDriftType);
+  const entries = kindEntries.length > 0 ? kindEntries : driftEntries;
+  if (entries.length === 0) return false;
+  const allKnown = entries.every(([kind]) => MEMORY_CONSISTENCY_REVIEW_SKIP_KIND_ALLOWLIST.includes(kind));
+  return allKnown && countEntriesTotal(entries) >= skippedCount;
+}
+
+function getMemoryConsistencyActionability(memoryConsistency = {}) {
+  const summary = memoryConsistency.summary && typeof memoryConsistency.summary === 'object'
+    ? memoryConsistency.summary
+    : {};
+  const repairPlan = memoryConsistency.repairPlan && typeof memoryConsistency.repairPlan === 'object'
+    ? memoryConsistency.repairPlan
+    : null;
+  const missing = Number(summary.missingInCognitiveCount || 0);
+  const orphans = Number(summary.orphanedNodeCount || 0);
+  const duplicates = Number(summary.duplicateKnowledgeHashCount || 0);
+  const issues = Number(summary.issueCount || 0);
+  const actionCount = repairPlan ? Number(repairPlan.actionCount || 0) : 0;
+  const skippedCount = repairPlan ? Number(repairPlan.skippedCount || 0) : 0;
+  const checkFailure = hasMemoryConsistencyCheckFailure(memoryConsistency);
+  const actionable = missing > 0
+    || duplicates > 0
+    || issues > 0
+    || actionCount > 0;
+  const knownReviewSkips = hasOnlyKnownMemoryConsistencyReviewSkips(repairPlan);
+  const reviewOnly = memoryConsistency.status === 'drift_detected'
+    && !checkFailure
+    && !actionable
+    && orphans > 0
+    && repairPlan !== null
+    && skippedCount >= orphans
+    && knownReviewSkips;
+  return {
+    missing,
+    orphans,
+    duplicates,
+    issues,
+    actionCount,
+    skippedCount,
+    checkFailure,
+    actionable,
+    knownReviewSkips,
+    reviewOnly,
   };
 }
 
@@ -854,14 +1008,38 @@ function buildHealthStatus(snapshot) {
   const memoryConsistency = snapshot.memoryConsistency && typeof snapshot.memoryConsistency === 'object'
     ? snapshot.memoryConsistency
     : {};
-  if (memoryConsistency.status === 'drift_detected') {
+  const memoryActionability = getMemoryConsistencyActionability(memoryConsistency);
+  if (memoryActionability.checkFailure) {
+    warnings.push(`memory_consistency_${memoryConsistency.status || 'unknown'}`);
+    addPenalty('memory_consistency_unsynced');
+  } else if (memoryConsistency.status === 'drift_detected' && memoryActionability.actionable) {
     warnings.push(
       'memory_consistency_drift:'
-      + `missing=${Number(memoryConsistency.summary?.missingInCognitiveCount || 0)},`
-      + `orphans=${Number(memoryConsistency.summary?.orphanedNodeCount || 0)},`
-      + `duplicates=${Number(memoryConsistency.summary?.duplicateKnowledgeHashCount || 0)}`
+      + `missing=${memoryActionability.missing},`
+      + `orphans=${memoryActionability.orphans},`
+      + `duplicates=${memoryActionability.duplicates},`
+      + `actions=${memoryActionability.actionCount},`
+      + `issues=${memoryActionability.issues}`
     );
     addPenalty('memory_consistency_drift');
+  } else if (memoryConsistency.status === 'drift_detected' && memoryActionability.reviewOnly) {
+    warnings.push(
+      'memory_consistency_review_queue:'
+      + `orphans=${memoryActionability.orphans},`
+      + `actions=${memoryActionability.actionCount},`
+      + `skips=${memoryActionability.skippedCount}`
+    );
+  } else if (memoryConsistency.status === 'drift_detected') {
+    warnings.push(
+      'memory_consistency_unclassified_drift:'
+      + `missing=${memoryActionability.missing},`
+      + `orphans=${memoryActionability.orphans},`
+      + `duplicates=${memoryActionability.duplicates},`
+      + `actions=${memoryActionability.actionCount},`
+      + `issues=${memoryActionability.issues},`
+      + `known_review_skips=${memoryActionability.knownReviewSkips ? 'yes' : 'no'}`
+    );
+    addPenalty('memory_consistency_unsynced');
   } else if (memoryConsistency.synced === false) {
     warnings.push(`memory_consistency_${memoryConsistency.status || 'unknown'}`);
     addPenalty('memory_consistency_unsynced');
@@ -972,6 +1150,28 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   );
   if (memoryConsistency.error) {
     lines.push(`- Error: ${memoryConsistency.error}`);
+  }
+  if (memoryConsistency.repairPlan && typeof memoryConsistency.repairPlan === 'object') {
+    const plan = memoryConsistency.repairPlan;
+    lines.push(
+      '- Review Queue: '
+      + `actions=${Number(plan.actionCount || 0)}, `
+      + `skips=${Number(plan.skippedCount || 0)}, `
+      + `insert=${Number(plan.insertCount || 0)}, `
+      + `merge=${Number(plan.duplicateMergeCount || 0)}, `
+      + `delete=${Number(plan.orphanDeleteCount || 0)}`
+    );
+    const skippedByKind = plan.skippedByKind && typeof plan.skippedByKind === 'object' && !Array.isArray(plan.skippedByKind)
+      ? Object.entries(plan.skippedByKind)
+        .filter(([, count]) => Number(count || 0) > 0)
+        .map(([kind, count]) => `${kind}=${Number(count || 0)}`)
+      : [];
+    if (skippedByKind.length > 0) {
+      lines.push(`- Review Types: ${skippedByKind.join(', ')}`);
+    }
+    if (plan.error) {
+      lines.push(`- Review Error: ${plan.error}`);
+    }
   }
 
   const bridge = snapshot.bridge && typeof snapshot.bridge === 'object' ? snapshot.bridge : {};
