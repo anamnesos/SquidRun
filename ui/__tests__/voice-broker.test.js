@@ -737,7 +737,7 @@ describe('voice-broker', () => {
       const phoneRegister = await postJson(port, '/v1/voice/egress/lease/register', {
         consumerId: 'phone-A',
         consumerKind: 'phone-client',
-      });
+      }, auth);
       expect(phoneRegister.statusCode).toBe(200);
       const phoneToken = phoneRegister.body.registrationToken;
       const phoneAcquire = await postJson(
@@ -1049,10 +1049,13 @@ describe('voice-broker', () => {
     await broker.start();
     const port = broker.getStatus().address.port;
     try {
+      const pairing = await postJson(port, '/v1/voice/phone/pairing', { ttlMs: 60000 });
+      const phoneAuth = { Authorization: `Bearer ${pairing.body.token}` };
+
       const phoneRegister = await postJson(port, '/v1/voice/egress/lease/register', {
         consumerId: 'phone-impostor',
         consumerKind: 'phone-client',
-      });
+      }, phoneAuth);
       expect(phoneRegister.statusCode).toBe(200);
       const phoneToken = phoneRegister.body.registrationToken;
 
@@ -1096,6 +1099,54 @@ describe('voice-broker', () => {
       expect(desktopAcquire.body.tieReason).toBe('kind_precedence');
       expect(desktopAcquire.body.leaseState.consumerId).toBe('desktop-real');
       expect(desktopAcquire.body.leaseState.consumerKind).toBe('desktop-tab');
+    } finally {
+      await broker.stop();
+    }
+  });
+
+  test('phone-client lease/register requires Bearer phone pairing token (tunnel exposure guard)', async () => {
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+    try {
+      const noAuth = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'phone-no-auth',
+        consumerKind: 'phone-client',
+      });
+      expect(noAuth.statusCode).toBe(401);
+      expect(noAuth.body.reason).toBe('phone_pairing_token_required');
+
+      const badAuth = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'phone-bad-auth',
+        consumerKind: 'phone-client',
+      }, { Authorization: 'Bearer not-a-real-pairing-token' });
+      expect(badAuth.statusCode).toBe(401);
+      expect(['phone_pairing_token_invalid', 'phone_pairing_not_available']).toContain(badAuth.body.reason);
+
+      const desktopNoAuth = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'desktop-no-auth',
+        consumerKind: 'desktop-tab',
+      });
+      expect(desktopNoAuth.statusCode).toBe(200);
+      expect(desktopNoAuth.body.ok).toBe(true);
+
+      const arbitraryNoAuth = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'arbitrary-no-auth',
+        consumerKind: 'arbitrary',
+      });
+      expect(arbitraryNoAuth.statusCode).toBe(200);
+      expect(arbitraryNoAuth.body.ok).toBe(true);
+
+      const pairing = await postJson(port, '/v1/voice/phone/pairing', { ttlMs: 60000 });
+      const phoneAuth = { Authorization: `Bearer ${pairing.body.token}` };
+      const goodAuth = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'phone-good',
+        consumerKind: 'phone-client',
+      }, phoneAuth);
+      expect(goodAuth.statusCode).toBe(200);
+      expect(goodAuth.body.ok).toBe(true);
     } finally {
       await broker.stop();
     }

@@ -1294,6 +1294,13 @@ class VoiceBrokerService {
 
       if (req.method === 'POST' && url.pathname === '/v1/voice/egress/lease/register') {
         const body = parseJsonBody(await readRequestBody(req));
+        if (typeof body.consumerKind === 'string' && body.consumerKind.trim() === 'phone-client') {
+          const auth = requirePhonePairing(req, url, this.config);
+          if (!auth.ok) {
+            sendJson(res, 401, auth);
+            return;
+          }
+        }
         const result = this.leaseStore.register({
           consumerId: body.consumerId,
           consumerKind: body.consumerKind,
