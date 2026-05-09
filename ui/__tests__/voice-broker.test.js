@@ -659,7 +659,25 @@ describe('voice-broker', () => {
         }),
       }));
 
-      const egress = await getJson(port, '/v1/voice/phone/egress?sinceMs=0', auth);
+      const phoneRegister = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'phone-A',
+        consumerKind: 'phone-client',
+      });
+      expect(phoneRegister.statusCode).toBe(200);
+      const phoneToken = phoneRegister.body.registrationToken;
+      const phoneAcquire = await postJson(
+        port,
+        '/v1/voice/egress/lease/acquire',
+        { consumerId: 'phone-A', consumerKind: 'phone-client' },
+        { 'x-voice-registration-token': phoneToken }
+      );
+      expect(phoneAcquire.statusCode).toBe(200);
+
+      const egress = await getJson(
+        port,
+        '/v1/voice/phone/egress?sinceMs=0&consumerId=phone-A',
+        { ...auth, 'x-voice-registration-token': phoneToken }
+      );
       expect(egress.statusCode).toBe(200);
       expect(egress.body.messages).toEqual([
         expect.objectContaining({
@@ -843,19 +861,42 @@ describe('voice-broker', () => {
     const port = broker.getStatus().address.port;
 
     try {
-      const response = await getJson(port, '/v1/voice/egress?sinceMs=1777882999000');
+      const registerResponse = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'test-tab',
+        consumerKind: 'desktop-tab',
+      });
+      expect(registerResponse.statusCode).toBe(200);
+      const registrationToken = registerResponse.body.registrationToken;
+      const acquireResponse = await postJson(
+        port,
+        '/v1/voice/egress/lease/acquire',
+        { consumerId: 'test-tab', consumerKind: 'desktop-tab' },
+        { 'x-voice-registration-token': registrationToken }
+      );
+      expect(acquireResponse.statusCode).toBe(200);
+      expect(acquireResponse.body.ok).toBe(true);
+
+      const response = await getJson(
+        port,
+        '/v1/voice/egress?sinceMs=1777882999000&consumerId=test-tab',
+        { 'x-voice-registration-token': registrationToken }
+      );
 
       expect(response.statusCode).toBe(200);
-    expect(response.body).toEqual(expect.objectContaining({
-      ok: true,
-      messages: [
-        expect.objectContaining({
-          messageId: 'mira-reply-1',
+      expect(response.body).toEqual(expect.objectContaining({
+        ok: true,
+        messages: [
+          expect.objectContaining({
+            messageId: 'mira-reply-1',
             speaker: 'Mira',
-          text: 'Yep, I am here through voice now.',
-        }),
-      ],
-    }));
+            text: 'Yep, I am here through voice now.',
+          }),
+        ],
+      }));
+      expect(response.body.meta).toEqual(expect.objectContaining({
+        lease_holder: 'test-tab',
+        multi_output_enforced: false,
+      }));
       expect(response.body.messages[0].text).not.toContain('Mira:');
       expect(response.body.messages[0].text).not.toContain('MIRA/ARCH');
       expect(response.body.messages[0].text).not.toContain('AGENT MSG');
@@ -864,6 +905,140 @@ describe('voice-broker', () => {
         targetRole: 'user',
         order: 'asc',
       }));
+    } finally {
+      await broker.stop();
+    }
+  });
+
+  test('voice egress fail-closes legacy requests without consumerId or registration token', async () => {
+    const queryCommsJournalEntries = jest.fn(() => [
+      {
+        messageId: 'mira-reply-1',
+        senderRole: 'architect',
+        targetRole: 'user',
+        rawBody: 'irrelevant',
+        brokeredAtMs: 1777883000000,
+      },
+    ]);
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
+      queryCommsJournalEntries,
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+    try {
+      const noConsumer = await getJson(port, '/v1/voice/egress?sinceMs=0');
+      expect(noConsumer.statusCode).toBe(401);
+      expect(noConsumer.body).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'consumer_id_required',
+      }));
+
+      const noToken = await getJson(port, '/v1/voice/egress?sinceMs=0&consumerId=legacy-tab');
+      expect(noToken.statusCode).toBe(401);
+      expect(noToken.body.reason).toBe('registration_required');
+
+      const registerResponse = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'legacy-tab',
+        consumerKind: 'arbitrary',
+      });
+      const registrationToken = registerResponse.body.registrationToken;
+
+      const noLease = await getJson(
+        port,
+        '/v1/voice/egress?sinceMs=0&consumerId=legacy-tab',
+        { 'x-voice-registration-token': registrationToken }
+      );
+      expect(noLease.statusCode).toBe(200);
+      expect(noLease.body.messages).toEqual([]);
+      expect(noLease.body.meta.lease_holder).toBe(null);
+    } finally {
+      await broker.stop();
+    }
+  });
+
+  test('registration token binds consumerKind: phone-registered consumer cannot claim desktop precedence via body', async () => {
+    const queryCommsJournalEntries = jest.fn(() => [
+      {
+        messageId: 'mira-reply-1',
+        senderRole: 'architect',
+        targetRole: 'user',
+        rawBody: 'hello',
+        brokeredAtMs: 1777883000000,
+      },
+    ]);
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({}, { port: 0 }),
+      queryCommsJournalEntries,
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+    try {
+      const phoneRegister = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'phone-impostor',
+        consumerKind: 'phone-client',
+      });
+      expect(phoneRegister.statusCode).toBe(200);
+      const phoneToken = phoneRegister.body.registrationToken;
+
+      const phoneImpostor = await postJson(
+        port,
+        '/v1/voice/egress/lease/acquire',
+        { consumerId: 'phone-impostor', consumerKind: 'desktop-tab' },
+        { 'x-voice-registration-token': phoneToken }
+      );
+      expect(phoneImpostor.statusCode).toBe(409);
+      expect(phoneImpostor.body).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'consumer_kind_mismatch',
+        registeredKind: 'phone-client',
+        attemptedKind: 'desktop-tab',
+      }));
+
+      const phoneAcquireMatching = await postJson(
+        port,
+        '/v1/voice/egress/lease/acquire',
+        { consumerId: 'phone-impostor', consumerKind: 'phone-client' },
+        { 'x-voice-registration-token': phoneToken }
+      );
+      expect(phoneAcquireMatching.statusCode).toBe(200);
+      expect(phoneAcquireMatching.body.leaseState.consumerKind).toBe('phone-client');
+
+      const desktopRegister = await postJson(port, '/v1/voice/egress/lease/register', {
+        consumerId: 'desktop-real',
+        consumerKind: 'desktop-tab',
+      });
+      const desktopToken = desktopRegister.body.registrationToken;
+      const desktopAcquire = await postJson(
+        port,
+        '/v1/voice/egress/lease/acquire',
+        { consumerId: 'desktop-real', consumerKind: 'desktop-tab' },
+        { 'x-voice-registration-token': desktopToken }
+      );
+      expect(desktopAcquire.statusCode).toBe(200);
+      expect(desktopAcquire.body.ok).toBe(true);
+      expect(desktopAcquire.body.decision).toBe('preempt_by_priority');
+      expect(desktopAcquire.body.tieReason).toBe('kind_precedence');
+      expect(desktopAcquire.body.leaseState.consumerId).toBe('desktop-real');
+      expect(desktopAcquire.body.leaseState.consumerKind).toBe('desktop-tab');
+    } finally {
+      await broker.stop();
+    }
+  });
+
+  test('voice phone egress fail-closes legacy requests without consumerId', async () => {
+    const queryCommsJournalEntries = jest.fn(() => []);
+    const broker = new voiceBroker.VoiceBrokerService({
+      config: voiceBroker.getVoiceBrokerConfig({
+        SQUIDRUN_VOICE_PHONE_PAIRING_TOKEN: 'phone-secret',
+      }, { port: 0 }),
+      queryCommsJournalEntries,
+    });
+    await broker.start();
+    const port = broker.getStatus().address.port;
+    try {
+      const phoneNoToken = await getJson(port, '/v1/voice/phone/egress?sinceMs=0');
+      expect(phoneNoToken.statusCode).toBe(401);
     } finally {
       await broker.stop();
     }

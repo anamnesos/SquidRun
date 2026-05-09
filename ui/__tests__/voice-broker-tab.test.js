@@ -977,19 +977,46 @@ describe('voice-broker tab', () => {
       dataChannel,
       egressSinceMs: 1777883000000,
       spokenMessageIds: new Set(),
+      voiceConsumerId: 'desktop-test-1',
     };
-    const fetchImpl = jest.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
+    const fetchImpl = jest.fn(async (url) => {
+      if (url.endsWith('/v1/voice/egress/lease/register')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            registrationToken: 'reg-token-1',
+            expiresAtMs: Date.now() + 3600000,
+          }),
+        };
+      }
+      if (url.endsWith('/v1/voice/egress/lease/acquire')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            leaseState: { leaseId: 'lease-1', expiresAtMs: Date.now() + 15000 },
+          }),
+        };
+      }
+      if (url.endsWith('/v1/voice/egress/spoken')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return {
         ok: true,
-        messages: [{
-          messageId: 'mira-reply-1',
-          text: 'I am answering as Mira now.',
-          timestampMs: 1777883000123,
-        }],
-      }),
-    }));
+        status: 200,
+        json: async () => ({
+          ok: true,
+          messages: [{
+            messageId: 'mira-reply-1',
+            text: 'I am answering as Mira now.',
+            timestampMs: 1777883000123,
+          }],
+        }),
+      };
+    });
     const status = {
       lane: { broker: { address: { address: '127.0.0.1', port: 43123 } } },
       config: {
@@ -1003,8 +1030,19 @@ describe('voice-broker tab', () => {
     await tab.pollVoiceEgressOnce(session, status, fetchImpl);
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://127.0.0.1:43123/v1/voice/egress?sinceMs=1777883000000&limit=10',
-      { method: 'GET' }
+      'http://127.0.0.1:43123/v1/voice/egress?sinceMs=1777883000000&limit=10&consumerId=desktop-test-1',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ 'x-voice-registration-token': 'reg-token-1' }),
+      })
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/v1/voice/egress/lease/register',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/v1/voice/egress/lease/acquire',
+      expect.objectContaining({ method: 'POST' })
     );
     expect(dataChannel.sent.filter((event) => event.type === 'response.create')).toHaveLength(1);
     expect(session.egressSinceMs).toBe(1777883000124);
