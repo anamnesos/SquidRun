@@ -16,12 +16,12 @@ function printHelp() {
     'Usage: hm-mira-reply.js <mira_intent_id> --stdin',
     '       hm-mira-reply.js <mira_intent_id> --text "<reply>"',
     '',
-    'Writes a single architect_reply row to the Mira event queue with target_role: "mira".',
+    'Writes a single architect_reply row to the Mira event queue with target_role: "mira"',
+    'and sender_role: "architect" (hardcoded — this helper is Architect-only by contract).',
     '',
     'Options:',
     '  --stdin                   Read reply text from stdin.',
     '  --text <reply>            Reply text inline.',
-    '  --sender-role <role>      Defaults to "architect".',
     '  --queue-path <file>       Override event queue JSONL path.',
     '  --lint                    Print Mira visible-reply lint violations to stderr (does not block write).',
     '',
@@ -33,7 +33,6 @@ function parseArgs(argv) {
     miraIntentId: null,
     fromStdin: false,
     text: null,
-    senderRole: 'architect',
     queuePath: DEFAULT_EVENT_QUEUE_PATH,
     lint: false,
   };
@@ -43,7 +42,6 @@ function parseArgs(argv) {
     if (token === '--help' || token === '-h') { printHelp(); process.exit(0); }
     else if (token === '--stdin') args.fromStdin = true;
     else if (token === '--text') args.text = argv[++i];
-    else if (token === '--sender-role') args.senderRole = argv[++i];
     else if (token === '--queue-path') args.queuePath = argv[++i];
     else if (token === '--lint') args.lint = true;
     else if (token.startsWith('--')) {
@@ -80,7 +78,6 @@ async function main() {
   const built = route.buildArchitectReplyRow({
     miraIntentId: args.miraIntentId,
     replyText,
-    senderRole: args.senderRole,
   });
   if (!built.ok) {
     process.stderr.write(`Reply build failed: ${built.reason}\n`);
