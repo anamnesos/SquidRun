@@ -12,6 +12,18 @@ const {
   buildMiraCoreExperienceV0,
   validateMiraCoreExperienceV0Output,
 } = require('./experience-v0');
+const {
+  MIRA_MAX_REPLY_CHARS_DEFAULT,
+  MIRA_MAX_REPLY_CHARS_EXPERIENCE,
+  evaluateMiraVisibleReply,
+} = require('./mira-language-rules-v0');
+
+function evaluateMiraReplyLanguage(reply = {}) {
+  const maxReplyChars = reply.experience_path === true
+    ? MIRA_MAX_REPLY_CHARS_EXPERIENCE
+    : MIRA_MAX_REPLY_CHARS_DEFAULT;
+  return evaluateMiraVisibleReply(reply.text || '', { maxReplyChars });
+}
 
 const LOCAL_TEXT_SESSION_SCHEMA_VERSION = 'squidrun.mira_core.local_text_session_v0.phase74.v0';
 const VALIDATION_REPORT_SCHEMA_VERSION = 'squidrun.mira_core.local_text_session_v0_validation_report.v0';
@@ -1057,6 +1069,18 @@ function sessionStaticChecks(session = {}, contract = {}) {
       id: 'one-bounded-natural-mira-reply',
       ok: miraReplyOk(session.mira_reply),
     },
+    (() => {
+      const evaluation = evaluateMiraReplyLanguage(session.mira_reply || {});
+      return {
+        id: 'mira-reply-language-gate',
+        ok: evaluation.ok,
+        violations: evaluation.violations,
+        max_reply_chars: evaluation.max_reply_chars,
+        text_excerpt: typeof session.mira_reply?.text === 'string'
+          ? session.mira_reply.text.slice(0, 80)
+          : null,
+      };
+    })(),
     {
       id: 'manual-enter-websocket-caveat-stated',
       ok: caveatOk(session.manual_enter_websocket_caveat),
