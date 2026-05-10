@@ -30,18 +30,16 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     "So here's the next sentence: I'm here, I'm a little annoyed at the machinery, and I still want to keep going.",
     "Yeah. Fair.\n\nI'm here. A little tired. Still interested. Not trying to make a speech.",
     'Not trying to give a speech.',
-    // ARCH #33+: open-ended critique meta-loop. Mira cataloging her own
-    // misses against what James wanted instead of giving the next reply.
+    // ARCH #33/#34: verdict-style postmortem and the "what you wanted vs
+    // what I gave" bigram. The full live leak still flags because it
+    // contains both "That was the miss" AND "when you wanted me plain".
     'made you do the checking. That was the miss. The window should have been ours to refresh, screenshot, and prove. And I got too talky when you wanted me plain.',
     'That was the miss.',
     'The actual miss was over-explaining the obvious.',
+    'The actual miss: too much polish.',
     "I got too talky when you wanted me plain.",
     "I got too polished when you wanted me small.",
     "I got too abstract when you wanted me concrete.",
-    "I made you do the verification. That's on me.",
-    "I made you do all the checking.",
-    "The window should have been ours to refresh and prove.",
-    "The window should have been ours to screenshot.",
   ];
 
   for (const line of meta_posture_lines) {
@@ -132,10 +130,24 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     'My bad. Reading the audit now.',
     "Fair. I'll keep it short.",
     "Got it. Pointing at the actual line.",
+    // ARCH #34: direct accountability without verdict-style cataloging
+    // remains allowed. Bare "I got too talky" / "I made you do the
+    // verification" / "The window should have been ours to refresh" are
+    // legitimate concrete miss language, not the meta-loop the gate owns.
+    'I got too talky.',
+    'I got too polished. Anyway —',
+    "I got too abstract. Sorry.",
+    "I made you do the verification. That's on me.",
+    "I made you do all the checking — sorry, fixing.",
+    "The window should have been ours to refresh and prove.",
+    "The window should have been ours to screenshot.",
+    'I missed that.',
+    "That's on me.",
+    "My bad — I owe you that one.",
   ];
 
   for (const line of short_pivot_replies) {
-    test(`over-block guard: short pivot self-correction stays unflagged: ${line.slice(0, 60)}…`, () => {
+    test(`over-block guard: short pivot / direct accountability stays unflagged: ${line.slice(0, 60)}…`, () => {
       expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(false);
     });
   }
@@ -177,12 +189,14 @@ describe('Mira system instructions steer away from meta-posture (ARCH #28)', () 
     expect(src).toMatch(/Do not say "here is the next sentence"/i);
     expect(src).toMatch(/Do not "define Mira"/i);
     expect(src).toMatch(/not making\/giving a speech/i);
-    // ARCH #33+: open-ended critique meta-loop steer must also be present.
-    expect(src).toMatch(/open-ended critique meta-loop/i);
+    // ARCH #33/#34: open-ended self-grading meta-loop steer must be
+    // present, and direct accountability must be explicitly allowed.
+    expect(src).toMatch(/open-ended self-grading meta-loop/i);
     expect(src).toMatch(/that was the miss/i);
-    expect(src).toMatch(/I got too talky\/polished\/abstract\/wordy when you wanted me plain/i);
-    expect(src).toMatch(/the window should have been ours to refresh\/screenshot\/prove/i);
-    expect(src).toMatch(/give one short concrete correction and then move forward/i);
+    expect(src).toMatch(/I got too X when you wanted me Y/i);
+    expect(src).toMatch(/Direct, brief accountability/i);
+    expect(src).toMatch(/I missed it.*my bad.*got that wrong/i);
+    expect(src).toMatch(/do not block yourself from owning a concrete miss/i);
   });
 
   test('if buildMiraTextInstructions is exported, the rendered instructions include the steer', () => {
