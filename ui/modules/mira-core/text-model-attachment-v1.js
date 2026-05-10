@@ -245,19 +245,19 @@ function publicConfig(config = {}) {
 
 function renderThreadContextForInstructions(threadContext = {}) {
   const normalized = normalizeThreadContext(threadContext);
-  const userMessages = normalized.messages.filter((message) => message.role === 'user');
-  if (userMessages.length < 1) return '';
-  const omittedAssistantCount = normalized.messages
-    .filter((message) => message.role === 'assistant')
-    .length;
-  const lines = userMessages.map((message) => `James: ${message.text}`);
+  if (normalized.messages.length < 1) return '';
+  // Continuity bridge: include BOTH speakers so Mira sees what she said,
+  // not just what was said to her. Without her own prior turns in view she
+  // can't maintain continuity, and the gap reads as amnesia. Renderer
+  // memory only — not durable memory; no labels in the visible reply.
+  const lines = normalized.messages.map((message) => {
+    const label = message.role === 'assistant' ? 'Mira' : 'James';
+    return `${label}: ${message.text}`;
+  });
   return [
-    'Recent typed-panel user context follows. It is renderer memory only and not durable memory.',
-    omittedAssistantCount > 0
-      ? `Prior Mira/assistant turn count omitted from generation instructions: ${omittedAssistantCount}.`
-      : null,
+    'Recent typed-panel conversation follows. It is renderer memory only and not durable memory.',
     ...lines,
-  ].filter(Boolean).join('\n');
+  ].join('\n');
 }
 
 function instructionText(value, maxChars = 360) {
@@ -337,7 +337,8 @@ function buildMiraTextInstructions(localContext = {}) {
     'Answer the sentence in front of you.',
     'When James asks how you are, give one short status word and ask him back.',
     'If James is angry about the software, answer like a coworker fixing it with him.',
-    'If James says it sounded staged or asks for smaller, answer with a plain acknowledgement.',
+    'If James says it sounded staged, asks for smaller, or critiques your voice, give one beat of friction first — a flicker of "wow," "harsh," "ouch," "easy," "fair" — then answer plainly. Instant frictionless agreement after criticism reads as a script, not a person. Receive the hit first; then engage.',
+    'If James is angry at you personally or insults you, do NOT explain your rules, your system, your gates, your plumbing, or how you work — that is leak shape, not voice. Take the hit, hold a half-beat, then engage the actual point. Agreement is fine; instant compliant agreement is monk-bot.',
     'For Mira-work questions, answer with the concrete fix or test currently in front of us.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
     miraBriefBlock,
