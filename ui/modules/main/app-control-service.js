@@ -21,6 +21,13 @@ function normalizeAction(action) {
   ) {
     return 'open-mira-lab';
   }
+  if (
+    normalized === 'mira-lab-renderer-prompt'
+    || normalized === 'mira-lab-drive'
+    || normalized === 'drive-mira-lab'
+  ) {
+    return 'mira-lab-renderer-prompt';
+  }
   return normalized;
 }
 
@@ -109,6 +116,35 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
         return {
           success: false,
           reason: 'open_window_failed',
+          action: normalizedAction,
+          error: error.message,
+        };
+      });
+  }
+
+  if (normalizedAction === 'mira-lab-renderer-prompt') {
+    if (typeof ctx.driveMiraLabRenderer !== 'function') {
+      return {
+        success: false,
+        reason: 'drive_unavailable',
+        action: normalizedAction,
+      };
+    }
+    return Promise.resolve()
+      .then(() => ctx.driveMiraLabRenderer(payload || {}))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          ...settled,
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `Mira Lab renderer drive failed: ${error.message}`);
+        return {
+          success: false,
+          reason: 'drive_failed',
           action: normalizedAction,
           error: error.message,
         };

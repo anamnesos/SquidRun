@@ -76,12 +76,12 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
   bridge_enabled_unconfigured: Object.freeze({
     points: 20,
     category: 'bridge',
-    rationale: 'Bridge is expected to run but lacks usable configuration.',
+    rationale: 'Bridge is explicitly required but lacks usable configuration.',
   }),
   bridge_enabled_not_connected: Object.freeze({
     points: 15,
     category: 'bridge',
-    rationale: 'Bridge is enabled and configured, so a disconnect is an operator-actionable degradation.',
+    rationale: 'Bridge is explicitly required and configured, so a disconnect is operator-actionable.',
   }),
   memory_consistency_drift: Object.freeze({
     points: 12,
@@ -97,6 +97,7 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
 
 const BRIDGE_ENV_KEYS = Object.freeze([
   'SQUIDRUN_CROSS_DEVICE',
+  'SQUIDRUN_BRIDGE_REQUIRED',
   'SQUIDRUN_DEVICE_ID',
   'SQUIDRUN_RELAY_URL',
   'SQUIDRUN_RELAY_SECRET',
@@ -616,6 +617,7 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
     ? source.status.trim()
     : null;
   const enabled = source.enabled === true;
+  const required = source.required === true;
   const configured = source.configured === true || Boolean(relayUrl && deviceId);
   const requestedMode = typeof source.mode === 'string' && source.mode.trim()
     ? source.mode.trim().toLowerCase()
@@ -634,6 +636,7 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
 
   return {
     enabled,
+    required,
     configured,
     mode,
     running: source.running === true,
@@ -707,8 +710,10 @@ function buildBridgeSnapshotFromEnv(projectRoot, runtimeEnv = process.env) {
   const relayUrl = asNonEmptyString(envMap.SQUIDRUN_RELAY_URL);
   const deviceId = asNonEmptyString(envMap.SQUIDRUN_DEVICE_ID);
   const enabled = envFlagTruthy(envMap.SQUIDRUN_CROSS_DEVICE);
+  const required = envFlagTruthy(envMap.SQUIDRUN_BRIDGE_REQUIRED);
   return normalizeBridgeSnapshot({
     enabled,
+    required,
     configured: Boolean(relayUrl && deviceId),
     relayUrl,
     deviceId,
@@ -996,12 +1001,12 @@ function buildHealthStatus(snapshot) {
     }
   }
   const bridge = snapshot.bridge && typeof snapshot.bridge === 'object' ? snapshot.bridge : {};
-  if (bridge.enabled === true && bridge.configured !== true) {
+  if (bridge.enabled === true && bridge.required === true && bridge.configured !== true) {
     warnings.push('bridge_enabled_unconfigured');
     addPenalty('bridge_enabled_unconfigured');
-  } else if (bridge.enabled === true && bridge.mode === 'pending') {
+  } else if (bridge.enabled === true && bridge.required === true && bridge.mode === 'pending') {
     warnings.push('bridge_connectivity_pending:live_discovery_not_available');
-  } else if (bridge.enabled === true && bridge.mode !== 'connected') {
+  } else if (bridge.enabled === true && bridge.required === true && bridge.mode !== 'connected') {
     warnings.push(`bridge_enabled_not_connected:${bridge.state || bridge.status || bridge.mode || 'unknown'}`);
     addPenalty('bridge_enabled_not_connected');
   }
@@ -1183,7 +1188,10 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push(`- Connection: ${bridgeState}`);
   lines.push(`- Device ID: ${bridge.deviceId ? String(bridge.deviceId) : 'missing'}`);
   lines.push(`- Relay URL: ${bridge.relayUrl ? String(bridge.relayUrl) : 'unconfigured'}`);
-  lines.push(`- Runtime: mode=${bridge.mode || 'unknown'}, enabled=${bridge.enabled === true ? 'yes' : 'no'}, configured=${bridge.configured === true ? 'yes' : 'no'}`);
+  lines.push(
+    `- Runtime: mode=${bridge.mode || 'unknown'}, enabled=${bridge.enabled === true ? 'yes' : 'no'}, `
+    + `configured=${bridge.configured === true ? 'yes' : 'no'}, required=${bridge.required === true ? 'yes' : 'no'}`
+  );
   if (bridge.liveDiscovery && typeof bridge.liveDiscovery === 'object') {
     const discovery = bridge.liveDiscovery;
     const ageText = isFiniteNumberValue(discovery.ageMs)
@@ -1205,11 +1213,15 @@ function renderStartupHealthMarkdown(snapshot = {}) {
     : null;
   if (bridgePenalty) {
     const bridgeProbeStatus = bridgePenalty.code === 'bridge_enabled_not_connected'
-      ? 'degraded (enabled but disconnected)'
-      : (bridgePenalty.code === 'bridge_enabled_unconfigured' ? 'degraded (enabled but unconfigured)' : `degraded (${bridgePenalty.code})`);
+      ? 'degraded (required but disconnected)'
+      : (bridgePenalty.code === 'bridge_enabled_unconfigured' ? 'degraded (required but unconfigured)' : `degraded (${bridgePenalty.code})`);
     lines.push(`- Probe: ${bridgeProbeStatus}; penalty=${Number(bridgePenalty.points || 0)}`);
-  } else if (bridge.enabled === true && bridge.mode === 'pending') {
+  } else if (bridge.enabled === true && bridge.required === true && bridge.mode === 'pending') {
     lines.push('- Probe: pending (live discovery not available in standalone snapshot); penalty=0');
+  } else if (bridge.enabled === true && bridge.required !== true && bridge.mode === 'pending') {
+    lines.push('- Probe: optional pending; penalty=0');
+  } else if (bridge.enabled === true && bridge.required !== true && bridge.mode !== 'connected') {
+    lines.push('- Probe: optional offline; penalty=0');
   }
 
   const warnings = Array.isArray(snapshot.status?.warnings) ? snapshot.status.warnings : [];

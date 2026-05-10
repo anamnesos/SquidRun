@@ -287,6 +287,7 @@ describe('hm-health-snapshot', () => {
       enabled: true,
       configured: true,
       mode: 'pending',
+      required: false,
       relayUrl: 'wss://relay.example.test',
       deviceId: 'LOCAL',
       state: 'pending_live_discovery',
@@ -294,7 +295,7 @@ describe('hm-health-snapshot', () => {
       lowFidelity: true,
     }));
     expect(snapshot.status.label).toBe('OK');
-    expect(snapshot.status.warnings).toContain('bridge_connectivity_pending:live_discovery_not_available');
+    expect(snapshot.status.warnings).not.toContain('bridge_connectivity_pending:live_discovery_not_available');
     expect(snapshot.status.penalties).not.toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
   });
 
@@ -391,6 +392,7 @@ describe('hm-health-snapshot', () => {
 
     expect(snapshot.bridge).toEqual(expect.objectContaining({
       mode: 'connecting',
+      required: false,
       state: 'disconnected',
       status: 'relay_disconnected',
       pending: false,
@@ -403,11 +405,12 @@ describe('hm-health-snapshot', () => {
         roles: ['architect'],
       }),
     }));
-    expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:disconnected');
-    expect(snapshot.status.penalties).toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+    expect(snapshot.status.warnings).not.toContain('bridge_enabled_not_connected:disconnected');
+    expect(snapshot.status.penalties).not.toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
     expect(markdown).toContain('Connection: disconnected');
     expect(markdown).toContain('Live Discovery: verified (architect_online; source=known-devices-cache; 15s old; roles=architect)');
-    expect(markdown).toContain('Probe: degraded (enabled but disconnected); penalty=15');
+    expect(markdown).toContain('Runtime: mode=connecting, enabled=yes, configured=yes, required=no');
+    expect(markdown).toContain('Probe: optional offline; penalty=0');
   });
 
   test('keeps bridge pending and reports discovery failure when known-devices proof is stale', () => {
@@ -444,6 +447,7 @@ describe('hm-health-snapshot', () => {
 
     expect(snapshot.bridge).toEqual(expect.objectContaining({
       mode: 'pending',
+      required: false,
       state: 'pending_live_discovery',
       pending: true,
       architectRoleDiscovery: 'unknown',
@@ -454,8 +458,9 @@ describe('hm-health-snapshot', () => {
         roles: ['architect'],
       }),
     }));
-    expect(snapshot.status.warnings).toContain('bridge_connectivity_pending:live_discovery_not_available');
+    expect(snapshot.status.warnings).not.toContain('bridge_connectivity_pending:live_discovery_not_available');
     expect(markdown).toContain('Live Discovery: not verified (stale; source=known-devices-cache; 1500s old; roles=architect)');
+    expect(markdown).toContain('Probe: optional pending; penalty=0');
   });
 
   test('keeps bridge pending and renders known-devices read errors explicitly', () => {
@@ -487,6 +492,7 @@ describe('hm-health-snapshot', () => {
 
     expect(snapshot.bridge).toEqual(expect.objectContaining({
       mode: 'pending',
+      required: false,
       state: 'pending_live_discovery',
       liveDiscovery: expect.objectContaining({
         ok: false,
@@ -495,9 +501,10 @@ describe('hm-health-snapshot', () => {
         roles: [],
       }),
     }));
-    expect(snapshot.status.warnings).toContain('bridge_connectivity_pending:live_discovery_not_available');
+    expect(snapshot.status.warnings).not.toContain('bridge_connectivity_pending:live_discovery_not_available');
     expect(markdown).toContain('Live Discovery: not verified (read_error; source=known-devices-cache; age unknown; roles=none)');
     expect(markdown).toContain('Live Discovery Error: Unexpected token');
+    expect(markdown).toContain('Probe: optional pending; penalty=0');
   });
 
   test('main can print the compact startup health markdown summary', () => {
@@ -620,7 +627,7 @@ describe('hm-health-snapshot', () => {
     expect(markdown).not.toContain('Ollama:');
   });
 
-  test('degrades startup health when bridge is enabled but not connected', () => {
+  test('keeps optional disconnected bridge visible without startup health penalty', () => {
     const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
       path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
@@ -642,12 +649,45 @@ describe('hm-health-snapshot', () => {
     });
 
     expect(snapshot.bridge.mode).toBe('connecting');
+    expect(snapshot.bridge.required).toBe(false);
+    expect(snapshot.status.level).toBe('ok');
+    expect(snapshot.status.label).toBe('OK');
+    expect(snapshot.status.score).toBe(100);
+    expect(snapshot.status.warnings).not.toContain('bridge_enabled_not_connected:disconnected');
+    expect(snapshot.status.penalties).not.toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+    expect(renderStartupHealthMarkdown(snapshot)).toContain('Probe: optional offline; penalty=0');
+  });
+
+  test('degrades startup health when bridge is required but not connected', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      bridgeStatus: {
+        enabled: true,
+        required: true,
+        configured: true,
+        running: false,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+      },
+    });
+
+    expect(snapshot.bridge.mode).toBe('connecting');
+    expect(snapshot.bridge.required).toBe(true);
     expect(snapshot.status.level).toBe('warn');
     expect(snapshot.status.label).toBe('WARN');
     expect(snapshot.status.score).toBe(85);
     expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:disconnected');
     expect(snapshot.status.penalties).toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
-    expect(renderStartupHealthMarkdown(snapshot)).toContain('Probe: degraded (enabled but disconnected); penalty=15');
+    expect(renderStartupHealthMarkdown(snapshot)).toContain('Probe: degraded (required but disconnected); penalty=15');
   });
 
   test('degrades startup health when memory consistency detects drift', () => {

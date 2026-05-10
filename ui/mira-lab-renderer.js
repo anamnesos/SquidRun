@@ -3,15 +3,40 @@
 
   const EXPORT_CHANNEL = 'mira:lab-export';
   const PROMPT_REPLY_CHANNEL = 'mira:lab-prompt-reply';
+  const RENDERER_DRIVE_CHANNEL = 'mira:lab-renderer-drive';
+  const RENDERER_DRIVE_RESULT_CHANNEL = 'mira:lab-renderer-drive-result';
   const sessionId = `mira-lab-${new Date().toISOString().slice(0, 10)}`;
 
+  function getBridgeApi() {
+    return window.squidrunAPI || window.squidrun || {};
+  }
+
   function bridgeInvoke(channel, payload) {
-    const api = window.squidrunAPI || window.squidrun || {};
+    const api = getBridgeApi();
     const invoke = typeof api.invoke === 'function'
       ? api.invoke.bind(api)
       : (api.ipc && typeof api.ipc.invoke === 'function' ? api.ipc.invoke.bind(api.ipc) : null);
     if (!invoke) return Promise.resolve({ ok: false, reason: 'bridge_unavailable' });
     return invoke(channel, payload);
+  }
+
+  function bridgeOn(channel, listener) {
+    const api = getBridgeApi();
+    const on = typeof api.on === 'function'
+      ? api.on.bind(api)
+      : (api.ipc && typeof api.ipc.on === 'function' ? api.ipc.on.bind(api.ipc) : null);
+    if (!on) return null;
+    return on(channel, listener);
+  }
+
+  function bridgeSend(channel, payload) {
+    const api = getBridgeApi();
+    const send = typeof api.send === 'function'
+      ? api.send.bind(api)
+      : (api.ipc && typeof api.ipc.send === 'function' ? api.ipc.send.bind(api.ipc) : null);
+    if (!send) return false;
+    send(channel, payload);
+    return true;
   }
 
   function lineClass(role) {
@@ -22,7 +47,7 @@
 
   function appendLine(role, text, extraClass) {
     const transcript = document.getElementById('miraLabTranscript');
-    if (!transcript) return;
+    if (!transcript) return null;
     const line = document.createElement('p');
     const classes = ['mira-lab-line', lineClass(role)];
     if (extraClass) classes.push(extraClass);
@@ -30,32 +55,32 @@
     line.textContent = text;
     transcript.appendChild(line);
     transcript.scrollTop = transcript.scrollHeight;
+    return line;
   }
 
   function appendBlockedBanner(reason) {
-    appendLine('mira', `Mira Lab reply unavailable: ${reason || 'unknown'}`, 'mira-lab-blocked');
+    return appendLine('mira', `Mira Lab reply unavailable: ${reason || 'unknown'}`, 'mira-lab-blocked');
   }
 
   function appendQuarantinedReply(text) {
-    appendLine('mira', `[MIRA LAB OUTPUT - GATE FAILED] ${text}`, 'mira-lab-gate-failed');
+    return appendLine('mira', `[MIRA LAB OUTPUT - GATE FAILED] ${text}`, 'mira-lab-gate-failed');
   }
 
   function renderPromptReply(result) {
-    if (!result) return;
+    if (!result) return null;
     const hint = result.visible_render_hint || {};
     if (hint.kind === 'clean_reply' && hint.text) {
-      appendLine('mira', hint.text);
+      return appendLine('mira', hint.text);
     } else if (hint.kind === 'gate_failed_quarantined' && hint.text) {
-      appendQuarantinedReply(hint.text);
+      return appendQuarantinedReply(hint.text);
     } else if (hint.kind === 'blocked_banner') {
-      appendBlockedBanner(hint.banner ? hint.banner.replace(/^Mira Lab reply unavailable:\s*/, '') : (result.gates && result.gates.reason_class) || 'unknown');
+      return appendBlockedBanner(hint.banner ? hint.banner.replace(/^Mira Lab reply unavailable:\s*/, '') : (result.gates && result.gates.reason_class) || 'unknown');
     } else if (result.decision === 'pass' && result.reply && result.reply.text) {
-      appendLine('mira', result.reply.text);
+      return appendLine('mira', result.reply.text);
     } else if (result.decision === 'fail' && result.raw_reply && result.raw_reply.text) {
-      appendQuarantinedReply(result.raw_reply.text);
-    } else {
-      appendBlockedBanner((result.gates && result.gates.reason_class) || result.reason || 'unknown');
+      return appendQuarantinedReply(result.raw_reply.text);
     }
+    return appendBlockedBanner((result.gates && result.gates.reason_class) || result.reason || 'unknown');
   }
 
   function updateEvalPacket(packet) {
@@ -165,9 +190,109 @@
     draw();
   }
 
+  function classListSnapshot(line) {
+    if (!line || !line.classList) return [];
+    return Array.from(line.classList);
+  }
+
+  // External-drive entry: main process sends `mira:lab-renderer-drive` with
+  // {correlationId, prompt, requesterPane, speakerRole}. We run the same
+  // IPC flow the form uses, capture the actually-appended DOM line, and
+  // report `rendered_text + dom_classes` back so the verifier can prove the
+  // reply visibly rendered (not just that the IPC envelope existed).
+  async function handleExternalDrive(payload = {}) {
+    const correlationId = payload && typeof payload.correlationId === 'string' ? payload.correlationId : null;
+    if (!correlationId) return;
+    const prompt = String(payload.prompt || '').trim();
+    const requesterPane = payload.requesterPane || null;
+    const speakerRole = payload.speakerRole || USER_SPEAKER_ROLE;
+    const driveSessionId = typeof payload.sessionId === 'string' && payload.sessionId
+      ? payload.sessionId
+      : sessionId;
+
+    const respond = (extras) => {
+      bridgeSend(RENDERER_DRIVE_RESULT_CHANNEL, { correlationId, ...extras });
+    };
+
+    if (!prompt) {
+      respond({
+        ok: false,
+        error: 'empty_prompt',
+        rendered_text: null,
+        dom_classes: [],
+      });
+      return;
+    }
+
+    let promptLine = null;
+    try {
+      promptLine = appendLine(speakerRole, prompt);
+    } catch (err) {
+      respond({ ok: false, error: 'append_prompt_failed', error_message: err && err.message ? err.message : String(err) });
+      return;
+    }
+
+    let result;
+    try {
+      result = await bridgeInvoke(PROMPT_REPLY_CHANNEL, {
+        sessionId: driveSessionId,
+        prompt,
+        speakerRole,
+        requesterPane,
+      });
+    } catch (err) {
+      respond({
+        ok: false,
+        error: 'prompt_reply_invoke_failed',
+        error_message: err && err.message ? err.message : String(err),
+        prompt_line_classes: classListSnapshot(promptLine),
+      });
+      return;
+    }
+
+    let replyLine = null;
+    try {
+      replyLine = renderPromptReply(result || {});
+    } catch (err) {
+      respond({
+        ok: false,
+        error: 'render_failed',
+        error_message: err && err.message ? err.message : String(err),
+        envelope: result || null,
+        prompt_line_classes: classListSnapshot(promptLine),
+      });
+      return;
+    }
+
+    const renderedText = replyLine && typeof replyLine.textContent === 'string'
+      ? replyLine.textContent
+      : null;
+    respond({
+      ok: true,
+      rendered_text: renderedText,
+      dom_classes: classListSnapshot(replyLine),
+      prompt_line_classes: classListSnapshot(promptLine),
+      decision: (result && result.decision) || null,
+      gates: (result && result.gates) || null,
+      reason_class: (result && result.gates && result.gates.reason_class) || null,
+      requester_pane: (result && result.requester_envelope && result.requester_envelope.requester_pane) || requesterPane || null,
+      requester_dispatch: (result && result.requester_dispatch) || null,
+      requester_envelope: (result && result.requester_envelope) || null,
+      session_id: driveSessionId,
+    });
+  }
+
+  function setupExternalDriveListener() {
+    bridgeOn(RENDERER_DRIVE_CHANNEL, (payload) => {
+      // Fire-and-forget; respond via separate send channel keyed by correlationId.
+      handleExternalDrive(payload || {});
+    });
+  }
+
   window.addEventListener('DOMContentLoaded', () => {
     setupField();
     setupComposer();
+    setupExternalDriveListener();
     bridgeInvoke(EXPORT_CHANNEL, { sessionId }).then((result) => updateEvalPacket(result.eval_packet));
   });
 }());

@@ -119,6 +119,7 @@ const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-h
 const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
 const { executeAppControlAction } = require('./app-control-service');
+const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
@@ -3023,6 +3024,10 @@ class SquidRunApp {
                 getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
                 restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload),
                 openAppWindow: (windowKey, openOptions = {}) => this.openAppWindow(windowKey, openOptions),
+                driveMiraLabRenderer: (drivePayload = {}) => miraLabHandlersModule.driveMiraLabRenderer(drivePayload, {
+                  ipcMain,
+                  getMiraLabWindow: () => this.getAppWindow('mira-lab'),
+                }),
               },
               data.message.action,
               data.message.payload || {}
