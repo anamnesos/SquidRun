@@ -85,3 +85,9 @@ Before restart-ready or live Mira voice work, focused tests must prove:
   - P3: Coworker bug-fix reply (validating anger and moving to fix).
   - P4: "Got it. Smaller." (simple human acknowledgment).
 - **Restart Gate:** Live Electron requires a main-process restart to pick up the `text-model-attachment-v1.js` changes; module CLI has already proven the path.
+
+## Session 354 Gate Recovery Lessons
+
+- **Gate Recovery Mechanism:** When Mira's output fails a gate (language, attachment, leakage), the visible UI and transcript must show a vetted, safe fallback string (e.g., "Ask it differently."). The raw violating model text must NOT reach the visible surface; it is strictly quarantined to the audit log (`reply_text` and `reply_hash`) for forensics. The transcript records `fallback_used: true` and a `quarantined_reply_hash`.
+- **Degraded Engine:** If the engine fails due to missing API keys or unconfigured adapters, it must remain a `blocked_banner`. Do not inject a conversational fallback for engine-level disconnections.
+- **Prompt vs. Gates:** Do not use pressure or adjective prompting (e.g., "beat of friction," "recoil") to stop sycophancy or compliance theater. Rely on post-hoc classifier gates (like the sycophancy gate) to intercept instant-compliance failures. This prevents the model from attempting to "perform" the requested adjectives instead of simply talking.
