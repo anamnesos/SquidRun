@@ -197,6 +197,83 @@ describe('startup-ai-briefing', () => {
     }
   });
 
+  test('generateStartupBriefing skips gracefully when Anthropic key is intentionally absent', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-skip-'));
+    const outputPath = path.join(tempRoot, 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
+
+    try {
+      const transcriptPath = path.join(tempRoot, 'session-1.jsonl');
+      fs.writeFileSync(transcriptPath, JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: 'unused transcript' }] },
+      }));
+
+      const fetchImpl = jest.fn();
+
+      const result = await generateStartupBriefing({
+        projectsDir: tempRoot,
+        projectRoot: tempRoot,
+        outputPath,
+        statusPath,
+        env: { OPENAI_API_KEY: 'sk-test-openai-fake' },
+        fetchImpl,
+      });
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        skipped: true,
+        skipReason: 'anthropic_provider_disabled',
+        fallbackAvailable: true,
+      }));
+
+      const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+      expect(status).toEqual(expect.objectContaining({
+        ok: true,
+        skipped: true,
+        skipReason: 'anthropic_provider_disabled',
+        fallbackAvailable: true,
+      }));
+      expect(JSON.stringify(status)).not.toMatch(/sk-test-openai-fake/);
+      expect(JSON.stringify(status)).not.toMatch(/ANTHROPIC_API_KEY/);
+      expect(fs.existsSync(outputPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('injected briefing emits a calm skip note (not UNTRUSTED prose) when status is skipped', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-skip-inject-'));
+    const outputPath = path.join(tempRoot, 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
+
+    try {
+      fs.writeFileSync(outputPath, '# AI Startup Briefing\n\n- Stale prose must not survive a skipped briefing.\n');
+      fs.writeFileSync(statusPath, JSON.stringify({
+        ok: true,
+        skipped: true,
+        skipReason: 'anthropic_provider_disabled',
+        generatedAt: '2026-05-10T18:00:00.000Z',
+      }));
+
+      const guarded = readStartupBriefingForInjection({
+        outputPath,
+        statusPath,
+        nowMs: Date.parse('2026-05-10T18:05:00.000Z'),
+      });
+
+      expect(guarded).toContain('AI briefing skipped: anthropic_provider_disabled');
+      expect(guarded).toContain('non-blocking');
+      expect(guarded).not.toContain('UNTRUSTED AI BRIEFING');
+      expect(guarded).not.toContain('failed');
+      expect(guarded).not.toContain('Stale prose must not survive');
+      expect(guarded).not.toContain('# AI Startup Briefing');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('omits old briefing prose and scopes missing Anthropic key wording to the startup process when latest generation failed', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-untrusted-'));
     const outputPath = path.join(tempRoot, 'ai-briefing.md');

@@ -98,6 +98,24 @@ function formatStartupBriefingFailureReason(reason) {
   return text;
 }
 
+function detectIntentionallyDisabledAnthropic(options = {}) {
+  const env = options.env && typeof options.env === 'object' ? options.env : process.env;
+  const apiKey = toText(options.apiKey, '') || toText(env.ANTHROPIC_API_KEY, '');
+  if (apiKey) return null;
+  const hasOpenAi = Boolean(toText(env.OPENAI_API_KEY, ''));
+  const hasGoogle = Boolean(toText(env.GOOGLE_API_KEY, '') || toText(env.GEMINI_API_KEY, ''));
+  return {
+    skipped: true,
+    skipReason: 'anthropic_provider_disabled',
+    fallbackAvailable: hasOpenAi || hasGoogle,
+  };
+}
+
+function formatSkippedBriefingNote(status = {}) {
+  const reason = toText(status?.skipReason, 'provider_disabled');
+  return `AI briefing skipped: ${reason} (intentional, non-blocking); old ai-briefing.md omitted so historical prose cannot create live blockers.`;
+}
+
 function normalizeAppSessionScopeId(value) {
   const text = toText(value, '').toLowerCase();
   if (!text) return null;
@@ -292,7 +310,10 @@ function readStartupBriefingForInjection(options = {}) {
     : null;
 
   const notes = [];
-  if (status?.ok === false) {
+  if (status?.skipped === true) {
+    notes.push(formatSkippedBriefingNote(status));
+    body = '';
+  } else if (status?.ok === false) {
     const reason = formatStartupBriefingFailureReason(status.error || status.reason);
     notes.push(`UNTRUSTED AI BRIEFING: latest generation failed (${reason}); old ai-briefing.md omitted so historical prose cannot create live blockers.`);
     body = '';
@@ -949,6 +970,38 @@ async function generateStartupBriefing(options = {}) {
   // briefing markdown.
   writeMiraPresenceRuntimeStateSummary({ ...options, generatedAt });
 
+  const disabledProvider = detectIntentionallyDisabledAnthropic(options);
+  if (disabledProvider) {
+    writeStatusFile(statusPath, {
+      ok: true,
+      skipped: true,
+      skipReason: disabledProvider.skipReason,
+      fallbackAvailable: disabledProvider.fallbackAvailable,
+      generatedAt,
+      outputPath,
+      transcriptCount: transcriptFiles.length,
+      transcriptFiles,
+      promptChars: transcriptCorpus.length,
+      source: toText(options.source, 'manual'),
+      liveSnapshotOk: liveSnapshot?.ok === true,
+      liveOpenPositionCount: Array.isArray(liveSnapshot?.positions) ? liveSnapshot.positions.length : 0,
+      canonicalSourceCount: canonicalSources.length,
+      canonicalSourceFiles: canonicalSources.map((source) => source.relativePath),
+    });
+    return {
+      ok: true,
+      skipped: true,
+      skipReason: disabledProvider.skipReason,
+      fallbackAvailable: disabledProvider.fallbackAvailable,
+      generatedAt,
+      outputPath,
+      statusPath,
+      transcriptFiles,
+      promptChars: transcriptCorpus.length,
+      liveSnapshot,
+    };
+  }
+
   try {
     const generatedBody = await requestStartupBriefing(transcriptCorpus, {
       ...options,
@@ -1039,6 +1092,8 @@ module.exports = {
     formatRecentCommsWindow,
     resolveCurrentSessionScopeId,
     formatStartupBriefingFailureReason,
+    detectIntentionallyDisabledAnthropic,
+    formatSkippedBriefingNote,
     requestStartupBriefing,
     resolveLiveAccountSnapshot,
     formatLiveSnapshotBlock,
