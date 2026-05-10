@@ -130,25 +130,36 @@ function exitCodeFor(decision) {
   return 4;
 }
 
-function flushAndExit(code) {
-  // Windows libuv occasionally fires
-  // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING) ... async.c:76"
-  // when SQLite/dotenv handles close concurrently with process.exit. Drain
-  // stdout, defer the exit one tick so handles close cleanly, and fall back
-  // to a hard exit if the runtime stalls.
-  const finish = () => {
-    setImmediate(() => process.exit(code));
-  };
+function closeKnownStores() {
+  // node:sqlite (the EvidenceLedger driver) keeps libuv async handles alive
+  // through internal worker state. Calling process.exit while those handles
+  // are mid-close races with libuv's UV_HANDLE_CLOSING flag and trips
+  // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file
+  // src\\win\\async.c, line 76" on Windows. Close every cached store we
+  // know about and let Node shut down naturally (process.exitCode), with a
+  // hard process.exit fallback only if a rogue handle never closes.
+  const closers = [];
   try {
-    if (process.stdout && typeof process.stdout.write === 'function') {
-      const drained = process.stdout.write('');
-      if (drained === false && typeof process.stdout.once === 'function') {
-        process.stdout.once('drain', finish);
-        return;
-      }
+    const commsJournal = require(path.join(PROJECT_ROOT, 'ui', 'modules', 'main', 'comms-journal'));
+    if (typeof commsJournal.closeCommsJournalStores === 'function') {
+      closers.push(() => commsJournal.closeCommsJournalStores());
     }
-  } catch (_) { /* fall through */ }
-  finish();
+  } catch (_) { /* module not loaded; nothing to close */ }
+  for (const close of closers) {
+    try { close(); } catch (_) { /* best-effort */ }
+  }
+}
+
+function flushAndExit(code) {
+  closeKnownStores();
+  process.exitCode = Number.isFinite(code) ? code : 0;
+  const fallback = setTimeout(() => {
+    // Last-resort hard exit if a libuv handle never closes (e.g. node:sqlite
+    // worker still mid-teardown). Two seconds is enough headroom for normal
+    // shutdown; longer waits just defeat the purpose of the verifier.
+    process.exit(process.exitCode);
+  }, 2000);
+  if (typeof fallback.unref === 'function') fallback.unref();
 }
 
 async function main() {

@@ -530,6 +530,21 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
       .toBe(null);
   });
 
+  // ARCH #37/#41 product-facing gate: the angry-friction prompt is blocked at
+  // the model-engine layer (decision='blocked', reason_class='reply_engine_degraded',
+  // language_gate='empty_reply', visible_reply=null). The classifier accepts
+  // the expected coworker pass-shape, but the engine returns nothing for that
+  // prompt class. This deliberately-failing test keeps the typed-panel
+  // acceptance lane visibly INCOMPLETE in CI output until the engine path is
+  // fixed. When the live verifier reports all four prompts pass and this
+  // value is flipped to 'complete', test.failing inverts and forces an
+  // explicit close-out, surfacing the lane completion to whoever lands the
+  // engine fix.
+  test.failing('typed-panel acceptance lane is COMPLETE for the four ordinary prompts including angry-friction (currently INCOMPLETE: reply_engine_degraded blocks angry-friction)', () => {
+    const angryFrictionLaneStatus = 'incomplete';
+    expect(angryFrictionLaneStatus).toBe('complete');
+  });
+
   test('cold-start continuity: empty thread context still drives one model call with a concrete reply', async () => {
     const { result, fetchImpl } = await runScenario({
       promptText: 'what are we doing with Mira?',
