@@ -339,6 +339,80 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
+  test('BLOCKED (empty model output): engine ran, returned empty text — degrades cleanly with NO raw API payload anywhere', async () => {
+    // Locks the live failure seen post-restart on the angry-caps prompt:
+    // model_attachment.live_model_called=true, reply.count=0, surface.decision=degraded.
+    // Confirms the gate-recovery patch correctly routes this to blocked /
+    // reply_engine_degraded with no fallback fabrication and no raw payload
+    // surfacing into audit, transcript, envelope, or render hint.
+    const projectRoot = tempProject();
+    const fakeSurface = jest.fn().mockResolvedValue({
+      ui_surface_v0: {
+        reply: { count: 0, text: null, source: 'none', model: null },
+        local_text_session_gate: {
+          ran: true,
+          ok: true,
+          decision: 'accepted_local_text_only',
+          status: 'local_text_session_ready',
+          reasons: [],
+          session_id: 'local-text-session-v0:empty-text-fixture',
+          output_hash: 'sha256:fixture',
+        },
+        model_attachment: {
+          enabled: true,
+          live_model_called: true,
+          model: 'gpt-5.5',
+          visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+        },
+        decision: 'degraded',
+      },
+      validation_report: { decision: 'degraded_no_model_response', status: 'model_unavailable' },
+    });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'the context just failed and I had to clean up manually AGAIN.',
+      sessionId: 'unit-empty-text-degrade',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('blocked');
+    expect(result.gates.reason_class).toBe('reply_engine_degraded');
+    expect(result.gates.degraded).toBe(true);
+    expect(result.gates.fallback_used).toBe(false);
+    expect(result.gates.fallback_blocked_reason).toBeNull();
+    expect(result.reply).toBeNull();
+    expect(result.raw_reply).toBeNull();
+    expect(result.visible_render_hint.kind).toBe('blocked_banner');
+    expect(result.visible_render_hint.text).toBeUndefined();
+
+    // Envelope: labelled diagnostic, no fabricated visible text.
+    expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][BLOCKED]');
+    expect(result.requester_envelope).toContain('reply="<no reply>"');
+
+    // Transcript: prompt-only — replyTurn must NOT be appended for the
+    // empty-model-output degrade path.
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-empty-text-degrade'));
+    expect(transcriptEntries).toHaveLength(1);
+    expect(transcriptEntries[0].speaker_role).toBe('james');
+
+    // Audit: raw payload null on both raw and visible fields.
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].decision).toBe('blocked');
+    expect(auditEntries[0].reply_text).toBeNull();
+    expect(auditEntries[0].reply_hash).toBeNull();
+    expect(auditEntries[0].visible_reply_text).toBeNull();
+    expect(auditEntries[0].fallback_used).toBe(false);
+    expect(auditEntries[0].gates.language_gate.violations).toContain('empty_reply');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('BLOCKED: degraded reply engine emits blocked banner; never substitutes prose', async () => {
     const projectRoot = tempProject();
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(null, { degraded: true, modelEnabled: false });
