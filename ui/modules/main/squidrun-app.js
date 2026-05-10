@@ -3022,6 +3022,7 @@ class SquidRunApp {
                 getAppWindows: () => this.getAppWindows(),
                 getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
                 restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload),
+                openAppWindow: (windowKey, openOptions = {}) => this.openAppWindow(windowKey, openOptions),
               },
               data.message.action,
               data.message.payload || {}

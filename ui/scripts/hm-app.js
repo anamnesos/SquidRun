@@ -15,13 +15,14 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
   console.log('Usage: node hm-app.js <command> [options]');
-  console.log('Commands: reload-renderers, restart-telegram-poller');
+  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
   console.log(`  --timeout <ms>              Response timeout (default: ${DEFAULT_RESPONSE_TIMEOUT_MS})`);
   console.log('Examples:');
   console.log('  node hm-app.js reload-renderers');
+  console.log('  node hm-app.js open-mira-lab');
 }
 
 function parseArgs(argv) {
@@ -67,6 +68,7 @@ function normalizeCommand(command) {
   if (!normalized) return null;
   if (normalized === 'reload' || normalized === 'reload-renderer') return 'reload-renderers';
   if (normalized === 'restart-telegram' || normalized === 'reload-telegram-poller') return 'restart-telegram-poller';
+  if (normalized === 'mira-lab' || normalized === 'open-mira' || normalized === 'mira-lab-open') return 'open-mira-lab';
   return normalized;
 }
 
@@ -180,7 +182,7 @@ async function main() {
     process.exit(1);
   }
 
-  const allowedCommands = new Set(['reload-renderers', 'restart-telegram-poller']);
+  const allowedCommands = new Set(['reload-renderers', 'restart-telegram-poller', 'open-mira-lab']);
   if (!allowedCommands.has(command)) {
     console.error(`Unsupported command: ${command}`);
     usage();

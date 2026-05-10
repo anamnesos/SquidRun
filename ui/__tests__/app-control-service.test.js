@@ -113,4 +113,61 @@ describe('app-control-service', () => {
       reason: 'restart_unavailable',
     }));
   });
+
+  test('open-mira-lab opens or focuses the Mira Lab window via openAppWindow without restart', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'mira-lab',
+      title: 'Mira Lab',
+      status: 'reused_existing',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'open-mira-lab');
+
+    expect(openAppWindow).toHaveBeenCalledWith('mira-lab', {});
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-mira-lab',
+      windowKey: 'mira-lab',
+      status: 'reused_existing',
+    }));
+    expect(result.note).toMatch(/without restarting the Electron main process/i);
+  });
+
+  test('open-mira-lab accepts the legacy aliases and surfaces window-factory failure reasons', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: false,
+      windowKey: 'mira-lab',
+      reason: 'mira_lab_window_factory_returned_no_window',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'mira-lab');
+
+    expect(openAppWindow).toHaveBeenCalledWith('mira-lab', {});
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'open-mira-lab',
+      reason: 'mira_lab_window_factory_returned_no_window',
+    }));
+  });
+
+  test('open-mira-lab reports unavailable when the app does not expose openAppWindow', () => {
+    const result = executeAppControlAction({}, 'open-mira-lab');
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'open-mira-lab',
+      reason: 'open_window_unavailable',
+    }));
+  });
+
+  test('open-mira-lab catches openAppWindow failures and reports them without throwing', async () => {
+    const openAppWindow = jest.fn(() => { throw new Error('window registry unavailable'); });
+    const result = await executeAppControlAction({ openAppWindow }, 'open-mira-lab');
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'open-mira-lab',
+      reason: 'open_window_failed',
+      error: 'window registry unavailable',
+    }));
+  });
 });
