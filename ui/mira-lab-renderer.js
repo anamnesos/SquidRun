@@ -1,7 +1,6 @@
 (function () {
   'use strict';
 
-  const TURN_CHANNEL = 'mira:lab-turn';
   const EXPORT_CHANNEL = 'mira:lab-export';
   const PROMPT_REPLY_CHANNEL = 'mira:lab-prompt-reply';
   const sessionId = `mira-lab-${new Date().toISOString().slice(0, 10)}`;
@@ -13,13 +12,6 @@
       : (api.ipc && typeof api.ipc.invoke === 'function' ? api.ipc.invoke.bind(api.ipc) : null);
     if (!invoke) return Promise.resolve({ ok: false, reason: 'bridge_unavailable' });
     return invoke(channel, payload);
-  }
-
-  function targetAgents(value) {
-    return String(value || '')
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter((item) => ['architect', 'builder', 'oracle'].includes(item));
   }
 
   function lineClass(role) {
@@ -72,72 +64,41 @@
     evalNode.textContent = JSON.stringify(packet || {}, null, 2);
   }
 
-  function maybeRevealRouting() {
-    try {
-      const params = new URLSearchParams(window.location.search || '');
-      if (params.get('diagnostics') === '1' || params.get('routing') === '1') {
-        const routing = document.getElementById('miraLabRouting');
-        if (routing) routing.hidden = false;
-      }
-    } catch (_e) {
-      // best-effort; default-hidden routing is the intended UI
-    }
-  }
+  // Mira Lab UI is James <-> Mira ONLY. Any agent-side probe of Mira (Architect
+  // only) lives outside this UI in CLI/module diagnostics (e.g.
+  // ui/scripts/hm-mira-lab-prompt.js). No UI control selects or hints at agent
+  // speakers; user sends always carry speakerRole='james'.
+  const USER_SPEAKER_ROLE = 'james';
 
   function setupComposer() {
     const form = document.getElementById('miraLabComposer');
     const input = document.getElementById('miraLabInput');
-    const speaker = document.getElementById('miraLabSpeaker');
-    const targets = document.getElementById('miraLabTargets');
     const state = document.getElementById('miraLabState');
-    if (!form || !input || !speaker) return;
+    if (!form || !input) return;
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const text = input.value.trim();
       if (!text) return;
-      const speakerRole = speaker.value;
-      const targetAgentsValue = targetAgents(targets && targets.value);
-      appendLine(speakerRole, text);
+      appendLine(USER_SPEAKER_ROLE, text);
       input.value = '';
-      if (state) state.textContent = 'recording transcript / diagnostics hidden';
-      const expectsMiraReply = speakerRole === 'james' || speakerRole === 'architect' || speakerRole === 'builder' || speakerRole === 'oracle';
-      if (expectsMiraReply) {
-        // Skip TURN_CHANNEL when expecting a reply: the prompt-reply path records both the
-        // prompt turn and Mira's reply turn in one transcript write. Calling both would
-        // duplicate the prompt row.
-        if (state) state.textContent = 'awaiting Mira reply / diagnostics hidden';
-        const replyResult = await bridgeInvoke(PROMPT_REPLY_CHANNEL, {
-          sessionId,
-          prompt: text,
-          speakerRole,
-          requesterPane: speakerRole === 'james' ? null : speakerRole,
-        });
-        renderPromptReply(replyResult);
-        if (state) {
-          if (!replyResult || (replyResult.ok === false && !replyResult.decision)) {
-            state.textContent = `Mira Lab reply unavailable: ${(replyResult && replyResult.reason) || 'bridge_unavailable'}`;
-          } else if (replyResult.decision === 'pass') {
-            state.textContent = 'Mira reply rendered / gates passed';
-          } else if (replyResult.decision === 'fail') {
-            state.textContent = 'Mira reply quarantined / gate failed';
-          } else if (replyResult.decision === 'blocked') {
-            state.textContent = `Mira Lab reply blocked: ${(replyResult.gates && replyResult.gates.reason_class) || replyResult.reason || 'unknown'}`;
-          }
-        }
-        return;
-      }
-      // mira speaking out — keep existing turn-record path (no reply expected)
-      const result = await bridgeInvoke(TURN_CHANNEL, {
+      if (state) state.textContent = 'awaiting Mira reply / diagnostics hidden';
+      const replyResult = await bridgeInvoke(PROMPT_REPLY_CHANNEL, {
         sessionId,
-        speakerRole,
-        targetAgents: targetAgentsValue,
-        text,
+        prompt: text,
+        speakerRole: USER_SPEAKER_ROLE,
+        requesterPane: null,
       });
-      updateEvalPacket(result.eval_packet);
+      renderPromptReply(replyResult);
       if (state) {
-        state.textContent = result.ok
-          ? 'transcript recorded / diagnostics hidden'
-          : `lab bridge ${result.reason || 'unavailable'}`;
+        if (!replyResult || (replyResult.ok === false && !replyResult.decision)) {
+          state.textContent = `Mira Lab reply unavailable: ${(replyResult && replyResult.reason) || 'bridge_unavailable'}`;
+        } else if (replyResult.decision === 'pass') {
+          state.textContent = 'Mira reply rendered / gates passed';
+        } else if (replyResult.decision === 'fail') {
+          state.textContent = 'Mira reply quarantined / gate failed';
+        } else if (replyResult.decision === 'blocked') {
+          state.textContent = `Mira Lab reply blocked: ${(replyResult.gates && replyResult.gates.reason_class) || replyResult.reason || 'unknown'}`;
+        }
       }
     });
   }
@@ -206,7 +167,6 @@
 
   window.addEventListener('DOMContentLoaded', () => {
     setupField();
-    maybeRevealRouting();
     setupComposer();
     bridgeInvoke(EXPORT_CHANNEL, { sessionId }).then((result) => updateEvalPacket(result.eval_packet));
   });

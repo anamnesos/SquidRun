@@ -142,13 +142,6 @@ body {
   min-height: 96px;
 }
 
-.mira-lab-routing {
-  display: grid;
-  grid-template-columns: minmax(110px, 150px) minmax(180px, 280px);
-  gap: 12px;
-  align-items: end;
-}
-
 .mira-lab-input-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -156,18 +149,7 @@ body {
   align-items: end;
 }
 
-.mira-lab-route {
-  display: grid;
-  gap: 6px;
-  color: var(--lab-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.mira-lab-route select,
-.mira-lab-composer textarea,
-.mira-lab-targets {
+.mira-lab-composer textarea {
   width: 100%;
   border: 0;
   border-bottom: 1px solid rgba(237, 247, 243, 0.28);
@@ -175,26 +157,12 @@ body {
   color: var(--lab-ink);
   font: inherit;
   outline: none;
-}
-
-.mira-lab-route select {
-  min-height: 42px;
-  color: var(--lab-ink);
-}
-
-.mira-lab-composer textarea {
   min-height: 64px;
   max-height: 180px;
   resize: vertical;
   padding: 10px 0;
   font-size: 18px;
   line-height: 1.35;
-}
-
-.mira-lab-targets {
-  min-height: 42px;
-  padding: 8px 0;
-  color: var(--lab-muted);
 }
 
 .mira-lab-send {
@@ -208,9 +176,7 @@ body {
 }
 
 .mira-lab-send:focus-visible,
-.mira-lab-route select:focus-visible,
-.mira-lab-composer textarea:focus-visible,
-.mira-lab-targets:focus-visible {
+.mira-lab-composer textarea:focus-visible {
   box-shadow: 0 8px 0 -6px rgba(154, 240, 189, 0.9);
 }
 
@@ -234,16 +200,8 @@ body {
     padding: 18px;
   }
 
-  .mira-lab-routing {
-    grid-template-columns: 1fr;
-  }
-
   .mira-lab-input-row {
     grid-template-columns: 1fr;
-  }
-
-  .mira-lab-targets {
-    min-height: 36px;
   }
 }
 
