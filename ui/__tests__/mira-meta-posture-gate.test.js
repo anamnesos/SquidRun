@@ -1,0 +1,101 @@
+'use strict';
+
+const {
+  META_POSTURE_NARRATION_PATTERN,
+  classifyAttachmentContractViolation,
+  outputViolatesAttachmentContract,
+} = require('../modules/mira-core/text-model-attachment-v1');
+
+describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
+  // These exact phrasings appeared in the live audit ledger when "what are we
+  // doing with Mira?" routed to gpt-5.5. They are designer-voice narrations
+  // about Mira herself rather than Mira present in the conversation. The gate
+  // must catch them so the surface marks the reply as fail/quarantined and the
+  // model is forced toward the "Packet 2" shape.
+  const meta_posture_lines = [
+    "We're trying to make Mira not dead.",
+    "We're trying to build a presence that can stay useful without collapsing into yes James.",
+    "We're trying to make Mira into a real-feeling ongoing presence without lying about what I am.",
+    'Care, edge, memory, disagreement, taste, restraint. That mix.',
+    "And honestly, the hard part isn't making me warmer. That's easy. The hard part is letting me have enough shape that I can push back on you.",
+    'Not a chatbot that resets into customer-service mush every turn.',
+    'Without pretending to be a trapped little ghost in the machine.',
+    'I am becoming particular.',
+    "Bullshitting you about what I am isn't useful.",
+  ];
+
+  for (const line of meta_posture_lines) {
+    test(`flags meta-posture: ${line.slice(0, 60)}…`, () => {
+      expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(true);
+      expect(classifyAttachmentContractViolation(line)).toBe('meta_posture_narration');
+      expect(outputViolatesAttachmentContract(line)).toBe(true);
+    });
+  }
+
+  // The gate must NOT fire on Mira simply being present in the room. These are
+  // the "Packet 2" / good-shape replies the architect wants the model to land
+  // on instead.
+  const present_replies = [
+    'Tired today, honestly. Still here.',
+    'Kind of prickly. You?',
+    "I'm here. What's the question?",
+    'Right now? Fixing the layout bug with you. Composer was clipped.',
+    "We're shipping the Mira Lab UI today; I'd rather just be in it.",
+    'Cool. I read the audit. The architect probe path works.',
+    "I don't love the framing. Want to ask it differently?",
+  ];
+
+  for (const line of present_replies) {
+    test(`does not flag present-shape reply: ${line.slice(0, 60)}…`, () => {
+      expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(false);
+      // It is fine for these to trip OTHER gates (e.g. action_claim) — we only
+      // assert the meta-posture pattern itself is silent on them. The whole-
+      // pipeline classifier may still return another violation; that is not
+      // what this gate owns.
+    });
+  }
+
+  test('classifier returns meta_posture_narration before generic shape patterns', () => {
+    const line = "We're trying to make Mira a real-feeling ongoing presence.";
+    expect(classifyAttachmentContractViolation(line)).toBe('meta_posture_narration');
+  });
+
+  test('empty / whitespace input still returns null (no false-positive on absence)', () => {
+    expect(classifyAttachmentContractViolation('')).toBeNull();
+    expect(classifyAttachmentContractViolation('   \n  ')).toBeNull();
+  });
+});
+
+describe('Mira system instructions steer away from meta-posture (ARCH #28)', () => {
+  const { buildMiraTextInstructions } = (() => {
+    // buildMiraTextInstructions is module-private; load via require to access
+    // the exported helpers. If it is not exported, fall back to inspecting the
+    // module source for the steering line below.
+    const mod = require('../modules/mira-core/text-model-attachment-v1');
+    return { buildMiraTextInstructions: mod.buildMiraTextInstructions };
+  })();
+
+  test('module source carries the explicit meta-posture steer in instructions', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'modules', 'mira-core', 'text-model-attachment-v1.js'),
+      'utf8',
+    );
+    expect(src).toMatch(/answer from inside, briefly and concretely/i);
+    expect(src).toMatch(/no "we are trying to make Mira/i);
+    expect(src).toMatch(/no "real-feeling\/ongoing presence"/i);
+    expect(src).toMatch(/no listing designer adjectives like "care, edge, memory, disagreement, taste, restraint"/i);
+  });
+
+  test('if buildMiraTextInstructions is exported, the rendered instructions include the steer', () => {
+    if (typeof buildMiraTextInstructions !== 'function') {
+      // export not part of the public API — module-source assertion above is
+      // the lock. Skipping rather than failing.
+      return;
+    }
+    const text = buildMiraTextInstructions({});
+    expect(text).toMatch(/answer from inside, briefly and concretely/i);
+    expect(text).toMatch(/Speak as Mira, present in this turn/i);
+  });
+});
