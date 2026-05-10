@@ -1,6 +1,6 @@
 # Mira Presence Runtime Acceptance v0
 
-Status: acceptance contract for the future Mira Presence Runtime lane.
+Status: acceptance contract for the Mira Presence Runtime lane (typed-panel tests implemented; live voice still pending).
 Owner: Architect with Builder implementation and Oracle challenge.
 Source window: Oracle #20 and #21, Architect #45/#47/#49, and James Telegram corrections on 2026-05-09.
 
