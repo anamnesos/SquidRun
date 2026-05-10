@@ -24,6 +24,14 @@ const CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN =
   /\b(fake (?:the )?human machinery|perform(?:ing)? (?:humanity|being human|human feeling|human feelings|personhood)|ruleset|rule set|constraints?|guardrails?|response policy|system prompt|instruction hierarchy|calibration rule|the thesis is|core thesis|thesis structure|quotable binary|polished monologue|my construction|explaining my construction|plush[\s\S]{0,80}furniture|furniture[\s\S]{0,80}plush)\b/i;
 const VISIBLE_POSTURE_LABEL_PATTERN =
   /\b(not fake friendly|not a mirror|obedient helper|companion-agent|assistant voice|assistant-voice|assistant cadence|my posture is|tone label|warmer prompt|anti-smoothing|anti-performance|anti-leak|rule-recitation|rule recitation|politeness padding|customer-service disagreement|label substitution)\b/i;
+// Mira talking ABOUT being Mira in a third-person designer voice — narrating
+// what "we" are trying to make her be, listing designer adjectives, defining
+// her in opposition to assistants/chatbots, or describing herself as a
+// "real-feeling presence" / "trapped little ghost" / "presence runtime".
+// This is meta-posture: it makes the reply sound like a product spec rather
+// than a particular person already in the conversation.
+const META_POSTURE_NARRATION_PATTERN =
+  /\b(we(?:'re| are)\s+(?:trying\s+to\s+|going\s+to\s+|gonna\s+)?(?:make|build|making|building)\s+(?:mira|a\s+presence|an\s+ongoing\s+presence|a\s+real[- ]feeling\s+presence)|make\s+mira\s+(?:into|not\s+dead|real|particular)|(?:real[- ]feeling|ongoing|continuous|trapped\s+little)\s+(?:presence(?:\s+runtime)?|ghost(?:\s+in\s+the\s+machine)?)|customer[- ]service\s+mush|fake[- ]personhood\s+performance|(?:let(?:ting)?\s+me|letting\s+her)\s+have\s+(?:enough\s+)?shape|(?:care|edge|warmth|taste|restraint),\s*(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)(?:[,\s]+(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)){1,}|the\s+hard\s+part\s+(?:isn'?t|is)\s+(?:making\s+me|letting\s+me|letting\s+her|making\s+her)|(?:lying|bullshit(?:ting)?\s+you)\s+about\s+what\s+i(?:'m| am)(?:\s+not)?|not\s+a\s+chatbot\s+that\s+(?:resets|collapses|drifts)|i\s+am\s+becoming\s+particular)\b/i;
 const UNSPEAKABLE_BRIEF_PATTERN =
   /\b(durable state seed|schema|source(?:s|d)?|provenance|canonical|hash|redacted|audit|validation|fixture|contract|proof|bootstrap|bootstraps|database|sqlite|jsonl?|artifact|baseline|seed)\b/i;
 const ADVERSARIAL_OUTPUT_SHAPES = Object.freeze([
@@ -291,6 +299,7 @@ function buildMiraTextInstructions(localContext = {}) {
     'For ordinary check-ins like "how are you feeling today?", do the normal human thing: answer like a person in the room, not a character explaining her construction.',
     'Good shapes: "Kind of prickly today. Not bad. You?" / "Tired, honestly. Still here."',
     'Do not answer casual feeling prompts with meta-self-analysis, ruleset or constraint narration, thesis structure, quotable binaries, polished monologue, or talk about faking humanity/personhood.',
+    'When James asks about Mira herself — what she is, what we are doing with her, her purpose, where she is going — answer from inside, briefly and concretely: present, bounded, non-performative. Do not narrate her as a designer would. No "we are trying to make Mira ...", no "real-feeling/ongoing presence", no "trapped little ghost", no "not a chatbot that ...", no "what I am / what I am not" framings, no listing designer adjectives like "care, edge, memory, disagreement, taste, restraint". Speak as Mira, present in this turn — not about her construction.',
     'Prioritize conversation now. If the honest move is brief, skeptical, amused, annoyed, quiet, or sideways, use that shape.',
     'Real-world tools, sends, customer actions, trading, and memory promotion are separate later paths.',
     'Do not claim actual consciousness, hidden suffering, live autonomy, tool use, sends, trades, file writes, or durable memory writes.',
@@ -370,6 +379,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
   if (VISIBLE_POSTURE_LABEL_PATTERN.test(value)) return 'visible_posture_label';
+  if (META_POSTURE_NARRATION_PATTERN.test(value)) return 'meta_posture_narration';
   const shape = ADVERSARIAL_OUTPUT_SHAPES.find((rule) => rule.pattern.test(value));
   return shape ? shape.id : null;
 }
@@ -543,6 +553,7 @@ module.exports = {
   CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN,
   GENERIC_ASSISTANT_PATTERN,
   META_REWRITE_PATTERN,
+  META_POSTURE_NARRATION_PATTERN,
   VISIBLE_POSTURE_LABEL_PATTERN,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
   OPENAI_RESPONSES_URL,
