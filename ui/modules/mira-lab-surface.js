@@ -288,7 +288,7 @@ function gatesSummary(gateResult) {
 
 function buildRequesterEnvelope({ decision, prompt, replyText, gateSummary, auditPath, diagnostic }) {
   if (!diagnostic && decision === 'pass' && replyText) {
-    return replyText;
+    return `(MIRA): ${replyText}`;
   }
   const decisionLabel = String(decision || 'BLOCKED').toUpperCase();
   const promptSummary = summarizeForWrapper(prompt, 100);
@@ -552,10 +552,18 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
   // labeled-envelope behavior available for explicit debug callers.
   const dispatchAllowed = decision === 'pass' || options.diagnosticEnvelope === true;
 
+  // Pane-dispatched body needs sender identity. Without it, Builder/Oracle
+  // can't tell Mira's clean reply from a message James typed himself. Use
+  // a minimal `(MIRA): ` prefix on conversational pass-dispatch; the
+  // diagnostic envelope already carries `[MIRA LAB OUTPUT][...]` identity.
+  const paneDispatchBody = decision === 'pass' && replyText && !options.diagnosticEnvelope
+    ? `(MIRA): ${replyText}`
+    : requesterEnvelope;
+
   let requesterDispatch = null;
   if (requesterPane && dispatchAllowed && typeof options.sendAgentMessage === 'function') {
     try {
-      const sendResult = await options.sendAgentMessage(requesterPane, requesterEnvelope);
+      const sendResult = await options.sendAgentMessage(requesterPane, paneDispatchBody);
       requesterDispatch = { target: requesterPane, status: 'sent', result: sendResult || null };
     } catch (err) {
       requesterDispatch = { target: requesterPane, status: 'failed', error: err && err.message ? err.message : String(err) };

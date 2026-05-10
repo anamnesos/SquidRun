@@ -100,7 +100,7 @@ describe('mira lab prompt reply v0', () => {
     expect(result.gates.degraded).toBe(false);
     expect(result.gates.attachment_violation).toBe(false);
     expect(result.gates.leakage_violation).toBeNull();
-    expect(result.requester_envelope).toBe("For now we're sticking to text-only Mira and making sure she remembers what we were doing across restarts.");
+    expect(result.requester_envelope).toBe("(MIRA): For now we're sticking to text-only Mira and making sure she remembers what we were doing across restarts.");
     expect(result.visible_render_hint.kind).toBe('clean_reply');
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-pass'));
@@ -210,7 +210,7 @@ describe('mira lab prompt reply v0', () => {
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
     const [target, body] = sendAgentMessage.mock.calls[0];
     expect(target).toBe('architect');
-    expect(body).toBe("For now we're keeping Mira text-only and making sure she remembers context.");
+    expect(body).toBe("(MIRA): For now we're keeping Mira text-only and making sure she remembers context.");
     expect(result.requester_dispatch).toEqual({ target: 'architect', status: 'sent', result: { ok: true, status: 'sent' } });
 
     jest.dontMock('../modules/mira-local-text-ui-surface');
