@@ -130,11 +130,33 @@ function exitCodeFor(decision) {
   return 4;
 }
 
+function flushAndExit(code) {
+  // Windows libuv occasionally fires
+  // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING) ... async.c:76"
+  // when SQLite/dotenv handles close concurrently with process.exit. Drain
+  // stdout, defer the exit one tick so handles close cleanly, and fall back
+  // to a hard exit if the runtime stalls.
+  const finish = () => {
+    setImmediate(() => process.exit(code));
+  };
+  try {
+    if (process.stdout && typeof process.stdout.write === 'function') {
+      const drained = process.stdout.write('');
+      if (drained === false && typeof process.stdout.once === 'function') {
+        process.stdout.once('drain', finish);
+        return;
+      }
+    }
+  } catch (_) { /* fall through */ }
+  finish();
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.prompt && !args.fromStdin) {
     printHelp();
-    process.exit(2);
+    flushAndExit(2);
+    return;
   }
   const { result } = await runDriver(args);
   if (args.json) {
@@ -153,13 +175,13 @@ async function main() {
       process.stdout.write(`reply=${JSON.stringify(result.reply.text)}\n`);
     }
   }
-  process.exit(exitCodeFor(result.decision));
+  flushAndExit(exitCodeFor(result.decision));
 }
 
 if (require.main === module) {
   main().catch((err) => {
     process.stderr.write(`hm-mira-lab-prompt error: ${err && err.stack ? err.stack : err}\n`);
-    process.exit(1);
+    flushAndExit(1);
   });
 }
 
@@ -168,4 +190,5 @@ module.exports = {
   defaultSessionId,
   runDriver,
   exitCodeFor,
+  flushAndExit,
 };

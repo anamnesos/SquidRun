@@ -23,12 +23,49 @@ const PROOF_NOTE = [
   'WebSocket; the prompt classifier comes from the on-disk module loaded',
   'fresh in each child.',
 ].join(' ');
+// Windows-only Node libuv assertion observed during clean shutdown of the
+// prompt CLI ("Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+// file src\\win\\async.c, line 76"). Surfaces as exit code 3221226505
+// (0xC0000409) AFTER the JSON envelope is already on stdout, so the
+// envelope's `decision` is authoritative.
+const WINDOWS_LIBUV_TEARDOWN_EXIT_CODE = 3221226505;
 
 function decisionFromExitCode(code) {
   if (code === 0) return 'pass';
   if (code === 3) return 'fail';
   if (code === 4) return 'blocked';
   return 'error';
+}
+
+function decisionFromEnvelope(envelope) {
+  const value = envelope && typeof envelope === 'object' ? envelope.decision : null;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (['pass', 'fail', 'blocked', 'error'].includes(normalized)) return normalized;
+  return null;
+}
+
+function pickReasonClass(envelope = {}) {
+  return envelope?.gates?.reason_class
+    || envelope?.decision?.gates?.reason_class
+    || envelope?.audit?.gates?.reason_class
+    || null;
+}
+
+function isWindowsTeardownAssertion(exitCode, stderr) {
+  if (Number(exitCode) === WINDOWS_LIBUV_TEARDOWN_EXIT_CODE) return true;
+  return /Assertion failed:.*UV_HANDLE_CLOSING.*async\.c/i.test(String(stderr || ''));
+}
+
+function classifyBootstrap(rendererWindowOpen) {
+  if (!rendererWindowOpen || rendererWindowOpen.attempted !== true) {
+    return 'not_attempted';
+  }
+  if (rendererWindowOpen.ok === true) return 'ready';
+  const reason = String(rendererWindowOpen.reason || '').toLowerCase();
+  if (reason === 'unknown_action') return 'action_not_loaded_in_running_main';
+  if (reason.startsWith('app_control_exit_')) return 'app_control_unreachable';
+  return 'open_failed';
 }
 
 function pickReplyText(envelope = {}) {
@@ -152,18 +189,28 @@ async function runVerification(options = {}) {
   for (const prompt of prompts) {
     const child = await spawnPromptCli({ prompt, sessionId, projectRoot });
     const envelope = parseEnvelope(child.stdout);
+    const envelopeDecision = decisionFromEnvelope(envelope);
+    const teardownAssertion = isWindowsTeardownAssertion(child.code, child.stderr);
+    // Envelope decision is authoritative when present; the prompt CLI emits
+    // it before exiting, so a Windows libuv teardown assertion that fires
+    // AFTER stdout flush should not flip a real decision into 'error'.
+    const decision = envelopeDecision || decisionFromExitCode(child.code);
     promptResults.push({
       prompt,
       exit_code: child.code,
-      decision: decisionFromExitCode(child.code),
+      decision,
+      decision_source: envelopeDecision ? 'envelope' : 'exit_code',
+      windows_libuv_teardown_observed: teardownAssertion,
       visible_reply: pickReplyText(envelope || {}),
       source: pickReplySource(envelope || {}),
       gates: pickGates(envelope || {}),
+      reason_class: pickReasonClass(envelope || {}),
       stderr_excerpt: child.stderr ? String(child.stderr).split(/\r?\n/).slice(-3).join('\n') : '',
     });
   }
 
   const allPass = promptResults.length > 0 && promptResults.every((entry) => entry.decision === 'pass');
+  const bootstrapStatus = classifyBootstrap(rendererWindowOpen);
 
   return {
     schema: SCHEMA,
@@ -171,6 +218,10 @@ async function runVerification(options = {}) {
     started_at: startedAt,
     session_id: sessionId,
     renderer_window_open: rendererWindowOpen,
+    bootstrap_status: bootstrapStatus,
+    bootstrap_note: bootstrapStatus === 'action_not_loaded_in_running_main'
+      ? 'open-mira-lab is not registered in the running Electron main process; the app-control action shipped at a0e1307 takes effect on the next main-process start. Future sessions inherit the no-restart seam. This is a one-time bootstrap limitation, not a verifier defect.'
+      : null,
     proof_classification: {
       renderer_proof_via_ipc: false,
       fresh_process_proxy_proof: true,
@@ -243,10 +294,15 @@ module.exports = {
   DEFAULT_PROMPTS,
   PROOF_NOTE,
   SCHEMA,
+  WINDOWS_LIBUV_TEARDOWN_EXIT_CODE,
+  classifyBootstrap,
+  decisionFromEnvelope,
   decisionFromExitCode,
-  pickReplyText,
-  pickReplySource,
-  pickGates,
+  isWindowsTeardownAssertion,
   parseEnvelope,
+  pickGates,
+  pickReasonClass,
+  pickReplySource,
+  pickReplyText,
   runVerification,
 };
