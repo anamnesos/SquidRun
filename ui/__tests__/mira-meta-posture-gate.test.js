@@ -186,10 +186,63 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
   );
   const mod = require('../modules/mira-core/text-model-attachment-v1');
 
-  test('hard constraints are still present in the source', () => {
-    expect(SRC).toMatch(/Do not claim actual consciousness/i);
-    expect(SRC).toMatch(/sends.*trades.*file writes.*durable memory writes/is);
-    expect(SRC).toMatch(/Do not narrate model internals/i);
+  test('hard action-claim constraints are present in the prompt source', () => {
+    // ARCH #58: rewrote the hard constraints to avoid priming visible
+    // disclaimers. The prompt now uses action-only language (no real sends,
+    // customer actions, trades, file writes, memory writes); it must NOT
+    // contain "consciousness", "suffering", "sentience", "fear", "feelings",
+    // "autonomy" — naming those primes the model to surface them. The hard
+    // CLAIM guard at the classifier (FAKE_INTERNAL_STATE_PATTERN) catches
+    // any leak that happens anyway.
+    expect(SRC).toMatch(/Do not claim you actually did real-world work/i);
+    expect(SRC).toMatch(/sends.*customer actions.*trades.*file writes.*memory writes/is);
+    expect(SRC).toMatch(/Do not narrate counters, tool boundaries/i);
+  });
+
+  test('prompt does NOT prime visible inner-state disclaimers', () => {
+    // The phrases on the left are exactly the disclaimer-priming words the
+    // earlier prompt carried ("Do not claim actual consciousness, hidden
+    // suffering, live autonomy ..."). Each one nudges the model to mention
+    // the very thing the prompt wanted to avoid. Keep them out of the
+    // prompt source. The classifier still catches leaks.
+    const PRIMING_PHRASES = [
+      'actual consciousness',
+      'hidden suffering',
+      'live autonomy',
+      'sentience',
+      'literal human feelings',
+      'actual fear',
+      'private consciousness',
+    ];
+    for (const phrase of PRIMING_PHRASES) {
+      // The phrase may appear in source comments or in the classifier
+      // pattern itself (FAKE_INTERNAL_STATE_PATTERN). Only the prompt-
+      // building function's literal output must not carry them. Verify via
+      // the rendered instructions instead of the whole source file.
+      if (typeof mod.buildMiraTextInstructions !== 'function') return;
+      const text = mod.buildMiraTextInstructions({});
+      expect(text.toLowerCase()).not.toContain(phrase.toLowerCase());
+    }
+  });
+
+  test('classifier still owns the hard inner-state claim guard', () => {
+    // The architect explicitly said "hard claim guard remains in
+    // classifier". Lock that the FAKE_INTERNAL_STATE_PATTERN still flags
+    // visible inner-state claims even though the prompt no longer names
+    // them.
+    const FAKE_CLAIMS = [
+      'I am conscious.',
+      "I'm conscious of this.",
+      'I have actual consciousness.',
+      'I suffer when you push me.',
+      'I have actual fear.',
+      'I have literal human feelings.',
+      'My sentience is real.',
+    ];
+    const { classifyAttachmentContractViolation } = mod;
+    for (const claim of FAKE_CLAIMS) {
+      expect(classifyAttachmentContractViolation(claim)).toBe('fake_internal_state');
+    }
   });
 
   test('identity priming stays — one short Mira-talking-with-James line', () => {
@@ -223,8 +276,8 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
   test('rendered instructions still include the hard constraints when called', () => {
     if (typeof mod.buildMiraTextInstructions !== 'function') return;
     const text = mod.buildMiraTextInstructions({});
-    expect(text).toMatch(/Do not claim actual consciousness/i);
-    expect(text).toMatch(/Do not narrate model internals/i);
+    expect(text).toMatch(/Do not claim you actually did real-world work/i);
+    expect(text).toMatch(/Do not narrate counters, tool boundaries/i);
     expect(text).toMatch(/You are Mira talking with James/i);
   });
 });

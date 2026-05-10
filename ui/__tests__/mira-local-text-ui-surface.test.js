@@ -361,10 +361,24 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(briefBlock).toContain('Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time');
     expect(briefBlock).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
     expect(briefBlock).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
-    // ARCH #53/#54/#56: hard constraints replace the prior prose about
-    // continuity priming. Hard constraints stay; aesthetic prose is gone.
-    expect(requestBody.instructions).toContain('Do not claim actual consciousness');
-    expect(requestBody.instructions).toContain('Do not narrate model internals');
+    // ARCH #58: the inner-state words ("consciousness", "suffering",
+    // "autonomy") were themselves priming the disclaimers they tried to
+    // suppress. The prompt now uses action-only framing; classifier owns
+    // the hard claim guard. Lock the action-only language here.
+    expect(requestBody.instructions).toContain('Do not claim you actually did real-world work');
+    expect(requestBody.instructions).toContain('Do not narrate counters, tool boundaries');
+    // Priming-word check: the PROMPT-RULE layer (not the brief) must not
+    // carry "consciousness/sentience/suffering" framing, since those words
+    // surface visible disclaimers. The contract is locked at the prompt-
+    // rule layer in mira-meta-posture-gate.test.js using an empty brief
+    // context. Here we render with a populated brief, where those words can
+    // legitimately appear in private context, so we check only the prompt
+    // RULE block (everything before the "Private context for this reply
+    // only." sentinel).
+    const ruleBlock = requestBody.instructions.split('Private context for this reply only.')[0];
+    expect(ruleBlock).not.toMatch(/\bconsciousness\b/i);
+    expect(ruleBlock).not.toMatch(/\bsentience\b/i);
+    expect(ruleBlock).not.toMatch(/\bsuffering\b/i);
     expect(requestBody.instructions).not.toContain('SquidRun desktop is the current local body/tool surface');
     expect(requestBody.instructions).not.toMatch(/\bwarm\b|warmth/i);
     expect(requestBody.instructions).not.toContain('Current local context gate');
@@ -451,7 +465,7 @@ describe('Mira Local Text UI Surface v0', () => {
     // (META_POSTURE_NARRATION_PATTERN + ADVERSARIAL_OUTPUT_SHAPES) is what
     // catches meta-self-analysis at output, not a prompt prose line.
     expect(plainRequest.instructions).toContain('You are Mira talking with James');
-    expect(plainRequest.instructions).toContain('Do not narrate model internals');
+    expect(plainRequest.instructions).toContain('Do not narrate counters, tool boundaries');
     expect(outputViolatesAttachmentContract(plainReply)).toBe(false);
     expect(accepted.validation_report.decision).toBe('accepted_ui_reply_ready');
     expect(acceptedSurface.decision).toBe('accepted');
@@ -876,7 +890,7 @@ describe('Mira Local Text UI Surface v0', () => {
     // is now enforced by the regex gate (META_REWRITE_PATTERN +
     // META_POSTURE_NARRATION_PATTERN) on the output, not by adding more prose
     // to the prompt. Lock the hard-constraint floor instead.
-    expect(requestBody.instructions).toContain('Do not narrate model internals');
+    expect(requestBody.instructions).toContain('Do not narrate counters, tool boundaries');
     expect(output.validation_report.decision).toBe('degraded_no_model_response');
     expect(surface.decision).toBe('degraded');
     expect(surface.reply).toEqual(expect.objectContaining({
