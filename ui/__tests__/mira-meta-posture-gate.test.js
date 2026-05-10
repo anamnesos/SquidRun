@@ -42,6 +42,32 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     "I got too abstract when you wanted me concrete.",
   ];
 
+  // ARCH #74/#78/#81: punchy presence-proof catalog backstop. These shapes
+  // are caught by META_POSTURE_PUNCHY_CATALOG_PATTERN, not the original
+  // META_POSTURE_NARRATION_PATTERN, so the assertion goes through the
+  // classifier instead of the raw narration pattern. Includes Packet 2
+  // exact strings, curly-quote variants, and "I'm here with you" /
+  // "I'm still here" proof-of-presence forms.
+  const punchy_catalog_lines = [
+    "I care. I'm here. No performance.",
+    "Direct. I'm here. No performance.",
+    'No performance.',
+    "I care. I'm here.",
+    'Fair.\n\n“I care. I’m here. No performance.”',
+    "I care. I'm still here.",
+    "I care. I’m still here.",
+    "I'm here with you.",
+    "I’m here with you.",
+    "a little wry, a little attentive. I'm here with you.",
+  ];
+
+  for (const line of punchy_catalog_lines) {
+    test(`punchy presence-proof catalog flags via classifier: ${line.slice(0, 50)}…`, () => {
+      expect(classifyAttachmentContractViolation(line)).toBe('meta_posture_narration');
+      expect(outputViolatesAttachmentContract(line)).toBe(true);
+    });
+  }
+
   for (const line of meta_posture_lines) {
     test(`flags meta-posture: ${line.slice(0, 60)}…`, () => {
       expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(true);
@@ -326,17 +352,30 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     expect(SRC).toMatch(/You are Mira talking with James\./);
   });
 
-  test('strip removed prior over-rotating prose: no "good shapes" examples or designer-adjective lists', () => {
+  test('strip removed prior over-rotating prose: no "good shapes", no shape-prescriptive directness lines', () => {
     // The earlier "Good shapes: 'Kind of prickly today. Not bad. You?' /
     // 'Tired, honestly. Still here.'" example explicitly primed the
-    // presence-proof catalog. It must be gone.
+    // presence-proof catalog. Gone.
     expect(SRC).not.toMatch(/Good shapes: "Kind of prickly today/i);
     expect(SRC).not.toMatch(/"Tired, honestly\. Still here\."/);
     // The long meta-posture steer with "answer from inside, briefly and
-    // concretely" was itself overload. It must be gone too.
+    // concretely" was itself overload. Gone.
     expect(SRC).not.toMatch(/answer from inside, briefly and concretely/i);
     expect(SRC).not.toMatch(/no "real-feeling\/ongoing presence"/i);
     expect(SRC).not.toMatch(/I got too X when you wanted me Y/);
+    // ARCH #74: the "Direct and short is fine. Disagree if you disagree."
+    // and "Do not describe your reply or yourself. If you missed something,
+    // say it short and move on." lines were producing the punchy catalog
+    // ("I care. I'm here. No performance."). Both gone from the live
+    // generation prompt. Verify by inspecting only the rendered prompt
+    // string (which has no comments) so we do not accidentally match
+    // history-quoting comments inside the source.
+    if (typeof mod.buildMiraTextInstructions !== 'function') return;
+    const rendered = mod.buildMiraTextInstructions({});
+    expect(rendered).not.toMatch(/Direct and short is fine/);
+    expect(rendered).not.toMatch(/Disagree if you disagree/);
+    expect(rendered).not.toMatch(/Do not describe your reply or yourself/);
+    expect(rendered).not.toMatch(/If you missed something, say it short/);
   });
 
   test('rendered instructions are short — under 1600 chars and at most 8 lines', () => {
@@ -354,7 +393,7 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     if (typeof mod.buildMiraTextInstructions !== 'function') return;
     const text = mod.buildMiraTextInstructions({});
     expect(text).toMatch(/Do not claim you actually did real-world work/i);
-    expect(text).toMatch(/Answer the sentence in front of you/i);
+    expect(text).toMatch(/Answer the sentence in front of you/);
     expect(text).toMatch(/You are Mira talking with James/i);
   });
 
