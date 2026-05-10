@@ -279,6 +279,37 @@ function summarizeForWrapper(text, max = 160) {
   return `${trimmed.slice(0, max - 1)}…`;
 }
 
+// Read recent non-quarantined turns from the lab transcript and shape them
+// for engine threadContext. Both James and Mira turns are included so
+// continuity isn't one-sided. Agent-driven prompts (architect/builder/oracle
+// via drive-mira-lab) are mapped to 'user' since they're a speaker to Mira
+// in the same conversational position. No labels, no `[SQUIDRUN ...]`
+// preambles — just raw role/text pairs. normalizeThreadContext downstream
+// caps to 6 messages / 3600 chars total, so over-reading here is safe.
+function loadRecentTranscriptForContext(transcriptFilePath, maxEntries = 12) {
+  if (!fs.existsSync(transcriptFilePath)) return [];
+  let entries;
+  try {
+    entries = readJsonl(transcriptFilePath);
+  } catch (_) {
+    return [];
+  }
+  const recent = entries.slice(-maxEntries);
+  const messages = [];
+  for (const turn of recent) {
+    if (turn && turn.quarantined === true) continue;
+    const speakerRole = String(turn?.speaker_role || '').toLowerCase();
+    const text = trimText(turn?.text);
+    if (!text) continue;
+    if (speakerRole === 'mira') {
+      messages.push({ role: 'assistant', text });
+    } else if (speakerRole === 'james' || AGENT_ROLES.includes(speakerRole)) {
+      messages.push({ role: 'user', text });
+    }
+  }
+  return messages;
+}
+
 function gatesSummary(gateResult) {
   if (!gateResult) return 'unknown';
   if (gateResult.ok === true) return 'ok';
@@ -406,6 +437,16 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
   // Electron WINDOW level (separate Mira Lab window), not the engine scope. Documented blocked
   // reason if a future scope adapter is required.
   const startedAtMs = Date.parse(generatedAt) || Date.now();
+  // Caller-supplied threadContext wins (none today); otherwise inject the
+  // recent lab transcript so Mira has continuity instead of replying with
+  // amnesia each turn. The current prompt isn't yet appended to the
+  // transcript, so it won't double-appear.
+  const callerThreadContext = payload.threadContext || payload.thread_context || null;
+  const callerSuppliedMessages = callerThreadContext
+    && (Array.isArray(callerThreadContext) || Array.isArray(callerThreadContext.messages) || Array.isArray(callerThreadContext.turns));
+  const threadContextForEngine = callerSuppliedMessages
+    ? callerThreadContext
+    : { messages: loadRecentTranscriptForContext(transcriptPathStr) };
   const enginePayload = {
     text: prompt,
     profileName: 'main',
@@ -417,7 +458,7 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     visibleIndicatorPresent: true,
     startedAt: new Date(startedAtMs).toISOString(),
     expiresAt: new Date(startedAtMs + 24 * 60 * 60 * 1000).toISOString(),
-    threadContext: payload.threadContext || payload.thread_context || {},
+    threadContext: threadContextForEngine,
   };
   let surfaceResult;
   let surfaceError = null;
@@ -552,18 +593,10 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
   // labeled-envelope behavior available for explicit debug callers.
   const dispatchAllowed = decision === 'pass' || options.diagnosticEnvelope === true;
 
-  // Pane-dispatched body needs sender identity. Without it, Builder/Oracle
-  // can't tell Mira's clean reply from a message James typed himself. Use
-  // a minimal `(MIRA): ` prefix on conversational pass-dispatch; the
-  // diagnostic envelope already carries `[MIRA LAB OUTPUT][...]` identity.
-  const paneDispatchBody = decision === 'pass' && replyText && !options.diagnosticEnvelope
-    ? `(MIRA): ${replyText}`
-    : requesterEnvelope;
-
   let requesterDispatch = null;
   if (requesterPane && dispatchAllowed && typeof options.sendAgentMessage === 'function') {
     try {
-      const sendResult = await options.sendAgentMessage(requesterPane, paneDispatchBody);
+      const sendResult = await options.sendAgentMessage(requesterPane, requesterEnvelope);
       requesterDispatch = { target: requesterPane, status: 'sent', result: sendResult || null };
     } catch (err) {
       requesterDispatch = { target: requesterPane, status: 'failed', error: err && err.message ? err.message : String(err) };
