@@ -74,3 +74,14 @@ Before restart-ready or live Mira voice work, focused tests must prove:
 - Oracle #21: restart/stop-turn continuity must be durable product state; raw renderer thread memory is not enough.
 - Architect #45/#47: preserve the critique across restart without memory drift or prompt-leak prose; block live voice/restart lanes until acceptance exists.
 - Architect #49 / James Telegram: avoid generic guardrails framing. Use anti-smoothing / anti-performance / anti-leak constraints that prevent assistant-voice collapse, rule-recitation, politeness padding, customer-service disagreement, and label substitution while still bounding consequence.
+
+## Session 345 Continuity Lessons
+
+- **"Human" Evaluation Standard:** "Human" means person-to-person talk, not just checklist anti-pattern scoring. Do not evaluate Mira solely by the absence of forbidden phrases. The core test is: *Does this sound like what a real person would say in this context?*
+- **Root Cause of Performance Theater:** Overloading the prompt/brief with mechanical constraints caused Mira to perform "being Mira" (e.g., describing its posture or proving its presence). The fix was an *upstream prompt shrink* combined with concrete situation routing.
+- **Accepted H4 Output Baseline:**
+  - P1: Concrete project-status answer (no meta-definitions like "useful coworker").
+  - P2: "Steady. You" (natural brevity, no poetic presence-reassurance).
+  - P3: Coworker bug-fix reply (validating anger and moving to fix).
+  - P4: "Got it. Smaller." (simple human acknowledgment).
+- **Restart Gate:** Live Electron requires a main-process restart to pick up the `text-model-attachment-v1.js` changes; module CLI has already proven the path.
