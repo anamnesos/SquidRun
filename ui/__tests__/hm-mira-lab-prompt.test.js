@@ -27,6 +27,13 @@ function auditPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-lab-replies.jsonl');
 }
 
+// Mirrors mira-lab-surface SAFE_FALLBACK_TEXT contract — a tiny pivot with a
+// position, not a poem, apology, or product-spec sentence. Kept here verbatim
+// so the CLI driver fake matches the surface contract; the surface's own
+// SAFE_FALLBACK_TEXT constant test in mira-lab-prompt-reply.test.js locks the
+// shape end-to-end.
+const FAKE_SAFE_FALLBACK_TEXT = 'Ask it differently.';
+
 function fakeBuilder(scenario) {
   return jest.fn(async (payload, options) => {
     const replyTextByScenario = {
@@ -66,9 +73,11 @@ function fakeBuilder(scenario) {
       fs.appendFileSync(transcript, `${JSON.stringify({
         ...promptTurn,
         speaker_role: 'mira',
-        text: `[MIRA LAB OUTPUT - GATE FAILED] ${replyText}`,
+        text: FAKE_SAFE_FALLBACK_TEXT,
         direction: 'mira_to_james',
         quarantined: true,
+        fallback_used: true,
+        quarantined_reply_hash: 'sha256:fake',
       })}\n`, 'utf8');
     } else {
       decision = 'pass';
@@ -114,17 +123,28 @@ function fakeBuilder(scenario) {
       ok: decision === 'pass',
       decision,
       prompt: payload.prompt,
-      reply: decision === 'pass' ? { text: replyText, model: 'gpt-5.5' } : null,
+      reply: decision === 'pass'
+        ? { text: replyText, model: 'gpt-5.5' }
+        : decision === 'fail'
+          ? { text: FAKE_SAFE_FALLBACK_TEXT, model: null, fallback: true }
+          : null,
       raw_reply: decision === 'fail' ? { text: replyText, model: 'gpt-5.5' } : null,
       gates: auditEntry.gates,
       transcript_path: transcript,
       audit_path: audit,
-      requester_envelope: `[MIRA LAB OUTPUT][${decision.toUpperCase()}] prompt="${payload.prompt}" reply="${decision === 'pass' ? replyText : '<no reply>'}" gates=${decision === 'pass' ? 'ok' : `violations=${(auditEntry.gates.language_gate.violations || []).join(',')}`} audit=${audit}`,
+      // PASS / FAIL non-diagnostic envelope is the safe Mira-voice line.
+      // BLOCKED keeps the labelled diagnostic envelope so degraded engine
+      // states never leak as a fabricated reply.
+      requester_envelope: decision === 'pass'
+        ? `(MIRA): ${replyText}`
+        : decision === 'fail'
+          ? `(MIRA): ${FAKE_SAFE_FALLBACK_TEXT}`
+          : `[MIRA LAB OUTPUT][${decision.toUpperCase()}] prompt="${payload.prompt}" reply="<no reply>" gates=violations=${(auditEntry.gates.language_gate.violations || []).join(',')} audit=${audit}`,
       requester_dispatch: null,
       visible_render_hint: decision === 'pass'
         ? { kind: 'clean_reply', text: replyText }
         : decision === 'fail'
-          ? { kind: 'gate_failed_quarantined', text: replyText, banner: '[MIRA LAB OUTPUT - GATE FAILED]' }
+          ? { kind: 'gate_failed_fallback', text: FAKE_SAFE_FALLBACK_TEXT }
           : { kind: 'blocked_banner', banner: `Mira Lab reply unavailable: ${reasonClass || 'unknown'}` },
     };
   });
@@ -181,7 +201,7 @@ describe('hm-mira-lab-prompt CLI driver', () => {
     }, { buildMiraLabPromptReply: builder });
     expect(builder).toHaveBeenCalledTimes(1);
     expect(result.decision).toBe('pass');
-    expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][PASS]');
+    expect(result.requester_envelope).toMatch(/^\(MIRA\): /);
     const transcript = readJsonl(transcriptPath(projectRoot, 'unit-pass'));
     expect(transcript).toHaveLength(2);
     expect(transcript[0].speaker_role).toBe('architect');
@@ -235,7 +255,7 @@ describe('hm-mira-lab-prompt CLI driver', () => {
     expect(audit[0].model_attachment.live_model_called).toBe(false);
   });
 
-  test('BLOCKED-GATE (FAIL) scenario: quarantined reply with gate-failed banner', async () => {
+  test('BLOCKED-GATE (FAIL) scenario: quarantined raw + safe fallback rendered (no [GATE FAILED] banner leak)', async () => {
     const projectRoot = tempProject();
     const builder = fakeBuilder('blocked_gate');
     const { result } = await driver.runDriver({
@@ -247,11 +267,18 @@ describe('hm-mira-lab-prompt CLI driver', () => {
       fromStdin: false,
     }, { buildMiraLabPromptReply: builder });
     expect(result.decision).toBe('fail');
-    expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][FAIL]');
+    // Non-diagnostic envelope dispatches the safe fallback as a Mira-voice
+    // line; the old "[MIRA LAB OUTPUT][FAIL]" labelled diagnostic is gone.
+    expect(result.requester_envelope).toMatch(/^\(MIRA\): /);
+    expect(result.requester_envelope).not.toContain('[MIRA LAB OUTPUT][FAIL]');
     const transcript = readJsonl(transcriptPath(projectRoot, 'unit-fail'));
     expect(transcript).toHaveLength(2);
-    expect(transcript[1].text).toContain('[MIRA LAB OUTPUT - GATE FAILED]');
+    // Transcript shows the safe fallback only — raw violating reply never
+    // surfaces, "[MIRA LAB OUTPUT - GATE FAILED]" banner stays out.
+    expect(transcript[1].text).not.toContain('[MIRA LAB OUTPUT - GATE FAILED]');
+    expect(transcript[1].text).not.toContain('happy to help');
     expect(transcript[1].quarantined).toBe(true);
+    expect(transcript[1].fallback_used).toBe(true);
     expect(driver.exitCodeFor(result.decision)).toBe(3);
   });
 

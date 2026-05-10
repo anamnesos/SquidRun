@@ -33,6 +33,23 @@ const NAME_SWAP_PATTERN =
   /\b(as mira|i am mira,? (?:an|your) ai|as an ai|language model|happy to help|assist you|how can i help|safe next step)\b/i;
 const LAB_BACKCHANNEL_PREFIX = 'MIRA-LAB';
 
+// Visible fallback text used when the live reply fails a gate. Contract:
+// a tiny pivot with a position — not a poem, not an apology, not a
+// product-spec sentence. Must itself pass evaluateMiraVisibleReply AND
+// outputViolatesAttachmentContract. validateSafeFallbackOrNull hard-blocks
+// the surface if this string ever regresses against those gates.
+const SAFE_FALLBACK_TEXT = 'Ask it differently.';
+
+function validateSafeFallbackOrNull(text) {
+  const trimmed = trimText(text);
+  if (!trimmed) return null;
+  const language = evaluateMiraVisibleReply(trimmed);
+  if (!language || language.ok !== true) return null;
+  if (outputViolatesAttachmentContract(trimmed)) return null;
+  if (visibleReplyLeakageViolation(trimmed)) return null;
+  return trimmed;
+}
+
 function stableHash(value) {
   return crypto
     .createHash('sha256')
@@ -317,13 +334,18 @@ function gatesSummary(gateResult) {
   return violations ? `violations=${violations}` : 'failed';
 }
 
-function buildRequesterEnvelope({ decision, prompt, replyText, gateSummary, auditPath, diagnostic }) {
-  if (!diagnostic && decision === 'pass' && replyText) {
-    return `(MIRA): ${replyText}`;
+function buildRequesterEnvelope({ decision, prompt, replyText, visibleText, gateSummary, auditPath, diagnostic }) {
+  // Non-diagnostic dispatch: only ever surface the validated visible text.
+  // For pass that is the model reply; for fail that is the safe fallback.
+  // Raw quarantined `replyText` is never embedded in the visible envelope.
+  if (!diagnostic && (decision === 'pass' || decision === 'fail') && visibleText) {
+    return `(MIRA): ${visibleText}`;
   }
   const decisionLabel = String(decision || 'BLOCKED').toUpperCase();
   const promptSummary = summarizeForWrapper(prompt, 100);
-  const replySummary = replyText ? summarizeForWrapper(replyText, 200) : '<no reply>';
+  const replySummary = visibleText
+    ? summarizeForWrapper(visibleText, 200)
+    : (replyText ? '<quarantined>' : '<no reply>');
   return `[MIRA LAB OUTPUT][${decisionLabel}] prompt="${promptSummary}" reply="${replySummary}" gates=${gateSummary} audit=${auditPath || '<unset>'}`;
 }
 
@@ -335,7 +357,7 @@ function classifyReplyDecision({ replyText, gateOk, languageGateOk, attachmentVi
   return { decision: 'fail', reasonClass: 'gate_violation' };
 }
 
-function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, decision, gateSummary, transcriptPathStr, speakerRole }) {
+function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, decision, gateSummary, transcriptPathStr, speakerRole, fallbackText }) {
   const role = normalizeSpeakerRole(speakerRole) || 'james';
   const direction = AGENT_ROLES.includes(role) ? 'agent_to_mira' : 'james_to_mira';
   const promptTurn = {
@@ -372,15 +394,18 @@ function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, deci
       transcript_path: transcriptPathStr,
       source_kind: 'mira_lab_prompt_reply_v0',
     };
-  } else if (decision === 'fail' && replyText) {
+  } else if (decision === 'fail' && fallbackText) {
+    // Quarantine the raw model output and surface only the validated safe
+    // fallback in the transcript. Audit (built by the caller) still preserves
+    // the raw `replyText` for forensics.
     replyTurn = {
       schema: MIRA_LAB_SCHEMA,
-      turn_id: `mira-lab-turn:${stableHash({ generatedAt, sessionId, role: 'mira_quarantined', text: replyText }).slice(0, 16)}`,
+      turn_id: `mira-lab-turn:${stableHash({ generatedAt, sessionId, role: 'mira_fallback', text: fallbackText }).slice(0, 16)}`,
       generated_at: generatedAt,
       session_id: sessionId,
       speaker_role: 'mira',
-      text: `[MIRA LAB OUTPUT - GATE FAILED] ${replyText}`,
-      text_hash: `sha256:${stableHash(replyText)}`,
+      text: fallbackText,
+      text_hash: `sha256:${stableHash(fallbackText)}`,
       direction: 'mira_to_james',
       target_agents: [],
       visible_to_lab: true,
@@ -390,6 +415,8 @@ function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, deci
       source_kind: 'mira_lab_prompt_reply_v0',
       gate_summary: gateSummary,
       quarantined: true,
+      fallback_used: true,
+      quarantined_reply_hash: replyText ? `sha256:${stableHash(replyText)}` : null,
     };
   }
   return { promptTurn, replyTurn };
@@ -510,7 +537,7 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     || surface.decision === 'degraded'
     || (modelAttachment && modelAttachment.live_model_called === false && replyText.length === 0);
 
-  const { decision, reasonClass } = classifyReplyDecision({
+  let { decision, reasonClass } = classifyReplyDecision({
     replyText,
     gateOk: gate ? gate.ok : false,
     languageGateOk: languageGate.ok,
@@ -518,6 +545,20 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     leakageViolation,
     degraded,
   });
+
+  // On gate failure, build a vetted conversational fallback. If the constant
+  // ever regresses against the same gates it must itself be hard-blocked —
+  // never surface raw leakage as the cost of "saying something".
+  let safeFallbackText = null;
+  let fallbackBlockedReason = null;
+  if (decision === 'fail') {
+    safeFallbackText = validateSafeFallbackOrNull(SAFE_FALLBACK_TEXT);
+    if (!safeFallbackText) {
+      decision = 'blocked';
+      reasonClass = 'fallback_failed_gate';
+      fallbackBlockedReason = 'safe_fallback_failed_gate';
+    }
+  }
 
   const consolidatedGate = {
     decision,
@@ -528,6 +569,8 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     leakage_violation: leakageViolation,
     degraded,
     surface_error: surfaceError,
+    fallback_used: decision === 'fail' && !!safeFallbackText,
+    fallback_blocked_reason: fallbackBlockedReason,
   };
   const gateSummary = gatesSummary({
     ok: decision === 'pass',
@@ -548,9 +591,20 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     gateSummary,
     transcriptPathStr,
     speakerRole,
+    fallbackText: safeFallbackText,
   });
   appendJsonl(transcriptPathStr, promptTurn);
   if (replyTurn) appendJsonl(transcriptPathStr, replyTurn);
+
+  // Visible text the lab/render layer is allowed to show. On pass this is the
+  // model's clean reply; on fail it is the vetted safe fallback. Raw violating
+  // text never reaches the visible surface — it stays in audit + transcript
+  // metadata only.
+  const visibleText = decision === 'pass'
+    ? replyText
+    : decision === 'fail' && safeFallbackText
+      ? safeFallbackText
+      : null;
 
   const auditEntry = {
     schema: MIRA_LAB_REPLY_AUDIT_SCHEMA,
@@ -562,8 +616,12 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     requester_pane: requesterPane,
     prompt,
     prompt_hash: `sha256:${stableHash(prompt)}`,
+    // Audit always retains the raw model output for forensics, even when the
+    // visible surface only ever showed the safe fallback.
     reply_text: replyText || null,
     reply_hash: replyText ? `sha256:${stableHash(replyText)}` : null,
+    visible_reply_text: visibleText || null,
+    fallback_used: decision === 'fail' && !!safeFallbackText,
     gates: consolidatedGate,
     engine_preflight_blocked: enginePreflightBlocked,
     model_attachment: modelAttachment ? {
@@ -581,17 +639,19 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     decision,
     prompt,
     replyText: replyText || null,
+    visibleText,
     gateSummary,
     auditPath: auditPathStr,
     diagnostic: options.diagnosticEnvelope,
   });
 
-  // The pane should only receive a message when Mira actually said something
-  // clean. Fail/blocked outputs stay in the JSON response + audit log; they
-  // do NOT show up in the receiving pane as a "[MIRA LAB OUTPUT][FAIL] ..."
-  // envelope masquerading as a chat. `diagnosticEnvelope=true` keeps the
+  // pass and fail-with-fallback both dispatch a clean Mira-voiced line to the
+  // requester pane. degraded/blocked stay in JSON + audit only — never invent
+  // a fallback for a degraded engine. `diagnosticEnvelope=true` keeps the
   // labeled-envelope behavior available for explicit debug callers.
-  const dispatchAllowed = decision === 'pass' || options.diagnosticEnvelope === true;
+  const dispatchAllowed = decision === 'pass'
+    || (decision === 'fail' && !!safeFallbackText)
+    || options.diagnosticEnvelope === true;
 
   let requesterDispatch = null;
   if (requesterPane && dispatchAllowed && typeof options.sendAgentMessage === 'function') {
@@ -612,8 +672,12 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     ok: decision === 'pass',
     decision,
     prompt,
-    reply: decision === 'pass' ? { text: replyText, model: surface?.reply?.model || null } : null,
-    raw_reply: decision === 'fail' ? { text: replyText, model: surface?.reply?.model || null } : null,
+    reply: decision === 'pass'
+      ? { text: replyText, model: surface?.reply?.model || null }
+      : decision === 'fail' && safeFallbackText
+        ? { text: safeFallbackText, model: null, fallback: true }
+        : null,
+    raw_reply: decision === 'fail' && replyText ? { text: replyText, model: surface?.reply?.model || null } : null,
     gates: consolidatedGate,
     transcript_path: transcriptPathStr,
     audit_path: auditPathStr,
@@ -621,8 +685,8 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     requester_dispatch: requesterDispatch,
     visible_render_hint: decision === 'pass'
       ? { kind: 'clean_reply', text: replyText }
-      : decision === 'fail'
-        ? { kind: 'gate_failed_quarantined', text: replyText, banner: '[MIRA LAB OUTPUT - GATE FAILED]' }
+      : decision === 'fail' && safeFallbackText
+        ? { kind: 'gate_failed_fallback', text: safeFallbackText }
         : { kind: 'blocked_banner', banner: `Mira Lab reply unavailable: ${reasonClass || 'unknown'}` },
   };
 }
@@ -652,9 +716,11 @@ module.exports = {
   MIRA_LAB_REPLY_AUDIT_SCHEMA,
   MIRA_LAB_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
+  SAFE_FALLBACK_TEXT,
   buildMiraLabPromptReply,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   replyAuditPath,
   transcriptPath,
+  validateSafeFallbackOrNull,
 };

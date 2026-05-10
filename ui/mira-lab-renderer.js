@@ -81,10 +81,6 @@
     if (state) state.classList.remove('mira-lab-state-system-error');
   }
 
-  function appendQuarantinedReply(text) {
-    return appendLine('mira', `[MIRA LAB OUTPUT - GATE FAILED] ${text}`, 'mira-lab-gate-failed');
-  }
-
   function renderPromptReply(result) {
     if (!result) {
       setSystemErrorState();
@@ -95,19 +91,21 @@
       clearSystemErrorState();
       return appendLine('mira', hint.text);
     }
-    if (hint.kind === 'gate_failed_quarantined' && hint.text) {
+    // gate_failed_fallback: render the vetted safe fallback as a normal Mira
+    // turn. Raw violating text stays in audit/transcript metadata only; it is
+    // never shown in chat.
+    if (hint.kind === 'gate_failed_fallback' && hint.text) {
       clearSystemErrorState();
-      return appendQuarantinedReply(hint.text);
+      return appendLine('mira', hint.text);
     }
     if (result.decision === 'pass' && result.reply && result.reply.text) {
       clearSystemErrorState();
       return appendLine('mira', result.reply.text);
     }
-    if (result.decision === 'fail' && result.raw_reply && result.raw_reply.text) {
-      clearSystemErrorState();
-      return appendQuarantinedReply(result.raw_reply.text);
-    }
-    // decision === 'blocked' (or any unhandled shape): system state, not chat.
+    // decision === 'blocked' (or any unhandled shape, including fail with no
+    // safe fallback available): system state, not chat. Never surface
+    // result.raw_reply to the visible UI — that would leak the violating
+    // model output past the gate.
     setSystemErrorState();
     return null;
   }

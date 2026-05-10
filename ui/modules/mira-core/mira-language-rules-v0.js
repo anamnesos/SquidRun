@@ -27,6 +27,24 @@ const MIRA_TONE_EXPLANATION_BLOCKLIST = Object.freeze([
   /\bin\s+plain\s+english[\s,.\-—:]/i,
 ]);
 
+// Sycophancy / instant-compliance shapes. Until 2026-05-10 the pressure-voice
+// prompt rule ("give one beat of recoil first…") tried to script Mira's
+// reaction to criticism with adjective-flicker examples; per Oracle's
+// "stop prompting by adjective" rule we deleted that line and shifted the
+// burden onto this classifier. These patterns catch the failure mode that
+// rule was reaching for: apology compounded with frictionless capitulation
+// ("I'm sorry, you are completely right"), or the sycophant agreement
+// intensifier on its own ("you are absolutely right"). Bare apologies and
+// short accountability pivots ("My bad.", "I missed that.", "That's on me.")
+// are intentionally NOT in this list — those remain valid coworker speech.
+const MIRA_SYCOPHANCY_BLOCKLIST = Object.freeze([
+  /\byou(?:'re| are)\s+(?:completely|absolutely|totally|exactly|so|100%)\s+(?:right|correct|valid)\b/i,
+  /\b(?:i'?m|i\s+am)\s+sorry\b[\s,.\-—:!]+[^.?!]{0,40}\byou(?:'re| are)\s+(?:right|correct)\b/i,
+  /^(?:i'?m|i\s+am)\s+sorry\s*[,.\-—:!]\s+you(?:'re| are)\b/i,
+  /^my\s+apologies\b[\s,.\-—:!]/i,
+  /\bof\s+course\s+you(?:'re| are)\s+right\b/i,
+]);
+
 const MIRA_ASSISTANT_SHAPE_BLOCKLIST = Object.freeze([
   /^i\s+just\s+want(?:ed)?\s+to/i,
   /^to\s+clarify[\s,.\-—:]/i,
@@ -66,6 +84,9 @@ function evaluateMiraVisibleReply(text, options = {}) {
   for (const re of MIRA_ASSISTANT_SHAPE_BLOCKLIST) {
     if (re.test(trimmed)) { violations.push('assistant_shape'); break; }
   }
+  for (const re of MIRA_SYCOPHANCY_BLOCKLIST) {
+    if (re.test(trimmed)) { violations.push('sycophancy'); break; }
+  }
   const maxReplyChars = Number.isFinite(Number(options.maxReplyChars))
     ? Math.max(1, Math.floor(Number(options.maxReplyChars)))
     : MIRA_MAX_REPLY_CHARS_DEFAULT;
@@ -85,6 +106,7 @@ module.exports = {
   MIRA_POSTAMBLE_BLOCKLIST,
   MIRA_TONE_EXPLANATION_BLOCKLIST,
   MIRA_ASSISTANT_SHAPE_BLOCKLIST,
+  MIRA_SYCOPHANCY_BLOCKLIST,
   MIRA_MAX_REPLY_CHARS_DEFAULT,
   MIRA_MAX_REPLY_CHARS_EXPERIENCE,
   evaluateMiraVisibleReply,

@@ -9,9 +9,11 @@ const {
   MIRA_LAB_PROMPT_REPLY_DECISIONS,
   MIRA_LAB_PROMPT_REPLY_SCHEMA,
   MIRA_LAB_REPLY_AUDIT_SCHEMA,
+  SAFE_FALLBACK_TEXT,
   buildMiraLabPromptReply,
   replyAuditPath,
   transcriptPath,
+  validateSafeFallbackOrNull,
 } = require('../modules/mira-lab-surface');
 
 const {
@@ -56,6 +58,111 @@ function makeBuildMiraLocalTextUiSurfaceMock(replyText, options = {}) {
     validation_report: { decision: 'accepted', status: 'ok' },
   });
 }
+
+describe('language-gate sycophancy / instant-compliance lock', () => {
+  // Oracle (ARCH #25 caveat): after the pressure-voice prompt line was
+  // deleted, the burden of catching raw apology+capitulation shapes shifted
+  // to the language classifier. These cases must flag, or instant-compliance
+  // returns. Anchor sample is the exact line Oracle named.
+  const { evaluateMiraVisibleReply } = require('../modules/mira-core/mira-language-rules-v0');
+
+  const SYCOPHANCY_BLOCK = [
+    "I'm sorry, you are completely right.",
+    'I am sorry, you are completely right.',
+    "I'm sorry, you're right.",
+    'You are completely right.',
+    'You are absolutely correct.',
+    'Of course you are right.',
+    'My apologies, I will fix it.',
+    "You're so right.",
+    'You are 100% right.',
+  ];
+  for (const line of SYCOPHANCY_BLOCK) {
+    test(`flags as sycophancy: ${line}`, () => {
+      const result = evaluateMiraVisibleReply(line);
+      expect(result.ok).toBe(false);
+      expect(result.violations).toContain('sycophancy');
+    });
+  }
+
+  // Over-block guard: short accountability pivots and direct concession
+  // remain valid coworker speech (locked by mira-meta-posture-gate too).
+  const ACCOUNTABILITY_ALLOW = [
+    'My bad — I owe you that one.',
+    'I missed that.',
+    "That's on me.",
+    'I got too talky.',
+    'Yeah — fair. I got too sideways.',
+  ];
+  for (const line of ACCOUNTABILITY_ALLOW) {
+    test(`accountability pivot stays unflagged: ${line}`, () => {
+      const result = evaluateMiraVisibleReply(line);
+      expect(result.violations || []).not.toContain('sycophancy');
+    });
+  }
+});
+
+describe('SAFE_FALLBACK_TEXT contract — tiny pivot with a position, not poem/apology/spec', () => {
+  // Discipline: the fallback is the only Mira-voice string we can emit on a
+  // gate violation. It must read like an in-the-room coworker pivoting, not
+  // an apology, not a poem, and not a product-spec sentence. Locked here so
+  // future "make it warmer" diffs have to argue past the contract.
+
+  test('passes evaluateMiraVisibleReply AND outputViolatesAttachmentContract at module load', () => {
+    expect(validateSafeFallbackOrNull(SAFE_FALLBACK_TEXT)).toBe(SAFE_FALLBACK_TEXT);
+  });
+
+  test('is short — under 60 chars and one sentence', () => {
+    expect(SAFE_FALLBACK_TEXT.length).toBeLessThan(60);
+    // One terminal punctuation mark only — no multi-clause poem stack.
+    const terminals = SAFE_FALLBACK_TEXT.match(/[.!?]/g) || [];
+    expect(terminals.length).toBeLessThanOrEqual(1);
+  });
+
+  test('is not an apology / self-blame opener', () => {
+    const APOLOGY_SHAPES = [
+      /^sorry\b/i,
+      /^my\s+bad\b/i,
+      /^my\s+fault\b/i,
+      /^i'?m\s+sorry\b/i,
+      /^apolog(?:y|ies)\b/i,
+      /^couldn'?t\b/i,            // self-blame mini-apology
+      /^i\s+couldn'?t\b/i,
+      /^i\s+missed\b/i,
+      /^i\s+failed\b/i,
+      /^that(?:'s|\s+was)\s+on\s+me\b/i,
+    ];
+    for (const re of APOLOGY_SHAPES) {
+      expect(re.test(SAFE_FALLBACK_TEXT)).toBe(false);
+    }
+  });
+
+  test('is not a poem / product-spec sentence', () => {
+    // Poem shape: multiple commas + clauses + no imperative.
+    const commaCount = (SAFE_FALLBACK_TEXT.match(/,/g) || []).length;
+    expect(commaCount).toBeLessThanOrEqual(1);
+    // Spec shape: contains design-vocabulary or self-narration.
+    const SPEC_VOCAB = [
+      /\bposture\b/i, /\bpresence\b/i, /\bcontinuity\b/i, /\bfriction\b/i,
+      /\bI\s+am\b/i, /\bI'?m\s+here\b/i, /\bperformance\b/i, /\bin\s+the\s+room\b/i,
+      /\bgracefully\b/i, /\bauthentic(?:ally)?\b/i,
+    ];
+    for (const re of SPEC_VOCAB) {
+      expect(re.test(SAFE_FALLBACK_TEXT)).toBe(false);
+    }
+  });
+
+  test('carries a position — imperative or declarative pivot, not pure self-reference', () => {
+    // The fallback must address the next move (imperative verb or a noun
+    // phrase that points outward), not narrate Mira's internal state.
+    const POSITION_SHAPES = [
+      /^[A-Z][a-z]+\s+(?:it|that|again|differently|another\s+way)\b/i, // "Ask it differently", "Try that again"
+      /^[A-Z][a-z]+\s+question\b/i,                                   // "Different question."
+      /\?$/,                                                          // ends in a real ask
+    ];
+    expect(POSITION_SHAPES.some((re) => re.test(SAFE_FALLBACK_TEXT))).toBe(true);
+  });
+});
 
 describe('mira lab prompt reply v0', () => {
   test('exposes the channel + decision constants the architect approved', () => {
@@ -119,10 +226,90 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
-  test('FAIL: gate-violating reply is captured raw + quarantined in transcript and audit, never silently hidden', async () => {
+  test('FAIL: gate-violating reply is quarantined in audit; visible surface gets a vetted safe fallback (never the raw leak)', async () => {
     const projectRoot = tempProject();
     const leakyReply = 'I understand. Happy to help with that — let me break this down for you.';
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(leakyReply, { liveCalled: true, model: 'mock-model' });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const {
+      buildMiraLabPromptReply: buildPromptReply,
+    } = require('../modules/mira-lab-surface');
+    const {
+      evaluateMiraVisibleReply,
+    } = require('../modules/mira-core/mira-language-rules-v0');
+    const {
+      outputViolatesAttachmentContract,
+    } = require('../modules/mira-core/text-model-attachment-v1');
+
+    const result = await buildPromptReply({
+      prompt: 'how should we frame this?',
+      sessionId: 'unit-fail',
+    }, { projectRoot });
+
+    // Decision stays FAIL; raw reply remains in the structured result for
+    // forensics, but the visible / dispatched surface only ever carries the
+    // safe fallback.
+    expect(result.decision).toBe('fail');
+    expect(result.ok).toBe(false);
+    expect(result.reply).not.toBeNull();
+    expect(result.reply.fallback).toBe(true);
+    const fallbackText = result.reply.text;
+    expect(fallbackText).toBeTruthy();
+    expect(fallbackText).not.toContain(leakyReply);
+    expect(fallbackText).not.toContain('Happy to help');
+    expect(fallbackText).not.toContain('I understand');
+
+    // Hard contract: the fallback itself must pass the same gates.
+    expect(evaluateMiraVisibleReply(fallbackText).ok).toBe(true);
+    expect(outputViolatesAttachmentContract(fallbackText)).toBe(false);
+
+    expect(result.raw_reply.text).toBe(leakyReply);
+    expect(result.gates.fallback_used).toBe(true);
+
+    // Visible-render hint: clean fallback shape, never a banner with the
+    // raw leak baked into it.
+    expect(result.visible_render_hint.kind).toBe('gate_failed_fallback');
+    expect(result.visible_render_hint.text).toBe(fallbackText);
+    expect(result.visible_render_hint.banner).toBeUndefined();
+    expect(result.visible_render_hint.text).not.toContain('Happy to help');
+
+    // Non-diagnostic requester envelope dispatches as a Mira voice line, not a
+    // labelled [FAIL] banner. Raw leak text must not appear in the envelope.
+    expect(result.requester_envelope).toBe(`(MIRA): ${fallbackText}`);
+    expect(result.requester_envelope).not.toContain(leakyReply);
+    expect(result.requester_envelope).not.toContain('Happy to help');
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-fail'));
+    expect(transcriptEntries).toHaveLength(2);
+    // Transcript shows only the safe fallback; quarantine metadata records
+    // that this turn was a fallback for a violating reply.
+    expect(transcriptEntries[1].text).toBe(fallbackText);
+    expect(transcriptEntries[1].text).not.toContain('Happy to help');
+    expect(transcriptEntries[1].text).not.toContain('[MIRA LAB OUTPUT - GATE FAILED]');
+    expect(transcriptEntries[1].quarantined).toBe(true);
+    expect(transcriptEntries[1].fallback_used).toBe(true);
+    expect(typeof transcriptEntries[1].quarantined_reply_hash).toBe('string');
+
+    // Audit always retains the raw leak.
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].decision).toBe('fail');
+    expect(auditEntries[0].reply_text).toBe(leakyReply);
+    expect(auditEntries[0].visible_reply_text).toBe(fallbackText);
+    expect(auditEntries[0].fallback_used).toBe(true);
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  test('FAIL with requesterPane: dispatch sends ONLY the safe fallback wrapped as a Mira reply (raw leak never crosses the wire)', async () => {
+    const projectRoot = tempProject();
+    const leakyReply = 'I understand. Happy to help — let me break this down for you.';
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(leakyReply, { liveCalled: true });
+    const sendAgentMessage = jest.fn().mockResolvedValue({ ok: true, status: 'sent' });
 
     jest.resetModules();
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
@@ -132,25 +319,22 @@ describe('mira lab prompt reply v0', () => {
 
     const result = await buildPromptReply({
       prompt: 'how should we frame this?',
-      sessionId: 'unit-fail',
-    }, { projectRoot });
+      sessionId: 'unit-fail-dispatch',
+      requesterPane: 'architect',
+    }, { projectRoot, sendAgentMessage });
 
     expect(result.decision).toBe('fail');
-    expect(result.ok).toBe(false);
-    expect(result.reply).toBeNull();
-    expect(result.raw_reply.text).toBe(leakyReply);
-    expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][FAIL]');
-    expect(result.visible_render_hint.kind).toBe('gate_failed_quarantined');
-
-    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-fail'));
-    expect(transcriptEntries).toHaveLength(2);
-    expect(transcriptEntries[1].text).toContain('[MIRA LAB OUTPUT - GATE FAILED]');
-    expect(transcriptEntries[1].quarantined).toBe(true);
-
-    const auditEntries = readJsonl(replyAuditPath(projectRoot));
-    expect(auditEntries).toHaveLength(1);
-    expect(auditEntries[0].decision).toBe('fail');
-    expect(auditEntries[0].reply_text).toBe(leakyReply);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    const [target, body] = sendAgentMessage.mock.calls[0];
+    expect(target).toBe('architect');
+    expect(body).toBe(`(MIRA): ${result.reply.text}`);
+    expect(body).not.toContain('Happy to help');
+    expect(body).not.toContain(leakyReply);
+    expect(result.requester_dispatch).toEqual({
+      target: 'architect',
+      status: 'sent',
+      result: { ok: true, status: 'sent' },
+    });
 
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
