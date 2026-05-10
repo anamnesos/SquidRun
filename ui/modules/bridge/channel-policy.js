@@ -118,6 +118,7 @@ const INVOKE_CHANNELS = Object.freeze([
 ]);
 
 const SEND_CHANNELS = Object.freeze([
+  'mira:lab-renderer-drive-result',
   'pane-host-ready',
   'trigger-delivery-ack',
   'trigger-delivery-outcome',
@@ -143,6 +144,7 @@ const ON_CHANNELS = Object.freeze([
   'inject-message',
   'kernel:bridge-event',
   'kernel:bridge-stats',
+  'mira:lab-renderer-drive',
   'nudge-pane',
   'oracle:image-generated',
   'pane-cli-identity',
