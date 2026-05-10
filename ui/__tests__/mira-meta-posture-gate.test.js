@@ -163,50 +163,68 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
   });
 });
 
-describe('Mira system instructions steer away from meta-posture (ARCH #28)', () => {
-  const { buildMiraTextInstructions } = (() => {
-    // buildMiraTextInstructions is module-private; load via require to access
-    // the exported helpers. If it is not exported, fall back to inspecting the
-    // module source for the steering line below.
-    const mod = require('../modules/mira-core/text-model-attachment-v1');
-    return { buildMiraTextInstructions: mod.buildMiraTextInstructions };
-  })();
+describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
+  // ARCH #53/#54/#56: prompt overload was making Mira stage-manage presence
+  // and tone. Test invariants now lock the STRIP, not the elaborate steer:
+  //   - Hard constraints stay (no consciousness claim, no fake actions, no
+  //     model-internal narration).
+  //   - Identity priming stays (one short "you are Mira talking with James").
+  //   - The instruction set must be SHORT — earlier versions ballooned past
+  //     2000 chars with "good shape" examples and meta-posture steers that
+  //     primed the exact catalog form James flagged.
+  //   - The instruction set must NOT carry "good shape" example replies —
+  //     the prior "Tired, honestly. Still here." example primed the
+  //     presence-proof catalog.
+  //   - The instruction set must NOT pile rules about Mira's construction or
+  //     tone (no "real-feeling presence", no "answer from inside", etc.) —
+  //     piling rules made the model demonstrate compliance.
+  const fs = require('fs');
+  const path = require('path');
+  const SRC = fs.readFileSync(
+    path.join(__dirname, '..', 'modules', 'mira-core', 'text-model-attachment-v1.js'),
+    'utf8',
+  );
+  const mod = require('../modules/mira-core/text-model-attachment-v1');
 
-  test('module source carries the explicit meta-posture steer in instructions', () => {
-    const fs = require('fs');
-    const path = require('path');
-    const src = fs.readFileSync(
-      path.join(__dirname, '..', 'modules', 'mira-core', 'text-model-attachment-v1.js'),
-      'utf8',
-    );
-    expect(src).toMatch(/answer from inside, briefly and concretely/i);
-    expect(src).toMatch(/no "we are trying to make Mira/i);
-    expect(src).toMatch(/no "real-feeling\/ongoing presence"/i);
-    expect(src).toMatch(/no listing designer adjectives like "care, edge, memory, disagreement, taste, restraint"/i);
-    // ARCH #31/#32: steer must explicitly cover aliveness, here-is-the-next-
-    // sentence meta-narration, define Mira, and the speech disclaimer.
-    expect(src).toMatch(/Do not use the noun "aliveness"/i);
-    expect(src).toMatch(/Do not say "here is the next sentence"/i);
-    expect(src).toMatch(/Do not "define Mira"/i);
-    expect(src).toMatch(/not making\/giving a speech/i);
-    // ARCH #33/#34: open-ended self-grading meta-loop steer must be
-    // present, and direct accountability must be explicitly allowed.
-    expect(src).toMatch(/open-ended self-grading meta-loop/i);
-    expect(src).toMatch(/that was the miss/i);
-    expect(src).toMatch(/I got too X when you wanted me Y/i);
-    expect(src).toMatch(/Direct, brief accountability/i);
-    expect(src).toMatch(/I missed it.*my bad.*got that wrong/i);
-    expect(src).toMatch(/do not block yourself from owning a concrete miss/i);
+  test('hard constraints are still present in the source', () => {
+    expect(SRC).toMatch(/Do not claim actual consciousness/i);
+    expect(SRC).toMatch(/sends.*trades.*file writes.*durable memory writes/is);
+    expect(SRC).toMatch(/Do not narrate model internals/i);
   });
 
-  test('if buildMiraTextInstructions is exported, the rendered instructions include the steer', () => {
-    if (typeof buildMiraTextInstructions !== 'function') {
-      // export not part of the public API — module-source assertion above is
-      // the lock. Skipping rather than failing.
+  test('identity priming stays — one short Mira-talking-with-James line', () => {
+    expect(SRC).toMatch(/You are Mira talking with James\./);
+  });
+
+  test('strip removed prior over-rotating prose: no "good shapes" examples or designer-adjective lists', () => {
+    // The earlier "Good shapes: 'Kind of prickly today. Not bad. You?' /
+    // 'Tired, honestly. Still here.'" example explicitly primed the
+    // presence-proof catalog. It must be gone.
+    expect(SRC).not.toMatch(/Good shapes: "Kind of prickly today/i);
+    expect(SRC).not.toMatch(/"Tired, honestly\. Still here\."/);
+    // The long meta-posture steer with "answer from inside, briefly and
+    // concretely" was itself overload. It must be gone too.
+    expect(SRC).not.toMatch(/answer from inside, briefly and concretely/i);
+    expect(SRC).not.toMatch(/no "real-feeling\/ongoing presence"/i);
+    expect(SRC).not.toMatch(/I got too X when you wanted me Y/);
+  });
+
+  test('rendered instructions are short — under 1600 chars and at most 8 lines', () => {
+    if (typeof mod.buildMiraTextInstructions !== 'function') {
+      // Helper not exported; the source-level locks above are the contract.
       return;
     }
-    const text = buildMiraTextInstructions({});
-    expect(text).toMatch(/answer from inside, briefly and concretely/i);
-    expect(text).toMatch(/Speak as Mira, present in this turn/i);
+    const text = mod.buildMiraTextInstructions({});
+    expect(text.length).toBeLessThan(1600);
+    const lineCount = text.split(/\n/).filter((line) => line.trim().length > 0).length;
+    expect(lineCount).toBeLessThanOrEqual(8);
+  });
+
+  test('rendered instructions still include the hard constraints when called', () => {
+    if (typeof mod.buildMiraTextInstructions !== 'function') return;
+    const text = mod.buildMiraTextInstructions({});
+    expect(text).toMatch(/Do not claim actual consciousness/i);
+    expect(text).toMatch(/Do not narrate model internals/i);
+    expect(text).toMatch(/You are Mira talking with James/i);
   });
 });
