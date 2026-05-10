@@ -3,7 +3,9 @@
 const { getProjectRoot } = require('../../config');
 const {
   MIRA_LAB_EXPORT_CHANNEL,
+  MIRA_LAB_PROMPT_REPLY_CHANNEL,
   MIRA_LAB_TURN_CHANNEL,
+  buildMiraLabPromptReply,
   buildMiraLabTurn,
   exportMiraLabTranscript,
 } = require('../mira-lab-surface');
@@ -12,6 +14,13 @@ const MIRA_LAB_OPEN_CHANNEL = 'mira:lab-open';
 
 async function buildMiraLabTurnResponse(payload = {}, options = {}) {
   return buildMiraLabTurn(payload, {
+    ...options,
+    projectRoot: options.projectRoot || getProjectRoot(),
+  });
+}
+
+async function buildMiraLabPromptReplyResponse(payload = {}, options = {}) {
+  return buildMiraLabPromptReply(payload, {
     ...options,
     projectRoot: options.projectRoot || getProjectRoot(),
   });
@@ -65,6 +74,8 @@ function registerMiraLabHandlers(ctx, deps = {}) {
     exportMiraLabTranscriptResponse(payload, deps));
   ipcMain.handle(MIRA_LAB_OPEN_CHANNEL, (_event, payload = {}) =>
     openMiraLabWindowResponse(payload, deps));
+  ipcMain.handle(MIRA_LAB_PROMPT_REPLY_CHANNEL, (_event, payload = {}) =>
+    buildMiraLabPromptReplyResponse(payload, deps));
 }
 
 function unregisterMiraLabHandlers(ctx) {
@@ -73,6 +84,7 @@ function unregisterMiraLabHandlers(ctx) {
   ipcMain.removeHandler(MIRA_LAB_TURN_CHANNEL);
   ipcMain.removeHandler(MIRA_LAB_EXPORT_CHANNEL);
   ipcMain.removeHandler(MIRA_LAB_OPEN_CHANNEL);
+  ipcMain.removeHandler(MIRA_LAB_PROMPT_REPLY_CHANNEL);
 }
 
 registerMiraLabHandlers.unregister = unregisterMiraLabHandlers;
@@ -80,7 +92,9 @@ registerMiraLabHandlers.unregister = unregisterMiraLabHandlers;
 module.exports = {
   MIRA_LAB_EXPORT_CHANNEL,
   MIRA_LAB_OPEN_CHANNEL,
+  MIRA_LAB_PROMPT_REPLY_CHANNEL,
   MIRA_LAB_TURN_CHANNEL,
+  buildMiraLabPromptReplyResponse,
   buildMiraLabTurnResponse,
   exportMiraLabTranscriptResponse,
   openMiraLabWindowResponse,

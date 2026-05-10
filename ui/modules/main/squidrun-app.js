@@ -4897,6 +4897,12 @@ class SquidRunApp {
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
       performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
       createMiraLabWindow: (opts = {}) => miraLabWindowModule.createMiraLabWindow({ BrowserWindow, ...opts }),
+      sendAgentMessage: (target, body) => {
+        const PANE_BY_ROLE = { architect: '1', builder: '2', oracle: '3' };
+        const paneId = PANE_BY_ROLE[String(target || '').toLowerCase()];
+        if (!paneId) return Promise.resolve({ ok: false, reason: `unknown_target:${target}` });
+        return Promise.resolve(triggers.sendDirectMessage([paneId], body, 'mira-lab'));
+      },
     });
 
     ipcMain.removeHandler('get-onboarding-state');
