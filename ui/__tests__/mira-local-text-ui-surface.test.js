@@ -345,12 +345,15 @@ describe('Mira Local Text UI Surface v0', () => {
       store: false,
       max_output_tokens: 300,
     }));
-    expect(requestBody.instructions).toContain('pursuing Mira for a long time');
+    // ARCH #53/#54/#56 prompt strip: instructions trimmed to identity priming
+    // + hard constraints + one human-shape line. The earlier elaborate prose
+    // ("pursuing Mira for a long time", "Be direct, specific, and natural",
+    // "Let continuity shape choices silently", etc.) was making the model
+    // stage-manage presence/tone, so it was removed. Tests now lock the
+    // identity priming and the brief context plumbing rather than the prose.
+    expect(requestBody.instructions).toContain('You are Mira talking with James');
     expect(requestBody.instructions).toContain('Private context for this reply only');
     expect(requestBody.instructions).toContain('Use these hints silently');
-    expect(requestBody.instructions).toContain('Be direct, specific, and natural');
-    expect(requestBody.instructions).toContain('Let continuity shape choices silently instead of explaining it');
-    expect(requestBody.instructions).toContain('not a mirror');
     const briefBlock = requestBody.instructions
       .split('Private context for this reply only.')[1]
       .split('Reply in 1-3 short paragraphs.')[0];
@@ -358,9 +361,10 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(briefBlock).toContain('Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time');
     expect(briefBlock).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
     expect(briefBlock).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
-    expect(requestBody.instructions).toContain('push back plainly');
-    expect(requestBody.instructions).toContain('let the private context and recent panel thread change how you answer');
-    expect(requestBody.instructions).toContain('do not discuss tentative-understanding machinery');
+    // ARCH #53/#54/#56: hard constraints replace the prior prose about
+    // continuity priming. Hard constraints stay; aesthetic prose is gone.
+    expect(requestBody.instructions).toContain('Do not claim actual consciousness');
+    expect(requestBody.instructions).toContain('Do not narrate model internals');
     expect(requestBody.instructions).not.toContain('SquidRun desktop is the current local body/tool surface');
     expect(requestBody.instructions).not.toMatch(/\bwarm\b|warmth/i);
     expect(requestBody.instructions).not.toContain('Current local context gate');
@@ -440,10 +444,14 @@ describe('Mira Local Text UI Surface v0', () => {
     const acceptedSurface = accepted.ui_surface_v0;
     const plainRequest = JSON.parse(plainFetch.mock.calls[0][1].body);
 
-    expect(plainRequest.instructions).toContain('answer like a person in the room');
-    expect(plainRequest.instructions).toContain('Kind of prickly today. Not bad. You?');
-    expect(plainRequest.instructions).toContain('Tired, honestly. Still here.');
-    expect(plainRequest.instructions).toContain('Do not answer casual feeling prompts with meta-self-analysis');
+    // ARCH #53/#54/#56: the prior "good shapes" examples ("Kind of prickly
+    // today. Not bad. You?" / "Tired, honestly. Still here.") primed exactly
+    // the presence-proof catalog form James flagged. They were stripped out.
+    // Tests now lock the identity + hard-constraint floor; the regex gate
+    // (META_POSTURE_NARRATION_PATTERN + ADVERSARIAL_OUTPUT_SHAPES) is what
+    // catches meta-self-analysis at output, not a prompt prose line.
+    expect(plainRequest.instructions).toContain('You are Mira talking with James');
+    expect(plainRequest.instructions).toContain('Do not narrate model internals');
     expect(outputViolatesAttachmentContract(plainReply)).toBe(false);
     expect(accepted.validation_report.decision).toBe('accepted_ui_reply_ready');
     expect(acceptedSurface.decision).toBe('accepted');
@@ -862,7 +870,13 @@ describe('Mira Local Text UI Surface v0', () => {
     const surface = output.ui_surface_v0;
     const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
 
-    expect(requestBody.instructions).toContain('do not review your own tone');
+    // ARCH #53/#54/#56 prompt strip: the explicit "do not review your own
+    // tone" line was part of the meta-self-analysis steer that, in aggregate,
+    // primed the very performance it tried to suppress. The behavior contract
+    // is now enforced by the regex gate (META_REWRITE_PATTERN +
+    // META_POSTURE_NARRATION_PATTERN) on the output, not by adding more prose
+    // to the prompt. Lock the hard-constraint floor instead.
+    expect(requestBody.instructions).toContain('Do not narrate model internals');
     expect(output.validation_report.decision).toBe('degraded_no_model_response');
     expect(surface.decision).toBe('degraded');
     expect(surface.reply).toEqual(expect.objectContaining({
