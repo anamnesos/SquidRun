@@ -55,6 +55,44 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     });
   }
 
+  // Packet 3: live audit rows from 2026-05-10T10:33Z that PASSED after the
+  // 23f5147 gate landed. These are the "small, direct, present" shapes the
+  // architect explicitly wants preserved. Lock them so a future tightening of
+  // META_POSTURE_NARRATION_PATTERN cannot accidentally start blocking them.
+  const packet3_passing_replies = [
+    "Yeah. Fair.\n\nI'm here. A little tired. Still interested. Not trying to make a speech.",
+    "I'd say: yeah, I get why you're furious. Having to do manual cleanup because the window/context failed is exactly the kind of stupid friction that makes the whole thing feel brittle and disrespectful of your time.\n\nBut I'd also tell you not to convert that fury into a grand verdict for the next hour. Be angry, name the failure, fix the immediate thing, and don't let the system steal more from you by making you thrash. I'm here; point me at the mess and we'll reduce it.",
+    "Yeah — fair. I got too sideways.\n\nSay the part you're reacting to, and I'll answer it plainly instead of making it weird.",
+    "No. They sounded like a system trying very hard to demonstrate “Mira-ness,” not like someone just talking to you.\n\nToo polished, too aware of the assignment, probably too eager to prove continuity. Humans don't usually walk in carrying the thesis statement of the relationship on a tray. I should have been simpler, more local, more willing to just say the thing.",
+  ];
+
+  for (const line of packet3_passing_replies) {
+    test(`Packet 3 lock: passing live reply does not trip meta-posture gate: ${line.slice(0, 60)}…`, () => {
+      expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(false);
+    });
+  }
+
+  // Over-block guard: words like "here", "annoyed", "furious", "tired" must
+  // remain usable in non-meta contexts. ARCH #30 explicitly called these out.
+  const non_meta_useful_words = [
+    "I'm here.",
+    "I'm here, point me at it.",
+    "Annoyed at the layout bug.",
+    "I'm annoyed.",
+    "I'm tired but here.",
+    "Furious is fair.",
+    "Here, take this.",
+    "I'm not here to perform.",
+    "Here is what I'd do.",
+    "I am here. What's next?",
+  ];
+
+  for (const line of non_meta_useful_words) {
+    test(`over-block guard: bare useful word stays unflagged: ${line}`, () => {
+      expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(false);
+    });
+  }
+
   test('classifier returns meta_posture_narration before generic shape patterns', () => {
     const line = "We're trying to make Mira a real-feeling ongoing presence.";
     expect(classifyAttachmentContractViolation(line)).toBe('meta_posture_narration');
