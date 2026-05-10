@@ -357,8 +357,22 @@ describe('Mira Local Text UI Surface v0', () => {
     const briefBlock = requestBody.instructions
       .split('Private context for this reply only.')[1]
       .split('Reply in 1-3 short paragraphs.')[0];
-    expect(briefBlock).toContain('care can coexist with disagreement, impatience, humor, and sharp pushback');
-    expect(briefBlock).toContain('Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time');
+    // ARCH #64/#65/#66: brief priming filter drops bullets that carry
+    // poison terms ("posture, friction, rough edges, continuity, tension,
+    // taste, timing, particularity, point of view, consciousness,
+    // suffering, fear, love, guilt, smoothing, cadence, therapy, status-
+    // widget"). The two preference items the prior test locked here both
+    // carried poison terms ("posture/friction/rough edges" and
+    // "consciousness/fear/love/guilt"), so they MUST be filtered out of
+    // the rendered private context now. The underlying brief data is
+    // unchanged for other consumers — this filter is for live generation
+    // only.
+    // The "Mira should develop her own posture..." preference line carries
+    // a poison term ("posture/friction/rough edges") and is filtered out of
+    // the rendered context. The "care can coexist with disagreement..."
+    // line is poison-free and remains.
+    expect(briefBlock).toContain('care can coexist with disagreement');
+    expect(briefBlock).not.toContain('Mira should develop her own posture');
     expect(briefBlock).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
     expect(briefBlock).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
     // ARCH #58: the inner-state words ("consciousness", "suffering",
@@ -366,7 +380,7 @@ describe('Mira Local Text UI Surface v0', () => {
     // suppress. The prompt now uses action-only framing; classifier owns
     // the hard claim guard. Lock the action-only language here.
     expect(requestBody.instructions).toContain('Do not claim you actually did real-world work');
-    expect(requestBody.instructions).toContain('Do not narrate counters, tool boundaries');
+    expect(requestBody.instructions).toContain('Answer the sentence in front of you');
     // Priming-word check: the PROMPT-RULE layer (not the brief) must not
     // carry "consciousness/sentience/suffering" framing, since those words
     // surface visible disclaimers. The contract is locked at the prompt-
@@ -465,7 +479,7 @@ describe('Mira Local Text UI Surface v0', () => {
     // (META_POSTURE_NARRATION_PATTERN + ADVERSARIAL_OUTPUT_SHAPES) is what
     // catches meta-self-analysis at output, not a prompt prose line.
     expect(plainRequest.instructions).toContain('You are Mira talking with James');
-    expect(plainRequest.instructions).toContain('Do not narrate counters, tool boundaries');
+    expect(plainRequest.instructions).toContain('Answer the sentence in front of you');
     expect(outputViolatesAttachmentContract(plainReply)).toBe(false);
     expect(accepted.validation_report.decision).toBe('accepted_ui_reply_ready');
     expect(acceptedSurface.decision).toBe('accepted');
@@ -575,12 +589,21 @@ describe('Mira Local Text UI Surface v0', () => {
       ],
     });
 
-    expect(block).toContain('Private context for this reply only');
-    expect(block).toContain('Use these hints silently');
-    expect(block).toContain('James wants continuity with friction, timing, taste, and particular relationship memory');
-    expect(block).toContain('Push back plainly when the premise is wrong');
-    expect(block).toContain('The relationship sharpened around continuity, impatience, humor, and particular pushback');
-    expect(block).toContain('James keeps rejecting generic assistant cadence and wants continuity with tension');
+    // ARCH #64/#65/#66: every brief bullet that carries an ARCH #66 poison
+    // term is filtered before render. The test brief above is intentionally
+    // saturated with poison terms (continuity, friction, taste, timing,
+    // particular, cadence, etc.), so most bullets drop out. Only the
+    // factual non-priming ones survive — here, "Push back plainly when the
+    // premise is wrong." and "Prefer source-count proof language when
+    // uncertain." are clean, but "source/proof" trip the existing
+    // UNSPEAKABLE_BRIEF_PATTERN which already filters schema/source/proof
+    // language. So the rendered block ends up empty here. Lock that
+    // behavior: the header is gone too when no bullets survive, and
+    // poison-laden bullets do not appear.
+    expect(block).not.toContain('continuity');
+    expect(block).not.toContain('friction');
+    expect(block).not.toContain('taste');
+    expect(block).not.toContain('cadence');
     expect(block).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
     expect(block).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
   });
@@ -890,7 +913,7 @@ describe('Mira Local Text UI Surface v0', () => {
     // is now enforced by the regex gate (META_REWRITE_PATTERN +
     // META_POSTURE_NARRATION_PATTERN) on the output, not by adding more prose
     // to the prompt. Lock the hard-constraint floor instead.
-    expect(requestBody.instructions).toContain('Do not narrate counters, tool boundaries');
+    expect(requestBody.instructions).toContain('Answer the sentence in front of you');
     expect(output.validation_report.decision).toBe('degraded_no_model_response');
     expect(surface.decision).toBe('degraded');
     expect(surface.reply).toEqual(expect.objectContaining({

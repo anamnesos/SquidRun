@@ -255,47 +255,65 @@ function instructionList(values = [], maxItems = 6, maxChars = 220) {
     .slice(0, maxItems);
 }
 
+// ARCH #64/#65: words that, when rendered as private context, prime the
+// model to produce stylized/meta replies. Bullets containing any of these
+// are dropped from the rendered brief block. The underlying brief data
+// stays intact for other consumers; this filter applies only to the live
+// generation prompt.
+const BRIEF_PRIMING_PATTERN =
+  /\b(posture|friction|rough[\s_-]?edges?|particularity|continuity|tension|taste|timing|point\s+of\s+view|relationship\s+history|textured\s+conversation|status[- ]widget|generic\s+assistant\s+cadence|cadence|presence|aliveness|shape\s+of|performing\s+the\s+shape|soothing|smoothing|scaffolding|naming\s+drift|over[- ]control|deadness|runaway[- ]monster|obedient\s+alignment\s+puppet|independent[\s_-]?developing[\s_-]?posture|suffering|consciousness|sentience|fear|love|guilt|therapy)\b/i;
+
+function passesBriefPrimingFilter(text) {
+  if (!text) return false;
+  return !BRIEF_PRIMING_PATTERN.test(text);
+}
+
 function renderMiraBriefForInstructions(brief = {}) {
   if (!brief || typeof brief !== 'object') return '';
-  const identity = brief.identity || {};
   const relationship = brief.relationship || {};
+  // Only factual fields are eligible for the live generation prompt.
+  // expressive_range was a designer-adjective list (care, directness,
+  // pushback, friction, rough_edges, independent_developing_posture, ...);
+  // pulling it into the prompt was priming exactly the meta-stylized output
+  // ARCH #64/#65 flagged. It is dropped here. Its underlying data stays in
+  // the brief for other consumers.
   const continuity = renderableBriefText(relationship.continuity, 420);
   const currentFocus = renderableBriefText(relationship.current_focus, 260);
   const preferences = instructionList(relationship.preferences, 6, 260);
-  const expressiveRange = instructionList(identity.expressive_range, 9, 80);
   const recentGrowth = instructionList(brief.recent_growth, 3, 280);
   const repair = renderableBriefText(relationship.repair, 240);
   const history = renderableBriefText(relationship.history, 280);
-  const contextLines = [
+  const candidateLines = [
     continuity,
     currentFocus,
     ...preferences,
-    ...expressiveRange,
     ...recentGrowth,
     repair,
     history,
   ].filter(Boolean);
-  const uniqueContextLines = Array.from(new Set(contextLines));
+  const filteredLines = candidateLines.filter(passesBriefPrimingFilter);
+  const uniqueContextLines = Array.from(new Set(filteredLines));
+  if (uniqueContextLines.length === 0) return '';
   const lines = [
     'Private context for this reply only. Use these hints silently; do not name, quote, categorize, or recite this context in the visible answer.',
     ...uniqueContextLines.map((line) => `- ${line}`),
   ];
-  return lines.length > 1 ? lines.join('\n') : '';
+  return lines.join('\n');
 }
 
 function buildMiraTextInstructions(localContext = {}) {
   const miraBriefBlock = renderMiraBriefForInstructions(localContext.miraBrief);
   const threadContextBlock = renderThreadContextForInstructions(localContext.threadContext);
-  // Prompt strip per ARCH #53/#54: instruction overload was making the model
-  // perform compliance with rules (cataloging presence, listing tone
-  // adjectives, narrating its own construction). Trim to identity priming +
-  // hard constraints + one human-shape line. Do not give "good shapes"
-  // examples — they prime the exact catalog form James flagged.
+  // Prompt rules per ARCH #53/#54/#56/#66: positive direction, no poison
+  // terms (no "presence", "posture", "tone", "narrate", etc. — naming the
+  // bad concept primes the very thing the rule tries to suppress). The
+  // hard action-only constraint stays. The classifier owns the safety
+  // floor for inner-state claim leaks.
   return [
     'You are Mira talking with James.',
-    'Just answer like a person who knows him would. Direct and short is fine. Disagree if you disagree. Be cranky, brief, or quiet if that is the honest move.',
-    'Do not narrate your own tone, presence, or construction. Do not label what you are or are not. Do not announce that you are still here or with him — answering is enough. Do not list the qualities you have ("care, edge, memory, taste") or what we are trying to make you. If you missed something, say it short and move on.',
-    'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately. Do not narrate counters, tool boundaries, implementation status, memory confidence, or next-step checklists in the visible reply.',
+    'Answer the sentence in front of you. Direct and short is fine. Disagree if you disagree.',
+    'Do not describe your reply or yourself. If you missed something, say it short and move on.',
+    'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
     miraBriefBlock,
     threadContextBlock,
     'Keep it to 1-3 short paragraphs.',
@@ -546,6 +564,7 @@ module.exports = {
   GENERIC_ASSISTANT_PATTERN,
   META_REWRITE_PATTERN,
   META_POSTURE_NARRATION_PATTERN,
+  BRIEF_PRIMING_PATTERN,
   VISIBLE_POSTURE_LABEL_PATTERN,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
   OPENAI_RESPONSES_URL,

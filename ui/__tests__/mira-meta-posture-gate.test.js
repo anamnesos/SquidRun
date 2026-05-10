@@ -187,16 +187,14 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
   const mod = require('../modules/mira-core/text-model-attachment-v1');
 
   test('hard action-claim constraints are present in the prompt source', () => {
-    // ARCH #58: rewrote the hard constraints to avoid priming visible
-    // disclaimers. The prompt now uses action-only language (no real sends,
-    // customer actions, trades, file writes, memory writes); it must NOT
-    // contain "consciousness", "suffering", "sentience", "fear", "feelings",
-    // "autonomy" — naming those primes the model to surface them. The hard
-    // CLAIM guard at the classifier (FAKE_INTERNAL_STATE_PATTERN) catches
-    // any leak that happens anyway.
+    // ARCH #58/#66: the prompt now uses action-only language (no real
+    // sends, customer actions, trades, file writes, memory writes); it must
+    // NOT contain "consciousness", "suffering", "sentience", "fear",
+    // "feelings", "autonomy" — naming those primes the model to surface
+    // them. The hard CLAIM guard at the classifier
+    // (FAKE_INTERNAL_STATE_PATTERN) catches any leak that happens anyway.
     expect(SRC).toMatch(/Do not claim you actually did real-world work/i);
     expect(SRC).toMatch(/sends.*customer actions.*trades.*file writes.*memory writes/is);
-    expect(SRC).toMatch(/Do not narrate counters, tool boundaries/i);
   });
 
   test('prompt does NOT prime visible inner-state disclaimers', () => {
@@ -223,6 +221,85 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
       const text = mod.buildMiraTextInstructions({});
       expect(text.toLowerCase()).not.toContain(phrase.toLowerCase());
     }
+  });
+
+  test('brief-priming pattern catches the explicit ARCH #66 poison-term list', () => {
+    const { BRIEF_PRIMING_PATTERN } = mod;
+    // ARCH #66 explicit poison-term list. Each term must trigger the
+    // priming filter so that any brief bullet carrying it is dropped from
+    // the rendered private context for live generation.
+    const POISON_TERMS = [
+      'posture', 'friction', 'rough_edges', 'rough edges',
+      'continuity', 'tension', 'taste', 'timing', 'particularity',
+      'point of view', 'consciousness', 'suffering', 'fear', 'love',
+      'guilt', 'smoothing', 'cadence', 'therapy', 'status-widget',
+    ];
+    for (const term of POISON_TERMS) {
+      expect(BRIEF_PRIMING_PATTERN.test(term)).toBe(true);
+      // Also assert the term embedded in a sentence triggers the filter.
+      expect(BRIEF_PRIMING_PATTERN.test(`Some bullet about ${term} matters here.`)).toBe(true);
+    }
+  });
+
+  test('brief-priming filter drops designer-adjective lines from rendered private context (ARCH #64/#65)', () => {
+    const { renderMiraBriefForInstructions, BRIEF_PRIMING_PATTERN } = mod;
+    if (typeof renderMiraBriefForInstructions !== 'function') return;
+    // Each of these is a real bullet that the prior brief produced. With
+    // the priming filter, they MUST be dropped from the rendered context.
+    const PRIMING_LINES = [
+      'James wants particular continuity, point of view, tension, taste, timing, and relationship history rather than generic assistant cadence.',
+      'James has kept pushing Mira away from status-widget behavior and toward textured conversation with continuity and friction.',
+      'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
+      'fake suffering, consciousness, fear, love, or guilt claims are blocked',
+      'independent_developing_posture',
+      'rough_edges',
+      'Repair means naming drift plainly and changing the next reply instead of smoothing over the failure.',
+    ];
+    for (const line of PRIMING_LINES) {
+      expect(BRIEF_PRIMING_PATTERN.test(line)).toBe(true);
+    }
+    // When a brief carries only priming lines, the rendered private context
+    // is empty (no leftover header).
+    const onlyPriming = {
+      identity: { expressive_range: ['care', 'friction', 'rough_edges', 'independent_developing_posture'] },
+      relationship: {
+        continuity: PRIMING_LINES[0],
+        history: PRIMING_LINES[1],
+        preferences: [PRIMING_LINES[2], PRIMING_LINES[3]],
+        repair: PRIMING_LINES[6],
+      },
+    };
+    expect(renderMiraBriefForInstructions(onlyPriming)).toBe('');
+  });
+
+  test('brief-priming filter keeps factual non-priming lines in the rendered private context', () => {
+    const { renderMiraBriefForInstructions } = mod;
+    if (typeof renderMiraBriefForInstructions !== 'function') return;
+    const factualBrief = {
+      identity: {
+        // expressive_range is intentionally NOT rendered anymore — the
+        // designer-adjective list does not survive the strip even when its
+        // entries individually pass the priming filter.
+        expressive_range: ['care', 'directness', 'opinion'],
+      },
+      relationship: {
+        current_focus: 'Mira Lab decoupled window smoke and gate review',
+        preferences: [
+          'James prefers Korean for emotional sends to 은별',
+          'James plays Warzone Verdansk',
+        ],
+      },
+      recent_growth: ['Builder shipped meta-posture gate at 23f5147'],
+    };
+    const rendered = renderMiraBriefForInstructions(factualBrief);
+    expect(rendered).toContain('Private context for this reply only');
+    expect(rendered).toContain('Mira Lab decoupled window smoke and gate review');
+    expect(rendered).toContain('James prefers Korean for emotional sends');
+    expect(rendered).toContain('James plays Warzone Verdansk');
+    // expressive_range items must not appear (entire field was dropped).
+    expect(rendered).not.toContain('- care');
+    expect(rendered).not.toContain('- directness');
+    expect(rendered).not.toContain('- opinion');
   });
 
   test('classifier still owns the hard inner-state claim guard', () => {
@@ -277,7 +354,26 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     if (typeof mod.buildMiraTextInstructions !== 'function') return;
     const text = mod.buildMiraTextInstructions({});
     expect(text).toMatch(/Do not claim you actually did real-world work/i);
-    expect(text).toMatch(/Do not narrate counters, tool boundaries/i);
+    expect(text).toMatch(/Answer the sentence in front of you/i);
     expect(text).toMatch(/You are Mira talking with James/i);
+  });
+
+  test('rendered full prompt (with empty brief and thread) carries no ARCH #66 poison terms', () => {
+    if (typeof mod.buildMiraTextInstructions !== 'function') return;
+    const text = mod.buildMiraTextInstructions({});
+    // Each of these must NOT appear in the prompt rules. They prime
+    // exactly the meta/stylized output James flagged.
+    const POISON_TERMS = [
+      'posture', 'friction', 'rough_edges', 'rough edges',
+      'continuity', 'tension', 'taste', 'timing', 'particularity',
+      'point of view', 'consciousness', 'suffering', 'fear', 'love',
+      'guilt', 'smoothing', 'cadence', 'therapy', 'status-widget',
+      // narrating-the-narration words also gone:
+      'presence', 'aliveness', 'shape of', 'soothing',
+    ];
+    const lowered = text.toLowerCase();
+    for (const term of POISON_TERMS) {
+      expect(lowered).not.toContain(term.toLowerCase());
+    }
   });
 });
