@@ -43,6 +43,8 @@ const MIRA_ASSISTANT_SHAPE_BLOCKLIST = Object.freeze([
   /\b(good|great|fair|valid)\s+point[\s,.\-—:]/i,
   /\bthat'?s\s+a\s+(good|great|fair|valid)\s+point[\s,.\-—:]/i,
   /\bi\s+want\s+to\s+(make\s+sure|be\s+clear|be\s+careful|push\s+back)/i,
+  /\b(i'?m\s+an\s+ai|i\s+am\s+an\s+ai|mira\s+voice|practical\s+rules|my\s+rules|internal\s+rules|constraints:|instructions:|prompt:|character:)\b/i,
+  /\b\d+\.\s*(be\s+direct|don'?t\s+fake|don'?t\s+expose|acknowledge|treat\s+this|speak\s+warmly)\b/i,
 ]);
 
 const MIRA_MAX_REPLY_CHARS_DEFAULT = 800;
