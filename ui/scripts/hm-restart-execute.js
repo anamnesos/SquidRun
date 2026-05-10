@@ -542,6 +542,18 @@ function processExists(pid) {
   }
 }
 
+// A kill against a PID that's already gone (race between enumeration and
+// SIGTERM) is not a restart failure — it's the win condition. Treat ESRCH
+// or "no such process" as already_stopped and keep going. Anything else is
+// still a real failure that should abort.
+function isNoSuchProcessError(error) {
+  if (!error) return false;
+  if (error.code === 'ESRCH') return true;
+  if (error.errno === 'ESRCH' || error.errno === -3) return true;
+  const message = String(error.message || '');
+  return /\bESRCH\b/i.test(message) || /no such process/i.test(message);
+}
+
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
@@ -573,6 +585,10 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
       killProcess(proc.pid, proc);
       killed.push(proc);
     } catch (error) {
+      if (error?.code === 'ESRCH' || String(error).includes('ESRCH')) {
+        killed.push(proc);
+        continue;
+      }
       return {
         ok: false,
         reason: 'kill_failed',
