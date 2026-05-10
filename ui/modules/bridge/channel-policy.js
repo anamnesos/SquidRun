@@ -63,6 +63,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'mira:coordinator-snapshot',
   'mira:lab-export',
   'mira:lab-open',
+  'mira:lab-prompt-reply',
   'mira:lab-turn',
   'mira:local-text-session',
   'notify-external-test',

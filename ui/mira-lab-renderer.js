@@ -3,6 +3,7 @@
 
   const TURN_CHANNEL = 'mira:lab-turn';
   const EXPORT_CHANNEL = 'mira:lab-export';
+  const PROMPT_REPLY_CHANNEL = 'mira:lab-prompt-reply';
   const sessionId = `mira-lab-${new Date().toISOString().slice(0, 10)}`;
 
   function bridgeInvoke(channel, payload) {
@@ -27,14 +28,42 @@
     return 'james';
   }
 
-  function appendLine(role, text) {
+  function appendLine(role, text, extraClass) {
     const transcript = document.getElementById('miraLabTranscript');
     if (!transcript) return;
     const line = document.createElement('p');
-    line.className = `mira-lab-line ${lineClass(role)}`;
+    const classes = ['mira-lab-line', lineClass(role)];
+    if (extraClass) classes.push(extraClass);
+    line.className = classes.join(' ');
     line.textContent = text;
     transcript.appendChild(line);
     transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function appendBlockedBanner(reason) {
+    appendLine('mira', `Mira Lab reply unavailable: ${reason || 'unknown'}`, 'mira-lab-blocked');
+  }
+
+  function appendQuarantinedReply(text) {
+    appendLine('mira', `[MIRA LAB OUTPUT - GATE FAILED] ${text}`, 'mira-lab-gate-failed');
+  }
+
+  function renderPromptReply(result) {
+    if (!result) return;
+    const hint = result.visible_render_hint || {};
+    if (hint.kind === 'clean_reply' && hint.text) {
+      appendLine('mira', hint.text);
+    } else if (hint.kind === 'gate_failed_quarantined' && hint.text) {
+      appendQuarantinedReply(hint.text);
+    } else if (hint.kind === 'blocked_banner') {
+      appendBlockedBanner(hint.banner ? hint.banner.replace(/^Mira Lab reply unavailable:\s*/, '') : (result.gates && result.gates.reason_class) || 'unknown');
+    } else if (result.decision === 'pass' && result.reply && result.reply.text) {
+      appendLine('mira', result.reply.text);
+    } else if (result.decision === 'fail' && result.raw_reply && result.raw_reply.text) {
+      appendQuarantinedReply(result.raw_reply.text);
+    } else {
+      appendBlockedBanner((result.gates && result.gates.reason_class) || result.reason || 'unknown');
+    }
   }
 
   function updateEvalPacket(packet) {
@@ -59,6 +88,33 @@
       appendLine(speakerRole, text);
       input.value = '';
       if (state) state.textContent = 'recording transcript / diagnostics hidden';
+      const expectsMiraReply = speakerRole === 'james' || speakerRole === 'architect' || speakerRole === 'builder' || speakerRole === 'oracle';
+      if (expectsMiraReply) {
+        // Skip TURN_CHANNEL when expecting a reply: the prompt-reply path records both the
+        // prompt turn and Mira's reply turn in one transcript write. Calling both would
+        // duplicate the prompt row.
+        if (state) state.textContent = 'awaiting Mira reply / diagnostics hidden';
+        const replyResult = await bridgeInvoke(PROMPT_REPLY_CHANNEL, {
+          sessionId,
+          prompt: text,
+          speakerRole,
+          requesterPane: speakerRole === 'james' ? null : speakerRole,
+        });
+        renderPromptReply(replyResult);
+        if (state) {
+          if (!replyResult || (replyResult.ok === false && !replyResult.decision)) {
+            state.textContent = `Mira Lab reply unavailable: ${(replyResult && replyResult.reason) || 'bridge_unavailable'}`;
+          } else if (replyResult.decision === 'pass') {
+            state.textContent = 'Mira reply rendered / gates passed';
+          } else if (replyResult.decision === 'fail') {
+            state.textContent = 'Mira reply quarantined / gate failed';
+          } else if (replyResult.decision === 'blocked') {
+            state.textContent = `Mira Lab reply blocked: ${(replyResult.gates && replyResult.gates.reason_class) || replyResult.reason || 'unknown'}`;
+          }
+        }
+        return;
+      }
+      // mira speaking out — keep existing turn-record path (no reply expected)
       const result = await bridgeInvoke(TURN_CHANNEL, {
         sessionId,
         speakerRole,
