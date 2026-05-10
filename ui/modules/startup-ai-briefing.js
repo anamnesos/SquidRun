@@ -10,6 +10,12 @@ const { queryCommsJournalEntries } = require('./main/comms-journal');
 const {
   isAgentTaskResolvedByLaterSignal,
 } = require('./main/agent-task-resolution');
+const {
+  readMiraPresenceRuntimeStartupSummary,
+  SURFACE_BACKSTAGE_INTERNAL_ONLY: MIRA_PRS_SURFACE_BACKSTAGE,
+} = require('./mira-core/mira-presence-runtime-state-v0');
+
+const MIRA_PRESENCE_RUNTIME_STATE_SUMMARY_FILENAME = 'mira-presence-runtime-state-summary.json';
 
 const DEFAULT_MODEL = String(process.env.SQUIDRUN_STARTUP_BRIEFING_MODEL || 'claude-opus-4-6').trim();
 const DEFAULT_BASE_URL = String(process.env.SQUIDRUN_ANTHROPIC_BASE_URL || 'https://api.anthropic.com').trim();
@@ -868,6 +874,64 @@ function writeStatusFile(statusPath, payload) {
   writeFileAtomic(statusPath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
+function resolveMiraPresenceRuntimeStateSummaryPath(options = {}) {
+  if (options.miraPresenceRuntimeStateSummaryPath) {
+    return path.resolve(String(options.miraPresenceRuntimeStateSummaryPath));
+  }
+  const briefingDir = path.dirname(resolveBriefingPath(options));
+  return path.join(briefingDir, MIRA_PRESENCE_RUNTIME_STATE_SUMMARY_FILENAME);
+}
+
+function resolveMiraPresenceProjectRoot(options = {}) {
+  if (options.miraPresenceProjectRoot) {
+    return path.resolve(String(options.miraPresenceProjectRoot));
+  }
+  if (options.projectRoot) return path.resolve(String(options.projectRoot));
+  try {
+    return path.resolve(String(getProjectRoot() || process.cwd()));
+  } catch (_) {
+    return path.resolve(process.cwd());
+  }
+}
+
+function readMiraPresenceRuntimeStartupContext(options = {}) {
+  try {
+    const projectRoot = resolveMiraPresenceProjectRoot(options);
+    const summary = readMiraPresenceRuntimeStartupSummary({ projectRoot });
+    return {
+      ...summary,
+      surface: MIRA_PRS_SURFACE_BACKSTAGE,
+      visible_injection_allowed: false,
+    };
+  } catch (err) {
+    return {
+      present: false,
+      decision: 'startup_context_read_error',
+      surface: MIRA_PRS_SURFACE_BACKSTAGE,
+      visible_injection_allowed: false,
+      error: err && err.message ? err.message : String(err),
+    };
+  }
+}
+
+function writeMiraPresenceRuntimeStateSummary(options = {}) {
+  const summaryPath = resolveMiraPresenceRuntimeStateSummaryPath(options);
+  const context = readMiraPresenceRuntimeStartupContext(options);
+  const payload = {
+    schema: 'squidrun.startup_ai_briefing.mira_presence_runtime_state_summary.v0',
+    surface: MIRA_PRS_SURFACE_BACKSTAGE,
+    visible_injection_allowed: false,
+    generated_at: toText(options.generatedAt || new Date().toISOString(), new Date().toISOString()),
+    context,
+  };
+  try {
+    writeFileAtomic(summaryPath, `${JSON.stringify(payload, null, 2)}\n`);
+    return { ok: true, path: summaryPath, payload };
+  } catch (err) {
+    return { ok: false, path: summaryPath, error: err && err.message ? err.message : String(err) };
+  }
+}
+
 async function generateStartupBriefing(options = {}) {
   const generatedAt = toText(options.generatedAt || new Date().toISOString(), new Date().toISOString());
   const transcriptFiles = listRecentTranscriptFiles(options);
@@ -877,6 +941,13 @@ async function generateStartupBriefing(options = {}) {
   const liveSnapshot = await resolveLiveAccountSnapshot(options);
   const canonicalSources = resolveCanonicalSourceFiles(options);
   const canonicalSourceBlock = buildCanonicalSourceBlock(canonicalSources, options);
+
+  // Backstage Mira Presence runtime state sidecar must refresh on EVERY startup
+  // attempt — including degraded paths (missing ANTHROPIC_API_KEY, fetch failure,
+  // or any pre-success exception). Run before the model call so success and
+  // failure branches both inherit a refreshed sidecar without modifying visible
+  // briefing markdown.
+  writeMiraPresenceRuntimeStateSummary({ ...options, generatedAt });
 
   try {
     const generatedBody = await requestStartupBriefing(transcriptCorpus, {
@@ -950,7 +1021,9 @@ module.exports = {
   generateStartupBriefing,
   readStartupBriefing,
   readStartupBriefingForInjection,
+  readMiraPresenceRuntimeStartupContext,
   resolveBriefingPath,
+  resolveMiraPresenceRuntimeStateSummaryPath,
   _internals: {
     listRecentTranscriptFiles,
     renderTranscriptForPrompt,
