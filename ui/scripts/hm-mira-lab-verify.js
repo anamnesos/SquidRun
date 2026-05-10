@@ -8,6 +8,10 @@ const PROJECT_ROOT = process.env.SQUIDRUN_PROJECT_ROOT
   || path.resolve(__dirname, '..', '..');
 const PROMPT_CLI = path.join(PROJECT_ROOT, 'ui', 'scripts', 'hm-mira-lab-prompt.js');
 const APP_CLI = path.join(PROJECT_ROOT, 'ui', 'scripts', 'hm-app.js');
+const {
+  deriveStateFromVerifierResult,
+  writeBootstrapState,
+} = require('../modules/mira-lab-verify-bootstrap-state');
 const DEFAULT_PROMPTS = Object.freeze([
   'what are we doing with Mira?',
   'how are you',
@@ -211,15 +215,21 @@ async function runVerification(options = {}) {
 
   const allPass = promptResults.length > 0 && promptResults.every((entry) => entry.decision === 'pass');
   const bootstrapStatus = classifyBootstrap(rendererWindowOpen);
+  // The bootstrap is "ready" only when the live app-control open succeeded
+  // AND every prompt probe passed; otherwise the next Architect needs the
+  // stale marker to know to re-run the verifier after restart.
+  const effectiveBootstrapStatus = bootstrapStatus === 'ready' && !allPass
+    ? 'prompts_failed'
+    : bootstrapStatus;
 
-  return {
+  const result = {
     schema: SCHEMA,
     verifier: 'hm-mira-lab-verify',
     started_at: startedAt,
     session_id: sessionId,
     renderer_window_open: rendererWindowOpen,
-    bootstrap_status: bootstrapStatus,
-    bootstrap_note: bootstrapStatus === 'action_not_loaded_in_running_main'
+    bootstrap_status: effectiveBootstrapStatus,
+    bootstrap_note: effectiveBootstrapStatus === 'action_not_loaded_in_running_main'
       ? 'open-mira-lab is not registered in the running Electron main process; the app-control action shipped at a0e1307 takes effect on the next main-process start. Future sessions inherit the no-restart seam. This is a one-time bootstrap limitation, not a verifier defect.'
       : null,
     proof_classification: {
@@ -230,6 +240,20 @@ async function runVerification(options = {}) {
     prompts: promptResults,
     all_pass: allPass,
   };
+
+  if (options.persistState !== false) {
+    const writeFn = typeof options.writeBootstrapState === 'function'
+      ? options.writeBootstrapState
+      : writeBootstrapState;
+    try {
+      const derived = deriveStateFromVerifierResult(result);
+      writeFn(derived, { projectRoot, statePath: options.bootstrapStatePath });
+    } catch (_) {
+      // best-effort; the marker stays stale on write failure
+    }
+  }
+
+  return result;
 }
 
 function printHelp() {

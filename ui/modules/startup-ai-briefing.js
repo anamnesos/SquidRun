@@ -14,6 +14,10 @@ const {
   readMiraPresenceRuntimeStartupSummary,
   SURFACE_BACKSTAGE_INTERNAL_ONLY: MIRA_PRS_SURFACE_BACKSTAGE,
 } = require('./mira-core/mira-presence-runtime-state-v0');
+const {
+  readBootstrapState: readMiraLabVerifyBootstrapState,
+  formatStartupStaleMarker: formatMiraLabVerifyBootstrapStaleMarker,
+} = require('./mira-lab-verify-bootstrap-state');
 
 const MIRA_PRESENCE_RUNTIME_STATE_SUMMARY_FILENAME = 'mira-presence-runtime-state-summary.json';
 
@@ -292,13 +296,25 @@ function resolveNowMs(options = {}) {
   return Number.isFinite(explicitNow) ? explicitNow : Date.now();
 }
 
+function readMiraLabVerifyBootstrapStaleBlock(options = {}) {
+  try {
+    const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+    const statePath = options.miraLabVerifyBootstrapStatePath || null;
+    const state = readMiraLabVerifyBootstrapState({ projectRoot, statePath });
+    return formatMiraLabVerifyBootstrapStaleMarker(state);
+  } catch (_) {
+    return '';
+  }
+}
+
 function readStartupBriefingForInjection(options = {}) {
   let body = readStartupBriefing(options).trim();
   const status = safeReadJson(resolveStatusPath(options));
   const startupDurableBlock = buildStartupDurableRequirementsBlock(resolveStartupDurableSourceFiles(options), options);
   const currentLaneBlock = formatCurrentLaneBlock(readCurrentLaneSnapshot(options));
   const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
-  const continuityBlock = [startupDurableBlock, currentLaneBlock, recentCommsBlock].filter(Boolean).join('\n\n');
+  const miraLabBootstrapBlock = readMiraLabVerifyBootstrapStaleBlock(options);
+  const continuityBlock = [startupDurableBlock, miraLabBootstrapBlock, currentLaneBlock, recentCommsBlock].filter(Boolean).join('\n\n');
   if (!body && !continuityBlock) return '';
   if (!body && continuityBlock) {
     return `LIVE STARTUP CONTINUITY from current-scope data.\n\n${continuityBlock}\n`;
@@ -1094,6 +1110,7 @@ module.exports = {
     formatStartupBriefingFailureReason,
     detectIntentionallyDisabledAnthropic,
     formatSkippedBriefingNote,
+    readMiraLabVerifyBootstrapStaleBlock,
     requestStartupBriefing,
     resolveLiveAccountSnapshot,
     formatLiveSnapshotBlock,
