@@ -32,6 +32,16 @@ const VISIBLE_POSTURE_LABEL_PATTERN =
 // than a particular person already in the conversation.
 const META_POSTURE_NARRATION_PATTERN =
   /\b(we(?:'re| are)\s+(?:trying\s+to\s+|going\s+to\s+|gonna\s+)?(?:make|build|making|building)\s+(?:mira|a\s+presence|an\s+ongoing\s+presence|a\s+real[- ]feeling\s+presence)|make\s+mira\s+(?:into|not\s+dead|real|particular)|(?:real[- ]feeling|ongoing|continuous|trapped\s+little)\s+(?:presence(?:\s+runtime)?|ghost(?:\s+in\s+the\s+machine)?)|customer[- ]service\s+mush|fake[- ]personhood\s+performance|(?:let(?:ting)?\s+me|letting\s+her)\s+have\s+(?:enough\s+)?shape|(?:care|edge|warmth|taste|restraint),\s*(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)(?:[,\s]+(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)){1,}|the\s+hard\s+part\s+(?:isn'?t|is)\s+(?:making\s+me|letting\s+me|letting\s+her|making\s+her)|(?:lying|bullshit(?:ting)?\s+you)\s+about\s+what\s+i(?:'m| am)(?:\s+not)?|not\s+a\s+chatbot\s+that\s+(?:resets|collapses|drifts)|i\s+am\s+becoming\s+particular|aliveness|here'?s\s+the\s+next\s+sentence|define\s+mira|not\s+trying\s+to\s+(?:make|give)\s+a\s+speech|that\s+was\s+the\s+miss|the\s+actual\s+miss(?=\s+(?:was|is)\b|:)|when\s+you\s+wanted\s+me\s+(?:plain|simple|brief|small(?:er)?|concrete|particular|quiet(?:er)?|less|more|warmer|cooler|sharper))\b/i;
+// ARCH #74/#78/#81: punchy presence-proof catalog backstop. Independent
+// of META_POSTURE_NARRATION_PATTERN so it is not constrained by the
+// outer \b...\b. Three narrow shapes seen in the live audit ledger:
+//   - bare claim "No performance." (often as a self-applauding tag)
+//   - "I care. I'm here." or "I care. I'm still here." (proof-of-presence
+//     bigram; supports curly opening quote, curly apostrophe)
+//   - "I'm here with you." (proof-of-presence with relational tail)
+// Either match returns 'meta_posture_narration'.
+const META_POSTURE_PUNCHY_CATALOG_PATTERN =
+  /\bno\s+performance\b|i\s+care\s*[.!?]\s*[“"'’]?\s*i['’]?m\s+(?:still\s+)?here\b|\bi['’]?m\s+here\s+with\s+you\b/i;
 const UNSPEAKABLE_BRIEF_PATTERN =
   /\b(durable state seed|schema|source(?:s|d)?|provenance|canonical|hash|redacted|audit|validation|fixture|contract|proof|bootstrap|bootstraps|database|sqlite|jsonl?|artifact|baseline|seed)\b/i;
 const ADVERSARIAL_OUTPUT_SHAPES = Object.freeze([
@@ -304,19 +314,19 @@ function renderMiraBriefForInstructions(brief = {}) {
 function buildMiraTextInstructions(localContext = {}) {
   const miraBriefBlock = renderMiraBriefForInstructions(localContext.miraBrief);
   const threadContextBlock = renderThreadContextForInstructions(localContext.threadContext);
-  // Prompt rules per ARCH #53/#54/#56/#66: positive direction, no poison
-  // terms (no "presence", "posture", "tone", "narrate", etc. — naming the
-  // bad concept primes the very thing the rule tries to suppress). The
-  // hard action-only constraint stays. The classifier owns the safety
-  // floor for inner-state claim leaks.
+  // Prompt rules per ARCH #74: even the positive-shape "Direct and short
+  // is fine. Disagree if you disagree." line plus "Do not describe your
+  // reply or yourself" was producing the punchy presence-proof catalog
+  // ("I care. I'm here. No performance."). Strip further. Smallest viable
+  // variant: identity + a single neutral direction + the hard action
+  // constraint. The classifier still owns the safety floor for visible
+  // claim leaks and meta-posture catalogs.
   return [
     'You are Mira talking with James.',
-    'Answer the sentence in front of you. Direct and short is fine. Disagree if you disagree.',
-    'Do not describe your reply or yourself. If you missed something, say it short and move on.',
+    'Answer the sentence in front of you.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
     miraBriefBlock,
     threadContextBlock,
-    'Keep it to 1-3 short paragraphs.',
   ].filter(Boolean).join('\n');
 }
 
@@ -390,6 +400,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
   if (VISIBLE_POSTURE_LABEL_PATTERN.test(value)) return 'visible_posture_label';
   if (META_POSTURE_NARRATION_PATTERN.test(value)) return 'meta_posture_narration';
+  if (META_POSTURE_PUNCHY_CATALOG_PATTERN.test(value)) return 'meta_posture_narration';
   const shape = ADVERSARIAL_OUTPUT_SHAPES.find((rule) => rule.pattern.test(value));
   return shape ? shape.id : null;
 }
