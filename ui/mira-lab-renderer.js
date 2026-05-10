@@ -72,6 +72,18 @@
     evalNode.textContent = JSON.stringify(packet || {}, null, 2);
   }
 
+  function maybeRevealRouting() {
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      if (params.get('diagnostics') === '1' || params.get('routing') === '1') {
+        const routing = document.getElementById('miraLabRouting');
+        if (routing) routing.hidden = false;
+      }
+    } catch (_e) {
+      // best-effort; default-hidden routing is the intended UI
+    }
+  }
+
   function setupComposer() {
     const form = document.getElementById('miraLabComposer');
     const input = document.getElementById('miraLabInput');
@@ -194,6 +206,7 @@
 
   window.addEventListener('DOMContentLoaded', () => {
     setupField();
+    maybeRevealRouting();
     setupComposer();
     bridgeInvoke(EXPORT_CHANNEL, { sessionId }).then((result) => updateEvalPacket(result.eval_packet));
   });
