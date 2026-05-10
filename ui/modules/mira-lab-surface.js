@@ -286,7 +286,10 @@ function gatesSummary(gateResult) {
   return violations ? `violations=${violations}` : 'failed';
 }
 
-function buildRequesterEnvelope({ decision, prompt, replyText, gateSummary, auditPath }) {
+function buildRequesterEnvelope({ decision, prompt, replyText, gateSummary, auditPath, diagnostic }) {
+  if (!diagnostic && decision === 'pass' && replyText) {
+    return replyText;
+  }
   const decisionLabel = String(decision || 'BLOCKED').toUpperCase();
   const promptSummary = summarizeForWrapper(prompt, 100);
   const replySummary = replyText ? summarizeForWrapper(replyText, 200) : '<no reply>';
@@ -539,18 +542,28 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     replyText: replyText || null,
     gateSummary,
     auditPath: auditPathStr,
+    diagnostic: options.diagnosticEnvelope,
   });
 
+  // The pane should only receive a message when Mira actually said something
+  // clean. Fail/blocked outputs stay in the JSON response + audit log; they
+  // do NOT show up in the receiving pane as a "[MIRA LAB OUTPUT][FAIL] ..."
+  // envelope masquerading as a chat. `diagnosticEnvelope=true` keeps the
+  // labeled-envelope behavior available for explicit debug callers.
+  const dispatchAllowed = decision === 'pass' || options.diagnosticEnvelope === true;
+
   let requesterDispatch = null;
-  if (requesterPane && typeof options.sendAgentMessage === 'function') {
+  if (requesterPane && dispatchAllowed && typeof options.sendAgentMessage === 'function') {
     try {
       const sendResult = await options.sendAgentMessage(requesterPane, requesterEnvelope);
       requesterDispatch = { target: requesterPane, status: 'sent', result: sendResult || null };
     } catch (err) {
       requesterDispatch = { target: requesterPane, status: 'failed', error: err && err.message ? err.message : String(err) };
     }
-  } else if (requesterPane) {
+  } else if (requesterPane && dispatchAllowed) {
     requesterDispatch = { target: requesterPane, status: 'queued_not_sent', reason: 'sendAgentMessage_dependency_missing' };
+  } else if (requesterPane) {
+    requesterDispatch = { target: requesterPane, status: 'skipped_no_clean_reply', decision };
   }
 
   return {
