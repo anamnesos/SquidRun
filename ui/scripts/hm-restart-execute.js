@@ -500,11 +500,16 @@ async function sweepOrphanProcesses(projectRoot, options = {}) {
   const nowFn = options.now || Date.now;
   const timeoutMs = Math.max(1000, Number(options.orphanSweepTimeoutMs || 5000));
   const killed = [];
+  const alreadyStopped = [];
   for (const proc of candidates) {
     try {
       killProcess(proc.pid, proc);
       killed.push(proc);
     } catch (error) {
+      if (isNoSuchProcessError(error)) {
+        alreadyStopped.push({ pid: proc.pid, name: proc.name || null, role: proc.role || null });
+        continue;
+      }
       return {
         ok: false,
         reason: 'orphan_sweep_kill_failed',
@@ -512,6 +517,7 @@ async function sweepOrphanProcesses(projectRoot, options = {}) {
         targets,
         candidates,
         killed,
+        alreadyStopped,
       };
     }
   }
@@ -519,7 +525,7 @@ async function sweepOrphanProcesses(projectRoot, options = {}) {
   while (nowFn() <= deadline) {
     const stillAlive = killed.filter((proc) => exists(proc.pid));
     if (stillAlive.length === 0) {
-      return { ok: true, targets, candidates, killed };
+      return { ok: true, targets, candidates, killed, alreadyStopped };
     }
     await sleepFn(Math.min(250, Math.max(0, deadline - nowFn())));
   }
@@ -529,6 +535,7 @@ async function sweepOrphanProcesses(projectRoot, options = {}) {
     targets,
     candidates,
     killed,
+    alreadyStopped,
     stillAlive: killed.filter((proc) => exists(proc.pid)),
   };
 }
