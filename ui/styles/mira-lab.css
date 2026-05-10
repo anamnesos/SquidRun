@@ -33,7 +33,9 @@ body {
 .mira-lab-shell {
   position: relative;
   z-index: 1;
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   padding: clamp(20px, 4vw, 56px);
@@ -98,11 +100,13 @@ body {
 
 .mira-lab-transcript {
   width: min(980px, 100%);
-  align-self: end;
   display: flex;
   flex-direction: column;
   gap: 18px;
   padding-bottom: 2vh;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .mira-lab-line {
@@ -129,13 +133,27 @@ body {
 }
 
 .mira-lab-composer {
-  display: grid;
-  grid-template-columns: minmax(110px, 150px) minmax(0, 1fr) minmax(180px, 280px) auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: end;
   width: min(1180px, 100%);
   border-top: 1px solid rgba(237, 247, 243, 0.16);
   padding-top: 18px;
+  min-height: 96px;
+}
+
+.mira-lab-routing {
+  display: grid;
+  grid-template-columns: minmax(110px, 150px) minmax(180px, 280px);
+  gap: 12px;
+  align-items: end;
+}
+
+.mira-lab-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
 }
 
 .mira-lab-route {
@@ -216,12 +234,36 @@ body {
     padding: 18px;
   }
 
-  .mira-lab-composer {
+  .mira-lab-routing {
+    grid-template-columns: 1fr;
+  }
+
+  .mira-lab-input-row {
     grid-template-columns: 1fr;
   }
 
   .mira-lab-targets {
     min-height: 36px;
+  }
+}
+
+@media (max-height: 520px) {
+  .mira-lab-shell {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .mira-lab-composer {
+    min-height: 76px;
+    padding-top: 10px;
+  }
+
+  .mira-lab-composer textarea {
+    min-height: 48px;
+  }
+
+  .mira-lab-name {
+    font-size: clamp(22px, 4vw, 34px);
   }
 }
 
