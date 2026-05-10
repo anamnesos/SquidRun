@@ -265,4 +265,86 @@ describe('hm-mira-lab-verify', () => {
     expect(pickReasonClass({ decision: { gates: { reason_class: 'engine' } } })).toBe('engine');
     expect(pickReasonClass({})).toBe(null);
   });
+
+  test('runVerification persists a bootstrap state file derived from the result', async () => {
+    const writeBootstrapState = jest.fn(() => ({ ok: true }));
+    const spawnAppOpen = jest.fn(() => Promise.resolve({
+      code: 0,
+      stdout: JSON.stringify({ success: true, action: 'open-mira-lab', status: 'opened', windowKey: 'mira-lab' }),
+      stderr: '',
+    }));
+    const spawnPromptCli = jest.fn(() => Promise.resolve({
+      code: 0,
+      stdout: JSON.stringify({ decision: 'pass', reply: { text: 'ok', source: 'm' } }),
+      stderr: '',
+    }));
+
+    const result = await runVerification({
+      sessionId: 'verify-state-write',
+      spawnAppOpen,
+      spawnPromptCli,
+      writeBootstrapState,
+    });
+
+    expect(writeBootstrapState).toHaveBeenCalledTimes(1);
+    const [derivedState] = writeBootstrapState.mock.calls[0];
+    expect(derivedState).toEqual(expect.objectContaining({
+      bootstrap_status: 'ready',
+      prompt_path_status: 'complete',
+    }));
+    expect(derivedState.last_run.all_pass).toBe(true);
+    expect(derivedState.last_run.renderer_window_open_ok).toBe(true);
+    expect(result.bootstrap_status).toBe('ready');
+  });
+
+  test('runVerification keeps bootstrap_status non-ready when prompt-path fails even if window-open succeeded', async () => {
+    const writeBootstrapState = jest.fn(() => ({ ok: true }));
+    const spawnAppOpen = jest.fn(() => Promise.resolve({
+      code: 0,
+      stdout: JSON.stringify({ success: true, action: 'open-mira-lab', status: 'opened' }),
+      stderr: '',
+    }));
+    const stdouts = [
+      JSON.stringify({ decision: 'pass', reply: { text: 'ok' } }),
+      JSON.stringify({ decision: 'blocked', reply: { text: null }, gates: { reason_class: 'reply_engine_degraded' } }),
+      JSON.stringify({ decision: 'pass', reply: { text: 'ok' } }),
+      JSON.stringify({ decision: 'pass', reply: { text: 'ok' } }),
+    ];
+    const codes = [0, 4, 0, 0];
+    let call = 0;
+    const spawnPromptCli = jest.fn(() => {
+      const i = call;
+      call += 1;
+      return Promise.resolve({ code: codes[i], stdout: stdouts[i], stderr: '' });
+    });
+
+    const result = await runVerification({
+      sessionId: 'verify-mixed',
+      spawnAppOpen,
+      spawnPromptCli,
+      writeBootstrapState,
+    });
+
+    expect(result.bootstrap_status).not.toBe('ready');
+    expect(result.all_pass).toBe(false);
+    const [derivedState] = writeBootstrapState.mock.calls[0];
+    expect(derivedState.prompt_path_status).toBe('incomplete');
+  });
+
+  test('runVerification can opt out of state persistence with persistState:false', async () => {
+    const writeBootstrapState = jest.fn(() => ({ ok: true }));
+    const spawnPromptCli = jest.fn(() => Promise.resolve({
+      code: 0,
+      stdout: JSON.stringify({ decision: 'pass', reply: { text: 'ok' } }),
+      stderr: '',
+    }));
+    await runVerification({
+      sessionId: 'verify-no-persist',
+      skipWindowOpen: true,
+      spawnPromptCli,
+      writeBootstrapState,
+      persistState: false,
+    });
+    expect(writeBootstrapState).not.toHaveBeenCalled();
+  });
 });

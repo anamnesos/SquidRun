@@ -347,6 +347,56 @@ describe('startup-ai-briefing', () => {
     }
   });
 
+  test('Mira Lab verifier bootstrap stale block is injected when state is non-ready and clears when ready', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-mira-bootstrap-'));
+    const outputPath = path.join(tempRoot, 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, 'startup-briefing-status.json');
+    const stateDir = path.join(tempRoot, '.squidrun', 'runtime');
+    const statePath = path.join(stateDir, 'mira-lab-verify-bootstrap.json');
+
+    try {
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(outputPath, '# AI Startup Briefing\n\n- Some prior content.\n');
+      fs.writeFileSync(statusPath, JSON.stringify({ ok: true, generatedAt: '2026-05-10T19:30:00.000Z' }));
+      fs.writeFileSync(statePath, JSON.stringify({
+        schema: 'squidrun.mira_lab_verify.bootstrap.v1',
+        bootstrap_status: 'action_not_loaded_in_running_main',
+        prompt_path_status: 'complete',
+        last_verified_at: '2026-05-10T19:00:00.000Z',
+      }));
+
+      const stale = readStartupBriefingForInjection({
+        projectRoot: tempRoot,
+        outputPath,
+        statusPath,
+        nowMs: Date.parse('2026-05-10T19:35:00.000Z'),
+      });
+
+      expect(stale).toMatch(/Mira Lab Verifier Bootstrap: stale \(window-open only\)/);
+      expect(stale).toMatch(/hm-mira-lab-verify\.js --session-id verify-post-restart-mira-lab --json/);
+      expect(stale).toMatch(/prompt_path: PASS/);
+
+      fs.writeFileSync(statePath, JSON.stringify({
+        schema: 'squidrun.mira_lab_verify.bootstrap.v1',
+        bootstrap_status: 'ready',
+        prompt_path_status: 'complete',
+        last_verified_at: '2026-05-10T19:34:00.000Z',
+      }));
+
+      const cleared = readStartupBriefingForInjection({
+        projectRoot: tempRoot,
+        outputPath,
+        statusPath,
+        nowMs: Date.parse('2026-05-10T19:36:00.000Z'),
+      });
+
+      expect(cleared).not.toMatch(/Mira Lab Verifier Bootstrap: stale/);
+      expect(cleared).not.toMatch(/verify-post-restart-mira-lab/);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('strips live account blocks when injected briefing is older than sixty minutes', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-61m-'));
     const outputPath = path.join(tempRoot, 'ai-briefing.md');
