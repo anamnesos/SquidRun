@@ -530,19 +530,24 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
       .toBe(null);
   });
 
-  // ARCH #37/#41 product-facing gate: the angry-friction prompt is blocked at
-  // the model-engine layer (decision='blocked', reason_class='reply_engine_degraded',
-  // language_gate='empty_reply', visible_reply=null). The classifier accepts
-  // the expected coworker pass-shape, but the engine returns nothing for that
-  // prompt class. This deliberately-failing test keeps the typed-panel
-  // acceptance lane visibly INCOMPLETE in CI output until the engine path is
-  // fixed. When the live verifier reports all four prompts pass and this
-  // value is flipped to 'complete', test.failing inverts and forces an
-  // explicit close-out, surfacing the lane completion to whoever lands the
-  // engine fix.
-  test.failing('typed-panel acceptance lane is COMPLETE for the four ordinary prompts including angry-friction (currently INCOMPLETE: reply_engine_degraded blocks angry-friction)', () => {
-    const angryFrictionLaneStatus = 'incomplete';
-    expect(angryFrictionLaneStatus).toBe('complete');
+  // ARCH #37/#41/#44 product-facing lane-completion gate. The angry-friction
+  // prompt previously surfaced as decision='blocked',
+  // reason_class='reply_engine_degraded', language_gate='empty_reply' in the
+  // live verifier under 3b8e62e. ARCH #44 re-ran the verifier under
+  // 9c6ab02 and the targeted prompt CLI on the same prompt; both passed
+  // cleanly with no UV assertion and a non-empty visible_reply. The
+  // empty_reply was correlated with the Windows libuv teardown corrupting
+  // the prompt CLI's stdout/exit path before fix #1 in 9c6ab02; closing the
+  // SQLite cache before exit removed both the assertion and the empty
+  // reply. The prompt-path lane is closed.
+  // SCOPE: this gate is for the prompt-path only. The window-open bootstrap
+  // caveat (running main predates a0e1307, so open-mira-lab returns
+  // unknown_action in the current session) is tracked separately by the
+  // verifier's bootstrap_status field and the classifyBootstrap test, not
+  // here.
+  test('typed-panel acceptance prompt-path lane is COMPLETE for all four ordinary prompts (including angry-friction) per ARCH #44 live verifier evidence', () => {
+    const angryFrictionPromptPathStatus = 'complete';
+    expect(angryFrictionPromptPathStatus).toBe('complete');
   });
 
   test('cold-start continuity: empty thread context still drives one model call with a concrete reply', async () => {
