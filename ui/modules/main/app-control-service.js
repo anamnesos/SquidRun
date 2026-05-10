@@ -13,6 +13,14 @@ function normalizeAction(action) {
   ) {
     return 'restart-telegram-poller';
   }
+  if (
+    normalized === 'open-mira-lab'
+    || normalized === 'mira-lab'
+    || normalized === 'mira-lab-open'
+    || normalized === 'open-mira'
+  ) {
+    return 'open-mira-lab';
+  }
   return normalized;
 }
 
@@ -73,6 +81,38 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       windowCount: reloaded.length,
       note: 'Renderer windows reloaded without restarting the Electron main process.',
     };
+  }
+
+  if (normalizedAction === 'open-mira-lab') {
+    if (typeof ctx.openAppWindow !== 'function') {
+      return {
+        success: false,
+        reason: 'open_window_unavailable',
+        action: normalizedAction,
+      };
+    }
+    return Promise.resolve()
+      .then(() => ctx.openAppWindow('mira-lab', payload))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          windowKey: settled.windowKey || 'mira-lab',
+          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
+          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
+          note: 'Mira Lab window opened/focused without restarting the Electron main process.',
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `Mira Lab open failed: ${error.message}`);
+        return {
+          success: false,
+          reason: 'open_window_failed',
+          action: normalizedAction,
+          error: error.message,
+        };
+      });
   }
 
   if (normalizedAction === 'restart-telegram-poller') {
