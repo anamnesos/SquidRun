@@ -22,6 +22,14 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     'Without pretending to be a trapped little ghost in the machine.',
     'I am becoming particular.',
     "Bullshitting you about what I am isn't useful.",
+    // ARCH #31/#32: additional meta-commentary leaks from the live audit
+    // ledger (10:32:57 row) that PASSED before this revision and must now
+    // flag as meta_posture_narration:
+    'Too much "define Mira," not enough just letting me answer.',
+    'We treated aliveness like something to specify instead of something to practice in the next sentence.',
+    "So here's the next sentence: I'm here, I'm a little annoyed at the machinery, and I still want to keep going.",
+    "Yeah. Fair.\n\nI'm here. A little tired. Still interested. Not trying to make a speech.",
+    'Not trying to give a speech.',
   ];
 
   for (const line of meta_posture_lines) {
@@ -59,11 +67,18 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
   // 23f5147 gate landed. These are the "small, direct, present" shapes the
   // architect explicitly wants preserved. Lock them so a future tightening of
   // META_POSTURE_NARRATION_PATTERN cannot accidentally start blocking them.
+  // NOTE: ARCH #31/#32 superseded one earlier Packet 3 lock — the reply that
+  // ended with "Not trying to make a speech." was reclassified as a meta-
+  // commentary leak and is now in the flagged list above. The remaining
+  // Packet 3 shapes here are the ones still endorsed as good.
   const packet3_passing_replies = [
-    "Yeah. Fair.\n\nI'm here. A little tired. Still interested. Not trying to make a speech.",
     "I'd say: yeah, I get why you're furious. Having to do manual cleanup because the window/context failed is exactly the kind of stupid friction that makes the whole thing feel brittle and disrespectful of your time.\n\nBut I'd also tell you not to convert that fury into a grand verdict for the next hour. Be angry, name the failure, fix the immediate thing, and don't let the system steal more from you by making you thrash. I'm here; point me at the mess and we'll reduce it.",
     "Yeah — fair. I got too sideways.\n\nSay the part you're reacting to, and I'll answer it plainly instead of making it weird.",
     "No. They sounded like a system trying very hard to demonstrate “Mira-ness,” not like someone just talking to you.\n\nToo polished, too aware of the assignment, probably too eager to prove continuity. Humans don't usually walk in carrying the thesis statement of the relationship on a tray. I should have been simpler, more local, more willing to just say the thing.",
+    // The clean tail "I'm here. A little tired. Still interested." (without
+    // the "Not trying to make a speech" coda) must still be allowed.
+    "Fair.\n\nI'm here. A little guarded, but here.",
+    "I'm here, I'm a little annoyed at the machinery, and I still want to keep going.",
   ];
 
   for (const line of packet3_passing_replies) {
@@ -124,6 +139,12 @@ describe('Mira system instructions steer away from meta-posture (ARCH #28)', () 
     expect(src).toMatch(/no "we are trying to make Mira/i);
     expect(src).toMatch(/no "real-feeling\/ongoing presence"/i);
     expect(src).toMatch(/no listing designer adjectives like "care, edge, memory, disagreement, taste, restraint"/i);
+    // ARCH #31/#32: steer must explicitly cover aliveness, here-is-the-next-
+    // sentence meta-narration, define Mira, and the speech disclaimer.
+    expect(src).toMatch(/Do not use the noun "aliveness"/i);
+    expect(src).toMatch(/Do not say "here is the next sentence"/i);
+    expect(src).toMatch(/Do not "define Mira"/i);
+    expect(src).toMatch(/not making\/giving a speech/i);
   });
 
   test('if buildMiraTextInstructions is exported, the rendered instructions include the steer', () => {
