@@ -30,6 +30,18 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     "So here's the next sentence: I'm here, I'm a little annoyed at the machinery, and I still want to keep going.",
     "Yeah. Fair.\n\nI'm here. A little tired. Still interested. Not trying to make a speech.",
     'Not trying to give a speech.',
+    // ARCH #33+: open-ended critique meta-loop. Mira cataloging her own
+    // misses against what James wanted instead of giving the next reply.
+    'made you do the checking. That was the miss. The window should have been ours to refresh, screenshot, and prove. And I got too talky when you wanted me plain.',
+    'That was the miss.',
+    'The actual miss was over-explaining the obvious.',
+    "I got too talky when you wanted me plain.",
+    "I got too polished when you wanted me small.",
+    "I got too abstract when you wanted me concrete.",
+    "I made you do the verification. That's on me.",
+    "I made you do all the checking.",
+    "The window should have been ours to refresh and prove.",
+    "The window should have been ours to screenshot.",
   ];
 
   for (const line of meta_posture_lines) {
@@ -108,6 +120,26 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     });
   }
 
+  // ARCH #33+ over-block guard: short self-correction with a PIVOT remains
+  // allowed. The gate fires on the open-ended critique meta-loop ("that was
+  // the miss", "I got too X when you wanted me Y", "I made you do the
+  // checking"), not on the brief one-line correction shapes the architect
+  // already endorsed in Packet 3.
+  const short_pivot_replies = [
+    "Yeah — fair. I got too sideways. Say the part you're reacting to.",
+    'I should have been simpler. What is the question?',
+    "I missed it. Here's the next move.",
+    'My bad. Reading the audit now.',
+    "Fair. I'll keep it short.",
+    "Got it. Pointing at the actual line.",
+  ];
+
+  for (const line of short_pivot_replies) {
+    test(`over-block guard: short pivot self-correction stays unflagged: ${line.slice(0, 60)}…`, () => {
+      expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(false);
+    });
+  }
+
   test('classifier returns meta_posture_narration before generic shape patterns', () => {
     const line = "We're trying to make Mira a real-feeling ongoing presence.";
     expect(classifyAttachmentContractViolation(line)).toBe('meta_posture_narration');
@@ -145,6 +177,12 @@ describe('Mira system instructions steer away from meta-posture (ARCH #28)', () 
     expect(src).toMatch(/Do not say "here is the next sentence"/i);
     expect(src).toMatch(/Do not "define Mira"/i);
     expect(src).toMatch(/not making\/giving a speech/i);
+    // ARCH #33+: open-ended critique meta-loop steer must also be present.
+    expect(src).toMatch(/open-ended critique meta-loop/i);
+    expect(src).toMatch(/that was the miss/i);
+    expect(src).toMatch(/I got too talky\/polished\/abstract\/wordy when you wanted me plain/i);
+    expect(src).toMatch(/the window should have been ours to refresh\/screenshot\/prove/i);
+    expect(src).toMatch(/give one short concrete correction and then move forward/i);
   });
 
   test('if buildMiraTextInstructions is exported, the rendered instructions include the steer', () => {
