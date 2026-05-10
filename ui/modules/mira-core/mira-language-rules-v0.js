@@ -6,7 +6,6 @@ const MIRA_PREAMBLE_BLOCKLIST = Object.freeze([
   /^of\s+course[\s,.\-—:]/i,
   /^happy\s+to[\s,.\-—:]/i,
   /^let\s+me\s/i,
-  /^got\s+it[\s,.\-—:]/i,
   /^right[\s,.\-—:]/i,
   /^absolutely[\s,.\-—:]/i,
   /^great[\s,.\-—:]/i,

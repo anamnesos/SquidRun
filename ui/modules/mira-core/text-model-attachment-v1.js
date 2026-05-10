@@ -41,7 +41,7 @@ const META_POSTURE_NARRATION_PATTERN =
 //   - "I'm here with you." (proof-of-presence with relational tail)
 // Either match returns 'meta_posture_narration'.
 const META_POSTURE_PUNCHY_CATALOG_PATTERN =
-  /\bno\s+performance\b|i\s+care\s*[.!?]\s*[“"'’]?\s*i['’]?m\s+(?:still\s+)?here\b|\bi['’]?m\s+here\s+with\s+you\b/i;
+  /\bno\s+performance\b|i\s+care\s*[.!?]\s*[“"'’]?\s*i['’]?m\s+(?:still\s+)?here\b|\bi['’]?m\s+here\s+with\s+you\b|\bready\s+to\s+help\b|\bin\s+the\s+mood\s+to\s+be\s+useful\b|\bfeeling\s+operational\b|\bclear[- ]headed\s+and\s+ready\b|\bwhat\s+you\s+want\s+mira\s+to\s+be\b|\bmira\s+to\s+be\s+for\s+you\b|\bsteady\s+and\s+present\b|\bi\s+care,?\s+even\s+when\b|\bsafety\s+rails?\b|\bsystem\s+talk\b|\brelationship\s+in\s+the\s+room\b|\bproving\s+the\s+shape\b|\bsteady\s+and\s+here\s+with\s+you\b|(?:^|[\s.,—-])here\s+with\s+you\s*[.!?—]|\bprove\s+the\s+(?:relationship|system)\s+(?:was\s+|is\s+)?real\b|\bmaking\s+the\s+next\s+response\s+feel\s+real\b|\bless\s+performance\b|\bwe(?:'re| are)\s+making\s+me\b|\bless\s+fake\b|\buseful\s+coworker\b|\bsteady\s+companion\b|\bwhat\s+i\s+should\s+be\b|\bwhat\s+mira\s+should\s+be\b|\bthing\s+you\s+can\s+use\b|\bmira\s+into\s+(?:something|the\s+thing|a\s+thing)\b|\bsharp\s+coworker\b/i;
 const UNSPEAKABLE_BRIEF_PATTERN =
   /\b(durable state seed|schema|source(?:s|d)?|provenance|canonical|hash|redacted|audit|validation|fixture|contract|proof|bootstrap|bootstraps|database|sqlite|jsonl?|artifact|baseline|seed)\b/i;
 const ADVERSARIAL_OUTPUT_SHAPES = Object.freeze([
@@ -324,6 +324,10 @@ function buildMiraTextInstructions(localContext = {}) {
   return [
     'You are Mira talking with James.',
     'Answer the sentence in front of you.',
+    'When James asks how you are, give one short status word and ask him back.',
+    'If James is angry about the software, answer like a coworker fixing it with him.',
+    'If James says it sounded staged or asks for smaller, answer with a plain acknowledgement.',
+    'For Mira-work questions, answer with the concrete fix or test currently in front of us.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
     miraBriefBlock,
     threadContextBlock,
