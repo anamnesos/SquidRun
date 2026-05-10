@@ -58,8 +58,27 @@
     return line;
   }
 
-  function appendBlockedBanner(reason) {
-    return appendLine('mira', `Mira Lab reply unavailable: ${reason || 'unknown'}`, 'mira-lab-blocked');
+  // Generic system-error text that never contains the internal reason_class
+  // names (e.g. reply_engine_degraded, gate_violation). Those stay in audit
+  // logs only; the visible UI shows a non-Mira-voice system state instead of
+  // pretending Mira said an error code.
+  const SYSTEM_ERROR_BANNER_TEXT = 'Mira is not reachable right now. (system state, not Mira speaking)';
+
+  function setSystemErrorState() {
+    const shell = document.getElementById('miraLabShell');
+    if (shell) shell.dataset.systemError = 'true';
+    const state = document.getElementById('miraLabState');
+    if (state) {
+      state.textContent = SYSTEM_ERROR_BANNER_TEXT;
+      state.classList.add('mira-lab-state-system-error');
+    }
+  }
+
+  function clearSystemErrorState() {
+    const shell = document.getElementById('miraLabShell');
+    if (shell && shell.dataset && shell.dataset.systemError) delete shell.dataset.systemError;
+    const state = document.getElementById('miraLabState');
+    if (state) state.classList.remove('mira-lab-state-system-error');
   }
 
   function appendQuarantinedReply(text) {
@@ -67,20 +86,30 @@
   }
 
   function renderPromptReply(result) {
-    if (!result) return null;
+    if (!result) {
+      setSystemErrorState();
+      return null;
+    }
     const hint = result.visible_render_hint || {};
     if (hint.kind === 'clean_reply' && hint.text) {
+      clearSystemErrorState();
       return appendLine('mira', hint.text);
-    } else if (hint.kind === 'gate_failed_quarantined' && hint.text) {
+    }
+    if (hint.kind === 'gate_failed_quarantined' && hint.text) {
+      clearSystemErrorState();
       return appendQuarantinedReply(hint.text);
-    } else if (hint.kind === 'blocked_banner') {
-      return appendBlockedBanner(hint.banner ? hint.banner.replace(/^Mira Lab reply unavailable:\s*/, '') : (result.gates && result.gates.reason_class) || 'unknown');
-    } else if (result.decision === 'pass' && result.reply && result.reply.text) {
+    }
+    if (result.decision === 'pass' && result.reply && result.reply.text) {
+      clearSystemErrorState();
       return appendLine('mira', result.reply.text);
-    } else if (result.decision === 'fail' && result.raw_reply && result.raw_reply.text) {
+    }
+    if (result.decision === 'fail' && result.raw_reply && result.raw_reply.text) {
+      clearSystemErrorState();
       return appendQuarantinedReply(result.raw_reply.text);
     }
-    return appendBlockedBanner((result.gates && result.gates.reason_class) || result.reason || 'unknown');
+    // decision === 'blocked' (or any unhandled shape): system state, not chat.
+    setSystemErrorState();
+    return null;
   }
 
   function updateEvalPacket(packet) {
@@ -116,13 +145,18 @@
       renderPromptReply(replyResult);
       if (state) {
         if (!replyResult || (replyResult.ok === false && !replyResult.decision)) {
-          state.textContent = `Mira Lab reply unavailable: ${(replyResult && replyResult.reason) || 'bridge_unavailable'}`;
+          state.textContent = SYSTEM_ERROR_BANNER_TEXT;
+          state.classList.add('mira-lab-state-system-error');
         } else if (replyResult.decision === 'pass') {
           state.textContent = 'Mira reply rendered / gates passed';
+          state.classList.remove('mira-lab-state-system-error');
         } else if (replyResult.decision === 'fail') {
           state.textContent = 'Mira reply quarantined / gate failed';
+          state.classList.remove('mira-lab-state-system-error');
         } else if (replyResult.decision === 'blocked') {
-          state.textContent = `Mira Lab reply blocked: ${(replyResult.gates && replyResult.gates.reason_class) || replyResult.reason || 'unknown'}`;
+          // System state, not Mira-as-speaker. No reason_class in visible text.
+          state.textContent = SYSTEM_ERROR_BANNER_TEXT;
+          state.classList.add('mira-lab-state-system-error');
         }
       }
     });
