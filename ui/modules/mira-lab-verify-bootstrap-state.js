@@ -108,8 +108,9 @@ function formatStartupStaleMarker(state) {
   const promptPath = trimText(state?.prompt_path_status) || 'unknown';
   const lastVerifiedAt = trimText(state?.last_verified_at) || 'never';
   const promptPathLabel = promptPath === 'complete' ? 'PASS' : promptPath.toUpperCase();
+  const headingScope = promptPath === 'complete' ? '(window-open only)' : '(prompt-path and window-open)';
   return [
-    '## Mira Lab Verifier Bootstrap: stale (window-open only)',
+    `## Mira Lab Verifier Bootstrap: stale ${headingScope}`,
     '',
     `- prompt_path: ${promptPathLabel}; window_open bootstrap stale (status=${status}, last_verified_at=${lastVerifiedAt}).`,
     '- After next main-process start, run: `node ui/scripts/hm-mira-lab-verify.js --session-id verify-post-restart-mira-lab --json`.',
