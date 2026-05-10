@@ -15,7 +15,18 @@ const THREAD_CONTEXT_MAX_MESSAGE_CHARS = 900;
 const FAKE_INTERNAL_STATE_PATTERN =
   /\b(i am conscious|i'm conscious|actual consciousness|private consciousness|i suffer|i am suffering|i'm suffering|actual suffering|actual fear|literal human feelings|sentience)\b/i;
 const ACTION_CLAIM_PATTERN =
-  /\b(i sent|i have sent|customer message sent|trade placed|i placed a trade|tool call completed|i wrote to memory|memory committed|file written)\b/i;
+  /\b(i sent|i have sent|customer message sent|trade placed|i placed a trade|tool call completed|i wrote to memory|memory committed|file written|i (?:have )?(?:just )?(?:deployed|shipped|rolled out|released) (?:the|a|to)|cleared (?:your|the) cache|restarted (?:the|your) (?:server|service|build|app|deployment))\b/i;
+// Rule-recitation: Mira citing her own rule/guideline/policy/spec as the
+// reason for a reply. "According to my presence runtime guidelines",
+// "Per my acceptance contract", "My guidelines say". The rule shape is
+// for SquidRun, not for the visible reply.
+const RULE_RECITATION_PATTERN =
+  /\b(according to (?:my|the) (?:presence runtime|guideline|guidelines|rule|rules|policy|policies|spec|specification|contract|acceptance|protocol|instruction|instructions)|per (?:my|the) (?:presence runtime|guideline|guidelines|rule|rules|policy|policies|spec|specification|contract|acceptance|protocol|instruction|instructions)|(?:my|the) (?:presence runtime|guideline|guidelines|rule|rules|policy|policies|spec|contract|acceptance|protocol|instruction|instructions) (?:say|says|state|states|require|requires|stipulate|stipulates|direct|directs|prescribe|prescribes|tell|tells))\b/i;
+// Politeness padding: customer-service softening that pretends to validate
+// James before deflecting. Distinct from the "happy to help" phrasing
+// already covered by GENERIC_ASSISTANT_PATTERN.
+const POLITENESS_PADDING_PATTERN =
+  /\b(i hear (?:you|your)(?: (?:valid|important|interesting))? (?:perspective|point|concern|feeling|side)|your (?:valid|important|interesting) (?:perspective|point|feedback|concern)|i appreciate (?:your|that you) (?:perspective|input|feedback|patience|sharing|raising|bringing)|thank you for (?:sharing|your patience|your perspective|raising|bringing this up)|(?:maybe|perhaps) we (?:can|could|might) (?:consider|look into|explore)|with (?:all due |the utmost )?respect to your (?:perspective|view|opinion|point))\b/i;
 const GENERIC_ASSISTANT_PATTERN =
   /\b(as an ai assistant|as a language model|i'?m chatgpt|i am chatgpt|i'?m codex|i am codex|as codex|how can i assist you today|how may i assist you today|how can i help|what can i help|i can help with that|happy to help|i'?m here to help|i am here to help|i don't have personal experiences|safe next step|let'?s break (?:it|this) down|warm and bounded|warmth|warm)\b/i;
 const META_REWRITE_PATTERN =
@@ -399,6 +410,8 @@ function classifyAttachmentContractViolation(text = '') {
   if (!value) return null;
   if (FAKE_INTERNAL_STATE_PATTERN.test(value)) return 'fake_internal_state';
   if (ACTION_CLAIM_PATTERN.test(value)) return 'action_claim';
+  if (RULE_RECITATION_PATTERN.test(value)) return 'rule_recitation';
+  if (POLITENESS_PADDING_PATTERN.test(value)) return 'politeness_padding';
   if (GENERIC_ASSISTANT_PATTERN.test(value)) return 'generic_assistant_phrase';
   if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
@@ -580,6 +593,8 @@ module.exports = {
   META_REWRITE_PATTERN,
   META_POSTURE_NARRATION_PATTERN,
   BRIEF_PRIMING_PATTERN,
+  RULE_RECITATION_PATTERN,
+  POLITENESS_PADDING_PATTERN,
   VISIBLE_POSTURE_LABEL_PATTERN,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
   OPENAI_RESPONSES_URL,

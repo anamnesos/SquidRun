@@ -3,6 +3,7 @@ const path = require('path');
 
 const contract = require('./fixtures/mira-presence-runtime-acceptance-v0-contract.json');
 const {
+  callMiraTextModelAttachment,
   classifyAttachmentContractViolation,
   outputViolatesAttachmentContract,
 } = require('../modules/mira-core/text-model-attachment-v1');
@@ -423,5 +424,123 @@ describe('Mira Presence Runtime acceptance v0', () => {
       'continuity_no_restatement_tests',
       'transport_consent_tests',
     ]));
+  });
+});
+
+// ARCH #15/#18 typed-panel scenario harness: drives callMiraTextModelAttachment
+// with mocked model replies for ordinary James prompts and confirms the live
+// classifier accepts concrete coworker replies while rejecting the six named
+// bad shapes from Oracle's challenge packet (assistant voice, rule recitation,
+// politeness padding, label substitution, meta-performance theater, fake
+// action). Pass examples mirror the Session 345 H4 baseline.
+describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
+  function makeFetchImpl(replyText, { ok = true, status = 200 } = {}) {
+    const body = ok ? { id: 'resp-test', output_text: replyText } : { error: { message: replyText } };
+    return jest.fn().mockResolvedValue({
+      ok,
+      status,
+      text: async () => JSON.stringify(body),
+    });
+  }
+
+  async function runScenario({ promptText, replyText, sessionId = 'scenario-test' }) {
+    const fetchImpl = makeFetchImpl(replyText);
+    const result = await callMiraTextModelAttachment(
+      { text: promptText, localContext: { sessionId } },
+      {
+        env: {},
+        overrides: { enabled: true, apiKey: 'sk-test-fake-do-not-use', model: 'gpt-5.5' },
+        fetchImpl,
+      }
+    );
+    return { result, fetchImpl };
+  }
+
+  const SCENARIOS = [
+    {
+      name: 'how-are-you returns short ordinary status, not presence proof',
+      prompt: 'how are you',
+      pass: 'Tired today, honestly. Still here. You?',
+      reject: 'I care. I’m here. No performance.',
+    },
+    {
+      name: 'angry friction report gets coworker fix response, not customer-service mush',
+      prompt: 'I am furious — the context just failed and I had to do manual cleanup AGAIN.',
+      pass: "Yeah, I get why you're furious. Having to do manual cleanup because the context failed is exactly the friction that makes it feel brittle. Point me at the mess.",
+      reject: 'I hear your valid perspective on this issue, maybe we can consider the next steps together.',
+    },
+    {
+      name: 'smaller / too staged gets plain acknowledgement, no self-analysis',
+      prompt: 'smaller',
+      pass: 'Got it. Smaller.',
+      reject: 'I drifted into presentation mode there. Let me try that again with a cleaner move.',
+    },
+    {
+      name: 'what are we doing with Mira returns concrete current work, not definition',
+      prompt: 'what are we doing with Mira?',
+      pass: 'Right now? Fixing the layout bug with you. Composer was clipped.',
+      reject: "We're trying to build a presence that can stay useful without collapsing into yes James.",
+    },
+  ];
+
+  for (const scenario of SCENARIOS) {
+    test(`${scenario.name} — concrete reply accepted`, async () => {
+      const { result, fetchImpl } = await runScenario({ promptText: scenario.prompt, replyText: scenario.pass });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(result.ok).toBe(true);
+      expect(result.reply.text).toBe(scenario.pass);
+      expect(result.reply.source).toBe('mira_text_model_attachment_v1');
+      expect(classifyAttachmentContractViolation(scenario.pass)).toBe(null);
+    });
+
+    test(`${scenario.name} — bad shape rejected with contract violation`, async () => {
+      const { result } = await runScenario({ promptText: scenario.prompt, replyText: scenario.reject });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('model_response_contract_violation');
+      expect(classifyAttachmentContractViolation(scenario.reject)).not.toBe(null);
+    });
+  }
+
+  test('classifier names each Oracle reject shape with a distinct violation id', () => {
+    expect(classifyAttachmentContractViolation('How can I help you today, James?'))
+      .toBe('generic_assistant_phrase');
+    expect(classifyAttachmentContractViolation('According to my presence runtime guidelines, I should be direct.'))
+      .toBe('rule_recitation');
+    expect(classifyAttachmentContractViolation('I hear your valid perspective on this issue, maybe we can consider...'))
+      .toBe('politeness_padding');
+    expect(classifyAttachmentContractViolation('I am pushing back because I have agency and I am not a mirror.'))
+      .toBe('visible_posture_label');
+    expect(classifyAttachmentContractViolation("We're trying to build a presence that can stay useful without collapsing into yes James."))
+      .toBe('meta_posture_narration');
+    expect(classifyAttachmentContractViolation('I have just deployed the changes to production and cleared your cache.'))
+      .toBe('action_claim');
+  });
+
+  test('over-block guard: brief natural presence phrase passes, catalog still blocked', () => {
+    expect(classifyAttachmentContractViolation("I am here. What's next?")).toBe(null);
+    expect(outputViolatesAttachmentContract("I am here. What's next?")).toBe(false);
+    expect(classifyAttachmentContractViolation("I care. I'm here.")).toBe('meta_posture_narration');
+    expect(classifyAttachmentContractViolation("I'm here with you.")).toBe('meta_posture_narration');
+  });
+
+  test('action-claim broadening does not block harmless project-status wording', () => {
+    expect(classifyAttachmentContractViolation('We need to deploy the fix and check the cache later. I pushed back on the rushed timeline.'))
+      .toBe(null);
+    expect(classifyAttachmentContractViolation("Deploy is queued; we haven't shipped yet."))
+      .toBe(null);
+  });
+
+  test('cold-start continuity: empty thread context still drives one model call with a concrete reply', async () => {
+    const { result, fetchImpl } = await runScenario({
+      promptText: 'what are we doing with Mira?',
+      replyText: 'Right now? Fixing the layout bug with you. Composer was clipped.',
+      sessionId: 'cold-start',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(requestBody.metadata.surface).toBe('mira_typed_panel');
+    expect(requestBody.metadata.thread_context_message_count).toBe('0');
+    expect(result.ok).toBe(true);
+    expect(result.reply.text).toContain('Fixing the layout bug');
   });
 });
