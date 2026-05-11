@@ -546,6 +546,11 @@ function buildSurfaceRecord({
       // degraded→blocked_banner. Audit-only.
       contract_violation_raw_text: attachment.contract_violation_raw_text || null,
       contract_violation_class: attachment.contract_violation_class || null,
+      // ARCH #97/#98/#100/#104: social-move classification passthrough.
+      // Audit-only by surface contract; lab-surface lifts onto audit row.
+      // (Same passthrough pattern as degraded_diagnostics — same prior bug
+      // discovered in 7efa1e2 if this field is omitted from the picker.)
+      social_move: attachment.social_move || null,
     },
     checked_output_counters: buildCounters(moduleCallCount, replyCount, {
       blocked_submit_count: decision === 'blocked' ? 1 : 0,
