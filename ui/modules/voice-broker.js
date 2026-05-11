@@ -472,13 +472,20 @@ async function mintRealtimeClientSecret(options = {}) {
   }
 
   const payload = buildRealtimeSessionPayload(config, options.session || {});
+  // OpenAI's /v1/realtime/client_secrets rejects unknown top-level fields
+  // ("Unknown parameter: 'persona_meta'"). persona_meta is internal
+  // SquidRun diagnostics carried alongside the session config for local
+  // journaling — strip it from the upstream request body. The local return
+  // shape (and the voice-broker test) still see it via the payload
+  // returned by buildRealtimeSessionPayload.
+  const upstreamBody = { session: payload.session };
   const response = await fetchImpl(OPENAI_CLIENT_SECRETS_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${config.openaiApiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(upstreamBody),
   });
   const responseText = await response.text();
   let body = responseText;
