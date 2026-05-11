@@ -531,6 +531,12 @@ function buildSurfaceRecord({
       tentative_understanding_owner: 'mira_memory_triage',
       james_clickthrough_required: false,
       visible_as_memory_settings_panel: false,
+      // ARCH #78 task #3: passthrough of audit-only degraded diagnostics
+      // captured by callMiraTextModelAttachment. The lab-surface picks this
+      // up and writes it to the audit row as a top-level degraded_diagnostics
+      // field. Renderer-facing IPC JSON never reads model_attachment, so
+      // this field stays audit-only by surface contract.
+      degraded_diagnostics: attachment.degraded_diagnostics || null,
     },
     checked_output_counters: buildCounters(moduleCallCount, replyCount, {
       blocked_submit_count: decision === 'blocked' ? 1 : 0,
