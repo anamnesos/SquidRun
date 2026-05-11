@@ -687,11 +687,15 @@ describe('mira core Local Text Session v0 phase 74', () => {
     }
   });
 
-  test('language gate caps experience-path replies at 4000 chars; default replies at 800', () => {
+  test('language gate caps experience-path replies at 4000 chars; default replies at 1600 (ARCH #73)', () => {
     const projectRoot = seededProject();
-    const filler = 'word '.repeat(180);
+    // ARCH #73 raised MIRA_MAX_REPLY_CHARS_DEFAULT from 800 to 1600 so
+    // typed-panel paragraph-length replies survive. Filler scaled to push
+    // past the new 1600 ceiling while staying under the 4000 EXPERIENCE
+    // ceiling.
+    const filler = 'word '.repeat(360);
     const longButUnder4000 = `Real text. ${filler}`;
-    expect(longButUnder4000.length).toBeGreaterThan(800);
+    expect(longButUnder4000.length).toBeGreaterThan(1600);
     expect(longButUnder4000.length).toBeLessThan(4000);
 
     const outputDefault = build(projectRoot);
@@ -701,7 +705,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
     const defaultGate = checkById(defaultValidation, 'mira-reply-language-gate');
     expect(defaultGate.ok).toBe(false);
     expect(defaultGate.violations).toContain('reply_too_long');
-    expect(defaultGate.max_reply_chars).toBe(800);
+    expect(defaultGate.max_reply_chars).toBe(1600);
 
     const outputExperience = build(projectRoot);
     session(outputExperience).mira_reply.text = longButUnder4000;

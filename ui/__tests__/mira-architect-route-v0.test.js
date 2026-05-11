@@ -163,7 +163,9 @@ describe('mira-architect-route-v0 / visible-reply language lint', () => {
   });
 
   test('rejects replies over the max-length cap (force shorter grounded replies)', () => {
-    const long = 'word '.repeat(200);
+    // ARCH #73: default ceiling raised from 800 to 1600. Filler scaled
+    // accordingly so the test still locks the "no walls of text" floor.
+    const long = 'word '.repeat(400);
     const r = evaluateMiraVisibleReply(long);
     expect(r.ok).toBe(false);
     expect(r.violations).toContain('reply_too_long');
