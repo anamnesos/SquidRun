@@ -12,6 +12,11 @@ const MIRA_PREAMBLE_BLOCKLIST = Object.freeze([
   /^totally[\s,.\-—:]/i,
   /^here(?:'s|\s+(?:is|are))\s/i,
   /^here\s+you\s+go[\s,.\-—:]/i,
+  // Completes the existing intent locked by mira-architect-route-v0.test.js
+  // ("rejects 'I understand' and other preamble openers" — "Got it, I will
+  // dig in."). Was previously a silent pre-existing gap; surfaced by the
+  // pre-commit hook on the ARCH #82 corrected-tests commit.
+  /^got\s+it[\s,.\-—:]/i,
 ]);
 
 const MIRA_POSTAMBLE_BLOCKLIST = Object.freeze([
