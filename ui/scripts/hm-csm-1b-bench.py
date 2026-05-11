@@ -1,18 +1,17 @@
 #!/usr/bin/env python
-"""Sesame CSM-1B local benchmark — smallest safe path (ARCH #46).
+"""Sesame CSM-1B local benchmark (ARCH #46).
 
-Status: SKELETON. Does not run end-to-end until:
-  1. James accepts terms at https://huggingface.co/sesame/csm-1b.
-  2. HF_TOKEN is exported (or in .env at repo root).
-  3. `pip install transformers>=4.49 huggingface_hub>=0.26 moshi soundfile psutil`.
-
-Hardware/torch already verified on this box: torch 2.11.0+cu128 with
-Blackwell sm_120 support on an RTX 5090; see workspace/specs/csm-1b-benchmark-prep.md.
+End-to-end runner: warm-load the model, run a fixed prompt suite,
+capture latency / VRAM / RTF, optionally write a reference WAV.
+All three deps (HF terms acceptance, HF_TOKEN in .env, transformers
++ huggingface_hub + moshi + soundfile + psutil) are verified live;
+gate them through --auth-check before a full run if uncertain.
 
 Surface:
   python ui/scripts/hm-csm-1b-bench.py --auth-check
   python ui/scripts/hm-csm-1b-bench.py --no-audio-write --json
   python ui/scripts/hm-csm-1b-bench.py --json --output workspace/bench/csm-1b/run-<ts>.json
+  python ui/scripts/hm-csm-1b-bench.py --prompt "Hey James, the build is up." --out-wav workspace/bench/csm-1b/reference.wav
 """
 from __future__ import annotations
 
@@ -164,6 +163,9 @@ class BenchReport:
     dotenv: dict = field(default_factory=dict)
     auth: dict = field(default_factory=dict)
     cold_load_ms: Optional[float] = None
+    cache_present_before_load: Optional[bool] = None
+    hf_cache_dir: Optional[str] = None
+    reference_wav_path: Optional[str] = None
     trials: list[TrialMetrics] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
     blocker: Optional[str] = None
@@ -200,40 +202,95 @@ def audit_env(report: BenchReport) -> None:
 
 
 def auth_check(report: BenchReport) -> bool:
-    """Dry-probe gated repo access. Returns True if we'd be allowed to download."""
+    """Dry-probe gated repo access. Returns True if we'd actually be allowed to download.
+
+    metadata-vs-resolve split: HfApi.model_info works for any authenticated
+    user on a gated repo, because public metadata is always visible. The
+    real gate fires on file resolve. So this probe does BOTH: metadata
+    fetch (catches missing/expired token) and a tiny file resolve on
+    config.json (catches user-hasn't-clicked-accept-on-the-model-card).
+    Previously the metadata-only check produced a false-positive when terms
+    were unaccepted, masking the real blocker behind the cold-pull failure.
+    """
     if not report.env.hf_token_present:
         report.blocker = "hf_token_missing"
         report.auth = {"ok": False, "reason": "HF_TOKEN / HUGGING_FACE_HUB_TOKEN not set"}
         return False
     try:
-        from huggingface_hub import HfApi
+        from huggingface_hub import HfApi, hf_hub_download
+        from huggingface_hub.errors import GatedRepoError  # type: ignore
     except ImportError:
         report.blocker = "huggingface_hub_not_installed"
         report.auth = {"ok": False, "reason": "huggingface_hub not importable"}
         return False
-    api = HfApi(token=os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    api = HfApi(token=token)
     try:
         info = api.model_info("sesame/csm-1b")
-        report.auth = {
-            "ok": True,
-            "model_id": info.id,
-            "gated": getattr(info, "gated", None),
-            "last_modified": str(getattr(info, "last_modified", "")),
-        }
-        return True
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         if "401" in msg or "gated" in msg.lower():
             report.blocker = "hf_gated_repo_terms_not_accepted"
-            report.auth = {"ok": False, "reason": "Accept terms at https://huggingface.co/sesame/csm-1b", "raw": msg[:240]}
+            report.auth = {"ok": False, "stage": "metadata", "reason": "Accept terms at https://huggingface.co/sesame/csm-1b", "raw": msg[:240]}
         else:
             report.blocker = "hf_auth_error"
-            report.auth = {"ok": False, "reason": "huggingface_hub error", "raw": msg[:240]}
+            report.auth = {"ok": False, "stage": "metadata", "reason": "huggingface_hub error", "raw": msg[:240]}
         return False
 
+    # Resolve-stage probe: this is what the actual download path hits.
+    # config.json is tiny (kB) and identical to what from_pretrained needs
+    # before it can decide whether to start the multi-GB pull.
+    try:
+        hf_hub_download("sesame/csm-1b", "config.json", token=token)
+        resolve_ok = True
+        resolve_reason = None
+        resolve_raw = None
+    except GatedRepoError as exc:  # noqa: BLE001
+        resolve_ok = False
+        resolve_reason = "Accept terms at https://huggingface.co/sesame/csm-1b (token is valid; user hasn't clicked accept on the model card)."
+        resolve_raw = str(exc)[:240]
+    except Exception as exc:  # noqa: BLE001
+        resolve_ok = False
+        resolve_reason = "hf_hub_download error"
+        resolve_raw = f"{type(exc).__name__}: {str(exc)[:200]}"
 
-def run_trial(label: str, prompt: str, model, processor, mimi) -> TrialMetrics:
-    """Single generate-and-decode trial. Captures latency + resource metrics."""
+    if not resolve_ok:
+        report.blocker = "hf_gated_repo_terms_not_accepted"
+        report.auth = {
+            "ok": False,
+            "stage": "resolve",
+            "model_id": info.id,
+            "gated": getattr(info, "gated", None),
+            "reason": resolve_reason,
+            "raw": resolve_raw,
+        }
+        return False
+
+    report.auth = {
+        "ok": True,
+        "stage": "resolve",
+        "model_id": info.id,
+        "gated": getattr(info, "gated", None),
+        "last_modified": str(getattr(info, "last_modified", "")),
+    }
+    return True
+
+
+SAMPLE_RATE_HZ = 24000
+
+
+def run_trial(label: str, prompt: str, model, processor, *, return_audio: bool = False):
+    """Single generate trial via transformers-native CSM path (no direct moshi).
+
+    Follows the Sesame model-card snippet: apply_chat_template with a
+    conversation list, then model.generate(..., output_audio=True). The
+    transformers integration handles Mimi decoding internally; we never
+    import moshi here. Audio duration is derived from the returned tensor
+    shape (sample rate 24 kHz per the CSM card).
+
+    When return_audio=True, returns (metrics, audio_tensor_on_cpu_or_None).
+    Otherwise returns just metrics.
+    """
     import torch
     import psutil
 
@@ -241,54 +298,93 @@ def run_trial(label: str, prompt: str, model, processor, mimi) -> TrialMetrics:
     proc = psutil.Process()
     torch.cuda.reset_peak_memory_stats()
     rss_before = proc.memory_info().rss
-    cpu_samples: list[float] = []
+
+    conversation = [{"role": "0", "content": [{"type": "text", "text": prompt}]}]
 
     t0 = time.perf_counter()
     try:
-        # CSM uses a conversation-shaped processor input: the official model
-        # card on sesame/csm-1b passes a `conversation` list with role/content
-        # pairs rather than raw text. Concretely:
-        #   conv = [{"role": "0", "content": [{"type": "text", "text": prompt}]}]
-        #   inputs = processor.apply_chat_template(conv, tokenize=True,
-        #                                          return_dict=True,
-        #                                          return_tensors="pt").to(model.device)
-        # The runner author should follow the model-card snippet rather than
-        # this `processor(text=...)` shortcut, which the CSM AutoProcessor
-        # may not accept.
-        inputs = processor(text=prompt, return_tensors="pt").to(model.device)
-        # CsmForConditionalGeneration.generate emits Mimi RVQ audio tokens.
-        # Greedy (do_sample=False) lets determinism_hash mean something; the
-        # exploratory pass should re-run with do_sample=True, temperature=0.8
-        # to measure variety + RTF under sampling load.
+        inputs = processor.apply_chat_template(
+            conversation,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(model.device)
+        input_token_len = int(inputs["input_ids"].shape[-1]) if "input_ids" in inputs else None
+
+        # output_audio=True asks the transformers CSM integration to
+        # decode Mimi tokens to PCM internally. The result is an audio
+        # tensor at 24 kHz. do_sample=False keeps the run deterministic
+        # so determinism_hash is meaningful.
         with torch.inference_mode():
-            output_tokens = model.generate(**inputs, max_new_tokens=2048, do_sample=False)
-        t_first_token = time.perf_counter()
-        audio = mimi.decode(output_tokens)
+            output = model.generate(
+                **inputs,
+                output_audio=True,
+                max_new_tokens=512,
+                do_sample=False,
+            )
         t_end = time.perf_counter()
 
-        sample_rate = 24000  # Mimi
-        audio_len = audio.shape[-1] if hasattr(audio, "shape") else len(audio)
-        metrics.audio_seconds = audio_len / sample_rate
-        metrics.ttft_ms = (t_first_token - t0) * 1000
+        # output may be a tensor (audio waveform) or a tuple/object with
+        # both tokens and audio depending on transformers version. Probe
+        # defensively without forcing a shape.
+        audio_tensor = output
+        if hasattr(output, "audio"):
+            audio_tensor = output.audio
+        elif isinstance(output, (list, tuple)) and len(output) > 0:
+            # Common shape: (audio_tensor,) or (tokens, audio_tensor).
+            audio_tensor = output[-1]
+
+        sample_rate = SAMPLE_RATE_HZ
+        audio_len_samples = None
+        if hasattr(audio_tensor, "shape") and audio_tensor.shape:
+            audio_len_samples = int(audio_tensor.shape[-1])
+        if audio_len_samples is not None:
+            metrics.audio_seconds = audio_len_samples / sample_rate
         metrics.wall_ms = (t_end - t0) * 1000
+        # TTFT in this loader is generate-call latency; transformers doesn't
+        # surface a streaming first-frame timestamp without an extra hook.
+        # Record wall_ms as the conservative ceiling and leave TTFT slot
+        # alongside for clarity.
+        metrics.ttft_ms = metrics.wall_ms
         if metrics.audio_seconds and metrics.audio_seconds > 0:
             metrics.rtf = metrics.wall_ms / (metrics.audio_seconds * 1000)
-        token_count = output_tokens.shape[-1] if hasattr(output_tokens, "shape") else 0
-        if metrics.wall_ms and metrics.wall_ms > 0:
-            metrics.tokens_per_second = token_count / (metrics.wall_ms / 1000)
+        if audio_len_samples and metrics.wall_ms and metrics.wall_ms > 0:
+            # Audio samples per wall-second — useful as a steady-state
+            # throughput proxy.
+            metrics.tokens_per_second = audio_len_samples / (metrics.wall_ms / 1000)
         metrics.vram_peak_gb = torch.cuda.max_memory_allocated() / 1e9
         metrics.vram_steady_gb = torch.cuda.memory_allocated() / 1e9
         metrics.rss_delta_mb = (proc.memory_info().rss - rss_before) / 1e6
-        # Best-effort CPU sample after generation (single point).
-        cpu_samples.append(psutil.cpu_percent(interval=None))
-        metrics.cpu_percent_max = max(cpu_samples) if cpu_samples else None
-        if not output_tokens.requires_grad and hasattr(output_tokens, "cpu"):
-            token_bytes = output_tokens.cpu().numpy().tobytes()
-            metrics.determinism_hash = hashlib.sha256(token_bytes).hexdigest()[:16]
-        if metrics.audio_seconds == 0:
+        metrics.cpu_percent_max = psutil.cpu_percent(interval=None)
+        if hasattr(audio_tensor, "cpu"):
+            try:
+                wave_bytes = audio_tensor.cpu().detach().numpy().tobytes()
+                metrics.determinism_hash = hashlib.sha256(wave_bytes).hexdigest()[:16]
+            except Exception:  # noqa: BLE001
+                metrics.determinism_hash = None
+        if not metrics.audio_seconds or metrics.audio_seconds == 0:
             metrics.error = "empty_audio_token_stream"
+        audio_cpu = None
+        if return_audio and hasattr(audio_tensor, "cpu"):
+            try:
+                audio_cpu = audio_tensor.detach().cpu()
+            except Exception:  # noqa: BLE001
+                audio_cpu = None
+        if return_audio:
+            return metrics, audio_cpu
+        return metrics
     except Exception as exc:  # noqa: BLE001
-        metrics.error = f"{type(exc).__name__}: {exc}"
+        msg = str(exc)
+        cls = type(exc).__name__
+        lowered = msg.lower()
+        if "llama-3.2" in lowered or "llama-3.2-1b" in lowered or ("gated" in lowered and "llama" in lowered):
+            metrics.error = f"blocked_dependent_gated_repo:llama-3.2:{cls}"
+        elif "no module named" in lowered or isinstance(exc, ModuleNotFoundError):
+            metrics.error = f"missing_package:{cls}:{msg[:160]}"
+        else:
+            metrics.error = f"{cls}: {msg[:240]}"
+    if return_audio:
+        return metrics, None
     return metrics
 
 
@@ -297,13 +393,27 @@ def summarize(report: BenchReport) -> None:
     if not successful:
         report.summary = {"trial_count": len(report.trials), "successful": 0}
         return
+    # Steady-state = drop run0 (cold per prompt), keep run1+. The reference
+    # trial is special-cased: it's always a "warmup" against the just-loaded
+    # model, so exclude it from steady-state aggregates too.
+    steady = [t for t in successful if t.label.endswith((":run1", ":run2", ":run3", ":run4"))]
+    pool = steady or successful
+
+    def _avg(field_name: str) -> Optional[float]:
+        values = [getattr(t, field_name) for t in pool if getattr(t, field_name) is not None]
+        return round(sum(values) / len(values), 3) if values else None
+
     report.summary = {
         "trial_count": len(report.trials),
         "successful": len(successful),
-        "avg_ttft_ms": round(sum(t.ttft_ms for t in successful if t.ttft_ms) / len(successful), 1),
-        "avg_rtf": round(sum(t.rtf for t in successful if t.rtf) / len(successful), 3),
+        "steady_state_count": len(steady),
+        "avg_ttft_ms": _avg("ttft_ms"),
+        "avg_wall_ms": _avg("wall_ms"),
+        "avg_rtf": _avg("rtf"),
+        "avg_tokens_per_second": _avg("tokens_per_second"),
         "max_vram_peak_gb": round(max((t.vram_peak_gb or 0) for t in successful), 2),
-        "live_conversation_capable": all((t.rtf or 99) < 1.0 for t in successful),
+        "max_rss_delta_mb": round(max((t.rss_delta_mb or 0) for t in successful), 1),
+        "live_conversation_capable": all((t.rtf or 99) < 1.0 for t in pool),
     }
 
 
@@ -314,6 +424,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--json", action="store_true", help="Print the full JSON report to stdout.")
     parser.add_argument("--output", type=Path, default=None, help="Write JSON report to this path.")
     parser.add_argument("--self-test", action="store_true", help="Run the dotenv loader regression test and exit.")
+    parser.add_argument("--prompt", type=str, default=None, help="Override reference prompt (default: 'Hey James, the build is up.').")
+    parser.add_argument("--out-wav", type=Path, default=None, help="Write reference-run audio to this WAV path.")
+    parser.add_argument("--runs-per-prompt", type=int, default=2, help="Total runs per prompt; first is warmup-tagged. Default 2.")
+    parser.add_argument("--skip-suite", action="store_true", help="Run only the reference prompt; skip the short/medium/long suite.")
     args = parser.parse_args(argv)
 
     if args.self_test:
@@ -338,34 +452,83 @@ def main(argv: list[str]) -> int:
         _emit(report, args)
         return 0
 
-    # Skeleton stops here — actual load/generate path is left to the runner
-    # author after deps are in place. CSM uses its own model class in
-    # transformers (CsmForConditionalGeneration); do NOT swap to
-    # AutoModelForCausalLM, which loads a text-only head and discards the
-    # audio decoder. The structure above is enough to mechanically fill in:
-    #
-    #   from transformers import AutoProcessor, CsmForConditionalGeneration
-    #   from moshi.models import loaders
-    #
-    #   t_load = time.perf_counter()
-    #   processor = AutoProcessor.from_pretrained("sesame/csm-1b")
-    #   model = CsmForConditionalGeneration.from_pretrained(
-    #       "sesame/csm-1b",
-    #       torch_dtype="auto",
-    #       device_map="cuda:0",
-    #   )
-    #   mimi = loaders.get_mimi(loaders.DEFAULT_REPO).cuda()
-    #   report.cold_load_ms = (time.perf_counter() - t_load) * 1000
-    #
-    #   for label, prompt in PROMPT_SUITE:
-    #       for _ in range(3):
-    #           report.trials.append(run_trial(label, prompt, model, processor, mimi))
-    #
-    # summarize(report)
-    report.blocker = "skeleton_only_runner_path_not_wired"
+    # Cold-pull detection: check the HF hub cache before the first
+    # from_pretrained call so cold_load_ms can be interpreted as either
+    # full download + load (cache_present_before_load=False) or warm
+    # in-place load (True).
+    hf_home = Path(os.environ.get("HF_HOME") or os.environ.get("HUGGINGFACE_HUB_CACHE") or (Path.home() / ".cache" / "huggingface"))
+    model_cache_dir = hf_home / "hub" / "models--sesame--csm-1b"
+    report.hf_cache_dir = str(hf_home)
+    report.cache_present_before_load = model_cache_dir.exists()
+
+    try:
+        import torch
+        from transformers import AutoProcessor, CsmForConditionalGeneration
+    except ImportError as exc:
+        report.blocker = f"transformers_import_failed:{type(exc).__name__}:{str(exc)[:160]}"
+        report.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _emit(report, args)
+        return 5
+
+    # huggingface_hub 0.36 reads HF_TOKEN from env, but transformers'
+    # from_pretrained doesn't automatically forward it on every version.
+    # Pass explicitly so the gated-repo download works regardless.
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    t_load = time.perf_counter()
+    try:
+        processor = AutoProcessor.from_pretrained("sesame/csm-1b", token=hf_token)
+        model = CsmForConditionalGeneration.from_pretrained(
+            "sesame/csm-1b",
+            torch_dtype="auto",
+            device_map="cuda:0",
+            token=hf_token,
+        )
+    except Exception as exc:  # noqa: BLE001
+        cls = type(exc).__name__
+        msg = str(exc)
+        report.blocker = f"model_load_failed:{cls}:{msg[:200]}"
+        report.cold_load_ms = (time.perf_counter() - t_load) * 1000
+        report.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _emit(report, args)
+        return 6
+    report.cold_load_ms = (time.perf_counter() - t_load) * 1000
+
+    runs_per_prompt = max(1, int(args.runs_per_prompt or 1))
+
+    # Reference run — always first, writes WAV (unless --no-audio-write).
+    ref_prompt = args.prompt or "Hey James, the build is up."
+    ref_metrics, ref_audio = run_trial("reference", ref_prompt, model, processor, return_audio=True)
+    ref_metrics.label = "reference:run0"
+    report.trials.append(ref_metrics)
+
+    # Optional WAV write of the reference run.
+    if not args.no_audio_write and ref_audio is not None and ref_metrics.error is None:
+        wav_path = args.out_wav or (DEFAULT_OUTPUT_DIR / f"reference-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.wav")
+        try:
+            import soundfile as sf
+            wav_path.parent.mkdir(parents=True, exist_ok=True)
+            arr = ref_audio.numpy()
+            # CSM audio tensors land as (1, T) or (B, 1, T); squeeze to (T,)
+            # mono for soundfile.write.
+            while arr.ndim > 1 and arr.shape[0] == 1:
+                arr = arr[0]
+            sf.write(str(wav_path), arr, SAMPLE_RATE_HZ)
+            report.reference_wav_path = str(wav_path)
+        except Exception as exc:  # noqa: BLE001
+            report.reference_wav_path = f"write_failed:{type(exc).__name__}:{str(exc)[:160]}"
+
+    # Suite runs — short / medium / long, runs_per_prompt times each.
+    if not args.skip_suite:
+        for label, prompt in PROMPT_SUITE:
+            for run_idx in range(runs_per_prompt):
+                trial_label = f"{label}:run{run_idx}"
+                metrics = run_trial(trial_label, prompt, model, processor)
+                report.trials.append(metrics)
+
+    summarize(report)
     report.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     _emit(report, args)
-    return 4
+    return 0 if not report.blocker and any(t.error is None for t in report.trials) else 7
 
 
 def _emit(report: BenchReport, args: argparse.Namespace) -> None:
