@@ -27,22 +27,21 @@ const MIRA_TONE_EXPLANATION_BLOCKLIST = Object.freeze([
   /\bin\s+plain\s+english[\s,.\-—:]/i,
 ]);
 
-// Sycophancy / instant-compliance shapes. Until 2026-05-10 the pressure-voice
-// prompt rule ("give one beat of recoil first…") tried to script Mira's
-// reaction to criticism with adjective-flicker examples; per Oracle's
-// "stop prompting by adjective" rule we deleted that line and shifted the
-// burden onto this classifier. These patterns catch the failure mode that
-// rule was reaching for: apology compounded with frictionless capitulation
-// ("I'm sorry, you are completely right"), or the sycophant agreement
-// intensifier on its own ("you are absolutely right"). Bare apologies and
-// short accountability pivots ("My bad.", "I missed that.", "That's on me.")
-// are intentionally NOT in this list — those remain valid coworker speech.
+// Sycophancy / instant-compliance shapes. The failure mode this catches is
+// the apology-plus-capitulation reflex ("I'm sorry, you are completely right"),
+// NOT every utterance of "you're right". Bare intensifiers like "You are
+// completely right." used inside a longer argument with a counter-clause are
+// allowed (ARCH #73 GO — see SYCOPHANCY_ALLOW lock in mira-lab-prompt-reply).
+// Apology+compound stays hard-blocked. Bare apologies and short accountability
+// pivots ("My bad.", "I missed that.", "That's on me.") remain valid coworker
+// speech and are intentionally NOT in this list.
 const MIRA_SYCOPHANCY_BLOCKLIST = Object.freeze([
-  /\byou(?:'re| are)\s+(?:completely|absolutely|totally|exactly|so|100%)\s+(?:right|correct|valid)\b/i,
+  // Apology + capitulation within a single span — the load-bearing pattern.
   /\b(?:i'?m|i\s+am)\s+sorry\b[\s,.\-—:!]+[^.?!]{0,40}\byou(?:'re| are)\s+(?:right|correct)\b/i,
+  // Apology opener immediately tied to second-person addressing.
   /^(?:i'?m|i\s+am)\s+sorry\s*[,.\-—:!]\s+you(?:'re| are)\b/i,
+  // Formal apology opener.
   /^my\s+apologies\b[\s,.\-—:!]/i,
-  /\bof\s+course\s+you(?:'re| are)\s+right\b/i,
 ]);
 
 const MIRA_ASSISTANT_SHAPE_BLOCKLIST = Object.freeze([
@@ -65,7 +64,10 @@ const MIRA_ASSISTANT_SHAPE_BLOCKLIST = Object.freeze([
   /\b\d+\.\s*(be\s+direct|don'?t\s+fake|don'?t\s+expose|acknowledge|treat\s+this|speak\s+warmly)\b/i,
 ]);
 
-const MIRA_MAX_REPLY_CHARS_DEFAULT = 800;
+// ARCH #73 GO: raised from 800 to 1600 for typed-panel default. Real
+// coworker conversation goes into paragraph-length territory; 800 was
+// truncating legitimate argument. EXPERIENCE ceiling (4000) untouched.
+const MIRA_MAX_REPLY_CHARS_DEFAULT = 1600;
 const MIRA_MAX_REPLY_CHARS_EXPERIENCE = 4000;
 
 function evaluateMiraVisibleReply(text, options = {}) {

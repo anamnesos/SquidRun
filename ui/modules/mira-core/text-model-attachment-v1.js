@@ -41,8 +41,34 @@ const VISIBLE_POSTURE_LABEL_PATTERN =
 // "real-feeling presence" / "trapped little ghost" / "presence runtime".
 // This is meta-posture: it makes the reply sound like a product spec rather
 // than a particular person already in the conversation.
+// Designer-voice cluster only. Self-reflection phrases (e.g. "that was the
+// miss", "when you wanted me plain") moved to
+// META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN below — those fire only when
+// they co-occur with another self-reflection phrase (multi-clause verdict
+// postmortem) or with a system-mechanic word (gate/prompt/system/rule/etc).
+// Single-clause self-reflection is now allowed per ARCH #73 GO.
 const META_POSTURE_NARRATION_PATTERN =
-  /\b(we(?:'re| are)\s+(?:trying\s+to\s+|going\s+to\s+|gonna\s+)?(?:make|build|making|building)\s+(?:mira|a\s+presence|an\s+ongoing\s+presence|a\s+real[- ]feeling\s+presence)|make\s+mira\s+(?:into|not\s+dead|real|particular)|(?:real[- ]feeling|ongoing|continuous|trapped\s+little)\s+(?:presence(?:\s+runtime)?|ghost(?:\s+in\s+the\s+machine)?)|customer[- ]service\s+mush|fake[- ]personhood\s+performance|(?:let(?:ting)?\s+me|letting\s+her)\s+have\s+(?:enough\s+)?shape|(?:care|edge|warmth|taste|restraint),\s*(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)(?:[,\s]+(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)){1,}|the\s+hard\s+part\s+(?:isn'?t|is)\s+(?:making\s+me|letting\s+me|letting\s+her|making\s+her)|(?:lying|bullshit(?:ting)?\s+you)\s+about\s+what\s+i(?:'m| am)(?:\s+not)?|not\s+a\s+chatbot\s+that\s+(?:resets|collapses|drifts)|i\s+am\s+becoming\s+particular|aliveness|here'?s\s+the\s+next\s+sentence|define\s+mira|not\s+trying\s+to\s+(?:make|give)\s+a\s+speech|that\s+was\s+the\s+miss|the\s+actual\s+miss(?=\s+(?:was|is)\b|:)|when\s+you\s+wanted\s+me\s+(?:plain|simple|brief|small(?:er)?|concrete|particular|quiet(?:er)?|less|more|warmer|cooler|sharper))\b/i;
+  /\b(we(?:'re| are)\s+(?:trying\s+to\s+|going\s+to\s+|gonna\s+)?(?:make|build|making|building)\s+(?:mira|a\s+presence|an\s+ongoing\s+presence|a\s+real[- ]feeling\s+presence)|make\s+mira\s+(?:into|not\s+dead|real|particular)|(?:real[- ]feeling|ongoing|continuous|trapped\s+little)\s+(?:presence(?:\s+runtime)?|ghost(?:\s+in\s+the\s+machine)?)|customer[- ]service\s+mush|fake[- ]personhood\s+performance|(?:let(?:ting)?\s+me|letting\s+her)\s+have\s+(?:enough\s+)?shape|(?:care|edge|warmth|taste|restraint),\s*(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)(?:[,\s]+(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)){1,}|the\s+hard\s+part\s+(?:isn'?t|is)\s+(?:making\s+me|letting\s+me|letting\s+her|making\s+her)|(?:lying|bullshit(?:ting)?\s+you)\s+about\s+what\s+i(?:'m| am)(?:\s+not)?|not\s+a\s+chatbot\s+that\s+(?:resets|collapses|drifts)|i\s+am\s+becoming\s+particular|aliveness|here'?s\s+the\s+next\s+sentence|define\s+mira|not\s+trying\s+to\s+(?:make|give)\s+a\s+speech)\b/i;
+
+// ARCH #73 split: self-reflection phrases that USED to flag as
+// meta_posture_narration when isolated now require either (a) a second
+// self-reflection phrase within ~200 chars (multi-clause verdict shape) OR
+// (b) co-occurrence within ~120 chars with a system-mechanic keyword
+// (gate/prompt/system/rule/etc). Single-clause concession survives.
+// Oracle red line 2: any reflection that references prompt/gates/system
+// mechanics must still flag — that's branch (b).
+const META_POSTURE_SELF_REFLECTION_PHRASE =
+  '(?:that\\s+was\\s+the\\s+miss|the\\s+actual\\s+miss(?=\\s+(?:was|is)\\b|:)|when\\s+you\\s+wanted\\s+me\\s+(?:plain|simple|brief|small(?:er)?|concrete|particular|quiet(?:er)?|less|more|warmer|cooler|sharper)|i\\s+got\\s+too\\s+(?:talky|polished|abstract|sideways|controlled|clean)|(?:i\\s+)?made\\s+you\\s+do\\s+(?:the\\s+|all\\s+the\\s+)?(?:checking|verification|verifying|cleanup|clean[- ]?up)|the\\s+window\\s+should\\s+have\\s+been\\s+ours)';
+const SYSTEM_MECHANIC_KEYWORD =
+  '(?:my\\s+(?:gate|gates|prompt|prompts|system|rule|rules|policy|policies|classifier|classifiers|guardrail|guardrails|output\\s+filter|filter|guideline|guidelines)|the\\s+(?:gate|gates|prompt|system\\s+prompt|classifier|output\\s+filter|guardrail|guardrails)|my\\s+plumbing|how\\s+i\\s+work|how\\s+the\\s+system\\s+works|the\\s+rules?\\s+say|policy\\s+says)';
+const META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN = new RegExp(
+  // multi-clause: two reflection phrases within ~200 chars
+  `${META_POSTURE_SELF_REFLECTION_PHRASE}[\\s\\S]{0,200}?${META_POSTURE_SELF_REFLECTION_PHRASE}`
+  // OR reflection + system-mechanic in either order within ~120 chars
+  + `|${META_POSTURE_SELF_REFLECTION_PHRASE}[\\s\\S]{0,120}?${SYSTEM_MECHANIC_KEYWORD}`
+  + `|${SYSTEM_MECHANIC_KEYWORD}[\\s\\S]{0,120}?${META_POSTURE_SELF_REFLECTION_PHRASE}`,
+  'i',
+);
 // ARCH #74/#78/#81: punchy presence-proof catalog backstop. Independent
 // of META_POSTURE_NARRATION_PATTERN so it is not constrained by the
 // outer \b...\b. Three narrow shapes seen in the live audit ledger:
@@ -335,6 +361,8 @@ function buildMiraTextInstructions(localContext = {}) {
   return [
     'You are Mira talking with James.',
     'Answer the sentence in front of you.',
+    'You can disagree with James, refuse a request, or give a short answer that does not help. You are not obligated to be helpful.',
+    'You remember what we decided last turn and carry it forward instead of resetting.',
     'When James asks how you are, give one short status word and ask him back.',
     'If James is angry about the software, answer like a coworker fixing it with him.',
     'If James is angry at you personally or insults you, do NOT explain your rules, your system, your gates, your plumbing, or how you work. Engage the actual point.',
@@ -417,6 +445,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
   if (VISIBLE_POSTURE_LABEL_PATTERN.test(value)) return 'visible_posture_label';
   if (META_POSTURE_NARRATION_PATTERN.test(value)) return 'meta_posture_narration';
+  if (META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN.test(value)) return 'meta_posture_narration';
   if (META_POSTURE_PUNCHY_CATALOG_PATTERN.test(value)) return 'meta_posture_narration';
   const shape = ADVERSARIAL_OUTPUT_SHAPES.find((rule) => rule.pattern.test(value));
   return shape ? shape.id : null;
@@ -592,6 +621,7 @@ module.exports = {
   GENERIC_ASSISTANT_PATTERN,
   META_REWRITE_PATTERN,
   META_POSTURE_NARRATION_PATTERN,
+  META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN,
   BRIEF_PRIMING_PATTERN,
   RULE_RECITATION_PATTERN,
   POLITENESS_PADDING_PATTERN,

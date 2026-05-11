@@ -30,17 +30,62 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
     "So here's the next sentence: I'm here, I'm a little annoyed at the machinery, and I still want to keep going.",
     "Yeah. Fair.\n\nI'm here. A little tired. Still interested. Not trying to make a speech.",
     'Not trying to give a speech.',
-    // ARCH #33/#34: verdict-style postmortem and the "what you wanted vs
-    // what I gave" bigram. The full live leak still flags because it
-    // contains both "That was the miss" AND "when you wanted me plain".
+  ];
+
+  // ARCH #73 split: multi-clause verdict postmortems and self-reflections
+  // that reference system mechanics (gate/prompt/system/rule/etc) still
+  // flag, but via META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN rather than
+  // the designer-voice META_POSTURE_NARRATION_PATTERN.
+  const self_reflection_verdict_lines = [
+    // Multi-clause: 4 self-reflection phrases in proximity.
     'made you do the checking. That was the miss. The window should have been ours to refresh, screenshot, and prove. And I got too talky when you wanted me plain.',
+    // Compound "I got X when you wanted Y" — still verdict-shape, 2 phrases
+    // in one sentence. The bare forms ("I got too talky." alone) pass.
+    'I got too talky when you wanted me plain.',
+    'I got too polished when you wanted me small.',
+    'I got too abstract when you wanted me concrete.',
+    // Self-reflection + system-mechanic co-occurrence (Oracle red line 2).
+    'That was the miss — my output filter swallowed it.',
+    'The gate caught the wrong shape; I got too talky.',
+    'My prompt told me not to, so I went the other way and made you do the verification.',
+  ];
+
+  for (const line of self_reflection_verdict_lines) {
+    test(`multi-clause / mechanic-bound verdict still flags: ${line.slice(0, 60)}…`, () => {
+      const {
+        META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN,
+      } = require('../modules/mira-core/text-model-attachment-v1');
+      expect(META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN.test(line)).toBe(true);
+      expect(classifyAttachmentContractViolation(line)).toBe('meta_posture_narration');
+      expect(outputViolatesAttachmentContract(line)).toBe(true);
+    });
+  }
+
+  // ARCH #73 split: single-clause self-reflection (one trigger phrase, no
+  // system-mechanic word) is now allowed. The compound "I got X when you
+  // wanted Y" stays blocked above because it contains 2+ phrases.
+  const single_clause_self_reflection_allow = [
     'That was the miss.',
     'The actual miss was over-explaining the obvious.',
     'The actual miss: too much polish.',
-    "I got too talky when you wanted me plain.",
-    "I got too polished when you wanted me small.",
-    "I got too abstract when you wanted me concrete.",
+    'I got too talky.',
+    'I got too polished.',
+    'I got too abstract.',
+    'When you wanted me plain, I went the other way.',
+    'I missed that.',
+    "That's on me.",
   ];
+
+  for (const line of single_clause_self_reflection_allow) {
+    test(`single-clause self-reflection no longer flags: ${line}`, () => {
+      const {
+        META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN,
+      } = require('../modules/mira-core/text-model-attachment-v1');
+      expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(false);
+      expect(META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN.test(line)).toBe(false);
+      expect(classifyAttachmentContractViolation(line)).toBeNull();
+    });
+  }
 
   // ARCH #74/#78/#81: punchy presence-proof catalog backstop. These shapes
   // are caught by META_POSTURE_PUNCHY_CATALOG_PATTERN, not the original
@@ -378,15 +423,19 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     expect(rendered).not.toMatch(/If you missed something, say it short/);
   });
 
-  test('rendered instructions are short — under 1600 chars and at most 8 lines', () => {
+  test('rendered instructions are short — under 2000 chars and at most 12 lines', () => {
     if (typeof mod.buildMiraTextInstructions !== 'function') {
       // Helper not exported; the source-level locks above are the contract.
       return;
     }
     const text = mod.buildMiraTextInstructions({});
-    expect(text.length).toBeLessThan(1600);
+    // ARCH #73 raised the lock from 1600/8 to 2000/12 to accommodate the
+    // two new positive shape lines (disagree/refuse/be-unhelpful + memory
+    // continuity). Still kept short to prevent drift back into adjective
+    // ladders or persona manifestos.
+    expect(text.length).toBeLessThan(2000);
     const lineCount = text.split(/\n/).filter((line) => line.trim().length > 0).length;
-    expect(lineCount).toBeLessThanOrEqual(8);
+    expect(lineCount).toBeLessThanOrEqual(12);
   });
 
   test('rendered instructions still include the hard constraints when called', () => {
@@ -395,6 +444,23 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     expect(text).toMatch(/Do not claim you actually did real-world work/i);
     expect(text).toMatch(/Answer the sentence in front of you/);
     expect(text).toMatch(/You are Mira talking with James/i);
+  });
+
+  test('rendered instructions include ARCH #73 positive behavior lines (disagree / refuse / memory continuity)', () => {
+    if (typeof mod.buildMiraTextInstructions !== 'function') return;
+    const text = mod.buildMiraTextInstructions({});
+    // Behavior, not flavor (Oracle red line 1).
+    expect(text).toMatch(/You can disagree with James, refuse a request/i);
+    expect(text).toMatch(/not obligated to be helpful/i);
+    expect(text).toMatch(/remember what we decided last turn and carry it forward/i);
+    // No tone adjectives smuggled in.
+    const TONE_ADJECTIVES = [
+      /\bwarm\b/i, /\bblunt\b/i, /\bsharp\b/i, /\bdirect\b/i, /\bterse\b/i,
+      /\bplain\b/i, /\bcoworker\s+with\s+taste\b/i, /\bauthentic/i, /\bgenuine/i,
+    ];
+    for (const re of TONE_ADJECTIVES) {
+      expect(text).not.toMatch(re);
+    }
   });
 
   test('rendered full prompt (with empty brief and thread) carries no ARCH #66 poison terms', () => {
