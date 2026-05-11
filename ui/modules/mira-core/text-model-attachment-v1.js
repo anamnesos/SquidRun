@@ -455,6 +455,97 @@ function outputViolatesAttachmentContract(text = '') {
   return Boolean(classifyAttachmentContractViolation(text));
 }
 
+// Audit-only diagnostics builders. Per ARCH #78 / Oracle red lines:
+//  - No raw provider error strings. Only structured fields (error.code,
+//    error.type, http_status) and sha256 hashes of message text if uniqueness
+//    is needed.
+//  - incomplete_details: enum-only — capture `.reason` only, no explanatory
+//    text.
+//  - These diagnostics only ride on modelResult.diagnostics and are passed
+//    through to the audit row. They never appear in transcript, visible
+//    render hint, requester envelope, or renderer-facing JSON.
+function buildEmptyResponseDiagnostics(body = {}, response = {}) {
+  const usage = body && body.usage;
+  return {
+    error_kind: 'empty_response',
+    http_status: Number(response && response.status) || null,
+    response_id: typeof body?.id === 'string' ? body.id : null,
+    status_top: typeof body?.status === 'string' ? body.status : null,
+    incomplete_reason: typeof body?.incomplete_details?.reason === 'string'
+      ? body.incomplete_details.reason
+      : null,
+    output_count: Array.isArray(body?.output) ? body.output.length : 0,
+    output_item_shapes: Array.isArray(body?.output)
+      ? body.output.map((item) => ({
+        type: typeof item?.type === 'string' ? item.type : null,
+        status: typeof item?.status === 'string' ? item.status : null,
+        role: typeof item?.role === 'string' ? item.role : null,
+        content_count: Array.isArray(item?.content) ? item.content.length : 0,
+        has_text_content: Array.isArray(item?.content)
+          && item.content.some((c) => typeof c?.text === 'string' && c.text.length > 0),
+        text_total_length: Array.isArray(item?.content)
+          ? item.content.reduce((s, c) => s + (typeof c?.text === 'string' ? c.text.length : 0), 0)
+          : 0,
+      }))
+      : [],
+    usage: usage ? {
+      input_tokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : null,
+      output_tokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
+      reasoning_tokens: typeof usage.output_tokens_details?.reasoning_tokens === 'number'
+        ? usage.output_tokens_details.reasoning_tokens
+        : null,
+      total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
+    } : null,
+    body_top_keys: Object.keys(body || {}).sort(),
+  };
+}
+
+function buildFetchThrewDiagnostics(err = {}) {
+  const message = typeof err?.message === 'string' ? err.message : String(err || '');
+  return {
+    error_kind: 'fetch_threw',
+    error_code: typeof err?.code === 'string' ? err.code : null,
+    error_name: typeof err?.name === 'string' ? err.name : null,
+    error_message_sha256: message ? `sha256:${stableHash(message)}` : null,
+  };
+}
+
+function buildParseFailedDiagnostics(response = {}) {
+  return {
+    error_kind: 'parse_failed',
+    http_status: Number(response && response.status) || null,
+  };
+}
+
+function buildHttpErrorDiagnostics(body = {}, response = {}, classifiedReason = null) {
+  const apiError = body && typeof body === 'object' ? body.error : null;
+  const errorMessage = typeof apiError?.message === 'string'
+    ? apiError.message
+    : (typeof apiError === 'string' ? apiError : null);
+  return {
+    error_kind: 'http_error',
+    http_status: Number(response && response.status) || null,
+    classified_reason: typeof classifiedReason === 'string' ? classifiedReason : null,
+    api_error_code: typeof apiError?.code === 'string' ? apiError.code : null,
+    api_error_type: typeof apiError?.type === 'string' ? apiError.type : null,
+    api_error_param: typeof apiError?.param === 'string' ? apiError.param : null,
+    api_error_message_sha256: errorMessage ? `sha256:${stableHash(errorMessage)}` : null,
+    body_top_keys: body && typeof body === 'object' ? Object.keys(body).sort() : [],
+  };
+}
+
+function buildContractViolationDiagnostics(body = {}, violationClass = null, textLength = 0) {
+  return {
+    error_kind: 'contract_violation',
+    violation_class: typeof violationClass === 'string' ? violationClass : null,
+    output_text_length: Number.isFinite(textLength) ? Number(textLength) : 0,
+    response_id: typeof body?.id === 'string' ? body.id : null,
+    incomplete_reason: typeof body?.incomplete_details?.reason === 'string'
+      ? body.incomplete_details.reason
+      : null,
+  };
+}
+
 function classifyNonOkModelResponse(statusCode, errorText = '') {
   const text = trimText(errorText);
   if (
@@ -538,6 +629,7 @@ async function callMiraTextModelAttachment(input = {}, options = {}) {
       request: { model: payload.model, tools: [], store: false },
       modelCallCount: 1,
       networkCount: 1,
+      diagnostics: buildFetchThrewDiagnostics(err),
     };
   }
 
@@ -554,6 +646,7 @@ async function callMiraTextModelAttachment(input = {}, options = {}) {
       attachment: publicConfig(config),
       modelCallCount: 1,
       networkCount: 1,
+      diagnostics: buildParseFailedDiagnostics(response),
     };
   }
 
@@ -572,6 +665,7 @@ async function callMiraTextModelAttachment(input = {}, options = {}) {
       }),
       modelCallCount: 1,
       networkCount: 1,
+      diagnostics: buildHttpErrorDiagnostics(body, response, classified.reason),
     };
   }
 
@@ -583,6 +677,7 @@ async function callMiraTextModelAttachment(input = {}, options = {}) {
       attachment: publicConfig(config),
       modelCallCount: 1,
       networkCount: 1,
+      diagnostics: buildEmptyResponseDiagnostics(body, response),
     };
   }
   if (outputViolatesAttachmentContract(text)) {
@@ -592,6 +687,11 @@ async function callMiraTextModelAttachment(input = {}, options = {}) {
       attachment: publicConfig(config),
       modelCallCount: 1,
       networkCount: 1,
+      diagnostics: buildContractViolationDiagnostics(
+        body,
+        classifyAttachmentContractViolation(text),
+        text.length,
+      ),
     };
   }
 
@@ -633,7 +733,12 @@ module.exports = {
   THREAD_CONTEXT_MAX_MESSAGE_CHARS,
   THREAD_CONTEXT_MAX_TOTAL_CHARS,
   THREAD_CONTEXT_SCHEMA,
+  buildContractViolationDiagnostics,
+  buildEmptyResponseDiagnostics,
+  buildFetchThrewDiagnostics,
+  buildHttpErrorDiagnostics,
   buildMiraTextInstructions,
+  buildParseFailedDiagnostics,
   buildResponsesPayload,
   callMiraTextModelAttachment,
   classifyAttachmentContractViolation,

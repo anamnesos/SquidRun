@@ -630,6 +630,12 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
       model: modelAttachment.model || null,
       visible_status: modelAttachment.visible_status || null,
     } : null,
+    // ARCH #78 task #3: audit-only diagnostics for degraded paths. Captures
+    // structured shape data (http_status, response_id, output item types,
+    // usage tokens, incomplete_reason enum) without raw model text. Never
+    // appears in transcript, visible_render_hint, requester_envelope, or any
+    // renderer-facing field — audit log only.
+    degraded_diagnostics: (modelAttachment && modelAttachment.degraded_diagnostics) || null,
     transcript_path: transcriptPathStr,
   };
   fs.mkdirSync(path.dirname(auditPathStr), { recursive: true });
