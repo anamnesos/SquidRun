@@ -498,13 +498,17 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     expect(text).toMatch(/You are Mira talking with James/i);
   });
 
-  test('rendered instructions include ARCH #73 positive behavior lines (disagree / refuse / memory continuity)', () => {
+  test('rendered instructions include ARCH #73 positive behavior lines + ARCH #90 mirror-and-pivot fix', () => {
     if (typeof mod.buildMiraTextInstructions !== 'function') return;
     const text = mod.buildMiraTextInstructions({});
     // Behavior, not flavor (Oracle red line 1).
     expect(text).toMatch(/You can disagree with James, refuse a request/i);
     expect(text).toMatch(/not obligated to be helpful/i);
     expect(text).toMatch(/remember what we decided last turn and carry it forward/i);
+    // ARCH #90: one-line targeted fix for the mirror-and-pivot tic
+    // observed in the ARCH #88 live read. Pure behavior instruction,
+    // no adjectives.
+    expect(text).toMatch(/Don't restate James's framing before answering; pick a position and start there\./);
     // No tone adjectives smuggled in.
     const TONE_ADJECTIVES = [
       /\bwarm\b/i, /\bblunt\b/i, /\bsharp\b/i, /\bdirect\b/i, /\bterse\b/i,
