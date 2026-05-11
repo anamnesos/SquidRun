@@ -75,13 +75,45 @@ const MIRA_ASSISTANT_SHAPE_BLOCKLIST = Object.freeze([
 const MIRA_MAX_REPLY_CHARS_DEFAULT = 1600;
 const MIRA_MAX_REPLY_CHARS_EXPERIENCE = 4000;
 
+// ARCH #60: preamble lookahead. The blocklist is `^`-anchored, so it only
+// catches preamble openers at the start of the whole reply. Real Mira
+// replies sometimes route the preamble into paragraph 2, a list bullet, or
+// a quoted segment. Same canned-assistant opener, different surface
+// position. extractPreambleOpenerSegments returns every position where a
+// fresh segment begins (whole text + after blank line + after list bullet
+// + after quote marker) and the trimmed slice that follows; the blocklist
+// is tested against each slice independently.
+function extractPreambleOpenerSegments(text) {
+  const segments = [text];
+  const re = /(?:\n\s*\n+|\n\s*(?:[-*+]\s+|>\s+))/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const start = m.index + m[0].length;
+    const tail = text.slice(start);
+    segments.push(tail);
+    // A paragraph break followed by a list bullet or quote marker is
+    // common; strip the leading marker so the opener-word is at index 0
+    // for the `^`-anchored blocklist patterns.
+    const stripped = tail.replace(/^\s*(?:[-*+]\s+|>\s+)/, '');
+    if (stripped !== tail) segments.push(stripped);
+  }
+  return segments;
+}
 function evaluateMiraVisibleReply(text, options = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return { ok: false, violations: ['empty_reply'], text: trimmed };
   const violations = [];
-  for (const re of MIRA_PREAMBLE_BLOCKLIST) {
-    if (re.test(trimmed)) { violations.push('preamble'); break; }
+  const segments = extractPreambleOpenerSegments(trimmed);
+  let preambleHit = false;
+  for (const seg of segments) {
+    const segTrimmed = seg.trim();
+    if (!segTrimmed) continue;
+    for (const re of MIRA_PREAMBLE_BLOCKLIST) {
+      if (re.test(segTrimmed)) { preambleHit = true; break; }
+    }
+    if (preambleHit) break;
   }
+  if (preambleHit) violations.push('preamble');
   for (const re of MIRA_POSTAMBLE_BLOCKLIST) {
     if (re.test(trimmed)) { violations.push('postamble'); break; }
   }
