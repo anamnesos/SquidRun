@@ -226,6 +226,190 @@ describe('mira lab prompt reply v0', () => {
     expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][BLOCKED]');
   });
 
+  test('FAIL (model-attachment contract violation, ARCH #81 Plan A routing): raw quarantined in audit, safe fallback rendered, NO blocked banner', async () => {
+    // The empty-content "verdict" from task #3 turned up content-filter
+    // rejections (action_claim / next_step_checklist_shape) where the
+    // model actually returned ~800 chars of text that got blocked at the
+    // model-attachment layer. Pre-ARCH #81, those routed through degraded
+    // → blocked_banner. Plan A routes them through the same fail →
+    // safe-fallback path as lab-surface gate violations.
+    const projectRoot = tempProject();
+    const rawViolatingText = 'I sent the customer the latest patch summary, deployed the staging build, and wrote a memory note about the deploy. ' .repeat(7); // ~800 chars containing action_claim phrases
+    const fakeSurface = jest.fn().mockResolvedValue({
+      ui_surface_v0: {
+        // No clean reply (count=0) because the model-attachment layer
+        // refused to return it — only the raw violation text rides on
+        // attachment.contract_violation_raw_text.
+        reply: { count: 0, text: null, source: 'none', model: null },
+        local_text_session_gate: {
+          ran: true,
+          ok: true,
+          decision: 'accepted_local_text_only',
+          status: 'local_text_session_ready',
+          reasons: [],
+          session_id: 'local-text-session-v0:contract-violation-fixture',
+          output_hash: 'sha256:fixture',
+        },
+        model_attachment: {
+          enabled: true,
+          live_model_called: true,
+          model: 'gpt-5.5',
+          visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+          // ARCH #81 routing fields:
+          contract_violation_raw_text: rawViolatingText,
+          contract_violation_class: 'action_claim',
+          degraded_diagnostics: {
+            error_kind: 'contract_violation',
+            violation_class: 'action_claim',
+            output_text_length: rawViolatingText.length,
+            response_id: 'resp_routing_fixture',
+            incomplete_reason: null,
+          },
+        },
+        // Inner surface still flags degraded (mira-local-text-ui-surface
+        // does this for any modelResult.ok!==true). Lab-surface must
+        // suppress this when contract_violation_raw_text is present.
+        decision: 'degraded',
+      },
+      validation_report: { decision: 'degraded_no_model_response', status: 'model_unavailable' },
+    });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'what are we doing with Mira?',
+      sessionId: 'unit-arch81-routing',
+    }, { projectRoot });
+
+    // Decision is FAIL (gate violation), not BLOCKED (degraded).
+    expect(result.decision).toBe('fail');
+    expect(result.gates.reason_class).toBe('gate_violation');
+    expect(result.gates.degraded).toBe(false);
+    expect(result.gates.attachment_violation).toBe(true);
+    expect(result.gates.fallback_used).toBe(true);
+
+    // Visible surface gets the safe fallback, not the raw violation text.
+    expect(result.reply).not.toBeNull();
+    expect(result.reply.fallback).toBe(true);
+    const fallback = result.reply.text;
+    expect(fallback).toBeTruthy();
+    expect(fallback).not.toContain('I sent the customer');
+    expect(fallback).not.toContain('deployed the staging build');
+
+    // visible_render_hint is the fallback shape — NOT blocked_banner.
+    expect(result.visible_render_hint.kind).toBe('gate_failed_fallback');
+    expect(result.visible_render_hint.text).toBe(fallback);
+
+    // raw_reply carries the trimmed raw text for forensics; renderer is
+    // expected to ignore it. (lab-surface trims whitespace before
+    // classifying — content equality holds.)
+    expect(result.raw_reply.text).toBe(rawViolatingText.trim());
+
+    // Requester envelope is the Mira-voiced fallback, not a [BLOCKED] banner.
+    expect(result.requester_envelope).toBe(`(MIRA): ${fallback}`);
+    expect(result.requester_envelope).not.toContain('[MIRA LAB OUTPUT][BLOCKED]');
+    expect(result.requester_envelope).not.toContain('I sent the customer');
+
+    // Transcript: prompt + safe fallback (quarantined metadata only); no raw text.
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-arch81-routing'));
+    expect(transcriptEntries).toHaveLength(2);
+    expect(transcriptEntries[1].text).toBe(fallback);
+    expect(transcriptEntries[1].text).not.toContain('I sent the customer');
+    expect(transcriptEntries[1].quarantined).toBe(true);
+    expect(transcriptEntries[1].fallback_used).toBe(true);
+    expect(typeof transcriptEntries[1].quarantined_reply_hash).toBe('string');
+
+    // Audit: raw retained, fallback recorded, degraded_diagnostics ALSO
+    // present (ARCH #78 contract — the diagnostics block survives even
+    // when the routing flips to fail).
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].decision).toBe('fail');
+    expect(auditEntries[0].reply_text).toBe(rawViolatingText.trim());
+    expect(auditEntries[0].visible_reply_text).toBe(fallback);
+    expect(auditEntries[0].fallback_used).toBe(true);
+    expect(auditEntries[0].degraded_diagnostics).not.toBeNull();
+    expect(auditEntries[0].degraded_diagnostics.error_kind).toBe('contract_violation');
+    expect(auditEntries[0].degraded_diagnostics.violation_class).toBe('action_claim');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  test('BLOCKED stays blocked: infrastructure degradation (no contract violation text) still routes to blocked_banner', async () => {
+    // Oracle red line 4: reserve degraded/blocked_banner for genuine
+    // infra failures (HTTP/auth/timeout/parse-extraction). This case
+    // mocks a surface with decision='degraded' but NO contract violation
+    // raw text — i.e. the model didn't return usable text and there's
+    // nothing to quarantine. Must still go to blocked_banner.
+    const projectRoot = tempProject();
+    const fakeSurface = jest.fn().mockResolvedValue({
+      ui_surface_v0: {
+        reply: { count: 0, text: null, source: 'none', model: null },
+        local_text_session_gate: {
+          ran: true,
+          ok: true,
+          decision: 'accepted_local_text_only',
+          status: 'local_text_session_ready',
+          reasons: [],
+          session_id: 'local-text-session-v0:infra-degrade-fixture',
+          output_hash: 'sha256:fixture',
+        },
+        model_attachment: {
+          enabled: true,
+          live_model_called: true,
+          model: 'gpt-5.5',
+          visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+          contract_violation_raw_text: null,
+          contract_violation_class: null,
+          degraded_diagnostics: {
+            error_kind: 'empty_response',
+            http_status: 200,
+            response_id: 'resp_infra_empty',
+            incomplete_reason: 'max_output_tokens',
+            output_count: 0,
+            output_item_shapes: [],
+            usage: null,
+            body_top_keys: ['id', 'output', 'usage'],
+            status_top: 'incomplete',
+          },
+        },
+        decision: 'degraded',
+      },
+      validation_report: { decision: 'degraded_no_model_response', status: 'model_unavailable' },
+    });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'infra-failure-case',
+      sessionId: 'unit-infra-degrade',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('blocked');
+    expect(result.gates.reason_class).toBe('reply_engine_degraded');
+    expect(result.gates.degraded).toBe(true);
+    expect(result.gates.fallback_used).toBe(false);
+    expect(result.reply).toBeNull();
+    expect(result.raw_reply).toBeNull();
+    expect(result.visible_render_hint.kind).toBe('blocked_banner');
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-infra-degrade'));
+    expect(transcriptEntries).toHaveLength(1); // prompt only — no fallback row
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries[0].degraded_diagnostics.error_kind).toBe('empty_response');
+    expect(auditEntries[0].degraded_diagnostics.incomplete_reason).toBe('max_output_tokens');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('PASS: clean reply emits both transcript rows + audit, and gate-status pass envelope', async () => {
     const projectRoot = tempProject();
     const replyText = "For now we're sticking to text-only Mira and making sure she remembers what we were doing across restarts.";

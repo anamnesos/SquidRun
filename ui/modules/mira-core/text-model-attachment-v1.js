@@ -681,17 +681,21 @@ async function callMiraTextModelAttachment(input = {}, options = {}) {
     };
   }
   if (outputViolatesAttachmentContract(text)) {
+    const violationClass = classifyAttachmentContractViolation(text);
     return {
       ok: false,
       reason: 'model_response_contract_violation',
       attachment: publicConfig(config),
       modelCallCount: 1,
       networkCount: 1,
-      diagnostics: buildContractViolationDiagnostics(
-        body,
-        classifyAttachmentContractViolation(text),
-        text.length,
-      ),
+      diagnostics: buildContractViolationDiagnostics(body, violationClass, text.length),
+      // ARCH #81 Plan A: contract violation WITH extracted text is a gate
+      // failure, not infrastructure degradation. Surface the raw text so
+      // the lab-surface can quarantine it through the same fail→fallback
+      // path as lab-surface language-gate failures. Audit-only — never
+      // surfaces to renderer / transcript visible row / requester envelope.
+      raw_violation_text: text,
+      violation_class: violationClass,
     };
   }
 

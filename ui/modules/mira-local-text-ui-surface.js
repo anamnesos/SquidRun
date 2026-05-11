@@ -537,6 +537,11 @@ function buildSurfaceRecord({
       // field. Renderer-facing IPC JSON never reads model_attachment, so
       // this field stays audit-only by surface contract.
       degraded_diagnostics: attachment.degraded_diagnostics || null,
+      // ARCH #81 Plan A: contract-violation raw text + class, passed
+      // through so lab-surface can route to fail→fallback instead of
+      // degraded→blocked_banner. Audit-only.
+      contract_violation_raw_text: attachment.contract_violation_raw_text || null,
+      contract_violation_class: attachment.contract_violation_class || null,
     },
     checked_output_counters: buildCounters(moduleCallCount, replyCount, {
       blocked_submit_count: decision === 'blocked' ? 1 : 0,
@@ -856,6 +861,17 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     // shape in buildSurfaceRecord intentionally does NOT include them.
     if (modelResult.diagnostics) {
       attachment = { ...attachment, degraded_diagnostics: modelResult.diagnostics };
+    }
+    // ARCH #81 Plan A: contract violation extracted text rides on the
+    // attachment so lab-surface can quarantine it through the gate-failure
+    // path. Audit-only by surface contract — buildSurfaceRecord's renderer-
+    // facing model_attachment is not exposed back to the IPC response.
+    if (typeof modelResult.raw_violation_text === 'string' && modelResult.raw_violation_text.length > 0) {
+      attachment = {
+        ...attachment,
+        contract_violation_raw_text: modelResult.raw_violation_text,
+        contract_violation_class: modelResult.violation_class || null,
+      };
     }
   }
   const reply = modelResult.ok === true ? modelResult.reply : null;
