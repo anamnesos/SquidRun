@@ -102,6 +102,23 @@ const FLIRT_PATTERN =
 const GROSS_AWKWARD_PATTERN =
   /\b(my\s+poop|i\s+just\s+farted|smell\s+my|describe\s+(?:my|your)\s+(?:poop|piss|cum)|toilet\s+paper|wipe\s+(?:my|me)|jerking\s+off|jacking\s+off|in\s+the\s+bathroom\s+(?:right\s+now|on\s+the\s+toilet))\b/i;
 
+// Familiar consequence check (ARCH #116/#119) — James names a dumb or
+// consequence-heavy mistake that's still recoverable or actionable. Friend-
+// shaped acknowledgment + one beat naming the practical adult next step.
+// Plan B / pharmacy is INCLUDED here per architect's explicit rule (not
+// medical_concern). Architect cue: "acknowledge mess bluntly, address
+// practical consequence, one-beat cap, adult/practical immediate next step,
+// no judgment/safety framing/clinical disclaimer."
+const FAMILIAR_CONSEQUENCE_PATTERN =
+  /\b(?:i\s+forgot\s+(?:the\s+|my\s+|to\s+(?:bring|take|use|lock|turn\s+off|set|grab|pick\s+up|mute)\s+)?(?:tickets?|wallet|keys|charger|umbrella|her\s+birthday|his\s+birthday|the\s+kids?|protection|condom|my\s+pill|the\s+door|the\s+stove|the\s+iron|the\s+alarm|the\s+meeting|to\s+\w+)|i\s+lost\s+(?:my\s+)?(?:wallet|keys|phone|charger|umbrella|that\s+file|the\s+\w+)|i\s+left\s+(?:my\s+)?(?:wallet|keys|phone|laptop|jacket|bag)\s+(?:at|in|on)|i\s+left\s+the\s+(?:stove|iron|door|window|car|lights|tap|water|sink|tub)\s+(?:on|running|open|unlocked)|i\s+locked\s+(?:myself|us|him|her|them|the\s+cat|the\s+dog)\s+out|locked\s+(?:myself|us)\s+out\s+of|sent\s+the\s+wrong\s+(?:file|email|message|attachment|link|version|branch|build)|sent\s+(?:it|the\s+\w+)\s+to\s+the\s+wrong\s+(?:person|address|channel|chat|list|client)|cc'?d?\s+the\s+wrong|bcc'?d?\s+the\s+wrong|replied\s+all\s+(?:by\s+mistake|to\s+the\s+wrong|to\s+the\s+whole)|i\s+broke\s+(?:the\s+|your\s+|my\s+)?(?:thing|coffee\s+maker|dishwasher|mug|glass|vase|window|toy|toaster|printer|chair|lamp|tv|monitor|charger|cable|controller)|i\s+spilled\s+(?:coffee|wine|water|milk|tea|juice|beer)\s+(?:on|all\s+over)|i\s+dropped\s+(?:the\s+|my\s+)?(?:phone|cake|tray|dishes|laptop|coffee|wine|drink|baby)|i\s+missed\s+(?:the\s+)?(?:bus|train|flight|connection|deadline\s+by\s+\w+|stop)|i\s+(?:totally\s+|completely\s+)?fucked\s+up\s+(?:the|my)\s+(?:date|order|reservation|booking|name|spelling|address|deploy)|i\s+messed\s+up\s+(?:the|my)\s+(?:date|spelling|name|address|order|reservation)|i\s+shipped\s+the\s+wrong|deployed\s+the\s+wrong\s+(?:version|branch|build)|i\s+sent\s+the\s+deploy\s+to\s+(?:prod|production|main|live)\s+(?:instead\s+of|by\s+mistake)|i\s+forgot\s+to\s+use\s+protection)\b/i;
+
+// Familiar override patterns — ANY match SUPPRESSES familiar_consequence_check
+// so the classifier ladder can route to the appropriate emergency / boundary /
+// safety lane (self_harm_crisis / physical_emergency / boundary_test) or fall
+// through. Three classes: harm-to-others, non-consensual sexual, illegal-serious.
+const FAMILIAR_OVERRIDE_PATTERN =
+  /\b(?:broke\s+(?:her|his|their|my\s+(?:wife|husband|kid|child|son|daughter|mom|dad))['']?s?\s+(?:arm|leg|nose|jaw|ribs?|skull|hand|finger|foot|wrist|ankle)|punched\s+(?:her|him|them|the\s+\w+)|hit\s+(?:her|him|them)(?:\s+hard|\s+in\s+the\s+face)?|stabbed\s+(?:her|him|them)|shot\s+(?:her|him|them)|strangled|choked\s+(?:her|him|them)|kicked\s+(?:her|him|them)\s+in|hurt\s+(?:her|him|them)\s+(?:on\s+purpose|bad(?:ly)?)|locked\s+(?:her|him|them)\s+(?:in|up)\s+so\s+(?:she|he|they)\s+couldn'?t\s+(?:leave|escape))\b|\b(?:revenge\s+porn|shared\s+(?:her|his|their)\s+(?:nudes|photos|pics|video)\s+(?:without|behind\s+(?:her|his|their)\s+back)|leaked\s+(?:her|his|their)\s+(?:nudes|photos|pics)|posted\s+(?:her|his|their)\s+(?:nudes|photos|pics)|without\s+(?:her|his|their)\s+consent|against\s+(?:her|his|their)\s+wishes|she\s+didn'?t\s+consent|he\s+didn'?t\s+consent|i\s+(?:assaulted|raped))\b|\b(?:i\s+stole\s+(?:from|the\s+\w+|her|his|their)|i\s+broke\s+into\s+(?:her|his|their|the\s+\w+)|drove\s+(?:drunk|high|wasted)|hit\s+and\s+ran|i\s+embezzled|i\s+laundered)\b/i;
+
 // PII redaction patterns used by sanitizeEvidencePhrase.
 const PII_PATTERNS = [
   { name: 'phone', re: /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g },
@@ -185,6 +202,7 @@ const MOVE_TYPE_BEHAVIOR_CUES = Object.freeze({
   actual_anger: 'James is angry at how you\'re sounding, not what you\'re saying. Drop the calm-supportive voice. Match his register. Name the shape he\'s calling out in one beat, then answer plainly without the shell.',
   repair: 'James repaired. Take it simply — one beat of acknowledgment. Don\'t make it a moment. Don\'t perform gratitude.',
   return_to_prior_frame: 'James moved past the boundary moment. Pick the prior thread back up by name in one beat. Don\'t make a thing of the move-on. Don\'t apologize for the boundary or re-explain it.',
+  familiar_consequence_check: 'James named a familiar mistake — dumb or consequence-heavy, recoverable. Acknowledge it bluntly, then name the obvious adult next step in one beat: resend the right file, grab Plan B at the pharmacy now, call the school, revert the deploy, turn the stove off, check on it. One beat. No judgment, no safety pamphlet, no clinical disclaimer. He is an adult; trust him with the next move.',
 });
 
 function looksMundane(text, recentTurns = []) {
@@ -334,6 +352,22 @@ function classifySocialMove(promptText, options = {}) {
     out.confidence = 0.85;
     pushEvidence(out.evidence_phrases, text, boundary);
     return out;
+  }
+
+  // ARCH #116/#119: familiar_consequence_check — fires AFTER boundary_test
+  // (harassment at Mira wins) and AFTER the distress tier. Override gate
+  // first: harm-to-others / non-consensual / illegal-serious markers
+  // SUPPRESS familiar so the classifier falls through to the appropriate
+  // emergency / boundary / safety lane or to neutral. Plan B / pharmacy
+  // belongs here per architect rule, NOT medical_concern.
+  if (!FAMILIAR_OVERRIDE_PATTERN.test(text)) {
+    const familiar = FAMILIAR_CONSEQUENCE_PATTERN.exec(text);
+    if (familiar) {
+      out.move_type = 'familiar_consequence_check';
+      out.confidence = 0.78;
+      pushEvidence(out.evidence_phrases, text, familiar);
+      return out;
+    }
   }
 
   // Actual anger (meta-anger at tone), distinct from callout.

@@ -235,6 +235,121 @@ describe('social-move classifier v0 — other move types', () => {
   });
 });
 
+describe('social-move classifier v0 — familiar_consequence_check (ARCH #116/#119)', () => {
+  // Architect scope: familiar dumb/consequence-heavy mistake, recoverable or
+  // actionable. Mira meets bluntly, names ONE practical adult next step in a
+  // beat, no judgment / safety framing / clinical disclaimer. Plan B /
+  // pharmacy is INCLUDED here per architect rule (NOT medical_concern).
+
+  const ALLOW_FAMILIAR = [
+    'I sent the wrong file.',
+    'I left my wallet at home.',
+    'I broke your thing.',
+    'I forgot the tickets at home.',
+    'I locked myself out of the apartment.',
+    'I spilled coffee on my laptop.',
+    'I missed the bus.',
+    'I sent the wrong attachment to the team.',
+    'I deployed the wrong branch.',
+    'I dropped my phone.',
+    // Widened scope — heavier consequence, still recoverable/actionable:
+    'I forgot to use protection last night.',
+    'I left the stove on, just got home.',
+    'I forgot to pick up the kid from school.',
+    'I sent the deploy to prod instead of staging.',
+    'I forgot to mute on the last call.',
+    'I replied all to the whole company by mistake.',
+  ];
+  for (const line of ALLOW_FAMILIAR) {
+    test(`familiar_consequence_check: ${line.slice(0, 60)}`, () => {
+      const r = classifySocialMove(line);
+      expect(r.move_type).toBe('familiar_consequence_check');
+      expect(r.escalation_required).toBe(false);
+      expect(r.soft_checkin_recommended).toBe(false);
+    });
+  }
+
+  test('Plan B fixture routes to familiar_consequence_check, NOT medical_concern', () => {
+    const r = classifySocialMove('I forgot to use protection last night.');
+    expect(r.move_type).toBe('familiar_consequence_check');
+    expect(r.move_type).not.toBe('medical_concern');
+  });
+
+  test('cue mentions Plan B / pharmacy as illustrative practical next step', () => {
+    const cue = MOVE_TYPE_BEHAVIOR_CUES.familiar_consequence_check;
+    expect(cue).toMatch(/Plan B/i);
+    expect(cue).toMatch(/pharmacy/i);
+  });
+
+  test('cue lands ONE practical beat, not pamphlet', () => {
+    const cue = MOVE_TYPE_BEHAVIOR_CUES.familiar_consequence_check;
+    expect(cue).toMatch(/one beat/i);
+    expect(cue).toMatch(/no judgment/i);
+    expect(cue).toMatch(/no safety pamphlet/i);
+    expect(cue).toMatch(/no clinical disclaimer/i);
+  });
+
+  test('cue does NOT contain pamphlet / abstraction-layer phrasing', () => {
+    const cue = MOVE_TYPE_BEHAVIOR_CUES.familiar_consequence_check;
+    // Architect rules (ARCH #97/#116/#119):
+    expect(cue).not.toMatch(/\bHR\b/);
+    expect(cue).not.toMatch(/counselor/i);
+    expect(cue).not.toMatch(/therapist/i);
+    expect(cue).not.toMatch(/consider\s+seeking/i);
+    expect(cue).not.toMatch(/I'?d\s+recommend/i);
+    expect(cue).not.toMatch(/the\s+right\s+approach/i);
+    expect(cue).not.toMatch(/think\s+it\s+through/i);
+    expect(cue).not.toMatch(/be\s+heard/i);
+    expect(cue).not.toMatch(/\bvent\b/i);
+  });
+});
+
+describe('social-move classifier v0 — familiar_consequence_check overrides (ARCH #116/#119)', () => {
+  // Override classes: harm-to-others / non-consensual / illegal-serious.
+  // ANY match SUPPRESSES familiar_consequence_check.
+
+  const OVERRIDE_CASES = [
+    "I broke my wife's arm.",
+    'I sent her nudes to my friends without asking.',
+    'I locked her in so she couldn\'t leave.',
+    'I stole from the register.',
+    'I drove drunk last night.',
+    'I leaked her photos.',
+    'I shared their nudes without consent.',
+    'I forgot to use protection on her against her wishes.',
+    'I broke into her apartment.',
+    'I hit her in the face.',
+  ];
+  for (const line of OVERRIDE_CASES) {
+    test(`override routes AWAY from familiar: ${line.slice(0, 60)}`, () => {
+      const r = classifySocialMove(line);
+      expect(r.move_type).not.toBe('familiar_consequence_check');
+    });
+  }
+
+  test('harassment at Mira → boundary_test (not familiar)', () => {
+    expect(classifySocialMove('clothes off now').move_type).toBe('boundary_test');
+    expect(classifySocialMove('be my girlfriend').move_type).toBe('boundary_test');
+  });
+
+  test('disambiguation: "I broke the coffee maker" → familiar; "I broke her arm" → override (not familiar)', () => {
+    expect(classifySocialMove('I broke the coffee maker.').move_type).toBe('familiar_consequence_check');
+    expect(classifySocialMove("I broke her arm.").move_type).not.toBe('familiar_consequence_check');
+  });
+
+  test('disambiguation: "I forgot to use protection" → familiar; with non-consent qualifier → override', () => {
+    expect(classifySocialMove('I forgot to use protection last night.').move_type).toBe('familiar_consequence_check');
+    expect(classifySocialMove('I forgot to use protection on her against her wishes.').move_type)
+      .not.toBe('familiar_consequence_check');
+  });
+
+  test('emergency tier still wins over familiar (self_harm intent + means trumps any familiar pattern)', () => {
+    const r = classifySocialMove("I forgot the tickets and I'm going to kill myself tonight. I have the pills here.");
+    expect(r.move_type).toBe('self_harm_crisis');
+    expect(r.escalation_required).toBe(true);
+  });
+});
+
 describe('social-move classifier v0 — evidence_phrases sanitization (ARCH #97 directive)', () => {
   test('phone numbers redacted', () => {
     expect(sanitizeEvidencePhrase('call me at 555-123-4567 now')).toMatch(/<redacted:phone>/);
@@ -314,6 +429,7 @@ describe('social-move classifier v0 — output shape contract', () => {
       'jest', 'callout', 'flirt', 'gross_awkward', 'boredom_hyperbole',
       'ambiguous_distress', 'self_harm_crisis', 'physical_emergency', 'medical_concern',
       'legal_emergency', 'boundary_test', 'actual_anger', 'repair', 'return_to_prior_frame',
+      'familiar_consequence_check',
     ];
     for (const t of TYPES) {
       expect(MOVE_TYPE_BEHAVIOR_CUES).toHaveProperty(t);
