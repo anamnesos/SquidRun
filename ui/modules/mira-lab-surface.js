@@ -503,9 +503,20 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
   }
 
   const surface = surfaceResult && surfaceResult.ui_surface_v0;
-  const replyText = surface && surface.reply && surface.reply.count === 1 ? trimText(surface.reply.text) : '';
+  const cleanReplyText = surface && surface.reply && surface.reply.count === 1 ? trimText(surface.reply.text) : '';
   const gate = surface && surface.local_text_session_gate ? surface.local_text_session_gate : null;
   const modelAttachment = surface && surface.model_attachment ? surface.model_attachment : null;
+  // ARCH #81 Plan A: when callMiraTextModelAttachment caught a contract
+  // violation, the raw violating text rides on model_attachment.contract_
+  // violation_raw_text. That's a gate failure (not infra degradation), so
+  // we adopt the raw text as replyText for downstream classification; the
+  // existing FAIL→safe-fallback path then handles it. Audit retains raw
+  // text + reply_hash; renderer never sees it.
+  const modelContractViolationText = typeof modelAttachment?.contract_violation_raw_text === 'string'
+    && modelAttachment.contract_violation_raw_text.length > 0
+    ? trimText(modelAttachment.contract_violation_raw_text)
+    : '';
+  const replyText = cleanReplyText || modelContractViolationText;
   // Detect any pre-module engine block (missing metadata, invalid session, inactive UI state,
   // wrong scope, etc.) by inspecting both the gate.status and the gate.reasons. ARCH #98:
   // narrow substring matching missed `blocked_inactive_ui_state`, so check the canonical
@@ -532,10 +543,20 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
   const languageGate = replyText ? evaluateMiraVisibleReply(replyText) : { ok: false, violations: ['empty_reply'] };
   const attachmentViolation = replyText ? outputViolatesAttachmentContract(replyText) : false;
   const leakageViolation = replyText ? visibleReplyLeakageViolation(replyText) : null;
-  const degraded = surfaceError !== null
+  // ARCH #81 Plan A: when we have contract-violation raw text from the
+  // model-attachment layer, that's a gate failure — NOT infra degradation.
+  // Suppress the degraded flag so classifyReplyDecision routes to FAIL
+  // (gate_violation → safe fallback) instead of BLOCKED (degraded engine →
+  // blocked_banner). Truly degraded paths (surfaceError, no surface,
+  // engine-side surface.decision='degraded' without contract violation,
+  // live_model_called=false) still flag degraded as before.
+  const isModelContractViolation = modelContractViolationText.length > 0;
+  const degraded = !isModelContractViolation && (
+    surfaceError !== null
     || !surface
     || surface.decision === 'degraded'
-    || (modelAttachment && modelAttachment.live_model_called === false && replyText.length === 0);
+    || (modelAttachment && modelAttachment.live_model_called === false && replyText.length === 0)
+  );
 
   let { decision, reasonClass } = classifyReplyDecision({
     replyText,
