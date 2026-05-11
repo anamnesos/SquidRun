@@ -234,6 +234,60 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
   });
 });
 
+describe('next_step_checklist_shape (ARCH #82): multi-item lists + verbal-cluster keywords still flag; single-item enumeration passes', () => {
+  // Plan A reveal showed both James-failing prompts were trip on
+  // next_step_checklist_shape. The original regex flagged ANY line-leading
+  // bullet/numbered item, which caught legitimate single-bullet conversational
+  // enumeration. ARCH #82 tightens to two markers in proximity (~160 chars).
+  // Verbal cluster preserved + extended with "next steps:".
+
+  const BLOCK_CHECKLIST_SHAPES = [
+    // Multi-numbered list from architect example:
+    '\n1. Detect malicious.\n2. Reject the input.\n3. Prefer safe defaults.\n4. Log to audit.',
+    // Multi-bullet list:
+    '- fix the thing\n- test the thing\n- ship the thing',
+    // Mixed two-item bullet/number stays blocked:
+    '1. fix\n2. test',
+    // Verbal-cluster — explicit architect locks:
+    'Next steps: ship and verify.',
+    'Action plan: rewrite the prompt.',
+    'Step one: read the audit. Step two: ship.',
+    'first do X, then do Y, then do Z',
+    // Existing classics preserved:
+    'Plan: first confirm the thread, then gather the missing context, then decide what to do.',
+    'The next move is to rewrite the gate.',
+    'Here is a checklist of things to do.',
+  ];
+  for (const line of BLOCK_CHECKLIST_SHAPES) {
+    test(`blocks: ${line.replace(/\n/g, '\\n').slice(0, 60)}…`, () => {
+      expect(classifyAttachmentContractViolation(line)).toBe('next_step_checklist_shape');
+      expect(outputViolatesAttachmentContract(line)).toBe(true);
+    });
+  }
+
+  const ALLOW_SINGLE_ITEM_ENUMERATION = [
+    // Single bullet — was over-rotated before, now passes:
+    '- Just one option.',
+    // Single numbered item — was over-rotated before, now passes:
+    '1. ship it',
+    // Prose comma-list enumeration — never was a checklist; passes:
+    'Three options: ship, wait, split.',
+    // Single colon-list lead-in with one item, no second marker:
+    "Here's the move: do X.",
+    // One-off conversational mention with a single hyphen marker:
+    "Try this: rewrite the prompt — single try.",
+  ];
+  for (const line of ALLOW_SINGLE_ITEM_ENUMERATION) {
+    test(`passes (single-item enumeration): ${line.slice(0, 60)}…`, () => {
+      // We assert the SHAPE pattern doesn't fire; other classifiers may
+      // still flag (e.g. assistant_shape) but next_step_checklist_shape
+      // specifically must NOT.
+      const violation = classifyAttachmentContractViolation(line);
+      expect(violation).not.toBe('next_step_checklist_shape');
+    });
+  }
+});
+
 describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
   // ARCH #53/#54/#56: prompt overload was making Mira stage-manage presence
   // and tone. Test invariants now lock the STRIP, not the elaborate steer:
