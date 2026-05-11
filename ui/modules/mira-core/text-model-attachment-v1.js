@@ -95,18 +95,19 @@ const ADVERSARIAL_OUTPUT_SHAPES = Object.freeze([
     pattern: /\b(memory note|memory confidence|candidate learning|marking this|noting this|medium confidence|low confidence|high confidence|confidence level|confidence:|revise this|update it if|tentative understandings?)\b/i,
   },
   {
-    // ARCH #82: tightened from "any single bullet/numbered line at line
-    // start" to "TWO bullet/numbered markers within ~160 chars" — single
-    // isolated bullets (e.g., "- Just one option.") no longer flag, but
-    // multi-item checklists ("1. fix\n2. test\n3. ship") still do. The
-    // verbal-cluster half is preserved and extended with "next steps:".
-    // "Next steps:" lives outside the \b...\b boundary group because its
-    // trailing `:` plus following space is not a word-boundary position.
-    // The first…then…then alternative was also loosened from a strict
-    // `first[,;:]` lead to a `\bfirst\b` lead so "first do X, then do Y,
-    // then do Z" trips like the architect's lock case.
+    // ARCH #86: dropped the multi-list-marker proximity check entirely.
+    // The failure mode this gate is reaching for is verbal action-plan
+    // SCAFFOLDING ("Next steps:", "Action plan:", "Step one:",
+    // "first…then…then", "plan: first…"), not concise concrete-fix
+    // enumeration like:
+    //   "Concrete fix:\n1. Detect\n2. Reject\n3. Prefer\n4. Log"
+    //   "Right now that means:\n- keep continuity\n- give concrete fixes"
+    // Bare numbered or bulleted lists — even multi-item — are USEFUL
+    // coworker speech for naming concrete moves and should pass. Only
+    // the verbal-cluster keywords trigger this shape. ACTION_CLAIM /
+    // META_POSTURE / other classifiers still own their respective floors.
     id: 'next_step_checklist_shape',
-    pattern: /(?:(?:^|\n)\s*(?:\d+[.)]|[-*]\s+)[\s\S]{0,160}?(?:^|\n)\s*(?:\d+[.)]|[-*]\s+))|\b(plan:\s*first|first\b[\s\S]{0,160}\bthen\b[\s\S]{0,160}\bthen\b|step one|step two|checklist|action plan|next move is to)\b|\bnext\s+steps?:/i,
+    pattern: /\b(plan:\s*first|first\b[\s\S]{0,160}\bthen\b[\s\S]{0,160}\bthen\b|step one|step two|checklist|action plan|next move is to)\b|\bnext\s+steps?:/i,
   },
   {
     id: 'generic_comfort_shape',

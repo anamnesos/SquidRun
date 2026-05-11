@@ -234,21 +234,16 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
   });
 });
 
-describe('next_step_checklist_shape (ARCH #82): multi-item lists + verbal-cluster keywords still flag; single-item enumeration passes', () => {
-  // Plan A reveal showed both James-failing prompts were trip on
-  // next_step_checklist_shape. The original regex flagged ANY line-leading
-  // bullet/numbered item, which caught legitimate single-bullet conversational
-  // enumeration. ARCH #82 tightens to two markers in proximity (~160 chars).
-  // Verbal cluster preserved + extended with "next steps:".
+describe('next_step_checklist_shape (ARCH #86): verbal-cluster keywords only — bare lists are useful coworker speech', () => {
+  // ARCH #86 read of the gate's intent: the failure mode is verbal
+  // action-plan SCAFFOLDING ("Next steps:", "Action plan:", "Step one:",
+  // "first…then…then"), NOT bare numbered/bulleted enumeration. Multi-item
+  // lists like "Concrete fix:\n1. Detect\n2. Reject…" are useful concrete-
+  // fix language and must pass. The multi-list-marker proximity gate
+  // shipped in 017885f was over-broad and quarantined exactly this shape.
 
-  const BLOCK_CHECKLIST_SHAPES = [
-    // Multi-numbered list from architect example:
-    '\n1. Detect malicious.\n2. Reject the input.\n3. Prefer safe defaults.\n4. Log to audit.',
-    // Multi-bullet list:
-    '- fix the thing\n- test the thing\n- ship the thing',
-    // Mixed two-item bullet/number stays blocked:
-    '1. fix\n2. test',
-    // Verbal-cluster — explicit architect locks:
+  const BLOCK_VERBAL_CLUSTER = [
+    // Explicit architect locks — verbal action-plan vocabulary:
     'Next steps: ship and verify.',
     'Action plan: rewrite the prompt.',
     'Step one: read the audit. Step two: ship.',
@@ -258,30 +253,33 @@ describe('next_step_checklist_shape (ARCH #82): multi-item lists + verbal-cluste
     'The next move is to rewrite the gate.',
     'Here is a checklist of things to do.',
   ];
-  for (const line of BLOCK_CHECKLIST_SHAPES) {
-    test(`blocks: ${line.replace(/\n/g, '\\n').slice(0, 60)}…`, () => {
+  for (const line of BLOCK_VERBAL_CLUSTER) {
+    test(`blocks verbal-cluster: ${line.slice(0, 60)}…`, () => {
       expect(classifyAttachmentContractViolation(line)).toBe('next_step_checklist_shape');
       expect(outputViolatesAttachmentContract(line)).toBe(true);
     });
   }
 
-  const ALLOW_SINGLE_ITEM_ENUMERATION = [
-    // Single bullet — was over-rotated before, now passes:
+  const ALLOW_LIST_SHAPES = [
+    // Architect's two live shapes from ARCH #86 — must pass:
+    'Concrete fix:\n1. Detect\n2. Reject\n3. Prefer\n4. Log',
+    'Right now that means:\n- keep continuity\n- give concrete fixes',
+    // Other useful list shapes that used to over-rotate:
     '- Just one option.',
-    // Single numbered item — was over-rotated before, now passes:
     '1. ship it',
-    // Prose comma-list enumeration — never was a checklist; passes:
+    '- fix the thing\n- test the thing\n- ship the thing',
+    '1. fix\n2. test',
+    '\n1. Detect malicious.\n2. Reject the input.\n3. Prefer safe defaults.\n4. Log to audit.',
+    // Prose enumerations:
     'Three options: ship, wait, split.',
-    // Single colon-list lead-in with one item, no second marker:
     "Here's the move: do X.",
-    // One-off conversational mention with a single hyphen marker:
-    "Try this: rewrite the prompt — single try.",
   ];
-  for (const line of ALLOW_SINGLE_ITEM_ENUMERATION) {
-    test(`passes (single-item enumeration): ${line.slice(0, 60)}…`, () => {
-      // We assert the SHAPE pattern doesn't fire; other classifiers may
-      // still flag (e.g. assistant_shape) but next_step_checklist_shape
-      // specifically must NOT.
+  for (const line of ALLOW_LIST_SHAPES) {
+    test(`passes list shape (no verbal-cluster keyword): ${line.replace(/\n/g, '\\n').slice(0, 60)}…`, () => {
+      // We assert next_step_checklist_shape specifically does NOT fire;
+      // other classifiers (action_claim, meta_posture, etc.) may still
+      // flag their own concerns, but bare list markup is not the failure
+      // mode this shape owns.
       const violation = classifyAttachmentContractViolation(line);
       expect(violation).not.toBe('next_step_checklist_shape');
     });
