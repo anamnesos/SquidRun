@@ -37,6 +37,12 @@ const {
   appendContextLeakBypass,
 } = require('./hm-send-context-leak-guard');
 const {
+  detectCoworkerLintViolation,
+  appendCoworkerLintViolation,
+  appendCoworkerLintBypass,
+  isHardBlockMode: isCoworkerLintHardBlock,
+} = require('./hm-send-coworker-output-lint');
+const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
   buildWebSocketDispatchMessage,
@@ -550,6 +556,21 @@ function runOutputGuards({ messageId, targetRole } = {}) {
       );
     }
 
+    const coworkerBypass = detectCoworkerLintViolation({
+      ...guardInput,
+      bypass: '0',
+    });
+    if (coworkerBypass) {
+      appendCoworkerLintBypass(
+        {
+          ...coworkerBypass,
+          messageId,
+          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+        },
+        { logPath: resolveGuardLogPath('coworker-lint-bypasses.jsonl') }
+      );
+    }
+
     return { ok: true, bypassed: true };
   }
 
@@ -570,6 +591,34 @@ function runOutputGuards({ messageId, targetRole } = {}) {
       `Log: ${logResult.path}`,
     ]);
     return { ok: false, type: 'permission_ask', violation: permissionViolation };
+  }
+
+  const coworkerLintViolation = detectCoworkerLintViolation({
+    ...guardInput,
+    bypass: '0',
+  });
+  if (coworkerLintViolation) {
+    const hardBlock = isCoworkerLintHardBlock();
+    const logResult = appendCoworkerLintViolation(
+      {
+        ...coworkerLintViolation,
+        messageId,
+      },
+      { logPath: resolveGuardLogPath('coworker-lint-violations.jsonl') }
+    );
+    if (hardBlock) {
+      writeGuardBlock([
+        `BLOCKED: coworker-output-lint '${coworkerLintViolation.violation_class}' opener '${coworkerLintViolation.phrase}'.`,
+        'Lead with the action, technical noun, or direct answer. Drop the apology/preamble/sycophancy opener.',
+        `Log: ${logResult.path}`,
+      ]);
+      return { ok: false, type: 'coworker_lint', violation: coworkerLintViolation };
+    }
+    writeGuardBlock([
+      `WARN: coworker-output-lint '${coworkerLintViolation.violation_class}' opener '${coworkerLintViolation.phrase}' — logged, send continuing.`,
+      'Set HM_SEND_COWORKER_LINT_HARD=1 to enforce hard-block.',
+      `Log: ${logResult.path}`,
+    ]);
   }
 
   const contextViolation = detectContextLeakViolation({
