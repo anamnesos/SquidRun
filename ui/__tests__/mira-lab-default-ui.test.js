@@ -63,6 +63,28 @@ describe('mira-lab default UI is James <-> Mira only (ARCH #14/#16/#17/#18)', ()
     expect(src).toMatch(/requesterPane:\s*null/);
   });
 
+  test('renderer composer status banner: post-d82580c wording, no quarantine/gate-fail leftover', () => {
+    const src = read(RENDERER_PATH);
+    // d82580c+ contract: on fail, the visible Mira reply is a vetted safe
+    // fallback (e.g. "Ask it differently."), NOT a raw quarantined leak. The
+    // status banner must describe the substitution honestly. The OLD wording
+    // "Mira reply quarantined / gate failed" read like a system error and
+    // shipped to James after the restart — locking its absence here.
+    expect(src).not.toMatch(/Mira reply quarantined \/ gate failed/);
+    // New wording is on the fail branch.
+    expect(src).toMatch(/Mira reply gated\s*[—\-]\s*safe fallback shown/);
+    // Pass branch wording stays as it was.
+    expect(src).toMatch(/Mira reply rendered \/ gates passed/);
+    // Blocked/degraded continues to use the system-unavailable banner per
+    // ARCH #64 ("Keep blocked/degraded as system unavailable banner").
+    expect(src).toMatch(/SYSTEM_ERROR_BANNER_TEXT\s*=\s*['"]Mira is not reachable right now/);
+    // The old `appendQuarantinedReply` path stays deleted.
+    expect(src).not.toMatch(/appendQuarantinedReply/);
+    expect(src).not.toMatch(/\[MIRA LAB OUTPUT - GATE FAILED\]/);
+    // gate_failed_fallback handler still present (renders fallback as normal Mira turn).
+    expect(src).toMatch(/gate_failed_fallback/);
+  });
+
   test('CSS shell is fixed to the viewport edges so the composer cannot be clipped', () => {
     const css = read(CSS_PATH);
     expect(css).toMatch(/\.mira-lab-shell\s*\{[^}]*position:\s*fixed/);

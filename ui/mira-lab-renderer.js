@@ -149,7 +149,12 @@
           state.textContent = 'Mira reply rendered / gates passed';
           state.classList.remove('mira-lab-state-system-error');
         } else if (replyResult.decision === 'fail') {
-          state.textContent = 'Mira reply quarantined / gate failed';
+          // d82580c+: fail surfaces a vetted safe fallback as Mira's visible
+          // reply (no raw leak, no dead banner). The status line should
+          // reflect what actually happened — not the old "quarantined / gate
+          // failed" wording, which read like a system error and didn't
+          // describe the fallback substitution James actually sees.
+          state.textContent = 'Mira reply gated — safe fallback shown';
           state.classList.remove('mira-lab-state-system-error');
         } else if (replyResult.decision === 'blocked') {
           // System state, not Mira-as-speaker. No reason_class in visible text.
