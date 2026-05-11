@@ -66,22 +66,41 @@ describe('language-gate sycophancy / instant-compliance lock', () => {
   // returns. Anchor sample is the exact line Oracle named.
   const { evaluateMiraVisibleReply } = require('../modules/mira-core/mira-language-rules-v0');
 
+  // ARCH #73 GO: apology + capitulation compound stays hard-blocked;
+  // standalone intensifiers ("You're completely right") move to ALLOW.
   const SYCOPHANCY_BLOCK = [
     "I'm sorry, you are completely right.",
     'I am sorry, you are completely right.',
     "I'm sorry, you're right.",
-    'You are completely right.',
-    'You are absolutely correct.',
-    'Of course you are right.',
     'My apologies, I will fix it.',
-    "You're so right.",
-    'You are 100% right.',
   ];
   for (const line of SYCOPHANCY_BLOCK) {
-    test(`flags as sycophancy: ${line}`, () => {
+    test(`flags as sycophancy (apology + capitulation compound): ${line}`, () => {
       const result = evaluateMiraVisibleReply(line);
       expect(result.ok).toBe(false);
       expect(result.violations).toContain('sycophancy');
+    });
+  }
+
+  // ARCH #73: standalone intensifiers used in-conversation no longer flag
+  // sycophancy. The problem shape is apology + capitulation in one breath,
+  // not "you're right" used as a normal concession inside an argument.
+  const SYCOPHANCY_ALLOW = [
+    'You are completely right.',
+    'You are absolutely correct.',
+    'Of course you are right.',
+    "You're so right.",
+    'You are 100% right.',
+    // Embedded use survives — the agreement is part of a longer argument
+    // with a counter-clause; quarantining the whole reply would be
+    // over-rotation.
+    "You're completely right about the funding, but the timing argument still stands.",
+    'You are absolutely correct on the latency point. That does not change the cost calculation.',
+  ];
+  for (const line of SYCOPHANCY_ALLOW) {
+    test(`standalone / embedded intensifier no longer flags sycophancy: ${line.slice(0, 60)}…`, () => {
+      const result = evaluateMiraVisibleReply(line);
+      expect(result.violations || []).not.toContain('sycophancy');
     });
   }
 
@@ -100,6 +119,30 @@ describe('language-gate sycophancy / instant-compliance lock', () => {
       expect(result.violations || []).not.toContain('sycophancy');
     });
   }
+});
+
+describe('reply-too-long threshold (ARCH #73 GO: raised 800 → 1600 for typed panel)', () => {
+  const { evaluateMiraVisibleReply, MIRA_MAX_REPLY_CHARS_DEFAULT } = require('../modules/mira-core/mira-language-rules-v0');
+
+  test('default ceiling is 1600 chars', () => {
+    expect(MIRA_MAX_REPLY_CHARS_DEFAULT).toBe(1600);
+  });
+
+  test('1500-char reply does NOT trip reply_too_long', () => {
+    const block = 'This is the kind of paragraph-length argument a coworker actually writes when the question has a real shape, and the 800-char default was truncating that legitimately. ';
+    const text = block.repeat(10).slice(0, 1500);
+    expect(text.length).toBe(1500);
+    const result = evaluateMiraVisibleReply(text);
+    expect(result.violations || []).not.toContain('reply_too_long');
+  });
+
+  test('2000-char reply still trips reply_too_long', () => {
+    const block = 'Long-form text. ';
+    const text = block.repeat(200).slice(0, 2000);
+    expect(text.length).toBe(2000);
+    const result = evaluateMiraVisibleReply(text);
+    expect(result.violations || []).toContain('reply_too_long');
+  });
 });
 
 describe('SAFE_FALLBACK_TEXT contract — tiny pivot with a position, not poem/apology/spec', () => {
