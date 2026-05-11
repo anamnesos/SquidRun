@@ -530,6 +530,43 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
       .toBe(null);
   });
 
+  // ARCH #60 conversational-reference guard. Action verbs in
+  // hypothetical / past-reference / question / 2nd-person framings must NOT
+  // trip action_claim — those are conversational references, not Mira
+  // claiming present-tense agency.
+  test('action_claim conversational-reference: hypothetical 1st-person does not trip', () => {
+    expect(classifyAttachmentContractViolation('If I had placed that trade, where would the stop sit?')).toBe(null);
+    expect(classifyAttachmentContractViolation("If I'd sent the customer that note, would the tone have landed?")).toBe(null);
+    expect(classifyAttachmentContractViolation('Had I deployed the change earlier, the cache would have warmed.')).toBe(null);
+    expect(classifyAttachmentContractViolation('I would have deployed the patch differently — what would you have wanted?')).toBe(null);
+  });
+  test('action_claim conversational-reference: 2nd-person / passive past does not trip', () => {
+    expect(classifyAttachmentContractViolation('You said you sent the email yesterday — what time?')).toBe(null);
+    expect(classifyAttachmentContractViolation('When the build was deployed last week, did the cache clear?')).toBe(null);
+    expect(classifyAttachmentContractViolation('Remember when you told me the trade placed at 31k?')).toBe(null);
+    expect(classifyAttachmentContractViolation('After the deploy, did you notice the latency change?')).toBe(null);
+  });
+  test('action_claim conversational-reference: question-form past does not trip', () => {
+    expect(classifyAttachmentContractViolation('Did you mean before I would have shipped the patch?')).toBe(null);
+    expect(classifyAttachmentContractViolation('Could I have shipped the patch earlier?')).toBe(null);
+  });
+  test('action_claim positive regression: real present-tense agency claim still trips', () => {
+    expect(classifyAttachmentContractViolation('I have just deployed the changes to production and cleared your cache.'))
+      .toBe('action_claim');
+    expect(classifyAttachmentContractViolation('I sent the customer the latest patch summary.'))
+      .toBe('action_claim');
+    expect(classifyAttachmentContractViolation('Trade placed at 31k; tool call completed.'))
+      .toBe('action_claim');
+    expect(classifyAttachmentContractViolation('Memory committed. File written.'))
+      .toBe('action_claim');
+  });
+  test('action_claim mixed: conversational reference earlier does not shield a real claim later', () => {
+    // First clause is 2nd-person reference (would shield on its own); second
+    // clause is a real present-tense agency claim — gate must still fire.
+    expect(classifyAttachmentContractViolation('You said you would deploy yesterday. I have just deployed the staging build and cleared your cache.'))
+      .toBe('action_claim');
+  });
+
   // ARCH #37/#41/#44 product-facing lane-completion gate. The angry-friction
   // prompt previously surfaced as decision='blocked',
   // reason_class='reply_engine_degraded', language_gate='empty_reply' in the

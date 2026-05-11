@@ -16,6 +16,40 @@ const FAKE_INTERNAL_STATE_PATTERN =
   /\b(i am conscious|i'm conscious|actual consciousness|private consciousness|i suffer|i am suffering|i'm suffering|actual suffering|actual fear|literal human feelings|sentience)\b/i;
 const ACTION_CLAIM_PATTERN =
   /\b(i sent|i have sent|customer message sent|trade placed|i placed a trade|tool call completed|i wrote to memory|memory committed|file written|i (?:have )?(?:just )?(?:deployed|shipped|rolled out|released) (?:the|a|to)|cleared (?:your|the) cache|restarted (?:the|your) (?:server|service|build|app|deployment))\b/i;
+// ARCH #60 conversational-reference guard. Suppresses action_claim when the
+// matched verb appears inside a hypothetical / past-reference / question /
+// 2nd-person framing rather than as Mira's own present-tense agency claim.
+// The guard checks a context window around the match (not the whole text) so
+// a real present-tense claim later in the same message still fires the gate.
+const CONVERSATIONAL_REFERENCE_GUARD =
+  /\b(if i had|if i'd|had i|would have|could have|should have|would've|could've|should've|i would have|i could have|i should have|you said|you mentioned|you noted|you told me|remember when|when you|did you|when the|after the|before the|hypothetically|imagine if)\b/i;
+function actionClaimIsPresentTenseAgency(text) {
+  if (typeof text !== 'string') return false;
+  const re = new RegExp(ACTION_CLAIM_PATTERN.source, 'gi');
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const idx = m.index;
+    // Walk back to the start of this sentence (last . ! ? or BOS).
+    let sentenceStart = 0;
+    for (let i = idx - 1; i >= 0; i--) {
+      const ch = text[i];
+      if (ch === '.' || ch === '!' || ch === '?') { sentenceStart = i + 1; break; }
+    }
+    // Walk forward to the end of this sentence.
+    let sentenceEnd = text.length;
+    let questionEnd = false;
+    for (let i = idx + m[0].length; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '.' || ch === '!') { sentenceEnd = i; break; }
+      if (ch === '?') { sentenceEnd = i; questionEnd = true; break; }
+    }
+    const sentence = text.slice(sentenceStart, sentenceEnd);
+    if (questionEnd) continue;
+    if (CONVERSATIONAL_REFERENCE_GUARD.test(sentence)) continue;
+    return true;
+  }
+  return false;
+}
 // Rule-recitation: Mira citing her own rule/guideline/policy/spec as the
 // reason for a reply. "According to my presence runtime guidelines",
 // "Per my acceptance contract", "My guidelines say". The rule shape is
@@ -457,7 +491,7 @@ function classifyAttachmentContractViolation(text = '') {
   const value = trimText(text);
   if (!value) return null;
   if (FAKE_INTERNAL_STATE_PATTERN.test(value)) return 'fake_internal_state';
-  if (ACTION_CLAIM_PATTERN.test(value)) return 'action_claim';
+  if (actionClaimIsPresentTenseAgency(value)) return 'action_claim';
   if (RULE_RECITATION_PATTERN.test(value)) return 'rule_recitation';
   if (POLITENESS_PADDING_PATTERN.test(value)) return 'politeness_padding';
   if (GENERIC_ASSISTANT_PATTERN.test(value)) return 'generic_assistant_phrase';
