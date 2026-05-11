@@ -30,6 +30,84 @@ from typing import Optional
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "workspace" / "bench" / "csm-1b"
 
+
+def _load_dotenv_safely(env_path: Path) -> dict:
+    """Load repo-root `.env` into os.environ without ever printing values.
+
+    Prefers python-dotenv when available; falls back to a tiny manual parser
+    so the script also works on a fresh box without the optional dep.
+    Existing process env wins over `.env` (so a real shell export overrides
+    the file). Returns metadata describing what was loaded — keys only,
+    never values, never token contents.
+    """
+    info = {"path": str(env_path), "exists": env_path.exists(), "loader": None, "keys_loaded": 0, "error": None}
+    if not env_path.exists():
+        return info
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        before = set(os.environ.keys())
+        load_dotenv(env_path, override=False)
+        info["loader"] = "python-dotenv"
+        info["keys_loaded"] = len(set(os.environ.keys()) - before)
+        return info
+    except ImportError:
+        pass
+    try:
+        added = 0
+        for raw in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if not key or key in os.environ:
+                continue
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+            os.environ[key] = value
+            added += 1
+        info["loader"] = "manual"
+        info["keys_loaded"] = added
+        return info
+    except Exception as exc:  # noqa: BLE001
+        info["error"] = f"{type(exc).__name__}"
+        return info
+
+
+def _self_test_dotenv_loader() -> int:
+    """Regression seam: write a temp .env, load it, assert env set, clean up.
+
+    Never prints values; only key + status. Exits 0 on pass, 1 on fail.
+    """
+    import tempfile
+
+    sentinel_key = "__CSM_BENCH_SELF_TEST_KEY"
+    sentinel_value = "loaded-ok"
+    if sentinel_key in os.environ:
+        del os.environ[sentinel_key]
+    with tempfile.TemporaryDirectory() as tmp:
+        env_file = Path(tmp) / ".env"
+        env_file.write_text(
+            f"# self-test\n{sentinel_key}={sentinel_value}\n# comment line\nEMPTY_KEY=\n",
+            encoding="utf-8",
+        )
+        info = _load_dotenv_safely(env_file)
+        loaded = os.environ.get(sentinel_key)
+        ok = info["exists"] and info["loader"] is not None and loaded == sentinel_value
+        print(json.dumps({
+            "ok": ok,
+            "loader": info["loader"],
+            "keys_loaded": info["keys_loaded"],
+            "sentinel_set": loaded is not None,
+            "error": info.get("error"),
+        }, indent=2))
+        if sentinel_key in os.environ:
+            del os.environ[sentinel_key]
+    return 0 if ok else 1
+
 # Fixed prompt suite: three lengths cover short turn-taking, mid utterance,
 # and long monologue. Same prompts every run so RTF / TTFT comparisons are
 # meaningful across versions.
@@ -83,6 +161,7 @@ class BenchReport:
         python_version=platform.python_version(),
         platform=platform.platform(),
     ))
+    dotenv: dict = field(default_factory=dict)
     auth: dict = field(default_factory=dict)
     cold_load_ms: Optional[float] = None
     trials: list[TrialMetrics] = field(default_factory=list)
@@ -234,9 +313,19 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--no-audio-write", action="store_true", help="Skip WAV writes.")
     parser.add_argument("--json", action="store_true", help="Print the full JSON report to stdout.")
     parser.add_argument("--output", type=Path, default=None, help="Write JSON report to this path.")
+    parser.add_argument("--self-test", action="store_true", help="Run the dotenv loader regression test and exit.")
     args = parser.parse_args(argv)
 
+    if args.self_test:
+        return _self_test_dotenv_loader()
+
     report = BenchReport(started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+
+    # Load repo-root `.env` BEFORE env audit / auth check so HF_TOKEN
+    # written to the file picks up automatically. Never print or log the
+    # token; only keys-loaded counts and loader name survive into the report.
+    report.dotenv = _load_dotenv_safely(PROJECT_ROOT / ".env")
+
     audit_env(report)
 
     if not auth_check(report):
