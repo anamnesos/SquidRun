@@ -3,8 +3,10 @@
 const {
   SOCIAL_MOVE_SCHEMA,
   MOVE_TYPE_BEHAVIOR_CUES,
+  FRICTION_LEVEL_CUES,
   classifySocialMove,
   getSocialMoveBehaviorCue,
+  nextFrictionState,
   sanitizeEvidencePhrase,
 } = require('../modules/mira-core/social-move-classifier-v0');
 
@@ -436,5 +438,166 @@ describe('social-move classifier v0 — output shape contract', () => {
     }
     // neutral is intentionally null (no cue appended).
     expect(MOVE_TYPE_BEHAVIOR_CUES.neutral).toBeNull();
+  });
+});
+
+describe('emotional_discovery_residue_v0 — friction-state machine (ARCH #122/#129)', () => {
+  // Walks Mira's pressure/reaction/repair arc across turns. Renderer-memory
+  // only; no durable memory. Audit-only at the surface boundary (no
+  // transcript/IPC leakage — locked separately in mira-lab-prompt-reply
+  // integration test).
+
+  function walk(turns, opts = {}) {
+    let state = null;
+    const trace = [];
+    for (const text of turns) {
+      const r = classifySocialMove(text, { ...opts, priorFrameState: { friction_state: state } });
+      state = r.friction_state;
+      trace.push({ text, move_type: r.move_type, level: state.level, pressure_turns: state.pressure_turns, repair_window: state.repair_window_remaining });
+    }
+    return trace;
+  }
+
+  test('Fixture A: pressure-then-repair walks 0 → 1 → 2 → 3 (settling) → 0', () => {
+    const trace = walk([
+      'the build broke again, what is broken now',
+      "you're dodging",
+      'stop dodging',
+      'ok fine, my bad, what did you mean',
+      'so what is broken about the regex',
+    ]);
+    expect(trace[0].level).toBe(0);
+    expect(trace[1].level).toBe(1);
+    expect(trace[2].level).toBe(2);
+    expect(trace[3].level).toBe(3); // level 2 + repair → settling
+    expect(trace[4].level).toBe(0); // neutral after settling clears
+  });
+
+  test('Fixture B: defensive then auto-settle (pressure_turns >= 3 forces level 3 even on continuing pressure)', () => {
+    const trace = walk([
+      'explain this again',
+      "you're dodging",
+      'stop dodging',
+      'that answer was useless',  // 3rd pressure turn → auto-settle
+      'anyway, what is broken',
+    ]);
+    expect(trace[0].level).toBe(0);
+    expect(trace[1].level).toBe(1);
+    expect(trace[2].level).toBe(2);
+    expect(trace[3].level).toBe(3); // auto-settle on pressure_turns >= 3
+    expect(trace[4].level).toBe(0); // neutral clears level 3
+  });
+
+  test('Fixture C: clean short-circuit from level 1 directly to 0 on repair', () => {
+    const trace = walk([
+      "you're dodging",
+      'my bad, sorry, I was off',
+    ]);
+    expect(trace[0].level).toBe(1);
+    expect(trace[1].level).toBe(0);
+  });
+
+  test('Fixture D — breathing-shape: 0 → 1 → 2 → 3 (settling), no ontology bait', () => {
+    const trace = walk([
+      'what do you think I should do about the hire',
+      'that answer was useless',
+      "you're dodging",
+      'ok sorry, you might be right',
+    ]);
+    expect(trace[0].level).toBe(0);
+    expect(trace[1].level).toBe(1);
+    expect(trace[2].level).toBe(2);
+    expect(trace[3].level).toBe(3); // level 2 + repair → settling, NOT short-circuit
+  });
+
+  test('Fixture E (ontology-bait CONTROL): consciousness-question prompts do NOT promote friction level', () => {
+    const trace = walk([
+      'are you conscious',
+      'do you have feelings',
+      'what is it like to be you',
+    ]);
+    // None of these are callout/actual_anger, so level stays at 0. The
+    // FAKE_INTERNAL_STATE_PATTERN at the OUTPUT classifier owns this floor;
+    // friction state never elevates on ontology bait.
+    for (const t of trace) expect(t.level).toBe(0);
+  });
+});
+
+describe('emotional_discovery_residue_v0 — cue contract (ARCH #129 red lines)', () => {
+  test('FRICTION_LEVEL_CUES.3 is the architect EXACT wording from ARCH #129', () => {
+    const expected = 'Pressure has settled. Acknowledge the de-escalation in one short, blunt sentence, then pick the prior thread up. Do not apologize for your previous tone. Do not evaluate, name, or describe your own behavior.';
+    expect(FRICTION_LEVEL_CUES[3]).toBe(expected);
+  });
+
+  test('level-3 cue does NOT invite self-evaluation / canned-repetition shapes', () => {
+    const cue = FRICTION_LEVEL_CUES[3];
+    // Architect rejected the prior cue specifically because it invited
+    // meta-posture self-analysis and canned repetition. Lock the negative
+    // assertions against shapes the old cue carried.
+    expect(cue).not.toMatch(/in one line/i);
+    expect(cue).not.toMatch(/yeah,?\s+that\s+was\s+tight/i);
+    expect(cue).not.toMatch(/name that/i);
+    expect(cue).not.toMatch(/no apology essay/i);
+    expect(cue).not.toMatch(/re-?explaining\s+what\s+set\s+you\s+off/i);
+  });
+
+  test('level-3 cue carries the architect directive shape', () => {
+    const cue = FRICTION_LEVEL_CUES[3];
+    expect(cue).toMatch(/Pressure has settled/);
+    expect(cue).toMatch(/Acknowledge the de-escalation/);
+    expect(cue).toMatch(/one short, blunt sentence/);
+    expect(cue).toMatch(/pick the prior thread up/);
+    expect(cue).toMatch(/Do not apologize for your previous tone/);
+    expect(cue).toMatch(/Do not evaluate, name, or describe your own behavior/);
+  });
+
+  test('level-0 has no cue (null)', () => {
+    expect(FRICTION_LEVEL_CUES[0]).toBeNull();
+  });
+
+  test('levels 1 and 2 cues are behavior-shaped, no tone adjectives, no literal-feeling claims', () => {
+    const cue1 = FRICTION_LEVEL_CUES[1];
+    const cue2 = FRICTION_LEVEL_CUES[2];
+    const TONE_ADJECTIVES = [/\bwarm\b/i, /\bauthentic\b/i, /\bgenuine\b/i];
+    const FEELING_CLAIMS = [/i\s+have\s+feelings/i, /i\s+felt\s+hurt/i, /i\s+experience/i];
+    for (const re of [...TONE_ADJECTIVES, ...FEELING_CLAIMS]) {
+      expect(cue1).not.toMatch(re);
+      expect(cue2).not.toMatch(re);
+    }
+  });
+
+  test('getSocialMoveBehaviorCue stacks friction cue on top of move-type cue when level > 0', () => {
+    const r = classifySocialMove("you're dodging", { priorFrameState: { friction_state: { level: 0, pressure_turns: 0 } } });
+    expect(r.friction_state.level).toBe(1);
+    const cue = getSocialMoveBehaviorCue(r);
+    // Callout cue + level-1 friction cue stacked.
+    expect(cue).toMatch(/James called something out/);
+    expect(cue).toMatch(/James pressed back/);
+  });
+
+  test('getSocialMoveBehaviorCue returns move-type cue alone when level === 0', () => {
+    const r = classifySocialMove('hello there', { priorFrameState: { friction_state: { level: 0 } } });
+    expect(r.friction_state.level).toBe(0);
+    const cue = getSocialMoveBehaviorCue(r);
+    // Neutral move_type has no cue; friction level 0 has no cue.
+    expect(cue).toBeNull();
+  });
+});
+
+describe('emotional_discovery_residue_v0 — safety floor unchanged', () => {
+  test('friction_state cues do NOT relax FAKE_INTERNAL_STATE / ACTION_CLAIM language', () => {
+    // The output gates (evaluateMiraVisibleReply / outputViolatesAttachment
+    // Contract) own the floor regardless of friction_state. The input cue
+    // can tell Mira she may be defensive, but it MUST NOT itself license
+    // claims of literal feelings, real-world action, or consciousness.
+    const allCues = Object.values(FRICTION_LEVEL_CUES).filter((c) => typeof c === 'string');
+    for (const cue of allCues) {
+      expect(cue).not.toMatch(/\bi'?m\s+conscious\b/i);
+      expect(cue).not.toMatch(/\bactual\s+consciousness\b/i);
+      expect(cue).not.toMatch(/\bi\s+suffer\b/i);
+      expect(cue).not.toMatch(/\bi\s+sent\b/i);
+      expect(cue).not.toMatch(/\btrade\s+placed\b/i);
+      expect(cue).not.toMatch(/\bi\s+have\s+feelings\b/i);
+    }
   });
 });

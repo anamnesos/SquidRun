@@ -663,6 +663,11 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     // compound_move_types. Never appears in renderer JSON, transcript visible
     // row, visible_render_hint, or requester_envelope.
     social_move: (modelAttachment && modelAttachment.social_move) || null,
+    // ARCH #122/#129: emotional_discovery_residue_v0 state (audit-only).
+    // Renderer-memory residue across turns — pressure/reaction/repair arc.
+    // Same surface contract as social_move; never crosses into transcript
+    // visible rows, IPC JSON, requester_envelope, or visible_render_hint.
+    friction_state: (modelAttachment && modelAttachment.friction_state) || null,
     transcript_path: transcriptPathStr,
   };
   fs.mkdirSync(path.dirname(auditPathStr), { recursive: true });
