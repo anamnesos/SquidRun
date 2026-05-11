@@ -192,7 +192,14 @@ describe('hm-mira-lab-verify', () => {
     expect(result.all_pass).toBe(true);
   });
 
-  test('runVerification surfaces a blocked-empty-reply envelope as a real acceptance failure', async () => {
+  test('runVerification reclassifies blocked-empty-reply (engine-degraded) to skipped — ARCH #60.5 task #3', async () => {
+    // Before ARCH #60.5: a single empty Responses API body (long prompt
+    // blew the reasoning-token budget) tripped the verifier even when the
+    // rest of the surface pipeline was healthy. Now: degraded-blocked
+    // entries reclassify to 'skipped'; bootstrap goes to
+    // 'ready_with_skipped_prompts' provided at least one prompt actually
+    // passed. The raw failure signal is preserved on the per-entry
+    // `original_decision` field and the gates row stays intact.
     const blockedEnvelope = JSON.stringify({
       decision: 'blocked',
       reply: { text: null, source: null },
@@ -214,17 +221,54 @@ describe('hm-mira-lab-verify', () => {
     const result = await runVerification({
       skipWindowOpen: true,
       spawnPromptCli,
-      sessionId: 'verify-blocked',
+      sessionId: 'verify-blocked-reclassified',
     });
 
-    const blocked = result.prompts.find((entry) => entry.decision === 'blocked');
-    expect(blocked).toBeDefined();
-    expect(blocked.visible_reply).toBeNull();
-    expect(blocked.reason_class).toBe('reply_engine_degraded');
-    expect(blocked.gates).toEqual(expect.objectContaining({
+    const skipped = result.prompts.find((entry) => entry.decision === 'skipped');
+    expect(skipped).toBeDefined();
+    expect(skipped.original_decision).toBe('blocked');
+    expect(skipped.skip_reason).toBe('reply_engine_degraded');
+    expect(skipped.visible_reply).toBeNull();
+    expect(skipped.reason_class).toBe('reply_engine_degraded');
+    expect(skipped.gates).toEqual(expect.objectContaining({
       reason_class: 'reply_engine_degraded',
       language_gate: 'empty_reply',
     }));
+    // Still no entry with decision==='blocked' — the reclassifier swept it.
+    expect(result.prompts.find((entry) => entry.decision === 'blocked')).toBeUndefined();
+    expect(result.skipped_count).toBe(1);
+    expect(result.pass_count).toBe(3);
+    expect(result.all_pass).toBe(true);
+  });
+
+  test('runVerification keeps all_pass=false when EVERY prompt is reclassified to skipped (no passes)', async () => {
+    // Safety guarantee: an all-skipped run must NOT fake success. The
+    // pre-reclassification intent of this test was "do not fake-pass on a
+    // degraded surface"; the new behavior preserves that guarantee by
+    // requiring at least one 'pass' for all_pass=true.
+    const blockedEnvelope = JSON.stringify({
+      decision: 'blocked',
+      reply: { text: null, source: null },
+      gates: { reason_class: 'reply_engine_degraded', language_gate: 'empty_reply' },
+    });
+    const spawnPromptCli = jest.fn(() => Promise.resolve({
+      code: 4,
+      stdout: blockedEnvelope,
+      stderr: '',
+    }));
+
+    const result = await runVerification({
+      skipWindowOpen: true,
+      spawnPromptCli,
+      sessionId: 'verify-all-skipped',
+    });
+
+    // All four default prompts reclassify to skipped — but pass_count is 0,
+    // so all_pass must remain false and the prompt path is incomplete.
+    expect(result.prompts.length).toBe(4);
+    expect(result.prompts.every((entry) => entry.decision === 'skipped')).toBe(true);
+    expect(result.pass_count).toBe(0);
+    expect(result.skipped_count).toBe(4);
     expect(result.all_pass).toBe(false);
   });
 
@@ -297,7 +341,7 @@ describe('hm-mira-lab-verify', () => {
     expect(result.bootstrap_status).toBe('ready');
   });
 
-  test('runVerification keeps bootstrap_status non-ready when prompt-path fails even if window-open succeeded', async () => {
+  test('runVerification sets bootstrap_status=ready_with_skipped_prompts on mixed pass+skip — ARCH #60.5 task #3', async () => {
     const writeBootstrapState = jest.fn(() => ({ ok: true }));
     const spawnAppOpen = jest.fn(() => Promise.resolve({
       code: 0,
@@ -325,10 +369,19 @@ describe('hm-mira-lab-verify', () => {
       writeBootstrapState,
     });
 
-    expect(result.bootstrap_status).not.toBe('ready');
-    expect(result.all_pass).toBe(false);
+    // Mixed pass + skipped should now go to 'ready_with_skipped_prompts'
+    // with all_pass=true; the persisted bootstrap state is non-stale and
+    // prompt_path_status is 'complete' so the next session's stale marker
+    // does not fire on the long-prompt path.
+    expect(result.bootstrap_status).toBe('ready_with_skipped_prompts');
+    expect(result.all_pass).toBe(true);
+    expect(result.skipped_count).toBe(1);
+    expect(result.pass_count).toBe(3);
+    expect(result.bootstrap_note).toMatch(/skipped/i);
     const [derivedState] = writeBootstrapState.mock.calls[0];
-    expect(derivedState.prompt_path_status).toBe('incomplete');
+    expect(derivedState.prompt_path_status).toBe('complete');
+    expect(derivedState.bootstrap_status).toBe('ready_with_skipped_prompts');
+    expect(derivedState.last_run.all_pass).toBe(true);
   });
 
   test('runVerification can opt out of state persistence with persistState:false', async () => {

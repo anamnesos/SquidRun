@@ -6,6 +6,8 @@ const path = require('path');
 const SCHEMA = 'squidrun.mira_lab_verify.bootstrap.v1';
 const DEFAULT_RELATIVE_PATH = path.join('runtime', 'mira-lab-verify-bootstrap.json');
 const READY = 'ready';
+const READY_WITH_SKIPPED = 'ready_with_skipped_prompts';
+const READY_STATUSES = Object.freeze(new Set([READY, READY_WITH_SKIPPED]));
 const STALE_STATUSES = Object.freeze([
   'unknown',
   'not_attempted',
@@ -76,8 +78,15 @@ function writeBootstrapState(state, options = {}) {
 
 function deriveStateFromVerifierResult(verifierResult = {}) {
   const promptsArray = Array.isArray(verifierResult.prompts) ? verifierResult.prompts : [];
-  const allPromptsPass = promptsArray.length > 0 && promptsArray.every((entry) => entry && entry.decision === 'pass');
-  const promptPathStatus = allPromptsPass ? 'complete' : 'incomplete';
+  // ARCH #60.5: a 'skipped' prompt (engine-degraded, e.g. empty Responses API
+  // body on a long prompt) does NOT make the prompt-path incomplete provided
+  // at least one prompt actually passed. The verifier's job is to confirm
+  // the surface pipeline works; a skipped probe is a model-decision event,
+  // not a pipeline failure.
+  const passCount = promptsArray.filter((entry) => entry && entry.decision === 'pass').length;
+  const allCompleteOrSkipped = promptsArray.length > 0 && passCount > 0
+    && promptsArray.every((entry) => entry && (entry.decision === 'pass' || entry.decision === 'skipped'));
+  const promptPathStatus = allCompleteOrSkipped ? 'complete' : 'incomplete';
   const bootstrapStatus = trimText(verifierResult.bootstrap_status) || 'unknown';
   const rendererOk = Boolean(verifierResult?.renderer_window_open?.ok);
   return {
@@ -98,8 +107,8 @@ function isStaleBootstrapState(state) {
   if (!state || typeof state !== 'object') return true;
   const status = trimText(state.bootstrap_status).toLowerCase();
   if (!status) return true;
-  if (status === READY) return false;
-  return STALE_STATUSES.includes(status) || status !== READY;
+  if (READY_STATUSES.has(status)) return false;
+  return true;
 }
 
 function formatStartupStaleMarker(state) {
@@ -122,6 +131,8 @@ function formatStartupStaleMarker(state) {
 module.exports = {
   DEFAULT_RELATIVE_PATH,
   READY,
+  READY_WITH_SKIPPED,
+  READY_STATUSES,
   SCHEMA,
   STALE_STATUSES,
   defaultStaleState,
