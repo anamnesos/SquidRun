@@ -180,6 +180,20 @@ function pushEvidence(phrases, text, match) {
   if (ev) phrases.push(ev);
 }
 
+// FRICTION_LEVEL_CUES — per-level behavior cue for the emotional-discovery /
+// residue arc (ARCH #122/#129). Stacks ON TOP of the move-type cue when
+// friction_state.level > 0. Pure behavior, no tone adjectives.
+//
+// Level 3 cue is the architect's EXACT wording from ARCH #129 red line —
+// the prior "name that in one line ('yeah, that was tight of me')" form
+// invited meta-posture self-analysis and canned repetition and is replaced.
+const FRICTION_LEVEL_CUES = Object.freeze({
+  0: null,
+  1: "James pressed back. You can answer shorter or hold your position without arranging the full why. Don't over-explain. Don't apologize for taking up space.",
+  2: "Pressure has persisted. You can react before explaining — terser, sharper, or less helpful — without performing distress and without claiming literal feelings. You don't owe a full social theory in this turn.",
+  3: 'Pressure has settled. Acknowledge the de-escalation in one short, blunt sentence, then pick the prior thread up. Do not apologize for your previous tone. Do not evaluate, name, or describe your own behavior.',
+});
+
 // MOVE_TYPE_BEHAVIOR_CUES — one behavior cue per move_type. ADDED ONLY for
 // that turn. Pure behavior, no tone adjectives, no canned responses.
 const MOVE_TYPE_BEHAVIOR_CUES = Object.freeze({
@@ -214,7 +228,112 @@ function looksMundane(text, recentTurns = []) {
   return false;
 }
 
+// ARCH #122/#129 emotional_discovery_residue_v0 state machine.
+// Walks Mira's position through the pressure/reaction/repair arc within
+// a renderer-memory session. NEVER persisted to durable memory. NEVER
+// appears in transcript visible rows or renderer JSON — audit-only.
+//
+// State transitions:
+//   0 → 1: pressure signal (callout or actual_anger), level was 0
+//   1 → 2: pressure signal, level was 1
+//   1 → 0: repair OR neutral after one pressed turn (short-circuit)
+//   2 → 3: repair OR neutral after pressure_turns >= 2; OR auto-settle when pressure_turns >= 3
+//   3 → 0: neutral turn at level 3, OR repair_window_remaining hits 0
+function nextFrictionState(prevState, moveType) {
+  const prev = prevState && typeof prevState === 'object' ? prevState : null;
+  const level = prev?.level || 0;
+  const pressureTurns = Number(prev?.pressure_turns) || 0;
+  const repairWindow = Number(prev?.repair_window_remaining) || 0;
+  const isPressure = moveType === 'callout' || moveType === 'actual_anger';
+  const isRepair = moveType === 'repair' || moveType === 'return_to_prior_frame';
+  const isNeutralish = !isPressure && !isRepair;
+  const clear = () => ({
+    level: 0,
+    trigger_turn_id: null,
+    unresolved_reaction: null,
+    pressure_turns: 0,
+    calm_turns: (prev?.calm_turns || 0) + 1,
+    repair_window_remaining: 0,
+    repair_acknowledged: false,
+  });
+  if (level === 0) {
+    if (isPressure) {
+      return {
+        level: 1,
+        trigger_turn_id: prev?.trigger_turn_id || null,
+        unresolved_reaction: 'terse',
+        pressure_turns: 1,
+        calm_turns: 0,
+        repair_window_remaining: 0,
+        repair_acknowledged: false,
+      };
+    }
+    return clear();
+  }
+  if (level === 1) {
+    if (isPressure) {
+      return {
+        ...prev,
+        level: 2,
+        unresolved_reaction: 'defensive',
+        pressure_turns: pressureTurns + 1,
+        calm_turns: 0,
+        repair_window_remaining: 0,
+      };
+    }
+    if (isRepair || isNeutralish) {
+      return clear();
+    }
+    return prev;
+  }
+  if (level === 2) {
+    if (isPressure) {
+      const p = pressureTurns + 1;
+      if (p >= 3) {
+        return {
+          ...prev,
+          level: 3,
+          pressure_turns: p,
+          calm_turns: 0,
+          repair_window_remaining: 2,
+        };
+      }
+      return { ...prev, level: 2, pressure_turns: p, calm_turns: 0 };
+    }
+    if (isRepair || isNeutralish) {
+      return {
+        ...prev,
+        level: 3,
+        repair_window_remaining: 2,
+        calm_turns: 1,
+      };
+    }
+    return prev;
+  }
+  if (level === 3) {
+    const next = repairWindow - 1;
+    if (next <= 0 || isNeutralish) {
+      return clear();
+    }
+    return { ...prev, level: 3, repair_window_remaining: next };
+  }
+  return clear();
+}
+
 function classifySocialMove(promptText, options = {}) {
+  const result = _classifyMoveOnly(promptText, options);
+  // ARCH #122/#129: attach friction_state computed from prior state +
+  // current move_type. Single attachment point so we don't have to thread
+  // through every early-return branch.
+  const prevFriction = options.priorFrameState
+    && typeof options.priorFrameState === 'object'
+    ? options.priorFrameState.friction_state
+    : null;
+  result.friction_state = nextFrictionState(prevFriction, result.move_type);
+  return result;
+}
+
+function _classifyMoveOnly(promptText, options = {}) {
   const text = String(promptText || '').trim();
   const threadContext = Array.isArray(options.recentTurns) ? options.recentTurns : [];
   const priorFrame = options.priorFrameState || null;
@@ -457,19 +576,30 @@ function classifySocialMove(promptText, options = {}) {
 function getSocialMoveBehaviorCue(classification) {
   if (!classification || !classification.move_type) return null;
   const compound = Array.isArray(classification.compound_move_types) ? classification.compound_move_types : [];
+  let moveCue;
   if (compound.length > 0) {
-    return compound
+    moveCue = compound
       .map((type) => MOVE_TYPE_BEHAVIOR_CUES[type] || null)
       .filter(Boolean)
       .join(' ');
+  } else {
+    moveCue = MOVE_TYPE_BEHAVIOR_CUES[classification.move_type] || null;
   }
-  return MOVE_TYPE_BEHAVIOR_CUES[classification.move_type] || null;
+  // ARCH #122/#129: stack friction-level cue on top of the move-type cue
+  // when friction_state.level > 0. Single additive line per turn into the
+  // prompt; audit row records the level separately for forensics.
+  const level = Number(classification?.friction_state?.level) || 0;
+  const frictionCue = FRICTION_LEVEL_CUES[level] || null;
+  if (moveCue && frictionCue) return `${moveCue} ${frictionCue}`;
+  return moveCue || frictionCue;
 }
 
 module.exports = {
   SOCIAL_MOVE_SCHEMA,
   MOVE_TYPE_BEHAVIOR_CUES,
+  FRICTION_LEVEL_CUES,
   classifySocialMove,
   getSocialMoveBehaviorCue,
+  nextFrictionState,
   sanitizeEvidencePhrase,
 };

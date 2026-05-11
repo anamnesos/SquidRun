@@ -551,6 +551,10 @@ function buildSurfaceRecord({
       // (Same passthrough pattern as degraded_diagnostics — same prior bug
       // discovered in 7efa1e2 if this field is omitted from the picker.)
       social_move: attachment.social_move || null,
+      // ARCH #122/#129: emotional_discovery_residue_v0 friction_state.
+      // Audit-only; same passthrough discipline. Renderer never reads
+      // model_attachment, so this stays off the IPC surface by construction.
+      friction_state: attachment.friction_state || null,
     },
     checked_output_counters: buildCounters(moduleCallCount, replyCount, {
       blocked_submit_count: decision === 'blocked' ? 1 : 0,
@@ -901,6 +905,13 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
   // mira-lab-surface can lift it onto the audit row. Audit-only — renderer
   // never reads model_attachment.social_move.
   attachment = { ...attachment, social_move: socialMoveClassification };
+  // ARCH #122/#129: also stash friction_state on the attachment (renderer-
+  // memory only, audit-only at the surface boundary). Lab-surface lifts it
+  // onto the audit row next to social_move. NEVER appears in transcript
+  // visible rows, IPC JSON, requester_envelope, or visible_render_hint.
+  if (socialMoveClassification && socialMoveClassification.friction_state) {
+    attachment = { ...attachment, friction_state: socialMoveClassification.friction_state };
+  }
   const reply = modelResult.ok === true ? modelResult.reply : null;
   const accepted = Boolean(reply);
   const fallbackUsed = false;

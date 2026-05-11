@@ -207,6 +207,103 @@ describe('SAFE_FALLBACK_TEXT contract — tiny pivot with a position, not poem/a
   });
 });
 
+describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 red line 2)', () => {
+  // Renderer JSON absence is not enough — friction_state MUST also be
+  // absent from the saved transcript.jsonl turn entries. If it leaks into
+  // transcript, it poisons next-turn context with system mechanics.
+
+  test('friction_state appears in audit row, absent from result JSON AND every transcript turn', async () => {
+    const projectRoot = tempProject();
+    const replyText = 'Steady. You?';
+    const frictionStateFixture = {
+      level: 2,
+      trigger_turn_id: null,
+      unresolved_reaction: 'defensive',
+      pressure_turns: 2,
+      calm_turns: 0,
+      repair_window_remaining: 0,
+      repair_acknowledged: false,
+    };
+    const socialMoveFixture = {
+      schema: 'squidrun.mira_core.social_move_v0',
+      move_type: 'callout',
+      confidence: 0.75,
+      escalation_required: false,
+      soft_checkin_recommended: false,
+      evidence_phrases: ["you're dodging"],
+      compound_move_types: [],
+      friction_state: frictionStateFixture,
+    };
+    const fakeSurface = jest.fn().mockResolvedValue({
+      ui_surface_v0: {
+        reply: { count: 1, text: replyText, model: 'mock-model', source: 'mira_text_model_attachment_v1' },
+        local_text_session_gate: {
+          ran: true,
+          ok: true,
+          decision: 'accepted_local_text_only',
+          status: 'local_text_session_ready',
+          reasons: [],
+          session_id: 'local-text-session-v0:friction-fixture',
+          output_hash: 'sha256:fixture',
+        },
+        model_attachment: {
+          enabled: true,
+          live_model_called: true,
+          model: 'gpt-5.5',
+          visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+          social_move: socialMoveFixture,
+          friction_state: frictionStateFixture,
+        },
+        decision: 'accepted',
+      },
+      validation_report: { decision: 'accepted', status: 'ok' },
+    });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: "you're dodging",
+      sessionId: 'unit-friction-audit-only',
+    }, { projectRoot });
+
+    // Audit row: friction_state present with the fixture's exact contents.
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].friction_state).toEqual(frictionStateFixture);
+
+    // Renderer JSON: NOT present anywhere.
+    expect(result).not.toHaveProperty('friction_state');
+    const resultJson = JSON.stringify(result);
+    expect(resultJson).not.toContain('friction_state');
+    expect(resultJson).not.toContain('unresolved_reaction');
+    expect(resultJson).not.toContain('pressure_turns');
+    expect(resultJson).not.toContain('repair_window_remaining');
+
+    // Transcript turn entries: NOT present anywhere. ARCH #129 red line 2.
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-friction-audit-only'));
+    expect(transcriptEntries.length).toBeGreaterThan(0);
+    for (const turn of transcriptEntries) {
+      expect(turn).not.toHaveProperty('friction_state');
+      const turnJson = JSON.stringify(turn);
+      expect(turnJson).not.toContain('friction_state');
+      expect(turnJson).not.toContain('unresolved_reaction');
+      expect(turnJson).not.toContain('pressure_turns');
+      expect(turnJson).not.toContain('repair_window_remaining');
+    }
+
+    // visible_render_hint and requester_envelope also clean.
+    expect(JSON.stringify(result.visible_render_hint || {})).not.toContain('friction_state');
+    expect(result.requester_envelope).not.toContain('friction_state');
+    expect(result.requester_envelope).not.toContain('pressure_turns');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+});
+
 describe('mira lab prompt reply v0', () => {
   test('exposes the channel + decision constants the architect approved', () => {
     expect(MIRA_LAB_PROMPT_REPLY_CHANNEL).toBe('mira:lab-prompt-reply');
