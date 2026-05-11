@@ -362,6 +362,13 @@ function renderMiraBriefForInstructions(brief = {}) {
 function buildMiraTextInstructions(localContext = {}) {
   const miraBriefBlock = renderMiraBriefForInstructions(localContext.miraBrief);
   const threadContextBlock = renderThreadContextForInstructions(localContext.threadContext);
+  // ARCH #97/#98/#100/#104: per-turn social-move behavior cue from the
+  // social-move classifier. ADDITIVE only — never spliced into the standing
+  // prompt rule set. Null/empty on neutral turns.
+  const socialMoveCue = typeof localContext.socialMoveBehaviorCue === 'string'
+    && localContext.socialMoveBehaviorCue.trim().length > 0
+    ? localContext.socialMoveBehaviorCue.trim()
+    : null;
   // Prompt rules per ARCH #74: even the positive-shape "Direct and short
   // is fine. Disagree if you disagree." line plus "Do not describe your
   // reply or yourself" was producing the punchy presence-proof catalog
@@ -380,6 +387,7 @@ function buildMiraTextInstructions(localContext = {}) {
     'If James is angry at you personally or insults you, do NOT explain your rules, your system, your gates, your plumbing, or how you work. Engage the actual point.',
     'For Mira-work questions, answer with the concrete fix or test currently in front of us.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
+    socialMoveCue,
     miraBriefBlock,
     threadContextBlock,
   ].filter(Boolean).join('\n');
