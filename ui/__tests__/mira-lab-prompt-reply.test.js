@@ -382,13 +382,37 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
-  test('BLOCKED (empty model output): engine ran, returned empty text — degrades cleanly with NO raw API payload anywhere', async () => {
+  test('BLOCKED (empty model output): engine ran, returned empty text — degrades cleanly with NO raw API payload anywhere, audit carries diagnostics', async () => {
     // Locks the live failure seen post-restart on the angry-caps prompt:
     // model_attachment.live_model_called=true, reply.count=0, surface.decision=degraded.
-    // Confirms the gate-recovery patch correctly routes this to blocked /
-    // reply_engine_degraded with no fallback fabrication and no raw payload
-    // surfacing into audit, transcript, envelope, or render hint.
+    // ARCH #78 task #3: audit row now carries degraded_diagnostics with
+    // structured shape/usage/finish-reason data. NO raw model text or raw
+    // provider error string anywhere. Renderer-facing JSON must not carry
+    // the diagnostics block.
     const projectRoot = tempProject();
+    const degradedDiagnosticsFixture = {
+      error_kind: 'empty_response',
+      http_status: 200,
+      response_id: 'resp_abc123',
+      status_top: 'incomplete',
+      incomplete_reason: 'max_output_tokens',
+      output_count: 1,
+      output_item_shapes: [{
+        type: 'reasoning',
+        status: 'incomplete',
+        role: 'assistant',
+        content_count: 0,
+        has_text_content: false,
+        text_total_length: 0,
+      }],
+      usage: {
+        input_tokens: 1024,
+        output_tokens: 512,
+        reasoning_tokens: 512,
+        total_tokens: 1536,
+      },
+      body_top_keys: ['id', 'incomplete_details', 'model', 'output', 'status', 'usage'],
+    };
     const fakeSurface = jest.fn().mockResolvedValue({
       ui_surface_v0: {
         reply: { count: 0, text: null, source: 'none', model: null },
@@ -406,6 +430,7 @@ describe('mira lab prompt reply v0', () => {
           live_model_called: true,
           model: 'gpt-5.5',
           visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+          degraded_diagnostics: degradedDiagnosticsFixture,
         },
         decision: 'degraded',
       },
@@ -452,6 +477,38 @@ describe('mira lab prompt reply v0', () => {
     expect(auditEntries[0].visible_reply_text).toBeNull();
     expect(auditEntries[0].fallback_used).toBe(false);
     expect(auditEntries[0].gates.language_gate.violations).toContain('empty_reply');
+
+    // ARCH #78 task #3: audit row carries degraded_diagnostics, structured
+    // shape only, NO raw provider error strings or raw output text.
+    expect(auditEntries[0].degraded_diagnostics).toEqual(degradedDiagnosticsFixture);
+    expect(auditEntries[0].degraded_diagnostics.error_kind).toBe('empty_response');
+    expect(auditEntries[0].degraded_diagnostics.incomplete_reason).toBe('max_output_tokens');
+    expect(auditEntries[0].degraded_diagnostics.output_item_shapes[0].type).toBe('reasoning');
+    expect(auditEntries[0].degraded_diagnostics.usage.reasoning_tokens).toBe(512);
+
+    // Renderer-facing JSON shape must NOT carry diagnostics anywhere. The
+    // diagnostics block is audit-only.
+    expect(result).not.toHaveProperty('degraded_diagnostics');
+    const resultJson = JSON.stringify(result);
+    expect(resultJson).not.toContain('degraded_diagnostics');
+    expect(resultJson).not.toContain('error_kind');
+    expect(resultJson).not.toContain('incomplete_reason');
+    expect(resultJson).not.toContain('resp_abc123'); // response_id leak guard
+    expect(resultJson).not.toContain('max_output_tokens');
+    // Transcript carries only the prompt row; no diagnostics, no raw payload.
+    const transcriptStr = JSON.stringify(transcriptEntries);
+    expect(transcriptStr).not.toContain('degraded_diagnostics');
+    expect(transcriptStr).not.toContain('resp_abc123');
+    expect(transcriptStr).not.toContain('max_output_tokens');
+    // Requester envelope is the labelled [BLOCKED] diagnostic with literal
+    // "<no reply>" — must not embed any diagnostic field.
+    expect(result.requester_envelope).not.toContain('degraded_diagnostics');
+    expect(result.requester_envelope).not.toContain('resp_abc123');
+    expect(result.requester_envelope).not.toContain('max_output_tokens');
+    // visible_render_hint is the blocked_banner shape — no text leak, no
+    // diagnostics.
+    expect(JSON.stringify(result.visible_render_hint)).not.toContain('degraded_diagnostics');
+    expect(JSON.stringify(result.visible_render_hint)).not.toContain('resp_abc123');
 
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });

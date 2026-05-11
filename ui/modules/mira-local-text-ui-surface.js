@@ -844,6 +844,13 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
       fetchImpl: options.fetchImpl,
     });
     attachment = modelResult.attachment || attachment;
+    // ARCH #78: bubble audit-only degraded diagnostics onto the attachment
+    // object so the lab-surface audit row can capture them. This is the only
+    // path that surfaces diagnostics; the renderer-facing model_attachment
+    // shape in buildSurfaceRecord intentionally does NOT include them.
+    if (modelResult.diagnostics) {
+      attachment = { ...attachment, degraded_diagnostics: modelResult.diagnostics };
+    }
   }
   const reply = modelResult.ok === true ? modelResult.reply : null;
   const accepted = Boolean(reply);
