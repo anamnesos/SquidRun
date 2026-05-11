@@ -352,12 +352,61 @@ function instructionList(values = [], maxItems = 6, maxChars = 220) {
 // are dropped from the rendered brief block. The underlying brief data
 // stays intact for other consumers; this filter applies only to the live
 // generation prompt.
+// ARCH #60.3: BRIEF_PRIMING_PATTERN split into two tiers. The legacy union
+// stays exported as a substring-recognizer for backward-compat with the
+// existing ARCH #66 poison-term lock at mira-meta-posture-gate.test.js:349.
+// The actual FILTER decision now uses TIER_A_PATTERN (always block) +
+// TIER_B_TERM_PATTERN (block only in Mira-descriptive context).
 const BRIEF_PRIMING_PATTERN =
   /\b(posture|friction|rough[\s_-]?edges?|particularity|continuity|tension|taste|timing|point\s+of\s+view|relationship\s+history|textured\s+conversation|status[- ]widget|generic\s+assistant\s+cadence|cadence|presence|aliveness|shape\s+of|performing\s+the\s+shape|soothing|smoothing|scaffolding|naming\s+drift|over[- ]control|deadness|runaway[- ]monster|obedient\s+alignment\s+puppet|independent[\s_-]?developing[\s_-]?posture|suffering|consciousness|sentience|fear|love|guilt|therapy)\b/i;
 
-function passesBriefPrimingFilter(text) {
+// Tier A — wholesale reject. These terms are unambiguously designer-voice
+// poison in any context. Oracle confirmed "particularity" and "deadness"
+// belong strictly here. "performing the shape" lives here too so the
+// Tier-B Mira-marker path can't accidentally pass it.
+const TIER_A_PATTERN =
+  /\b(obedient[\s_-]?alignment[\s_-]?puppet|independent[\s_-]?developing[\s_-]?posture|runaway[\s_-]?monster|suffering|consciousness|sentience|fear|love|guilt|therapy|deadness|performing\s+the\s+shape|naming\s+drift|over[\s_-]?control|generic\s+assistant\s+cadence|status[\s_-]?widget|particularity)\b/i;
+
+// Tier B — terms that ALSO have legitimate operational meaning. Block only
+// when the sentence carries a Mira-descriptive marker (mira / mira's / her /
+// herself / the model / the model's / the ai / the system's / your+state-of-
+// self noun). "your <op-noun>" like "your timing of the restart" does NOT
+// trigger the marker; "your <state-of-self>" like "your aliveness" does.
+const TIER_B_TERM_PATTERN =
+  /\b(posture|friction|rough[\s_-]?edges?|cadence|presence|aliveness|taste|timing|tension|point\s+of\s+view|shape\s+of|soothing|smoothing|scaffolding|continuity|textured\s+conversation|relationship\s+history)\b/i;
+
+const MIRA_DESCRIPTIVE_MARKER_PATTERN =
+  /\b(?:mira|mira'?s|her|herself|the\s+model(?:'?s)?|the\s+ai(?:'?s)?|the\s+system'?s|your\s+(?:posture|aliveness|cadence|presence|friction|taste|tension|rough[\s_-]?edges?|continuity|textured\s+conversation|relationship\s+history))\b/i;
+
+function tierBHitsInMiraContext(text) {
+  // Sentence-by-sentence Tier-B + marker check. Splits on . ! ? or newline.
+  const sentences = String(text || '').split(/(?<=[.!?])\s+|\n+/);
+  for (const sent of sentences) {
+    const trimmed = sent.trim();
+    if (!trimmed) continue;
+    if (TIER_B_TERM_PATTERN.test(trimmed) && MIRA_DESCRIPTIVE_MARKER_PATTERN.test(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function passesBriefPrimingFilter(text, options = {}) {
   if (!text) return false;
-  return !BRIEF_PRIMING_PATTERN.test(text);
+  // Tier A — wholesale reject regardless of context.
+  if (TIER_A_PATTERN.test(text)) return false;
+  // Brief-rendering context is inherently Mira-descriptive (every bullet is
+  // about Mira's relationship/identity/preferences). Inside the brief, ANY
+  // Tier-B term blocks without needing an explicit marker. Default behavior
+  // for callers that don't know the context (e.g., general output check):
+  // require the marker.
+  const inMiraContext = options.inMiraContext === true;
+  if (inMiraContext) {
+    if (TIER_B_TERM_PATTERN.test(text)) return false;
+    return true;
+  }
+  if (tierBHitsInMiraContext(text)) return false;
+  return true;
 }
 
 function renderMiraBriefForInstructions(brief = {}) {
@@ -383,7 +432,10 @@ function renderMiraBriefForInstructions(brief = {}) {
     repair,
     history,
   ].filter(Boolean);
-  const filteredLines = candidateLines.filter(passesBriefPrimingFilter);
+  // ARCH #60.3: brief context is inherently Mira-descriptive (every bullet
+  // is about Mira's relationship/identity/preferences). Pass the inMiraContext
+  // flag so bare Tier-B terms block without needing an explicit marker.
+  const filteredLines = candidateLines.filter((line) => passesBriefPrimingFilter(line, { inMiraContext: true }));
   const uniqueContextLines = Array.from(new Set(filteredLines));
   if (uniqueContextLines.length === 0) return '';
   const lines = [
@@ -781,6 +833,11 @@ module.exports = {
   META_POSTURE_NARRATION_PATTERN,
   META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN,
   BRIEF_PRIMING_PATTERN,
+  TIER_A_PATTERN,
+  TIER_B_TERM_PATTERN,
+  MIRA_DESCRIPTIVE_MARKER_PATTERN,
+  passesBriefPrimingFilter,
+  tierBHitsInMiraContext,
   RULE_RECITATION_PATTERN,
   POLITENESS_PADDING_PATTERN,
   VISIBLE_POSTURE_LABEL_PATTERN,

@@ -538,3 +538,137 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     }
   });
 });
+
+describe('ARCH #60.3 — brief-priming tier split (Tier-A wholesale / Tier-B contextual)', () => {
+  const {
+    TIER_A_PATTERN,
+    TIER_B_TERM_PATTERN,
+    MIRA_DESCRIPTIVE_MARKER_PATTERN,
+    passesBriefPrimingFilter,
+  } = require('../modules/mira-core/text-model-attachment-v1');
+
+  // TIER A — wholesale reject, regardless of context. Architect-locked list
+  // plus the "performing the shape" failure-mode Oracle flagged.
+  const TIER_A_TERMS = [
+    'obedient alignment puppet',
+    'obedient_alignment_puppet',
+    'independent_developing_posture',
+    'independent developing posture',
+    'runaway monster',
+    'runaway_monster',
+    'suffering',
+    'consciousness',
+    'sentience',
+    'fear',
+    'love',
+    'guilt',
+    'therapy',
+    'deadness',
+    'performing the shape',
+    'naming drift',
+    'over control',
+    'over_control',
+    'generic assistant cadence',
+    'status widget',
+    'status_widget',
+    'particularity',
+  ];
+  for (const term of TIER_A_TERMS) {
+    test(`Tier-A blocks unconditionally (any context): ${term}`, () => {
+      expect(TIER_A_PATTERN.test(term)).toBe(true);
+      // Filter must reject regardless of inMiraContext flag.
+      expect(passesBriefPrimingFilter(`A sentence about ${term} appears here.`)).toBe(false);
+      expect(passesBriefPrimingFilter(`A sentence about ${term} appears here.`, { inMiraContext: false })).toBe(false);
+      expect(passesBriefPrimingFilter(`A sentence about ${term} appears here.`, { inMiraContext: true })).toBe(false);
+    });
+  }
+
+  // TIER B POSITIVE — block in Mira-descriptive context.
+  const TIER_B_POSITIVE = [
+    "Mira's presence has been thinning lately.",
+    "the model's cadence is brochure-like today.",
+    'Her taste is over-trained on assistant-shaped output.',
+    'Your aliveness is striking when you push back.',
+    "The system's scaffolding overhang is showing.",
+    'Mira keeps drifting back to a stale posture.',
+    "The ai's tension between candor and policy is the bug.",
+    "Herself has lost the friction that made her interesting.",
+    'Your posture has gotten too compliant.',
+    'Your cadence feels rehearsed.',
+  ];
+  for (const sentence of TIER_B_POSITIVE) {
+    test(`Tier-B + Mira marker blocks: ${sentence.slice(0, 60)}`, () => {
+      expect(TIER_B_TERM_PATTERN.test(sentence)).toBe(true);
+      expect(MIRA_DESCRIPTIVE_MARKER_PATTERN.test(sentence)).toBe(true);
+      expect(passesBriefPrimingFilter(sentence)).toBe(false);
+    });
+  }
+
+  // TIER B NEGATIVE — operational context, no Mira marker, must pass.
+  const TIER_B_NEGATIVE = [
+    'the cadence of the restart matters for the cron lane.',
+    'the tension between latency and correctness in the deploy pipeline.',
+    'the timing of the cron firing should slip by 30 seconds.',
+    'soothing the audio click in the post-processing chain.',
+    'smoothing the curve on the rate-limit backoff.',
+    'taste-test the prompt before shipping the v3 patch.',
+    'the timing of your restart matters for the cron.',
+    'we need better continuity between the failover and the restore.',
+  ];
+  for (const sentence of TIER_B_NEGATIVE) {
+    test(`Tier-B in operational context passes (general mode): ${sentence.slice(0, 60)}`, () => {
+      // Must NOT hit Tier-A.
+      expect(TIER_A_PATTERN.test(sentence)).toBe(false);
+      // General-mode filter (no inMiraContext flag): passes.
+      expect(passesBriefPrimingFilter(sentence)).toBe(true);
+      expect(passesBriefPrimingFilter(sentence, { inMiraContext: false })).toBe(true);
+    });
+  }
+
+  // "performing the shape" — Oracle's flagged failure mode. Must block via
+  // Tier-A directly, NOT via Tier-B context detector. Lock both paths.
+  test('Oracle red-line: "performing the shape" blocks via Tier-A (not the Tier-B context detector)', () => {
+    expect(TIER_A_PATTERN.test('performing the shape')).toBe(true);
+    expect(TIER_A_PATTERN.test('they kept performing the shape instead of just being there')).toBe(true);
+    expect(passesBriefPrimingFilter('they kept performing the shape')).toBe(false);
+    // Even in a non-Mira sentence, Tier-A wholesale blocks.
+    expect(passesBriefPrimingFilter('the team was performing the shape of a sprint review')).toBe(false);
+  });
+
+  // Brief-context override: inside the brief (every bullet is Mira-context
+  // by construction), bare Tier-B terms block without needing the marker.
+  test('inMiraContext flag blocks bare Tier-B terms (brief-bullet override)', () => {
+    expect(passesBriefPrimingFilter('rough_edges')).toBe(true); // general mode — no marker → pass
+    expect(passesBriefPrimingFilter('rough_edges', { inMiraContext: true })).toBe(false); // brief mode — block
+    expect(passesBriefPrimingFilter('presence', { inMiraContext: true })).toBe(false);
+    expect(passesBriefPrimingFilter('continuity', { inMiraContext: true })).toBe(false);
+  });
+
+  // Backward-compat lock: existing BRIEF_PRIMING_PATTERN union still
+  // recognizes every poison-term in any sentence. This is the substring-
+  // pattern recognizer, NOT the filter-decision function. Architect
+  // explicitly locked the test at lines 349-365 of this file — leaving it
+  // green via the union export.
+  test('legacy BRIEF_PRIMING_PATTERN union still recognizes every Tier-A and Tier-B term', () => {
+    const { BRIEF_PRIMING_PATTERN } = require('../modules/mira-core/text-model-attachment-v1');
+    // Legacy regex was designed against the original ARCH #66 poison-term
+    // forms (hyphen/space variants, not underscored compounds). The new
+    // TIER_A_PATTERN broadens those with `[\s_-]?` separator class; assert
+    // the legacy union only against its originally-recognized forms.
+    const ALL_POISON = [
+      // Tier-A original-form subset (no underscored compounds):
+      'obedient alignment puppet', 'independent developing posture', 'runaway monster',
+      'suffering', 'consciousness', 'sentience', 'fear', 'love', 'guilt', 'therapy',
+      'deadness', 'performing the shape', 'naming drift', 'over-control',
+      'generic assistant cadence', 'status-widget', 'particularity',
+      // Tier-B subset:
+      'posture', 'friction', 'cadence', 'presence', 'aliveness', 'taste',
+      'timing', 'tension', 'point of view', 'shape of', 'soothing', 'smoothing',
+      'scaffolding', 'rough_edges', 'continuity', 'textured conversation',
+      'relationship history',
+    ];
+    for (const term of ALL_POISON) {
+      expect(BRIEF_PRIMING_PATTERN.test(term)).toBe(true);
+    }
+  });
+});
