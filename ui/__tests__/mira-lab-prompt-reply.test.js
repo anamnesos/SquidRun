@@ -275,13 +275,24 @@ describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 re
     expect(auditEntries).toHaveLength(1);
     expect(auditEntries[0].friction_state).toEqual(frictionStateFixture);
 
-    // Renderer JSON: NOT present anywhere.
+    // Renderer JSON: top-level `friction_state` field is NOT present.
+    // ARCH direction A threading carries a separate `friction_state_next`
+    // server→renderer ferry that is allowed; substring asserts below
+    // exclude that field via name.
     expect(result).not.toHaveProperty('friction_state');
-    const resultJson = JSON.stringify(result);
-    expect(resultJson).not.toContain('friction_state');
-    expect(resultJson).not.toContain('unresolved_reaction');
-    expect(resultJson).not.toContain('pressure_turns');
-    expect(resultJson).not.toContain('repair_window_remaining');
+    // Allow friction_state_next as the threading payload; assert it is the
+    // ONLY friction_state-shape field on the top-level result.
+    expect(result).toHaveProperty('friction_state_next');
+    // The deeper-state internal field names must not leak anywhere on the
+    // result EXCEPT inside friction_state_next, which is the threading
+    // ferry the renderer module memory consumes.
+    const resultExceptThreading = { ...result };
+    delete resultExceptThreading.friction_state_next;
+    const resultExceptThreadingJson = JSON.stringify(resultExceptThreading);
+    expect(resultExceptThreadingJson).not.toContain('friction_state');
+    expect(resultExceptThreadingJson).not.toContain('unresolved_reaction');
+    expect(resultExceptThreadingJson).not.toContain('pressure_turns');
+    expect(resultExceptThreadingJson).not.toContain('repair_window_remaining');
 
     // Transcript turn entries: NOT present anywhere. ARCH #129 red line 2.
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-friction-audit-only'));
@@ -297,6 +308,240 @@ describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 re
 
     // visible_render_hint and requester_envelope also clean.
     expect(JSON.stringify(result.visible_render_hint || {})).not.toContain('friction_state');
+    expect(result.requester_envelope).not.toContain('friction_state');
+    expect(result.requester_envelope).not.toContain('pressure_turns');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  // ARCH #122/#129 direction-A threading test. Two sequential IPC turns:
+  // turn 1 audit shows friction_state.level=1, turn 1 result.friction_state_next
+  // ferries that value to renderer memory, turn 2's IPC payload carries it as
+  // priorFrameState.friction_state, turn 2 classifier walks 1→2, turn 2
+  // audit shows friction_state.level=2.
+  test('renderer-memory threading: turn 1 friction_state ferries via friction_state_next → turn 2 priorFrameState → turn 2 audit shows advanced level', async () => {
+    const projectRoot = tempProject();
+    const replyText = 'Steady. You?';
+    // Mock surface that computes a fresh friction_state per call via the
+    // real classifier — same way the live pipeline runs.
+    const { classifySocialMove } = require('../modules/mira-core/social-move-classifier-v0');
+    const surfaceMock = jest.fn().mockImplementation(async (payload) => {
+      const cls = classifySocialMove(payload.text, {
+        priorFrameState: payload.threadContext?.priorFrameState
+          || payload.priorFrameState
+          || null,
+      });
+      return {
+        ui_surface_v0: {
+          reply: { count: 1, text: replyText, model: 'mock-model', source: 'mira_text_model_attachment_v1' },
+          local_text_session_gate: {
+            ran: true,
+            ok: true,
+            decision: 'accepted_local_text_only',
+            status: 'local_text_session_ready',
+            reasons: [],
+            session_id: 'local-text-session-v0:threading-fixture',
+            output_hash: 'sha256:fixture',
+          },
+          model_attachment: {
+            enabled: true,
+            live_model_called: true,
+            model: 'gpt-5.5',
+            visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+            social_move: cls,
+            friction_state: cls.friction_state,
+          },
+          decision: 'accepted',
+        },
+        validation_report: { decision: 'accepted', status: 'ok' },
+      };
+    });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: surfaceMock,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    // TURN 1: pressure signal lifts level 0 → 1.
+    const turn1 = await buildPromptReply({
+      prompt: "you're dodging",
+      sessionId: 'unit-threading-arc',
+      priorFrameState: null,
+    }, { projectRoot });
+    expect(turn1.friction_state_next).not.toBeNull();
+    expect(turn1.friction_state_next.level).toBe(1);
+
+    // Simulated renderer-memory threading: take friction_state_next, pass it
+    // back as priorFrameState on turn 2.
+    const turn2 = await buildPromptReply({
+      prompt: 'stop dodging me',
+      sessionId: 'unit-threading-arc',
+      priorFrameState: { friction_state: turn1.friction_state_next },
+    }, { projectRoot });
+    expect(turn2.friction_state_next.level).toBe(2);
+
+    // Turn 3: continue pressure, walk to level 3 (auto-settle via pressure_turns >= 3).
+    const turn3 = await buildPromptReply({
+      prompt: 'that answer was useless',
+      sessionId: 'unit-threading-arc',
+      priorFrameState: { friction_state: turn2.friction_state_next },
+    }, { projectRoot });
+    expect(turn3.friction_state_next.level).toBe(3);
+
+    // Turn 4: neutral clears level 3 → 0.
+    const turn4 = await buildPromptReply({
+      prompt: 'so what is broken about the regex',
+      sessionId: 'unit-threading-arc',
+      priorFrameState: { friction_state: turn3.friction_state_next },
+    }, { projectRoot });
+    expect(turn4.friction_state_next.level).toBe(0);
+
+    // Audit row trail must show the same progression — locks that audit
+    // captures the level-arc end-to-end.
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(4);
+    expect(auditEntries[0].friction_state.level).toBe(1);
+    expect(auditEntries[1].friction_state.level).toBe(2);
+    expect(auditEntries[2].friction_state.level).toBe(3);
+    expect(auditEntries[3].friction_state.level).toBe(0);
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  // ARCH #122/#129 renderer-reload reset: priorFrameState defaulting to
+  // null mid-conversation simulates a renderer reload event. Friction state
+  // must reset to level 0; the prior turn's pressure does NOT survive.
+  test('renderer-reload reset: priorFrameState=null after a pressure peak → friction_state resets to 0', async () => {
+    const projectRoot = tempProject();
+    const { classifySocialMove } = require('../modules/mira-core/social-move-classifier-v0');
+    const surfaceMock = jest.fn().mockImplementation(async (payload) => {
+      const cls = classifySocialMove(payload.text, {
+        priorFrameState: payload.threadContext?.priorFrameState
+          || payload.priorFrameState
+          || null,
+      });
+      return {
+        ui_surface_v0: {
+          reply: { count: 1, text: 'OK.', model: 'mock-model', source: 'mira_text_model_attachment_v1' },
+          local_text_session_gate: {
+            ran: true,
+            ok: true,
+            decision: 'accepted_local_text_only',
+            status: 'local_text_session_ready',
+            reasons: [],
+            session_id: 'local-text-session-v0:reset-fixture',
+            output_hash: 'sha256:fixture',
+          },
+          model_attachment: {
+            enabled: true,
+            live_model_called: true,
+            model: 'gpt-5.5',
+            visible_status: 'Conversation connected: gpt-5.5',
+            social_move: cls,
+            friction_state: cls.friction_state,
+          },
+          decision: 'accepted',
+        },
+        validation_report: { decision: 'accepted', status: 'ok' },
+      };
+    });
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: surfaceMock,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    // Turn 1: pressure raises level to 1.
+    const turn1 = await buildPromptReply({
+      prompt: "you're dodging",
+      sessionId: 'unit-reload-reset',
+      priorFrameState: null,
+    }, { projectRoot });
+    expect(turn1.friction_state_next.level).toBe(1);
+
+    // Simulated reload: renderer memory dies → next IPC call goes back to
+    // priorFrameState=null. Next turn's pressure signal lifts 0→1 again
+    // (not 1→2). The previous peak does NOT carry through.
+    const turn2 = await buildPromptReply({
+      prompt: 'stop dodging me',
+      sessionId: 'unit-reload-reset',
+      priorFrameState: null,
+    }, { projectRoot });
+    expect(turn2.friction_state_next.level).toBe(1);
+    expect(turn2.friction_state_next.pressure_turns).toBe(1);
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  // ARCH #122/#129 leak guard: even with active threading via
+  // friction_state_next, the deeper internal field names MUST NOT appear in
+  // transcript / visible_render_hint / requester_envelope.
+  test('threading leak guard: friction_state_next on result is allowed; deeper field names absent from transcript/visible_render_hint/envelope', async () => {
+    const projectRoot = tempProject();
+    const { classifySocialMove } = require('../modules/mira-core/social-move-classifier-v0');
+    const surfaceMock = jest.fn().mockImplementation(async (payload) => {
+      const cls = classifySocialMove(payload.text, {
+        priorFrameState: payload.priorFrameState || null,
+      });
+      return {
+        ui_surface_v0: {
+          reply: { count: 1, text: 'OK.', model: 'mock-model', source: 'mira_text_model_attachment_v1' },
+          local_text_session_gate: {
+            ran: true,
+            ok: true,
+            decision: 'accepted_local_text_only',
+            status: 'local_text_session_ready',
+            reasons: [],
+            session_id: 'local-text-session-v0:leak-guard-fixture',
+            output_hash: 'sha256:fixture',
+          },
+          model_attachment: {
+            enabled: true,
+            live_model_called: true,
+            model: 'gpt-5.5',
+            visible_status: 'Conversation connected: gpt-5.5',
+            social_move: cls,
+            friction_state: cls.friction_state,
+          },
+          decision: 'accepted',
+        },
+        validation_report: { decision: 'accepted', status: 'ok' },
+      };
+    });
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: surfaceMock,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: "you're dodging",
+      sessionId: 'unit-threading-leak-guard',
+      priorFrameState: null,
+    }, { projectRoot });
+
+    // Result MUST carry friction_state_next (threading) but MUST NOT carry
+    // the unscoped `friction_state` top-level field.
+    expect(result).toHaveProperty('friction_state_next');
+    expect(result).not.toHaveProperty('friction_state');
+
+    // Transcript rows must contain neither the threading field NOR the
+    // deeper internal field names.
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-threading-leak-guard'));
+    for (const turn of transcriptEntries) {
+      const turnJson = JSON.stringify(turn);
+      expect(turn).not.toHaveProperty('friction_state');
+      expect(turn).not.toHaveProperty('friction_state_next');
+      expect(turnJson).not.toContain('friction_state');
+      expect(turnJson).not.toContain('unresolved_reaction');
+      expect(turnJson).not.toContain('pressure_turns');
+      expect(turnJson).not.toContain('repair_window_remaining');
+    }
+
+    // visible_render_hint and requester_envelope: neither field present.
+    expect(JSON.stringify(result.visible_render_hint || {})).not.toContain('friction_state');
+    expect(JSON.stringify(result.visible_render_hint || {})).not.toContain('pressure_turns');
     expect(result.requester_envelope).not.toContain('friction_state');
     expect(result.requester_envelope).not.toContain('pressure_turns');
 
