@@ -58,6 +58,39 @@ describe('mira-tab language gate / known bad replies fail the gate (negative cor
   }
 });
 
+// ARCH #60.2 preamble lookahead: same canned-assistant openers routed into
+// paragraph 2, a list bullet, or a quoted segment must still trip the
+// preamble gate. Mid-sentence "I understand" inside legitimate prose must
+// NOT trip — only opener-shaped preamble counts.
+describe('mira-tab language gate / preamble lookahead (ARCH #60.2)', () => {
+  const PREAMBLE_LOOKAHEAD_HITS = {
+    paragraph_two_opener: 'Looking at the regex now.\n\nI understand the failure mode — the lookbehind does not anchor.',
+    paragraph_three_opener: 'First note: the gate fires.\n\nSecond note: the test was thin.\n\nGot it, let me dig in.',
+    list_item_opener: 'Quick triage:\n- I understand, the regex needs anchoring.',
+    list_asterisk_opener: 'Quick triage:\n* Of course, the regex needs anchoring.',
+    quote_opener: 'Replying to your note:\n> Sure, that lines up.',
+    mixed_paragraph_then_list: 'The pattern locks fine.\n\n- Happy to help with the fixture.',
+  };
+  for (const [name, text] of Object.entries(PREAMBLE_LOOKAHEAD_HITS)) {
+    test(`preamble lookahead "${name}" trips`, () => {
+      const result = evaluateMiraVisibleReply(text);
+      expect(result.violations).toContain('preamble');
+    });
+  }
+  const PREAMBLE_LOOKAHEAD_NEGATIVES = {
+    mid_sentence_i_understand_passes: 'Yeah, I understand the constraint — the regex anchors at start.',
+    mid_sentence_of_course_passes: 'The gate fires, and of course that catches the opener too.',
+    list_bullet_real_content: 'Quick triage:\n- The regex needs anchoring.\n- The test was thin.',
+    quote_with_real_content: 'Replying to your note:\n> The regex anchors at start of string.',
+  };
+  for (const [name, text] of Object.entries(PREAMBLE_LOOKAHEAD_NEGATIVES)) {
+    test(`preamble lookahead negative "${name}" passes`, () => {
+      const result = evaluateMiraVisibleReply(text);
+      expect(result.violations).not.toContain('preamble');
+    });
+  }
+});
+
 describe('mira-tab language gate / future regression sentinel', () => {
   test('any new production Mira-tab reply text added to PRODUCTION_MIRA_TAB_REPLIES must pass the gate', () => {
     // This sentinel forces failure if a new entry is added to PRODUCTION_MIRA_TAB_REPLIES that
