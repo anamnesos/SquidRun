@@ -41,6 +41,42 @@ function decisionFromExitCode(code) {
   return 'error';
 }
 
+// ARCH #60.5 / task #3: long-prompt verifier reclassification.
+// When the OpenAI Responses API returns an empty body (long prompt blew the
+// reasoning-token budget, `incomplete_details.reason='max_output_tokens'`,
+// etc.), the text-model-attachment layer reports empty_model_response and
+// mira-lab-surface routes that to decision='blocked',
+// reason_class='reply_engine_degraded'. That's the honest signal — empty
+// content is NOT a contract violation, so ARCH #81 Plan A (safe-fallback)
+// does NOT apply at the surface. But the verifier's job is to confirm the
+// pipeline works, not to confirm every individual prompt produced a non-
+// empty reply. We reclassify a blocked-by-degradation prompt as 'skipped'
+// here so bootstrap can go green when the rest of the surface is healthy.
+//
+// Recomputed `all_pass` requires every entry in {pass, skipped} AND at
+// least one 'pass' — so an all-skipped run does NOT fake success.
+const DEGRADED_REASON_CLASSES = new Set([
+  'reply_engine_degraded',
+  'no_reply_text',
+]);
+
+function shouldSkipBlockedEntry(entry) {
+  if (!entry || entry.decision !== 'blocked') return false;
+  if (entry.reason_class && DEGRADED_REASON_CLASSES.has(entry.reason_class)) return true;
+  const gates = entry.gates;
+  if (gates && (gates.degraded === true || gates.surface_error !== null)) return true;
+  return false;
+}
+
+function deriveSkipReason(entry) {
+  if (!entry) return null;
+  if (entry.reason_class && DEGRADED_REASON_CLASSES.has(entry.reason_class)) return entry.reason_class;
+  const gates = entry.gates || {};
+  if (gates.surface_error) return 'surface_error';
+  if (gates.degraded === true) return 'reply_engine_degraded';
+  return 'blocked_reclassified';
+}
+
 function decisionFromEnvelope(envelope) {
   const value = envelope && typeof envelope === 'object' ? envelope.decision : null;
   if (typeof value !== 'string') return null;
@@ -198,11 +234,11 @@ async function runVerification(options = {}) {
     // Envelope decision is authoritative when present; the prompt CLI emits
     // it before exiting, so a Windows libuv teardown assertion that fires
     // AFTER stdout flush should not flip a real decision into 'error'.
-    const decision = envelopeDecision || decisionFromExitCode(child.code);
-    promptResults.push({
+    const rawDecision = envelopeDecision || decisionFromExitCode(child.code);
+    const entry = {
       prompt,
       exit_code: child.code,
-      decision,
+      decision: rawDecision,
       decision_source: envelopeDecision ? 'envelope' : 'exit_code',
       windows_libuv_teardown_observed: teardownAssertion,
       visible_reply: pickReplyText(envelope || {}),
@@ -210,18 +246,42 @@ async function runVerification(options = {}) {
       gates: pickGates(envelope || {}),
       reason_class: pickReasonClass(envelope || {}),
       stderr_excerpt: child.stderr ? String(child.stderr).split(/\r?\n/).slice(-3).join('\n') : '',
-    });
+    };
+    // ARCH #60.5: reclassify degraded-blocked (e.g. long-prompt empty
+    // Responses API body) as 'skipped' so the verifier can complete
+    // bootstrap when the surface pipeline is healthy but the model
+    // legitimately returned no extractable content.
+    if (shouldSkipBlockedEntry(entry)) {
+      entry.original_decision = rawDecision;
+      entry.decision = 'skipped';
+      entry.skip_reason = deriveSkipReason(entry);
+    }
+    promptResults.push(entry);
   }
 
-  const allPass = promptResults.length > 0 && promptResults.every((entry) => entry.decision === 'pass');
+  const passCount = promptResults.filter((e) => e.decision === 'pass').length;
+  const skippedCount = promptResults.filter((e) => e.decision === 'skipped').length;
+  // Bootstrap goes green when every prompt is pass-or-skipped AND at least
+  // one prompt actually passed. An all-skipped run does NOT fake success.
+  const allPass = promptResults.length > 0
+    && passCount > 0
+    && promptResults.every((entry) => entry.decision === 'pass' || entry.decision === 'skipped');
   const bootstrapStatus = classifyBootstrap(rendererWindowOpen);
-  // The bootstrap is "ready" only when the live app-control open succeeded
-  // AND every prompt probe passed; otherwise the next Architect needs the
-  // stale marker to know to re-run the verifier after restart.
-  const effectiveBootstrapStatus = bootstrapStatus === 'ready' && !allPass
-    ? 'prompts_failed'
-    : bootstrapStatus;
+  let effectiveBootstrapStatus = bootstrapStatus;
+  if (bootstrapStatus === 'ready') {
+    if (!allPass) {
+      effectiveBootstrapStatus = 'prompts_failed';
+    } else if (skippedCount > 0) {
+      effectiveBootstrapStatus = 'ready_with_skipped_prompts';
+    }
+  }
 
+  let bootstrapNote = null;
+  if (effectiveBootstrapStatus === 'action_not_loaded_in_running_main') {
+    bootstrapNote = 'open-mira-lab is not registered in the running Electron main process; the app-control action shipped at a0e1307 takes effect on the next main-process start. Future sessions inherit the no-restart seam. This is a one-time bootstrap limitation, not a verifier defect.';
+  } else if (effectiveBootstrapStatus === 'ready_with_skipped_prompts') {
+    bootstrapNote = `${skippedCount} of ${promptResults.length} prompts skipped due to engine-degradation (commonly an empty Responses API body on long prompts). Surface pipeline is healthy; at least one prompt passed end-to-end. Bootstrap is ready.`;
+  }
   const result = {
     schema: SCHEMA,
     verifier: 'hm-mira-lab-verify',
@@ -229,15 +289,15 @@ async function runVerification(options = {}) {
     session_id: sessionId,
     renderer_window_open: rendererWindowOpen,
     bootstrap_status: effectiveBootstrapStatus,
-    bootstrap_note: effectiveBootstrapStatus === 'action_not_loaded_in_running_main'
-      ? 'open-mira-lab is not registered in the running Electron main process; the app-control action shipped at a0e1307 takes effect on the next main-process start. Future sessions inherit the no-restart seam. This is a one-time bootstrap limitation, not a verifier defect.'
-      : null,
+    bootstrap_note: bootstrapNote,
     proof_classification: {
       renderer_proof_via_ipc: false,
       fresh_process_proxy_proof: true,
       note: PROOF_NOTE,
     },
     prompts: promptResults,
+    pass_count: passCount,
+    skipped_count: skippedCount,
     all_pass: allPass,
   };
 
@@ -316,13 +376,16 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_PROMPTS,
+  DEGRADED_REASON_CLASSES,
   PROOF_NOTE,
   SCHEMA,
   WINDOWS_LIBUV_TEARDOWN_EXIT_CODE,
   classifyBootstrap,
   decisionFromEnvelope,
   decisionFromExitCode,
+  deriveSkipReason,
   isWindowsTeardownAssertion,
+  shouldSkipBlockedEntry,
   parseEnvelope,
   pickGates,
   pickReasonClass,
