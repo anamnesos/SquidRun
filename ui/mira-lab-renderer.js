@@ -7,6 +7,13 @@
   const RENDERER_DRIVE_RESULT_CHANNEL = 'mira:lab-renderer-drive-result';
   const sessionId = `mira-lab-${new Date().toISOString().slice(0, 10)}`;
 
+  // ARCH #122/#129 threading (direction A): renderer-memory friction_state.
+  // Holds the most-recent friction_state value across IPC turns so the
+  // pressure/repair arc threads correctly. Module-scope JS state only —
+  // dies on window unload / reload (correct: reload = session reset).
+  // NEVER persisted, NEVER displayed, NEVER read by the visible-render path.
+  let currentFrictionState = null;
+
   function getBridgeApi() {
     return window.squidrunAPI || window.squidrun || {};
   }
@@ -139,7 +146,18 @@
         prompt: text,
         speakerRole: USER_SPEAKER_ROLE,
         requesterPane: null,
+        // ARCH #122/#129 threading: pass renderer-memory friction_state as
+        // priorFrameState so the classifier walks the pressure/repair arc
+        // across turns. Null on session start.
+        priorFrameState: currentFrictionState ? { friction_state: currentFrictionState } : null,
       });
+      // ARCH #122/#129 threading: read friction_state_next off the IPC
+      // response (a separate surface from transcript/visible_render_hint/
+      // requester_envelope) and store in module-scope memory for the next
+      // turn. The visible-render path below does NOT consume this field.
+      if (replyResult && typeof replyResult === 'object') {
+        currentFrictionState = replyResult.friction_state_next || null;
+      }
       renderPromptReply(replyResult);
       if (state) {
         if (!replyResult || (replyResult.ok === false && !replyResult.decision)) {

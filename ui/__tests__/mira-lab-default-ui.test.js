@@ -63,6 +63,21 @@ describe('mira-lab default UI is James <-> Mira only (ARCH #14/#16/#17/#18)', ()
     expect(src).toMatch(/requesterPane:\s*null/);
   });
 
+  test('renderer threads friction_state through IPC: module-memory state + payload + response read (ARCH #122/#129 direction A)', () => {
+    const src = read(RENDERER_PATH);
+    // Module-scope memory for friction_state.
+    expect(src).toMatch(/let\s+currentFrictionState\s*=\s*null/);
+    // Outbound payload passes friction_state via priorFrameState when
+    // currentFrictionState is non-null.
+    expect(src).toMatch(/priorFrameState:\s*currentFrictionState\s*\?\s*\{\s*friction_state:\s*currentFrictionState/);
+    // Inbound response reads friction_state_next off the IPC reply and
+    // updates module memory.
+    expect(src).toMatch(/currentFrictionState\s*=\s*replyResult\.friction_state_next\s*\|\|\s*null/);
+    // Visible-render path does NOT contain a read of friction_state on the
+    // render side — the threading field is for module memory only.
+    expect(src).not.toMatch(/appendLine\(['"][^'"]*['"],\s*[^,)]*\.friction_state/);
+  });
+
   test('renderer composer status banner: post-d82580c wording, no quarantine/gate-fail leftover', () => {
     const src = read(RENDERER_PATH);
     // d82580c+ contract: on fail, the visible Mira reply is a vetted safe

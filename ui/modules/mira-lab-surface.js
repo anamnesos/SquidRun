@@ -486,6 +486,10 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     startedAt: new Date(startedAtMs).toISOString(),
     expiresAt: new Date(startedAtMs + 24 * 60 * 60 * 1000).toISOString(),
     threadContext: threadContextForEngine,
+    // ARCH #122/#129 direction-A threading: pass renderer-supplied
+    // priorFrameState through to the surface so classifySocialMove can
+    // walk the friction_state arc across turns.
+    priorFrameState: payload.priorFrameState || payload.prior_frame_state || null,
   };
   let surfaceResult;
   let surfaceError = null;
@@ -705,11 +709,20 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     requesterDispatch = { target: requesterPane, status: 'skipped_no_clean_reply', decision };
   }
 
+  // ARCH #122/#129 threading (direction A): expose friction_state_next as
+  // a SEPARATE field on the IPC response so the renderer can thread state
+  // across turns. NOT the same surface as the four locked ones — transcript,
+  // visible_render_hint, requester_envelope, and the user-visible renderer
+  // output all stay free of friction_state. This is server→renderer ferry
+  // for module-scope memory only.
+  const frictionStateNext = (modelAttachment && modelAttachment.friction_state) || null;
+
   return {
     schema: MIRA_LAB_PROMPT_REPLY_SCHEMA,
     ok: decision === 'pass',
     decision,
     prompt,
+    friction_state_next: frictionStateNext,
     reply: decision === 'pass'
       ? { text: replyText, model: surface?.reply?.model || null }
       : decision === 'fail' && safeFallbackText
