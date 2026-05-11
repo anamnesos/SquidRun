@@ -24,6 +24,10 @@ const {
   getMiraTextModelAttachmentConfig,
   normalizeThreadContext,
 } = require('./mira-core/text-model-attachment-v1');
+const {
+  classifySocialMove,
+  getSocialMoveBehaviorCue,
+} = require('./mira-core/social-move-classifier-v0');
 
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
@@ -840,6 +844,19 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     modelCallCount: 0,
     networkCount: 0,
   };
+  // ARCH #97/#98/#100/#104 — social-move classifier. Runs BEFORE the model
+  // call so we can append ONE behavior cue per turn into the prompt without
+  // touching buildMiraTextInstructions. Audit-only by surface contract; the
+  // renderer-facing IPC JSON never carries social_move.
+  const socialMoveClassification = classifySocialMove(text, {
+    recentTurns: Array.isArray(payload.threadContext?.messages)
+      ? payload.threadContext.messages
+      : (Array.isArray(payload.thread_context?.messages)
+        ? payload.thread_context.messages
+        : []),
+    priorFrameState: payload.priorFrameState || payload.prior_frame_state || null,
+  });
+  const socialMoveBehaviorCue = getSocialMoveBehaviorCue(socialMoveClassification);
   if (localReply && attachment.enabled === true) {
     modelResult = await callMiraTextModelAttachment({
       text,
@@ -848,6 +865,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
         scope,
         miraBrief: session.presence_runtime_read_path_gate?.speakable_mira_brief || null,
         threadContext: payload.threadContext || payload.thread_context || {},
+        socialMoveBehaviorCue,
       },
     }, {
       env: options.env,
@@ -874,6 +892,10 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
       };
     }
   }
+  // ARCH #97/#98/#100/#104: stash the classification on the attachment so
+  // mira-lab-surface can lift it onto the audit row. Audit-only — renderer
+  // never reads model_attachment.social_move.
+  attachment = { ...attachment, social_move: socialMoveClassification };
   const reply = modelResult.ok === true ? modelResult.reply : null;
   const accepted = Boolean(reply);
   const fallbackUsed = false;

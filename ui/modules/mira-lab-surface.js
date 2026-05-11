@@ -657,6 +657,12 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     // appears in transcript, visible_render_hint, requester_envelope, or any
     // renderer-facing field — audit log only.
     degraded_diagnostics: (modelAttachment && modelAttachment.degraded_diagnostics) || null,
+    // ARCH #97/#98/#100/#104: social-move classification (audit-only).
+    // Carries move_type / confidence / escalation_required /
+    // soft_checkin_recommended / evidence_phrases (sanitized) /
+    // compound_move_types. Never appears in renderer JSON, transcript visible
+    // row, visible_render_hint, or requester_envelope.
+    social_move: (modelAttachment && modelAttachment.social_move) || null,
     transcript_path: transcriptPathStr,
   };
   fs.mkdirSync(path.dirname(auditPathStr), { recursive: true });
