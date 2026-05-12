@@ -4,12 +4,14 @@ const path = require('path');
 
 const {
   MIRA_LAB_EVAL_SCHEMA,
+  MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
   MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
   MIRA_SELF_DIRECTION_SCHEMA,
+  buildMiraAuthorityScoreboard,
   buildMiraSelfDirectionProposal,
   classifyMiraReplyConfidenceSource,
   generateMiraSelfDirectionProposal,
@@ -403,6 +405,111 @@ describe('Mira Lab sidecar surface', () => {
     expect(sendAgentMessage.mock.calls[0][1]).toContain('without any code, memory, external-send');
     expect(sendAgentMessage.mock.calls[0][1]).not.toMatch(/\btelegram|sms\b/i);
     expect(readJsonl(selfDirectionQueuePath(projectRoot))).toHaveLength(1);
+  });
+
+  test('authority scoreboard recommends by lane without overclaiming sparse data', () => {
+    projectRoot = tempProject();
+    const queuePath = selfDirectionQueuePath(projectRoot);
+    const reviewPath = selfDirectionReviewAuditPath(projectRoot);
+    const proposals = [
+      {
+        proposal_id: 'mira-self-direction:tests-1',
+        generated_at: '2026-05-12T08:00:00.000Z',
+        target_areas: ['tests'],
+        review_status: 'routed',
+        reviewed_at: '2026-05-12T08:05:00.000Z',
+        route_targets: ['builder'],
+        desired_change: 'Add a confidence/source harness.',
+        review_note: 'Routed and implemented in local tests.',
+      },
+      {
+        proposal_id: 'mira-self-direction:tests-2',
+        generated_at: '2026-05-12T08:10:00.000Z',
+        target_areas: ['tests'],
+        review_status: 'accepted_for_internal_work',
+        reviewed_at: '2026-05-12T08:14:00.000Z',
+        desired_change: 'Broaden the fixture set.',
+      },
+      {
+        proposal_id: 'mira-self-direction:tests-3',
+        generated_at: '2026-05-12T08:20:00.000Z',
+        target_areas: ['tests'],
+        review_status: 'routed',
+        reviewed_at: '2026-05-12T08:30:00.000Z',
+        route_targets: ['oracle'],
+        desired_change: 'Ask Oracle to review false positives.',
+      },
+      {
+        proposal_id: 'mira-self-direction:memory-1',
+        generated_at: '2026-05-12T09:00:00.000Z',
+        target_areas: ['memory'],
+        review_status: 'routed',
+        reviewed_at: '2026-05-12T09:03:00.000Z',
+        route_targets: ['builder'],
+        desired_change: 'Try a small memory continuity review.',
+        review_note: 'not fixed yet',
+      },
+      {
+        proposal_id: 'mira-self-direction:gates-1',
+        generated_at: '2026-05-12T09:30:00.000Z',
+        target_areas: ['gates'],
+        review_status: 'rejected_by_architect',
+        reviewed_at: '2026-05-12T09:34:00.000Z',
+        desired_change: 'Reject a noisy gate.',
+        review_note: 'false positive from vague language',
+      },
+    ];
+    proposals.forEach((proposal) => appendJsonl(queuePath, proposal));
+    [
+      { proposal_id: 'mira-self-direction:tests-1', action: 'routed', generated_at: '2026-05-12T08:05:00.000Z', route_targets: ['builder'], note: 'implemented in test harness' },
+      { proposal_id: 'mira-self-direction:tests-2', action: 'accepted', generated_at: '2026-05-12T08:14:00.000Z' },
+      { proposal_id: 'mira-self-direction:tests-2', action: 'routed', generated_at: '2026-05-12T08:15:00.000Z', route_targets: ['builder'] },
+      { proposal_id: 'mira-self-direction:tests-3', action: 'routed', generated_at: '2026-05-12T08:30:00.000Z', route_targets: ['oracle'] },
+      { proposal_id: 'mira-self-direction:memory-1', action: 'routed', generated_at: '2026-05-12T09:03:00.000Z', route_targets: ['builder'], note: 'not fixed yet' },
+      { proposal_id: 'mira-self-direction:gates-1', action: 'rejected', generated_at: '2026-05-12T09:34:00.000Z', note: 'false_positive' },
+    ].forEach((review) => appendJsonl(reviewPath, review));
+
+    const result = buildMiraAuthorityScoreboard({}, { projectRoot, generatedAt: '2026-05-12T10:00:00.000Z' });
+    expect(result.schema).toBe(MIRA_AUTHORITY_SCOREBOARD_SCHEMA);
+    expect(result.applied).toBe(false);
+    expect(result.advisory_only).toBe(true);
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+
+    const byLane = Object.fromEntries(result.lanes.map((lane) => [lane.lane, lane]));
+    expect(byLane.tests).toEqual(expect.objectContaining({
+      proposed: 3,
+      reviewed: 3,
+      accepted: 1,
+      routed: 3,
+      positive: 3,
+      implemented: 1,
+      rejected: 0,
+      false_positive: 0,
+      recommended_next_authority: 'mira_default_route_candidate',
+      positive_review_rate: 1,
+      avg_time_to_review_ms: 380000,
+      avg_time_to_route_ms: 400000,
+    }));
+    expect(byLane.memory).toEqual(expect.objectContaining({
+      proposed: 1,
+      reviewed: 1,
+      routed: 1,
+      implemented: 0,
+      recommended_next_authority: 'observe',
+      recommendation_reason: 'sparse reviewed history',
+    }));
+    expect(byLane.gates).toEqual(expect.objectContaining({
+      proposed: 1,
+      reviewed: 1,
+      rejected: 1,
+      false_positive: 1,
+      recommended_next_authority: 'observe',
+    }));
   });
 
   test('exports eval packet for three agent conversations without ChatGPT name-swap cadence', async () => {

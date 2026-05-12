@@ -9,6 +9,7 @@ const PROJECT_ROOT = process.env.SQUIDRUN_PROJECT_ROOT
   || path.resolve(__dirname, '..', '..');
 
 const {
+  buildMiraAuthorityScoreboard,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   reviewMiraSelfDirectionProposal,
@@ -32,6 +33,7 @@ function printHelp() {
     'Usage:',
     '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin] [--session-id <id>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js scoreboard [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js list [--status pending_architect_review|all] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js review --proposal-id <id> --action accepted|rejected|routed [--route builder,oracle] [--note <text>] [--project-root <path>] [--json]',
     '',
@@ -104,6 +106,26 @@ function output(result, args) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
+  if (args.command === 'scoreboard') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    process.stdout.write(`lanes=${result.lane_count}\n`);
+    for (const lane of result.lanes || []) {
+      process.stdout.write([
+        `lane=${lane.lane}`,
+        `proposed=${lane.proposed}`,
+        `reviewed=${lane.reviewed}`,
+        `accepted=${lane.accepted}`,
+        `routed=${lane.routed}`,
+        `implemented=${lane.implemented}`,
+        `rejected=${lane.rejected}`,
+        `false_positive=${lane.false_positive}`,
+        `next=${lane.recommended_next_authority}`,
+      ].join(' '));
+      process.stdout.write('\n');
+    }
+    if (result.review_queue_path) process.stdout.write(`queue=${result.review_queue_path}\n`);
+    return;
+  }
   process.stdout.write(`decision=${result.decision}\n`);
   if (result.proposal_id) process.stdout.write(`proposal_id=${result.proposal_id}\n`);
   if (result.staged_review?.proposal_id) process.stdout.write(`proposal_id=${result.staged_review.proposal_id}\n`);
@@ -161,6 +183,13 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
       status: args.status,
     }, {
       projectRoot: args.projectRoot,
+    });
+    return { args, result };
+  }
+  if (args.command === 'scoreboard') {
+    const result = buildMiraAuthorityScoreboard({}, {
+      projectRoot: args.projectRoot,
+      ...(deps.options || {}),
     });
     return { args, result };
   }

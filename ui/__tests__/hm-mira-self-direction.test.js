@@ -3,10 +3,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const driver = require('../scripts/hm-mira-self-direction');
 const {
   replyAuditPath,
+  selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
 } = require('../modules/mira-lab-surface');
 
@@ -137,5 +139,61 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(sendAgentMessage.mock.calls[0][1]).toContain('without any code, memory, external-send');
     expect(sendAgentMessage.mock.calls[0][1]).not.toMatch(/\btelegram|sms\b/i);
     expect(readJsonl(selfDirectionQueuePath(projectRoot))).toHaveLength(1);
+  });
+
+  test('scoreboard emits per-lane advisory authority recommendations as JSON and compact text', async () => {
+    const projectRoot = tempProject();
+    const queuePath = selfDirectionQueuePath(projectRoot);
+    const reviewPath = selfDirectionReviewAuditPath(projectRoot);
+    [
+      ['tests-a', 'tests', 'routed', '2026-05-12T08:00:00.000Z', '2026-05-12T08:02:00.000Z'],
+      ['tests-b', 'tests', 'accepted_for_internal_work', '2026-05-12T08:05:00.000Z', '2026-05-12T08:07:00.000Z'],
+      ['tests-c', 'tests', 'routed', '2026-05-12T08:10:00.000Z', '2026-05-12T08:14:00.000Z'],
+      ['memory-a', 'memory', 'routed', '2026-05-12T09:00:00.000Z', '2026-05-12T09:01:00.000Z'],
+    ].forEach(([id, area, status, generatedAt, reviewedAt]) => appendJsonl(queuePath, {
+      proposal_id: `mira-self-direction:${id}`,
+      generated_at: generatedAt,
+      target_areas: [area],
+      review_status: status,
+      reviewed_at: reviewedAt,
+      desired_change: `Improve ${area}`,
+      review_note: id === 'tests-a' ? 'implemented locally' : null,
+    }));
+    [
+      ['tests-a', 'routed', '2026-05-12T08:02:00.000Z'],
+      ['tests-b', 'accepted', '2026-05-12T08:07:00.000Z'],
+      ['tests-c', 'routed', '2026-05-12T08:14:00.000Z'],
+      ['memory-a', 'routed', '2026-05-12T09:01:00.000Z'],
+    ].forEach(([id, action, generatedAt]) => appendJsonl(reviewPath, {
+      proposal_id: `mira-self-direction:${id}`,
+      action,
+      generated_at: generatedAt,
+      note: id === 'tests-a' ? 'implemented locally' : null,
+    }));
+
+    const jsonResult = await driver.run([
+      'scoreboard',
+      '--project-root', projectRoot,
+      '--json',
+    ]);
+    const testsLane = jsonResult.result.lanes.find((lane) => lane.lane === 'tests');
+    const memoryLane = jsonResult.result.lanes.find((lane) => lane.lane === 'memory');
+    expect(testsLane.recommended_next_authority).toBe('mira_default_route_candidate');
+    expect(memoryLane.recommended_next_authority).toBe('observe');
+    expect(jsonResult.result.applied).toBe(false);
+    expect(jsonResult.result.consequence_controls.external_send_performed).toBe(false);
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'scoreboard',
+      '--project-root', projectRoot,
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=scoreboard');
+    expect(textRun.stdout).toContain('lane=tests');
+    expect(textRun.stdout).toContain('next=mira_default_route_candidate');
+    expect(textRun.stdout).toContain('lane=memory');
+    expect(textRun.stdout).toContain('next=observe');
   });
 });
