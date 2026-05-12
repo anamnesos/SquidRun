@@ -3228,10 +3228,28 @@ function createReadOnlyCodeModeApi({ projectRoot, allowedPaths, maxReadBytes }) 
         fs.closeSync(handle);
       }
     },
+    readTextTail(relativePath) {
+      const resolved = assertAllowed(relativePath);
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) throw new Error('read_target_not_file');
+      const bytes = Math.min(stat.size, maxReadBytes);
+      const start = Math.max(0, stat.size - bytes);
+      const handle = fs.openSync(resolved, 'r');
+      try {
+        const buffer = Buffer.alloc(bytes);
+        const read = fs.readSync(handle, buffer, 0, bytes, start);
+        return buffer.slice(0, read).toString('utf8');
+      } finally {
+        fs.closeSync(handle);
+      }
+    },
     readJsonl(relativePath, limit = 50) {
-      const text = this.readText(relativePath);
-      return text.split(/\r?\n/)
-        .map((line, index) => ({ line: line.trim(), line_number: index + 1 }))
+      const text = this.readTextTail(relativePath);
+      const lines = text.split(/\r?\n/);
+      const startsMidLine = text && !/^\s*[{[]/.test(lines[0] || '');
+      return lines
+        .map((line, index) => ({ line: line.trim(), line_number: startsMidLine ? null : index + 1 }))
+        .filter((entry, index) => !(startsMidLine && index === 0))
         .filter((entry) => entry.line)
         .slice(-Math.max(1, Math.min(200, Number(limit) || 50)))
         .map((entry) => {
