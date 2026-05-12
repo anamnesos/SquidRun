@@ -1732,16 +1732,19 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
 const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   code_mode_exploration: {
     priority: 100,
+    active_priority: 58,
     target_role: 'builder',
     reason: 'read-only search-execute is the fastest bridge from broad curiosity to real inspection',
   },
   source_action_substrate: {
     priority: 96,
+    active_priority: 56,
     target_role: 'builder',
     reason: 'source/action substrate turns many dormant curiosity arms into one usable capability surface',
   },
   implementation_outcomes: {
     priority: 94,
+    active_priority: 54,
     target_role: 'builder',
     reason: 'explicit implementation outcomes give the authority scoreboard real fitness data',
   },
@@ -1829,8 +1832,12 @@ function directRoutePlanForItem(item = {}) {
   const rawHint = trimText(item.route_hint || item.routeHint);
   const targetRole = normalizeDirectRouteTarget(plan?.target_role) || hintedTarget || 'architect';
   const unsupportedRouteHint = Boolean(rawHint && !hintedTarget);
+  const status = normalizeCuriosityStatus(item.status);
+  const priority = status === 'active' && Number.isFinite(Number(plan?.active_priority))
+    ? Number(plan.active_priority)
+    : Number(plan?.priority);
   return {
-    priority: Number.isFinite(Number(plan?.priority)) ? Number(plan.priority) : 20,
+    priority: Number.isFinite(priority) ? priority : 20,
     target_role: targetRole,
     reason: plan?.reason || 'Mira selected a reviewable internal route from the curiosity stream',
     route_hint_supported: Boolean(hintedTarget),

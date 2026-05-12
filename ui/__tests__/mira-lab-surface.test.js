@@ -915,6 +915,59 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.candidate_count).toBe(2);
   });
 
+  test('direct route advances from active built capabilities to the next unbuilt arm', async () => {
+    projectRoot = tempProject();
+    [
+      {
+        item_id: 'mira-curiosity:active-code-mode',
+        source: 'code_mode_exploration',
+        adapter_id: 'read_only_execute_script_curiosity',
+        status: 'active',
+        integration_strategy: 'existing_seam',
+        suggested_question: 'What runtime file should Mira inspect with code-mode?',
+        possible_action: 'Use the read-only code-mode wrapper.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:active-substrate',
+        source: 'source_action_substrate',
+        adapter_id: 'source_action_substrate_curiosity',
+        status: 'active',
+        integration_strategy: 'existing_seam',
+        suggested_question: 'Which substrate arm is next?',
+        possible_action: 'Use the substrate map.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:memory-next',
+        source: 'memory',
+        adapter_id: 'active_memory_tools_curiosity',
+        status: 'adapter_not_built_yet',
+        integration_strategy: 'existing_seam',
+        suggested_question: 'Which memory retrieve seam should Mira call first?',
+        possible_action: 'Connect curiosity scout to hm-memory-api retrieve.',
+        route_hint: 'builder',
+      },
+    ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: `2026-05-12T12:2${index}:00.000Z`,
+      sensitivity_hint: 'test_metadata',
+      ...item,
+    }));
+
+    const result = await selectMiraDirectRoute({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T12:30:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      item_id: 'mira-curiosity:memory-next',
+      source: 'memory',
+      adapter_id: 'active_memory_tools_curiosity',
+    }));
+  });
+
   test('read-only code mode lets Mira inspect allowed files without mutation', () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
