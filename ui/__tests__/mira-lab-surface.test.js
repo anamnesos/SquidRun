@@ -856,6 +856,17 @@ describe('Mira Lab sidecar surface', () => {
           { host: 'squidrun.local', title: 'SquidRun', safe_url: 'https://squidrun.local/status' },
         ],
       }),
+      emailCuriosityReader: () => ({
+        ok: true,
+        decision: 'email_metadata_read_only',
+        label_count: 2,
+        unread_total: 42,
+        recent_message_count: 3,
+        top_labels: [
+          { id: 'INBOX', name: 'INBOX', messages_total: 80, messages_unread: 40, threads_unread: 38 },
+          { id: 'STARRED', name: 'STARRED', messages_total: 2, messages_unread: 2, threads_unread: 2 },
+        ],
+      }),
       environmentCuriosityReader: () => ({
         ok: true,
         decision: 'environment_health_read_only',
@@ -870,7 +881,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(7);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(6);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -908,7 +919,17 @@ describe('Mira Lab sidecar surface', () => {
       browser_profile: 'Default',
     }));
     expect(bySource.browser_history.browser_top_hosts).toEqual([{ host: 'docs.example.com', count: 2 }]);
-    expect(bySource.email.status).toBe('adapter_not_built_yet');
+    expect(bySource.email).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'native_adapter',
+      email_label_count: 2,
+      email_unread_total: 42,
+      email_recent_message_count: 3,
+    }));
+    expect(bySource.email.email_top_labels[0]).toEqual(expect.objectContaining({
+      id: 'INBOX',
+      messages_unread: 40,
+    }));
     expect(bySource.web_research.status).toBe('adapter_not_built_yet');
     expect(bySource.environment_apps).toEqual(expect.objectContaining({
       status: 'active',
@@ -1400,9 +1421,18 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:email-next',
         source: 'email',
         adapter_id: 'email_curiosity',
+        status: 'active',
+        suggested_question: 'Which email pressure signal matters?',
+        possible_action: 'Use compact email metadata.',
+        route_hint: 'mira_lab',
+      },
+      {
+        item_id: 'mira-curiosity:web-next',
+        source: 'web_research',
+        adapter_id: 'web_research_curiosity',
         status: 'adapter_not_built_yet',
-        suggested_question: 'Which email seam should Mira connect?',
-        possible_action: 'Build email curiosity.',
+        suggested_question: 'Which web research seam should Mira connect?',
+        possible_action: 'Build web research curiosity.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1419,8 +1449,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:email-next',
-      source: 'email',
+      item_id: 'mira-curiosity:web-next',
+      source: 'web_research',
     }));
   });
 

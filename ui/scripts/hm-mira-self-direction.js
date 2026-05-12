@@ -21,6 +21,7 @@ const {
   runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
   selectMiraDirectRoute,
+  writeMiraEmailCuriositySnapshot,
 } = require('../modules/mira-lab-surface');
 
 const DEFAULT_FIXTURE = Object.freeze({
@@ -42,6 +43,7 @@ function printHelp() {
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-burst [--project-root <path>] [--source repo_files,memory] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js email-snapshot --stdin [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js code-mode --script <js>|--stdin [--allow <path>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scoreboard [--project-root <path>] [--json]',
@@ -225,6 +227,13 @@ function output(result, args) {
     if (result.direct_route_log_path) process.stdout.write(`log=${result.direct_route_log_path}\n`);
     return;
   }
+  if (args.command === 'email-snapshot') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    process.stdout.write(`labels=${result.label_count}\n`);
+    process.stdout.write(`recent_messages=${result.recent_message_count}\n`);
+    if (result.snapshot_path) process.stdout.write(`snapshot=${result.snapshot_path}\n`);
+    return;
+  }
   if (args.command === 'code-mode') {
     process.stdout.write(`decision=${result.decision}\n`);
     if (result.run_id) process.stdout.write(`run_id=${result.run_id}\n`);
@@ -403,6 +412,15 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
           hmSendPath: deps.hmSendPath,
         })))
         : undefined,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
+  if (args.command === 'email-snapshot') {
+    const raw = args.fromStdin ? (deps.readStdin || readStdin)() : '{}';
+    const payload = raw.trim() ? JSON.parse(raw) : {};
+    const result = writeMiraEmailCuriositySnapshot(payload, {
+      projectRoot: args.projectRoot,
       ...(deps.options || {}),
     });
     return { args, result };

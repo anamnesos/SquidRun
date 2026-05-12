@@ -18,6 +18,9 @@ const {
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
 } = require('../modules/mira-lab-surface');
+const {
+  defaultEmailCuriositySnapshotPath,
+} = require('../modules/mira-email-curiosity');
 
 function tempProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sq-hm-mira-self-direction-'));
@@ -337,6 +340,11 @@ describe('hm-mira-self-direction CLI harness', () => {
           decision: 'unavailable_in_this_runtime',
           reason: 'browser_history_missing',
         }),
+        emailCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'email_connector_snapshot_missing',
+        }),
       },
     });
 
@@ -376,6 +384,30 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(readJsonl(path.join(projectRoot, '.squidrun', 'runtime', 'mira-curiosity-items.jsonl')).length).toBeGreaterThan(0);
   });
 
+  test('email-snapshot CLI stores compact connector metadata for scout reuse', async () => {
+    const projectRoot = tempProject();
+    const payload = JSON.stringify({
+      labels: [{ id: 'INBOX', name: 'INBOX', messagesTotal: 10, messagesUnread: 7 }],
+      message_ids: ['gmail-raw-id-1'],
+    });
+
+    const result = await driver.run([
+      'email-snapshot',
+      '--project-root', projectRoot,
+      '--stdin',
+      '--json',
+    ], {
+      readStdin: () => payload,
+    });
+
+    expect(result.result.decision).toBe('email_snapshot_written');
+    expect(result.result.label_count).toBe(1);
+    expect(result.result.recent_message_count).toBe(1);
+    const snapshotText = fs.readFileSync(defaultEmailCuriositySnapshotPath(projectRoot), 'utf8');
+    expect(snapshotText).not.toContain('gmail-raw-id-1');
+    expect(snapshotText).toContain('email-msg:');
+  });
+
   test('curiosity-scout can route interesting questions internally without external send', async () => {
     const projectRoot = tempProject();
     const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
@@ -394,6 +426,11 @@ describe('hm-mira-self-direction CLI harness', () => {
           ok: false,
           decision: 'unavailable_in_this_runtime',
           reason: 'browser_history_missing',
+        }),
+        emailCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'email_connector_snapshot_missing',
         }),
       },
     });

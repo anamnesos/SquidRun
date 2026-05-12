@@ -75,12 +75,12 @@ const SOURCE_ACTION_SUBSTRATE_REGISTRY = Object.freeze([
   {
     source: 'email',
     scope: 'local_email_context',
-    strategy: SUBSTRATE_STRATEGIES.mcp_connector,
-    status: 'connector_needed',
+    strategy: SUBSTRATE_STRATEGIES.native_adapter,
+    status: 'active',
     priority: 72,
-    existing_seams: ['Gmail connector', 'mcp-bridge.js'],
-    first_probe: 'Read metadata and user-selected threads before any send/reply action exists.',
-    why_this_strategy: 'The ecosystem connector is the fast path for authenticated email reads; sends stay a different consequence class.',
+    existing_seams: ['mira-email-curiosity.js', 'Gmail connector metadata snapshot', 'mcp-bridge.js'],
+    first_probe: 'Read compact label counts and hashed recent message refs from the email metadata snapshot.',
+    why_this_strategy: 'A connector-backed metadata snapshot gives Mira mailbox awareness now while body reads and sends remain separate capabilities.',
   },
   {
     source: 'web_research',

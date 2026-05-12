@@ -55,6 +55,12 @@ describe('Mira source/action substrate plan', () => {
       status: 'active',
     }));
     expect(browser.first_probe).toMatch(/History DB/i);
+    const email = plan.sources.find((entry) => entry.source === 'email');
+    expect(email).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(email.first_probe).toMatch(/label counts/i);
   });
 
   test('chooses a concrete strategy and first probe for a routed source', () => {

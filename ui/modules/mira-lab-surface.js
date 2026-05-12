@@ -32,6 +32,10 @@ const {
 const {
   readMiraBrowserHistoryCuriosity,
 } = require('./mira-browser-history-curiosity');
+const {
+  readMiraEmailCuriosity,
+  writeMiraEmailCuriositySnapshot,
+} = require('./mira-email-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -128,7 +132,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'recent_comms', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/scripts/hm-comms.js history --last 20, telegram-poller.js, sms-poller.js, external-notifications.js' },
   { source: 'memory', scope: 'local_memory_and_continuity', adapter_id: 'active_memory_tools_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-memory-curiosity.js compact read-only cognitive-memory retrieval, cognitive-memory-*, memory-search/retrieve, team-memory/*, memory-ingest/*, ui/scripts/hm-memory-api.js retrieve' },
   { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-browser-history-curiosity.js compact read-only Chromium History DB metadata via temp-copy' },
-  { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'Gmail connector or local email adapter via mcp-bridge' },
+  { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-email-curiosity.js compact read-only Gmail/connector metadata snapshot' },
   { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'scout_model_candidate', existing_seam: 'browser-use/Chrome tools plus local research artifacts' },
   { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'screenshot handlers/scripts, ui/scripts/hm-screenshot.js, ui/modules/image-gen.js' },
   { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'future calendar/message connector seam' },
@@ -1351,6 +1355,25 @@ function compactBrowserHistoryTopHosts(value) {
     .slice(0, 8);
 }
 
+function compactEmailTopLabels(value) {
+  return asArray(value)
+    .map((entry) => ({
+      id: trimText(entry?.id) || null,
+      name: trimText(entry?.name) || null,
+      messages_total: Number.isFinite(Number(entry?.messages_total ?? entry?.messagesTotal))
+        ? Number(entry.messages_total ?? entry.messagesTotal)
+        : null,
+      messages_unread: Number.isFinite(Number(entry?.messages_unread ?? entry?.messagesUnread))
+        ? Number(entry.messages_unread ?? entry.messagesUnread)
+        : null,
+      threads_unread: Number.isFinite(Number(entry?.threads_unread ?? entry?.threadsUnread))
+        ? Number(entry.threads_unread ?? entry.threadsUnread)
+        : null,
+    }))
+    .filter((entry) => entry.id || entry.name)
+    .slice(0, 8);
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1370,6 +1393,9 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const memoryResultCount = Number(rawItem.memory_result_count ?? rawItem.memoryResultCount);
   const environmentScore = Number(rawItem.environment_overall_score ?? rawItem.environmentOverallScore);
   const browserResultCount = Number(rawItem.browser_result_count ?? rawItem.browserResultCount);
+  const emailLabelCount = Number(rawItem.email_label_count ?? rawItem.emailLabelCount);
+  const emailUnreadTotal = Number(rawItem.email_unread_total ?? rawItem.emailUnreadTotal);
+  const emailRecentMessageCount = Number(rawItem.email_recent_message_count ?? rawItem.emailRecentMessageCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1412,6 +1438,10 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     browser_top_hosts: compactBrowserHistoryTopHosts(rawItem.browser_top_hosts || rawItem.browserTopHosts),
     browser_name: trimText(rawItem.browser_name || rawItem.browserName) || null,
     browser_profile: trimText(rawItem.browser_profile || rawItem.browserProfile) || null,
+    email_label_count: Number.isFinite(emailLabelCount) ? emailLabelCount : null,
+    email_unread_total: Number.isFinite(emailUnreadTotal) ? emailUnreadTotal : null,
+    email_recent_message_count: Number.isFinite(emailRecentMessageCount) ? emailRecentMessageCount : null,
+    email_top_labels: compactEmailTopLabels(rawItem.email_top_labels || rawItem.emailTopLabels),
   };
 }
 
@@ -1724,6 +1754,66 @@ function activeBrowserHistoryCuriosityAdapter(context = {}) {
   };
 }
 
+function activeEmailCuriosityAdapter(context = {}) {
+  const reader = typeof context.emailCuriosityReader === 'function'
+    ? context.emailCuriosityReader
+    : readMiraEmailCuriosity;
+  const result = reader({
+    snapshot: context.emailSnapshot,
+    snapshotPath: context.emailSnapshotPath,
+  }, {
+    projectRoot: context.projectRoot,
+    snapshot: context.emailSnapshot,
+    snapshotPath: context.emailSnapshotPath,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'email',
+      scope: 'local_email',
+      adapter_id: 'email_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'unavailable_in_this_runtime',
+      observation: `Email metadata read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Email can reveal obligations, unread pressure, and repeated sender/context patterns before James turns them into a prompt.',
+      hypothesis: 'Mira is missing a compact mailbox snapshot rather than needing permission theater.',
+      suggested_question: 'What connector snapshot should Mira refresh so email can become a live curiosity source?',
+      possible_action: 'Capture label counts and recent message refs from the Gmail connector, without reading bodies, sending, archiving, deleting, or modifying labels.',
+      route_hint: 'builder',
+      sensitivity_hint: 'email_metadata_only',
+      adapter_error: trimText(result?.reason || result?.error || 'email_metadata_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const topLabels = asArray(result.top_labels).slice(0, 8);
+  const topLabelText = topLabels.length > 0
+    ? topLabels.map((label) => `${label.name || label.id}:${label.messages_unread || 0}`).join(', ')
+    : 'none';
+  const topLabel = topLabels[0]?.name || topLabels[0]?.id || null;
+  return {
+    source: 'email',
+    scope: 'local_email',
+    adapter_id: 'email_curiosity',
+    integration_strategy: 'native_adapter',
+    status: 'active',
+    observation: `Email metadata snapshot read ${result.label_count || 0} label(s), ${result.unread_total || 0} unread message(s), and ${result.recent_message_count || 0} hashed recent message ref(s); top labels: ${topLabelText}.`,
+    why_interesting: 'Mira can now notice inbox pressure and mailbox shape without opening message bodies or mutating mail.',
+    hypothesis: topLabel
+      ? `${topLabel} may be the strongest current email pressure signal.`
+      : 'The email source is connected, but the latest snapshot did not show a strong label signal.',
+    suggested_question: topLabel
+      ? `What should Mira infer or ask from the ${topLabel} email pressure signal?`
+      : 'Which email query should Mira snapshot next for a stronger signal?',
+    possible_action: 'Use compact email metadata as one curiosity signal; keep body reads, sends, archives, deletes, and label changes out of this adapter.',
+    route_hint: 'mira_lab',
+    sensitivity_hint: 'email_metadata_only',
+    email_label_count: result.label_count || 0,
+    email_unread_total: result.unread_total || 0,
+    email_recent_message_count: result.recent_message_count || 0,
+    email_top_labels: topLabels,
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -1826,7 +1916,7 @@ function defaultCuriosityAdapters() {
     recentCommsCuriosityAdapter,
     activeMemoryCuriosityAdapter,
     activeBrowserHistoryCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.email_curiosity, 'email'),
+    activeEmailCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.web_research_curiosity, 'websites visited and research trails'),
     notImplementedCuriosityAdapter(byAdapter.visual_asset_curiosity, 'screenshots and visual assets'),
     notImplementedCuriosityAdapter(byAdapter.calendar_message_curiosity, 'calendars and messages'),
@@ -1945,6 +2035,9 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     browserHistoryLimit: options.browserHistoryLimit,
     browserHistoryCopyBeforeRead: options.browserHistoryCopyBeforeRead,
     browserHistoryTempRoot: options.browserHistoryTempRoot,
+    emailCuriosityReader: options.emailCuriosityReader,
+    emailSnapshot: options.emailSnapshot,
+    emailSnapshotPath: options.emailSnapshotPath,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -2001,6 +2094,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'runtime_comms',
   'memory',
   'browser_history',
+  'email',
   'environment_apps',
   'cheap_parallel_scouts',
   'automation_scheduler',
@@ -2013,7 +2107,7 @@ function normalizeCuriosityBurstSources(payload = {}, options = {}) {
     .map((item) => trimText(item))
     .filter((item) => allowed.has(item));
   const unique = Array.from(new Set(values));
-  const maxSources = Math.max(1, Math.min(8, Number(payload.maxSources || options.maxSources || 7) || 7));
+  const maxSources = Math.max(1, Math.min(8, Number(payload.maxSources || options.maxSources || 8) || 8));
   return (unique.length > 0 ? unique : [...CURIOSITY_BURST_DEFAULT_SOURCES]).slice(0, maxSources);
 }
 
@@ -2022,6 +2116,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'runtime_comms') return [runtimeQueueCuriosityAdapter, recentCommsCuriosityAdapter];
   if (source === 'memory') return [activeMemoryCuriosityAdapter];
   if (source === 'browser_history') return [activeBrowserHistoryCuriosityAdapter];
+  if (source === 'email') return [activeEmailCuriosityAdapter];
   if (source === 'environment_apps') return [activeEnvironmentCuriosityAdapter];
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
   if (source === 'automation_scheduler') return [scheduledCuriosityBurstAdapter];
@@ -2034,6 +2129,7 @@ function curiosityBurstRouteForItems(items = []) {
     cheap_parallel_scouts: 88,
     memory: 76,
     browser_history: 74,
+    email: 73,
     environment_apps: 70,
     runtime_comms: 64,
     repo_files: 42,
@@ -2110,6 +2206,9 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     browserHistoryLimit: options.browserHistoryLimit,
     browserHistoryCopyBeforeRead: options.browserHistoryCopyBeforeRead,
     browserHistoryTempRoot: options.browserHistoryTempRoot,
+    emailCuriosityReader: options.emailCuriosityReader,
+    emailSnapshot: options.emailSnapshot,
+    emailSnapshotPath: options.emailSnapshotPath,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,
@@ -2261,8 +2360,9 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   email: {
     priority: 74,
+    active_priority: 38,
     target_role: 'builder',
-    reason: 'email curiosity needs a connector before Mira can inspect message context',
+    reason: 'email curiosity gives Mira compact mailbox metadata without reading bodies or mutating mail',
   },
   web_research: {
     priority: 72,
@@ -4075,6 +4175,7 @@ module.exports = {
   runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
   selectMiraDirectRoute,
+  writeMiraEmailCuriositySnapshot,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   curiosityBurstsPath,
