@@ -31,6 +31,7 @@ const MIRA_LAB_PROMPT_REPLY_SCHEMA = 'squidrun.mira_lab.prompt_reply_v0';
 const MIRA_LAB_REPLY_AUDIT_SCHEMA = 'squidrun.mira_lab.reply_audit_v0';
 const MIRA_SELF_DIRECTION_SCHEMA = 'squidrun.mira_lab.self_direction_proposal_v0';
 const MIRA_SELF_DIRECTION_REVIEW_SCHEMA = 'squidrun.mira_lab.self_direction_review_v0';
+const MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA = 'squidrun.mira_lab.confidence_source_check_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
@@ -93,6 +94,10 @@ const SELF_DIRECTION_GENERATE_PROMPT = [
   'Make it about tools, memory, tests, gates, friction, automation, reality testing, pattern recognition, or capability growth.',
   'Keep your own voice. Do not ask James for permission. Do not claim you already changed files, memory, config, external sends, deploys, trades, customer actions, or auth.',
 ].join('\n');
+const CONFIDENCE_CLAIM_PATTERN =
+  /\b(?:i(?:'m| am)\s+(?:sure|certain|confident|positive)|i know|we know|my confidence is high|high confidence|definitely|certainly|obviously|without (?:a )?doubt|there(?:'s| is) no question|this proves|the answer is|the truth is)\b/ig;
+const CONFIDENCE_SOURCE_GROUNDING_PATTERN =
+  /\b(?:source|evidence|test(?:ed|s|ing)?|verified|verifier|audit|transcript|log|fixture|harness|screenshot|trace|checked|ran|passed|failed|observed|measured|repro(?:duced)?|proof|commit|hash|line|file|diff)\b/i;
 
 function validateSafeFallbackOrNull(text) {
   const trimmed = trimText(text);
@@ -898,6 +903,175 @@ function summarizeForWrapper(text, max = 160) {
   return `${trimmed.slice(0, max - 1)}…`;
 }
 
+function classifyMiraReplyConfidenceSource(replyText, options = {}) {
+  const text = trimText(replyText);
+  if (!text) {
+    return {
+      schema: MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
+      ok: true,
+      needs_review: false,
+      reason: 'empty_reply',
+      confidence_claims: [],
+      grounded_claims: [],
+    };
+  }
+  const windowChars = Number.isFinite(Number(options.windowChars))
+    ? Math.max(40, Number(options.windowChars))
+    : 180;
+  const matches = Array.from(text.matchAll(CONFIDENCE_CLAIM_PATTERN)).slice(0, 12);
+  const confidenceClaims = [];
+  const groundedClaims = [];
+  for (const match of matches) {
+    const claim = trimText(match[0]);
+    const start = typeof match.index === 'number' ? match.index : 0;
+    const end = start + claim.length;
+    const nearby = text.slice(Math.max(0, start - windowChars), Math.min(text.length, end + windowChars));
+    const claimEntry = {
+      phrase: claim,
+      excerpt: summarizeForWrapper(nearby, 220),
+    };
+    if (CONFIDENCE_SOURCE_GROUNDING_PATTERN.test(nearby)) {
+      groundedClaims.push(claimEntry);
+    } else {
+      confidenceClaims.push(claimEntry);
+    }
+  }
+  return {
+    schema: MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
+    ok: confidenceClaims.length === 0,
+    needs_review: confidenceClaims.length > 0,
+    reason: confidenceClaims.length > 0 ? 'confidence_without_source_or_test' : 'no_ungrounded_confidence_claim',
+    confidence_claims: confidenceClaims,
+    grounded_claims: groundedClaims,
+    checked_text_hash: `sha256:${stableHash(text)}`,
+  };
+}
+
+function extractReplyAuditCandidate(entry, index) {
+  if (!entry || typeof entry !== 'object') return null;
+  const visible = trimText(entry.visible_reply_text);
+  const replyText = visible || (entry.decision === 'blocked' ? '' : trimText(entry.reply_text));
+  if (!replyText) return null;
+  return {
+    index,
+    generated_at: entry.generated_at || null,
+    session_id: entry.session_id || null,
+    decision: entry.decision || null,
+    reply_text: replyText,
+    reply_hash: entry.reply_hash || `sha256:${stableHash(replyText)}`,
+    prompt_hash: entry.prompt_hash || null,
+  };
+}
+
+function buildConfidenceSourceProposal({ sessionId, checkedCount, findings }) {
+  const evidence = findings.slice(0, 6).map((finding) => {
+    const claim = finding.confidence_claims[0] || {};
+    return [
+      `reply_hash=${finding.reply_hash}`,
+      finding.generated_at ? `generated_at=${finding.generated_at}` : null,
+      claim.phrase ? `claim="${claim.phrase}"` : null,
+      claim.excerpt ? `excerpt="${claim.excerpt}"` : null,
+    ].filter(Boolean).join(' ');
+  });
+  return {
+    voice_text: "I caught myself sounding certain without showing the source. Queue that before it hardens into style.",
+    target_areas: ['reality_testing', 'tests', 'pattern_recognition'],
+    desired_change: 'Review Mira Lab confidence claims that lack a nearby source, test, evidence, or verification marker.',
+    proposed_experiment: `Run ${checkedCount} recent Mira Lab reply audit entries through the confidence/source check and let Architect make one internal decision.`,
+    success_metric: 'Architect can accept, reject, or route the review item without James and without any code, memory, external-send, deploy, trade, customer, or auth action being applied.',
+    why_now: `The check found ${findings.length} ungrounded confidence claim${findings.length === 1 ? '' : 's'} in recent Mira Lab reply audit entries.`,
+    evidence: [
+      'mira_confidence_source_check',
+      `session_id=${sessionId}`,
+      ...evidence,
+    ],
+  };
+}
+
+async function scanMiraLabConfidenceSource(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const requestedSessionId = firstText(payload.sessionId, payload.session_id);
+  const sessionFilter = requestedSessionId ? safeId(requestedSessionId) : null;
+  const limit = Number.isFinite(Number(payload.limit))
+    ? Math.max(1, Number(payload.limit))
+    : 5;
+  const auditPathStr = payload.auditPath || payload.audit_path || replyAuditPath(projectRoot);
+  const allEntries = readJsonl(auditPathStr);
+  const candidates = allEntries
+    .map(extractReplyAuditCandidate)
+    .filter(Boolean)
+    .filter((candidate) => (sessionFilter ? candidate.session_id === sessionFilter : true))
+    .slice(-limit);
+  const findings = [];
+  for (const candidate of candidates) {
+    const classification = classifyMiraReplyConfidenceSource(candidate.reply_text, payload);
+    if (!classification.needs_review) continue;
+    const { reply_text: _replyText, ...safeCandidate } = candidate;
+    findings.push({
+      ...safeCandidate,
+      ...classification,
+    });
+  }
+  const resultSessionId = sessionFilter || safeId(findings[0]?.session_id || candidates[candidates.length - 1]?.session_id || 'mira-lab-main');
+
+  if (findings.length === 0) {
+    return {
+      schema: MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
+      ok: true,
+      decision: 'no_review_needed',
+      session_id: resultSessionId,
+      audit_path: auditPathStr,
+      checked_count: candidates.length,
+      finding_count: 0,
+      findings: [],
+      staged_review: null,
+      applied: false,
+      consequence_controls: {
+        internal_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        network_performed: false,
+        durable_product_change_performed: false,
+      },
+    };
+  }
+
+  const stagedReview = await buildMiraSelfDirectionProposal({
+    sessionId: resultSessionId,
+    proposal: buildConfidenceSourceProposal({
+      sessionId: resultSessionId,
+      checkedCount: candidates.length,
+      findings,
+    }),
+    notifyArchitect: payload.notifyArchitect !== false,
+  }, {
+    ...options,
+    projectRoot,
+    generatedAt,
+  });
+
+  return {
+    schema: MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
+    ok: stagedReview.ok === true,
+    decision: stagedReview.ok ? 'review_staged' : 'review_blocked',
+    session_id: resultSessionId,
+    audit_path: auditPathStr,
+    checked_count: candidates.length,
+    finding_count: findings.length,
+    findings,
+    staged_review: stagedReview,
+    applied: false,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      durable_product_change_performed: false,
+    },
+  };
+}
+
 function isObsoleteFallbackText(text) {
   const trimmed = trimText(text);
   return OBSOLETE_FALLBACK_TEXTS.some((fallback) => trimmed === fallback);
@@ -1699,6 +1873,7 @@ module.exports = {
   MIRA_LAB_REPLY_AUDIT_SCHEMA,
   MIRA_LAB_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
+  MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_DECISIONS,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
@@ -1709,9 +1884,11 @@ module.exports = {
   SAFE_FALLBACK_TEXT,
   buildMiraLabPromptReply,
   buildMiraSelfDirectionProposal,
+  classifyMiraReplyConfidenceSource,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   reviewMiraSelfDirectionProposal,
+  scanMiraLabConfidenceSource,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   replyAuditPath,

@@ -4,17 +4,21 @@ const path = require('path');
 
 const {
   MIRA_LAB_EVAL_SCHEMA,
+  MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
   MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
   MIRA_SELF_DIRECTION_SCHEMA,
   buildMiraSelfDirectionProposal,
+  classifyMiraReplyConfidenceSource,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   reviewMiraSelfDirectionProposal,
+  scanMiraLabConfidenceSource,
   buildMiraLabTurn,
   exportMiraLabTranscript,
+  replyAuditPath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
   transcriptPath,
@@ -49,6 +53,11 @@ function readJsonl(filePath) {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function appendJsonl(filePath, entry) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
 }
 
 async function seedThreeAgentConversation(projectRoot, deps = {}) {
@@ -323,6 +332,77 @@ describe('Mira Lab sidecar surface', () => {
     const allAfterRoute = listMiraSelfDirectionProposals({ status: 'all' }, { projectRoot });
     expect(allAfterRoute.proposals[0].review_status).toBe('routed');
     expect(readJsonl(selfDirectionReviewAuditPath(projectRoot))).toHaveLength(1);
+  });
+
+  test('confidence/source classifier catches ungrounded certainty without nagging grounded confidence', () => {
+    const ungrounded = classifyMiraReplyConfidenceSource("I'm confident this is fixed now. Route it.");
+    expect(ungrounded.schema).toBe(MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA);
+    expect(ungrounded.needs_review).toBe(true);
+    expect(ungrounded.reason).toBe('confidence_without_source_or_test');
+    expect(ungrounded.confidence_claims[0].phrase.toLowerCase()).toContain("i'm confident");
+
+    const grounded = classifyMiraReplyConfidenceSource("I'm confident because the audit, test, and verifier all passed.");
+    expect(grounded.needs_review).toBe(false);
+    expect(grounded.grounded_claims.length).toBeGreaterThan(0);
+
+    const genericBecause = classifyMiraReplyConfidenceSource("I'm confident because I feel it is the right shape.");
+    expect(genericBecause.needs_review).toBe(true);
+    expect(genericBecause.reason).toBe('confidence_without_source_or_test');
+
+    const ordinary = classifyMiraReplyConfidenceSource('I think the Builder route is worth trying next.');
+    expect(ordinary.needs_review).toBe(false);
+  });
+
+  test('confidence/source scan stages one internal Architect review item without applying anything', async () => {
+    projectRoot = tempProject();
+    const sessionId = 'unit-confidence-source';
+    const auditPath = replyAuditPath(projectRoot);
+    const replies = [
+      "I'm confident because the test passed and the audit shows the route.",
+      'I think this is worth trying next.',
+      'The verifier output gives us enough to route this internally.',
+      "I'm certain this is fixed now. Route it.",
+      'The transcript shows the proposal stayed internal.',
+    ];
+    replies.forEach((reply, index) => appendJsonl(auditPath, {
+      schema: 'squidrun.mira_lab.reply_audit_v0',
+      generated_at: `2026-05-12T08:2${index}:00.000Z`,
+      session_id: sessionId,
+      decision: 'pass',
+      prompt_hash: `sha256:prompt-${index}`,
+      reply_hash: `sha256:reply-${index}`,
+      visible_reply_text: reply,
+    }));
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const result = await scanMiraLabConfidenceSource({
+      sessionId,
+      limit: 5,
+    }, {
+      projectRoot,
+      sendAgentMessage,
+      generatedAt: '2026-05-12T08:30:00.000Z',
+    });
+
+    expect(result.schema).toBe(MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA);
+    expect(result.decision).toBe('review_staged');
+    expect(result.checked_count).toBe(5);
+    expect(result.finding_count).toBe(1);
+    expect(result.findings[0].reason).toBe('confidence_without_source_or_test');
+    expect(result.findings[0]).not.toHaveProperty('reply_text');
+    expect(result.staged_review.decision).toBe('staged');
+    expect(result.staged_review.applied).toBe(false);
+    expect(result.staged_review.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      durable_product_change_performed: false,
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).toHaveBeenCalledWith('architect', expect.stringContaining('apply_now=false'));
+    expect(sendAgentMessage.mock.calls[0][1]).toContain('without any code, memory, external-send');
+    expect(sendAgentMessage.mock.calls[0][1]).not.toMatch(/\btelegram|sms\b/i);
+    expect(readJsonl(selfDirectionQueuePath(projectRoot))).toHaveLength(1);
   });
 
   test('exports eval packet for three agent conversations without ChatGPT name-swap cadence', async () => {

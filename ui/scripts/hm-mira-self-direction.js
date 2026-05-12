@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const PROJECT_ROOT = process.env.SQUIDRUN_PROJECT_ROOT
   || path.resolve(__dirname, '..', '..');
@@ -11,6 +12,7 @@ const {
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   reviewMiraSelfDirectionProposal,
+  scanMiraLabConfidenceSource,
 } = require('../modules/mira-lab-surface');
 
 const DEFAULT_FIXTURE = Object.freeze({
@@ -29,6 +31,7 @@ function printHelp() {
     '',
     'Usage:',
     '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin] [--session-id <id>] [--project-root <path>] [--json]',
+    '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js list [--status pending_architect_review|all] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js review --proposal-id <id> --action accepted|rejected|routed [--route builder,oracle] [--note <text>] [--project-root <path>] [--json]',
     '',
@@ -39,7 +42,7 @@ function parseArgs(argv = []) {
   const args = {
     command: argv[0] || 'help',
     projectRoot: PROJECT_ROOT,
-    sessionId: `mira-self-direction-${new Date().toISOString().slice(0, 10)}`,
+    sessionId: null,
     useFixture: false,
     fromStdin: false,
     json: false,
@@ -48,6 +51,8 @@ function parseArgs(argv = []) {
     action: null,
     routeTargets: [],
     note: null,
+    dispatch: true,
+    limit: 5,
   };
   for (let index = 1; index < argv.length; index += 1) {
     const token = argv[index];
@@ -73,6 +78,12 @@ function parseArgs(argv = []) {
       args.routeTargets = String(argv[++index] || '').split(',').map((item) => item.trim()).filter(Boolean);
     } else if (token === '--note') {
       args.note = argv[++index];
+    } else if (token === '--limit') {
+      args.limit = Number(argv[++index]);
+    } else if (token === '--dispatch') {
+      args.dispatch = true;
+    } else if (token === '--no-dispatch') {
+      args.dispatch = false;
     } else {
       throw new Error(`Unknown flag: ${token}`);
     }
@@ -95,9 +106,32 @@ function output(result, args) {
   }
   process.stdout.write(`decision=${result.decision}\n`);
   if (result.proposal_id) process.stdout.write(`proposal_id=${result.proposal_id}\n`);
+  if (result.staged_review?.proposal_id) process.stdout.write(`proposal_id=${result.staged_review.proposal_id}\n`);
   if (result.count !== undefined) process.stdout.write(`count=${result.count}\n`);
+  if (result.finding_count !== undefined) process.stdout.write(`findings=${result.finding_count}\n`);
   if (result.review_queue_path) process.stdout.write(`queue=${result.review_queue_path}\n`);
+  if (result.staged_review?.review_queue_path) process.stdout.write(`queue=${result.staged_review.review_queue_path}\n`);
   if (result.review_audit_path) process.stdout.write(`review_audit=${result.review_audit_path}\n`);
+}
+
+function sendInternalHmMessage(target, body, options = {}) {
+  const role = String(target || '').toLowerCase();
+  if (!['architect', 'builder', 'oracle'].includes(role)) {
+    return { ok: false, reason: `unsupported_internal_target:${target}` };
+  }
+  const hmSendPath = options.hmSendPath || path.join(PROJECT_ROOT, 'ui', 'scripts', 'hm-send.js');
+  const run = spawnSync(process.execPath, [hmSendPath, role, '--stdin', '--role', 'mira'], {
+    cwd: options.projectRoot || PROJECT_ROOT,
+    input: body,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  return {
+    ok: run.status === 0,
+    status: run.status,
+    stdout: run.stdout || '',
+    stderr: run.stderr || '',
+  };
 }
 
 async function run(rawArgs = process.argv.slice(2), deps = {}) {
@@ -113,7 +147,7 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
     }
     if (!proxyProposal) proxyProposal = { ...DEFAULT_FIXTURE };
     const result = await generateMiraSelfDirectionProposal({
-      sessionId: args.sessionId,
+      sessionId: args.sessionId || `mira-self-direction-${new Date().toISOString().slice(0, 10)}`,
       proxyProposal,
       notifyArchitect: false,
     }, {
@@ -130,6 +164,24 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
     });
     return { args, result };
   }
+  if (args.command === 'scan-confidence') {
+    const payload = {
+      limit: args.limit,
+      notifyArchitect: args.dispatch,
+    };
+    if (args.sessionId) payload.sessionId = args.sessionId;
+    const result = await scanMiraLabConfidenceSource(payload, {
+      projectRoot: args.projectRoot,
+      sendAgentMessage: args.dispatch
+        ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
+          projectRoot: args.projectRoot,
+          hmSendPath: deps.hmSendPath,
+        })))
+        : undefined,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
   if (args.command === 'review') {
     const result = await reviewMiraSelfDirectionProposal({
       proposalId: args.proposalId,
@@ -138,6 +190,12 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
       note: args.note,
     }, {
       projectRoot: args.projectRoot,
+      sendAgentMessage: args.dispatch
+        ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
+          projectRoot: args.projectRoot,
+          hmSendPath: deps.hmSendPath,
+        })))
+        : undefined,
       ...(deps.options || {}),
     });
     return { args, result };
@@ -166,4 +224,5 @@ module.exports = {
   DEFAULT_FIXTURE,
   parseArgs,
   run,
+  sendInternalHmMessage,
 };
