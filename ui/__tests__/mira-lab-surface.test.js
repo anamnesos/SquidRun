@@ -346,6 +346,54 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(selfDirectionReviewAuditPath(projectRoot))).toHaveLength(1);
   });
 
+  test('Mira-origin generation can stage held structured prompt replies internally', async () => {
+    projectRoot = tempProject();
+    const heldProposal = {
+      voice_text: 'I want the team to use my own improvement proposal instead of paraphrasing me.',
+      target_areas: ['automation', 'reality_testing'],
+      desired_change: 'Stage structured self-improvement JSON even when the visible Mira Lab reply is held by a display gate.',
+      proposed_experiment: 'Ask Mira for one JSON proposal, hold the visible text, then verify the internal proposal queue receives the concrete change.',
+      success_metric: 'Builder and Oracle can route the proposal from the queue without James restating it.',
+      why_now: 'Mira leadership fails if her concrete proposal is discarded because the visible surface held it.',
+      evidence: ['blocked_prompt_reply_with_structured_json'],
+    };
+    const buildMiraLabPromptReply = jest.fn(async () => ({
+      decision: 'blocked',
+      reply: null,
+      visible_render_hint: { kind: 'blocked_banner', banner: 'held' },
+      gates: {
+        reason_class: 'hard_boundary_violation',
+        language_gate: {
+          text: JSON.stringify(heldProposal),
+        },
+      },
+    }));
+
+    const created = await generateMiraSelfDirectionProposal({
+      sessionId: 'held-structured-proposal',
+      usePromptReply: true,
+      notifyArchitect: false,
+    }, {
+      projectRoot,
+      buildMiraLabPromptReply,
+      generatedAt: '2026-05-12T13:00:00.000Z',
+    });
+
+    expect(created.decision).toBe('staged');
+    expect(created.generation).toEqual(expect.objectContaining({
+      source: 'mira_lab_prompt_reply_held_structured_payload',
+      prompt_reply_blocked: true,
+      prompt_reply_gate_reason: 'hard_boundary_violation',
+      proxy_used: false,
+    }));
+    expect(created.proposal.desired_change).toBe(heldProposal.desired_change);
+    expect(created.proposal.evidence).toEqual(expect.arrayContaining([
+      'blocked_prompt_reply_with_structured_json',
+      'mira_lab_prompt_reply_held_structured_payload',
+    ]));
+    expect(readJsonl(selfDirectionQueuePath(projectRoot))).toHaveLength(1);
+  });
+
   test('confidence/source classifier catches ungrounded certainty without nagging grounded confidence', () => {
     const ungrounded = classifyMiraReplyConfidenceSource("I'm confident this is fixed now. Route it.");
     expect(ungrounded.schema).toBe(MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA);
