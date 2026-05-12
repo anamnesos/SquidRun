@@ -51,6 +51,30 @@ describe('Mira email curiosity', () => {
     expect(result.recent_messages[0]).toEqual(expect.objectContaining({
       message_ref: expect.stringMatching(/^email-msg:/),
     }));
+    expect(result.label_pressure_buckets.map((entry) => entry.bucket)).toEqual(expect.arrayContaining([
+      'inbox_unread',
+      'starred_unread',
+    ]));
+    expect(result.snapshot_gaps).toEqual(expect.objectContaining({
+      recent_message_count: 2,
+      missing_sender_domain_count: 2,
+      missing_subject_count: 2,
+      missing_timestamp_count: 2,
+      thread_poor_snapshot: true,
+    }));
+    expect(result.suggested_next_snapshot_queries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        query: expect.stringContaining('label:STARRED is:unread'),
+        metadata_only: true,
+        body_read_required: false,
+        send_or_modify_required: false,
+      }),
+      expect.objectContaining({
+        query: expect.stringContaining('label:INBOX'),
+        metadata_only: true,
+      }),
+    ]));
+    expect(result.pressure_question).toMatch(/metadata/i);
     expect(JSON.stringify(result)).not.toContain('19e1dafa17846125');
     expect(JSON.stringify(result)).not.toMatch(/raw body|credential_secret|oauth_token/i);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -60,6 +84,7 @@ describe('Mira email curiosity', () => {
       email_send_performed: false,
       email_modify_performed: false,
       raw_message_ids_exposed: false,
+      suggested_queries_executed: false,
       external_send_performed: false,
     }));
   });
@@ -84,6 +109,39 @@ describe('Mira email curiosity', () => {
       messages_unread: 20,
     }));
     expect(JSON.stringify(read)).not.toContain('abc123');
+  });
+
+  test('preserves stored hashed refs and reports metadata gaps instead of rehashing snapshot objects', () => {
+    projectRoot = tempProject();
+    const snapshotPath = defaultEmailCuriositySnapshotPath(projectRoot);
+    fs.writeFileSync(snapshotPath, JSON.stringify({
+      schema: MIRA_EMAIL_CURIOSITY_SNAPSHOT_SCHEMA,
+      source: 'gmail_connector_metadata',
+      query: 'newer_than:7d -in:spam -in:trash label:INBOX',
+      labels: [{ id: 'IMPORTANT', name: 'IMPORTANT', messages_total: 8, messages_unread: 6, threads_unread: 5 }],
+      recent_messages: [
+        { message_ref: 'email-msg:aaaabbbbccccdddd' },
+        { message_ref: 'email-msg:1111222233334444' },
+      ],
+    }), 'utf8');
+
+    const result = readMiraEmailCuriosity({}, { projectRoot });
+
+    expect(result.ok).toBe(true);
+    expect(result.recent_messages.map((entry) => entry.message_ref)).toEqual([
+      'email-msg:aaaabbbbccccdddd',
+      'email-msg:1111222233334444',
+    ]);
+    expect(result.snapshot_gaps).toEqual(expect.objectContaining({
+      missing_sender_domain_count: 2,
+      missing_subject_count: 2,
+      missing_timestamp_count: 2,
+      thread_poor_snapshot: true,
+    }));
+    expect(result.suggested_next_snapshot_queries[0]).toEqual(expect.objectContaining({
+      query: expect.stringContaining('label:IMPORTANT is:unread'),
+      body_read_required: false,
+    }));
   });
 
   test('reports unavailable when no connector snapshot exists', () => {

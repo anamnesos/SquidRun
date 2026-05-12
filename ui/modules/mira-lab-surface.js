@@ -1403,6 +1403,62 @@ function compactEmailTopLabels(value) {
     .slice(0, 8);
 }
 
+function compactEmailPressureBuckets(value) {
+  return asArray(value)
+    .map((entry) => ({
+      bucket: trimText(entry?.bucket) || null,
+      label_id: trimText(entry?.label_id || entry?.labelId) || null,
+      label_name: trimText(entry?.label_name || entry?.labelName) || null,
+      messages_unread: Number.isFinite(Number(entry?.messages_unread ?? entry?.messagesUnread))
+        ? Number(entry.messages_unread ?? entry.messagesUnread)
+        : null,
+      threads_unread: Number.isFinite(Number(entry?.threads_unread ?? entry?.threadsUnread))
+        ? Number(entry.threads_unread ?? entry.threadsUnread)
+        : null,
+      pressure_score: Number.isFinite(Number(entry?.pressure_score ?? entry?.pressureScore))
+        ? Number(entry.pressure_score ?? entry.pressureScore)
+        : null,
+    }))
+    .filter((entry) => entry.bucket)
+    .slice(0, 8);
+}
+
+function compactEmailSnapshotGaps(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    recent_message_count: Number.isFinite(Number(value.recent_message_count ?? value.recentMessageCount))
+      ? Number(value.recent_message_count ?? value.recentMessageCount)
+      : 0,
+    missing_sender_domain_count: Number.isFinite(Number(value.missing_sender_domain_count ?? value.missingSenderDomainCount))
+      ? Number(value.missing_sender_domain_count ?? value.missingSenderDomainCount)
+      : 0,
+    missing_subject_count: Number.isFinite(Number(value.missing_subject_count ?? value.missingSubjectCount))
+      ? Number(value.missing_subject_count ?? value.missingSubjectCount)
+      : 0,
+    missing_timestamp_count: Number.isFinite(Number(value.missing_timestamp_count ?? value.missingTimestampCount))
+      ? Number(value.missing_timestamp_count ?? value.missingTimestampCount)
+      : 0,
+    missing_label_ids_count: Number.isFinite(Number(value.missing_label_ids_count ?? value.missingLabelIdsCount))
+      ? Number(value.missing_label_ids_count ?? value.missingLabelIdsCount)
+      : 0,
+    thread_poor_snapshot: value.thread_poor_snapshot === true || value.threadPoorSnapshot === true,
+  };
+}
+
+function compactEmailSuggestedSnapshotQueries(value) {
+  return asArray(value)
+    .map((entry) => ({
+      query: oneLine(entry?.query, 180) || null,
+      purpose: oneLine(entry?.purpose, 180) || null,
+      requested_metadata: asArray(entry?.requested_metadata || entry?.requestedMetadata).map(trimText).filter(Boolean).slice(0, 8),
+      metadata_only: entry?.metadata_only !== false,
+      body_read_required: entry?.body_read_required === true,
+      send_or_modify_required: entry?.send_or_modify_required === true,
+    }))
+    .filter((entry) => entry.query)
+    .slice(0, 5);
+}
+
 function compactWebTopDomains(value) {
   return asArray(value)
     .map((entry) => ({
@@ -1613,6 +1669,10 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     email_unread_total: Number.isFinite(emailUnreadTotal) ? emailUnreadTotal : null,
     email_recent_message_count: Number.isFinite(emailRecentMessageCount) ? emailRecentMessageCount : null,
     email_top_labels: compactEmailTopLabels(rawItem.email_top_labels || rawItem.emailTopLabels),
+    email_label_pressure_buckets: compactEmailPressureBuckets(rawItem.email_label_pressure_buckets || rawItem.emailLabelPressureBuckets),
+    email_snapshot_gaps: compactEmailSnapshotGaps(rawItem.email_snapshot_gaps || rawItem.emailSnapshotGaps),
+    email_suggested_next_snapshot_queries: compactEmailSuggestedSnapshotQueries(rawItem.email_suggested_next_snapshot_queries || rawItem.emailSuggestedNextSnapshotQueries),
+    email_pressure_question: oneLine(rawItem.email_pressure_question || rawItem.emailPressureQuestion, 220) || null,
     web_result_count: Number.isFinite(webResultCount) ? webResultCount : null,
     web_top_domains: compactWebTopDomains(rawItem.web_top_domains || rawItem.webTopDomains),
     visual_asset_count: Number.isFinite(visualAssetCount) ? visualAssetCount : null,
@@ -1976,27 +2036,41 @@ function activeEmailCuriosityAdapter(context = {}) {
     ? topLabels.map((label) => `${label.name || label.id}:${label.messages_unread || 0}`).join(', ')
     : 'none';
   const topLabel = topLabels[0]?.name || topLabels[0]?.id || null;
+  const pressureBuckets = asArray(result.label_pressure_buckets).slice(0, 8);
+  const snapshotGaps = result.snapshot_gaps || null;
+  const suggestedQueries = asArray(result.suggested_next_snapshot_queries).slice(0, 5);
+  const pressureQuestion = trimText(result.pressure_question)
+    || (topLabel ? `What should Mira infer or ask from the ${topLabel} email pressure signal?` : 'Which email query should Mira snapshot next for a stronger signal?');
+  const gapText = snapshotGaps?.thread_poor_snapshot
+    ? ` Snapshot gap: missing sender_domain=${snapshotGaps.missing_sender_domain_count || 0}, subject=${snapshotGaps.missing_subject_count || 0}, timestamp=${snapshotGaps.missing_timestamp_count || 0}.`
+    : '';
   return {
     source: 'email',
     scope: 'local_email',
     adapter_id: 'email_curiosity',
     integration_strategy: 'native_adapter',
     status: 'active',
-    observation: `Email metadata snapshot read ${result.label_count || 0} label(s), ${result.unread_total || 0} unread message(s), and ${result.recent_message_count || 0} hashed recent message ref(s); top labels: ${topLabelText}.`,
+    observation: `Email metadata snapshot read ${result.label_count || 0} label(s), ${result.unread_total || 0} unread message(s), and ${result.recent_message_count || 0} hashed recent message ref(s); top labels: ${topLabelText}.${gapText}`,
     why_interesting: 'Mira can now notice inbox pressure and mailbox shape without opening message bodies or mutating mail.',
-    hypothesis: topLabel
-      ? `${topLabel} may be the strongest current email pressure signal.`
+    hypothesis: snapshotGaps?.thread_poor_snapshot
+      ? 'The mailbox signal is label-heavy but thread-poor, so Mira needs a tighter metadata snapshot before treating unread count as an obligation.'
+      : topLabel
+        ? `${topLabel} may be the strongest current email pressure signal.`
       : 'The email source is connected, but the latest snapshot did not show a strong label signal.',
-    suggested_question: topLabel
-      ? `What should Mira infer or ask from the ${topLabel} email pressure signal?`
-      : 'Which email query should Mira snapshot next for a stronger signal?',
-    possible_action: 'Use compact email metadata as one curiosity signal; keep body reads, sends, archives, deletes, and label changes out of this adapter.',
+    suggested_question: pressureQuestion,
+    possible_action: suggestedQueries[0]?.query
+      ? `Refresh metadata only for ${suggestedQueries[0].query}; keep body reads, sends, archives, deletes, and label changes out of this adapter.`
+      : 'Use compact email metadata as one curiosity signal; keep body reads, sends, archives, deletes, and label changes out of this adapter.',
     route_hint: 'mira_lab',
     sensitivity_hint: 'email_metadata_only',
     email_label_count: result.label_count || 0,
     email_unread_total: result.unread_total || 0,
     email_recent_message_count: result.recent_message_count || 0,
     email_top_labels: topLabels,
+    email_label_pressure_buckets: pressureBuckets,
+    email_snapshot_gaps: snapshotGaps,
+    email_suggested_next_snapshot_queries: suggestedQueries,
+    email_pressure_question: pressureQuestion,
     no_mutation_performed: true,
   };
 }
@@ -3423,6 +3497,9 @@ function activeInitiativeEvidenceForItem(item = {}) {
     evidence.push(`scheduler=due_soon:${numberSignal(item.scheduler_due_soon_count)} overdue:${numberSignal(item.scheduler_overdue_count)}`);
   }
   if (numberSignal(item.email_unread_total) > 0) evidence.push(`email_unread=${numberSignal(item.email_unread_total)}`);
+  if (item.email_snapshot_gaps?.thread_poor_snapshot) {
+    evidence.push(`email_snapshot_gaps=sender_domain:${numberSignal(item.email_snapshot_gaps.missing_sender_domain_count)} subject:${numberSignal(item.email_snapshot_gaps.missing_subject_count)} timestamp:${numberSignal(item.email_snapshot_gaps.missing_timestamp_count)}`);
+  }
   if (numberSignal(item.calendar_artifact_count) > 0 || numberSignal(item.message_artifact_count) > 0) {
     evidence.push(`calendar_messages=calendar:${numberSignal(item.calendar_artifact_count)} messages:${numberSignal(item.message_artifact_count)}`);
   }
@@ -3616,8 +3693,14 @@ function activeInitiativeCandidateForItem(item, index, total) {
     const unread = numberSignal(item.email_unread_total);
     if (unread > 0) {
       score += Math.min(18, Math.ceil(unread / 10));
-      title = `Inspect email pressure metadata: unread=${unread}`;
-      action = 'Use mailbox metadata to pick a thread-pressure question without reading bodies or sending mail.';
+      const gaps = item.email_snapshot_gaps || {};
+      const query = asArray(item.email_suggested_next_snapshot_queries)[0]?.query;
+      title = gaps.thread_poor_snapshot
+        ? `Sharpen email pressure metadata: unread=${unread} gaps=sender_domain/subject/timestamp`
+        : `Inspect email pressure metadata: unread=${unread}`;
+      action = query
+        ? `Use metadata-only email snapshot query "${query}" to pick a thread-pressure question without reading bodies, sending mail, or mutating labels.`
+        : 'Use mailbox metadata to pick a thread-pressure question without reading bodies or sending mail.';
     }
   } else if (source === 'calendar_messages') {
     const artifacts = numberSignal(item.calendar_artifact_count) + numberSignal(item.message_artifact_count);
