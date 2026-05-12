@@ -3348,7 +3348,7 @@ function recentActiveInitiativeFingerprints(logPath, generatedAt, cooldownMs) {
     const rowMs = parseTimestampMs(row.generated_at);
     if (rowMs === null || nowMs - rowMs > cooldownMs) continue;
     const dispatchStatus = trimText(row.dispatch?.status);
-    if (dispatchStatus === 'not_sent') continue;
+    if (dispatchStatus !== 'sent') continue;
     const fingerprint = activeInitiativeFingerprint(row);
     if (!fingerprint) continue;
     fingerprints.set(fingerprint, {
