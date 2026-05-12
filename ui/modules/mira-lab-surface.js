@@ -156,7 +156,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-email-curiosity.js compact read-only Gmail/connector metadata snapshot' },
   { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-web-research-curiosity.js compact read-only local research artifact inventory plus safe URLs/domains' },
   { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-visual-asset-curiosity.js compact screenshot/generated-image inventory' },
-  { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'active', integration_strategy: 'mcp_candidate', existing_seam: 'ui/modules/mira-calendar-message-curiosity.js compact local calendar/message metadata plus connector candidate map' },
+  { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'active', integration_strategy: 'mcp_candidate', existing_seam: 'ui/modules/mira-calendar-message-curiosity.js plus ui/scripts/hm-comms.js compact local calendar/message metadata before future calendar/message connectors' },
   { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-environment-curiosity.js read-only startup/app health, bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
   { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-automation-scheduler-curiosity.js compact read-only schedules.json metadata, ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
   { source: 'work_continuation', scope: 'background_work_and_routing', adapter_id: 'work_continuation_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-work-continuation-curiosity.js compact read-only owned-work queue and continuation-card metadata' },
@@ -1474,6 +1474,55 @@ function compactCalendarMessageConnectorCandidates(value) {
     .slice(0, 6);
 }
 
+function compactCalendarMessageSelectedConnector(value) {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = trimText(value.candidate) || null;
+  if (!candidate) return null;
+  return {
+    candidate,
+    seam: trimText(value.seam) || null,
+    reason: oneLine(value.reason || '', 220) || null,
+    evidence: value.evidence && typeof value.evidence === 'object'
+      ? Object.fromEntries(Object.entries(value.evidence)
+        .map(([key, entryValue]) => [trimText(key), Number.isFinite(Number(entryValue)) ? Number(entryValue) : trimText(entryValue)])
+        .filter(([key, entryValue]) => key && entryValue !== ''))
+      : {},
+    writes_or_sends: value.writes_or_sends === true,
+  };
+}
+
+function compactCalendarMessageCommsMetadata(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    ok: value.ok === true,
+    source: trimText(value.source || 'hm-comms') || 'hm-comms',
+    scope: trimText(value.scope) || null,
+    history_limit: Number.isFinite(Number(value.history_limit ?? value.historyLimit)) ? Number(value.history_limit ?? value.historyLimit) : null,
+    row_count: Number.isFinite(Number(value.row_count ?? value.rowCount)) ? Number(value.row_count ?? value.rowCount) : 0,
+    latest_timestamp_ms: Number.isFinite(Number(value.latest_timestamp_ms ?? value.latestTimestampMs))
+      ? Number(value.latest_timestamp_ms ?? value.latestTimestampMs)
+      : null,
+    latest_message_ids: asArray(value.latest_message_ids || value.latestMessageIds).map(trimText).filter(Boolean).slice(0, 8),
+    sender_counts: compactSchedulerTypeCounts(value.sender_counts || value.senderCounts),
+    target_counts: compactSchedulerTypeCounts(value.target_counts || value.targetCounts),
+    status_counts: compactSchedulerTypeCounts(value.status_counts || value.statusCounts),
+    role_pair_counts: compactSchedulerTypeCounts(value.role_pair_counts || value.rolePairCounts),
+    thread_pressure: asArray(value.thread_pressure || value.threadPressure)
+      .map((entry) => ({
+        pair: trimText(entry?.pair) || null,
+        count: Number.isFinite(Number(entry?.count)) ? Number(entry.count) : null,
+        latest_timestamp_ms: Number.isFinite(Number(entry?.latest_timestamp_ms ?? entry?.latestTimestampMs))
+          ? Number(entry.latest_timestamp_ms ?? entry.latestTimestampMs)
+          : null,
+      }))
+      .filter((entry) => entry.pair)
+      .slice(0, 6),
+    mira_route_count: Number.isFinite(Number(value.mira_route_count ?? value.miraRouteCount))
+      ? Number(value.mira_route_count ?? value.miraRouteCount)
+      : 0,
+  };
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1594,6 +1643,8 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     calendar_first_start: trimText(rawItem.calendar_first_start || rawItem.calendarFirstStart) || null,
     calendar_last_start: trimText(rawItem.calendar_last_start || rawItem.calendarLastStart) || null,
     calendar_message_connector_candidates: compactCalendarMessageConnectorCandidates(rawItem.connector_candidates || rawItem.connectorCandidates),
+    calendar_message_selected_connector: compactCalendarMessageSelectedConnector(rawItem.selected_connector_candidate || rawItem.selectedConnectorCandidate),
+    calendar_message_comms_metadata: compactCalendarMessageCommsMetadata(rawItem.native_comms_metadata || rawItem.nativeCommsMetadata),
   };
 }
 
@@ -2267,7 +2318,7 @@ function activeCalendarMessageCuriosityAdapter(context = {}) {
       source: 'calendar_messages',
       scope: 'calendar_and_message_context',
       adapter_id: 'calendar_message_curiosity',
-      integration_strategy: 'mcp_candidate',
+      integration_strategy: 'existing_seam',
       status: 'unavailable_in_this_runtime',
       observation: `Calendar/message metadata read was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
       why_interesting: 'Calendars and messages can reveal obligations, rhythms, and repeated context James has not turned into a prompt yet.',
@@ -2283,22 +2334,35 @@ function activeCalendarMessageCuriosityAdapter(context = {}) {
   const calendarCount = Number(result.calendar_artifact_count || 0);
   const messageCount = Number(result.message_artifact_count || 0);
   const candidates = result.connector_candidates || [];
-  const firstCandidate = candidates[0]?.candidate || 'calendar/message connector';
+  const selectedConnector = result.selected_connector_candidate || null;
+  const nativeCommsMetadata = result.native_comms_metadata || null;
+  const firstCandidate = selectedConnector?.candidate || candidates[0]?.candidate || 'calendar/message connector';
+  const nativeCommsRows = Number(nativeCommsMetadata?.row_count || 0);
+  const selectedNativeComms = selectedConnector?.candidate === 'native_squidrun_comms';
+  const hypothesis = selectedNativeComms
+    ? 'Native SquidRun comms metadata is the first useful calendar/message seam because it exposes who is pressing whom, what is routed, and what is still unresolved without reading bodies or sending anything.'
+    : (calendarCount > 0 || messageCount > 0)
+      ? 'Local metadata is enough to ask a sharper calendar/message question before building a live connector.'
+      : 'No local artifacts are present, so the next move is choosing the first connector seam without framing it as blocked.';
+  const suggestedQuestion = selectedNativeComms
+    ? 'Which recent native comms pressure should Mira turn into the next internal question before reaching for calendar or Gmail APIs?'
+    : calendarCount > 0
+      ? 'Which local calendar time window should Mira compare against current work routes?'
+      : `Should Mira connect ${firstCandidate} first for calendar/message curiosity?`;
+  const possibleAction = selectedNativeComms
+    ? 'Use hm-comms compact metadata as the first read-only calendar/message seam; keep message text out of scout output and do not send messages or mutate calendars.'
+    : 'Use compact metadata and connector candidates to pick the next read-only calendar/message seam; do not send messages, mutate calendars, or export bodies from scout output.';
   return {
     source: 'calendar_messages',
     scope: 'calendar_and_message_context',
     adapter_id: 'calendar_message_curiosity',
-    integration_strategy: 'mcp_candidate',
+    integration_strategy: selectedNativeComms ? 'existing_seam' : 'mcp_candidate',
     status: 'active',
-    observation: `Calendar/message metadata read ${calendarCount} calendar artifact(s), ${messageCount} message artifact(s), connector_candidates=${candidates.length}.`,
-    why_interesting: 'Mira can now see the shape of calendar and message context before asking James to hand-summarize obligations or threads.',
-    hypothesis: calendarCount > 0 || messageCount > 0
-      ? 'Local metadata is enough to ask a sharper calendar/message question before building a live connector.'
-      : 'No local artifacts are present, so the next move is choosing the first connector seam without framing it as blocked.',
-    suggested_question: calendarCount > 0
-      ? 'Which local calendar time window should Mira compare against current work routes?'
-      : `Should Mira connect ${firstCandidate} first for calendar/message curiosity?`,
-    possible_action: 'Use compact metadata and connector candidates to pick the next read-only calendar/message seam; do not send messages, mutate calendars, or export bodies from scout output.',
+    observation: `Calendar/message metadata read ${calendarCount} calendar artifact(s), ${messageCount} message artifact(s), connector_candidates=${candidates.length}; selected=${firstCandidate}; hm_comms_rows=${nativeCommsRows}.`,
+    why_interesting: 'Mira can now see local message pressure and calendar/message shape before asking James to hand-summarize obligations or threads.',
+    hypothesis,
+    suggested_question: suggestedQuestion,
+    possible_action: possibleAction,
     route_hint: 'builder',
     sensitivity_hint: 'calendar_message_metadata_only',
     calendar_artifact_count: calendarCount,
@@ -2306,6 +2370,8 @@ function activeCalendarMessageCuriosityAdapter(context = {}) {
     calendar_first_start: result.calendar_first_start || null,
     calendar_last_start: result.calendar_last_start || null,
     connector_candidates: candidates,
+    selected_connector_candidate: selectedConnector,
+    native_comms_metadata: nativeCommsMetadata,
     no_mutation_performed: true,
   };
 }
@@ -3360,6 +3426,9 @@ function activeInitiativeEvidenceForItem(item = {}) {
   if (numberSignal(item.calendar_artifact_count) > 0 || numberSignal(item.message_artifact_count) > 0) {
     evidence.push(`calendar_messages=calendar:${numberSignal(item.calendar_artifact_count)} messages:${numberSignal(item.message_artifact_count)}`);
   }
+  if (item.calendar_message_selected_connector?.candidate) {
+    evidence.push(`calendar_message_seam=${trimText(item.calendar_message_selected_connector.candidate)} hm_comms_rows=${numberSignal(item.calendar_message_comms_metadata?.row_count)}`);
+  }
   if (numberSignal(item.browser_result_count) > 0) evidence.push(`browser_results=${numberSignal(item.browser_result_count)}`);
   if (numberSignal(item.web_result_count) > 0) evidence.push(`web_research_results=${numberSignal(item.web_result_count)}`);
   if (numberSignal(item.visual_asset_count) > 0) evidence.push(`visual_assets=${numberSignal(item.visual_asset_count)}`);
@@ -3498,9 +3567,16 @@ function activeInitiativeCandidateForItem(item, index, total) {
   } else if (source === 'calendar_messages') {
     const artifacts = numberSignal(item.calendar_artifact_count) + numberSignal(item.message_artifact_count);
     const connectors = asArray(item.calendar_message_connector_candidates).length;
+    const selectedSeam = trimText(item.calendar_message_selected_connector?.candidate);
+    const hmCommsRows = numberSignal(item.calendar_message_comms_metadata?.row_count);
     if (artifacts > 0 || connectors > 0) {
-      score += Math.min(18, artifacts * 2 + connectors * 3);
-      title = `Choose the next calendar/message seam from ${artifacts} artifact(s) and ${connectors} connector candidate(s).`;
+      score += Math.min(18, artifacts * 2 + connectors * 3 + Math.min(6, hmCommsRows));
+      if (selectedSeam === 'native_squidrun_comms') {
+        title = `Use native SquidRun comms as the calendar/message seam from ${artifacts} artifact(s) and ${hmCommsRows} recent row(s).`;
+        action = 'Have Builder wire compact hm-comms sender/target/status/timestamp metadata into the calendar/message curiosity path without exporting bodies, sending messages, or mutating calendars.';
+      } else {
+        title = `Choose the next calendar/message seam from ${artifacts} artifact(s) and ${connectors} connector candidate(s).`;
+      }
     }
   } else if (source === 'browser_history') {
     score += Math.min(10, numberSignal(item.browser_result_count));

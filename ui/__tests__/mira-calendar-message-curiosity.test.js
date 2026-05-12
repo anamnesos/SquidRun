@@ -38,7 +38,42 @@ describe('Mira calendar/message curiosity', () => {
     ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(messagesDir, 'builder.txt'), 'private message body\nsecond line', 'utf8');
 
-    const result = readMiraCalendarMessageCuriosity({}, { projectRoot });
+    const result = readMiraCalendarMessageCuriosity({}, {
+      projectRoot,
+      commsHistoryReader: () => ({
+        ok: true,
+        limit: 50,
+        scope: 'main',
+        rows: [
+          {
+            rowId: 10,
+            messageId: 'hm-test-10',
+            sessionId: 'app-session-test',
+            sender: 'mira',
+            target: 'builder',
+            status: 'routed',
+            scope: 'main',
+            timestampMs: 1778628300000,
+            timestamp: '2026-05-12 23:25:00.000',
+            excerpt: 'private comms excerpt should not leak',
+            rawBody: 'private comms raw body should not leak',
+          },
+          {
+            rowId: 9,
+            messageId: 'hm-test-9',
+            sessionId: 'app-session-test',
+            sender: 'architect',
+            target: 'builder',
+            status: 'recorded',
+            scope: 'main',
+            timestampMs: 1778628200000,
+            timestamp: '2026-05-12 23:23:20.000',
+            excerpt: 'second private comms excerpt',
+            rawBody: 'second private comms raw body',
+          },
+        ],
+      }),
+    });
 
     expect(result.schema).toBe(MIRA_CALENDAR_MESSAGE_CURIOSITY_SCHEMA);
     expect(result.ok).toBe(true);
@@ -63,7 +98,30 @@ describe('Mira calendar/message curiosity', () => {
       'calendar_connector',
       'message_connector',
     ]));
-    expect(JSON.stringify(result)).not.toMatch(/Secret customer|private message body|raw calendar body/i);
+    expect(result.selected_connector_candidate).toEqual(expect.objectContaining({
+      candidate: 'native_squidrun_comms',
+      writes_or_sends: false,
+      evidence: expect.objectContaining({
+        message_artifact_count: 1,
+        native_comms_row_count: 2,
+      }),
+    }));
+    expect(result.native_comms_metadata).toEqual(expect.objectContaining({
+      ok: true,
+      row_count: 2,
+      sender_counts: expect.objectContaining({ mira: 1, architect: 1 }),
+      target_counts: expect.objectContaining({ builder: 2 }),
+      status_counts: expect.objectContaining({ routed: 1, recorded: 1 }),
+      role_pair_counts: expect.objectContaining({ 'mira->builder': 1, 'architect->builder': 1 }),
+      mira_route_count: 1,
+    }));
+    expect(result.native_comms_metadata.latest_rows[0]).toEqual(expect.objectContaining({
+      message_id: 'hm-test-10',
+      sender: 'mira',
+      target: 'builder',
+      status: 'routed',
+    }));
+    expect(JSON.stringify(result)).not.toMatch(/Secret customer|private message body|raw calendar body|private comms|rawBody|excerpt/i);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       read_only: true,
@@ -78,7 +136,10 @@ describe('Mira calendar/message curiosity', () => {
   test('stays active with connector candidates when local artifacts are absent', () => {
     projectRoot = tempProject();
 
-    const result = readMiraCalendarMessageCuriosity({}, { projectRoot });
+    const result = readMiraCalendarMessageCuriosity({}, {
+      projectRoot,
+      commsHistoryReader: () => ({ ok: false, reason: 'fixture_missing', rows: [] }),
+    });
 
     expect(result.ok).toBe(true);
     expect(result.decision).toBe('calendar_message_metadata_read_only');
