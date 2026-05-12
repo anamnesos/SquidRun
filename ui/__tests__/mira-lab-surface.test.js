@@ -9,6 +9,7 @@ const {
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_DIRECT_ROUTE_SCHEMA,
+  MIRA_READ_ONLY_CODE_MODE_SCHEMA,
   MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
@@ -23,12 +24,14 @@ const {
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityScout,
+  runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
   selectMiraDirectRoute,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   curiosityItemsPath,
   miraDirectRoutesPath,
+  readOnlyCodeModeRunsPath,
   replyAuditPath,
   selfDirectionOutcomePath,
   selfDirectionReviewAuditPath,
@@ -846,6 +849,71 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.dispatch.status).toBe('queued_not_sent');
     expect(result.route_message).not.toMatch(/\btelegram\b/i);
     expect(result.consequence_controls.external_send_performed).toBe(false);
+  });
+
+  test('read-only code mode lets Mira inspect allowed files without mutation', () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:inspect-me',
+      generated_at: '2026-05-12T14:00:00.000Z',
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+      status: 'adapter_not_built_yet',
+      suggested_question: 'What is in the curiosity log?',
+      possible_action: 'Inspect the JSONL.',
+    });
+
+    const result = runMiraReadOnlyCodeMode({
+      allowedPaths: ['.squidrun/runtime'],
+      script: [
+        "const rows = api.readJsonl('.squidrun/runtime/mira-curiosity-items.jsonl', 5);",
+        "emit({ count: rows.length, first_source: rows[0].source });",
+        'return rows.map((row) => row.adapter_id);',
+      ].join('\n'),
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T14:01:00.000Z',
+    });
+
+    expect(result.schema).toBe(MIRA_READ_ONLY_CODE_MODE_SCHEMA);
+    expect(result.decision).toBe('completed');
+    expect(result.ok).toBe(true);
+    expect(result.output[0]).toEqual({ count: 1, first_source: 'code_mode_exploration' });
+    expect(result.result).toEqual(['read_only_execute_script_curiosity']);
+    expect(result.elapsed_ms).toBeLessThan(1000);
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      network_performed: false,
+      file_write_performed: false,
+    }));
+    expect(readJsonl(readOnlyCodeModeRunsPath(projectRoot))).toHaveLength(1);
+  });
+
+  test('read-only code mode blocks mutation and outside-project reads', () => {
+    projectRoot = tempProject();
+
+    const blockedMutation = runMiraReadOnlyCodeMode({
+      script: "require('fs').writeFileSync('x', 'y')",
+    }, { projectRoot, generatedAt: '2026-05-12T14:02:00.000Z' });
+
+    expect(blockedMutation).toEqual(expect.objectContaining({
+      schema: MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: 'script_contains_blocked_capability',
+    }));
+
+    const outsideRead = runMiraReadOnlyCodeMode({
+      allowedPaths: ['.squidrun/runtime'],
+      script: "return api.readText('../outside.txt')",
+    }, { projectRoot, generatedAt: '2026-05-12T14:03:00.000Z' });
+
+    expect(outsideRead.decision).toBe('failed');
+    expect(outsideRead.error).toMatch(/read_path_not_allowed/);
+    expect(outsideRead.consequence_controls.file_write_performed).toBe(false);
+    expect(readJsonl(readOnlyCodeModeRunsPath(projectRoot))).toHaveLength(2);
   });
 
   test('exports eval packet for three agent conversations without ChatGPT name-swap cadence', async () => {
