@@ -3445,6 +3445,14 @@ function activeInitiativeFingerprint(source) {
   return [kind, itemSource, adapterId, title].filter(Boolean).join(':');
 }
 
+function activeInitiativeSemanticKey(source) {
+  const selected = source?.selected_item || source?.item || source || {};
+  const kind = trimText(source?.initiative_kind || source?.initiativeKind);
+  const itemSource = trimText(selected.source || source?.source);
+  const adapterId = trimText(selected.adapter_id || selected.adapterId || source?.adapter_id || source?.adapterId);
+  return [kind, itemSource, adapterId].filter(Boolean).join(':');
+}
+
 function recentActiveInitiativeFingerprints(logPath, generatedAt, cooldownMs) {
   const nowMs = parseTimestampMs(generatedAt) ?? Date.now();
   const fingerprints = new Map();
@@ -3469,6 +3477,53 @@ function recentActiveInitiativeFingerprints(logPath, generatedAt, cooldownMs) {
     });
   }
   return fingerprints;
+}
+
+function recentImplementedActiveInitiativeOutcomes(outcomePath, generatedAt, cooldownMs) {
+  const nowMs = parseTimestampMs(generatedAt) ?? Date.now();
+  const outcomes = new Map();
+  const rows = readJsonl(outcomePath).slice(-240);
+  for (const row of rows) {
+    if (!row || row.schema !== MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA) continue;
+    const status = normalizeActiveInitiativeOutcomeStatus(row.outcome_status);
+    if (!['implemented', 'false_positive'].includes(status)) continue;
+    const rowMs = parseTimestampMs(row.generated_at);
+    if (rowMs === null || nowMs - rowMs > cooldownMs) continue;
+    const semanticKey = activeInitiativeSemanticKey(row);
+    if (!semanticKey) continue;
+    outcomes.set(semanticKey, {
+      outcome_id: row.outcome_id || null,
+      initiative_id: row.initiative_id || null,
+      generated_at: row.generated_at || null,
+      outcome_status: status,
+      target_role: row.target_role || null,
+      initiative_kind: row.initiative_kind || null,
+      source: row.source || null,
+      adapter_id: row.adapter_id || null,
+      evidence: asArray(row.evidence).slice(0, 6),
+      note: row.note || null,
+    });
+  }
+  return outcomes;
+}
+
+function activeInitiativeSuppressionForCandidate(candidate, recentInitiatives, recentOutcomes) {
+  if (!candidate) return null;
+  if (recentInitiatives.has(candidate.fingerprint)) {
+    return {
+      reason: 'recent_duplicate_active_initiative',
+      initiative: recentInitiatives.get(candidate.fingerprint) || null,
+      outcome: null,
+    };
+  }
+  if (recentOutcomes.has(candidate.semantic_key)) {
+    return {
+      reason: 'recent_implemented_active_initiative_outcome',
+      initiative: null,
+      outcome: recentOutcomes.get(candidate.semantic_key) || null,
+    };
+  }
+  return null;
 }
 
 function activeInitiativeCandidateForItem(item, index, total) {
@@ -3602,6 +3657,10 @@ function activeInitiativeCandidateForItem(item, index, total) {
       item,
       title,
     }),
+    semantic_key: activeInitiativeSemanticKey({
+      initiative_kind: initiativeKind,
+      item,
+    }),
   };
 }
 
@@ -3635,6 +3694,7 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
     .filter((item) => item && item.schema === MIRA_CURIOSITY_ITEM_SCHEMA);
   const windowSize = Math.max(24, Math.min(1000, Number(payload.itemLimit || payload.item_limit || options.itemLimit || 360) || 360));
   const cooldownMs = Math.max(0, Math.min(24 * 60 * 60 * 1000, Number(payload.cooldownMs || payload.cooldown_ms || options.cooldownMs || 45 * 60 * 1000) || 0));
+  const outcomeCooldownMs = Math.max(cooldownMs, Math.min(7 * 24 * 60 * 60 * 1000, Number(payload.outcomeCooldownMs || payload.outcome_cooldown_ms || options.outcomeCooldownMs || 24 * 60 * 60 * 1000) || 0));
   const suppressDuplicates = payload.force !== true
     && options.force !== true
     && payload.dedupe !== false
@@ -3642,6 +3702,9 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
     && cooldownMs > 0;
   const recentInitiatives = suppressDuplicates
     ? recentActiveInitiativeFingerprints(logPath, generatedAt, cooldownMs)
+    : new Map();
+  const recentOutcomes = suppressDuplicates
+    ? recentImplementedActiveInitiativeOutcomes(activeInitiativeOutcomesPath(projectRoot), generatedAt, outcomeCooldownMs)
     : new Map();
   const recentItems = latestCuriosityItemsByAdapter(allItems.slice(-windowSize));
   const statusCounts = curiosityStatusCounts(recentItems);
@@ -3653,14 +3716,20 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
       return trimText(right.item.generated_at).localeCompare(trimText(left.item.generated_at));
     });
   const suppressedCandidates = allCandidates
-    .filter((candidate) => recentInitiatives.has(candidate.fingerprint));
+    .filter((candidate) => activeInitiativeSuppressionForCandidate(candidate, recentInitiatives, recentOutcomes));
   const candidates = allCandidates
-    .filter((candidate) => !recentInitiatives.has(candidate.fingerprint));
+    .filter((candidate) => !activeInitiativeSuppressionForCandidate(candidate, recentInitiatives, recentOutcomes));
 
   if (candidates.length === 0) {
     if (suppressedCandidates.length > 0) {
       const suppressed = suppressedCandidates[0];
-      const recent = recentInitiatives.get(suppressed.fingerprint) || null;
+      const suppression = activeInitiativeSuppressionForCandidate(suppressed, recentInitiatives, recentOutcomes) || {};
+      const recent = suppression.initiative || null;
+      const recentOutcome = suppression.outcome || null;
+      const reason = suppression.reason || 'recent_duplicate_active_initiative';
+      const dispatchReason = reason === 'recent_duplicate_active_initiative'
+        ? 'duplicate_recent_active_initiative'
+        : reason;
       const held = {
         schema: MIRA_ACTIVE_INITIATIVE_SCHEMA,
         ok: true,
@@ -3668,18 +3737,22 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
         generated_at: generatedAt,
         initiative_id: `mira-active-initiative:${stableHash({
           generatedAt,
-          reason: 'recent_duplicate_active_initiative',
+          reason,
           fingerprint: suppressed.fingerprint,
+          semanticKey: suppressed.semantic_key,
         }).slice(0, 16)}`,
-        reason: 'recent_duplicate_active_initiative',
+        reason,
         active_initiative_log_path: logPath,
         curiosity_log_path: curiosityItemsPath(projectRoot),
         curiosity_items_seen: allItems.length,
         latest_adapter_count: recentItems.length,
         current_state: statusCounts,
         duplicate_cooldown_ms: cooldownMs,
+        outcome_cooldown_ms: outcomeCooldownMs,
         suppressed_fingerprint: suppressed.fingerprint,
+        suppressed_semantic_key: suppressed.semantic_key,
         recent_matching_initiative: recent,
+        recent_matching_outcome: recentOutcome,
         target_role: suppressed.target_role,
         selected_item: {
           item_id: suppressed.item.item_id,
@@ -3689,7 +3762,7 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
         },
         dispatch: {
           status: 'not_sent',
-          reason: 'duplicate_recent_active_initiative',
+          reason: dispatchReason,
           target: suppressed.target_role,
         },
         applied: false,

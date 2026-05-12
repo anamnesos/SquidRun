@@ -1848,6 +1848,90 @@ describe('Mira Lab sidecar surface', () => {
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
   });
 
+  test('active initiative advances past semantically implemented work when the title changes', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:24:00.000Z',
+      item_id: 'mira-curiosity:calendar-seam-before',
+      source: 'calendar_messages',
+      adapter_id: 'calendar_message_curiosity',
+      status: 'active',
+      observation: 'Calendar/message metadata read 0 calendar artifact(s), 24 message artifact(s), connector_candidates=3.',
+      suggested_question: 'Should Mira connect native_squidrun_comms first for calendar/message curiosity?',
+      possible_action: 'Use compact metadata and connector candidates to pick the next read-only calendar/message seam.',
+      message_artifact_count: 24,
+      calendar_message_connector_candidates: [
+        { candidate: 'native_squidrun_comms', writes_or_sends: false },
+        { candidate: 'calendar_connector', writes_or_sends: false },
+        { candidate: 'message_connector', writes_or_sends: false },
+      ],
+    });
+
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+    const first = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:25:00.000Z',
+      sendAgentMessage,
+    });
+    expect(first.decision).toBe('routed');
+    expect(first.initiative_kind).toBe('calendar_message_connector_next');
+
+    recordMiraActiveInitiativeOutcome({
+      initiativeId: first.initiative_id,
+      status: 'implemented',
+      evidence: ['selected_connector=native_squidrun_comms', 'hm_comms_rows=50'],
+      note: 'Builder connected compact native comms metadata.',
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:30:00.000Z',
+    });
+
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:31:00.000Z',
+      item_id: 'mira-curiosity:calendar-seam-after',
+      source: 'calendar_messages',
+      adapter_id: 'calendar_message_curiosity',
+      status: 'active',
+      observation: 'Calendar/message metadata read 0 calendar artifact(s), 24 message artifact(s), connector_candidates=3; selected=native_squidrun_comms; hm_comms_rows=50.',
+      suggested_question: 'Which recent native comms pressure should Mira turn into the next internal question before reaching for calendar or Gmail APIs?',
+      possible_action: 'Use hm-comms compact metadata as the first read-only calendar/message seam.',
+      message_artifact_count: 24,
+      calendar_message_connector_candidates: [
+        { candidate: 'native_squidrun_comms', writes_or_sends: false },
+        { candidate: 'calendar_connector', writes_or_sends: false },
+        { candidate: 'message_connector', writes_or_sends: false },
+      ],
+      calendar_message_selected_connector: { candidate: 'native_squidrun_comms', writes_or_sends: false },
+      calendar_message_comms_metadata: { row_count: 50 },
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:31:30.000Z',
+      item_id: 'mira-curiosity:email-pressure-next',
+      source: 'email',
+      adapter_id: 'email_curiosity',
+      status: 'active',
+      observation: 'Email metadata read 42 unread messages.',
+      suggested_question: 'Which email pressure signal should Mira inspect next?',
+      possible_action: 'Use mailbox metadata to pick a thread-pressure question.',
+      email_unread_total: 42,
+    });
+
+    const second = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:32:00.000Z',
+      sendAgentMessage,
+    });
+
+    expect(second.decision).toBe('routed');
+    expect(second.selected_item.source).toBe('email');
+    expect(second.suppressed_candidate_count).toBe(1);
+    expect(second.evidence).toEqual(expect.arrayContaining(['email_unread=42']));
+    expect(sendAgentMessage).toHaveBeenCalledTimes(2);
+  });
+
   test('active initiative names live memory drift as memory consistency repair', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
