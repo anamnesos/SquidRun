@@ -65,12 +65,12 @@ const SOURCE_ACTION_SUBSTRATE_REGISTRY = Object.freeze([
   {
     source: 'browser_history',
     scope: 'local_browser_trails_and_research_context',
-    strategy: SUBSTRATE_STRATEGIES.mcp_connector,
-    status: 'connector_needed',
+    strategy: SUBSTRATE_STRATEGIES.native_adapter,
+    status: 'active',
     priority: 76,
-    existing_seams: ['Chrome connector', 'mcp-bridge.js', 'browser-use/Chrome tools'],
-    first_probe: 'List recent research domains and repeated searches without opening or sending anything.',
-    why_this_strategy: 'MCP-compatible browser access is likely faster than inventing a browser-history parser first.',
+    existing_seams: ['mira-browser-history-curiosity.js', 'Chromium History DB temp-copy', 'Chrome connector', 'mcp-bridge.js', 'browser-use/Chrome tools'],
+    first_probe: 'Read compact recent domains, titles, visit counts, and safe paths from a temp-copied Chromium History DB.',
+    why_this_strategy: 'A native read-only metadata adapter gives Mira useful browser curiosity now while connector-based live browsing remains an expansion path.',
   },
   {
     source: 'email',

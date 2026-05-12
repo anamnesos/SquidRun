@@ -332,6 +332,11 @@ describe('hm-mira-self-direction CLI harness', () => {
       options: {
         repoStatusText: ' M ui/scripts/hm-mira-self-direction.js\n',
         recentCommsText: '(ARCHITECT #78): move the curiosity scout.',
+        browserHistoryCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'browser_history_missing',
+        }),
       },
     });
 
@@ -357,10 +362,17 @@ describe('hm-mira-self-direction CLI harness', () => {
       scriptPath,
       'curiosity-scout',
       '--project-root', projectRoot,
-    ], { encoding: 'utf8' });
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        LOCALAPPDATA: path.join(projectRoot, 'empty-local-appdata'),
+        SQUIDRUN_MIRA_BROWSER_HISTORY_HOME: path.join(projectRoot, 'empty-home'),
+      },
+    });
     expect(textRun.status).toBe(0);
     expect(textRun.stdout).toContain('decision=scouted');
-    expect(textRun.stdout).toContain('source=browser_history status=adapter_not_built_yet');
+    expect(textRun.stdout).toContain('source=browser_history status=unavailable_in_this_runtime');
     expect(readJsonl(path.join(projectRoot, '.squidrun', 'runtime', 'mira-curiosity-items.jsonl')).length).toBeGreaterThan(0);
   });
 
@@ -378,6 +390,11 @@ describe('hm-mira-self-direction CLI harness', () => {
       options: {
         repoStatusText: ' M ui/modules/mira-lab-surface.js\n',
         recentCommsText: '(ARCHITECT #90): source/action substrate, not MCP as mind.',
+        browserHistoryCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'browser_history_missing',
+        }),
       },
     });
 

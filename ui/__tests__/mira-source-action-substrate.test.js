@@ -51,9 +51,10 @@ describe('Mira source/action substrate plan', () => {
     }));
     const browser = plan.sources.find((entry) => entry.source === 'browser_history');
     expect(browser).toEqual(expect.objectContaining({
-      strategy: SUBSTRATE_STRATEGIES.mcp_connector,
-      status: 'connector_needed',
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
     }));
+    expect(browser.first_probe).toMatch(/History DB/i);
   });
 
   test('chooses a concrete strategy and first probe for a routed source', () => {
