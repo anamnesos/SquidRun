@@ -1781,6 +1781,41 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(2);
   });
 
+  test('active initiative does not suppress a duplicate that was never dispatched', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:24:00.000Z',
+      item_id: 'mira-curiosity:runtime-undispatched',
+      source: 'mira_runtime',
+      adapter_id: 'mira_runtime_curiosity',
+      status: 'active',
+      observation: 'Mira runtime read 5 modules; active_signals=3; blocked=2; healthy=false.',
+      suggested_question: 'Which Mira runtime gap matters?',
+      possible_action: 'Use runtime health metadata.',
+      route_hint: 'builder',
+      runtime_healthy: false,
+      runtime_blocked_count: 2,
+      runtime_blocked_modules: ['experience', 'growth_loop'],
+    });
+    const held = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:25:00.000Z',
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+    const sent = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:26:00.000Z',
+      sendAgentMessage,
+    });
+
+    expect(held.decision).toBe('routed');
+    expect(held.dispatch.status).toBe('queued_not_sent');
+    expect(sent.decision).toBe('routed');
+    expect(sent.dispatch.status).toBe('sent');
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+  });
+
   test('active initiative outcomes close the work loop and feed curriculum skills', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
