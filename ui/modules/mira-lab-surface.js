@@ -48,6 +48,9 @@ const {
 const {
   readMiraWorkContinuationCuriosity,
 } = require('./mira-work-continuation-curiosity');
+const {
+  readMiraRuntimeCuriosity,
+} = require('./mira-runtime-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -151,7 +154,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-environment-curiosity.js read-only startup/app health, bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
   { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-automation-scheduler-curiosity.js compact read-only schedules.json metadata, ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
   { source: 'work_continuation', scope: 'background_work_and_routing', adapter_id: 'work_continuation_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-work-continuation-curiosity.js compact read-only owned-work queue and continuation-card metadata' },
-  { source: 'mira_runtime', scope: 'mira_internal_growth_runtime', adapter_id: 'mira_runtime_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'native_adapter', existing_seam: 'mira-core/growth-loop-v0.js, autonomy-substrate-v0.js, experience-v0.js, perception.js, intent-queue.js' },
+  { source: 'mira_runtime', scope: 'mira_internal_growth_runtime', adapter_id: 'mira_runtime_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-runtime-curiosity.js compact runtime health over growth/autonomy/experience/perception/intent modules' },
 ]);
 
 function validateSafeFallbackOrNull(text) {
@@ -1426,6 +1429,10 @@ function compactWorkContinuationTotals(value) {
     .filter(([, count]) => Number.isFinite(count)));
 }
 
+function compactRuntimeSignals(value) {
+  return asArray(value).map(trimText).filter(Boolean).slice(0, 8);
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1459,6 +1466,9 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const workApprovalRequiredCount = Number(rawItem.work_approval_required_count ?? rawItem.workApprovalRequiredCount);
   const workDueCount = Number(rawItem.work_due_count ?? rawItem.workDueCount);
   const workHeldCount = Number(rawItem.work_held_count ?? rawItem.workHeldCount);
+  const runtimeModuleCount = Number(rawItem.runtime_module_count ?? rawItem.runtimeModuleCount);
+  const runtimeActiveSignalCount = Number(rawItem.runtime_active_signal_count ?? rawItem.runtimeActiveSignalCount);
+  const runtimeBlockedCount = Number(rawItem.runtime_blocked_count ?? rawItem.runtimeBlockedCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1522,6 +1532,14 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     work_held_count: Number.isFinite(workHeldCount) ? workHeldCount : null,
     work_next_agent: trimText(rawItem.work_next_agent || rawItem.workNextAgent) || null,
     work_next_task_id: trimText(rawItem.work_next_task_id || rawItem.workNextTaskId) || null,
+    runtime_healthy: typeof (rawItem.runtime_healthy ?? rawItem.runtimeHealthy) === 'boolean'
+      ? Boolean(rawItem.runtime_healthy ?? rawItem.runtimeHealthy)
+      : null,
+    runtime_module_count: Number.isFinite(runtimeModuleCount) ? runtimeModuleCount : null,
+    runtime_active_signal_count: Number.isFinite(runtimeActiveSignalCount) ? runtimeActiveSignalCount : null,
+    runtime_blocked_count: Number.isFinite(runtimeBlockedCount) ? runtimeBlockedCount : null,
+    runtime_active_signals: compactRuntimeSignals(rawItem.runtime_active_signals || rawItem.runtimeActiveSignals),
+    runtime_blocked_modules: compactRuntimeSignals(rawItem.runtime_blocked_modules || rawItem.runtimeBlockedModules),
   };
 }
 
@@ -2134,6 +2152,65 @@ function activeWorkContinuationCuriosityAdapter(context = {}) {
   };
 }
 
+function activeMiraRuntimeCuriosityAdapter(context = {}) {
+  const reader = typeof context.miraRuntimeCuriosityReader === 'function'
+    ? context.miraRuntimeCuriosityReader
+    : readMiraRuntimeCuriosity;
+  const result = reader({
+    projectRoot: context.projectRoot,
+    nowMs: context.nowMs,
+  }, {
+    projectRoot: context.projectRoot,
+    nowMs: context.nowMs,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'mira_runtime',
+      scope: 'mira_internal_growth_runtime',
+      adapter_id: 'mira_runtime_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'unavailable_in_this_runtime',
+      observation: `Mira runtime read was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Mira needs to inspect her own growth/autonomy/intent/perception modules before deciding what to evolve next.',
+      hypothesis: 'The runtime reader may need a missing local knowledge artifact or module repair before this lane can be trusted.',
+      suggested_question: 'Which Mira runtime module needs repair before she can trust this lane?',
+      possible_action: 'Repair the read-only Mira runtime health adapter before proposing runtime mutations.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_mira_runtime_metadata',
+      adapter_error: trimText(result?.reason || result?.error || 'mira_runtime_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const blockedModules = asArray(result.blocked_modules)
+    .map((entry) => trimText(entry?.module || entry))
+    .filter(Boolean);
+  return {
+    source: 'mira_runtime',
+    scope: 'mira_internal_growth_runtime',
+    adapter_id: 'mira_runtime_curiosity',
+    integration_strategy: 'native_adapter',
+    status: 'active',
+    observation: `Mira runtime read ${result.module_count || 0} module(s); active_signals=${result.active_signal_count || 0}; blocked=${blockedModules.length}; healthy=${result.healthy_runtime === true}.`,
+    why_interesting: 'Mira can now inspect which parts of her own growth runtime are actually clean before asking for more autonomy.',
+    hypothesis: blockedModules.length > 0
+      ? `${blockedModules.join(', ')} need repair before Mira should treat runtime self-evolution as fully healthy.`
+      : 'The runtime health surface is clean enough to choose the next capability frontier.',
+    suggested_question: blockedModules.length > 0
+      ? `Which runtime gap should Mira repair first: ${blockedModules.join(', ')}?`
+      : 'Which next capability should Mira select after her runtime health check?',
+    possible_action: 'Use compact runtime health to route targeted repairs or advance to the next source/action frontier; do not apply runtime mutations from scout output.',
+    route_hint: blockedModules.length > 0 ? 'builder' : 'mira_lab',
+    sensitivity_hint: 'local_mira_runtime_metadata',
+    runtime_healthy: result.healthy_runtime === true,
+    runtime_module_count: result.module_count || 0,
+    runtime_active_signal_count: result.active_signal_count || 0,
+    runtime_blocked_count: blockedModules.length,
+    runtime_active_signals: result.active_signals || [],
+    runtime_blocked_modules: blockedModules,
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -2225,7 +2302,7 @@ function defaultCuriosityAdapters() {
     activeEnvironmentCuriosityAdapter,
     activeAutomationSchedulerCuriosityAdapter,
     activeWorkContinuationCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.mira_runtime_curiosity, 'Mira runtime growth loops'),
+    activeMiraRuntimeCuriosityAdapter,
   ];
 }
 
@@ -2354,6 +2431,7 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     workContinuationQueuePath: options.workContinuationQueuePath,
     workContinuationWakeTrigger: options.workContinuationWakeTrigger,
     workContinuationStaleAfterMs: options.workContinuationStaleAfterMs,
+    miraRuntimeCuriosityReader: options.miraRuntimeCuriosityReader,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -2417,6 +2495,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'cheap_parallel_scouts',
   'automation_scheduler',
   'work_continuation',
+  'mira_runtime',
 ]);
 
 function normalizeCuriosityBurstSources(payload = {}, options = {}) {
@@ -2442,6 +2521,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
   if (source === 'automation_scheduler') return [activeAutomationSchedulerCuriosityAdapter];
   if (source === 'work_continuation') return [activeWorkContinuationCuriosityAdapter];
+  if (source === 'mira_runtime') return [activeMiraRuntimeCuriosityAdapter];
   return [];
 }
 
@@ -2456,6 +2536,7 @@ function curiosityBurstRouteForItems(items = []) {
     images_screenshots_assets: 71,
     environment_apps: 70,
     work_continuation: 69,
+    mira_runtime: 68,
     runtime_comms: 64,
     repo_files: 42,
   };
@@ -2548,6 +2629,7 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     workContinuationQueuePath: options.workContinuationQueuePath,
     workContinuationWakeTrigger: options.workContinuationWakeTrigger,
     workContinuationStaleAfterMs: options.workContinuationStaleAfterMs,
+    miraRuntimeCuriosityReader: options.miraRuntimeCuriosityReader,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,
@@ -2729,13 +2811,20 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   work_continuation: {
     priority: 64,
+    active_priority: 33,
     target_role: 'builder',
     reason: 'work continuation curiosity needs a background routing seam',
   },
   mira_runtime: {
     priority: 62,
+    active_priority: 35,
     target_role: 'builder',
     reason: 'Mira runtime growth loops need native adapter wiring',
+  },
+  calendar_messages: {
+    priority: 60,
+    target_role: 'builder',
+    reason: 'calendar and message curiosity needs connector shape mapping after native sources are active',
   },
   runtime_comms: {
     priority: 42,

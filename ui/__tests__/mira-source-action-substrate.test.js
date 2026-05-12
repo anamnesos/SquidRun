@@ -85,6 +85,12 @@ describe('Mira source/action substrate plan', () => {
       status: 'active',
     }));
     expect(workContinuation.first_probe).toMatch(/owned-work queue totals/i);
+    const miraRuntime = plan.sources.find((entry) => entry.source === 'mira_runtime');
+    expect(miraRuntime).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.evolution_loop,
+      status: 'active',
+    }));
+    expect(miraRuntime.first_probe).toMatch(/runtime health/i);
   });
 
   test('chooses a concrete strategy and first probe for a routed source', () => {
