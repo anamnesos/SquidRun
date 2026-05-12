@@ -42,6 +42,9 @@ const {
 const {
   readMiraVisualAssetCuriosity,
 } = require('./mira-visual-asset-curiosity');
+const {
+  readMiraAutomationSchedulerCuriosity,
+} = require('./mira-automation-scheduler-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -143,7 +146,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-visual-asset-curiosity.js compact screenshot/generated-image inventory' },
   { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'future calendar/message connector seam' },
   { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-environment-curiosity.js read-only startup/app health, bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
-  { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
+  { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-automation-scheduler-curiosity.js compact read-only schedules.json metadata, ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
   { source: 'work_continuation', scope: 'background_work_and_routing', adapter_id: 'work_continuation_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'background-agent-manager.js, owned-work-continue-broker.js, smart-routing.js, transcript-index.js' },
   { source: 'mira_runtime', scope: 'mira_internal_growth_runtime', adapter_id: 'mira_runtime_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'native_adapter', existing_seam: 'mira-core/growth-loop-v0.js, autonomy-substrate-v0.js, experience-v0.js, perception.js, intent-queue.js' },
 ]);
@@ -1398,6 +1401,14 @@ function compactVisualAssetBuckets(value) {
     .slice(0, 8));
 }
 
+function compactSchedulerTypeCounts(value) {
+  if (!value || typeof value !== 'object') return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, count]) => [trimText(key), Number(count)])
+    .filter(([key, count]) => key && Number.isFinite(count))
+    .slice(0, 8));
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1422,6 +1433,10 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const emailRecentMessageCount = Number(rawItem.email_recent_message_count ?? rawItem.emailRecentMessageCount);
   const webResultCount = Number(rawItem.web_result_count ?? rawItem.webResultCount);
   const visualAssetCount = Number(rawItem.visual_asset_count ?? rawItem.visualAssetCount);
+  const schedulerScheduleCount = Number(rawItem.scheduler_schedule_count ?? rawItem.schedulerScheduleCount);
+  const schedulerActiveCount = Number(rawItem.scheduler_active_count ?? rawItem.schedulerActiveCount);
+  const schedulerDueSoonCount = Number(rawItem.scheduler_due_soon_count ?? rawItem.schedulerDueSoonCount);
+  const schedulerOverdueCount = Number(rawItem.scheduler_overdue_count ?? rawItem.schedulerOverdueCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1472,6 +1487,11 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     web_top_domains: compactWebTopDomains(rawItem.web_top_domains || rawItem.webTopDomains),
     visual_asset_count: Number.isFinite(visualAssetCount) ? visualAssetCount : null,
     visual_asset_buckets: compactVisualAssetBuckets(rawItem.visual_asset_buckets || rawItem.visualAssetBuckets),
+    scheduler_schedule_count: Number.isFinite(schedulerScheduleCount) ? schedulerScheduleCount : null,
+    scheduler_active_count: Number.isFinite(schedulerActiveCount) ? schedulerActiveCount : null,
+    scheduler_due_soon_count: Number.isFinite(schedulerDueSoonCount) ? schedulerDueSoonCount : null,
+    scheduler_overdue_count: Number.isFinite(schedulerOverdueCount) ? schedulerOverdueCount : null,
+    scheduler_type_counts: compactSchedulerTypeCounts(rawItem.scheduler_type_counts || rawItem.schedulerTypeCounts),
   };
 }
 
@@ -1958,6 +1978,68 @@ function activeVisualAssetCuriosityAdapter(context = {}) {
   };
 }
 
+function activeAutomationSchedulerCuriosityAdapter(context = {}) {
+  const reader = typeof context.schedulerCuriosityReader === 'function'
+    ? context.schedulerCuriosityReader
+    : readMiraAutomationSchedulerCuriosity;
+  const result = reader({
+    schedulerStatePaths: context.schedulerStatePaths,
+    limit: context.schedulerLimit || 24,
+  }, {
+    projectRoot: context.projectRoot,
+    schedulerStatePaths: context.schedulerStatePaths,
+    limit: context.schedulerLimit || 24,
+    nowMs: context.nowMs,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'automation_scheduler',
+      scope: 'local_automation_and_scheduler',
+      adapter_id: 'automation_scheduler_curiosity',
+      integration_strategy: 'existing_seam',
+      status: 'unavailable_in_this_runtime',
+      observation: `Scheduler state read was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Mira needs to see the local automation surface before turning curiosity into recurring inspection.',
+      hypothesis: 'The scheduler seam may exist, but its state file needs repair or a different read path before Mira can trust it.',
+      suggested_question: 'Which scheduler state path or IPC list seam should Mira inspect next?',
+      possible_action: 'Repair the read-only scheduler metadata path before creating, running, or updating any schedule.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_scheduler_metadata',
+      adapter_error: trimText(result?.reason || result?.error || 'scheduler_state_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const count = Number(result.schedule_count || 0);
+  const activeCount = Number(result.active_count || 0);
+  const dueSoonCount = Number(result.due_soon_count || 0);
+  const overdueCount = Number(result.overdue_count || 0);
+  const nextName = result.next_schedule?.name || null;
+  return {
+    source: 'automation_scheduler',
+    scope: 'local_automation_and_scheduler',
+    adapter_id: 'automation_scheduler_curiosity',
+    integration_strategy: 'existing_seam',
+    status: 'active',
+    observation: `Scheduler metadata read ${count} schedule(s); active=${activeCount}; due_soon=${dueSoonCount}; overdue=${overdueCount}; state=${result.state_found ? 'found' : 'missing_but_readable'}.`,
+    why_interesting: 'Mira can now inspect automation cadence before asking James to hand-run recurring curiosity work.',
+    hypothesis: nextName
+      ? `${nextName} is the next visible automation event worth comparing against current curiosity routes.`
+      : 'No scheduled automation currently stands out, so Mira needs a reviewed recurring curiosity routine rather than another manual scout.',
+    suggested_question: nextName
+      ? `Should Mira compare the next scheduled automation ${nextName} with the current direct-route frontier?`
+      : 'What quiet-interval curiosity burst should Mira propose for the scheduler first?',
+    possible_action: 'Use compact scheduler metadata to design a reviewed recurring curiosity burst; do not create, update, delete, or run schedules from scout output.',
+    route_hint: 'builder',
+    sensitivity_hint: 'local_scheduler_metadata',
+    scheduler_schedule_count: count,
+    scheduler_active_count: activeCount,
+    scheduler_due_soon_count: dueSoonCount,
+    scheduler_overdue_count: overdueCount,
+    scheduler_type_counts: result.type_counts || {},
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -1974,24 +2056,6 @@ function cheapParallelScoutsCuriosityAdapter(context = {}) {
     possible_action: 'Run curiosity-burst with a small source budget, then route the strongest internal follow-up from the burst output.',
     route_hint: 'builder',
     sensitivity_hint: 'local_runtime_planning',
-    no_mutation_performed: true,
-  };
-}
-
-function scheduledCuriosityBurstAdapter() {
-  return {
-    source: 'automation_scheduler',
-    scope: 'local_automation_and_scheduler',
-    adapter_id: 'scheduled_curiosity_burst',
-    integration_strategy: 'existing_seam',
-    status: 'adapter_not_built_yet',
-    observation: 'Curiosity burst is CLI-runnable now, but it is not yet attached to the existing scheduler quiet-interval seam.',
-    why_interesting: 'Scheduled bursts would let Mira notice local changes while James is away instead of waiting for manual prompts.',
-    hypothesis: 'The scheduler should call the same read-only burst path with a tight source budget and leave route output for internal review.',
-    suggested_question: 'Which scheduler event should run a read-only curiosity burst first: quiet interval, startup, or post-commit?',
-    possible_action: 'Wire ui/modules/scheduler.js or scheduler-handlers.js to invoke curiosity-burst internally with no external sends.',
-    route_hint: 'builder',
-    sensitivity_hint: 'local_scheduler_metadata',
     no_mutation_performed: true,
   };
 }
@@ -2065,7 +2129,7 @@ function defaultCuriosityAdapters() {
     activeVisualAssetCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.calendar_message_curiosity, 'calendars and messages'),
     activeEnvironmentCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.automation_scheduler_curiosity, 'automation and scheduler state'),
+    activeAutomationSchedulerCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.work_continuation_curiosity, 'work continuation and routing'),
     notImplementedCuriosityAdapter(byAdapter.mira_runtime_curiosity, 'Mira runtime growth loops'),
   ];
@@ -2189,6 +2253,9 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     visualAssetCuriosityReader: options.visualAssetCuriosityReader,
     visualAssetRoots: options.visualAssetRoots,
     visualAssetLimit: options.visualAssetLimit,
+    schedulerCuriosityReader: options.schedulerCuriosityReader,
+    schedulerStatePaths: options.schedulerStatePaths,
+    schedulerLimit: options.schedulerLimit,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -2274,7 +2341,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'images_screenshots_assets') return [activeVisualAssetCuriosityAdapter];
   if (source === 'environment_apps') return [activeEnvironmentCuriosityAdapter];
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
-  if (source === 'automation_scheduler') return [scheduledCuriosityBurstAdapter];
+  if (source === 'automation_scheduler') return [activeAutomationSchedulerCuriosityAdapter];
   return [];
 }
 
@@ -2373,6 +2440,9 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     visualAssetCuriosityReader: options.visualAssetCuriosityReader,
     visualAssetRoots: options.visualAssetRoots,
     visualAssetLimit: options.visualAssetLimit,
+    schedulerCuriosityReader: options.schedulerCuriosityReader,
+    schedulerStatePaths: options.schedulerStatePaths,
+    schedulerLimit: options.schedulerLimit,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,
@@ -2548,6 +2618,7 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   automation_scheduler: {
     priority: 66,
+    active_priority: 34,
     target_role: 'builder',
     reason: 'scheduler curiosity turns quiet-interval intent into recurring inspection',
   },

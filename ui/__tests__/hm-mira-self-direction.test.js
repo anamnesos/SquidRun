@@ -355,6 +355,16 @@ describe('hm-mira-self-direction CLI harness', () => {
           decision: 'unavailable_in_this_runtime',
           reason: 'visual_assets_missing',
         }),
+        schedulerCuriosityReader: () => ({
+          ok: true,
+          decision: 'scheduler_state_read_only',
+          schedule_count: 0,
+          active_count: 0,
+          due_soon_count: 0,
+          overdue_count: 0,
+          type_counts: {},
+          schedules: [],
+        }),
       },
     });
 
@@ -384,6 +394,7 @@ describe('hm-mira-self-direction CLI harness', () => {
       encoding: 'utf8',
       env: {
         ...process.env,
+        APPDATA: path.join(projectRoot, 'empty-appdata'),
         LOCALAPPDATA: path.join(projectRoot, 'empty-local-appdata'),
         SQUIDRUN_MIRA_BROWSER_HISTORY_HOME: path.join(projectRoot, 'empty-home'),
       },
@@ -452,6 +463,16 @@ describe('hm-mira-self-direction CLI harness', () => {
           decision: 'unavailable_in_this_runtime',
           reason: 'visual_assets_missing',
         }),
+        schedulerCuriosityReader: () => ({
+          ok: true,
+          decision: 'scheduler_state_read_only',
+          schedule_count: 0,
+          active_count: 0,
+          due_soon_count: 0,
+          overdue_count: 0,
+          type_counts: {},
+          schedules: [],
+        }),
       },
     });
 
@@ -492,6 +513,16 @@ describe('hm-mira-self-direction CLI harness', () => {
           result_count: 1,
           results: [{ nodeId: 'node-cli-memory', title: 'CLI burst memory' }],
         }),
+        schedulerCuriosityReader: () => ({
+          ok: true,
+          decision: 'scheduler_state_read_only',
+          schedule_count: 0,
+          active_count: 0,
+          due_soon_count: 0,
+          overdue_count: 0,
+          type_counts: {},
+          schedules: [],
+        }),
       },
     });
 
@@ -500,7 +531,7 @@ describe('hm-mira-self-direction CLI harness', () => {
       decision: 'route_selected',
       target_role: 'builder',
       source: 'automation_scheduler',
-      adapter_id: 'scheduled_curiosity_burst',
+      adapter_id: 'automation_scheduler_curiosity',
     }));
     expect(jsonResult.result.items.some((item) => item.source === 'cheap_parallel_scouts' && item.status === 'active')).toBe(true);
     expect(jsonResult.result.consequence_controls.external_send_performed).toBe(false);

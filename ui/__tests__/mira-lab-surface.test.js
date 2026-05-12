@@ -886,6 +886,18 @@ describe('Mira Lab sidecar surface', () => {
         latest_asset: { path: '.squidrun/screenshots/latest.png', width: 900, height: 760 },
         results: [],
       }),
+      schedulerCuriosityReader: () => ({
+        ok: true,
+        decision: 'scheduler_state_read_only',
+        state_found: true,
+        schedule_count: 2,
+        active_count: 1,
+        due_soon_count: 1,
+        overdue_count: 0,
+        type_counts: { interval: 1, event: 1 },
+        next_schedule: { name: 'Quiet interval curiosity burst' },
+        schedules: [],
+      }),
       environmentCuriosityReader: () => ({
         ok: true,
         decision: 'environment_health_read_only',
@@ -900,7 +912,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(4);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(3);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -959,6 +971,14 @@ describe('Mira Lab sidecar surface', () => {
       integration_strategy: 'native_adapter',
       visual_asset_count: 3,
       visual_asset_buckets: { screenshots: 2, generated_images: 1 },
+    }));
+    expect(bySource.automation_scheduler).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      scheduler_schedule_count: 2,
+      scheduler_active_count: 1,
+      scheduler_due_soon_count: 1,
+      scheduler_type_counts: { interval: 1, event: 1 },
     }));
     expect(bySource.environment_apps).toEqual(expect.objectContaining({
       status: 'active',
@@ -1050,6 +1070,16 @@ describe('Mira Lab sidecar surface', () => {
           contentExcerpt: 'Mira can ground a burst in memory.',
         }],
       }),
+      schedulerCuriosityReader: () => ({
+        ok: true,
+        decision: 'scheduler_state_read_only',
+        schedule_count: 0,
+        active_count: 0,
+        due_soon_count: 0,
+        overdue_count: 0,
+        type_counts: {},
+        schedules: [],
+      }),
       sendAgentMessage,
     });
 
@@ -1065,14 +1095,14 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.items.some((item) => item.source === 'cheap_parallel_scouts' && item.status === 'active')).toBe(true);
     expect(result.items.some((item) => (
       item.source === 'automation_scheduler'
-      && item.adapter_id === 'scheduled_curiosity_burst'
-      && item.status === 'adapter_not_built_yet'
+      && item.adapter_id === 'automation_scheduler_curiosity'
+      && item.status === 'active'
     ))).toBe(true);
     expect(result.route_output).toEqual(expect.objectContaining({
       decision: 'route_selected',
       target_role: 'builder',
       source: 'automation_scheduler',
-      adapter_id: 'scheduled_curiosity_burst',
+      adapter_id: 'automation_scheduler_curiosity',
       internal_only: true,
       external_send_performed: false,
     }));
@@ -1083,7 +1113,7 @@ describe('Mira Lab sidecar surface', () => {
       target: 'builder',
       internal_only: true,
     }));
-    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('scheduled_curiosity_burst'));
+    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('automation_scheduler_curiosity'));
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
@@ -1476,10 +1506,19 @@ describe('Mira Lab sidecar surface', () => {
       {
         item_id: 'mira-curiosity:scheduler-next',
         source: 'automation_scheduler',
-        adapter_id: 'scheduled_curiosity_loop',
+        adapter_id: 'automation_scheduler_curiosity',
+        status: 'active',
+        suggested_question: 'Which scheduler cadence matters?',
+        possible_action: 'Use compact scheduler metadata.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:work-continuation-next',
+        source: 'work_continuation',
+        adapter_id: 'work_continuation_curiosity',
         status: 'adapter_not_built_yet',
-        suggested_question: 'Which scheduler seam should Mira connect?',
-        possible_action: 'Build recurring curiosity scheduling.',
+        suggested_question: 'Which owned work route is stalled?',
+        possible_action: 'Build work continuation curiosity.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1496,8 +1535,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:scheduler-next',
-      source: 'automation_scheduler',
+      item_id: 'mira-curiosity:work-continuation-next',
+      source: 'work_continuation',
     }));
   });
 
