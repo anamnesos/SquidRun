@@ -61,6 +61,12 @@ describe('Mira source/action substrate plan', () => {
       status: 'active',
     }));
     expect(email.first_probe).toMatch(/label counts/i);
+    const webResearch = plan.sources.find((entry) => entry.source === 'web_research');
+    expect(webResearch).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(webResearch.first_probe).toMatch(/saved research artifact metadata/i);
   });
 
   test('chooses a concrete strategy and first probe for a routed source', () => {

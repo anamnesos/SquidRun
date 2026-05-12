@@ -867,6 +867,17 @@ describe('Mira Lab sidecar surface', () => {
           { id: 'STARRED', name: 'STARRED', messages_total: 2, messages_unread: 2, threads_unread: 2 },
         ],
       }),
+      webResearchCuriosityReader: () => ({
+        ok: true,
+        decision: 'web_research_artifacts_read_only',
+        result_count: 2,
+        top_domains: [{ domain: 'research.example.com', count: 2 }],
+        buckets: { workspace_research: 2 },
+        results: [
+          { path: 'workspace/research/ai-research.md', title: 'AI Research', domains: ['research.example.com'] },
+          { path: '.squidrun/coord/ui-research.md', title: 'UI Research', domains: ['research.example.com'] },
+        ],
+      }),
       environmentCuriosityReader: () => ({
         ok: true,
         decision: 'environment_health_read_only',
@@ -881,7 +892,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(6);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(5);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -897,7 +908,6 @@ describe('Mira Lab sidecar surface', () => {
       'existing_seam',
       'mcp_candidate',
       'native_adapter',
-      'scout_model_candidate',
     ]));
 
     const bySource = Object.fromEntries(result.items.map((item) => [item.source, item]));
@@ -930,7 +940,12 @@ describe('Mira Lab sidecar surface', () => {
       id: 'INBOX',
       messages_unread: 40,
     }));
-    expect(bySource.web_research.status).toBe('adapter_not_built_yet');
+    expect(bySource.web_research).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'native_adapter',
+      web_result_count: 2,
+    }));
+    expect(bySource.web_research.web_top_domains).toEqual([{ domain: 'research.example.com', count: 2 }]);
     expect(bySource.environment_apps).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
@@ -1430,9 +1445,18 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:web-next',
         source: 'web_research',
         adapter_id: 'web_research_curiosity',
+        status: 'active',
+        suggested_question: 'Which saved web trail matters?',
+        possible_action: 'Use compact web research metadata.',
+        route_hint: 'mira_lab',
+      },
+      {
+        item_id: 'mira-curiosity:visual-next',
+        source: 'images_screenshots_assets',
+        adapter_id: 'visual_asset_curiosity',
         status: 'adapter_not_built_yet',
-        suggested_question: 'Which web research seam should Mira connect?',
-        possible_action: 'Build web research curiosity.',
+        suggested_question: 'Which visual asset seam should Mira connect?',
+        possible_action: 'Build visual asset curiosity.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1449,8 +1473,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:web-next',
-      source: 'web_research',
+      item_id: 'mira-curiosity:visual-next',
+      source: 'images_screenshots_assets',
     }));
   });
 

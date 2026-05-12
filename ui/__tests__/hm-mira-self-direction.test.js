@@ -345,6 +345,11 @@ describe('hm-mira-self-direction CLI harness', () => {
           decision: 'unavailable_in_this_runtime',
           reason: 'email_connector_snapshot_missing',
         }),
+        webResearchCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'web_research_artifacts_missing',
+        }),
       },
     });
 
@@ -431,6 +436,11 @@ describe('hm-mira-self-direction CLI harness', () => {
           ok: false,
           decision: 'unavailable_in_this_runtime',
           reason: 'email_connector_snapshot_missing',
+        }),
+        webResearchCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'web_research_artifacts_missing',
         }),
       },
     });
