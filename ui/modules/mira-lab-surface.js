@@ -29,6 +29,9 @@ const {
 const {
   readMiraEnvironmentCuriosity,
 } = require('./mira-environment-curiosity');
+const {
+  readMiraBrowserHistoryCuriosity,
+} = require('./mira-browser-history-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -124,7 +127,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'self_direction_queue', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: '.squidrun/runtime/mira-self-direction-proposals.jsonl' },
   { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'recent_comms', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/scripts/hm-comms.js history --last 20, telegram-poller.js, sms-poller.js, external-notifications.js' },
   { source: 'memory', scope: 'local_memory_and_continuity', adapter_id: 'active_memory_tools_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-memory-curiosity.js compact read-only cognitive-memory retrieval, cognitive-memory-*, memory-search/retrieve, team-memory/*, memory-ingest/*, ui/scripts/hm-memory-api.js retrieve' },
-  { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'Chrome connector or local browser-history reader via mcp-bridge' },
+  { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-browser-history-curiosity.js compact read-only Chromium History DB metadata via temp-copy' },
   { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'Gmail connector or local email adapter via mcp-bridge' },
   { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'scout_model_candidate', existing_seam: 'browser-use/Chrome tools plus local research artifacts' },
   { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'screenshot handlers/scripts, ui/scripts/hm-screenshot.js, ui/modules/image-gen.js' },
@@ -1338,6 +1341,16 @@ function compactCuriosityMemoryTopResult(value) {
   };
 }
 
+function compactBrowserHistoryTopHosts(value) {
+  return asArray(value)
+    .map((entry) => ({
+      host: trimText(entry?.host) || null,
+      count: Number.isFinite(Number(entry?.count)) ? Number(entry.count) : null,
+    }))
+    .filter((entry) => entry.host)
+    .slice(0, 8);
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1356,6 +1369,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const sensitivityHint = trimText(rawItem.sensitivity_hint || rawItem.sensitivityHint || 'local_metadata_only') || 'local_metadata_only';
   const memoryResultCount = Number(rawItem.memory_result_count ?? rawItem.memoryResultCount);
   const environmentScore = Number(rawItem.environment_overall_score ?? rawItem.environmentOverallScore);
+  const browserResultCount = Number(rawItem.browser_result_count ?? rawItem.browserResultCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1394,6 +1408,10 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
       : null,
     environment_memory_sync_status: trimText(rawItem.environment_memory_sync_status || rawItem.environmentMemorySyncStatus) || null,
     environment_bridge_connection: trimText(rawItem.environment_bridge_connection || rawItem.environmentBridgeConnection) || null,
+    browser_result_count: Number.isFinite(browserResultCount) ? browserResultCount : null,
+    browser_top_hosts: compactBrowserHistoryTopHosts(rawItem.browser_top_hosts || rawItem.browserTopHosts),
+    browser_name: trimText(rawItem.browser_name || rawItem.browserName) || null,
+    browser_profile: trimText(rawItem.browser_profile || rawItem.browserProfile) || null,
   };
 }
 
@@ -1644,6 +1662,68 @@ function activeMemoryCuriosityAdapter(context = {}) {
   };
 }
 
+function activeBrowserHistoryCuriosityAdapter(context = {}) {
+  const reader = typeof context.browserHistoryCuriosityReader === 'function'
+    ? context.browserHistoryCuriosityReader
+    : readMiraBrowserHistoryCuriosity;
+  const result = reader({
+    historyPaths: context.browserHistoryPaths,
+    limit: context.browserHistoryLimit || 8,
+  }, {
+    projectRoot: context.projectRoot,
+    historyPaths: context.browserHistoryPaths,
+    limit: context.browserHistoryLimit || 8,
+    copyBeforeRead: context.browserHistoryCopyBeforeRead,
+    tempRoot: context.browserHistoryTempRoot,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'browser_history',
+      scope: 'local_browser_history',
+      adapter_id: 'browser_history_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'unavailable_in_this_runtime',
+      observation: `Browser history read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Recent browser trails can reveal what James is already exploring before he turns it into a prompt.',
+      hypothesis: 'Mira may be missing a local research trail, repeated domain, or practical next question from recent browsing.',
+      suggested_question: 'What browser-history source should Mira inspect next when this local profile is unavailable?',
+      possible_action: 'Verify the Chrome or Edge History DB path, then read only compact metadata from a temp copy.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_browser_history_metadata',
+      adapter_error: trimText(result?.reason || result?.error || 'browser_history_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const topHosts = asArray(result.top_hosts).slice(0, 8);
+  const hostText = topHosts.length > 0
+    ? topHosts.map((entry) => `${entry.host}:${entry.count}`).join(', ')
+    : 'none';
+  const topHost = topHosts[0]?.host || null;
+  return {
+    source: 'browser_history',
+    scope: 'local_browser_history',
+    adapter_id: 'browser_history_curiosity',
+    integration_strategy: 'native_adapter',
+    status: 'active',
+    observation: `Browser history read returned ${result.result_count || 0} compact recent metadata row(s) from ${result.browser || 'browser'}/${result.profile || 'profile'}; top hosts: ${hostText}.`,
+    why_interesting: 'Mira can now notice live local research trails and repeated web interests before James hand-describes them.',
+    hypothesis: topHost
+      ? `Recent visits around ${topHost} may point at an unspoken question, project, or decision trail.`
+      : 'The browser history source is connected, but the latest rows did not yield a strong host pattern.',
+    suggested_question: topHost
+      ? `What should Mira infer or ask from the recent ${topHost} browsing trail?`
+      : 'Which browser profile should Mira inspect next for a stronger browsing signal?',
+    possible_action: 'Use compact browser-history metadata as one curiosity signal, without cookies, auth stores, raw query strings, or browser mutation.',
+    route_hint: 'mira_lab',
+    sensitivity_hint: 'local_browser_history_metadata',
+    browser_result_count: result.result_count || 0,
+    browser_top_hosts: topHosts,
+    browser_name: result.browser || null,
+    browser_profile: result.profile || null,
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -1745,7 +1825,7 @@ function defaultCuriosityAdapters() {
     runtimeQueueCuriosityAdapter,
     recentCommsCuriosityAdapter,
     activeMemoryCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.browser_history_curiosity, 'browser history'),
+    activeBrowserHistoryCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.email_curiosity, 'email'),
     notImplementedCuriosityAdapter(byAdapter.web_research_curiosity, 'websites visited and research trails'),
     notImplementedCuriosityAdapter(byAdapter.visual_asset_curiosity, 'screenshots and visual assets'),
@@ -1860,6 +1940,11 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     recentCommsText: options.recentCommsText,
     memoryCuriosityReader: options.memoryCuriosityReader,
     memoryCuriosityQuery: options.memoryCuriosityQuery,
+    browserHistoryCuriosityReader: options.browserHistoryCuriosityReader,
+    browserHistoryPaths: options.browserHistoryPaths,
+    browserHistoryLimit: options.browserHistoryLimit,
+    browserHistoryCopyBeforeRead: options.browserHistoryCopyBeforeRead,
+    browserHistoryTempRoot: options.browserHistoryTempRoot,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -1915,6 +2000,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'repo_files',
   'runtime_comms',
   'memory',
+  'browser_history',
   'environment_apps',
   'cheap_parallel_scouts',
   'automation_scheduler',
@@ -1927,7 +2013,7 @@ function normalizeCuriosityBurstSources(payload = {}, options = {}) {
     .map((item) => trimText(item))
     .filter((item) => allowed.has(item));
   const unique = Array.from(new Set(values));
-  const maxSources = Math.max(1, Math.min(8, Number(payload.maxSources || options.maxSources || 6) || 6));
+  const maxSources = Math.max(1, Math.min(8, Number(payload.maxSources || options.maxSources || 7) || 7));
   return (unique.length > 0 ? unique : [...CURIOSITY_BURST_DEFAULT_SOURCES]).slice(0, maxSources);
 }
 
@@ -1935,6 +2021,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'repo_files') return [gitStatusCuriosityAdapter];
   if (source === 'runtime_comms') return [runtimeQueueCuriosityAdapter, recentCommsCuriosityAdapter];
   if (source === 'memory') return [activeMemoryCuriosityAdapter];
+  if (source === 'browser_history') return [activeBrowserHistoryCuriosityAdapter];
   if (source === 'environment_apps') return [activeEnvironmentCuriosityAdapter];
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
   if (source === 'automation_scheduler') return [scheduledCuriosityBurstAdapter];
@@ -1946,6 +2033,7 @@ function curiosityBurstRouteForItems(items = []) {
     automation_scheduler: 96,
     cheap_parallel_scouts: 88,
     memory: 76,
+    browser_history: 74,
     environment_apps: 70,
     runtime_comms: 64,
     repo_files: 42,
@@ -2017,6 +2105,11 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     recentCommsText: options.recentCommsText,
     memoryCuriosityReader: options.memoryCuriosityReader,
     memoryCuriosityQuery: options.memoryCuriosityQuery,
+    browserHistoryCuriosityReader: options.browserHistoryCuriosityReader,
+    browserHistoryPaths: options.browserHistoryPaths,
+    browserHistoryLimit: options.browserHistoryLimit,
+    browserHistoryCopyBeforeRead: options.browserHistoryCopyBeforeRead,
+    browserHistoryTempRoot: options.browserHistoryTempRoot,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,
@@ -2162,8 +2255,9 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   browser_history: {
     priority: 76,
+    active_priority: 40,
     target_role: 'builder',
-    reason: 'browser-history curiosity needs a connector before Mira can notice web trails',
+    reason: 'browser-history curiosity gives Mira compact local web-trail metadata without browser mutation',
   },
   email: {
     priority: 74,

@@ -844,6 +844,18 @@ describe('Mira Lab sidecar surface', () => {
           contentExcerpt: 'Mira can retrieve current lane memory before asking James.',
         }],
       }),
+      browserHistoryCuriosityReader: () => ({
+        ok: true,
+        decision: 'browser_history_read_only',
+        browser: 'chrome',
+        profile: 'Default',
+        result_count: 2,
+        top_hosts: [{ host: 'docs.example.com', count: 2 }],
+        results: [
+          { host: 'docs.example.com', title: 'Docs', safe_url: 'https://docs.example.com/guide' },
+          { host: 'squidrun.local', title: 'SquidRun', safe_url: 'https://squidrun.local/status' },
+        ],
+      }),
       environmentCuriosityReader: () => ({
         ok: true,
         decision: 'environment_health_read_only',
@@ -858,7 +870,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(8);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(7);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -888,8 +900,14 @@ describe('Mira Lab sidecar surface', () => {
     expect(bySource.repo_files.observation).toContain('2 visible git status entries');
     expect(result.items.some((item) => item.adapter_id === 'self_direction_queue' && item.observation.includes('pending_architect_review=1'))).toBe(true);
     expect(result.items.some((item) => item.adapter_id === 'recent_comms' && /repeated demand|recent comms/i.test(item.suggested_question))).toBe(true);
-    expect(bySource.browser_history.status).toBe('adapter_not_built_yet');
-    expect(bySource.browser_history.integration_strategy).toBe('mcp_candidate');
+    expect(bySource.browser_history).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'native_adapter',
+      browser_result_count: 2,
+      browser_name: 'chrome',
+      browser_profile: 'Default',
+    }));
+    expect(bySource.browser_history.browser_top_hosts).toEqual([{ host: 'docs.example.com', count: 2 }]);
     expect(bySource.email.status).toBe('adapter_not_built_yet');
     expect(bySource.web_research.status).toBe('adapter_not_built_yet');
     expect(bySource.environment_apps).toEqual(expect.objectContaining({
@@ -1373,9 +1391,18 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:browser-next',
         source: 'browser_history',
         adapter_id: 'browser_history_curiosity',
+        status: 'active',
+        suggested_question: 'Which recent browser trail matters?',
+        possible_action: 'Use compact browser-history metadata.',
+        route_hint: 'mira_lab',
+      },
+      {
+        item_id: 'mira-curiosity:email-next',
+        source: 'email',
+        adapter_id: 'email_curiosity',
         status: 'adapter_not_built_yet',
-        suggested_question: 'Which browser history seam should Mira connect?',
-        possible_action: 'Build browser-history curiosity.',
+        suggested_question: 'Which email seam should Mira connect?',
+        possible_action: 'Build email curiosity.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1392,8 +1419,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:browser-next',
-      source: 'browser_history',
+      item_id: 'mira-curiosity:email-next',
+      source: 'email',
     }));
   });
 
