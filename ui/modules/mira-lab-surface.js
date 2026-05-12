@@ -46,6 +46,7 @@ const MIRA_SELF_DIRECTION_OUTCOME_SCHEMA = 'squidrun.mira_lab.self_direction_out
 const MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA = 'squidrun.mira_lab.confidence_source_check_v0';
 const MIRA_AUTHORITY_SCOREBOARD_SCHEMA = 'squidrun.mira_lab.authority_scoreboard_v0';
 const MIRA_REFLEXION_LESSONS_SCHEMA = 'squidrun.mira_lab.reflexion_lessons_v0';
+const MIRA_CURRICULUM_SKILLS_SCHEMA = 'squidrun.mira_lab.curriculum_skills_v0';
 const MIRA_CURIOSITY_ITEM_SCHEMA = 'squidrun.mira_lab.curiosity_item_v0';
 const MIRA_CURIOSITY_BURST_SCHEMA = 'squidrun.mira_lab.curiosity_burst_v0';
 const MIRA_DIRECT_ROUTE_SCHEMA = 'squidrun.mira_lab.direct_route_v0';
@@ -397,6 +398,10 @@ function curiosityItemsPath(projectRoot) {
 
 function curiosityBurstsPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-curiosity-bursts.jsonl');
+}
+
+function curriculumSkillsPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-curriculum-skills.jsonl');
 }
 
 function miraDirectRoutesPath(projectRoot) {
@@ -1829,12 +1834,12 @@ function buildAccelerationCuriosityItems(context) {
       scope: 'automatic_skill_library',
       adapter_id: 'curriculum_skill_library_curiosity',
       integration_strategy: 'native_adapter',
-      status: 'adapter_not_built_yet',
-      observation: 'Mira can propose improvements, but does not yet grow an automatic curriculum or reusable skill library from successful curiosity loops.',
+      status: 'active',
+      observation: 'Mira now has a curriculum extractor that turns successful proposals, direct routes, bursts, and lessons into reusable skill candidates.',
       why_interesting: 'A curriculum turns one-off curiosity into compounding capability instead of more chat.',
-      hypothesis: 'Repeated successful scout-route-implement loops should become named skills Mira can reuse.',
-      suggested_question: 'What small curiosity skill should Mira practice repeatedly until it graduates into the default toolkit?',
-      possible_action: 'Add a curriculum JSONL over successful curiosity items and route candidates into a reusable skill-library review.',
+      hypothesis: 'Repeated successful scout-route-implement loops can graduate into skills Mira reuses before asking for another bespoke route.',
+      suggested_question: 'Which curriculum skill candidate should Mira practice or promote next?',
+      possible_action: 'Run hm-mira-self-direction curriculum and use the top skill candidate for the next reusable behavior.',
       route_hint: 'architect',
       sensitivity_hint: 'local_capability_growth_metadata',
     },
@@ -2151,6 +2156,7 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   voyager_curriculum: {
     priority: 78,
+    active_priority: 44,
     target_role: 'architect',
     reason: 'successful scout-route-implement loops need curriculum selection before default promotion',
   },
@@ -3759,6 +3765,178 @@ function extractMiraReflexionLessons(payload = {}, options = {}) {
   };
 }
 
+function curriculumSkillName(value, fallback = 'mira_skill') {
+  const source = trimText(value || fallback).toLowerCase();
+  const words = source.match(/[a-z0-9]+/g) || [];
+  return (words.slice(0, 7).join('_') || fallback).slice(0, 80);
+}
+
+function curriculumEvidenceList(...values) {
+  const flattened = values.flatMap((value) => {
+    if (Array.isArray(value)) return value;
+    return [value];
+  });
+  return Array.from(new Set(flattened.map(trimText).filter(Boolean))).slice(0, 12);
+}
+
+function buildCurriculumCandidate(raw = {}) {
+  const skillName = curriculumSkillName(raw.skill_name || raw.title || raw.source_key || raw.desired_change);
+  const sourceKind = trimText(raw.source_kind || 'curriculum_signal') || 'curriculum_signal';
+  return {
+    skill_id: `mira-skill:${stableHash({ sourceKind, skillName, key: raw.source_key || raw.proposal_id || raw.route_id || raw.burst_id }).slice(0, 16)}`,
+    skill_name: skillName,
+    source_kind: sourceKind,
+    source_key: trimText(raw.source_key || raw.proposal_id || raw.route_id || raw.burst_id || skillName) || skillName,
+    status: trimText(raw.status || 'ready_to_practice') || 'ready_to_practice',
+    proposal_id: trimText(raw.proposal_id) || null,
+    source: trimText(raw.source) || null,
+    adapter_id: trimText(raw.adapter_id) || null,
+    target_role: trimText(raw.target_role) || null,
+    times_observed: Math.max(1, Number(raw.times_observed || 1) || 1),
+    desired_change: oneLine(raw.desired_change, 260) || null,
+    lesson: oneLine(raw.lesson, 320) || null,
+    next_behavior: oneLine(raw.next_behavior, 240) || oneLine(raw.practice_next, 240) || 'Practice this pattern on the next matching Mira lane.',
+    practice_trigger: oneLine(raw.practice_trigger, 220) || 'Use when a similar Mira route, proposal, or scout result appears.',
+    graduation_metric: oneLine(raw.graduation_metric, 220) || 'Promote after two successful uses with no false-positive or rollback outcome.',
+    evidence: curriculumEvidenceList(raw.evidence, raw.route_id, raw.burst_id, raw.proposal_id),
+  };
+}
+
+function mergeCurriculumCandidate(map, raw) {
+  const candidate = buildCurriculumCandidate(raw);
+  const key = `${candidate.source_kind}:${candidate.source || ''}:${candidate.adapter_id || ''}:${candidate.skill_name}`;
+  const existing = map.get(key);
+  if (!existing) {
+    map.set(key, candidate);
+    return;
+  }
+  existing.times_observed += candidate.times_observed;
+  existing.evidence = curriculumEvidenceList(existing.evidence, candidate.evidence);
+  existing.next_behavior = existing.next_behavior || candidate.next_behavior;
+  existing.practice_trigger = existing.practice_trigger || candidate.practice_trigger;
+}
+
+function extractMiraCurriculumSkills(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const logPath = curriculumSkillsPath(projectRoot);
+  const proposals = readJsonl(selfDirectionQueuePath(projectRoot));
+  const reviews = readJsonl(selfDirectionReviewAuditPath(projectRoot));
+  const outcomes = readJsonl(selfDirectionOutcomePath(projectRoot));
+  const routes = readJsonl(miraDirectRoutesPath(projectRoot));
+  const bursts = readJsonl(curiosityBurstsPath(projectRoot));
+  const reflexion = extractMiraReflexionLessons({ generatedAt }, { projectRoot, generatedAt });
+  const groupedReviews = reviewsByProposalId(reviews);
+  const groupedOutcomes = outcomesByProposalId(outcomes);
+  const candidates = new Map();
+
+  for (const proposal of proposals) {
+    const proposalId = trimText(proposal.proposal_id || proposal.proposalId);
+    if (!proposalId) continue;
+    const outcomeScore = proposalOutcomeForScoreboard(
+      proposal,
+      groupedReviews.get(proposalId) || [],
+      groupedOutcomes.get(proposalId) || [],
+    );
+    if (!outcomeScore.implemented) continue;
+    mergeCurriculumCandidate(candidates, {
+      source_kind: 'implemented_proposal',
+      source_key: proposalId,
+      proposal_id: proposalId,
+      skill_name: proposal.skill_name || proposal.desired_change || proposal.voice_text,
+      desired_change: proposal.desired_change || proposal.voice_text,
+      next_behavior: 'Use the implemented capability before proposing another custom fix in this lane.',
+      practice_trigger: `When target areas recur: ${targetAreasForScoreboard(proposal).join(', ') || 'unknown'}.`,
+      graduation_metric: 'Graduate after this implemented proposal pattern succeeds twice with explicit outcome evidence.',
+      evidence: curriculumEvidenceList(proposal.evidence, proposalId),
+    });
+  }
+
+  for (const lesson of reflexion.lessons || []) {
+    if (!['successful_implementation_with_notes', 'routed_with_notes'].includes(lesson.category)) continue;
+    mergeCurriculumCandidate(candidates, {
+      source_kind: 'reflexion_lesson',
+      source_key: lesson.proposal_id,
+      proposal_id: lesson.proposal_id,
+      skill_name: lesson.desired_change,
+      desired_change: lesson.desired_change,
+      lesson: lesson.lesson,
+      next_behavior: lesson.next_behavior,
+      practice_trigger: 'When a new Mira proposal resembles this learned review outcome.',
+      graduation_metric: 'Keep if the next matching route is implemented or accepted without false-positive review.',
+      evidence: curriculumEvidenceList(lesson.evidence, lesson.proposal_id),
+    });
+  }
+
+  for (const route of routes) {
+    if (route?.decision !== 'routed') continue;
+    const item = route.selected_item || {};
+    mergeCurriculumCandidate(candidates, {
+      source_kind: 'direct_route_pattern',
+      source_key: `${trimText(item.source)}:${trimText(item.adapter_id)}`,
+      route_id: route.route_id,
+      source: item.source,
+      adapter_id: item.adapter_id,
+      target_role: route.target_role || route.route_target,
+      skill_name: `${item.source || 'route'} ${item.adapter_id || ''} direct route`,
+      lesson: route.reason,
+      next_behavior: item.possible_action,
+      practice_trigger: item.suggested_question,
+      graduation_metric: 'Promote if repeated direct routes for this source lead to implemented outcomes.',
+      evidence: curriculumEvidenceList(route.route_id, item.item_id),
+    });
+  }
+
+  for (const burst of bursts) {
+    const route = burst.route_output || {};
+    if (burst?.decision !== 'burst_completed' || route.decision !== 'route_selected') continue;
+    mergeCurriculumCandidate(candidates, {
+      source_kind: 'curiosity_burst_pattern',
+      source_key: `${trimText(route.source)}:${trimText(route.adapter_id)}`,
+      burst_id: burst.burst_id,
+      source: route.source,
+      adapter_id: route.adapter_id,
+      target_role: route.target_role,
+      skill_name: `${route.source || 'burst'} ${route.adapter_id || ''} curiosity burst`,
+      lesson: route.reason,
+      next_behavior: route.possible_action,
+      practice_trigger: route.suggested_question,
+      graduation_metric: 'Promote after two bounded bursts pick useful follow-ups without external action.',
+      evidence: curriculumEvidenceList(burst.burst_id, route.source, route.adapter_id),
+    });
+  }
+
+  const skills = Array.from(candidates.values())
+    .sort((left, right) => {
+      if (right.times_observed !== left.times_observed) return right.times_observed - left.times_observed;
+      return left.skill_name.localeCompare(right.skill_name);
+    })
+    .slice(0, Math.max(1, Math.min(24, Number(payload.limit || options.limit || 12) || 12)));
+
+  const result = {
+    schema: MIRA_CURRICULUM_SKILLS_SCHEMA,
+    ok: true,
+    decision: 'curriculum_skills_extracted',
+    generated_at: generatedAt,
+    curriculum_log_path: logPath,
+    skill_count: skills.length,
+    skills,
+    applied: false,
+    internal_only: true,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      curriculum_log_write_performed: true,
+      deploy_trade_customer_auth_action_performed: false,
+    },
+  };
+  appendJsonl(logPath, result);
+  return result;
+}
+
 module.exports = {
   AGENT_ROLES,
   MIRA_LAB_EVAL_SCHEMA,
@@ -3772,6 +3950,7 @@ module.exports = {
   MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_CURIOSITY_BURST_SCHEMA,
+  MIRA_CURRICULUM_SKILLS_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_DIRECT_ROUTE_SCHEMA,
@@ -3791,6 +3970,7 @@ module.exports = {
   buildMiraLabPromptReply,
   buildMiraSelfDirectionProposal,
   classifyMiraReplyConfidenceSource,
+  extractMiraCurriculumSkills,
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
@@ -3804,6 +3984,7 @@ module.exports = {
   buildMiraLabTurn,
   exportMiraLabTranscript,
   curiosityBurstsPath,
+  curriculumSkillsPath,
   replyAuditPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
