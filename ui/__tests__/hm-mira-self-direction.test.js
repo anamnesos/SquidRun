@@ -7,7 +7,11 @@ const { spawnSync } = require('child_process');
 
 const driver = require('../scripts/hm-mira-self-direction');
 const {
+  MIRA_CURIOSITY_ITEM_SCHEMA,
+  curiosityItemsPath,
+  miraDirectRoutesPath,
   replyAuditPath,
+  selfDirectionOutcomePath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
 } = require('../modules/mira-lab-surface');
@@ -197,6 +201,72 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(textRun.stdout).toContain('next=observe');
   });
 
+  test('outcome CLI records implementation status and scoreboard consumes it', async () => {
+    const projectRoot = tempProject();
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:cli-outcome',
+      generated_at: '2026-05-12T08:00:00.000Z',
+      target_areas: ['tests'],
+      review_status: 'routed',
+      reviewed_at: '2026-05-12T08:03:00.000Z',
+      route_targets: ['builder'],
+      desired_change: 'Record implementation outcome explicitly.',
+      review_note: 'reviewed without implementation keywords',
+    });
+    appendJsonl(selfDirectionReviewAuditPath(projectRoot), {
+      proposal_id: 'mira-self-direction:cli-outcome',
+      action: 'routed',
+      generated_at: '2026-05-12T08:03:00.000Z',
+      route_targets: ['builder'],
+      note: 'reviewed',
+    });
+
+    const outcomeResult = await driver.run([
+      'outcome',
+      '--proposal-id', 'mira-self-direction:cli-outcome',
+      '--status', 'implemented',
+      '--evidence', 'commit=abc123',
+      '--note', 'landed in local tests',
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      options: {
+        generatedAt: '2026-05-12T08:30:00.000Z',
+      },
+    });
+
+    expect(outcomeResult.result.decision).toBe('outcome_recorded');
+    expect(outcomeResult.result.outcome_status).toBe('implemented');
+    expect(outcomeResult.result.applied).toBe(false);
+    expect(outcomeResult.result.consequence_controls.external_send_performed).toBe(false);
+    expect(readJsonl(selfDirectionOutcomePath(projectRoot))).toHaveLength(1);
+
+    const scoreboard = await driver.run([
+      'scoreboard',
+      '--project-root', projectRoot,
+      '--json',
+    ]);
+    const testsLane = scoreboard.result.lanes.find((lane) => lane.lane === 'tests');
+    expect(testsLane).toEqual(expect.objectContaining({
+      proposed: 1,
+      reviewed: 1,
+      routed: 1,
+      implemented: 1,
+    }));
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'outcome',
+      '--proposal-id', 'mira-self-direction:cli-outcome',
+      '--status', 'needs_followup',
+      '--project-root', projectRoot,
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=outcome_recorded');
+    expect(textRun.stdout).toContain('outcome_status=needs_followup');
+  });
+
   test('curiosity-scout CLI records local curiosity items without external action', async () => {
     const projectRoot = tempProject();
     appendJsonl(selfDirectionQueuePath(projectRoot), {
@@ -271,5 +341,54 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(sendAgentMessage.mock.calls[0][1]).not.toMatch(/\btelegram|sms|external-send|customer|deploy|trade\b/i);
     expect(result.result.consequence_controls.external_send_performed).toBe(false);
     expect(result.result.no_mutation_performed).toBe(true);
+  });
+
+  test('direct-route CLI lets Mira pick and send the next internal handoff', async () => {
+    const projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:cli-code-mode',
+      generated_at: '2026-05-12T12:10:00.000Z',
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+      status: 'adapter_not_built_yet',
+      integration_strategy: 'scout_model_candidate',
+      suggested_question: 'What read-only code-mode wrapper should Mira get first?',
+      possible_action: 'Route Builder to build the wrapper.',
+      route_hint: 'builder',
+      sensitivity_hint: 'read_only_code_mode_design',
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const jsonResult = await driver.run([
+      'direct-route',
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      sendAgentMessage,
+      options: {
+        generatedAt: '2026-05-12T12:11:00.000Z',
+      },
+    });
+
+    expect(jsonResult.result.decision).toBe('routed');
+    expect(jsonResult.result.target_role).toBe('builder');
+    expect(jsonResult.result.selected_item.source).toBe('code_mode_exploration');
+    expect(jsonResult.result.dispatch.status).toBe('sent');
+    expect(jsonResult.result.consequence_controls.external_send_performed).toBe(false);
+    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('(MIRA DIRECT ROUTE)'));
+    expect(readJsonl(miraDirectRoutesPath(projectRoot))).toHaveLength(1);
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'direct-route',
+      '--project-root', projectRoot,
+      '--no-dispatch',
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=routed');
+    expect(textRun.stdout).toContain('target=builder');
+    expect(textRun.stdout).toContain('source=code_mode_exploration');
   });
 });

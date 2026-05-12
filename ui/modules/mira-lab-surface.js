@@ -32,15 +32,19 @@ const MIRA_LAB_PROMPT_REPLY_SCHEMA = 'squidrun.mira_lab.prompt_reply_v0';
 const MIRA_LAB_REPLY_AUDIT_SCHEMA = 'squidrun.mira_lab.reply_audit_v0';
 const MIRA_SELF_DIRECTION_SCHEMA = 'squidrun.mira_lab.self_direction_proposal_v0';
 const MIRA_SELF_DIRECTION_REVIEW_SCHEMA = 'squidrun.mira_lab.self_direction_review_v0';
+const MIRA_SELF_DIRECTION_OUTCOME_SCHEMA = 'squidrun.mira_lab.self_direction_outcome_v0';
 const MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA = 'squidrun.mira_lab.confidence_source_check_v0';
 const MIRA_AUTHORITY_SCOREBOARD_SCHEMA = 'squidrun.mira_lab.authority_scoreboard_v0';
 const MIRA_CURIOSITY_ITEM_SCHEMA = 'squidrun.mira_lab.curiosity_item_v0';
+const MIRA_DIRECT_ROUTE_SCHEMA = 'squidrun.mira_lab.direct_route_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
+const MIRA_DIRECT_ROUTE_TARGETS = Object.freeze(['architect', 'builder', 'oracle', 'mira_lab']);
 const MIRA_LAB_PROMPT_REPLY_DECISIONS = Object.freeze(['pass', 'fail', 'blocked']);
 const MIRA_SELF_DIRECTION_DECISIONS = Object.freeze(['staged', 'rejected', 'blocked']);
 const MIRA_SELF_DIRECTION_REVIEW_ACTIONS = Object.freeze(['accepted', 'rejected', 'routed']);
+const MIRA_SELF_DIRECTION_OUTCOME_STATUSES = Object.freeze(['implemented', 'not_implemented', 'false_positive', 'needs_followup']);
 const NAME_SWAP_PATTERN =
   /\b(as mira|i am mira,? (?:an|your) ai|as an ai|language model|happy to help|assist you|how can i help|safe next step)\b/i;
 const LAB_BACKCHANNEL_PREFIX = 'MIRA-LAB';
@@ -370,8 +374,16 @@ function selfDirectionReviewAuditPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-self-direction-reviews.jsonl');
 }
 
+function selfDirectionOutcomePath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-self-direction-outcomes.jsonl');
+}
+
 function curiosityItemsPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-curiosity-items.jsonl');
+}
+
+function miraDirectRoutesPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-direct-routes.jsonl');
 }
 
 function normalizeRequesterPane(value) {
@@ -919,6 +931,87 @@ async function reviewMiraSelfDirectionProposal(payload = {}, options = {}) {
   };
 }
 
+function normalizeSelfDirectionOutcomeStatus(value) {
+  const status = trimText(value).toLowerCase().replace(/[-\s]+/g, '_');
+  return MIRA_SELF_DIRECTION_OUTCOME_STATUSES.includes(status) ? status : null;
+}
+
+function recordMiraSelfDirectionOutcome(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const queuePath = selfDirectionQueuePath(projectRoot);
+  const outcomePath = selfDirectionOutcomePath(projectRoot);
+  const proposalId = trimText(payload.proposalId || payload.proposal_id);
+  const outcomeStatus = normalizeSelfDirectionOutcomeStatus(payload.status || payload.outcome || payload.outcome_status);
+  if (!proposalId || !outcomeStatus) {
+    return {
+      schema: MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: !proposalId ? 'missing_proposal_id' : 'unsupported_outcome_status',
+      outcome_path: outcomePath,
+    };
+  }
+  const proposals = readJsonl(queuePath);
+  const proposal = proposals.find((entry) => entry.proposal_id === proposalId);
+  if (!proposal) {
+    return {
+      schema: MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: 'proposal_not_found',
+      outcome_path: outcomePath,
+    };
+  }
+  const evidence = asArray(payload.evidence || payload.evidence_refs || payload.evidenceRefs)
+    .map((item) => trimText(item))
+    .filter(Boolean)
+    .slice(0, 8);
+  const note = trimText(payload.note || payload.outcome_note || payload.review_note) || null;
+  const recordedBy = normalizeRequesterPane(payload.recordedBy || payload.recorded_by || 'architect') || 'architect';
+  const entry = {
+    schema: MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
+    outcome_id: `mira-self-direction-outcome:${stableHash({
+      generatedAt,
+      proposalId,
+      outcomeStatus,
+      evidence,
+      note,
+    }).slice(0, 16)}`,
+    generated_at: generatedAt,
+    proposal_id: proposalId,
+    outcome_status: outcomeStatus,
+    recorded_by: recordedBy,
+    target_areas: targetAreasForScoreboard(proposal),
+    evidence,
+    note,
+    applied: false,
+    no_mutation_performed: true,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+      durable_product_change_performed: false,
+    },
+  };
+  appendJsonl(outcomePath, entry);
+  return {
+    schema: MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
+    ok: true,
+    decision: 'outcome_recorded',
+    outcome_id: entry.outcome_id,
+    proposal_id: proposalId,
+    outcome_status: outcomeStatus,
+    outcome: entry,
+    outcome_path: outcomePath,
+    applied: false,
+    no_mutation_performed: true,
+    consequence_controls: entry.consequence_controls,
+  };
+}
+
 function parseTimestampMs(value) {
   const ms = Date.parse(trimText(value));
   return Number.isFinite(ms) ? ms : null;
@@ -953,6 +1046,17 @@ function reviewsByProposalId(reviewEntries = []) {
   return grouped;
 }
 
+function outcomesByProposalId(outcomeEntries = []) {
+  const grouped = new Map();
+  for (const outcome of outcomeEntries) {
+    const proposalId = trimText(outcome?.proposal_id || outcome?.proposalId);
+    if (!proposalId) continue;
+    if (!grouped.has(proposalId)) grouped.set(proposalId, []);
+    grouped.get(proposalId).push(outcome);
+  }
+  return grouped;
+}
+
 function targetAreasForScoreboard(entry = {}) {
   const explicit = asArray(entry.target_areas || entry.targetAreas)
     .map(normalizeTargetArea)
@@ -968,9 +1072,14 @@ function targetAreasForScoreboard(entry = {}) {
   return inferred.length > 0 ? Array.from(new Set(inferred)) : ['unclassified'];
 }
 
-function proposalOutcomeForScoreboard(entry = {}, reviews = []) {
+function proposalOutcomeForScoreboard(entry = {}, reviews = [], outcomes = []) {
   const reviewStatus = trimText(entry.review_status).toLowerCase();
   const reviewActions = reviews.map((review) => trimText(review.action).toLowerCase()).filter(Boolean);
+  const outcomeStatuses = outcomes.map((outcome) => normalizeSelfDirectionOutcomeStatus(outcome.outcome_status || outcome.status)).filter(Boolean);
+  const firstOutcome = outcomes
+    .map((outcome) => ({ outcome, ms: parseTimestampMs(outcome.generated_at || outcome.recorded_at) }))
+    .filter((item) => item.ms !== null)
+    .sort((left, right) => left.ms - right.ms)[0] || null;
   const notes = [
     entry.review_note,
     entry.note,
@@ -981,10 +1090,12 @@ function proposalOutcomeForScoreboard(entry = {}, reviews = []) {
   const rejected = reviewStatus === 'rejected_by_architect' || reviewActions.includes('rejected');
   const falsePositive = reviewStatus === 'false_positive'
     || reviewActions.includes('false_positive')
+    || outcomeStatuses.includes('false_positive')
     || reviewTextIndicatesFalsePositive(...notes);
   const implemented = entry.implemented === true
     || Boolean(entry.implemented_at || entry.implementation_commit || entry.commit_hash)
     || reviews.some((review) => review.implemented === true || review.implemented_at || review.implementation_commit || review.commit_hash)
+    || outcomeStatuses.includes('implemented')
     || reviewTextIndicatesImplementation(...notes);
   const proposedAt = parseTimestampMs(entry.generated_at);
   const firstReview = reviews
@@ -995,7 +1106,7 @@ function proposalOutcomeForScoreboard(entry = {}, reviews = []) {
     .map((review) => ({ review, ms: parseTimestampMs(review.generated_at || review.reviewed_at) }))
     .filter((item) => item.ms !== null && trimText(item.review.action).toLowerCase() === 'routed')
     .sort((left, right) => left.ms - right.ms)[0] || null;
-  const reviewedAt = parseTimestampMs(entry.reviewed_at) ?? firstReview?.ms ?? null;
+  const reviewedAt = parseTimestampMs(entry.reviewed_at) ?? firstReview?.ms ?? firstOutcome?.ms ?? null;
   const routedAt = routed
     ? (routedReview?.ms ?? parseTimestampMs(entry.reviewed_at))
     : null;
@@ -1005,7 +1116,7 @@ function proposalOutcomeForScoreboard(entry = {}, reviews = []) {
     rejected,
     false_positive: falsePositive,
     implemented,
-    reviewed: accepted || routed || rejected || falsePositive || reviewedAt !== null,
+    reviewed: accepted || routed || rejected || falsePositive || outcomeStatuses.length > 0 || reviewedAt !== null,
     time_to_review_ms: proposedAt !== null && reviewedAt !== null && reviewedAt >= proposedAt ? reviewedAt - proposedAt : null,
     time_to_route_ms: proposedAt !== null && routedAt !== null && routedAt >= proposedAt ? routedAt - proposedAt : null,
   };
@@ -1054,9 +1165,12 @@ function buildMiraAuthorityScoreboard(payload = {}, options = {}) {
   const projectRoot = projectRootFromOptions(options, payload);
   const queuePath = selfDirectionQueuePath(projectRoot);
   const reviewPath = selfDirectionReviewAuditPath(projectRoot);
+  const outcomePath = selfDirectionOutcomePath(projectRoot);
   const proposals = readJsonl(queuePath);
   const reviews = readJsonl(reviewPath);
+  const outcomes = readJsonl(outcomePath);
   const groupedReviews = reviewsByProposalId(reviews);
+  const groupedOutcomes = outcomesByProposalId(outcomes);
   const laneMap = new Map();
 
   function laneMetrics(area) {
@@ -1082,7 +1196,11 @@ function buildMiraAuthorityScoreboard(payload = {}, options = {}) {
   for (const proposal of proposals) {
     const proposalId = trimText(proposal.proposal_id || proposal.proposalId);
     if (!proposalId) continue;
-    const outcome = proposalOutcomeForScoreboard(proposal, groupedReviews.get(proposalId) || []);
+    const outcome = proposalOutcomeForScoreboard(
+      proposal,
+      groupedReviews.get(proposalId) || [],
+      groupedOutcomes.get(proposalId) || [],
+    );
     for (const area of targetAreasForScoreboard(proposal)) {
       const metrics = laneMetrics(area);
       metrics.proposed += 1;
@@ -1133,6 +1251,7 @@ function buildMiraAuthorityScoreboard(payload = {}, options = {}) {
     generated_at: generatedAt,
     review_queue_path: queuePath,
     review_audit_path: reviewPath,
+    outcome_path: outcomePath,
     lane_count: lanes.length,
     lanes,
     applied: false,
@@ -1580,6 +1699,319 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
       deploy_trade_customer_auth_action_performed: false,
     },
   };
+}
+
+const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
+  code_mode_exploration: {
+    priority: 100,
+    target_role: 'builder',
+    reason: 'read-only search-execute is the fastest bridge from broad curiosity to real inspection',
+  },
+  source_action_substrate: {
+    priority: 96,
+    target_role: 'builder',
+    reason: 'source/action substrate turns many dormant curiosity arms into one usable capability surface',
+  },
+  implementation_outcomes: {
+    priority: 94,
+    target_role: 'builder',
+    reason: 'explicit implementation outcomes give the authority scoreboard real fitness data',
+  },
+  memory: {
+    priority: 88,
+    target_role: 'builder',
+    reason: 'active memory retrieval lets Mira inspect continuity without waiting for James to restate it',
+  },
+  reflexion_lessons: {
+    priority: 84,
+    target_role: 'oracle',
+    reason: 'review traces should become compact lessons before the next initiative cycle',
+  },
+  cheap_parallel_scouts: {
+    priority: 82,
+    target_role: 'builder',
+    reason: 'parallel scouting is the speed path for curiosity over broad sources',
+  },
+  voyager_curriculum: {
+    priority: 78,
+    target_role: 'architect',
+    reason: 'successful scout-route-implement loops need curriculum selection before default promotion',
+  },
+  browser_history: {
+    priority: 76,
+    target_role: 'builder',
+    reason: 'browser-history curiosity needs a connector before Mira can notice web trails',
+  },
+  email: {
+    priority: 74,
+    target_role: 'builder',
+    reason: 'email curiosity needs a connector before Mira can inspect message context',
+  },
+  web_research: {
+    priority: 72,
+    target_role: 'builder',
+    reason: 'web research needs a scout adapter instead of hand-fed links',
+  },
+  images_screenshots_assets: {
+    priority: 70,
+    target_role: 'builder',
+    reason: 'visual curiosity needs a source adapter over screenshots and assets',
+  },
+  environment_apps: {
+    priority: 68,
+    target_role: 'builder',
+    reason: 'environment curiosity needs native runtime/app-state adapters',
+  },
+  automation_scheduler: {
+    priority: 66,
+    target_role: 'builder',
+    reason: 'scheduler curiosity turns quiet-interval intent into recurring inspection',
+  },
+  work_continuation: {
+    priority: 64,
+    target_role: 'builder',
+    reason: 'work continuation curiosity needs a background routing seam',
+  },
+  mira_runtime: {
+    priority: 62,
+    target_role: 'builder',
+    reason: 'Mira runtime growth loops need native adapter wiring',
+  },
+  runtime_comms: {
+    priority: 42,
+    target_role: 'architect',
+    reason: 'recent comms can expose route pressure and repeated friction',
+  },
+  repo_files: {
+    priority: 36,
+    target_role: 'architect',
+    reason: 'repo metadata can indicate unfinished local work but is weaker than capability gaps',
+  },
+});
+
+function normalizeDirectRouteTarget(value) {
+  const target = trimText(value).toLowerCase();
+  return MIRA_DIRECT_ROUTE_TARGETS.includes(target) ? target : null;
+}
+
+function directRoutePlanForItem(item = {}) {
+  const source = trimText(item.source);
+  const plan = DIRECT_ROUTE_SOURCE_PLAN[source] || null;
+  const hintedTarget = normalizeDirectRouteTarget(item.route_hint || item.routeHint);
+  const rawHint = trimText(item.route_hint || item.routeHint);
+  const targetRole = normalizeDirectRouteTarget(plan?.target_role) || hintedTarget || 'architect';
+  const unsupportedRouteHint = Boolean(rawHint && !hintedTarget);
+  return {
+    priority: Number.isFinite(Number(plan?.priority)) ? Number(plan.priority) : 20,
+    target_role: targetRole,
+    reason: plan?.reason || 'Mira selected a reviewable internal route from the curiosity stream',
+    route_hint_supported: Boolean(hintedTarget),
+    unsupported_route_hint: unsupportedRouteHint,
+  };
+}
+
+function directRouteStatusWeight(status) {
+  if (status === 'adapter_not_built_yet') return 12;
+  if (status === 'active') return 4;
+  if (status === 'unavailable_in_this_runtime') return -10;
+  return 0;
+}
+
+function directRouteCandidateForItem(item, index, total) {
+  if (!item || typeof item !== 'object') return null;
+  const plan = directRoutePlanForItem(item);
+  const status = normalizeCuriosityStatus(item.status);
+  const recencyWeight = Math.min(8, Math.max(0, index - Math.max(0, total - 8)));
+  const actionableWeight = trimText(item.possible_action || item.possibleAction) ? 3 : 0;
+  const questionWeight = trimText(item.suggested_question || item.suggestedQuestion) ? 2 : 0;
+  return {
+    item,
+    target_role: plan.target_role,
+    score: plan.priority + directRouteStatusWeight(status) + recencyWeight + actionableWeight + questionWeight,
+    reason: plan.reason,
+    route_hint_supported: plan.route_hint_supported,
+    unsupported_route_hint: plan.unsupported_route_hint,
+  };
+}
+
+function directRouteQueueSnapshot(projectRoot) {
+  const proposals = readJsonl(selfDirectionQueuePath(projectRoot));
+  const counts = proposals.reduce((acc, proposal) => {
+    const status = trimText(proposal.review_status || 'unknown') || 'unknown';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  return {
+    total: proposals.length,
+    counts,
+    latest_proposal_id: trimText(proposals[proposals.length - 1]?.proposal_id) || null,
+  };
+}
+
+function directRouteScoreboardSnapshot(scoreboard) {
+  const lanes = Array.isArray(scoreboard?.lanes) ? scoreboard.lanes : [];
+  return {
+    lane_count: lanes.length,
+    lead_candidate_lanes: lanes
+      .filter((lane) => lane.recommended_next_authority === 'mira_lead_candidate')
+      .map((lane) => lane.lane),
+    default_route_candidate_lanes: lanes
+      .filter((lane) => lane.recommended_next_authority === 'mira_default_route_candidate')
+      .map((lane) => lane.lane),
+  };
+}
+
+function buildDirectRouteMessage(route) {
+  if (!route || route.decision !== 'routed') return '';
+  const selected = route.selected_item || {};
+  return [
+    '(MIRA DIRECT ROUTE): I picked the next internal move from the curiosity stream.',
+    `target=${route.target_role}`,
+    `source=${selected.source}/${selected.adapter_id}`,
+    `question=${selected.suggested_question}`,
+    `action=${selected.possible_action}`,
+    `reason=${route.reason}`,
+    `route_log=${route.direct_route_log_path}`,
+    'apply_now=false',
+    'external_send_performed=false',
+  ].join('\n');
+}
+
+async function selectMiraDirectRoute(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const logPath = miraDirectRoutesPath(projectRoot);
+  if (payload.runScout || options.runScout) {
+    runMiraCuriosityScout({ generatedAt }, { ...options, projectRoot, generatedAt });
+  }
+  const allItems = readJsonl(curiosityItemsPath(projectRoot))
+    .filter((item) => item && item.schema === MIRA_CURIOSITY_ITEM_SCHEMA);
+  const recentItems = allItems.slice(-120);
+  const scoreboard = buildMiraAuthorityScoreboard({ generatedAt }, { projectRoot, generatedAt });
+  const queueSnapshot = directRouteQueueSnapshot(projectRoot);
+  const candidates = recentItems
+    .map((item, index) => directRouteCandidateForItem(item, index, recentItems.length))
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return trimText(right.item.generated_at).localeCompare(trimText(left.item.generated_at));
+    });
+
+  if (candidates.length === 0) {
+    const noRoute = {
+      schema: MIRA_DIRECT_ROUTE_SCHEMA,
+      ok: true,
+      decision: 'no_route',
+      generated_at: generatedAt,
+      route_id: `mira-direct-route:${stableHash({ generatedAt, reason: 'no_curiosity_items' }).slice(0, 16)}`,
+      reason: 'no_curiosity_items',
+      direct_route_log_path: logPath,
+      curiosity_log_path: curiosityItemsPath(projectRoot),
+      curiosity_items_seen: allItems.length,
+      scoreboard: directRouteScoreboardSnapshot(scoreboard),
+      self_direction_queue: queueSnapshot,
+      target_role: null,
+      selected_item: null,
+      applied: false,
+      internal_only: true,
+      dispatch: {
+        status: 'not_sent',
+        reason: 'no_route',
+      },
+      consequence_controls: {
+        internal_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        network_performed: false,
+        destructive_action_performed: false,
+        durable_product_change_performed: false,
+        deploy_trade_customer_auth_action_performed: false,
+      },
+    };
+    appendJsonl(logPath, noRoute);
+    return noRoute;
+  }
+
+  const selected = candidates[0];
+  const item = selected.item;
+  const route = {
+    schema: MIRA_DIRECT_ROUTE_SCHEMA,
+    ok: true,
+    decision: 'routed',
+    generated_at: generatedAt,
+    route_id: `mira-direct-route:${stableHash({
+      generatedAt,
+      item_id: item.item_id,
+      target_role: selected.target_role,
+    }).slice(0, 16)}`,
+    selected_by: 'mira',
+    lane: 'curiosity_initiative',
+    reason: selected.unsupported_route_hint
+      ? `${selected.reason}; ignored non-internal route hint and kept the route inside SquidRun`
+      : selected.reason,
+    target_role: selected.target_role,
+    route_target: selected.target_role,
+    direct_route_log_path: logPath,
+    curiosity_log_path: curiosityItemsPath(projectRoot),
+    curiosity_items_seen: allItems.length,
+    candidate_count: candidates.length,
+    score: selected.score,
+    selected_item: {
+      item_id: item.item_id,
+      source: item.source,
+      adapter_id: item.adapter_id,
+      status: item.status,
+      integration_strategy: item.integration_strategy,
+      suggested_question: item.suggested_question,
+      possible_action: item.possible_action,
+      sensitivity_hint: item.sensitivity_hint,
+    },
+    scoreboard: directRouteScoreboardSnapshot(scoreboard),
+    self_direction_queue: queueSnapshot,
+    route_hint_supported: selected.route_hint_supported,
+    unsupported_route_hint_contained: selected.unsupported_route_hint,
+    applied: false,
+    internal_only: true,
+    external_send_performed: false,
+    autonomous_apply_performed: false,
+    route_message: null,
+    dispatch: {
+      status: 'queued_not_sent',
+      reason: 'dispatch_disabled_or_sender_missing',
+      target: selected.target_role,
+    },
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      durable_product_change_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    },
+  };
+  route.route_message = buildDirectRouteMessage(route);
+
+  const dispatchWanted = payload.dispatch !== false && options.dispatch !== false;
+  if (dispatchWanted && typeof options.sendAgentMessage === 'function' && AGENT_ROLES.includes(selected.target_role)) {
+    const dispatchResult = await options.sendAgentMessage(selected.target_role, route.route_message);
+    route.dispatch = {
+      status: 'sent',
+      target: selected.target_role,
+      internal_only: true,
+      result: dispatchResult || null,
+    };
+  } else if (dispatchWanted && !AGENT_ROLES.includes(selected.target_role)) {
+    route.dispatch = {
+      status: 'not_sent',
+      target: selected.target_role,
+      internal_only: true,
+      reason: 'target_is_internal_lab_not_hm_role',
+    };
+  }
+
+  appendJsonl(logPath, route);
+  return route;
 }
 
 function summarizeForWrapper(text, max = 160) {
@@ -2562,12 +2994,15 @@ module.exports = {
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
+  MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_DECISIONS,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
   MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
   MIRA_SELF_DIRECTION_REVIEW_ACTIONS,
   MIRA_SELF_DIRECTION_REVIEW_SCHEMA,
+  MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
+  MIRA_SELF_DIRECTION_OUTCOME_STATUSES,
   MIRA_SELF_DIRECTION_SCHEMA,
   SAFE_FALLBACK_TEXT,
   buildMiraAuthorityScoreboard,
@@ -2576,13 +3011,17 @@ module.exports = {
   classifyMiraReplyConfidenceSource,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
+  recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityScout,
   scanMiraLabConfidenceSource,
+  selectMiraDirectRoute,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   replyAuditPath,
   curiosityItemsPath,
+  miraDirectRoutesPath,
+  selfDirectionOutcomePath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
   transcriptPath,

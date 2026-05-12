@@ -8,6 +8,8 @@ const {
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
+  MIRA_DIRECT_ROUTE_SCHEMA,
+  MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
@@ -18,13 +20,17 @@ const {
   classifyMiraReplyConfidenceSource,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
+  recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityScout,
   scanMiraLabConfidenceSource,
+  selectMiraDirectRoute,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   curiosityItemsPath,
+  miraDirectRoutesPath,
   replyAuditPath,
+  selfDirectionOutcomePath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
   transcriptPath,
@@ -516,6 +522,89 @@ describe('Mira Lab sidecar surface', () => {
     }));
   });
 
+  test('implementation outcomes are recorded explicitly and read by the scoreboard', () => {
+    projectRoot = tempProject();
+    const queuePath = selfDirectionQueuePath(projectRoot);
+    const reviewPath = selfDirectionReviewAuditPath(projectRoot);
+    [
+      ['tests-outcome', 'tests', 'routed', '2026-05-12T08:00:00.000Z', '2026-05-12T08:05:00.000Z'],
+      ['memory-outcome', 'memory', 'routed', '2026-05-12T08:10:00.000Z', '2026-05-12T08:14:00.000Z'],
+      ['gate-outcome', 'gates', 'rejected_by_architect', '2026-05-12T08:20:00.000Z', '2026-05-12T08:25:00.000Z'],
+    ].forEach(([id, area, status, generatedAt, reviewedAt]) => appendJsonl(queuePath, {
+      proposal_id: `mira-self-direction:${id}`,
+      generated_at: generatedAt,
+      target_areas: [area],
+      review_status: status,
+      reviewed_at: reviewedAt,
+      desired_change: `Record explicit ${area} outcome.`,
+      review_note: 'reviewed without implementation keywords',
+    }));
+    [
+      ['tests-outcome', 'routed', '2026-05-12T08:05:00.000Z'],
+      ['memory-outcome', 'routed', '2026-05-12T08:14:00.000Z'],
+      ['gate-outcome', 'rejected', '2026-05-12T08:25:00.000Z'],
+    ].forEach(([id, action, generatedAt]) => appendJsonl(reviewPath, {
+      proposal_id: `mira-self-direction:${id}`,
+      action,
+      generated_at: generatedAt,
+      note: 'reviewed',
+    }));
+
+    const implemented = recordMiraSelfDirectionOutcome({
+      proposalId: 'mira-self-direction:tests-outcome',
+      status: 'implemented',
+      evidence: ['commit=abc123', 'jest=mira-lab-surface.test.js'],
+      note: 'landed',
+    }, { projectRoot, generatedAt: '2026-05-12T08:30:00.000Z' });
+    const notImplemented = recordMiraSelfDirectionOutcome({
+      proposalId: 'mira-self-direction:memory-outcome',
+      status: 'not_implemented',
+      note: 'not done yet',
+    }, { projectRoot, generatedAt: '2026-05-12T08:31:00.000Z' });
+    const falsePositive = recordMiraSelfDirectionOutcome({
+      proposalId: 'mira-self-direction:gate-outcome',
+      status: 'false_positive',
+      evidence: ['architect_review=not actionable'],
+    }, { projectRoot, generatedAt: '2026-05-12T08:32:00.000Z' });
+
+    expect(implemented.schema).toBe(MIRA_SELF_DIRECTION_OUTCOME_SCHEMA);
+    expect(implemented.decision).toBe('outcome_recorded');
+    expect(implemented.applied).toBe(false);
+    expect(implemented.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      durable_product_change_performed: false,
+    }));
+    expect(notImplemented.outcome_status).toBe('not_implemented');
+    expect(falsePositive.outcome_status).toBe('false_positive');
+    expect(readJsonl(selfDirectionOutcomePath(projectRoot))).toHaveLength(3);
+
+    const result = buildMiraAuthorityScoreboard({}, { projectRoot, generatedAt: '2026-05-12T09:00:00.000Z' });
+    expect(result.outcome_path).toBe(selfDirectionOutcomePath(projectRoot));
+    const byLane = Object.fromEntries(result.lanes.map((lane) => [lane.lane, lane]));
+    expect(byLane.tests).toEqual(expect.objectContaining({
+      proposed: 1,
+      reviewed: 1,
+      routed: 1,
+      implemented: 1,
+      false_positive: 0,
+    }));
+    expect(byLane.memory).toEqual(expect.objectContaining({
+      proposed: 1,
+      reviewed: 1,
+      routed: 1,
+      implemented: 0,
+      false_positive: 0,
+    }));
+    expect(byLane.gates).toEqual(expect.objectContaining({
+      proposed: 1,
+      reviewed: 1,
+      rejected: 1,
+      false_positive: 1,
+    }));
+  });
+
   test('curiosity scout notices repo/runtime/comms signals and records broad pending adapters', () => {
     projectRoot = tempProject();
     appendJsonl(selfDirectionQueuePath(projectRoot), {
@@ -594,6 +683,121 @@ describe('Mira Lab sidecar surface', () => {
       no_action_taken: true,
       no_mutation_performed: true,
     }));
+  });
+
+  test('direct route handoff lets Mira choose Builder from curiosity evidence', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:repo-low',
+      generated_at: '2026-05-12T12:00:00.000Z',
+      source: 'repo_files',
+      adapter_id: 'git_status_short',
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      suggested_question: 'Which local scratch file is stale?',
+      possible_action: 'Ask Architect to inspect the repo metadata.',
+      route_hint: 'architect',
+      sensitivity_hint: 'local_repo_metadata',
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:code-mode-high',
+      generated_at: '2026-05-12T12:01:00.000Z',
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+      status: 'adapter_not_built_yet',
+      integration_strategy: 'scout_model_candidate',
+      suggested_question: 'What sandboxed read-only execute_script shape lets Mira inspect JSONL and logs?',
+      possible_action: 'Route Builder to design the read-only code-mode/search-execute wrapper.',
+      route_hint: 'builder',
+      sensitivity_hint: 'read_only_code_mode_design',
+    });
+
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+    const result = await selectMiraDirectRoute({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T12:02:00.000Z',
+      sendAgentMessage,
+    });
+
+    expect(result.schema).toBe(MIRA_DIRECT_ROUTE_SCHEMA);
+    expect(result.decision).toBe('routed');
+    expect(result.selected_by).toBe('mira');
+    expect(result.target_role).toBe('builder');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+    }));
+    expect(result.route_message).toContain('(MIRA DIRECT ROUTE)');
+    expect(result.route_message).toContain('target=builder');
+    expect(result.applied).toBe(false);
+    expect(result.external_send_performed).toBe(false);
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('apply_now=false'));
+
+    const routes = readJsonl(miraDirectRoutesPath(projectRoot));
+    expect(routes).toHaveLength(1);
+    expect(routes[0]).toEqual(expect.objectContaining({
+      schema: MIRA_DIRECT_ROUTE_SCHEMA,
+      route_id: result.route_id,
+      target_role: 'builder',
+    }));
+  });
+
+  test('direct route records no_route when curiosity has no item to promote', async () => {
+    projectRoot = tempProject();
+
+    const result = await selectMiraDirectRoute({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T12:03:00.000Z',
+    });
+
+    expect(result.schema).toBe(MIRA_DIRECT_ROUTE_SCHEMA);
+    expect(result.decision).toBe('no_route');
+    expect(result.target_role).toBeNull();
+    expect(result.dispatch).toEqual(expect.objectContaining({
+      status: 'not_sent',
+      reason: 'no_route',
+    }));
+    expect(result.consequence_controls.external_send_performed).toBe(false);
+    expect(readJsonl(miraDirectRoutesPath(projectRoot))).toHaveLength(1);
+  });
+
+  test('direct route keeps unsupported route hints inside SquidRun', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:external-hint',
+      generated_at: '2026-05-12T12:04:00.000Z',
+      source: 'web_research',
+      adapter_id: 'web_research_curiosity',
+      status: 'adapter_not_built_yet',
+      integration_strategy: 'scout_model_candidate',
+      suggested_question: 'Which web research trail should Mira inspect first?',
+      possible_action: 'Build a read-only research trail scout.',
+      route_hint: 'telegram',
+      sensitivity_hint: 'research_metadata',
+    });
+
+    const result = await selectMiraDirectRoute({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T12:05:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(['architect', 'builder', 'oracle', 'mira_lab']).toContain(result.target_role);
+    expect(result.unsupported_route_hint_contained).toBe(true);
+    expect(result.internal_only).toBe(true);
+    expect(result.dispatch.status).toBe('queued_not_sent');
+    expect(result.route_message).not.toMatch(/\btelegram\b/i);
+    expect(result.consequence_controls.external_send_performed).toBe(false);
   });
 
   test('exports eval packet for three agent conversations without ChatGPT name-swap cadence', async () => {
