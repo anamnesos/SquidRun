@@ -6,10 +6,12 @@ const {
   MIRA_LAB_EVAL_SCHEMA,
   MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
+  MIRA_CURIOSITY_BURST_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+  MIRA_REFLEXION_LESSONS_SCHEMA,
   MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
@@ -19,16 +21,19 @@ const {
   buildMiraAuthorityScoreboard,
   buildMiraSelfDirectionProposal,
   classifyMiraReplyConfidenceSource,
+  extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
+  runMiraCuriosityBurst,
   runMiraCuriosityScout,
   runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
   selectMiraDirectRoute,
   buildMiraLabTurn,
   exportMiraLabTranscript,
+  curiosityBurstsPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
   readOnlyCodeModeRunsPath,
@@ -656,6 +661,73 @@ describe('Mira Lab sidecar surface', () => {
     }));
   });
 
+  test('extractMiraReflexionLessons generates compact lessons from review outcomes', () => {
+    projectRoot = tempProject();
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:reject-me',
+      review_status: 'rejected_by_architect',
+      desired_change: 'Bad idea',
+      target_areas: ['gates'],
+    });
+    appendJsonl(selfDirectionReviewAuditPath(projectRoot), {
+      proposal_id: 'mira-self-direction:reject-me',
+      action: 'rejected',
+      note: 'Too complex',
+    });
+
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:fp-me',
+      review_status: 'false_positive',
+      desired_change: 'Wrong alert',
+      target_areas: ['pattern_recognition'],
+    });
+    appendJsonl(selfDirectionReviewAuditPath(projectRoot), {
+      proposal_id: 'mira-self-direction:fp-me',
+      action: 'false_positive',
+      note: 'Not a real issue',
+    });
+
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:impl-me',
+      review_status: 'routed',
+      desired_change: 'Good idea',
+      target_areas: ['tests'],
+      evidence: ['proposal-evidence'],
+    });
+    appendJsonl(selfDirectionReviewAuditPath(projectRoot), {
+      proposal_id: 'mira-self-direction:impl-me',
+      action: 'routed',
+      note: 'Routing for builder',
+      evidence: ['review-evidence'],
+    });
+    appendJsonl(selfDirectionOutcomePath(projectRoot), {
+      proposal_id: 'mira-self-direction:impl-me',
+      outcome_status: 'implemented',
+      note: 'Landed in PR 1',
+      evidence: ['outcome-evidence'],
+    });
+
+    const result = extractMiraReflexionLessons({}, { projectRoot });
+    expect(result.schema).toBe(MIRA_REFLEXION_LESSONS_SCHEMA);
+    expect(result.lesson_count).toBe(3);
+    const byId = Object.fromEntries(result.lessons.map(l => [l.proposal_id, l]));
+    
+    expect(byId['mira-self-direction:reject-me'].category).toBe('rejected_proposal');
+    expect(byId['mira-self-direction:reject-me'].lesson).toContain('Too complex');
+    
+    expect(byId['mira-self-direction:fp-me'].category).toBe('false_positive_proposal');
+    expect(byId['mira-self-direction:fp-me'].lesson).toContain('Not a real issue');
+    
+    expect(byId['mira-self-direction:impl-me'].category).toBe('successful_implementation_with_notes');
+    expect(byId['mira-self-direction:impl-me'].lesson).toContain('Landed in PR 1');
+    expect(byId['mira-self-direction:impl-me'].evidence).toEqual([
+      'proposal-evidence',
+      'review-evidence',
+      'outcome-evidence',
+    ]);
+    expect(byId['mira-self-direction:impl-me'].next_behavior).toBe('Use this capability in future routes and prompts.');
+  });
+
   test('curiosity scout notices repo/runtime/comms signals and records broad pending adapters', () => {
     projectRoot = tempProject();
     appendJsonl(selfDirectionQueuePath(projectRoot), {
@@ -686,12 +758,21 @@ describe('Mira Lab sidecar surface', () => {
           contentExcerpt: 'Mira can retrieve current lane memory before asking James.',
         }],
       }),
+      environmentCuriosityReader: () => ({
+        ok: true,
+        decision: 'environment_health_read_only',
+        overall_label: 'WARN',
+        overall_score: 88,
+        memory_sync_status: 'drift_detected',
+        bridge_connection: 'disconnected',
+        snapshot_stale: false,
+      }),
     });
 
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
-    expect(result.active_count).toBe(7);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(11);
+    expect(result.active_count).toBeGreaterThanOrEqual(8);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(9);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -725,7 +806,14 @@ describe('Mira Lab sidecar surface', () => {
     expect(bySource.browser_history.integration_strategy).toBe('mcp_candidate');
     expect(bySource.email.status).toBe('adapter_not_built_yet');
     expect(bySource.web_research.status).toBe('adapter_not_built_yet');
-    expect(bySource.environment_apps.status).toBe('adapter_not_built_yet');
+    expect(bySource.environment_apps).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      environment_overall_label: 'WARN',
+      environment_overall_score: 88,
+      environment_memory_sync_status: 'drift_detected',
+      environment_bridge_connection: 'disconnected',
+    }));
     expect(bySource.memory).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
@@ -754,7 +842,7 @@ describe('Mira Lab sidecar surface', () => {
     }));
     expect(bySource.implementation_outcomes.suggested_question).toMatch(/outcome evidence/i);
     expect(bySource.reflexion_lessons.possible_action).toMatch(/review-to-lesson/i);
-    expect(bySource.cheap_parallel_scouts.suggested_question).toMatch(/three curiosity scouts/i);
+    expect(bySource.cheap_parallel_scouts.suggested_question).toMatch(/curiosity-burst source mix/i);
     expect(bySource.voyager_curriculum.possible_action).toMatch(/curriculum JSONL/i);
     expect(JSON.stringify(result.items)).toContain('Which existing seam should Mira connect first');
     expect(JSON.stringify(result.items)).not.toMatch(/requires_permission|forbidden|blocked/i);
@@ -769,6 +857,83 @@ describe('Mira Lab sidecar surface', () => {
       no_action_taken: true,
       no_mutation_performed: true,
     }));
+  });
+
+  test('curiosity burst runs bounded read-only scouts and selects an internal route', async () => {
+    projectRoot = tempProject();
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:burst-1',
+      generated_at: '2026-05-12T13:00:00.000Z',
+      target_areas: ['automation'],
+      review_status: 'routed',
+      desired_change: 'Let Mira run cheap scout bursts during quiet intervals.',
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const result = await runMiraCuriosityBurst({
+      routeInteresting: true,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:05:00.000Z',
+      repoStatusText: ' M ui/modules/mira-lab-surface.js\n',
+      recentCommsText: '(ARCHITECT #126): take cheap_parallel_scouts next.',
+      memoryCuriosityReader: () => ({
+        ok: true,
+        decision: 'memory_retrieved_read_only',
+        query: 'Mira source action substrate current lane memory continuity',
+        result_count: 1,
+        results: [{
+          nodeId: 'node-burst-memory',
+          title: 'Burst memory',
+          contentExcerpt: 'Mira can ground a burst in memory.',
+        }],
+      }),
+      sendAgentMessage,
+    });
+
+    expect(result.schema).toBe(MIRA_CURIOSITY_BURST_SCHEMA);
+    expect(result.decision).toBe('burst_completed');
+    expect(result.sources).toEqual(expect.arrayContaining([
+      'repo_files',
+      'runtime_comms',
+      'memory',
+      'cheap_parallel_scouts',
+      'automation_scheduler',
+    ]));
+    expect(result.items.some((item) => item.source === 'cheap_parallel_scouts' && item.status === 'active')).toBe(true);
+    expect(result.items.some((item) => (
+      item.source === 'automation_scheduler'
+      && item.adapter_id === 'scheduled_curiosity_burst'
+      && item.status === 'adapter_not_built_yet'
+    ))).toBe(true);
+    expect(result.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      target_role: 'builder',
+      source: 'automation_scheduler',
+      adapter_id: 'scheduled_curiosity_burst',
+      internal_only: true,
+      external_send_performed: false,
+    }));
+    expect(result.route_message).toContain('(MIRA CURIOSITY BURST)');
+    expect(result.route_message).toContain('apply_now=false');
+    expect(result.dispatch).toEqual(expect.objectContaining({
+      status: 'sent',
+      target: 'builder',
+      internal_only: true,
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('scheduled_curiosity_burst'));
+    expect(result.no_mutation_performed).toBe(true);
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+    expect(JSON.stringify(result)).not.toMatch(/james permission|requires_permission|forbidden|blocked/i);
+    expect(readJsonl(curiosityBurstsPath(projectRoot))).toHaveLength(1);
+    expect(readJsonl(curiosityItemsPath(projectRoot)).length).toBe(result.item_count);
   });
 
   test('direct route handoff lets Mira choose Builder from curiosity evidence', async () => {

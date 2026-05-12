@@ -106,10 +106,10 @@ const SOURCE_ACTION_SUBSTRATE_REGISTRY = Object.freeze([
     source: 'environment_apps',
     scope: 'local_app_state_bridge_and_devices',
     strategy: SUBSTRATE_STRATEGIES.native_adapter,
-    status: 'adapter_ready_to_wire',
+    status: 'active',
     priority: 64,
-    existing_seams: ['bridge-client.js', 'mcp-bridge.js', 'websocket runtime/server', 'cross-device-target.js', 'hm-health-snapshot.js'],
-    first_probe: 'Read local health, bridge status, and app-state snapshots as evidence before proposing environment actions.',
+    existing_seams: ['mira-environment-curiosity.js', 'bridge-client.js', 'mcp-bridge.js', 'websocket runtime/server', 'cross-device-target.js', 'hm-health-snapshot.js'],
+    first_probe: 'Use the active environment curiosity adapter to read startup/app health, memory drift, and bridge state before environment actions.',
     why_this_strategy: 'Native environment reads keep profile/device state grounded before any device-control lane.',
   },
   {
