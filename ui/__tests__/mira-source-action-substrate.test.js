@@ -41,6 +41,10 @@ describe('Mira source/action substrate plan', () => {
       'memory',
       'runtime_comms',
     ]));
+    expect(plan.sources.find((entry) => entry.source === 'memory')).toEqual(expect.objectContaining({
+      status: 'active',
+      strategy: SUBSTRATE_STRATEGIES.active_memory,
+    }));
     const browser = plan.sources.find((entry) => entry.source === 'browser_history');
     expect(browser).toEqual(expect.objectContaining({
       strategy: SUBSTRATE_STRATEGIES.mcp_connector,

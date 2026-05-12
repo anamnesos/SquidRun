@@ -23,6 +23,9 @@ const {
 const {
   evaluateMiraWorkEvidenceReply,
 } = require('./mira-work-evidence-gate');
+const {
+  readMiraMemoryCuriosity,
+} = require('./mira-memory-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -114,7 +117,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'repo_files', scope: 'local_repo_and_files', adapter_id: 'git_status_short', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'git status --short plus repo file reads' },
   { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'self_direction_queue', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: '.squidrun/runtime/mira-self-direction-proposals.jsonl' },
   { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'recent_comms', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/scripts/hm-comms.js history --last 20, telegram-poller.js, sms-poller.js, external-notifications.js' },
-  { source: 'memory', scope: 'local_memory_and_continuity', adapter_id: 'memory_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'cognitive-memory-*, memory-search/retrieve, team-memory/*, memory-ingest/*, ui/scripts/hm-memory-api.js retrieve' },
+  { source: 'memory', scope: 'local_memory_and_continuity', adapter_id: 'active_memory_tools_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-memory-curiosity.js compact read-only cognitive-memory retrieval, cognitive-memory-*, memory-search/retrieve, team-memory/*, memory-ingest/*, ui/scripts/hm-memory-api.js retrieve' },
   { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'Chrome connector or local browser-history reader via mcp-bridge' },
   { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'Gmail connector or local email adapter via mcp-bridge' },
   { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'scout_model_candidate', existing_seam: 'browser-use/Chrome tools plus local research artifacts' },
@@ -1308,6 +1311,19 @@ function normalizeCuriosityStatus(value) {
   return 'active';
 }
 
+function compactCuriosityMemoryTopResult(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    nodeId: trimText(value.nodeId || value.node_id) || null,
+    category: trimText(value.category) || null,
+    title: trimText(value.title) || null,
+    heading: trimText(value.heading) || null,
+    sourceType: trimText(value.sourceType || value.source_type) || null,
+    sourcePath: trimText(value.sourcePath || value.source_path) || null,
+    contentExcerpt: oneLine(value.contentExcerpt || value.content_excerpt || value.content, 220) || null,
+  };
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1324,6 +1340,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const routeHint = trimText(rawItem.route_hint || rawItem.routeHint || 'mira_lab') || 'mira_lab';
   const status = normalizeCuriosityStatus(rawItem.status);
   const sensitivityHint = trimText(rawItem.sensitivity_hint || rawItem.sensitivityHint || 'local_metadata_only') || 'local_metadata_only';
+  const memoryResultCount = Number(rawItem.memory_result_count ?? rawItem.memoryResultCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1352,6 +1369,9 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     destructive_action_performed: false,
     file_system_action_performed: false,
     adapter_error: rawItem.adapter_error ? oneLine(rawItem.adapter_error, 180) : null,
+    memory_query: trimText(rawItem.memory_query || rawItem.memoryQuery) || null,
+    memory_result_count: Number.isFinite(memoryResultCount) ? memoryResultCount : null,
+    memory_top_result: compactCuriosityMemoryTopResult(rawItem.memory_top_result || rawItem.memoryTopResult),
   };
 }
 
@@ -1546,13 +1566,69 @@ function notImplementedCuriosityAdapter(registryEntry, label) {
   });
 }
 
+function activeMemoryCuriosityAdapter(context = {}) {
+  const query = trimText(context.memoryCuriosityQuery)
+    || 'Mira source action substrate current lane memory continuity';
+  const reader = typeof context.memoryCuriosityReader === 'function'
+    ? context.memoryCuriosityReader
+    : readMiraMemoryCuriosity;
+  const result = reader({ query, limit: 5 }, { projectRoot: context.projectRoot });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'memory',
+      scope: 'local_memory_and_continuity',
+      adapter_id: 'active_memory_tools_curiosity',
+      integration_strategy: 'existing_seam',
+      status: 'unavailable_in_this_runtime',
+      observation: `Memory read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Mira should inspect continuity from memory when the local memory DB or retrieval seam is available.',
+      hypothesis: 'The source/action substrate should keep memory as the next active read arm once the runtime exposes data.',
+      suggested_question: 'What local memory DB or retrieve seam should Mira use for continuity in this runtime?',
+      possible_action: 'Verify hm-memory-api retrieve or cognitive-memory-api read-only retrieval against the current profile memory DB.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_memory_metadata',
+      no_mutation_performed: true,
+    };
+  }
+  const top = result.results?.[0] || null;
+  const topLabel = trimText(top?.title || top?.heading || top?.category || top?.nodeId || 'no titled result');
+  return {
+    source: 'memory',
+    scope: 'local_memory_and_continuity',
+    adapter_id: 'active_memory_tools_curiosity',
+    integration_strategy: 'existing_seam',
+    status: 'active',
+    observation: `Memory read path returned ${result.result_count || 0} result(s) for the active lane query; top=${topLabel}.`,
+    why_interesting: 'Mira can now inspect continuity before asking James to restate context.',
+    hypothesis: 'Active memory retrieval can ground curiosity items, direct routes, and pre-answer evidence checks.',
+    suggested_question: top
+      ? `Which current-lane decision changes if Mira uses memory result ${top.nodeId || topLabel}?`
+      : 'Which memory query should Mira try next for the active lane?',
+    possible_action: 'Use active memory read results as evidence before routing the next Mira improvement.',
+    route_hint: 'builder',
+    sensitivity_hint: 'local_memory_metadata',
+    memory_query: result.query,
+    memory_result_count: result.result_count || 0,
+    memory_top_result: top ? {
+      nodeId: top.nodeId || null,
+      category: top.category || null,
+      title: top.title || null,
+      heading: top.heading || null,
+      sourceType: top.sourceType || null,
+      sourcePath: top.sourcePath || null,
+      contentExcerpt: top.contentExcerpt || null,
+    } : null,
+    no_mutation_performed: true,
+  };
+}
+
 function defaultCuriosityAdapters() {
   const byAdapter = Object.fromEntries(MIRA_CURIOSITY_SOURCE_REGISTRY.map((entry) => [entry.adapter_id, entry]));
   return [
     gitStatusCuriosityAdapter,
     runtimeQueueCuriosityAdapter,
     recentCommsCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.memory_curiosity, 'memory and continuity'),
+    activeMemoryCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.browser_history_curiosity, 'browser history'),
     notImplementedCuriosityAdapter(byAdapter.email_curiosity, 'email'),
     notImplementedCuriosityAdapter(byAdapter.web_research_curiosity, 'websites visited and research trails'),
@@ -1594,20 +1670,6 @@ function buildAccelerationCuriosityItems(context) {
       possible_action: 'Use hm-mira-self-direction code-mode with an allowed path and a tiny read-only script to inspect current evidence.',
       route_hint: 'builder',
       sensitivity_hint: 'read_only_code_mode_design',
-    },
-    {
-      source: 'memory',
-      scope: 'local_memory_and_continuity',
-      adapter_id: 'active_memory_tools_curiosity',
-      integration_strategy: 'existing_seam',
-      status: 'adapter_not_built_yet',
-      observation: 'Memory tooling already exists in cognitive-memory, memory-search, team-memory, and memory-ingest modules, but curiosity v0 is not using it yet.',
-      why_interesting: 'Mira should inspect her own continuity substrate before asking James to restate what the system already knows.',
-      hypothesis: 'Active memory retrieve can turn vague curiosity into grounded follow-up questions.',
-      suggested_question: 'Which memory retrieve/search seam should Mira call first when she wants context without waiting for James?',
-      possible_action: 'Connect curiosity scout to hm-memory-api retrieve or cognitive-memory-api read-only retrieval.',
-      route_hint: 'builder',
-      sensitivity_hint: 'local_memory_metadata',
     },
     {
       source: 'implementation_outcomes',
@@ -1680,6 +1742,8 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     generatedAt,
     repoStatusText: options.repoStatusText,
     recentCommsText: options.recentCommsText,
+    memoryCuriosityReader: options.memoryCuriosityReader,
+    memoryCuriosityQuery: options.memoryCuriosityQuery,
   };
   const items = [];
   for (const adapter of adapters) {
@@ -1869,10 +1933,17 @@ function directRouteCandidateForItem(item, index, total) {
   };
 }
 
+function canonicalCuriosityAdapterId(item = {}) {
+  const source = trimText(item.source);
+  const adapterId = trimText(item.adapter_id || item.adapterId);
+  if (source === 'memory' && adapterId === 'memory_curiosity') return 'active_memory_tools_curiosity';
+  return adapterId;
+}
+
 function latestCuriosityItemsByAdapter(items = []) {
   const latest = new Map();
   for (const item of items) {
-    const key = `${trimText(item.source)}:${trimText(item.adapter_id)}`;
+    const key = `${trimText(item.source)}:${canonicalCuriosityAdapterId(item)}`;
     if (!key || key === ':') continue;
     latest.set(key, item);
   }

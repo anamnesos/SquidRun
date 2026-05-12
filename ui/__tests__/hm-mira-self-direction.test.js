@@ -293,6 +293,11 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(jsonResult.result.active_count).toBe(6);
     expect(jsonResult.result.items.some((item) => item.source === 'repo_files')).toBe(true);
     expect(jsonResult.result.items.some((item) => item.status === 'adapter_not_built_yet')).toBe(true);
+    expect(jsonResult.result.items.some((item) => (
+      item.source === 'memory'
+      && item.adapter_id === 'active_memory_tools_curiosity'
+      && item.status === 'unavailable_in_this_runtime'
+    ))).toBe(true);
     expect(jsonResult.result.items.some((item) => item.source === 'source_action_substrate')).toBe(true);
     expect(jsonResult.result.items.some((item) => item.source === 'code_mode_exploration')).toBe(true);
     expect(jsonResult.result.items.some((item) => item.source === 'implementation_outcomes')).toBe(true);
