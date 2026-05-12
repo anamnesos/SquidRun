@@ -5,6 +5,7 @@ const {
   validateMiraAutonomySubstrateV0Output,
 } = require('./mira-core/autonomy-substrate-v0');
 const {
+  DEFAULT_PROMPT,
   buildMiraCoreExperienceV0,
   validateMiraCoreExperienceV0Output,
 } = require('./mira-core/experience-v0');
@@ -79,7 +80,7 @@ function readExperience(options = {}) {
       generatedAt: options.generatedAt,
       nowMs: options.nowMs,
       inputSignals: {
-        prompt: options.prompt || 'Mira runtime curiosity status',
+        prompt: options.experiencePrompt || DEFAULT_PROMPT,
       },
     });
     const validation = validateMiraCoreExperienceV0Output(output);

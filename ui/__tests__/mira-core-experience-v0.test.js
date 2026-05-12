@@ -152,6 +152,22 @@ describe('mira core experience v0', () => {
     expect(reply).toContain('Builder, Oracle, CLI arms');
   });
 
+  test('uses the built-in north-star contract when runtime readers do not pass the fixture', () => {
+    const projectRoot = tempProject();
+    seedProject(projectRoot);
+
+    const output = buildMiraCoreExperienceV0({
+      projectRoot,
+      inputSignals: { prompt: DEFAULT_PROMPT },
+      nowMs: Date.parse('2026-05-08T06:52:00.000Z'),
+    });
+    const validation = validateMiraCoreExperienceV0Output(output);
+
+    expect(output.validation_report.status).toBe('local_experience_transcript_validated');
+    expect(validation.ok).toBe(true);
+    expect(validation.errors).toEqual([]);
+  });
+
   test('uses the North-Star contract to require experience, agency, continuity, and rough-edged pushback', () => {
     const projectRoot = tempProject();
     seedProject(projectRoot);

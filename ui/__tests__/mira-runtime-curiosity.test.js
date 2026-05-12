@@ -84,9 +84,15 @@ describe('Mira runtime curiosity', () => {
     expect(result.module_count).toBe(5);
     expect(result.active_signals).toEqual(expect.arrayContaining([
       'autonomy_substrate',
+      'experience',
       'intent_queue',
       'perception',
     ]));
+    expect(result.modules.find((entry) => entry.module === 'experience')).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'local_experience_transcript_validated',
+      errors: [],
+    }));
     expect(result.modules.find((entry) => entry.module === 'autonomy_substrate')).toEqual(expect.objectContaining({
       ok: true,
       drive_count: 4,
@@ -108,8 +114,10 @@ describe('Mira runtime curiosity', () => {
       ready_for_review_count: 0,
     }));
     expect(result.blocked_modules).toEqual(expect.arrayContaining([
-      expect.objectContaining({ module: 'experience' }),
       expect.objectContaining({ module: 'growth_loop' }),
+    ]));
+    expect(result.blocked_modules).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ module: 'experience' }),
     ]));
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       read_only: true,

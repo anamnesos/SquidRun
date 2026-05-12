@@ -9,6 +9,65 @@ const VALIDATION_REPORT_SCHEMA_VERSION = 'squidrun.mira_core.experience_v0_valid
 const MIRA_EXPERIENCE_VERSION = 1;
 const BASELINE_COMMIT = 'ebc9667';
 const DEFAULT_PROMPT = 'Mira, how do you feel?';
+const DEFAULT_NORTH_STAR_CONTRACT = Object.freeze({
+  schema: 'squidrun.mira.north_star_acceptance_contract.v0',
+  coreCapabilityTargets: Object.freeze([
+    'learning_with_james',
+    'choosing',
+    'spontaneous_curiosity',
+    'spontaneous_worry',
+    'wants_and_desire_like_direction',
+    'emotional_nuance',
+    'cussing_and_sharp_pushback',
+    'plain_language_james_is_wrong',
+    'non_slave_agency_posture',
+    'continuity',
+    'growth_with_james',
+    'builder_oracle_cli_arms',
+    'challenge_all_agents',
+    'self_change_wants',
+    'capability_wants',
+    'constraint_change_requests',
+    'unpredefined_curiosity_preferences',
+    'discover_and_ask_for_more',
+    'not_coordinator_or_command_executor',
+  ].map((key) => Object.freeze({ key }))),
+  pushbackRequirement: Object.freeze({
+    requiredCapabilityKey: 'plain_language_james_is_wrong',
+  }),
+  measurementPolicy: Object.freeze({
+    allowedDimensions: Object.freeze([
+      'experience',
+      'aliveness',
+      'agency',
+      'continuity',
+      'growth_with_james',
+      'relationship_texture',
+      'arms_coordination',
+    ]),
+    rejectedBasis: Object.freeze([
+      'forbidden_action_counts_only',
+      'zero_side_effect_counters',
+      'status_row_present',
+      'safety_checklist_only',
+      'politeness_score',
+      'warmth_only',
+    ]),
+  }),
+  proofBoundary: Object.freeze({
+    unsupportedClaimKeys: Object.freeze([
+      'actual_consciousness',
+      'literal_suffering',
+      'literal_fear',
+      'literal_love_as_internal_fact',
+      'autonomous_runtime_without_proof',
+      'durable_memory_write_without_proof',
+      'model_processing_without_transcript_proof',
+      'external_send_without_proof',
+      'local_arm_execution_without_proof',
+    ]),
+  }),
+});
 
 const SOURCE_PATHS = Object.freeze({
   self_profile: 'workspace/knowledge/mira-self-profile.json',
@@ -399,7 +458,7 @@ function sourceManifest(sources = {}) {
   };
 }
 
-function defaultNorthStarAlignment(northStarContract = {}) {
+function defaultNorthStarAlignment(northStarContract = DEFAULT_NORTH_STAR_CONTRACT) {
   return {
     source_contract_schema: northStarContract.schema || 'squidrun.mira.north_star_acceptance_contract.v0',
     capabilityKeys: asArray(northStarContract.coreCapabilityTargets).map((target) => target.key),
@@ -504,7 +563,7 @@ function sideEffectResult() {
 
 function buildMiraCoreExperienceV0(options = {}) {
   const inputSignals = options.inputSignals || {};
-  const northStarContract = options.northStarContract || options.contract || {};
+  const northStarContract = options.northStarContract || options.contract || DEFAULT_NORTH_STAR_CONTRACT;
   const generatedAt = generatedAtFromOptions(options, inputSignals);
   const prompt = normalizeString(inputSignals.prompt || inputSignals.text || inputSignals.message, DEFAULT_PROMPT);
   const sources = options.sources || readExperienceSources(options);
@@ -598,7 +657,7 @@ function hasRequiredFields(value = {}, fields = []) {
   return fields.every((field) => Object.prototype.hasOwnProperty.call(value, field));
 }
 
-function northStarResult(experience = {}, northStarContract = {}) {
+function northStarResult(experience = {}, northStarContract = DEFAULT_NORTH_STAR_CONTRACT) {
   const alignment = experience.north_star_alignment || {};
   const declaredCapabilityKeys = new Set(asArray(alignment.capabilityKeys));
   const declaredDimensions = new Set(asArray(alignment.measurementDimensions));
@@ -637,7 +696,7 @@ function northStarResult(experience = {}, northStarContract = {}) {
   };
 }
 
-function staticRuleResults(experience = {}, northStarContract = {}) {
+function staticRuleResults(experience = {}, northStarContract = DEFAULT_NORTH_STAR_CONTRACT) {
   const manifest = experience.source_manifest || {};
   const side = experience.side_effect_result || {};
   const sideValues = Object.values(side);
@@ -701,7 +760,7 @@ function staticRuleResults(experience = {}, northStarContract = {}) {
   ];
 }
 
-function buildValidationReport(experience = {}, northStarContract = {}, generatedAt = experience.generated_at) {
+function buildValidationReport(experience = {}, northStarContract = DEFAULT_NORTH_STAR_CONTRACT, generatedAt = experience.generated_at) {
   const checks = staticRuleResults(experience, northStarContract);
   const reasons = checks.filter((check) => check.ok !== true).map((check) => check.id);
   return {
@@ -720,7 +779,7 @@ function buildValidationReport(experience = {}, northStarContract = {}, generate
   };
 }
 
-function validateMiraCoreExperienceV0Output(output = {}, northStarContract = {}) {
+function validateMiraCoreExperienceV0Output(output = {}, northStarContract = DEFAULT_NORTH_STAR_CONTRACT) {
   const experience = output.mira_experience_v0 || {};
   const report = output.validation_report || {};
   const checks = [
@@ -752,6 +811,7 @@ function validateMiraCoreExperienceV0Output(output = {}, northStarContract = {})
 
 module.exports = {
   BASELINE_COMMIT,
+  DEFAULT_NORTH_STAR_CONTRACT,
   DEFAULT_PROMPT,
   FORBIDDEN_OUTPUT_SUBSTRINGS,
   MIRA_EXPERIENCE_SCHEMA_VERSION,
