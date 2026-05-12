@@ -20,6 +20,7 @@ const {
   runMiraCuriosityScout,
   runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
+  selectMiraActiveInitiative,
   selectMiraDirectRoute,
   writeMiraEmailCuriositySnapshot,
 } = require('../modules/mira-lab-surface');
@@ -43,6 +44,7 @@ function printHelp() {
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-burst [--project-root <path>] [--source repo_files,memory] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js next-initiative [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js email-snapshot --stdin [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js code-mode --script <js>|--stdin [--allow <path>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
@@ -227,6 +229,18 @@ function output(result, args) {
     if (result.direct_route_log_path) process.stdout.write(`log=${result.direct_route_log_path}\n`);
     return;
   }
+  if (args.command === 'next-initiative') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    if (result.initiative_id) process.stdout.write(`initiative_id=${result.initiative_id}\n`);
+    if (result.target_role) process.stdout.write(`target=${result.target_role}\n`);
+    if (result.initiative_kind) process.stdout.write(`initiative=${result.initiative_kind}\n`);
+    if (result.selected_item?.source) process.stdout.write(`source=${result.selected_item.source}\n`);
+    if (result.selected_item?.adapter_id) process.stdout.write(`adapter=${result.selected_item.adapter_id}\n`);
+    if (result.work_order?.title) process.stdout.write(`job=${result.work_order.title}\n`);
+    if (result.dispatch?.status) process.stdout.write(`dispatch=${result.dispatch.status}\n`);
+    if (result.active_initiative_log_path) process.stdout.write(`log=${result.active_initiative_log_path}\n`);
+    return;
+  }
   if (args.command === 'email-snapshot') {
     process.stdout.write(`decision=${result.decision}\n`);
     process.stdout.write(`labels=${result.label_count}\n`);
@@ -401,6 +415,23 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
   }
   if (args.command === 'direct-route') {
     const result = await selectMiraDirectRoute({
+      runScout: args.runScout,
+      dispatch: args.dispatch,
+    }, {
+      projectRoot: args.projectRoot,
+      dispatch: args.dispatch,
+      sendAgentMessage: args.dispatch
+        ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
+          projectRoot: args.projectRoot,
+          hmSendPath: deps.hmSendPath,
+        })))
+        : undefined,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
+  if (args.command === 'next-initiative') {
+    const result = await selectMiraActiveInitiative({
       runScout: args.runScout,
       dispatch: args.dispatch,
     }, {

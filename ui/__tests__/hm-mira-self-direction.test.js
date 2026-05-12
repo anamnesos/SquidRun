@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process');
 const driver = require('../scripts/hm-mira-self-direction');
 const {
   MIRA_CURIOSITY_ITEM_SCHEMA,
+  activeInitiativesPath,
   curiosityBurstsPath,
   curriculumSkillsPath,
   curiosityItemsPath,
@@ -703,6 +704,69 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(textRun.stdout).toContain('decision=routed');
     expect(textRun.stdout).toContain('target=builder');
     expect(textRun.stdout).toContain('source=code_mode_exploration');
+  });
+
+  test('next-initiative CLI sends the active-sense work order', async () => {
+    const projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:cli-active-code-mode',
+      generated_at: '2026-05-12T15:10:00.000Z',
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+      status: 'active',
+      suggested_question: 'What runtime file should Mira inspect?',
+      possible_action: 'Use code-mode.',
+      route_hint: 'builder',
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:cli-active-runtime',
+      generated_at: '2026-05-12T15:11:00.000Z',
+      source: 'mira_runtime',
+      adapter_id: 'mira_runtime_curiosity',
+      status: 'active',
+      observation: 'Mira runtime read 5 modules; active_signals=3; blocked=2; healthy=false.',
+      suggested_question: 'Which Mira runtime gap matters?',
+      possible_action: 'Use runtime health metadata.',
+      route_hint: 'builder',
+      runtime_healthy: false,
+      runtime_blocked_count: 2,
+      runtime_blocked_modules: ['experience', 'growth_loop'],
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const jsonResult = await driver.run([
+      'next-initiative',
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      sendAgentMessage,
+      options: {
+        generatedAt: '2026-05-12T15:12:00.000Z',
+      },
+    });
+
+    expect(jsonResult.result.decision).toBe('routed');
+    expect(jsonResult.result.target_role).toBe('builder');
+    expect(jsonResult.result.initiative_kind).toBe('runtime_gap_repair');
+    expect(jsonResult.result.selected_item.source).toBe('mira_runtime');
+    expect(jsonResult.result.dispatch.status).toBe('sent');
+    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('(MIRA ACTIVE INITIATIVE)'));
+    expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(1);
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'next-initiative',
+      '--project-root', projectRoot,
+      '--no-dispatch',
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=routed');
+    expect(textRun.stdout).toContain('target=builder');
+    expect(textRun.stdout).toContain('initiative=runtime_gap_repair');
+    expect(textRun.stdout).toContain('source=mira_runtime');
   });
 
   test('code-mode CLI runs read-only exploration over allowed runtime files', async () => {

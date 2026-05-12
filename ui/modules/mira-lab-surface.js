@@ -75,6 +75,7 @@ const MIRA_CURRICULUM_SKILLS_SCHEMA = 'squidrun.mira_lab.curriculum_skills_v0';
 const MIRA_CURIOSITY_ITEM_SCHEMA = 'squidrun.mira_lab.curiosity_item_v0';
 const MIRA_CURIOSITY_BURST_SCHEMA = 'squidrun.mira_lab.curiosity_burst_v0';
 const MIRA_DIRECT_ROUTE_SCHEMA = 'squidrun.mira_lab.direct_route_v0';
+const MIRA_ACTIVE_INITIATIVE_SCHEMA = 'squidrun.mira_lab.active_initiative_v0';
 const MIRA_READ_ONLY_CODE_MODE_SCHEMA = 'squidrun.mira_lab.read_only_code_mode_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
@@ -431,6 +432,10 @@ function curriculumSkillsPath(projectRoot) {
 
 function miraDirectRoutesPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-direct-routes.jsonl');
+}
+
+function activeInitiativesPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-active-initiatives.jsonl');
 }
 
 function readOnlyCodeModeRunsPath(projectRoot) {
@@ -3161,6 +3166,424 @@ async function selectMiraDirectRoute(payload = {}, options = {}) {
   return route;
 }
 
+const ACTIVE_INITIATIVE_SOURCE_PLAN = Object.freeze({
+  mira_runtime: {
+    priority: 116,
+    target_role: 'builder',
+    initiative_kind: 'runtime_gap_repair',
+    reason: 'Mira runtime health is the highest leverage signal once the basic senses are active',
+  },
+  work_continuation: {
+    priority: 112,
+    target_role: 'builder',
+    initiative_kind: 'resume_owned_work',
+    reason: 'unfinished owned work should beat opening a fresh lane when it is due or stale',
+  },
+  environment_apps: {
+    priority: 106,
+    target_role: 'builder',
+    initiative_kind: 'environment_drift_repair',
+    reason: 'environment drift can poison later autonomy if Mira ignores it',
+  },
+  automation_scheduler: {
+    priority: 96,
+    target_role: 'builder',
+    initiative_kind: 'scheduler_followthrough',
+    reason: 'scheduled curiosity is the path from one-off initiative to repeated initiative',
+  },
+  implementation_outcomes: {
+    priority: 86,
+    target_role: 'builder',
+    initiative_kind: 'fitness_loop_followthrough',
+    reason: 'implemented outcomes are the fitness data Mira needs to compound useful behavior',
+  },
+  reflexion_lessons: {
+    priority: 84,
+    target_role: 'oracle',
+    initiative_kind: 'lesson_reuse',
+    reason: 'review lessons should shape the next route instead of sitting inert',
+  },
+  voyager_curriculum: {
+    priority: 82,
+    target_role: 'architect',
+    initiative_kind: 'skill_practice',
+    reason: 'successful loops should become reusable skills Mira can practice and promote',
+  },
+  memory: {
+    priority: 78,
+    target_role: 'builder',
+    initiative_kind: 'active_memory_use',
+    reason: 'memory retrieval should ground the next move before James has to restate context',
+  },
+  calendar_messages: {
+    priority: 72,
+    target_role: 'builder',
+    initiative_kind: 'calendar_message_connector_next',
+    reason: 'calendar/message metadata can expose obligations and thread pressure',
+  },
+  email: {
+    priority: 70,
+    target_role: 'builder',
+    initiative_kind: 'email_pressure_followup',
+    reason: 'mailbox metadata can reveal attention pressure without reading message bodies',
+  },
+  browser_history: {
+    priority: 68,
+    target_role: 'oracle',
+    initiative_kind: 'browser_trail_investigation',
+    reason: 'browser trails can reveal current research context James did not spell out',
+  },
+  web_research: {
+    priority: 66,
+    target_role: 'oracle',
+    initiative_kind: 'research_trail_investigation',
+    reason: 'saved research trails can seed the next concrete investigation',
+  },
+  images_screenshots_assets: {
+    priority: 64,
+    target_role: 'builder',
+    initiative_kind: 'visual_context_followup',
+    reason: 'visual metadata can reveal UI or asset work that needs inspection',
+  },
+  code_mode_exploration: {
+    priority: 58,
+    target_role: 'builder',
+    initiative_kind: 'read_only_code_exploitation',
+    reason: 'code-mode is the fallback active sense for inspecting fresh runtime evidence',
+  },
+  source_action_substrate: {
+    priority: 56,
+    target_role: 'architect',
+    initiative_kind: 'substrate_next_probe',
+    reason: 'the source/action map should choose a concrete probe when no sharper live signal wins',
+  },
+  cheap_parallel_scouts: {
+    priority: 54,
+    target_role: 'builder',
+    initiative_kind: 'parallel_scout_followup',
+    reason: 'bounded scout bursts keep curiosity moving without a giant serial pass',
+  },
+  runtime_comms: {
+    priority: 48,
+    target_role: 'architect',
+    initiative_kind: 'comms_pressure_followup',
+    reason: 'recent comms can expose repeated friction or an unclosed route',
+  },
+  repo_files: {
+    priority: 42,
+    target_role: 'builder',
+    initiative_kind: 'repo_state_followup',
+    reason: 'repo state is weaker than runtime gaps but can still expose unfinished work',
+  },
+});
+
+function numberSignal(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function curiosityStatusCounts(items = []) {
+  return items.reduce((acc, item) => {
+    const status = normalizeCuriosityStatus(item?.status);
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {
+    active: 0,
+    adapter_not_built_yet: 0,
+    unavailable_in_this_runtime: 0,
+  });
+}
+
+function activeInitiativeEvidenceForItem(item = {}) {
+  const evidence = [
+    `source=${trimText(item.source)}/${trimText(item.adapter_id || item.adapterId)}`,
+    `status=${normalizeCuriosityStatus(item.status)}`,
+  ];
+  const observation = oneLine(item.observation, 180);
+  if (observation) evidence.push(`observation=${observation}`);
+  if (numberSignal(item.runtime_blocked_count) > 0) {
+    evidence.push(`runtime_blocked_modules=${asArray(item.runtime_blocked_modules).map(trimText).filter(Boolean).join(',')}`);
+  }
+  if (numberSignal(item.work_due_count) > 0 || numberSignal(item.work_stale_count) > 0) {
+    evidence.push(`work_due=${numberSignal(item.work_due_count)} stale=${numberSignal(item.work_stale_count)} next=${trimText(item.work_next_agent) || 'none'}/${trimText(item.work_next_task_id) || 'none'}`);
+  }
+  if (trimText(item.environment_memory_sync_status) || trimText(item.environment_bridge_connection)) {
+    evidence.push(`environment=memory:${trimText(item.environment_memory_sync_status) || 'unknown'} bridge:${trimText(item.environment_bridge_connection) || 'unknown'}`);
+  }
+  if (numberSignal(item.scheduler_due_soon_count) > 0 || numberSignal(item.scheduler_overdue_count) > 0) {
+    evidence.push(`scheduler=due_soon:${numberSignal(item.scheduler_due_soon_count)} overdue:${numberSignal(item.scheduler_overdue_count)}`);
+  }
+  if (numberSignal(item.email_unread_total) > 0) evidence.push(`email_unread=${numberSignal(item.email_unread_total)}`);
+  if (numberSignal(item.calendar_artifact_count) > 0 || numberSignal(item.message_artifact_count) > 0) {
+    evidence.push(`calendar_messages=calendar:${numberSignal(item.calendar_artifact_count)} messages:${numberSignal(item.message_artifact_count)}`);
+  }
+  if (numberSignal(item.browser_result_count) > 0) evidence.push(`browser_results=${numberSignal(item.browser_result_count)}`);
+  if (numberSignal(item.web_result_count) > 0) evidence.push(`web_research_results=${numberSignal(item.web_result_count)}`);
+  if (numberSignal(item.visual_asset_count) > 0) evidence.push(`visual_assets=${numberSignal(item.visual_asset_count)}`);
+  return evidence.filter(Boolean).slice(0, 10);
+}
+
+function activeInitiativeCandidateForItem(item, index, total) {
+  if (!item || typeof item !== 'object') return null;
+  if (normalizeCuriosityStatus(item.status) !== 'active') return null;
+  const source = trimText(item.source);
+  const plan = ACTIVE_INITIATIVE_SOURCE_PLAN[source];
+  if (!plan) return null;
+  let score = plan.priority;
+  let targetRole = normalizeDirectRouteTarget(plan.target_role) || 'builder';
+  let title = oneLine(item.suggested_question || `Use ${source} for the next internal initiative.`, 160);
+  let action = oneLine(item.possible_action || 'Route the next internal follow-up from this active signal.', 220);
+  const modules = asArray(item.runtime_blocked_modules).map(trimText).filter(Boolean);
+
+  if (source === 'mira_runtime') {
+    const blocked = numberSignal(item.runtime_blocked_count);
+    if (blocked > 0) {
+      score += 36 + Math.min(12, blocked * 4);
+      title = `Repair Mira runtime gaps: ${modules.join(', ') || `${blocked} blocked module(s)`}`;
+      action = 'Have Builder inspect the runtime health reader and patch the smallest module/evidence gap that keeps Mira self-evolution unhealthy.';
+    } else if (item.runtime_healthy === false) {
+      score += 18;
+      title = 'Repair Mira runtime health before the next autonomy expansion.';
+    } else {
+      score -= 44;
+    }
+  } else if (source === 'work_continuation') {
+    const due = numberSignal(item.work_due_count);
+    const stale = numberSignal(item.work_stale_count);
+    if (due > 0 || stale > 0) {
+      score += 28 + Math.min(12, due * 3 + stale);
+      const nextAgent = normalizeDirectRouteTarget(item.work_next_agent) || null;
+      if (nextAgent && AGENT_ROLES.includes(nextAgent)) targetRole = nextAgent;
+      title = item.work_next_task_id
+        ? `Resume owned work ${trimText(item.work_next_agent) || 'agent'}/${trimText(item.work_next_task_id)}`
+        : `Resolve owned-work due=${due} stale=${stale}`;
+      action = 'Route the next dispatch-ready continuation internally before opening a new capability lane.';
+    } else {
+      score -= 38;
+    }
+  } else if (source === 'environment_apps') {
+    const label = trimText(item.environment_overall_label).toUpperCase();
+    const scoreValue = item.environment_overall_score;
+    const memory = trimText(item.environment_memory_sync_status);
+    const bridge = trimText(item.environment_bridge_connection);
+    if (item.environment_snapshot_stale === true) score += 16;
+    if (label && label !== 'OK') score += 16;
+    if (Number.isFinite(Number(scoreValue)) && Number(scoreValue) < 95) score += 8;
+    if (memory && !/^(ok|synced|clean)$/i.test(memory)) score += 18;
+    if (bridge && !/^(connected|disabled|not_required)$/i.test(bridge)) score += 12;
+    if (score > plan.priority) {
+      title = `Repair environment drift: memory=${memory || 'unknown'} bridge=${bridge || 'unknown'}`;
+      action = 'Have Builder refresh or repair the local health/memory/bridge signal that can mislead later routes.';
+    } else {
+      score -= 24;
+    }
+  } else if (source === 'automation_scheduler') {
+    const dueSoon = numberSignal(item.scheduler_due_soon_count);
+    const overdue = numberSignal(item.scheduler_overdue_count);
+    if (dueSoon > 0 || overdue > 0) {
+      score += 18 + overdue * 4 + dueSoon * 2;
+      title = `Follow through scheduler curiosity: due_soon=${dueSoon} overdue=${overdue}`;
+      action = 'Have Builder connect the scheduler signal to the next read-only curiosity run without creating or firing new schedules from this selector.';
+    } else {
+      score -= 18;
+    }
+  } else if (source === 'email') {
+    const unread = numberSignal(item.email_unread_total);
+    if (unread > 0) {
+      score += Math.min(18, Math.ceil(unread / 10));
+      title = `Inspect email pressure metadata: unread=${unread}`;
+      action = 'Use mailbox metadata to pick a thread-pressure question without reading bodies or sending mail.';
+    }
+  } else if (source === 'calendar_messages') {
+    const artifacts = numberSignal(item.calendar_artifact_count) + numberSignal(item.message_artifact_count);
+    const connectors = asArray(item.calendar_message_connector_candidates).length;
+    if (artifacts > 0 || connectors > 0) {
+      score += Math.min(18, artifacts * 2 + connectors * 3);
+      title = `Choose the next calendar/message seam from ${artifacts} artifact(s) and ${connectors} connector candidate(s).`;
+    }
+  } else if (source === 'browser_history') {
+    score += Math.min(10, numberSignal(item.browser_result_count));
+  } else if (source === 'web_research') {
+    score += Math.min(10, numberSignal(item.web_result_count));
+  } else if (source === 'images_screenshots_assets') {
+    score += Math.min(10, numberSignal(item.visual_asset_count));
+  }
+
+  const recencyWeight = Math.min(6, Math.max(0, index - Math.max(0, total - 6)));
+  return {
+    item,
+    target_role: targetRole,
+    initiative_kind: plan.initiative_kind,
+    title,
+    action,
+    success_metric: 'The target agent reports a concrete patch, proof, or rejected-with-evidence outcome that can be recorded back into Mira outcomes.',
+    score: score + recencyWeight,
+    reason: plan.reason,
+    evidence: activeInitiativeEvidenceForItem(item),
+  };
+}
+
+function buildActiveInitiativeMessage(initiative) {
+  if (!initiative || initiative.decision !== 'routed') return '';
+  const selected = initiative.selected_item || {};
+  const work = initiative.work_order || {};
+  return [
+    '(MIRA ACTIVE INITIATIVE): I used the active curiosity signals to pick the next internal job.',
+    `target=${initiative.target_role}`,
+    `initiative=${initiative.initiative_kind}`,
+    `source=${selected.source}/${selected.adapter_id}`,
+    `job=${work.title}`,
+    `action=${work.action}`,
+    `success_metric=${work.success_metric}`,
+    `evidence=${(initiative.evidence || []).join(' | ')}`,
+    `initiative_log=${initiative.active_initiative_log_path}`,
+    'apply_now=false',
+    'external_send_performed=false',
+  ].join('\n');
+}
+
+async function selectMiraActiveInitiative(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const logPath = activeInitiativesPath(projectRoot);
+  if (payload.runScout || options.runScout) {
+    runMiraCuriosityScout({ generatedAt }, { ...options, projectRoot, generatedAt });
+  }
+  const allItems = readJsonl(curiosityItemsPath(projectRoot))
+    .filter((item) => item && item.schema === MIRA_CURIOSITY_ITEM_SCHEMA);
+  const windowSize = Math.max(24, Math.min(1000, Number(payload.itemLimit || payload.item_limit || options.itemLimit || 360) || 360));
+  const recentItems = latestCuriosityItemsByAdapter(allItems.slice(-windowSize));
+  const statusCounts = curiosityStatusCounts(recentItems);
+  const candidates = recentItems
+    .map((item, index) => activeInitiativeCandidateForItem(item, index, recentItems.length))
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return trimText(right.item.generated_at).localeCompare(trimText(left.item.generated_at));
+    });
+
+  if (candidates.length === 0) {
+    const noInitiative = {
+      schema: MIRA_ACTIVE_INITIATIVE_SCHEMA,
+      ok: true,
+      decision: 'no_initiative',
+      generated_at: generatedAt,
+      initiative_id: `mira-active-initiative:${stableHash({ generatedAt, reason: 'no_active_curiosity_items' }).slice(0, 16)}`,
+      reason: 'no_active_curiosity_items',
+      active_initiative_log_path: logPath,
+      curiosity_log_path: curiosityItemsPath(projectRoot),
+      curiosity_items_seen: allItems.length,
+      latest_adapter_count: recentItems.length,
+      current_state: statusCounts,
+      target_role: null,
+      selected_item: null,
+      dispatch: {
+        status: 'not_sent',
+        reason: 'no_initiative',
+      },
+      applied: false,
+      internal_only: true,
+      consequence_controls: {
+        internal_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        network_performed: false,
+        destructive_action_performed: false,
+        durable_product_change_performed: false,
+        deploy_trade_customer_auth_action_performed: false,
+      },
+    };
+    appendJsonl(logPath, noInitiative);
+    return noInitiative;
+  }
+
+  const selected = candidates[0];
+  const item = selected.item;
+  const initiative = {
+    schema: MIRA_ACTIVE_INITIATIVE_SCHEMA,
+    ok: true,
+    decision: 'routed',
+    generated_at: generatedAt,
+    initiative_id: `mira-active-initiative:${stableHash({
+      generatedAt,
+      item_id: item.item_id,
+      initiative_kind: selected.initiative_kind,
+      target_role: selected.target_role,
+    }).slice(0, 16)}`,
+    selected_by: 'mira',
+    lane: 'active_sense_exploitation',
+    phase: statusCounts.adapter_not_built_yet === 0
+      ? 'all_basic_senses_active'
+      : 'active_signal_wins_despite_remaining_foundation_gap',
+    reason: selected.reason,
+    target_role: selected.target_role,
+    initiative_kind: selected.initiative_kind,
+    score: selected.score,
+    candidate_count: candidates.length,
+    active_initiative_log_path: logPath,
+    curiosity_log_path: curiosityItemsPath(projectRoot),
+    curiosity_items_seen: allItems.length,
+    latest_adapter_count: recentItems.length,
+    current_state: statusCounts,
+    selected_item: {
+      item_id: item.item_id,
+      source: item.source,
+      adapter_id: item.adapter_id,
+      status: item.status,
+      suggested_question: item.suggested_question,
+      possible_action: item.possible_action,
+      sensitivity_hint: item.sensitivity_hint,
+    },
+    work_order: {
+      title: selected.title,
+      action: selected.action,
+      success_metric: selected.success_metric,
+    },
+    evidence: selected.evidence,
+    applied: false,
+    internal_only: true,
+    external_send_performed: false,
+    autonomous_apply_performed: false,
+    route_message: null,
+    dispatch: {
+      status: 'queued_not_sent',
+      reason: 'dispatch_disabled_or_sender_missing',
+      target: selected.target_role,
+    },
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      durable_product_change_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    },
+  };
+  initiative.route_message = buildActiveInitiativeMessage(initiative);
+
+  const dispatchWanted = payload.dispatch !== false && options.dispatch !== false;
+  if (dispatchWanted && typeof options.sendAgentMessage === 'function' && AGENT_ROLES.includes(selected.target_role)) {
+    const dispatchResult = await options.sendAgentMessage(selected.target_role, initiative.route_message);
+    initiative.dispatch = {
+      status: 'sent',
+      target: selected.target_role,
+      internal_only: true,
+      result: dispatchResult || null,
+    };
+  } else if (dispatchWanted && !AGENT_ROLES.includes(selected.target_role)) {
+    initiative.dispatch = {
+      status: 'not_sent',
+      target: selected.target_role,
+      internal_only: true,
+      reason: 'target_is_internal_lab_not_hm_role',
+    };
+  }
+
+  appendJsonl(logPath, initiative);
+  return initiative;
+}
+
 function relativeProjectPath(projectRoot, targetPath) {
   const resolvedProject = path.resolve(projectRoot);
   const resolvedTarget = path.resolve(targetPath);
@@ -4673,6 +5096,7 @@ module.exports = {
   MIRA_CURRICULUM_SKILLS_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
+  MIRA_ACTIVE_INITIATIVE_SCHEMA,
   MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_READ_ONLY_CODE_MODE_SCHEMA,
   MIRA_REFLEXION_LESSONS_SCHEMA,
@@ -4700,6 +5124,7 @@ module.exports = {
   runMiraCuriosityScout,
   runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
+  selectMiraActiveInitiative,
   selectMiraDirectRoute,
   writeMiraEmailCuriositySnapshot,
   buildMiraLabTurn,
@@ -4707,6 +5132,7 @@ module.exports = {
   curiosityBurstsPath,
   curriculumSkillsPath,
   replyAuditPath,
+  activeInitiativesPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
   readOnlyCodeModeRunsPath,

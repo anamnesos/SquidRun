@@ -10,6 +10,7 @@ const {
   MIRA_CURRICULUM_SKILLS_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
+  MIRA_ACTIVE_INITIATIVE_SCHEMA,
   MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_READ_ONLY_CODE_MODE_SCHEMA,
   MIRA_REFLEXION_LESSONS_SCHEMA,
@@ -32,9 +33,11 @@ const {
   runMiraCuriosityScout,
   runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
+  selectMiraActiveInitiative,
   selectMiraDirectRoute,
   buildMiraLabTurn,
   exportMiraLabTranscript,
+  activeInitiativesPath,
   curiosityBurstsPath,
   curriculumSkillsPath,
   curiosityItemsPath,
@@ -1629,6 +1632,106 @@ describe('Mira Lab sidecar surface', () => {
       item_id: 'mira-curiosity:active-code-mode',
       source: 'code_mode_exploration',
     }));
+  });
+
+  test('active initiative turns all-active senses into a concrete runtime repair job', async () => {
+    projectRoot = tempProject();
+    [
+      {
+        item_id: 'mira-curiosity:active-code-mode',
+        source: 'code_mode_exploration',
+        adapter_id: 'read_only_execute_script_curiosity',
+        status: 'active',
+        observation: 'Code-mode can inspect runtime JSONL tails.',
+        suggested_question: 'What runtime file should Mira inspect?',
+        possible_action: 'Use code-mode.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:active-environment',
+        source: 'environment_apps',
+        adapter_id: 'environment_app_curiosity',
+        status: 'active',
+        observation: 'Environment health is WARN; memory drift detected; bridge disconnected.',
+        suggested_question: 'Which environment signal matters?',
+        possible_action: 'Use app-health evidence.',
+        route_hint: 'builder',
+        environment_overall_label: 'WARN',
+        environment_overall_score: 88,
+        environment_memory_sync_status: 'drift_detected',
+        environment_bridge_connection: 'disconnected',
+      },
+      {
+        item_id: 'mira-curiosity:active-work',
+        source: 'work_continuation',
+        adapter_id: 'work_continuation_curiosity',
+        status: 'active',
+        observation: 'Owned work has one due continuation.',
+        suggested_question: 'Which owned work route is stalled?',
+        possible_action: 'Use compact work-continuation metadata.',
+        route_hint: 'builder',
+        work_due_count: 1,
+        work_stale_count: 1,
+        work_next_agent: 'builder',
+        work_next_task_id: 'builder-followup-1',
+      },
+      {
+        item_id: 'mira-curiosity:active-runtime',
+        source: 'mira_runtime',
+        adapter_id: 'mira_runtime_curiosity',
+        status: 'active',
+        observation: 'Mira runtime read 5 modules; active_signals=3; blocked=2; healthy=false.',
+        suggested_question: 'Which Mira runtime gap matters?',
+        possible_action: 'Use runtime health metadata.',
+        route_hint: 'builder',
+        runtime_healthy: false,
+        runtime_module_count: 5,
+        runtime_active_signal_count: 3,
+        runtime_blocked_count: 2,
+        runtime_blocked_modules: ['experience', 'growth_loop'],
+      },
+    ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: `2026-05-12T15:0${index}:00.000Z`,
+      sensitivity_hint: 'test_metadata',
+      no_mutation_performed: true,
+      ...item,
+    }));
+
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+    const result = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:10:00.000Z',
+      sendAgentMessage,
+    });
+
+    expect(result.schema).toBe(MIRA_ACTIVE_INITIATIVE_SCHEMA);
+    expect(result.decision).toBe('routed');
+    expect(result.selected_by).toBe('mira');
+    expect(result.phase).toBe('all_basic_senses_active');
+    expect(result.lane).toBe('active_sense_exploitation');
+    expect(result.target_role).toBe('builder');
+    expect(result.initiative_kind).toBe('runtime_gap_repair');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'mira_runtime',
+      adapter_id: 'mira_runtime_curiosity',
+    }));
+    expect(result.work_order.title).toContain('experience, growth_loop');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'runtime_blocked_modules=experience,growth_loop',
+    ]));
+    expect(result.route_message).toContain('(MIRA ACTIVE INITIATIVE)');
+    expect(result.route_message).toContain('apply_now=false');
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('runtime_gap_repair'));
+    expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(1);
   });
 
   test('read-only code mode lets Mira inspect allowed files without mutation', () => {
