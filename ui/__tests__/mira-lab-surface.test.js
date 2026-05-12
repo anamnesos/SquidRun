@@ -6,10 +6,16 @@ const {
   MIRA_LAB_EVAL_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
+  MIRA_SELF_DIRECTION_LIST_CHANNEL,
+  MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
   MIRA_SELF_DIRECTION_SCHEMA,
   buildMiraSelfDirectionProposal,
+  generateMiraSelfDirectionProposal,
+  listMiraSelfDirectionProposals,
+  reviewMiraSelfDirectionProposal,
   buildMiraLabTurn,
   exportMiraLabTranscript,
+  selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
   transcriptPath,
 } = require('../modules/mira-lab-surface');
@@ -258,6 +264,67 @@ describe('Mira Lab sidecar surface', () => {
     expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 
+  test('deterministic Mira-origin harness creates, lists, and routes proposal without James or autonomous apply', async () => {
+    projectRoot = tempProject();
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const created = await generateMiraSelfDirectionProposal({
+      sessionId: 'mira-origin-harness',
+      proxyProposal: {
+        voice_text: "I want a reality mirror before I start sounding certain. Don't make James babysit that.",
+        target_areas: ['reality_testing', 'tests'],
+        desired_change: 'Stage a local review item whenever my reply claims certainty without a source or test.',
+        proposed_experiment: 'Run five Mira Lab replies through the source check and let Architect route one item.',
+        success_metric: 'Architect can route the item to Builder without James and without applying code, config, or memory.',
+        evidence: ['deterministic_mira_origin_harness_fixture'],
+      },
+      notifyArchitect: false,
+    }, { projectRoot });
+
+    expect(created.decision).toBe('staged');
+    expect(created.generation).toEqual(expect.objectContaining({
+      source: 'proxy_mira_origin_payload',
+      proxy_used: true,
+    }));
+    expect(created.applied).toBe(false);
+    expect(created.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      durable_product_change_performed: false,
+    }));
+
+    const listed = listMiraSelfDirectionProposals({}, { projectRoot });
+    expect(listed.count).toBe(1);
+    expect(listed.proposals[0].proposal_id).toBe(created.proposal_id);
+    expect(JSON.stringify(listed)).not.toMatch(/james permission|required permission|ask james/i);
+
+    const routed = await reviewMiraSelfDirectionProposal({
+      proposalId: created.proposal_id,
+      action: 'routed',
+      routeTargets: ['builder', 'oracle'],
+      note: 'Builder gets the harness; Oracle reviews whether the test catches real drift.',
+    }, { projectRoot, sendAgentMessage });
+
+    expect(routed.decision).toBe('routed');
+    expect(routed.applied).toBe(false);
+    expect(routed.external_send_performed).toBe(false);
+    expect(routed.proposal.review_status).toBe('routed');
+    expect(routed.proposal.route_targets).toEqual(['builder', 'oracle']);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(2);
+    expect(sendAgentMessage.mock.calls.map((call) => call[0]).sort()).toEqual(['builder', 'oracle']);
+    for (const [, body] of sendAgentMessage.mock.calls) {
+      expect(body).toContain('apply_now=false');
+      expect(body).not.toMatch(/\btelegram|sms|customer|deploy|trade\b/i);
+    }
+
+    const pendingAfterRoute = listMiraSelfDirectionProposals({}, { projectRoot });
+    expect(pendingAfterRoute.count).toBe(0);
+    const allAfterRoute = listMiraSelfDirectionProposals({ status: 'all' }, { projectRoot });
+    expect(allAfterRoute.proposals[0].review_status).toBe('routed');
+    expect(readJsonl(selfDirectionReviewAuditPath(projectRoot))).toHaveLength(1);
+  });
+
   test('exports eval packet for three agent conversations without ChatGPT name-swap cadence', async () => {
     projectRoot = tempProject();
     const sessionId = await seedThreeAgentConversation(projectRoot);
@@ -352,7 +419,9 @@ describe('Mira Lab sidecar surface', () => {
     expect(isAllowedInvokeChannel(MIRA_LAB_TURN_CHANNEL)).toBe(true);
     expect(isAllowedInvokeChannel('mira:lab-export')).toBe(true);
     expect(isAllowedInvokeChannel(MIRA_LAB_OPEN_CHANNEL)).toBe(true);
+    expect(isAllowedInvokeChannel(MIRA_SELF_DIRECTION_LIST_CHANNEL)).toBe(true);
     expect(isAllowedInvokeChannel(MIRA_SELF_DIRECTION_CHANNEL)).toBe(true);
+    expect(isAllowedInvokeChannel(MIRA_SELF_DIRECTION_REVIEW_CHANNEL)).toBe(true);
     expect(isAllowedInvokeChannel('mira:lab-undefined')).toBe(false);
   });
 
