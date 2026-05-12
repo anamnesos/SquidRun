@@ -61,10 +61,14 @@ function normalizeLabel(label = {}) {
 }
 
 function normalizeRecentMessage(entry) {
-  const rawId = trimText(entry?.id || entry?.message_id || entry?.messageId || entry);
-  if (!rawId) return null;
+  const existingRef = trimText(entry?.message_ref || entry?.messageRef);
+  const rawId = trimText(entry?.id || entry?.message_id || entry?.messageId || (typeof entry === 'string' ? entry : ''));
+  if (!rawId && !existingRef) return null;
+  const messageRef = existingRef
+    ? (existingRef.startsWith('email-msg:') ? existingRef : `email-msg:${stableHash(existingRef).slice(0, 16)}`)
+    : `email-msg:${stableHash(rawId).slice(0, 16)}`;
   return {
-    message_ref: `email-msg:${stableHash(rawId).slice(0, 16)}`,
+    message_ref: messageRef,
     label_ids: asArray(entry?.label_ids || entry?.labelIds || entry?.labels).map(trimText).filter(Boolean).slice(0, 8),
     sender_domain: trimText(entry?.sender_domain || entry?.senderDomain) || null,
     subject_excerpt: oneLine(entry?.subject || entry?.subject_excerpt || entry?.snippet, 100) || null,
@@ -73,6 +77,130 @@ function normalizeRecentMessage(entry) {
       ? Boolean(entry?.has_attachment ?? entry?.hasAttachment)
       : null,
   };
+}
+
+function findLabel(labels, names = []) {
+  const wanted = new Set(names.map((name) => trimText(name).toUpperCase()).filter(Boolean));
+  return labels.find((label) => wanted.has(trimText(label.id).toUpperCase()) || wanted.has(trimText(label.name).toUpperCase())) || null;
+}
+
+function labelPressureEntry(bucket, label, extra = {}) {
+  if (!label) return null;
+  return {
+    bucket,
+    label_id: label.id,
+    label_name: label.name,
+    messages_total: label.messages_total,
+    messages_unread: label.messages_unread,
+    threads_unread: label.threads_unread,
+    pressure_score: numberOrZero(label.messages_unread) + Math.ceil(numberOrZero(label.threads_unread) / 10),
+    ...extra,
+  };
+}
+
+function buildLabelPressureBuckets(labels = []) {
+  const unread = findLabel(labels, ['UNREAD']);
+  const inbox = findLabel(labels, ['INBOX']);
+  const important = findLabel(labels, ['IMPORTANT']);
+  const starred = findLabel(labels, ['STARRED']);
+  return [
+    labelPressureEntry('unread_backlog', unread, {
+      question_hint: 'Is the unread backlog hiding recent sender-domain clusters that should become a route?',
+    }),
+    labelPressureEntry('inbox_unread', inbox, {
+      question_hint: 'Which inbox metadata cluster is live enough to inspect before broad backlog triage?',
+    }),
+    labelPressureEntry('important_unread', important, {
+      question_hint: 'Which IMPORTANT unread cluster should Mira inspect from metadata first?',
+    }),
+    labelPressureEntry('starred_unread', starred, {
+      question_hint: 'Which STARRED unread item looks intentionally marked and still unresolved?',
+    }),
+  ]
+    .filter((entry) => entry && (entry.messages_unread > 0 || entry.threads_unread > 0))
+    .sort((left, right) => right.pressure_score - left.pressure_score || left.bucket.localeCompare(right.bucket));
+}
+
+function buildSnapshotGaps(recentMessages = []) {
+  const total = recentMessages.length;
+  const missingSenderDomain = recentMessages.filter((entry) => !trimText(entry.sender_domain)).length;
+  const missingSubject = recentMessages.filter((entry) => !trimText(entry.subject_excerpt)).length;
+  const missingTimestamp = recentMessages.filter((entry) => !trimText(entry.timestamp)).length;
+  const missingLabelIds = recentMessages.filter((entry) => asArray(entry.label_ids).length === 0).length;
+  const missingAttachmentFlag = recentMessages.filter((entry) => typeof entry.has_attachment !== 'boolean').length;
+  return {
+    recent_message_count: total,
+    missing_sender_domain_count: missingSenderDomain,
+    missing_subject_count: missingSubject,
+    missing_timestamp_count: missingTimestamp,
+    missing_label_ids_count: missingLabelIds,
+    missing_attachment_flag_count: missingAttachmentFlag,
+    thread_poor_snapshot: total > 0
+      && missingSenderDomain === total
+      && missingSubject === total
+      && missingTimestamp === total,
+  };
+}
+
+function snapshotQuery(baseQuery, suffix) {
+  const base = trimText(baseQuery) || 'newer_than:7d -in:spam -in:trash';
+  const cleaned = base
+    .replace(/\blabel:(?:INBOX|IMPORTANT|STARRED|UNREAD)\b/gi, '')
+    .replace(/\bis:(?:read|unread)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `${cleaned} ${suffix}`.replace(/\s+/g, ' ').trim();
+}
+
+function buildSuggestedNextSnapshotQueries(snapshot, pressureBuckets, gaps) {
+  const hasImportant = pressureBuckets.some((entry) => entry.bucket === 'important_unread');
+  const hasStarred = pressureBuckets.some((entry) => entry.bucket === 'starred_unread');
+  const hasInbox = pressureBuckets.some((entry) => entry.bucket === 'inbox_unread' || entry.bucket === 'unread_backlog');
+  const requestedMetadata = ['message_ref', 'label_ids', 'sender_domain', 'subject', 'timestamp', 'has_attachment'];
+  const controls = {
+    metadata_only: true,
+    body_read_required: false,
+    send_or_modify_required: false,
+  };
+  return [
+    hasImportant ? {
+      query: snapshotQuery(snapshot.query, 'label:IMPORTANT is:unread'),
+      purpose: 'Find high-salience unread clusters before broad inbox triage.',
+      requested_metadata: requestedMetadata,
+      ...controls,
+    } : null,
+    hasStarred ? {
+      query: snapshotQuery(snapshot.query, 'label:STARRED is:unread'),
+      purpose: 'Check intentionally marked unread items that may represent active obligations.',
+      requested_metadata: requestedMetadata,
+      ...controls,
+    } : null,
+    hasInbox || gaps.thread_poor_snapshot ? {
+      query: snapshotQuery(snapshot.query, 'label:INBOX'),
+      purpose: 'Refresh recent inbox metadata with sender/domain/time fields so Mira can identify thread pressure without message bodies.',
+      requested_metadata: requestedMetadata,
+      ...controls,
+    } : null,
+  ].filter(Boolean);
+}
+
+function buildPressureQuestion(pressureBuckets, gaps) {
+  const important = pressureBuckets.find((entry) => entry.bucket === 'important_unread');
+  const starred = pressureBuckets.find((entry) => entry.bucket === 'starred_unread');
+  const inbox = pressureBuckets.find((entry) => entry.bucket === 'inbox_unread');
+  if (gaps.thread_poor_snapshot && important) {
+    return `Which IMPORTANT unread sender-domain cluster should Mira inspect first from a metadata-only refresh (${important.messages_unread} unread, ${important.threads_unread} threads)?`;
+  }
+  if (gaps.thread_poor_snapshot && starred) {
+    return `Which STARRED unread item needs a metadata-only follow-up before Mira reads any body or sends anything (${starred.messages_unread} unread)?`;
+  }
+  if (inbox) {
+    return `Which recent INBOX sender-domain cluster should Mira route from metadata before treating ${inbox.messages_unread} unread messages as a single blob?`;
+  }
+  const top = pressureBuckets[0];
+  return top
+    ? `Which ${top.label_name || top.label_id} metadata cluster should Mira inspect first?`
+    : 'Which metadata-only email snapshot should Mira refresh to find real thread pressure?';
 }
 
 function normalizeEmailSnapshot(input = {}) {
@@ -181,6 +309,10 @@ function readMiraEmailCuriosity(payload = {}, options = {}) {
       threads_unread: label.threads_unread,
     }));
   const recent_messages = snapshot.recent_messages.slice(0, 12);
+  const label_pressure_buckets = buildLabelPressureBuckets(labels);
+  const snapshot_gaps = buildSnapshotGaps(recent_messages);
+  const suggested_next_snapshot_queries = buildSuggestedNextSnapshotQueries(snapshot, label_pressure_buckets, snapshot_gaps);
+  const pressure_question = buildPressureQuestion(label_pressure_buckets, snapshot_gaps);
 
   return {
     schema: MIRA_EMAIL_CURIOSITY_SCHEMA,
@@ -193,6 +325,10 @@ function readMiraEmailCuriosity(payload = {}, options = {}) {
     unread_total,
     message_total,
     top_labels,
+    label_pressure_buckets,
+    snapshot_gaps,
+    suggested_next_snapshot_queries,
+    pressure_question,
     recent_message_count: recent_messages.length,
     recent_messages,
     next_page_token_present: snapshot.next_page_token_present,
@@ -204,6 +340,7 @@ function readMiraEmailCuriosity(payload = {}, options = {}) {
       email_send_performed: false,
       email_modify_performed: false,
       raw_message_ids_exposed: false,
+      suggested_queries_executed: false,
       external_send_performed: false,
     },
   };
@@ -212,6 +349,9 @@ function readMiraEmailCuriosity(payload = {}, options = {}) {
 module.exports = {
   MIRA_EMAIL_CURIOSITY_SCHEMA,
   MIRA_EMAIL_CURIOSITY_SNAPSHOT_SCHEMA,
+  buildLabelPressureBuckets,
+  buildSnapshotGaps,
+  buildSuggestedNextSnapshotQueries,
   defaultEmailCuriositySnapshotPath,
   normalizeEmailSnapshot,
   readMiraEmailCuriosity,

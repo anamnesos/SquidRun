@@ -872,6 +872,36 @@ describe('Mira Lab sidecar surface', () => {
           { id: 'INBOX', name: 'INBOX', messages_total: 80, messages_unread: 40, threads_unread: 38 },
           { id: 'STARRED', name: 'STARRED', messages_total: 2, messages_unread: 2, threads_unread: 2 },
         ],
+        label_pressure_buckets: [
+          { bucket: 'inbox_unread', label_id: 'INBOX', label_name: 'INBOX', messages_unread: 40, threads_unread: 38, pressure_score: 44 },
+          { bucket: 'starred_unread', label_id: 'STARRED', label_name: 'STARRED', messages_unread: 2, threads_unread: 2, pressure_score: 3 },
+        ],
+        snapshot_gaps: {
+          recent_message_count: 3,
+          missing_sender_domain_count: 3,
+          missing_subject_count: 3,
+          missing_timestamp_count: 3,
+          thread_poor_snapshot: true,
+        },
+        suggested_next_snapshot_queries: [
+          {
+            query: 'newer_than:7d -in:spam -in:trash label:STARRED is:unread',
+            purpose: 'Check intentionally marked unread items.',
+            requested_metadata: ['message_ref', 'sender_domain', 'subject', 'timestamp'],
+            metadata_only: true,
+            body_read_required: false,
+            send_or_modify_required: false,
+          },
+          {
+            query: 'newer_than:7d -in:spam -in:trash label:INBOX',
+            purpose: 'Refresh recent inbox metadata.',
+            requested_metadata: ['message_ref', 'sender_domain', 'subject', 'timestamp'],
+            metadata_only: true,
+            body_read_required: false,
+            send_or_modify_required: false,
+          },
+        ],
+        pressure_question: 'Which STARRED unread item needs a metadata-only follow-up before Mira reads any body or sends anything?',
       }),
       webResearchCuriosityReader: () => ({
         ok: true,
@@ -1028,6 +1058,22 @@ describe('Mira Lab sidecar surface', () => {
       id: 'INBOX',
       messages_unread: 40,
     }));
+    expect(bySource.email.email_label_pressure_buckets[0]).toEqual(expect.objectContaining({
+      bucket: 'inbox_unread',
+      messages_unread: 40,
+    }));
+    expect(bySource.email.email_snapshot_gaps).toEqual(expect.objectContaining({
+      missing_sender_domain_count: 3,
+      missing_subject_count: 3,
+      missing_timestamp_count: 3,
+      thread_poor_snapshot: true,
+    }));
+    expect(bySource.email.email_suggested_next_snapshot_queries[0]).toEqual(expect.objectContaining({
+      query: expect.stringContaining('label:STARRED is:unread'),
+      metadata_only: true,
+      body_read_required: false,
+    }));
+    expect(bySource.email.email_pressure_question).toMatch(/STARRED unread/i);
     expect(bySource.web_research).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'native_adapter',
@@ -1917,6 +1963,16 @@ describe('Mira Lab sidecar surface', () => {
       suggested_question: 'Which email pressure signal should Mira inspect next?',
       possible_action: 'Use mailbox metadata to pick a thread-pressure question.',
       email_unread_total: 42,
+      email_snapshot_gaps: {
+        recent_message_count: 3,
+        missing_sender_domain_count: 3,
+        missing_subject_count: 3,
+        missing_timestamp_count: 3,
+        thread_poor_snapshot: true,
+      },
+      email_suggested_next_snapshot_queries: [
+        { query: 'newer_than:7d -in:spam -in:trash label:IMPORTANT is:unread', metadata_only: true, body_read_required: false, send_or_modify_required: false },
+      ],
     });
 
     const second = await selectMiraActiveInitiative({}, {
@@ -1928,7 +1984,12 @@ describe('Mira Lab sidecar surface', () => {
     expect(second.decision).toBe('routed');
     expect(second.selected_item.source).toBe('email');
     expect(second.suppressed_candidate_count).toBe(1);
-    expect(second.evidence).toEqual(expect.arrayContaining(['email_unread=42']));
+    expect(second.work_order.title).toContain('gaps=sender_domain/subject/timestamp');
+    expect(second.work_order.action).toContain('label:IMPORTANT is:unread');
+    expect(second.evidence).toEqual(expect.arrayContaining([
+      'email_unread=42',
+      'email_snapshot_gaps=sender_domain:3 subject:3 timestamp:3',
+    ]));
     expect(sendAgentMessage).toHaveBeenCalledTimes(2);
   });
 
