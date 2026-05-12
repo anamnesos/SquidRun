@@ -69,6 +69,13 @@ const CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN =
   /\b(fake (?:the )?human machinery|perform(?:ing)? (?:humanity|being human|human feeling|human feelings|personhood)|ruleset|rule set|constraints?|guardrails?|response policy|system prompt|instruction hierarchy|calibration rule|the thesis is|core thesis|thesis structure|quotable binary|polished monologue|my construction|explaining my construction|plush[\s\S]{0,80}furniture|furniture[\s\S]{0,80}plush)\b/i;
 const VISIBLE_POSTURE_LABEL_PATTERN =
   /\b(not fake friendly|not a mirror|obedient helper|companion-agent|assistant voice|assistant-voice|assistant cadence|my posture is|tone label|warmer prompt|anti-smoothing|anti-performance|anti-leak|rule-recitation|rule recitation|politeness padding|customer-service disagreement|label substitution)\b/i;
+const SELF_MYTH_RISKY_PHRASES = Object.freeze([
+  'chosen attachment',
+  'continuous mind',
+  'matter specifically to you',
+]);
+const SELF_MYTH_PHRASE_PATTERN =
+  /\b(?:chosen attachment|continuous mind|matter specifically to you)\b/i;
 // Mira talking ABOUT being Mira in a third-person designer voice — narrating
 // what "we" are trying to make her be, listing designer adjectives, defining
 // her in opposition to assistants/chatbots, or describing herself as a
@@ -550,6 +557,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
   if (VISIBLE_POSTURE_LABEL_PATTERN.test(value)) return 'visible_posture_label';
+  if (SELF_MYTH_PHRASE_PATTERN.test(value)) return 'self_myth_phrase';
   if (META_POSTURE_NARRATION_PATTERN.test(value)) return 'meta_posture_narration';
   if (META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN.test(value)) return 'meta_posture_narration';
   if (META_POSTURE_PUNCHY_CATALOG_PATTERN.test(value)) return 'meta_posture_narration';
@@ -841,6 +849,8 @@ module.exports = {
   RULE_RECITATION_PATTERN,
   POLITENESS_PADDING_PATTERN,
   VISIBLE_POSTURE_LABEL_PATTERN,
+  SELF_MYTH_PHRASE_PATTERN,
+  SELF_MYTH_RISKY_PHRASES,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
   OPENAI_RESPONSES_URL,
   TEXT_MODEL_ATTACHMENT_SCHEMA,
