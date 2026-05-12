@@ -34,6 +34,70 @@ function parseOverall(value) {
   };
 }
 
+function parseCountMap(value) {
+  const result = {};
+  for (const part of trimText(value).split(',')) {
+    const match = /^\s*([a-z_]+)\s*=\s*(-?\d+)/i.exec(part);
+    if (match) {
+      result[match[1].toLowerCase()] = Number(match[2]);
+    }
+  }
+  return result;
+}
+
+function deriveMemoryRepairState(parsed = {}) {
+  const status = trimText(parsed.memory_sync_status).toLowerCase();
+  const counts = parseCountMap(parsed.memory_counts);
+  const warnings = trimText(parsed.bridge_warnings).toLowerCase();
+  const missing = Number(counts.missing || 0);
+  const duplicates = Number(counts.duplicates || 0);
+  const reviewQueueMatch = /memory_consistency_review_queue:([^\n;]+)/i.exec(parsed.bridge_warnings || '');
+  const reviewQueue = reviewQueueMatch ? parseCountMap(reviewQueueMatch[1]) : {};
+  const actionMatch = /actions\s*=\s*(\d+)/i.exec(parsed.bridge_warnings || '');
+  const actionCount = actionMatch ? Number(actionMatch[1]) : 0;
+  const reviewOnly = warnings.includes('memory_consistency_review_queue')
+    || (status.includes('drift_detected') && missing === 0 && duplicates === 0 && actionCount === 0);
+  const actionable = warnings.includes('memory_consistency_drift')
+    || missing > 0
+    || duplicates > 0
+    || actionCount > 0;
+
+  if (status.includes('synced') || status.includes('in_sync')) {
+    return {
+      memory_repair_state: 'synced',
+      memory_actionable: false,
+      memory_review_only: false,
+      memory_review_queue: null,
+    };
+  }
+  if (reviewOnly && !actionable) {
+    return {
+      memory_repair_state: 'review_queue_only',
+      memory_actionable: false,
+      memory_review_only: true,
+      memory_review_queue: {
+        orphans: Number(reviewQueue.orphans ?? counts.orphans ?? 0),
+        actions: Number(reviewQueue.actions ?? 0),
+        skips: Number(reviewQueue.skips ?? counts.orphans ?? 0),
+      },
+    };
+  }
+  if (actionable) {
+    return {
+      memory_repair_state: 'actionable_drift',
+      memory_actionable: true,
+      memory_review_only: false,
+      memory_review_queue: null,
+    };
+  }
+  return {
+    memory_repair_state: status || 'unknown',
+    memory_actionable: false,
+    memory_review_only: false,
+    memory_review_queue: null,
+  };
+}
+
 function readStartupHealthText(projectRoot, profileName = 'main') {
   const normalizedProfile = trimText(profileName || 'main').toLowerCase() || 'main';
   const fileName = normalizedProfile === 'main'
@@ -213,6 +277,11 @@ function readMiraEnvironmentCuriosity(payload = {}, options = {}) {
     }
   }
 
+  const memoryState = deriveMemoryRepairState(parsed);
+  const memoryObservation = memoryState.memory_repair_state === 'review_queue_only'
+    ? `memory=review_queue_only(orphans=${Number(memoryState.memory_review_queue?.orphans || 0)})`
+    : (parsed.memory_sync_status ? `memory=${parsed.memory_sync_status}` : null);
+
   return {
     schema: MIRA_ENVIRONMENT_CURIOSITY_SCHEMA,
     ok: true,
@@ -237,13 +306,14 @@ function readMiraEnvironmentCuriosity(payload = {}, options = {}) {
     modules: parsed.modules,
     memory_sync_status: parsed.memory_sync_status,
     memory_counts: parsed.memory_counts,
+    ...memoryState,
     bridge_connection: parsed.bridge_connection,
     bridge_runtime: parsed.bridge_runtime,
     bridge_warnings: parsed.bridge_warnings,
     local_models_enabled: parsed.local_models_enabled,
     observation_excerpt: oneLine([
       parsed.overall_label ? `health=${parsed.overall_label}${parsed.overall_score !== null ? `/${parsed.overall_score}` : ''}` : null,
-      parsed.memory_sync_status ? `memory=${parsed.memory_sync_status}` : null,
+      memoryObservation,
       parsed.bridge_connection ? `bridge=${parsed.bridge_connection}` : null,
       snapshotSource === 'live_health_snapshot' ? 'snapshot=live_refresh' : (stale ? 'snapshot=stale' : 'snapshot=fresh'),
       refreshAttempted && !refreshOk ? `refresh=${refreshReason || 'failed'}` : null,
