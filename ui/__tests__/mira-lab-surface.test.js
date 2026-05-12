@@ -904,6 +904,27 @@ describe('Mira Lab sidecar surface', () => {
           { candidate: 'native_squidrun_comms', seam: 'hm-comms history', writes_or_sends: false },
           { candidate: 'calendar_connector', seam: 'MCP-compatible calendar provider', writes_or_sends: false },
         ],
+        selected_connector_candidate: {
+          candidate: 'native_squidrun_comms',
+          seam: 'hm-comms history',
+          reason: 'Native comms metadata shows thread pressure before calendar or Gmail APIs.',
+          evidence: { message_artifact_count: 1, native_comms_row_count: 12, role_pair_count: 4 },
+          writes_or_sends: false,
+        },
+        native_comms_metadata: {
+          ok: true,
+          source: 'hm-comms',
+          scope: 'main',
+          history_limit: 50,
+          row_count: 12,
+          latest_message_ids: ['hm-test-12', 'hm-test-11'],
+          sender_counts: { architect: 6, mira: 3 },
+          target_counts: { builder: 7, oracle: 2 },
+          status_counts: { routed: 8, recorded: 4 },
+          role_pair_counts: { 'architect->builder': 6, 'mira->builder': 3 },
+          thread_pressure: [{ pair: 'architect->builder', count: 6, latest_timestamp_ms: 1778628300000 }],
+          mira_route_count: 3,
+        },
       }),
       schedulerCuriosityReader: () => ({
         ok: true,
@@ -1021,7 +1042,7 @@ describe('Mira Lab sidecar surface', () => {
     }));
     expect(bySource.calendar_messages).toEqual(expect.objectContaining({
       status: 'active',
-      integration_strategy: 'mcp_candidate',
+      integration_strategy: 'existing_seam',
       calendar_artifact_count: 1,
       message_artifact_count: 1,
       calendar_first_start: '2026-05-13T09:00:00.000Z',
@@ -1030,6 +1051,17 @@ describe('Mira Lab sidecar surface', () => {
       candidate: 'native_squidrun_comms',
       writes_or_sends: false,
     }));
+    expect(bySource.calendar_messages.calendar_message_selected_connector).toEqual(expect.objectContaining({
+      candidate: 'native_squidrun_comms',
+      writes_or_sends: false,
+    }));
+    expect(bySource.calendar_messages.calendar_message_comms_metadata).toEqual(expect.objectContaining({
+      ok: true,
+      row_count: 12,
+      mira_route_count: 3,
+      role_pair_counts: expect.objectContaining({ 'architect->builder': 6 }),
+    }));
+    expect(JSON.stringify(bySource.calendar_messages)).not.toMatch(/rawBody|excerpt/i);
     expect(bySource.automation_scheduler).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
