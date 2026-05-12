@@ -5441,18 +5441,33 @@ function buildCurriculumCandidate(raw = {}) {
   };
 }
 
+function curriculumSourceAdapterKey(source, adapterId) {
+  const sourceText = trimText(source);
+  const adapterText = canonicalCuriosityAdapterId({ source: sourceText, adapter_id: adapterId });
+  if (!sourceText || !adapterText) return null;
+  return `${sourceText}:${adapterText}`;
+}
+
 function mergeCurriculumCandidate(map, raw) {
   const candidate = buildCurriculumCandidate(raw);
   const key = `${candidate.source_kind}:${candidate.source || ''}:${candidate.adapter_id || ''}:${candidate.skill_name}`;
   const existing = map.get(key);
   if (!existing) {
     map.set(key, candidate);
-    return;
+    return candidate;
   }
   existing.times_observed += candidate.times_observed;
   existing.evidence = curriculumEvidenceList(existing.evidence, candidate.evidence);
   existing.next_behavior = existing.next_behavior || candidate.next_behavior;
   existing.practice_trigger = existing.practice_trigger || candidate.practice_trigger;
+  return existing;
+}
+
+function mergeStalePatternIntoActiveOutcome(activeCandidate, raw = {}) {
+  if (!activeCandidate) return false;
+  activeCandidate.times_observed += Math.max(1, Number(raw.times_observed || 1) || 1);
+  activeCandidate.evidence = curriculumEvidenceList(activeCandidate.evidence, raw.evidence, raw.route_id, raw.burst_id, raw.item_id);
+  return true;
 }
 
 function extractMiraCurriculumSkills(payload = {}, options = {}) {
@@ -5473,6 +5488,7 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
     .filter((entry) => entry && entry.schema === MIRA_ACTIVE_INITIATIVE_SCHEMA && trimText(entry.initiative_id))
     .map((entry) => [trimText(entry.initiative_id), entry]));
   const candidates = new Map();
+  const activeOutcomeBySourceAdapter = new Map();
 
   for (const proposal of proposals) {
     const proposalId = trimText(proposal.proposal_id || proposal.proposalId);
@@ -5521,7 +5537,7 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
     const work = outcome.work_order || initiative.work_order || {};
     const source = trimText(outcome.source || selected.source);
     const adapterId = trimText(outcome.adapter_id || selected.adapter_id || selected.adapterId);
-    mergeCurriculumCandidate(candidates, {
+    const candidate = mergeCurriculumCandidate(candidates, {
       source_kind: 'active_initiative_outcome',
       source_key: initiativeId,
       initiative_id: initiativeId,
@@ -5536,11 +5552,24 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
       graduation_metric: 'Promote after two implemented active initiatives with no duplicate spam or rollback outcome.',
       evidence: curriculumEvidenceList(outcome.evidence, outcome.outcome_id, initiativeId),
     });
+    const sourceAdapterKey = curriculumSourceAdapterKey(source, adapterId);
+    if (sourceAdapterKey && candidate) {
+      activeOutcomeBySourceAdapter.set(sourceAdapterKey, candidate);
+    }
   }
 
   for (const route of routes) {
     if (route?.decision !== 'routed') continue;
     const item = route.selected_item || {};
+    const sourceAdapterKey = curriculumSourceAdapterKey(item.source, item.adapter_id);
+    const activeCandidate = sourceAdapterKey ? activeOutcomeBySourceAdapter.get(sourceAdapterKey) : null;
+    if (mergeStalePatternIntoActiveOutcome(activeCandidate, {
+      route_id: route.route_id,
+      item_id: item.item_id,
+      evidence: [route.reason, item.possible_action, item.suggested_question],
+    })) {
+      continue;
+    }
     mergeCurriculumCandidate(candidates, {
       source_kind: 'direct_route_pattern',
       source_key: `${trimText(item.source)}:${trimText(item.adapter_id)}`,
@@ -5560,6 +5589,14 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
   for (const burst of bursts) {
     const route = burst.route_output || {};
     if (burst?.decision !== 'burst_completed' || route.decision !== 'route_selected') continue;
+    const sourceAdapterKey = curriculumSourceAdapterKey(route.source, route.adapter_id);
+    const activeCandidate = sourceAdapterKey ? activeOutcomeBySourceAdapter.get(sourceAdapterKey) : null;
+    if (mergeStalePatternIntoActiveOutcome(activeCandidate, {
+      burst_id: burst.burst_id,
+      evidence: [route.source, route.adapter_id, route.reason, route.possible_action, route.suggested_question],
+    })) {
+      continue;
+    }
     mergeCurriculumCandidate(candidates, {
       source_kind: 'curiosity_burst_pattern',
       source_key: `${trimText(route.source)}:${trimText(route.adapter_id)}`,

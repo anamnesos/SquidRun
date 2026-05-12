@@ -2134,6 +2134,93 @@ describe('Mira Lab sidecar surface', () => {
     expect(activeSkill.evidence).toEqual(expect.arrayContaining(['commit=9edcd93']));
   });
 
+  test('curriculum prefers implemented active-outcome lessons over stale route patterns for the same source', () => {
+    projectRoot = tempProject();
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      generated_at: '2026-05-12T16:00:00.000Z',
+      outcome_id: 'mira-active-initiative-outcome:calendar-fresh',
+      initiative_id: 'mira-active-initiative:calendar-fresh',
+      outcome_status: 'implemented',
+      target_role: 'builder',
+      initiative_kind: 'calendar_message_connector_next',
+      source: 'calendar_messages',
+      adapter_id: 'calendar_message_curiosity',
+      work_order: { title: 'Choose calendar native comms seam' },
+      evidence: ['selected_connector=native_squidrun_comms', 'hm_comms_rows=50'],
+      note: 'Calendar/message curiosity uses native SquidRun comms metadata now.',
+    });
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      generated_at: '2026-05-12T16:01:00.000Z',
+      outcome_id: 'mira-active-initiative-outcome:email-fresh',
+      initiative_id: 'mira-active-initiative:email-fresh',
+      outcome_status: 'implemented',
+      target_role: 'builder',
+      initiative_kind: 'email_pressure_followup',
+      source: 'email',
+      adapter_id: 'email_curiosity',
+      work_order: { title: 'Sharpen email pressure metadata' },
+      evidence: ['pressure_buckets=important_unread,starred_unread', 'metadata_only_queries=IMPORTANT_unread'],
+      note: 'Email curiosity uses pressure buckets and metadata-only refresh queries now.',
+    });
+    for (const [routeId, source, adapterId, reason] of [
+      ['mira-direct-route:calendar-old-1', 'calendar_messages', 'calendar_message_curiosity', 'calendar and message curiosity needs connector shape mapping after native sources are active'],
+      ['mira-direct-route:calendar-old-2', 'calendar_messages', 'calendar_message_curiosity', 'calendar and message curiosity needs connector shape mapping after native sources are active'],
+      ['mira-direct-route:email-old-1', 'email', 'email_curiosity', 'email curiosity needs a connector before Mira can inspect message context'],
+      ['mira-direct-route:email-old-2', 'email', 'email_curiosity', 'email curiosity needs a connector before Mira can inspect message context'],
+    ]) {
+      appendJsonl(miraDirectRoutesPath(projectRoot), {
+        decision: 'routed',
+        route_id: routeId,
+        reason,
+        target_role: 'builder',
+        selected_item: {
+          item_id: `${routeId}:item`,
+          source,
+          adapter_id: adapterId,
+          suggested_question: 'Which connector should Mira build?',
+          possible_action: 'Build the old connector.',
+        },
+      });
+    }
+    appendJsonl(curiosityBurstsPath(projectRoot), {
+      decision: 'burst_completed',
+      burst_id: 'mira-curiosity-burst:email-old',
+      route_output: {
+        decision: 'route_selected',
+        source: 'email',
+        adapter_id: 'email_curiosity',
+        target_role: 'builder',
+        reason: 'burst selected older email connector follow-up',
+        suggested_question: 'Which email connector should Mira build?',
+        possible_action: 'Build email curiosity.',
+      },
+    });
+
+    const curriculum = extractMiraCurriculumSkills({ limit: 5 }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:05:00.000Z',
+    });
+
+    const calendar = curriculum.skills.find((skill) => skill.source === 'calendar_messages' && skill.adapter_id === 'calendar_message_curiosity');
+    const email = curriculum.skills.find((skill) => skill.source === 'email' && skill.adapter_id === 'email_curiosity');
+    expect(calendar).toEqual(expect.objectContaining({
+      source_kind: 'active_initiative_outcome',
+      lesson: expect.stringContaining('native SquidRun comms'),
+    }));
+    expect(calendar.evidence).toEqual(expect.arrayContaining(['mira-direct-route:calendar-old-1']));
+    expect(email).toEqual(expect.objectContaining({
+      source_kind: 'active_initiative_outcome',
+      lesson: expect.stringContaining('pressure buckets'),
+    }));
+    expect(email.evidence).toEqual(expect.arrayContaining(['mira-direct-route:email-old-1']));
+    expect(curriculum.skills.some((skill) => (
+      ['direct_route_pattern', 'curiosity_burst_pattern'].includes(skill.source_kind)
+      && ['calendar_messages', 'email'].includes(skill.source)
+    ))).toBe(false);
+  });
+
   test('read-only code mode lets Mira inspect allowed files without mutation', () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
