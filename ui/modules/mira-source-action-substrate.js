@@ -26,10 +26,10 @@ const SOURCE_ACTION_SUBSTRATE_REGISTRY = Object.freeze([
     source: 'memory',
     scope: 'continuity_claims_and_relevant_context',
     strategy: SUBSTRATE_STRATEGIES.active_memory,
-    status: 'adapter_ready_to_wire',
+    status: 'active',
     priority: 94,
-    existing_seams: ['cognitive-memory-api.js', 'memory-search/retrieve', 'team-memory/*', 'memory-ingest/*', 'hm-memory-api.js retrieve'],
-    first_probe: 'Retrieve recent Mira/source-action memories for the current lane before asking James to restate context.',
+    existing_seams: ['mira-memory-curiosity.js', 'cognitive-memory-api.js', 'memory-search/retrieve', 'team-memory/*', 'memory-ingest/*', 'hm-memory-api.js retrieve'],
+    first_probe: 'Use the active memory curiosity adapter to retrieve current-lane continuity before asking James to restate context.',
     why_this_strategy: 'Memory is an action source, not a passive note bucket; retrieval should ground curiosity and proposals.',
   },
   {

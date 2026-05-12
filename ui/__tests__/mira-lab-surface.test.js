@@ -674,11 +674,23 @@ describe('Mira Lab sidecar surface', () => {
         '(ARCHITECT #74): Mira curiosity lane routed.',
         '(BUILDER #1): local scout should notice repo/runtime/comms.',
       ].join('\n'),
+      memoryCuriosityReader: () => ({
+        ok: true,
+        decision: 'memory_retrieved_read_only',
+        query: 'Mira source action substrate current lane memory continuity',
+        result_count: 1,
+        results: [{
+          nodeId: 'node-memory-1',
+          category: 'mira',
+          title: 'Mira continuity',
+          contentExcerpt: 'Mira can retrieve current lane memory before asking James.',
+        }],
+      }),
     });
 
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
-    expect(result.active_count).toBe(6);
+    expect(result.active_count).toBe(7);
     expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(11);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
@@ -714,6 +726,17 @@ describe('Mira Lab sidecar surface', () => {
     expect(bySource.email.status).toBe('adapter_not_built_yet');
     expect(bySource.web_research.status).toBe('adapter_not_built_yet');
     expect(bySource.environment_apps.status).toBe('adapter_not_built_yet');
+    expect(bySource.memory).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      no_mutation_performed: true,
+    }));
+    expect(result.items.some((item) => (
+      item.source === 'memory'
+      && item.adapter_id === 'active_memory_tools_curiosity'
+      && item.memory_result_count === 1
+      && /memory result node-memory-1/i.test(item.suggested_question)
+    ))).toBe(true);
     expect(bySource.source_action_substrate).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
@@ -913,6 +936,58 @@ describe('Mira Lab sidecar surface', () => {
       source: 'source_action_substrate',
     }));
     expect(result.candidate_count).toBe(2);
+  });
+
+  test('direct route treats old memory curiosity rows as the active memory adapter alias', async () => {
+    projectRoot = tempProject();
+    [
+      {
+        item_id: 'mira-curiosity:old-memory',
+        generated_at: '2026-05-12T12:00:00.000Z',
+        source: 'memory',
+        adapter_id: 'memory_curiosity',
+        status: 'adapter_not_built_yet',
+        suggested_question: 'Which memory seam should Mira connect?',
+        possible_action: 'Build memory_curiosity.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:active-memory',
+        generated_at: '2026-05-12T12:10:00.000Z',
+        source: 'memory',
+        adapter_id: 'active_memory_tools_curiosity',
+        status: 'active',
+        suggested_question: 'Which memory result should Mira use?',
+        possible_action: 'Use active memory read results as evidence.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:reflexion-next',
+        generated_at: '2026-05-12T12:11:00.000Z',
+        source: 'reflexion_lessons',
+        adapter_id: 'scoreboard_reflexion_curiosity',
+        status: 'adapter_not_built_yet',
+        suggested_question: 'What lesson should Mira extract from the last review?',
+        possible_action: 'Build a read-only review-to-lesson extractor.',
+        route_hint: 'oracle',
+      },
+    ].forEach((item) => appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      sensitivity_hint: 'test_metadata',
+      ...item,
+    }));
+
+    const result = await selectMiraDirectRoute({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T12:12:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.candidate_count).toBe(2);
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      item_id: 'mira-curiosity:reflexion-next',
+      source: 'reflexion_lessons',
+    }));
   });
 
   test('direct route advances from active built capabilities to the next unbuilt arm', async () => {
