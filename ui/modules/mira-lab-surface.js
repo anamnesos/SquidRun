@@ -45,6 +45,9 @@ const {
 const {
   readMiraAutomationSchedulerCuriosity,
 } = require('./mira-automation-scheduler-curiosity');
+const {
+  readMiraWorkContinuationCuriosity,
+} = require('./mira-work-continuation-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -147,7 +150,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'future calendar/message connector seam' },
   { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-environment-curiosity.js read-only startup/app health, bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
   { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-automation-scheduler-curiosity.js compact read-only schedules.json metadata, ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
-  { source: 'work_continuation', scope: 'background_work_and_routing', adapter_id: 'work_continuation_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'background-agent-manager.js, owned-work-continue-broker.js, smart-routing.js, transcript-index.js' },
+  { source: 'work_continuation', scope: 'background_work_and_routing', adapter_id: 'work_continuation_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-work-continuation-curiosity.js compact read-only owned-work queue and continuation-card metadata' },
   { source: 'mira_runtime', scope: 'mira_internal_growth_runtime', adapter_id: 'mira_runtime_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'native_adapter', existing_seam: 'mira-core/growth-loop-v0.js, autonomy-substrate-v0.js, experience-v0.js, perception.js, intent-queue.js' },
 ]);
 
@@ -1409,6 +1412,20 @@ function compactSchedulerTypeCounts(value) {
     .slice(0, 8));
 }
 
+function compactWorkContinuationTotals(value) {
+  if (!value || typeof value !== 'object') return {};
+  const fields = [
+    'active_count',
+    'carried_count',
+    'stale_count',
+    'blocked_count',
+    'approval_required_count',
+  ];
+  return Object.fromEntries(fields
+    .map((field) => [field, Number(value[field] ?? value[field.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())])])
+    .filter(([, count]) => Number.isFinite(count)));
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1437,6 +1454,11 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const schedulerActiveCount = Number(rawItem.scheduler_active_count ?? rawItem.schedulerActiveCount);
   const schedulerDueSoonCount = Number(rawItem.scheduler_due_soon_count ?? rawItem.schedulerDueSoonCount);
   const schedulerOverdueCount = Number(rawItem.scheduler_overdue_count ?? rawItem.schedulerOverdueCount);
+  const workCarriedCount = Number(rawItem.work_carried_count ?? rawItem.workCarriedCount);
+  const workStaleCount = Number(rawItem.work_stale_count ?? rawItem.workStaleCount);
+  const workApprovalRequiredCount = Number(rawItem.work_approval_required_count ?? rawItem.workApprovalRequiredCount);
+  const workDueCount = Number(rawItem.work_due_count ?? rawItem.workDueCount);
+  const workHeldCount = Number(rawItem.work_held_count ?? rawItem.workHeldCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1492,6 +1514,14 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     scheduler_due_soon_count: Number.isFinite(schedulerDueSoonCount) ? schedulerDueSoonCount : null,
     scheduler_overdue_count: Number.isFinite(schedulerOverdueCount) ? schedulerOverdueCount : null,
     scheduler_type_counts: compactSchedulerTypeCounts(rawItem.scheduler_type_counts || rawItem.schedulerTypeCounts),
+    work_continuation_totals: compactWorkContinuationTotals(rawItem.work_continuation_totals || rawItem.workContinuationTotals),
+    work_carried_count: Number.isFinite(workCarriedCount) ? workCarriedCount : null,
+    work_stale_count: Number.isFinite(workStaleCount) ? workStaleCount : null,
+    work_approval_required_count: Number.isFinite(workApprovalRequiredCount) ? workApprovalRequiredCount : null,
+    work_due_count: Number.isFinite(workDueCount) ? workDueCount : null,
+    work_held_count: Number.isFinite(workHeldCount) ? workHeldCount : null,
+    work_next_agent: trimText(rawItem.work_next_agent || rawItem.workNextAgent) || null,
+    work_next_task_id: trimText(rawItem.work_next_task_id || rawItem.workNextTaskId) || null,
   };
 }
 
@@ -2040,6 +2070,70 @@ function activeAutomationSchedulerCuriosityAdapter(context = {}) {
   };
 }
 
+function activeWorkContinuationCuriosityAdapter(context = {}) {
+  const reader = typeof context.workContinuationCuriosityReader === 'function'
+    ? context.workContinuationCuriosityReader
+    : readMiraWorkContinuationCuriosity;
+  const result = reader({
+    queuePath: context.workContinuationQueuePath,
+    wakeTrigger: context.workContinuationWakeTrigger || 'post-wake',
+    staleAfterMs: context.workContinuationStaleAfterMs,
+  }, {
+    projectRoot: context.projectRoot,
+    queuePath: context.workContinuationQueuePath,
+    wakeTrigger: context.workContinuationWakeTrigger || 'post-wake',
+    staleAfterMs: context.workContinuationStaleAfterMs,
+    nowMs: context.nowMs,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'work_continuation',
+      scope: 'background_work_and_routing',
+      adapter_id: 'work_continuation_curiosity',
+      integration_strategy: 'existing_seam',
+      status: 'unavailable_in_this_runtime',
+      observation: `Owned-work continuation read was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Mira needs to see pending owned work before deciding whether to start a fresh lane or resume a stalled one.',
+      hypothesis: 'The continuation seam may exist, but the queue path or summary broker needs repair before Mira can trust it.',
+      suggested_question: 'Which owned-work queue or continuation broker path should Mira inspect next?',
+      possible_action: 'Repair the read-only work-continuation metadata path before dispatching or mutating queue state.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_owned_work_metadata',
+      adapter_error: trimText(result?.reason || result?.error || 'work_continuation_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const totals = result.totals || {};
+  const next = result.next_action || null;
+  return {
+    source: 'work_continuation',
+    scope: 'background_work_and_routing',
+    adapter_id: 'work_continuation_curiosity',
+    integration_strategy: 'existing_seam',
+    status: 'active',
+    observation: `Owned-work continuation read carried=${totals.carried_count || 0}; stale=${totals.stale_count || 0}; blocked=${totals.blocked_count || 0}; approval_required=${totals.approval_required_count || 0}; next=${next?.agent || 'none'}/${next?.task_id || 'none'}.`,
+    why_interesting: 'Mira can now notice unfinished internal work and choose resume-vs-new-route instead of losing threads between bursts.',
+    hypothesis: next?.task_id
+      ? `${next.agent}/${next.task_id} is the next dispatch-ready owned-work continuation to compare against fresh curiosity routes.`
+      : 'No dispatch-ready owned work is due, so the next route can advance to new runtime growth without dropping a queued task.',
+    suggested_question: next?.task_id
+      ? `Should Mira resume ${next.agent}/${next.task_id} before starting the next new capability lane?`
+      : 'Which fresh runtime lane should Mira choose now that no owned-work continuation is due?',
+    possible_action: 'Use compact owned-work metadata to decide whether to resume existing work; do not dispatch, continue, block, or mutate queue state from scout output.',
+    route_hint: next?.agent || 'builder',
+    sensitivity_hint: 'local_owned_work_metadata',
+    work_continuation_totals: totals,
+    work_carried_count: totals.carried_count || 0,
+    work_stale_count: totals.stale_count || 0,
+    work_approval_required_count: totals.approval_required_count || 0,
+    work_due_count: result.due_count || 0,
+    work_held_count: result.held_count || 0,
+    work_next_agent: next?.agent || null,
+    work_next_task_id: next?.task_id || null,
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -2130,7 +2224,7 @@ function defaultCuriosityAdapters() {
     notImplementedCuriosityAdapter(byAdapter.calendar_message_curiosity, 'calendars and messages'),
     activeEnvironmentCuriosityAdapter,
     activeAutomationSchedulerCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.work_continuation_curiosity, 'work continuation and routing'),
+    activeWorkContinuationCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.mira_runtime_curiosity, 'Mira runtime growth loops'),
   ];
 }
@@ -2256,6 +2350,10 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     schedulerCuriosityReader: options.schedulerCuriosityReader,
     schedulerStatePaths: options.schedulerStatePaths,
     schedulerLimit: options.schedulerLimit,
+    workContinuationCuriosityReader: options.workContinuationCuriosityReader,
+    workContinuationQueuePath: options.workContinuationQueuePath,
+    workContinuationWakeTrigger: options.workContinuationWakeTrigger,
+    workContinuationStaleAfterMs: options.workContinuationStaleAfterMs,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -2318,6 +2416,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'environment_apps',
   'cheap_parallel_scouts',
   'automation_scheduler',
+  'work_continuation',
 ]);
 
 function normalizeCuriosityBurstSources(payload = {}, options = {}) {
@@ -2342,6 +2441,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'environment_apps') return [activeEnvironmentCuriosityAdapter];
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
   if (source === 'automation_scheduler') return [activeAutomationSchedulerCuriosityAdapter];
+  if (source === 'work_continuation') return [activeWorkContinuationCuriosityAdapter];
   return [];
 }
 
@@ -2355,6 +2455,7 @@ function curiosityBurstRouteForItems(items = []) {
     web_research: 72,
     images_screenshots_assets: 71,
     environment_apps: 70,
+    work_continuation: 69,
     runtime_comms: 64,
     repo_files: 42,
   };
@@ -2443,6 +2544,10 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     schedulerCuriosityReader: options.schedulerCuriosityReader,
     schedulerStatePaths: options.schedulerStatePaths,
     schedulerLimit: options.schedulerLimit,
+    workContinuationCuriosityReader: options.workContinuationCuriosityReader,
+    workContinuationQueuePath: options.workContinuationQueuePath,
+    workContinuationWakeTrigger: options.workContinuationWakeTrigger,
+    workContinuationStaleAfterMs: options.workContinuationStaleAfterMs,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,

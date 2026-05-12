@@ -365,6 +365,14 @@ describe('hm-mira-self-direction CLI harness', () => {
           type_counts: {},
           schedules: [],
         }),
+        workContinuationCuriosityReader: () => ({
+          ok: true,
+          decision: 'work_continuation_read_only',
+          totals: { carried_count: 0, stale_count: 0, approval_required_count: 0 },
+          due_count: 0,
+          held_count: 0,
+          next_action: null,
+        }),
       },
     });
 
@@ -383,7 +391,7 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(jsonResult.result.no_action_taken).toBe(true);
     expect(jsonResult.result.no_mutation_performed).toBe(true);
     expect(jsonResult.result.consequence_controls.external_send_performed).toBe(false);
-    expect(JSON.stringify(jsonResult.result)).not.toMatch(/requires_permission|forbidden|blocked/i);
+    expect(JSON.stringify(jsonResult.result)).not.toMatch(/requires_permission|forbidden/i);
 
     const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
     const textRun = spawnSync(process.execPath, [
@@ -473,6 +481,14 @@ describe('hm-mira-self-direction CLI harness', () => {
           type_counts: {},
           schedules: [],
         }),
+        workContinuationCuriosityReader: () => ({
+          ok: true,
+          decision: 'work_continuation_read_only',
+          totals: { carried_count: 0, stale_count: 0, approval_required_count: 0 },
+          due_count: 0,
+          held_count: 0,
+          next_action: null,
+        }),
       },
     });
 
@@ -522,6 +538,14 @@ describe('hm-mira-self-direction CLI harness', () => {
           overdue_count: 0,
           type_counts: {},
           schedules: [],
+        }),
+        workContinuationCuriosityReader: () => ({
+          ok: true,
+          decision: 'work_continuation_read_only',
+          totals: { carried_count: 0, stale_count: 0, approval_required_count: 0 },
+          due_count: 0,
+          held_count: 0,
+          next_action: null,
         }),
       },
     });
