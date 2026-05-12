@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process');
 const driver = require('../scripts/hm-mira-self-direction');
 const {
   MIRA_CURIOSITY_ITEM_SCHEMA,
+  activeInitiativeOutcomesPath,
   activeInitiativesPath,
   curiosityBurstsPath,
   curriculumSkillsPath,
@@ -768,6 +769,58 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(textRun.stdout).toContain('target=builder');
     expect(textRun.stdout).toContain('initiative=runtime_gap_repair');
     expect(textRun.stdout).toContain('source=mira_runtime');
+  });
+
+  test('initiative-outcome CLI records completion for a Mira-selected work order', async () => {
+    const projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:cli-env-outcome',
+      generated_at: '2026-05-12T15:20:00.000Z',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health is WARN and snapshot stale.',
+      suggested_question: 'Should Mira route a health refresh?',
+      possible_action: 'Use environment health evidence.',
+      route_hint: 'builder',
+      environment_overall_label: 'WARN',
+      environment_overall_score: 88,
+      environment_snapshot_stale: true,
+      environment_memory_sync_status: 'drift_detected',
+      environment_bridge_connection: 'disconnected',
+    });
+    const initiative = await driver.run([
+      'next-initiative',
+      '--project-root', projectRoot,
+      '--no-dispatch',
+      '--json',
+    ], {
+      options: {
+        generatedAt: '2026-05-12T15:21:00.000Z',
+      },
+    });
+
+    const result = await driver.run([
+      'initiative-outcome',
+      '--initiative-id', initiative.result.initiative_id,
+      '--status', 'implemented',
+      '--evidence', 'commit=9edcd93',
+      '--note', 'Builder patched the stale snapshot path.',
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      options: {
+        generatedAt: '2026-05-12T15:22:00.000Z',
+      },
+    });
+
+    expect(result.result.decision).toBe('outcome_recorded');
+    expect(result.result.initiative_id).toBe(initiative.result.initiative_id);
+    expect(result.result.outcome_status).toBe('implemented');
+    expect(result.result.outcome.source).toBe('environment_apps');
+    expect(result.result.consequence_controls.external_send_performed).toBe(false);
+    expect(readJsonl(activeInitiativeOutcomesPath(projectRoot))).toHaveLength(1);
   });
 
   test('code-mode CLI runs read-only exploration over allowed runtime files', async () => {
