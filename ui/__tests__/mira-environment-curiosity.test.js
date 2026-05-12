@@ -80,6 +80,8 @@ describe('Mira environment curiosity read adapter', () => {
     expect(result.schema).toBe(MIRA_ENVIRONMENT_CURIOSITY_SCHEMA);
     expect(result.decision).toBe('environment_health_read_only');
     expect(result.no_mutation_performed).toBe(true);
+    expect(result.snapshot_source).toBe('startup_health_file');
+    expect(result.snapshot_refresh_attempted).toBe(false);
     expect(result.snapshot_stale).toBe(false);
     expect(result).toEqual(expect.objectContaining({
       overall_label: 'WARN',
@@ -94,6 +96,107 @@ describe('Mira environment curiosity read adapter', () => {
       external_send_performed: false,
     }));
     expect(JSON.stringify(result)).not.toMatch(/relay-production|api_key|secret/i);
+  });
+
+  test('refreshes a stale startup snapshot with a live read-only health snapshot', () => {
+    const projectRoot = tempProject();
+    writeStartupHealth(projectRoot, [
+      'STARTUP HEALTH',
+      '- Overall: WARN (score=88/100)',
+      '- Generated: 2026-05-12T07:11:11.317Z',
+      '- Profile: main',
+      '',
+      'MEMORY CONSISTENCY',
+      '- Sync Status: drift_detected (attention needed)',
+      '- Counts: entries=162, nodes=218, missing=9, orphans=65, duplicates=0',
+      '',
+      'BRIDGE HEALTH',
+      '- Connection: disconnected',
+      '- Runtime: mode=connecting, enabled=yes, configured=yes, required=no',
+    ].join('\n'));
+
+    const liveHealthSnapshotReader = jest.fn(() => ({
+      ok: true,
+      text: [
+        'STARTUP HEALTH',
+        '- Overall: OK (score=100/100)',
+        '- Generated: 2026-05-12T22:00:00.000Z',
+        '- Profile: main',
+        '- App Session: session 368',
+        '',
+        'MEMORY CONSISTENCY',
+        '- Sync Status: synced (in sync)',
+        '- Counts: entries=164, nodes=223, missing=0, orphans=0, duplicates=0',
+        '',
+        'BRIDGE HEALTH',
+        '- Connection: connected',
+        '- Runtime: mode=connected, enabled=yes, configured=yes, required=no',
+      ].join('\n'),
+    }));
+
+    const result = readMiraEnvironmentCuriosity({}, {
+      projectRoot,
+      nowMs: Date.parse('2026-05-12T22:05:00.000Z'),
+      liveHealthSnapshotReader,
+    });
+
+    expect(liveHealthSnapshotReader).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot,
+      profileName: 'main',
+      stale_health_path: expect.stringContaining('startup-health.md'),
+      startup_snapshot: expect.objectContaining({
+        snapshot_stale: true,
+      }),
+    }));
+    expect(result.snapshot_source).toBe('live_health_snapshot');
+    expect(result.snapshot_refresh_attempted).toBe(true);
+    expect(result.snapshot_refresh_ok).toBe(true);
+    expect(result.startup_snapshot_stale).toBe(true);
+    expect(result.snapshot_stale).toBe(false);
+    expect(result.memory_sync_status).toBe('synced (in sync)');
+    expect(result.bridge_connection).toBe('connected');
+    expect(result.observation_excerpt).toContain('snapshot=live_refresh');
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      read_only: true,
+      file_write_performed: false,
+      external_send_performed: false,
+    }));
+  });
+
+  test('keeps stale health evidence visible when live refresh is unavailable', () => {
+    const projectRoot = tempProject();
+    writeStartupHealth(projectRoot, [
+      'STARTUP HEALTH',
+      '- Overall: WARN (score=88/100)',
+      '- Generated: 2026-05-12T07:11:11.317Z',
+      '- Profile: main',
+      '',
+      'MEMORY CONSISTENCY',
+      '- Sync Status: drift_detected (attention needed)',
+      '- Counts: entries=162, nodes=218, missing=9, orphans=65, duplicates=0',
+      '',
+      'BRIDGE HEALTH',
+      '- Connection: disconnected',
+    ].join('\n'));
+
+    const result = readMiraEnvironmentCuriosity({}, {
+      projectRoot,
+      nowMs: Date.parse('2026-05-12T22:05:00.000Z'),
+      liveHealthSnapshotReader: () => ({
+        ok: false,
+        reason: 'health_cli_busy',
+        error: 'health snapshot timed out',
+      }),
+    });
+
+    expect(result.snapshot_source).toBe('startup_health_file');
+    expect(result.snapshot_refresh_attempted).toBe(true);
+    expect(result.snapshot_refresh_ok).toBe(false);
+    expect(result.snapshot_refresh_reason).toBe('health_cli_busy');
+    expect(result.snapshot_refresh_error).toBe('health snapshot timed out');
+    expect(result.snapshot_stale).toBe(true);
+    expect(result.memory_sync_status).toBe('drift_detected (attention needed)');
+    expect(result.observation_excerpt).toContain('refresh=health_cli_busy');
   });
 
   test('reports missing startup health without creating a file', () => {
