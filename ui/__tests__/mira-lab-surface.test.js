@@ -917,6 +917,15 @@ describe('Mira Lab sidecar surface', () => {
           next_step: 'Run focused continuation tests.',
         },
       }),
+      miraRuntimeCuriosityReader: () => ({
+        ok: true,
+        decision: 'runtime_read_with_gaps',
+        healthy_runtime: false,
+        module_count: 5,
+        active_signal_count: 3,
+        active_signals: ['autonomy_substrate', 'intent_queue', 'perception'],
+        blocked_modules: [{ module: 'experience' }, { module: 'growth_loop' }],
+      }),
       environmentCuriosityReader: () => ({
         ok: true,
         decision: 'environment_health_read_only',
@@ -931,7 +940,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(2);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(1);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -1009,6 +1018,16 @@ describe('Mira Lab sidecar surface', () => {
       work_held_count: 1,
       work_next_agent: 'builder',
       work_next_task_id: 'builder-safe-1',
+    }));
+    expect(bySource.mira_runtime).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'native_adapter',
+      runtime_healthy: false,
+      runtime_module_count: 5,
+      runtime_active_signal_count: 3,
+      runtime_blocked_count: 2,
+      runtime_active_signals: ['autonomy_substrate', 'intent_queue', 'perception'],
+      runtime_blocked_modules: ['experience', 'growth_loop'],
     }));
     expect(bySource.environment_apps).toEqual(expect.objectContaining({
       status: 'active',
@@ -1153,7 +1172,7 @@ describe('Mira Lab sidecar surface', () => {
       destructive_action_performed: false,
       deploy_trade_customer_auth_action_performed: false,
     }));
-    expect(JSON.stringify(result)).not.toMatch(/james permission|requires_permission|forbidden|blocked/i);
+    expect(JSON.stringify(result)).not.toMatch(/james permission|requires_permission|forbidden/i);
     expect(readJsonl(curiosityBurstsPath(projectRoot))).toHaveLength(1);
     expect(readJsonl(curiosityItemsPath(projectRoot)).length).toBe(result.item_count);
   });
@@ -1555,9 +1574,18 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:runtime-next',
         source: 'mira_runtime',
         adapter_id: 'mira_runtime_curiosity',
-        status: 'adapter_not_built_yet',
+        status: 'active',
         suggested_question: 'Which Mira runtime gap matters?',
-        possible_action: 'Build Mira runtime curiosity integration.',
+        possible_action: 'Use runtime health metadata.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:calendar-next',
+        source: 'calendar_messages',
+        adapter_id: 'calendar_message_curiosity',
+        status: 'adapter_not_built_yet',
+        suggested_question: 'Which calendar/message connector shape matters?',
+        possible_action: 'Map calendar/message connector shape.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1574,8 +1602,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:runtime-next',
-      source: 'mira_runtime',
+      item_id: 'mira-curiosity:calendar-next',
+      source: 'calendar_messages',
     }));
   });
 

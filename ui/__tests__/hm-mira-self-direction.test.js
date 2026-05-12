@@ -373,6 +373,15 @@ describe('hm-mira-self-direction CLI harness', () => {
           held_count: 0,
           next_action: null,
         }),
+        miraRuntimeCuriosityReader: () => ({
+          ok: true,
+          decision: 'runtime_read_only',
+          healthy_runtime: true,
+          module_count: 5,
+          active_signal_count: 5,
+          active_signals: ['autonomy_substrate', 'experience', 'growth_loop', 'intent_queue', 'perception'],
+          blocked_modules: [],
+        }),
       },
     });
 
@@ -489,6 +498,15 @@ describe('hm-mira-self-direction CLI harness', () => {
           held_count: 0,
           next_action: null,
         }),
+        miraRuntimeCuriosityReader: () => ({
+          ok: true,
+          decision: 'runtime_read_only',
+          healthy_runtime: true,
+          module_count: 5,
+          active_signal_count: 5,
+          active_signals: ['autonomy_substrate', 'experience', 'growth_loop', 'intent_queue', 'perception'],
+          blocked_modules: [],
+        }),
       },
     });
 
@@ -546,6 +564,15 @@ describe('hm-mira-self-direction CLI harness', () => {
           due_count: 0,
           held_count: 0,
           next_action: null,
+        }),
+        miraRuntimeCuriosityReader: () => ({
+          ok: true,
+          decision: 'runtime_read_only',
+          healthy_runtime: true,
+          module_count: 5,
+          active_signal_count: 5,
+          active_signals: ['autonomy_substrate', 'experience', 'growth_loop', 'intent_queue', 'perception'],
+          blocked_modules: [],
         }),
       },
     });
