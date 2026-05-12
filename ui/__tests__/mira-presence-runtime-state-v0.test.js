@@ -320,7 +320,7 @@ describe('mira presence runtime state v0', () => {
     expect(path.dirname(sidecarPath)).toBe(path.join(projectRoot, 'handoffs'));
   });
 
-  test('startup-ai-briefing refreshes the backstage sidecar even when the model call fails (missing key / fetch error)', async () => {
+  test('startup-ai-briefing refreshes the backstage sidecar when Anthropic is intentionally disabled', async () => {
     const projectRoot = tempProject();
     buildMiraPresenceRuntimeStateV0({
       projectRoot,
@@ -334,6 +334,7 @@ describe('mira presence runtime state v0', () => {
     const sidecarPath = resolveMiraPresenceRuntimeStateSummaryPath({ outputPath });
 
     expect(fs.existsSync(sidecarPath)).toBe(false);
+    const fetchImpl = jest.fn().mockRejectedValue(new Error('should_not_call_provider_when_disabled'));
 
     const result = await generateStartupBriefing({
       projectsDir: briefingDir,
@@ -342,10 +343,19 @@ describe('mira presence runtime state v0', () => {
       outputPath,
       statusPath,
       apiKey: '',
-      fetchImpl: jest.fn().mockRejectedValue(new Error('ANTHROPIC_API_KEY is not set')),
+      env: {
+        ANTHROPIC_API_KEY: '',
+        OPENAI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        GEMINI_API_KEY: '',
+      },
+      fetchImpl,
     });
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.skipReason).toBe('anthropic_provider_disabled');
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(fs.existsSync(outputPath)).toBe(false);
     expect(fs.existsSync(sidecarPath)).toBe(true);
     const sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
@@ -354,6 +364,54 @@ describe('mira presence runtime state v0', () => {
       surface: SURFACE_BACKSTAGE_INTERNAL_ONLY,
       visible_injection_allowed: false,
     }));
+    expect(sidecar.context).toEqual(expect.objectContaining({
+      present: true,
+      surface: SURFACE_BACKSTAGE_INTERNAL_ONLY,
+      visible_injection_allowed: false,
+    }));
+    expect(sidecar.context.summary).toEqual(expect.objectContaining({
+      active_mira_presence_lane: 'mira_presence_runtime_acceptance_v0',
+    }));
+
+    fs.rmSync(briefingDir, { recursive: true, force: true });
+  });
+
+  test('startup-ai-briefing refreshes the backstage sidecar when provider fetch fails', async () => {
+    const projectRoot = tempProject();
+    buildMiraPresenceRuntimeStateV0({
+      projectRoot,
+      apply: true,
+      state: fullState(),
+    });
+    const { generateStartupBriefing, resolveMiraPresenceRuntimeStateSummaryPath } = require('../modules/startup-ai-briefing');
+    const briefingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-fetch-fail-'));
+    const outputPath = path.join(briefingDir, 'ai-briefing.md');
+    const statusPath = path.join(briefingDir, 'startup-briefing-status.json');
+    const sidecarPath = resolveMiraPresenceRuntimeStateSummaryPath({ outputPath });
+    const fetchImpl = jest.fn().mockRejectedValue(new Error('forced_fetch_failure'));
+
+    const result = await generateStartupBriefing({
+      projectsDir: briefingDir,
+      projectRoot: briefingDir,
+      miraPresenceProjectRoot: projectRoot,
+      outputPath,
+      statusPath,
+      apiKey: 'test-anthropic-key',
+      env: {
+        ANTHROPIC_API_KEY: 'test-anthropic-key',
+        OPENAI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        GEMINI_API_KEY: '',
+      },
+      fetchImpl,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('forced_fetch_failure');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.existsSync(sidecarPath)).toBe(true);
+    const sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
     expect(sidecar.context).toEqual(expect.objectContaining({
       present: true,
       surface: SURFACE_BACKSTAGE_INTERNAL_ONLY,

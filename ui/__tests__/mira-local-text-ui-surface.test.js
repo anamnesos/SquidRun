@@ -660,17 +660,16 @@ describe('Mira Local Text UI Surface v0', () => {
       thread_context_message_count: '6',
       thread_context_omitted_count: '2',
     }));
-    expect(requestBody.instructions).toContain('Recent typed-panel user context follows');
-    expect(requestBody.instructions).toContain('Prior Mira/assistant turn count omitted from generation instructions: 3.');
+    expect(requestBody.instructions).toContain('Recent typed-panel conversation follows');
     expect(requestBody.instructions).not.toContain('old user turn one should be omitted');
     expect(requestBody.instructions).not.toContain('old Mira turn two should be omitted');
     expect(requestBody.instructions).toContain('James: I prefer direct pushback when my premise is wrong.');
-    expect(requestBody.instructions).not.toContain('Mira: recent Mira turn four');
+    expect(requestBody.instructions).toContain('Mira: recent Mira turn four');
     expect(requestBody.instructions).toContain('James: recent user turn five');
     expect(requestBody.instructions).toContain('James: recent user turn seven');
-    expect(requestBody.instructions).not.toContain('Mira: recent Mira turn eight');
-    expect(requestBody.instructions).not.toContain('human machinery');
-    expect(requestBody.instructions).not.toContain('plush and not furniture');
+    expect(requestBody.instructions).toContain('Mira: recent Mira turn eight');
+    expect(requestBody.instructions).toContain('human machinery');
+    expect(requestBody.instructions).toContain('plush and not furniture');
     expect(requestBody.instructions).toContain('renderer memory only and not durable memory');
     expect(requestBody.instructions).not.toContain('proof of memory commit');
     expect(surface.thread_context).toEqual(expect.objectContaining({
@@ -841,8 +840,10 @@ describe('Mira Local Text UI Surface v0', () => {
       fallback_used: false,
       degraded_reason: 'model_response_contract_violation',
       primary_status: 'degraded',
+      contract_violation_class: 'generic_assistant_phrase',
     }));
-    expect(JSON.stringify(surface)).not.toContain('How can I assist you today');
+    expect(JSON.stringify(surface.reply)).not.toContain('How can I assist you today');
+    expect(surface.model_attachment.contract_violation_raw_text).toContain('How can I assist you today');
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
@@ -879,8 +880,10 @@ describe('Mira Local Text UI Surface v0', () => {
       fallback_used: false,
       degraded_reason: 'model_response_contract_violation',
       primary_status: 'degraded',
+      contract_violation_class: 'generic_assistant_phrase',
     }));
-    expect(JSON.stringify(surface)).not.toContain('happy to help');
+    expect(JSON.stringify(surface.reply)).not.toContain('happy to help');
+    expect(surface.model_attachment.contract_violation_raw_text).toContain('happy to help');
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
@@ -925,8 +928,10 @@ describe('Mira Local Text UI Surface v0', () => {
       fallback_used: false,
       degraded_reason: 'model_response_contract_violation',
       primary_status: 'degraded',
+      contract_violation_class: 'meta_rewrite_phrase',
     }));
-    expect(JSON.stringify(surface)).not.toContain('a better version might be');
+    expect(JSON.stringify(surface.reply)).not.toContain('a better version might be');
+    expect(surface.model_attachment.contract_violation_raw_text).toContain('a better version might be');
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
