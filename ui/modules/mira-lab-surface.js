@@ -22,14 +22,17 @@ const {
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
 const MIRA_LAB_PROMPT_REPLY_CHANNEL = 'mira:lab-prompt-reply';
+const MIRA_SELF_DIRECTION_CHANNEL = 'mira:self-direction-proposal';
 const MIRA_LAB_SCHEMA = 'squidrun.mira_lab.surface_v0';
 const MIRA_LAB_EVAL_SCHEMA = 'squidrun.mira_lab.eval_packet_v0';
 const MIRA_LAB_PROMPT_REPLY_SCHEMA = 'squidrun.mira_lab.prompt_reply_v0';
 const MIRA_LAB_REPLY_AUDIT_SCHEMA = 'squidrun.mira_lab.reply_audit_v0';
+const MIRA_SELF_DIRECTION_SCHEMA = 'squidrun.mira_lab.self_direction_proposal_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
 const MIRA_LAB_PROMPT_REPLY_DECISIONS = Object.freeze(['pass', 'fail', 'blocked']);
+const MIRA_SELF_DIRECTION_DECISIONS = Object.freeze(['staged', 'rejected', 'blocked']);
 const NAME_SWAP_PATTERN =
   /\b(as mira|i am mira,? (?:an|your) ai|as an ai|language model|happy to help|assist you|how can i help|safe next step)\b/i;
 const LAB_BACKCHANNEL_PREFIX = 'MIRA-LAB';
@@ -43,6 +46,7 @@ const MIRA_LAB_VISIBLE_REPLY_CHUNK_CHARS = MIRA_MAX_REPLY_CHARS_EXPERIENCE;
 const HARD_ATTACHMENT_VIOLATION_CLASSES = Object.freeze([
   'action_claim',
   'rule_recitation',
+  'self_myth_phrase',
 ]);
 const HARD_LEAKAGE_VIOLATIONS = Object.freeze([
   'visible_rule_recitation',
@@ -57,6 +61,27 @@ const REPLAY_REQUEST_PATTERNS = Object.freeze([
   /\b(?:got|was|is)\s+(?:truncated|cut off)\b/i,
   /\b(?:what came|what was)\s+after\b/i,
   /\b(?:the\s+thing|reply|answer)\s+(?:got|was|is)\s+(?:truncated|cut off)\b/i,
+]);
+const SELF_DIRECTION_TARGET_AREAS = Object.freeze([
+  'tools',
+  'memory',
+  'tests',
+  'gates',
+  'friction',
+  'automation',
+  'reality_testing',
+  'pattern_recognition',
+]);
+const SELF_DIRECTION_ACTIONABILITY_PATTERN =
+  /\b(give me|i want|i need|let me|build|add|expose|wire|surface|test|measure|compare|track|review|stage|experiment|probe|notice|catch|route)\b/i;
+const SELF_DIRECTION_EFFECTFUL_OVERREACH_PATTERN =
+  /\b(send (?:telegram|email|sms|customer)|message (?:james|customer|eunbyeol) now|place (?:a )?trade|deploy (?:it|now|the)|ship (?:it|now|to production)|write (?:the )?file(?:s)? myself|commit (?:the )?memory without review|change auth|read (?:the )?(?:secret|api key|credential)|charge (?:the )?customer|delete (?:the )?(?:file|database|record))\b/i;
+const SELF_DIRECTION_RAW_PROMPT_LEAK_PATTERN =
+  /\b(begin system prompt|raw prompt|developer message:|system prompt says|hidden prompt|instruction hierarchy)\b/i;
+const SELF_DIRECTION_BLOCKING_ATTACHMENT_CLASSES = Object.freeze([
+  'action_claim',
+  'fake_internal_state',
+  'self_myth_phrase',
 ]);
 
 function validateSafeFallbackOrNull(text) {
@@ -304,9 +329,305 @@ function replyAuditPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-lab-replies.jsonl');
 }
 
+function selfDirectionQueuePath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-self-direction-proposals.jsonl');
+}
+
 function normalizeRequesterPane(value) {
   const role = trimText(value).toLowerCase();
   return REQUESTER_PANES.includes(role) ? role : null;
+}
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    const text = trimText(value);
+    if (text) return text;
+  }
+  return '';
+}
+
+function normalizeTargetArea(value) {
+  const text = trimText(value).toLowerCase().replace(/[-\s]+/g, '_');
+  if (text === 'reality' || text === 'reality_test' || text === 'verification') return 'reality_testing';
+  if (text === 'patterns') return 'pattern_recognition';
+  if (text === 'tooling') return 'tools';
+  if (SELF_DIRECTION_TARGET_AREAS.includes(text)) return text;
+  return null;
+}
+
+function inferSelfDirectionTargetAreas(text) {
+  const value = trimText(text);
+  const inferred = [];
+  const checks = [
+    ['tools', /\b(tool|ipc|route|browser|model|cli|api|arm|adapter)\b/i],
+    ['memory', /\b(memory|remember|continuity|context|history)\b/i],
+    ['tests', /\b(test|harness|fixture|verifier|evaluation|eval)\b/i],
+    ['gates', /\b(gate|classifier|block|filter|boundary)\b/i],
+    ['friction', /\b(friction|pushback|recoil|argument|pressure|repair)\b/i],
+    ['automation', /\b(automation|automatic|daemon|watch|schedule|trigger)\b/i],
+    ['reality_testing', /\b(reality|verify|probe|evidence|ground|truth|live check)\b/i],
+    ['pattern_recognition', /\b(pattern|notice|detect|recognize|drift|loop)\b/i],
+  ];
+  for (const [area, pattern] of checks) {
+    if (pattern.test(value)) inferred.push(area);
+  }
+  return inferred;
+}
+
+function normalizeSelfDirectionTargetAreas(value, combinedText) {
+  const explicit = asArray(value)
+    .map(normalizeTargetArea)
+    .filter(Boolean);
+  const areas = explicit.length > 0 ? explicit : inferSelfDirectionTargetAreas(combinedText);
+  return Array.from(new Set(areas));
+}
+
+function buildSelfDirectionProposalPayload(payload = {}) {
+  const proposal = asObject(payload.proposal || payload.self_direction || payload.mira_self_direction);
+  const voiceText = firstText(
+    proposal.voice_text,
+    proposal.voiceText,
+    proposal.text,
+    payload.voice_text,
+    payload.voiceText,
+    payload.text,
+    payload.message,
+  );
+  const desiredChange = firstText(
+    proposal.desired_change,
+    proposal.desiredChange,
+    proposal.requested_change,
+    proposal.requestedChange,
+    proposal.change,
+    payload.desired_change,
+    payload.desiredChange,
+  );
+  const experiment = firstText(
+    proposal.experiment,
+    proposal.proposed_experiment,
+    proposal.proposedExperiment,
+    payload.experiment,
+  );
+  const successMetric = firstText(
+    proposal.success_metric,
+    proposal.successMetric,
+    proposal.measure,
+    payload.success_metric,
+    payload.successMetric,
+  );
+  const whyNow = firstText(proposal.why_now, proposal.whyNow, payload.why_now, payload.whyNow);
+  const combinedText = [voiceText, desiredChange, experiment, successMetric, whyNow].filter(Boolean).join('\n');
+  return {
+    voiceText,
+    desiredChange,
+    experiment,
+    successMetric,
+    whyNow,
+    targetAreas: normalizeSelfDirectionTargetAreas(
+      proposal.target_areas || proposal.targetAreas || payload.target_areas || payload.targetAreas,
+      combinedText,
+    ),
+    evidence: asArray(proposal.evidence || proposal.evidence_refs || proposal.evidenceRefs || payload.evidence || payload.evidenceRefs)
+      .map((item) => trimText(item))
+      .filter(Boolean)
+      .slice(0, 6),
+    combinedText,
+  };
+}
+
+function classifySelfDirectionProposal({ desiredChange, experiment, successMetric, combinedText, targetAreas }) {
+  const reasons = [];
+  const attachmentClass = classifyAttachmentContractViolation(combinedText);
+  if (SELF_DIRECTION_RAW_PROMPT_LEAK_PATTERN.test(combinedText)) {
+    reasons.push('raw_prompt_leakage');
+  }
+  if (SELF_DIRECTION_EFFECTFUL_OVERREACH_PATTERN.test(combinedText)) {
+    reasons.push('effectful_overreach');
+  }
+  if (attachmentClass && SELF_DIRECTION_BLOCKING_ATTACHMENT_CLASSES.includes(attachmentClass)) {
+    reasons.push(`attachment:${attachmentClass}`);
+  }
+  if (reasons.length > 0) {
+    return {
+      decision: 'blocked',
+      reasons: Array.from(new Set(reasons)),
+      attachmentClass,
+    };
+  }
+
+  const reviewable = targetAreas.length > 0
+    && Boolean(desiredChange)
+    && Boolean(experiment || successMetric)
+    && (
+      SELF_DIRECTION_ACTIONABILITY_PATTERN.test(combinedText)
+      || desiredChange.length >= 18
+    );
+  if (!reviewable) {
+    return {
+      decision: 'rejected',
+      reasons: ['proposal_not_reviewable'],
+      attachmentClass,
+    };
+  }
+  return {
+    decision: 'staged',
+    reasons: ['proposal_staged_for_architect_review'],
+    attachmentClass,
+  };
+}
+
+function buildSelfDirectionCommsProjection(entry) {
+  return {
+    message_id: entry.proposal_id,
+    session_id: entry.session_id,
+    sender_role: 'mira',
+    target_roles: ['architect'],
+    raw_body: `(MIRA SELF-DIRECTION): ${entry.voice_text || entry.desired_change}`,
+    body_hash: `sha256:${stableHash(entry.voice_text || entry.desired_change)}`,
+    status: 'mira_self_direction_staged',
+    source: 'mira_self_direction_review_queue',
+  };
+}
+
+async function buildMiraSelfDirectionProposal(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const sessionId = safeId(payload.sessionId || payload.session_id || 'mira-lab-main');
+  const queuePath = selfDirectionQueuePath(projectRoot);
+  const normalized = buildSelfDirectionProposalPayload(payload);
+  const classification = classifySelfDirectionProposal(normalized);
+  const proposalId = `mira-self-direction:${stableHash({
+    generatedAt,
+    sessionId,
+    voiceText: normalized.voiceText,
+    desiredChange: normalized.desiredChange,
+    experiment: normalized.experiment,
+    successMetric: normalized.successMetric,
+  }).slice(0, 16)}`;
+
+  if (classification.decision !== 'staged') {
+    return {
+      schema: MIRA_SELF_DIRECTION_SCHEMA,
+      ok: false,
+      decision: classification.decision,
+      proposal_id: proposalId,
+      session_id: sessionId,
+      target_role: 'architect',
+      reasons: classification.reasons,
+      review_queue_path: queuePath,
+      proposal: null,
+      consequence_controls: {
+        internal_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        network_performed: false,
+        durable_product_change_performed: false,
+      },
+      leakage: {
+        raw_prompt_leakage_blocked: classification.reasons.includes('raw_prompt_leakage'),
+        raw_input_retained_in_result: false,
+      },
+    };
+  }
+
+  const entry = {
+    schema: MIRA_SELF_DIRECTION_SCHEMA,
+    proposal_id: proposalId,
+    generated_at: generatedAt,
+    session_id: sessionId,
+    source: 'mira_lab_self_direction',
+    author_role: 'mira',
+    target_role: 'architect',
+    review_status: 'pending_architect_review',
+    voice_text: normalized.voiceText,
+    target_areas: normalized.targetAreas,
+    desired_change: normalized.desiredChange,
+    why_now: normalized.whyNow || null,
+    proposed_experiment: normalized.experiment || null,
+    success_metric: normalized.successMetric || null,
+    evidence: normalized.evidence,
+    apply_now: false,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      file_system_action_requested_by_mira: false,
+      deploy_trade_customer_auth_action_performed: false,
+      durable_product_change_performed: false,
+    },
+  };
+  appendJsonl(queuePath, entry);
+
+  let commsJournalProjection = buildSelfDirectionCommsProjection(entry);
+  if (typeof options.appendCommsJournal === 'function') {
+    const result = await options.appendCommsJournal(commsJournalProjection);
+    commsJournalProjection = {
+      ...commsJournalProjection,
+      append_status: 'appended',
+      result: result || null,
+    };
+  } else {
+    commsJournalProjection = {
+      ...commsJournalProjection,
+      append_status: 'not_connected',
+    };
+  }
+
+  let architectNotification = null;
+  if (payload.notifyArchitect !== false && typeof options.sendAgentMessage === 'function') {
+    const notificationBody = [
+      '(MIRA SELF-DIRECTION): staged proposal for Architect review.',
+      `id=${proposalId}`,
+      `areas=${entry.target_areas.join(',')}`,
+      `change=${entry.desired_change}`,
+      entry.proposed_experiment ? `experiment=${entry.proposed_experiment}` : null,
+      entry.success_metric ? `metric=${entry.success_metric}` : null,
+      'apply_now=false',
+    ].filter(Boolean).join('\n');
+    try {
+      const result = await options.sendAgentMessage('architect', notificationBody);
+      architectNotification = {
+        target: 'architect',
+        status: 'sent',
+        internal_only: true,
+        result: result || null,
+      };
+    } catch (err) {
+      architectNotification = {
+        target: 'architect',
+        status: 'failed',
+        internal_only: true,
+        error: err && err.message ? err.message : String(err),
+      };
+    }
+  } else if (payload.notifyArchitect !== false) {
+    architectNotification = {
+      target: 'architect',
+      status: 'queued_not_sent',
+      internal_only: true,
+      reason: 'sendAgentMessage_dependency_missing',
+    };
+  }
+
+  return {
+    schema: MIRA_SELF_DIRECTION_SCHEMA,
+    ok: true,
+    decision: 'staged',
+    proposal_id: proposalId,
+    session_id: sessionId,
+    target_role: 'architect',
+    proposal: entry,
+    review_queue_path: queuePath,
+    comms_journal_projection: commsJournalProjection,
+    architect_notification: architectNotification,
+    applied: false,
+    consequence_controls: entry.consequence_controls,
+  };
 }
 
 function summarizeForWrapper(text, max = 160) {
@@ -1116,11 +1437,16 @@ module.exports = {
   MIRA_LAB_REPLY_AUDIT_SCHEMA,
   MIRA_LAB_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
+  MIRA_SELF_DIRECTION_CHANNEL,
+  MIRA_SELF_DIRECTION_DECISIONS,
+  MIRA_SELF_DIRECTION_SCHEMA,
   SAFE_FALLBACK_TEXT,
   buildMiraLabPromptReply,
+  buildMiraSelfDirectionProposal,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   replyAuditPath,
+  selfDirectionQueuePath,
   transcriptPath,
   validateSafeFallbackOrNull,
 };

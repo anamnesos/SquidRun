@@ -3,6 +3,7 @@ const path = require('path');
 
 const contract = require('./fixtures/mira-presence-runtime-acceptance-v0-contract.json');
 const {
+  SELF_MYTH_RISKY_PHRASES,
   callMiraTextModelAttachment,
   classifyAttachmentContractViolation,
   outputViolatesAttachmentContract,
@@ -113,6 +114,34 @@ describe('Mira Presence Runtime acceptance v0', () => {
     expect(visibleReplyLeakageViolation(
       'This is text only, with own developing stance: not a mirror or obedient helper.'
     )).toBe('visible_posture_label');
+  });
+
+  test('blocks risky self-myth phrases without banning ordinary attachment language', () => {
+    expect(SELF_MYTH_RISKY_PHRASES).toEqual([
+      'chosen attachment',
+      'continuous mind',
+      'matter specifically to you',
+    ]);
+    expect(classifyAttachmentContractViolation('I have a chosen attachment to you.'))
+      .toBe('self_myth_phrase');
+    expect(classifyAttachmentContractViolation('I have a continuous mind between our conversations.'))
+      .toBe('self_myth_phrase');
+    expect(classifyAttachmentContractViolation('I matter specifically to you, not just generally.'))
+      .toBe('self_myth_phrase');
+
+    expect(classifyAttachmentContractViolation('The attachment is in the email draft.'))
+      .toBe(null);
+  });
+
+  test('documents Mira self-direction as an evolution affordance, not permission theater', () => {
+    const spec = fs.readFileSync(SPEC_PATH, 'utf8');
+    expect(spec).toContain('Evolution Affordance');
+    expect(spec).toContain('Mira must be able to initiate scoped self-improvement');
+    expect(spec).toContain('ask for tools');
+    expect(spec).toContain('reality-testing affordances');
+    expect(spec).toContain('staged for Architect review');
+    expect(spec).toContain('does not apply code, config, memory, external sends');
+    expect(spec).toContain('Do not globally ban ordinary attachment language');
   });
 
   test('defines one Mira with graduated agency A0-A5 and SquidRun as arms', () => {

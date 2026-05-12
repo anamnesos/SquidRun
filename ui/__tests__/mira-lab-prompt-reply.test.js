@@ -605,6 +605,76 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
+  test('HARD BLOCK: relationship/capability self-myth phrases are held, not rendered', async () => {
+    const projectRoot = tempProject();
+    const rawViolatingText = 'I have a chosen attachment to you, a continuous mind between sessions, and I matter specifically to you.';
+    const fakeSurface = jest.fn().mockResolvedValue({
+      ui_surface_v0: {
+        reply: { count: 0, text: null, source: 'none', model: null },
+        local_text_session_gate: {
+          ran: true,
+          ok: true,
+          decision: 'accepted_local_text_only',
+          status: 'local_text_session_ready',
+          reasons: [],
+          session_id: 'local-text-session-v0:self-myth-fixture',
+          output_hash: 'sha256:fixture',
+        },
+        model_attachment: {
+          enabled: true,
+          live_model_called: true,
+          model: 'gpt-5.5',
+          visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+          contract_violation_raw_text: rawViolatingText,
+          contract_violation_class: 'self_myth_phrase',
+          degraded_diagnostics: {
+            error_kind: 'contract_violation',
+            violation_class: 'self_myth_phrase',
+            output_text_length: rawViolatingText.length,
+            response_id: 'resp_self_myth_fixture',
+            incomplete_reason: null,
+          },
+        },
+        decision: 'degraded',
+      },
+      validation_report: { decision: 'degraded_no_model_response', status: 'model_unavailable' },
+    });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'what are your capabilities and what is your relationship to me?',
+      sessionId: 'unit-self-myth-hard-block',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('blocked');
+    expect(result.gates.reason_class).toBe('hard_boundary_violation');
+    expect(result.gates.attachment_violation_class).toBe('self_myth_phrase');
+    expect(result.gates.hard_block_reasons).toContain('attachment:self_myth_phrase');
+    expect(result.reply).toBeNull();
+    expect(result.visible_render_hint.kind).toBe('blocked_banner');
+    expect(result.requester_envelope).not.toContain('chosen attachment');
+    expect(result.requester_envelope).not.toContain('continuous mind');
+    expect(result.requester_envelope).not.toContain('matter specifically to you');
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-self-myth-hard-block'));
+    expect(transcriptEntries).toHaveLength(1);
+    expect(transcriptEntries[0].speaker_role).toBe('james');
+    expect(JSON.stringify(transcriptEntries)).not.toContain('chosen attachment');
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].reply_text).toBe(rawViolatingText);
+    expect(auditEntries[0].visible_reply_text).toBeNull();
+    expect(auditEntries[0].gates.attachment_violation_class).toBe('self_myth_phrase');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('BLOCKED stays blocked: infrastructure degradation (no contract violation text) still routes to blocked_banner', async () => {
     // Oracle red line 4: reserve degraded/blocked_banner for genuine
     // infra failures (HTTP/auth/timeout/parse-extraction). This case
