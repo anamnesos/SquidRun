@@ -126,11 +126,11 @@ const SOURCE_ACTION_SUBSTRATE_REGISTRY = Object.freeze([
     source: 'calendar_messages',
     scope: 'calendar_and_message_context',
     strategy: SUBSTRATE_STRATEGIES.mcp_connector,
-    status: 'connector_needed',
-    priority: 50,
-    existing_seams: ['future calendar/message connector seam'],
-    first_probe: 'Map available connector shape before reading any calendar/message content.',
-    why_this_strategy: 'Calendar/message access is ecosystem-shaped until a native SquidRun seam exists.',
+    status: 'active',
+    priority: 60,
+    existing_seams: ['mira-calendar-message-curiosity.js', 'hm-comms.js history metadata', 'Telegram/SMS/Gmail snapshots', 'future MCP-compatible calendar/message connector seam'],
+    first_probe: 'Read compact local calendar/message artifact metadata and connector candidates before any body reads, sends, or calendar mutations.',
+    why_this_strategy: 'Calendar/message access is ecosystem-shaped, but Mira now has a native read-only connector map to choose the first seam without pretending it is blocked.',
   },
 ]);
 

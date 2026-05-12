@@ -91,6 +91,12 @@ describe('Mira source/action substrate plan', () => {
       status: 'active',
     }));
     expect(miraRuntime.first_probe).toMatch(/runtime health/i);
+    const calendarMessages = plan.sources.find((entry) => entry.source === 'calendar_messages');
+    expect(calendarMessages).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.mcp_connector,
+      status: 'active',
+    }));
+    expect(calendarMessages.first_probe).toMatch(/calendar\/message artifact metadata/i);
   });
 
   test('chooses a concrete strategy and first probe for a routed source', () => {

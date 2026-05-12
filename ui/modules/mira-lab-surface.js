@@ -51,6 +51,9 @@ const {
 const {
   readMiraRuntimeCuriosity,
 } = require('./mira-runtime-curiosity');
+const {
+  readMiraCalendarMessageCuriosity,
+} = require('./mira-calendar-message-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -150,7 +153,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-email-curiosity.js compact read-only Gmail/connector metadata snapshot' },
   { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-web-research-curiosity.js compact read-only local research artifact inventory plus safe URLs/domains' },
   { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-visual-asset-curiosity.js compact screenshot/generated-image inventory' },
-  { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'future calendar/message connector seam' },
+  { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'active', integration_strategy: 'mcp_candidate', existing_seam: 'ui/modules/mira-calendar-message-curiosity.js compact local calendar/message metadata plus connector candidate map' },
   { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-environment-curiosity.js read-only startup/app health, bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
   { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-automation-scheduler-curiosity.js compact read-only schedules.json metadata, ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
   { source: 'work_continuation', scope: 'background_work_and_routing', adapter_id: 'work_continuation_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-work-continuation-curiosity.js compact read-only owned-work queue and continuation-card metadata' },
@@ -1433,6 +1436,17 @@ function compactRuntimeSignals(value) {
   return asArray(value).map(trimText).filter(Boolean).slice(0, 8);
 }
 
+function compactCalendarMessageConnectorCandidates(value) {
+  return asArray(value)
+    .map((entry) => ({
+      candidate: trimText(entry?.candidate) || null,
+      seam: trimText(entry?.seam) || null,
+      writes_or_sends: entry?.writes_or_sends === true,
+    }))
+    .filter((entry) => entry.candidate)
+    .slice(0, 6);
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1469,6 +1483,8 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const runtimeModuleCount = Number(rawItem.runtime_module_count ?? rawItem.runtimeModuleCount);
   const runtimeActiveSignalCount = Number(rawItem.runtime_active_signal_count ?? rawItem.runtimeActiveSignalCount);
   const runtimeBlockedCount = Number(rawItem.runtime_blocked_count ?? rawItem.runtimeBlockedCount);
+  const calendarArtifactCount = Number(rawItem.calendar_artifact_count ?? rawItem.calendarArtifactCount);
+  const messageArtifactCount = Number(rawItem.message_artifact_count ?? rawItem.messageArtifactCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1540,6 +1556,11 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     runtime_blocked_count: Number.isFinite(runtimeBlockedCount) ? runtimeBlockedCount : null,
     runtime_active_signals: compactRuntimeSignals(rawItem.runtime_active_signals || rawItem.runtimeActiveSignals),
     runtime_blocked_modules: compactRuntimeSignals(rawItem.runtime_blocked_modules || rawItem.runtimeBlockedModules),
+    calendar_artifact_count: Number.isFinite(calendarArtifactCount) ? calendarArtifactCount : null,
+    message_artifact_count: Number.isFinite(messageArtifactCount) ? messageArtifactCount : null,
+    calendar_first_start: trimText(rawItem.calendar_first_start || rawItem.calendarFirstStart) || null,
+    calendar_last_start: trimText(rawItem.calendar_last_start || rawItem.calendarLastStart) || null,
+    calendar_message_connector_candidates: compactCalendarMessageConnectorCandidates(rawItem.connector_candidates || rawItem.connectorCandidates),
   };
 }
 
@@ -1716,22 +1737,6 @@ function recentCommsCuriosityAdapter(context) {
     route_hint: 'architect',
     sensitivity_hint: 'internal_comms_metadata',
   };
-}
-
-function notImplementedCuriosityAdapter(registryEntry, label) {
-  return () => ({
-    source: registryEntry.source,
-    scope: registryEntry.scope,
-    adapter_id: registryEntry.adapter_id,
-    status: 'adapter_not_built_yet',
-    observation: `${label} is a valid curiosity source, but this v0 scout does not have that adapter yet.`,
-    why_interesting: 'Mira should be able to notice broader local-world patterns as read-only source arms come online.',
-    hypothesis: `${label} may contain repeated interests, friction, obligations, or visual/context clues that James has not translated into an explicit prompt.`,
-    suggested_question: `Which existing seam should Mira connect first for ${label}: ${registryEntry.existing_seam}?`,
-    possible_action: `Ask which existing seam Mira should connect first: ${registryEntry.existing_seam}. If none is enough, build ${registryEntry.adapter_id}.`,
-    route_hint: 'builder',
-    sensitivity_hint: 'broad_local_source_adapter_pending',
-  });
 }
 
 function activeMemoryCuriosityAdapter(context = {}) {
@@ -2211,6 +2216,67 @@ function activeMiraRuntimeCuriosityAdapter(context = {}) {
   };
 }
 
+function activeCalendarMessageCuriosityAdapter(context = {}) {
+  const reader = typeof context.calendarMessageCuriosityReader === 'function'
+    ? context.calendarMessageCuriosityReader
+    : readMiraCalendarMessageCuriosity;
+  const result = reader({
+    calendarMessageRoots: context.calendarMessageRoots,
+    limit: context.calendarMessageLimit || 24,
+  }, {
+    projectRoot: context.projectRoot,
+    calendarMessageRoots: context.calendarMessageRoots,
+    limit: context.calendarMessageLimit || 24,
+    maxBytes: context.calendarMessageMaxBytes,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'calendar_messages',
+      scope: 'calendar_and_message_context',
+      adapter_id: 'calendar_message_curiosity',
+      integration_strategy: 'mcp_candidate',
+      status: 'unavailable_in_this_runtime',
+      observation: `Calendar/message metadata read was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Calendars and messages can reveal obligations, rhythms, and repeated context James has not turned into a prompt yet.',
+      hypothesis: 'Mira needs either a local artifact reader or a connector shape before she can trust calendar/message curiosity.',
+      suggested_question: 'Which local calendar/message artifact or connector candidate should Mira inspect first?',
+      possible_action: 'Repair the read-only calendar/message metadata path before any message send, calendar write, or connector body read.',
+      route_hint: 'builder',
+      sensitivity_hint: 'calendar_message_metadata_only',
+      adapter_error: trimText(result?.reason || result?.error || 'calendar_message_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const calendarCount = Number(result.calendar_artifact_count || 0);
+  const messageCount = Number(result.message_artifact_count || 0);
+  const candidates = result.connector_candidates || [];
+  const firstCandidate = candidates[0]?.candidate || 'calendar/message connector';
+  return {
+    source: 'calendar_messages',
+    scope: 'calendar_and_message_context',
+    adapter_id: 'calendar_message_curiosity',
+    integration_strategy: 'mcp_candidate',
+    status: 'active',
+    observation: `Calendar/message metadata read ${calendarCount} calendar artifact(s), ${messageCount} message artifact(s), connector_candidates=${candidates.length}.`,
+    why_interesting: 'Mira can now see the shape of calendar and message context before asking James to hand-summarize obligations or threads.',
+    hypothesis: calendarCount > 0 || messageCount > 0
+      ? 'Local metadata is enough to ask a sharper calendar/message question before building a live connector.'
+      : 'No local artifacts are present, so the next move is choosing the first connector seam without framing it as blocked.',
+    suggested_question: calendarCount > 0
+      ? 'Which local calendar time window should Mira compare against current work routes?'
+      : `Should Mira connect ${firstCandidate} first for calendar/message curiosity?`,
+    possible_action: 'Use compact metadata and connector candidates to pick the next read-only calendar/message seam; do not send messages, mutate calendars, or export bodies from scout output.',
+    route_hint: 'builder',
+    sensitivity_hint: 'calendar_message_metadata_only',
+    calendar_artifact_count: calendarCount,
+    message_artifact_count: messageCount,
+    calendar_first_start: result.calendar_first_start || null,
+    calendar_last_start: result.calendar_last_start || null,
+    connector_candidates: candidates,
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -2288,7 +2354,6 @@ function activeEnvironmentCuriosityAdapter(context = {}) {
 }
 
 function defaultCuriosityAdapters() {
-  const byAdapter = Object.fromEntries(MIRA_CURIOSITY_SOURCE_REGISTRY.map((entry) => [entry.adapter_id, entry]));
   return [
     gitStatusCuriosityAdapter,
     runtimeQueueCuriosityAdapter,
@@ -2298,7 +2363,7 @@ function defaultCuriosityAdapters() {
     activeEmailCuriosityAdapter,
     activeWebResearchCuriosityAdapter,
     activeVisualAssetCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.calendar_message_curiosity, 'calendars and messages'),
+    activeCalendarMessageCuriosityAdapter,
     activeEnvironmentCuriosityAdapter,
     activeAutomationSchedulerCuriosityAdapter,
     activeWorkContinuationCuriosityAdapter,
@@ -2432,6 +2497,10 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     workContinuationWakeTrigger: options.workContinuationWakeTrigger,
     workContinuationStaleAfterMs: options.workContinuationStaleAfterMs,
     miraRuntimeCuriosityReader: options.miraRuntimeCuriosityReader,
+    calendarMessageCuriosityReader: options.calendarMessageCuriosityReader,
+    calendarMessageRoots: options.calendarMessageRoots,
+    calendarMessageLimit: options.calendarMessageLimit,
+    calendarMessageMaxBytes: options.calendarMessageMaxBytes,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -2491,6 +2560,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'email',
   'web_research',
   'images_screenshots_assets',
+  'calendar_messages',
   'environment_apps',
   'cheap_parallel_scouts',
   'automation_scheduler',
@@ -2505,7 +2575,7 @@ function normalizeCuriosityBurstSources(payload = {}, options = {}) {
     .map((item) => trimText(item))
     .filter((item) => allowed.has(item));
   const unique = Array.from(new Set(values));
-  const maxSources = Math.max(1, Math.min(10, Number(payload.maxSources || options.maxSources || 10) || 10));
+  const maxSources = Math.max(1, Math.min(13, Number(payload.maxSources || options.maxSources || 13) || 13));
   return (unique.length > 0 ? unique : [...CURIOSITY_BURST_DEFAULT_SOURCES]).slice(0, maxSources);
 }
 
@@ -2517,6 +2587,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'email') return [activeEmailCuriosityAdapter];
   if (source === 'web_research') return [activeWebResearchCuriosityAdapter];
   if (source === 'images_screenshots_assets') return [activeVisualAssetCuriosityAdapter];
+  if (source === 'calendar_messages') return [activeCalendarMessageCuriosityAdapter];
   if (source === 'environment_apps') return [activeEnvironmentCuriosityAdapter];
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
   if (source === 'automation_scheduler') return [activeAutomationSchedulerCuriosityAdapter];
@@ -2534,6 +2605,7 @@ function curiosityBurstRouteForItems(items = []) {
     email: 73,
     web_research: 72,
     images_screenshots_assets: 71,
+    calendar_messages: 70,
     environment_apps: 70,
     work_continuation: 69,
     mira_runtime: 68,
@@ -2630,6 +2702,10 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     workContinuationWakeTrigger: options.workContinuationWakeTrigger,
     workContinuationStaleAfterMs: options.workContinuationStaleAfterMs,
     miraRuntimeCuriosityReader: options.miraRuntimeCuriosityReader,
+    calendarMessageCuriosityReader: options.calendarMessageCuriosityReader,
+    calendarMessageRoots: options.calendarMessageRoots,
+    calendarMessageLimit: options.calendarMessageLimit,
+    calendarMessageMaxBytes: options.calendarMessageMaxBytes,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,
@@ -2823,6 +2899,7 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   calendar_messages: {
     priority: 60,
+    active_priority: 32,
     target_role: 'builder',
     reason: 'calendar and message curiosity needs connector shape mapping after native sources are active',
   },

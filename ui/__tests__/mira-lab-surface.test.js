@@ -886,6 +886,19 @@ describe('Mira Lab sidecar surface', () => {
         latest_asset: { path: '.squidrun/screenshots/latest.png', width: 900, height: 760 },
         results: [],
       }),
+      calendarMessageCuriosityReader: () => ({
+        ok: true,
+        decision: 'calendar_message_metadata_read_only',
+        result_count: 2,
+        calendar_artifact_count: 1,
+        message_artifact_count: 1,
+        calendar_first_start: '2026-05-13T09:00:00.000Z',
+        calendar_last_start: '2026-05-13T09:00:00.000Z',
+        connector_candidates: [
+          { candidate: 'native_squidrun_comms', seam: 'hm-comms history', writes_or_sends: false },
+          { candidate: 'calendar_connector', seam: 'MCP-compatible calendar provider', writes_or_sends: false },
+        ],
+      }),
       schedulerCuriosityReader: () => ({
         ok: true,
         decision: 'scheduler_state_read_only',
@@ -940,7 +953,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(1);
+    expect(result.adapter_not_built_count).toBe(0);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -999,6 +1012,17 @@ describe('Mira Lab sidecar surface', () => {
       integration_strategy: 'native_adapter',
       visual_asset_count: 3,
       visual_asset_buckets: { screenshots: 2, generated_images: 1 },
+    }));
+    expect(bySource.calendar_messages).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'mcp_candidate',
+      calendar_artifact_count: 1,
+      message_artifact_count: 1,
+      calendar_first_start: '2026-05-13T09:00:00.000Z',
+    }));
+    expect(bySource.calendar_messages.calendar_message_connector_candidates[0]).toEqual(expect.objectContaining({
+      candidate: 'native_squidrun_comms',
+      writes_or_sends: false,
     }));
     expect(bySource.automation_scheduler).toEqual(expect.objectContaining({
       status: 'active',
@@ -1075,7 +1099,7 @@ describe('Mira Lab sidecar surface', () => {
       integration_strategy: 'native_adapter',
     }));
     expect(bySource.voyager_curriculum.possible_action).toMatch(/hm-mira-self-direction curriculum/i);
-    expect(JSON.stringify(result.items)).toContain('Which existing seam should Mira connect first');
+    expect(JSON.stringify(result.items)).toContain('calendar/message');
     expect(JSON.stringify(result.items)).not.toMatch(/requires_permission|forbidden/i);
 
     const logEntries = readJsonl(curiosityItemsPath(projectRoot));
@@ -1583,9 +1607,9 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:calendar-next',
         source: 'calendar_messages',
         adapter_id: 'calendar_message_curiosity',
-        status: 'adapter_not_built_yet',
-        suggested_question: 'Which calendar/message connector shape matters?',
-        possible_action: 'Map calendar/message connector shape.',
+        status: 'active',
+        suggested_question: 'Which calendar/message metadata matters?',
+        possible_action: 'Use compact calendar/message metadata.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1602,8 +1626,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:calendar-next',
-      source: 'calendar_messages',
+      item_id: 'mira-curiosity:active-code-mode',
+      source: 'code_mode_exploration',
     }));
   });
 
