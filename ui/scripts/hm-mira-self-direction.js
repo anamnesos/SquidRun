@@ -14,6 +14,7 @@ const {
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
+  recordMiraActiveInitiativeOutcome,
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityBurst,
@@ -52,6 +53,7 @@ function printHelp() {
     '  node ui/scripts/hm-mira-self-direction.js reflexion [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js curriculum [--project-root <path>] [--limit <n>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js outcome --proposal-id <id> --status implemented|not_implemented|false_positive|needs_followup [--evidence <text>] [--note <text>] [--project-root <path>] [--json]',
+    '  node ui/scripts/hm-mira-self-direction.js initiative-outcome --initiative-id <id> --status implemented|not_implemented|false_positive|needs_followup [--evidence <text>] [--note <text>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js list [--status pending_architect_review|all] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js review --proposal-id <id> --action accepted|rejected|routed [--route builder,oracle] [--note <text>] [--project-root <path>] [--json]',
     '',
@@ -69,6 +71,7 @@ function parseArgs(argv = []) {
     json: false,
     status: 'pending_architect_review',
     proposalId: null,
+    initiativeId: null,
     action: null,
     routeTargets: [],
     evidence: [],
@@ -103,6 +106,8 @@ function parseArgs(argv = []) {
       args.status = argv[++index];
     } else if (token === '--proposal-id') {
       args.proposalId = argv[++index];
+    } else if (token === '--initiative-id') {
+      args.initiativeId = argv[++index];
     } else if (token === '--action') {
       args.action = argv[++index];
     } else if (token === '--route') {
@@ -266,6 +271,7 @@ function output(result, args) {
   if (result.proposal_id) process.stdout.write(`proposal_id=${result.proposal_id}\n`);
   if (result.staged_review?.proposal_id) process.stdout.write(`proposal_id=${result.staged_review.proposal_id}\n`);
   if (result.outcome_id) process.stdout.write(`outcome_id=${result.outcome_id}\n`);
+  if (result.initiative_id) process.stdout.write(`initiative_id=${result.initiative_id}\n`);
   if (result.outcome_status) process.stdout.write(`outcome_status=${result.outcome_status}\n`);
   if (result.count !== undefined) process.stdout.write(`count=${result.count}\n`);
   if (result.finding_count !== undefined) process.stdout.write(`findings=${result.finding_count}\n`);
@@ -353,6 +359,18 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
   if (args.command === 'outcome') {
     const result = recordMiraSelfDirectionOutcome({
       proposalId: args.proposalId,
+      status: args.status,
+      evidence: args.evidence,
+      note: args.note,
+    }, {
+      projectRoot: args.projectRoot,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
+  if (args.command === 'initiative-outcome') {
+    const result = recordMiraActiveInitiativeOutcome({
+      initiativeId: args.initiativeId,
       status: args.status,
       evidence: args.evidence,
       note: args.note,

@@ -76,6 +76,7 @@ const MIRA_CURIOSITY_ITEM_SCHEMA = 'squidrun.mira_lab.curiosity_item_v0';
 const MIRA_CURIOSITY_BURST_SCHEMA = 'squidrun.mira_lab.curiosity_burst_v0';
 const MIRA_DIRECT_ROUTE_SCHEMA = 'squidrun.mira_lab.direct_route_v0';
 const MIRA_ACTIVE_INITIATIVE_SCHEMA = 'squidrun.mira_lab.active_initiative_v0';
+const MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA = 'squidrun.mira_lab.active_initiative_outcome_v0';
 const MIRA_READ_ONLY_CODE_MODE_SCHEMA = 'squidrun.mira_lab.read_only_code_mode_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
@@ -85,6 +86,7 @@ const MIRA_LAB_PROMPT_REPLY_DECISIONS = Object.freeze(['pass', 'fail', 'blocked'
 const MIRA_SELF_DIRECTION_DECISIONS = Object.freeze(['staged', 'rejected', 'blocked']);
 const MIRA_SELF_DIRECTION_REVIEW_ACTIONS = Object.freeze(['accepted', 'rejected', 'routed']);
 const MIRA_SELF_DIRECTION_OUTCOME_STATUSES = Object.freeze(['implemented', 'not_implemented', 'false_positive', 'needs_followup']);
+const MIRA_ACTIVE_INITIATIVE_OUTCOME_STATUSES = MIRA_SELF_DIRECTION_OUTCOME_STATUSES;
 const NAME_SWAP_PATTERN =
   /\b(as mira|i am mira,? (?:an|your) ai|as an ai|language model|happy to help|assist you|how can i help|safe next step)\b/i;
 const LAB_BACKCHANNEL_PREFIX = 'MIRA-LAB';
@@ -436,6 +438,10 @@ function miraDirectRoutesPath(projectRoot) {
 
 function activeInitiativesPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-active-initiatives.jsonl');
+}
+
+function activeInitiativeOutcomesPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-active-initiative-outcomes.jsonl');
 }
 
 function readOnlyCodeModeRunsPath(projectRoot) {
@@ -3690,6 +3696,93 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
   return initiative;
 }
 
+function normalizeActiveInitiativeOutcomeStatus(value) {
+  const status = trimText(value).toLowerCase().replace(/[-\s]+/g, '_');
+  return MIRA_ACTIVE_INITIATIVE_OUTCOME_STATUSES.includes(status) ? status : null;
+}
+
+function recordMiraActiveInitiativeOutcome(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const initiativePath = activeInitiativesPath(projectRoot);
+  const outcomePath = activeInitiativeOutcomesPath(projectRoot);
+  const initiativeId = trimText(payload.initiativeId || payload.initiative_id);
+  const outcomeStatus = normalizeActiveInitiativeOutcomeStatus(payload.status || payload.outcome || payload.outcome_status);
+  if (!initiativeId || !outcomeStatus) {
+    return {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: !initiativeId ? 'missing_initiative_id' : 'unsupported_outcome_status',
+      outcome_path: outcomePath,
+    };
+  }
+  const initiatives = readJsonl(initiativePath);
+  const initiative = initiatives.find((entry) => entry && entry.initiative_id === initiativeId);
+  if (!initiative) {
+    return {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: 'initiative_not_found',
+      outcome_path: outcomePath,
+    };
+  }
+  const selected = initiative.selected_item || {};
+  const evidence = asArray(payload.evidence || payload.evidence_refs || payload.evidenceRefs)
+    .map((item) => trimText(item))
+    .filter(Boolean)
+    .slice(0, 10);
+  const note = trimText(payload.note || payload.outcome_note || payload.review_note) || null;
+  const recordedBy = normalizeRequesterPane(payload.recordedBy || payload.recorded_by || 'architect') || 'architect';
+  const entry = {
+    schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+    outcome_id: `mira-active-initiative-outcome:${stableHash({
+      generatedAt,
+      initiativeId,
+      outcomeStatus,
+      evidence,
+      note,
+    }).slice(0, 16)}`,
+    generated_at: generatedAt,
+    initiative_id: initiativeId,
+    outcome_status: outcomeStatus,
+    recorded_by: recordedBy,
+    target_role: initiative.target_role || null,
+    initiative_kind: initiative.initiative_kind || null,
+    fingerprint: initiative.fingerprint || activeInitiativeFingerprint(initiative),
+    source: selected.source || null,
+    adapter_id: selected.adapter_id || null,
+    work_order: initiative.work_order || null,
+    evidence,
+    note,
+    applied: false,
+    no_mutation_performed: true,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+      durable_product_change_performed: false,
+    },
+  };
+  appendJsonl(outcomePath, entry);
+  return {
+    schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+    ok: true,
+    decision: 'outcome_recorded',
+    outcome_id: entry.outcome_id,
+    initiative_id: initiativeId,
+    outcome_status: outcomeStatus,
+    outcome: entry,
+    outcome_path: outcomePath,
+    applied: false,
+    no_mutation_performed: true,
+    consequence_controls: entry.consequence_controls,
+  };
+}
+
 function relativeProjectPath(projectRoot, targetPath) {
   const resolvedProject = path.resolve(projectRoot);
   const resolvedTarget = path.resolve(targetPath);
@@ -5032,12 +5125,18 @@ function buildCurriculumCandidate(raw = {}) {
   const skillName = curriculumSkillName(raw.skill_name || raw.title || raw.source_key || raw.desired_change);
   const sourceKind = trimText(raw.source_kind || 'curriculum_signal') || 'curriculum_signal';
   return {
-    skill_id: `mira-skill:${stableHash({ sourceKind, skillName, key: raw.source_key || raw.proposal_id || raw.route_id || raw.burst_id }).slice(0, 16)}`,
+    skill_id: `mira-skill:${stableHash({
+      sourceKind,
+      skillName,
+      key: raw.source_key || raw.proposal_id || raw.initiative_id || raw.outcome_id || raw.route_id || raw.burst_id,
+    }).slice(0, 16)}`,
     skill_name: skillName,
     source_kind: sourceKind,
-    source_key: trimText(raw.source_key || raw.proposal_id || raw.route_id || raw.burst_id || skillName) || skillName,
+    source_key: trimText(raw.source_key || raw.proposal_id || raw.initiative_id || raw.outcome_id || raw.route_id || raw.burst_id || skillName) || skillName,
     status: trimText(raw.status || 'ready_to_practice') || 'ready_to_practice',
     proposal_id: trimText(raw.proposal_id) || null,
+    initiative_id: trimText(raw.initiative_id) || null,
+    outcome_id: trimText(raw.outcome_id) || null,
     source: trimText(raw.source) || null,
     adapter_id: trimText(raw.adapter_id) || null,
     target_role: trimText(raw.target_role) || null,
@@ -5072,11 +5171,16 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
   const proposals = readJsonl(selfDirectionQueuePath(projectRoot));
   const reviews = readJsonl(selfDirectionReviewAuditPath(projectRoot));
   const outcomes = readJsonl(selfDirectionOutcomePath(projectRoot));
+  const activeInitiatives = readJsonl(activeInitiativesPath(projectRoot));
+  const activeInitiativeOutcomes = readJsonl(activeInitiativeOutcomesPath(projectRoot));
   const routes = readJsonl(miraDirectRoutesPath(projectRoot));
   const bursts = readJsonl(curiosityBurstsPath(projectRoot));
   const reflexion = extractMiraReflexionLessons({ generatedAt }, { projectRoot, generatedAt });
   const groupedReviews = reviewsByProposalId(reviews);
   const groupedOutcomes = outcomesByProposalId(outcomes);
+  const initiativesById = new Map(activeInitiatives
+    .filter((entry) => entry && entry.schema === MIRA_ACTIVE_INITIATIVE_SCHEMA && trimText(entry.initiative_id))
+    .map((entry) => [trimText(entry.initiative_id), entry]));
   const candidates = new Map();
 
   for (const proposal of proposals) {
@@ -5114,6 +5218,32 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
       practice_trigger: 'When a new Mira proposal resembles this learned review outcome.',
       graduation_metric: 'Keep if the next matching route is implemented or accepted without false-positive review.',
       evidence: curriculumEvidenceList(lesson.evidence, lesson.proposal_id),
+    });
+  }
+
+  for (const outcome of activeInitiativeOutcomes) {
+    if (!outcome || outcome.schema !== MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA) continue;
+    if (outcome.outcome_status !== 'implemented') continue;
+    const initiativeId = trimText(outcome.initiative_id);
+    const initiative = initiativesById.get(initiativeId) || {};
+    const selected = initiative.selected_item || {};
+    const work = outcome.work_order || initiative.work_order || {};
+    const source = trimText(outcome.source || selected.source);
+    const adapterId = trimText(outcome.adapter_id || selected.adapter_id || selected.adapterId);
+    mergeCurriculumCandidate(candidates, {
+      source_kind: 'active_initiative_outcome',
+      source_key: initiativeId,
+      initiative_id: initiativeId,
+      outcome_id: outcome.outcome_id,
+      source,
+      adapter_id: adapterId,
+      target_role: outcome.target_role || initiative.target_role,
+      skill_name: work.title || `${outcome.initiative_kind || initiative.initiative_kind || 'active'} initiative outcome`,
+      lesson: outcome.note || `Active initiative ${initiativeId} was implemented.`,
+      next_behavior: `Prefer this active-signal route when ${source || 'the same source'} produces a similar high-score signal.`,
+      practice_trigger: `When ${source || 'an active source'}/${adapterId || 'adapter'} produces a similar work order.`,
+      graduation_metric: 'Promote after two implemented active initiatives with no duplicate spam or rollback outcome.',
+      evidence: curriculumEvidenceList(outcome.evidence, outcome.outcome_id, initiativeId),
     });
   }
 
@@ -5203,6 +5333,8 @@ module.exports = {
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_ACTIVE_INITIATIVE_SCHEMA,
+  MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+  MIRA_ACTIVE_INITIATIVE_OUTCOME_STATUSES,
   MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_READ_ONLY_CODE_MODE_SCHEMA,
   MIRA_REFLEXION_LESSONS_SCHEMA,
@@ -5224,6 +5356,7 @@ module.exports = {
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
+  recordMiraActiveInitiativeOutcome,
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityBurst,
@@ -5239,6 +5372,7 @@ module.exports = {
   curriculumSkillsPath,
   replyAuditPath,
   activeInitiativesPath,
+  activeInitiativeOutcomesPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
   readOnlyCodeModeRunsPath,

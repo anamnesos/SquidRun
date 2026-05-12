@@ -11,6 +11,7 @@ const {
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_ACTIVE_INITIATIVE_SCHEMA,
+  MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
   MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_READ_ONLY_CODE_MODE_SCHEMA,
   MIRA_REFLEXION_LESSONS_SCHEMA,
@@ -27,6 +28,7 @@ const {
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
+  recordMiraActiveInitiativeOutcome,
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityBurst,
@@ -37,6 +39,7 @@ const {
   selectMiraDirectRoute,
   buildMiraLabTurn,
   exportMiraLabTranscript,
+  activeInitiativeOutcomesPath,
   activeInitiativesPath,
   curiosityBurstsPath,
   curriculumSkillsPath,
@@ -1776,6 +1779,72 @@ describe('Mira Lab sidecar surface', () => {
     }));
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
     expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(2);
+  });
+
+  test('active initiative outcomes close the work loop and feed curriculum skills', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:30:00.000Z',
+      item_id: 'mira-curiosity:environment-outcome',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health snapshot read WARN; memory drift detected; snapshot stale.',
+      suggested_question: 'Should Mira route a health refresh before deciding the next environment action?',
+      possible_action: 'Use the compact environment health read as evidence.',
+      route_hint: 'builder',
+      environment_overall_label: 'WARN',
+      environment_overall_score: 88,
+      environment_snapshot_stale: true,
+      environment_memory_sync_status: 'drift_detected',
+      environment_bridge_connection: 'disconnected',
+    });
+    const initiative = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:31:00.000Z',
+    });
+
+    const outcome = recordMiraActiveInitiativeOutcome({
+      initiativeId: initiative.initiative_id,
+      status: 'implemented',
+      evidence: ['commit=9edcd93', 'live_read=snapshot_source:live_health_snapshot'],
+      note: 'Builder patched stale environment health reads.',
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:40:00.000Z',
+    });
+
+    expect(outcome.schema).toBe(MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA);
+    expect(outcome.decision).toBe('outcome_recorded');
+    expect(outcome.outcome_status).toBe('implemented');
+    expect(outcome.outcome).toEqual(expect.objectContaining({
+      initiative_id: initiative.initiative_id,
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      initiative_kind: 'environment_drift_repair',
+    }));
+    expect(outcome.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      durable_product_change_performed: false,
+    }));
+    expect(readJsonl(activeInitiativeOutcomesPath(projectRoot))).toHaveLength(1);
+
+    const curriculum = extractMiraCurriculumSkills({ limit: 12 }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:45:00.000Z',
+    });
+    const activeSkill = curriculum.skills.find((skill) => skill.source_kind === 'active_initiative_outcome');
+    expect(activeSkill).toEqual(expect.objectContaining({
+      initiative_id: initiative.initiative_id,
+      outcome_id: outcome.outcome_id,
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      target_role: 'builder',
+    }));
+    expect(activeSkill.evidence).toEqual(expect.arrayContaining(['commit=9edcd93']));
   });
 
   test('read-only code mode lets Mira inspect allowed files without mutation', () => {
