@@ -859,6 +859,58 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.consequence_controls.external_send_performed).toBe(false);
   });
 
+  test('direct route scores the newest adapter state instead of stale curiosity rows', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:old-code-mode',
+      generated_at: '2026-05-12T12:00:00.000Z',
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+      status: 'adapter_not_built_yet',
+      integration_strategy: 'scout_model_candidate',
+      suggested_question: 'Old code-mode question.',
+      possible_action: 'Old code-mode action.',
+      route_hint: 'builder',
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:new-code-mode',
+      generated_at: '2026-05-12T12:10:00.000Z',
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      suggested_question: 'Use code-mode to inspect runtime evidence.',
+      possible_action: 'Run the read-only wrapper.',
+      route_hint: 'builder',
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:substrate-next',
+      generated_at: '2026-05-12T12:11:00.000Z',
+      source: 'source_action_substrate',
+      adapter_id: 'source_action_substrate_curiosity',
+      status: 'adapter_not_built_yet',
+      integration_strategy: 'native_adapter',
+      suggested_question: 'What source/action substrate should come next?',
+      possible_action: 'Route Builder to map the source/action substrate.',
+      route_hint: 'builder',
+    });
+
+    const result = await selectMiraDirectRoute({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T12:12:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      item_id: 'mira-curiosity:substrate-next',
+      source: 'source_action_substrate',
+    }));
+    expect(result.candidate_count).toBe(2);
+  });
+
   test('read-only code mode lets Mira inspect allowed files without mutation', () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
