@@ -141,6 +141,8 @@ describe('Mira Presence Runtime acceptance v0', () => {
     expect(spec).toContain('reality-testing affordances');
     expect(spec).toContain('staged for Architect review');
     expect(spec).toContain('does not apply code, config, memory, external sends');
+    expect(spec).toContain('hm-mira-self-direction.js create');
+    expect(spec).toContain('review --proposal-id <id> --action routed');
     expect(spec).toContain('Do not globally ban ordinary attachment language');
   });
 

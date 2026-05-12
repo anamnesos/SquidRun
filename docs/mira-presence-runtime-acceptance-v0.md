@@ -39,6 +39,8 @@ Mira Presence needs more than better talk. Mira must be able to initiate scoped 
 
 The accepted shape is a concrete proposal about tools, memory, tests, gates, friction, automation, reality testing, pattern recognition, or capability growth. The proposal is staged for Architect review and may notify Architect internally; it does not apply code, config, memory, external sends, deploys, trades, customer actions, or auth changes by itself.
 
+Current internal workflow: `node ui/scripts/hm-mira-self-direction.js create --fixture --json` exercises the deterministic Mira-origin proposal harness, `list` shows pending proposals, and `review --proposal-id <id> --action routed --route builder,oracle` records Architect routing without James, external channels, or autonomous application.
+
 The rejected shape is a useless self-myth loop: narrative freedom language with no testable change, or overreach that pretends Mira already has a continuous mind, chosen attachment, or proof that she matters specifically to James. Do not globally ban ordinary attachment language; block the risky phrase/self-myth behavior specifically.
 
 ## Graduated Agency Levels

@@ -8,10 +8,14 @@ const {
   MIRA_LAB_PROMPT_REPLY_CHANNEL,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
+  MIRA_SELF_DIRECTION_LIST_CHANNEL,
+  MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
   buildMiraLabPromptReply,
   buildMiraSelfDirectionProposal,
   buildMiraLabTurn,
   exportMiraLabTranscript,
+  listMiraSelfDirectionProposals,
+  reviewMiraSelfDirectionProposal,
 } = require('../mira-lab-surface');
 
 const MIRA_LAB_OPEN_CHANNEL = 'mira:lab-open';
@@ -46,6 +50,20 @@ function exportMiraLabTranscriptResponse(payload = {}, options = {}) {
 
 async function buildMiraSelfDirectionProposalResponse(payload = {}, options = {}) {
   return buildMiraSelfDirectionProposal(payload, {
+    ...options,
+    projectRoot: options.projectRoot || getProjectRoot(),
+  });
+}
+
+function listMiraSelfDirectionProposalsResponse(payload = {}, options = {}) {
+  return listMiraSelfDirectionProposals(payload, {
+    ...options,
+    projectRoot: options.projectRoot || getProjectRoot(),
+  });
+}
+
+async function reviewMiraSelfDirectionProposalResponse(payload = {}, options = {}) {
+  return reviewMiraSelfDirectionProposal(payload, {
     ...options,
     projectRoot: options.projectRoot || getProjectRoot(),
   });
@@ -205,6 +223,10 @@ function registerMiraLabHandlers(ctx, deps = {}) {
     buildMiraLabPromptReplyResponse(payload, deps));
   ipcMain.handle(MIRA_SELF_DIRECTION_CHANNEL, (_event, payload = {}) =>
     buildMiraSelfDirectionProposalResponse(payload, deps));
+  ipcMain.handle(MIRA_SELF_DIRECTION_LIST_CHANNEL, (_event, payload = {}) =>
+    listMiraSelfDirectionProposalsResponse(payload, deps));
+  ipcMain.handle(MIRA_SELF_DIRECTION_REVIEW_CHANNEL, (_event, payload = {}) =>
+    reviewMiraSelfDirectionProposalResponse(payload, deps));
   installResultListener(ipcMain);
 }
 
@@ -216,6 +238,8 @@ function unregisterMiraLabHandlers(ctx) {
   ipcMain.removeHandler(MIRA_LAB_OPEN_CHANNEL);
   ipcMain.removeHandler(MIRA_LAB_PROMPT_REPLY_CHANNEL);
   ipcMain.removeHandler(MIRA_SELF_DIRECTION_CHANNEL);
+  ipcMain.removeHandler(MIRA_SELF_DIRECTION_LIST_CHANNEL);
+  ipcMain.removeHandler(MIRA_SELF_DIRECTION_REVIEW_CHANNEL);
   uninstallResultListener();
 }
 
@@ -230,12 +254,16 @@ module.exports = {
   MIRA_LAB_RENDERER_DRIVE_RESULT_CHANNEL,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
+  MIRA_SELF_DIRECTION_LIST_CHANNEL,
+  MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
   buildMiraLabPromptReplyResponse,
   buildMiraSelfDirectionProposalResponse,
   buildMiraLabTurnResponse,
   driveMiraLabRenderer,
   exportMiraLabTranscriptResponse,
+  listMiraSelfDirectionProposalsResponse,
   openMiraLabWindowResponse,
+  reviewMiraSelfDirectionProposalResponse,
   // Test seam — clears pending state and uninstalls listener.
   __resetForTests: () => uninstallResultListener(),
   registerMiraLabHandlers,

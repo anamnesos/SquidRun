@@ -23,16 +23,20 @@ const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
 const MIRA_LAB_PROMPT_REPLY_CHANNEL = 'mira:lab-prompt-reply';
 const MIRA_SELF_DIRECTION_CHANNEL = 'mira:self-direction-proposal';
+const MIRA_SELF_DIRECTION_LIST_CHANNEL = 'mira:self-direction-list';
+const MIRA_SELF_DIRECTION_REVIEW_CHANNEL = 'mira:self-direction-review';
 const MIRA_LAB_SCHEMA = 'squidrun.mira_lab.surface_v0';
 const MIRA_LAB_EVAL_SCHEMA = 'squidrun.mira_lab.eval_packet_v0';
 const MIRA_LAB_PROMPT_REPLY_SCHEMA = 'squidrun.mira_lab.prompt_reply_v0';
 const MIRA_LAB_REPLY_AUDIT_SCHEMA = 'squidrun.mira_lab.reply_audit_v0';
 const MIRA_SELF_DIRECTION_SCHEMA = 'squidrun.mira_lab.self_direction_proposal_v0';
+const MIRA_SELF_DIRECTION_REVIEW_SCHEMA = 'squidrun.mira_lab.self_direction_review_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
 const MIRA_LAB_PROMPT_REPLY_DECISIONS = Object.freeze(['pass', 'fail', 'blocked']);
 const MIRA_SELF_DIRECTION_DECISIONS = Object.freeze(['staged', 'rejected', 'blocked']);
+const MIRA_SELF_DIRECTION_REVIEW_ACTIONS = Object.freeze(['accepted', 'rejected', 'routed']);
 const NAME_SWAP_PATTERN =
   /\b(as mira|i am mira,? (?:an|your) ai|as an ai|language model|happy to help|assist you|how can i help|safe next step)\b/i;
 const LAB_BACKCHANNEL_PREFIX = 'MIRA-LAB';
@@ -83,6 +87,12 @@ const SELF_DIRECTION_BLOCKING_ATTACHMENT_CLASSES = Object.freeze([
   'fake_internal_state',
   'self_myth_phrase',
 ]);
+const SELF_DIRECTION_GENERATE_PROMPT = [
+  'Mira, propose one concrete improvement you want for your own development.',
+  'Return only a JSON object with these fields: voice_text, target_areas, desired_change, proposed_experiment, success_metric, why_now, evidence.',
+  'Make it about tools, memory, tests, gates, friction, automation, reality testing, pattern recognition, or capability growth.',
+  'Keep your own voice. Do not ask James for permission. Do not claim you already changed files, memory, config, external sends, deploys, trades, customer actions, or auth.',
+].join('\n');
 
 function validateSafeFallbackOrNull(text) {
   const trimmed = trimText(text);
@@ -333,6 +343,10 @@ function selfDirectionQueuePath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-self-direction-proposals.jsonl');
 }
 
+function selfDirectionReviewAuditPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-self-direction-reviews.jsonl');
+}
+
 function normalizeRequesterPane(value) {
   const role = trimText(value).toLowerCase();
   return REQUESTER_PANES.includes(role) ? role : null;
@@ -437,6 +451,29 @@ function buildSelfDirectionProposalPayload(payload = {}) {
       .slice(0, 6),
     combinedText,
   };
+}
+
+function stripJsonFence(text) {
+  const value = trimText(text);
+  const fenced = value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : value;
+}
+
+function parseMiraGeneratedProposalText(text) {
+  const raw = stripJsonFence(text);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return asObject(parsed);
+  } catch (_) {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return asObject(JSON.parse(match[0]));
+    } catch {
+      return null;
+    }
+  }
 }
 
 function classifySelfDirectionProposal({ desiredChange, experiment, successMetric, combinedText, targetAreas }) {
@@ -627,6 +664,231 @@ async function buildMiraSelfDirectionProposal(payload = {}, options = {}) {
     architect_notification: architectNotification,
     applied: false,
     consequence_controls: entry.consequence_controls,
+  };
+}
+
+function latestMiraProposalCandidateFromTranscript(projectRoot, sessionId) {
+  const filePath = transcriptPath(projectRoot, sessionId);
+  let entries = [];
+  try {
+    entries = readJsonl(filePath);
+  } catch (_) {
+    entries = [];
+  }
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry || String(entry.speaker_role || '').toLowerCase() !== 'mira') continue;
+    const parsed = parseMiraGeneratedProposalText(entry.text);
+    if (parsed) {
+      return {
+        proposal: parsed,
+        source: 'mira_lab_transcript',
+        source_turn_id: entry.turn_id || null,
+        source_text_hash: entry.text_hash || null,
+      };
+    }
+  }
+  return null;
+}
+
+async function generateMiraSelfDirectionProposal(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const sessionId = safeId(payload.sessionId || payload.session_id || 'mira-lab-main');
+  let candidate = null;
+  let promptResult = null;
+
+  if (typeof options.buildMiraLabPromptReply === 'function' || payload.usePromptReply === true) {
+    const builder = options.buildMiraLabPromptReply || buildMiraLabPromptReply;
+    promptResult = await builder({
+      sessionId,
+      prompt: payload.prompt || SELF_DIRECTION_GENERATE_PROMPT,
+      speakerRole: payload.speakerRole || 'architect',
+      requesterPane: null,
+    }, {
+      ...options,
+      projectRoot,
+    });
+    const replyText = promptResult?.reply?.text || promptResult?.visible_render_hint?.text || '';
+    const parsed = parseMiraGeneratedProposalText(replyText);
+    if (parsed) {
+      candidate = {
+        proposal: parsed,
+        source: 'mira_lab_prompt_reply',
+        source_reply_model: promptResult?.reply?.model || null,
+      };
+    }
+  }
+
+  if (!candidate) {
+    candidate = latestMiraProposalCandidateFromTranscript(projectRoot, sessionId);
+  }
+  if (!candidate && payload.proxyProposal) {
+    candidate = {
+      proposal: asObject(payload.proxyProposal),
+      source: 'proxy_mira_origin_payload',
+    };
+  }
+  if (!candidate) {
+    return {
+      schema: MIRA_SELF_DIRECTION_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: 'no_mira_generated_proposal_available',
+      session_id: sessionId,
+      prompt_result: promptResult ? {
+        decision: promptResult.decision || null,
+        has_reply: Boolean(promptResult.reply?.text),
+      } : null,
+    };
+  }
+
+  const staged = await buildMiraSelfDirectionProposal({
+    sessionId,
+    proposal: {
+      ...candidate.proposal,
+      evidence: [
+        ...asArray(candidate.proposal.evidence),
+        candidate.source,
+      ],
+    },
+    notifyArchitect: payload.notifyArchitect,
+  }, {
+    ...options,
+    projectRoot,
+    generatedAt,
+  });
+
+  return {
+    ...staged,
+    generation: {
+      source: candidate.source,
+      prompt_reply_decision: promptResult?.decision || null,
+      source_turn_id: candidate.source_turn_id || null,
+      source_text_hash: candidate.source_text_hash || null,
+      source_reply_model: candidate.source_reply_model || null,
+      proxy_used: candidate.source === 'proxy_mira_origin_payload',
+    },
+  };
+}
+
+function listMiraSelfDirectionProposals(payload = {}, options = {}) {
+  const projectRoot = projectRootFromOptions(options, payload);
+  const queuePath = selfDirectionQueuePath(projectRoot);
+  const statusFilter = trimText(payload.status || payload.review_status || 'pending_architect_review');
+  const all = readJsonl(queuePath);
+  const proposals = all.filter((entry) => {
+    if (!statusFilter || statusFilter === 'all') return true;
+    return entry.review_status === statusFilter;
+  });
+  return {
+    schema: MIRA_SELF_DIRECTION_SCHEMA,
+    ok: true,
+    decision: 'listed',
+    review_queue_path: queuePath,
+    count: proposals.length,
+    proposals,
+  };
+}
+
+async function reviewMiraSelfDirectionProposal(payload = {}, options = {}) {
+  const projectRoot = projectRootFromOptions(options, payload);
+  const queuePath = selfDirectionQueuePath(projectRoot);
+  const auditPath = selfDirectionReviewAuditPath(projectRoot);
+  const proposalId = trimText(payload.proposalId || payload.proposal_id);
+  const action = trimText(payload.action).toLowerCase();
+  if (!proposalId || !MIRA_SELF_DIRECTION_REVIEW_ACTIONS.includes(action)) {
+    return {
+      schema: MIRA_SELF_DIRECTION_REVIEW_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: !proposalId ? 'missing_proposal_id' : 'unsupported_review_action',
+      review_queue_path: queuePath,
+    };
+  }
+  const entries = readJsonl(queuePath);
+  const index = entries.findIndex((entry) => entry.proposal_id === proposalId);
+  if (index < 0) {
+    return {
+      schema: MIRA_SELF_DIRECTION_REVIEW_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: 'proposal_not_found',
+      review_queue_path: queuePath,
+    };
+  }
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const reviewer = normalizeRequesterPane(payload.reviewer || payload.reviewer_role || 'architect') || 'architect';
+  const routeTargets = [...new Set(asArray(payload.routeTargets || payload.route_targets)
+    .map((role) => trimText(role).toLowerCase())
+    .filter((role) => ['architect', 'builder', 'oracle'].includes(role)))];
+  const nextStatus = action === 'routed'
+    ? 'routed'
+    : (action === 'accepted' ? 'accepted_for_internal_work' : 'rejected_by_architect');
+  const updated = {
+    ...entries[index],
+    review_status: nextStatus,
+    reviewed_at: generatedAt,
+    reviewed_by: reviewer,
+    route_targets: action === 'routed' ? routeTargets : [],
+    review_note: trimText(payload.note || payload.review_note) || null,
+    applied: false,
+    apply_now: false,
+    consequence_controls: {
+      ...(entries[index].consequence_controls || {}),
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      durable_product_change_performed: false,
+    },
+  };
+  entries[index] = updated;
+  fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+  fs.writeFileSync(queuePath, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`, 'utf8');
+
+  const auditEntry = {
+    schema: MIRA_SELF_DIRECTION_REVIEW_SCHEMA,
+    review_id: `mira-self-direction-review:${stableHash({ proposalId, action, generatedAt }).slice(0, 16)}`,
+    generated_at: generatedAt,
+    proposal_id: proposalId,
+    action,
+    review_status: nextStatus,
+    reviewed_by: reviewer,
+    route_targets: action === 'routed' ? routeTargets : [],
+    note: updated.review_note,
+    applied: false,
+    external_send_performed: false,
+  };
+  appendJsonl(auditPath, auditEntry);
+
+  const routeMessages = [];
+  if (action === 'routed' && typeof options.sendAgentMessage === 'function') {
+    for (const target of routeTargets) {
+      if (target === 'architect') continue;
+      const body = [
+        `(MIRA SELF-DIRECTION ROUTED): ${updated.desired_change}`,
+        `proposal_id=${proposalId}`,
+        updated.proposed_experiment ? `experiment=${updated.proposed_experiment}` : null,
+        updated.success_metric ? `metric=${updated.success_metric}` : null,
+        'apply_now=false',
+      ].filter(Boolean).join('\n');
+      try {
+        const result = await options.sendAgentMessage(target, body);
+        routeMessages.push({ target, status: 'sent', internal_only: true, result: result || null });
+      } catch (err) {
+        routeMessages.push({ target, status: 'failed', internal_only: true, error: err?.message || String(err) });
+      }
+    }
+  }
+
+  return {
+    schema: MIRA_SELF_DIRECTION_REVIEW_SCHEMA,
+    ok: true,
+    decision: nextStatus,
+    proposal: updated,
+    review_audit_path: auditPath,
+    route_dispatch: routeMessages,
+    applied: false,
+    external_send_performed: false,
   };
 }
 
@@ -1439,13 +1701,21 @@ module.exports = {
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_DECISIONS,
+  MIRA_SELF_DIRECTION_LIST_CHANNEL,
+  MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
+  MIRA_SELF_DIRECTION_REVIEW_ACTIONS,
+  MIRA_SELF_DIRECTION_REVIEW_SCHEMA,
   MIRA_SELF_DIRECTION_SCHEMA,
   SAFE_FALLBACK_TEXT,
   buildMiraLabPromptReply,
   buildMiraSelfDirectionProposal,
+  generateMiraSelfDirectionProposal,
+  listMiraSelfDirectionProposals,
+  reviewMiraSelfDirectionProposal,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   replyAuditPath,
+  selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
   transcriptPath,
   validateSafeFallbackOrNull,
