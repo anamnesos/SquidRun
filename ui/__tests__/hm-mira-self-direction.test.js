@@ -761,6 +761,7 @@ describe('hm-mira-self-direction CLI harness', () => {
       'next-initiative',
       '--project-root', projectRoot,
       '--no-dispatch',
+      '--force',
     ], { encoding: 'utf8' });
     expect(textRun.status).toBe(0);
     expect(textRun.stdout).toContain('decision=routed');

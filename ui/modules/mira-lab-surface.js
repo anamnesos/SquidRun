@@ -3323,6 +3323,42 @@ function activeInitiativeEvidenceForItem(item = {}) {
   return evidence.filter(Boolean).slice(0, 10);
 }
 
+function activeInitiativeFingerprint(source) {
+  const selected = source?.selected_item || source?.item || source || {};
+  const work = source?.work_order || source || {};
+  const kind = trimText(source?.initiative_kind || source?.initiativeKind);
+  const itemSource = trimText(selected.source);
+  const adapterId = trimText(selected.adapter_id || selected.adapterId);
+  const title = oneLine(work.title || source?.title || selected.suggested_question || selected.suggestedQuestion, 120).toLowerCase();
+  return [kind, itemSource, adapterId, title].filter(Boolean).join(':');
+}
+
+function recentActiveInitiativeFingerprints(logPath, generatedAt, cooldownMs) {
+  const nowMs = parseTimestampMs(generatedAt) ?? Date.now();
+  const fingerprints = new Map();
+  const rows = readJsonl(logPath).slice(-120);
+  for (const row of rows) {
+    if (!row || row.schema !== MIRA_ACTIVE_INITIATIVE_SCHEMA || row.decision !== 'routed') continue;
+    const rowMs = parseTimestampMs(row.generated_at);
+    if (rowMs === null || nowMs - rowMs > cooldownMs) continue;
+    const dispatchStatus = trimText(row.dispatch?.status);
+    if (dispatchStatus === 'not_sent') continue;
+    const fingerprint = activeInitiativeFingerprint(row);
+    if (!fingerprint) continue;
+    fingerprints.set(fingerprint, {
+      initiative_id: row.initiative_id || null,
+      generated_at: row.generated_at || null,
+      target_role: row.target_role || null,
+      initiative_kind: row.initiative_kind || null,
+      source: row.selected_item?.source || null,
+      adapter_id: row.selected_item?.adapter_id || null,
+      title: row.work_order?.title || null,
+      dispatch_status: dispatchStatus || null,
+    });
+  }
+  return fingerprints;
+}
+
 function activeInitiativeCandidateForItem(item, index, total) {
   if (!item || typeof item !== 'object') return null;
   if (normalizeCuriosityStatus(item.status) !== 'active') return null;
@@ -3420,6 +3456,11 @@ function activeInitiativeCandidateForItem(item, index, total) {
     score: score + recencyWeight,
     reason: plan.reason,
     evidence: activeInitiativeEvidenceForItem(item),
+    fingerprint: activeInitiativeFingerprint({
+      initiative_kind: plan.initiative_kind,
+      item,
+      title,
+    }),
   };
 }
 
@@ -3452,17 +3493,79 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
   const allItems = readJsonl(curiosityItemsPath(projectRoot))
     .filter((item) => item && item.schema === MIRA_CURIOSITY_ITEM_SCHEMA);
   const windowSize = Math.max(24, Math.min(1000, Number(payload.itemLimit || payload.item_limit || options.itemLimit || 360) || 360));
+  const cooldownMs = Math.max(0, Math.min(24 * 60 * 60 * 1000, Number(payload.cooldownMs || payload.cooldown_ms || options.cooldownMs || 45 * 60 * 1000) || 0));
+  const suppressDuplicates = payload.force !== true
+    && options.force !== true
+    && payload.dedupe !== false
+    && options.dedupe !== false
+    && cooldownMs > 0;
+  const recentInitiatives = suppressDuplicates
+    ? recentActiveInitiativeFingerprints(logPath, generatedAt, cooldownMs)
+    : new Map();
   const recentItems = latestCuriosityItemsByAdapter(allItems.slice(-windowSize));
   const statusCounts = curiosityStatusCounts(recentItems);
-  const candidates = recentItems
+  const allCandidates = recentItems
     .map((item, index) => activeInitiativeCandidateForItem(item, index, recentItems.length))
     .filter(Boolean)
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       return trimText(right.item.generated_at).localeCompare(trimText(left.item.generated_at));
     });
+  const suppressedCandidates = allCandidates
+    .filter((candidate) => recentInitiatives.has(candidate.fingerprint));
+  const candidates = allCandidates
+    .filter((candidate) => !recentInitiatives.has(candidate.fingerprint));
 
   if (candidates.length === 0) {
+    if (suppressedCandidates.length > 0) {
+      const suppressed = suppressedCandidates[0];
+      const recent = recentInitiatives.get(suppressed.fingerprint) || null;
+      const held = {
+        schema: MIRA_ACTIVE_INITIATIVE_SCHEMA,
+        ok: true,
+        decision: 'duplicate_suppressed',
+        generated_at: generatedAt,
+        initiative_id: `mira-active-initiative:${stableHash({
+          generatedAt,
+          reason: 'recent_duplicate_active_initiative',
+          fingerprint: suppressed.fingerprint,
+        }).slice(0, 16)}`,
+        reason: 'recent_duplicate_active_initiative',
+        active_initiative_log_path: logPath,
+        curiosity_log_path: curiosityItemsPath(projectRoot),
+        curiosity_items_seen: allItems.length,
+        latest_adapter_count: recentItems.length,
+        current_state: statusCounts,
+        duplicate_cooldown_ms: cooldownMs,
+        suppressed_fingerprint: suppressed.fingerprint,
+        recent_matching_initiative: recent,
+        target_role: suppressed.target_role,
+        selected_item: {
+          item_id: suppressed.item.item_id,
+          source: suppressed.item.source,
+          adapter_id: suppressed.item.adapter_id,
+          status: suppressed.item.status,
+        },
+        dispatch: {
+          status: 'not_sent',
+          reason: 'duplicate_recent_active_initiative',
+          target: suppressed.target_role,
+        },
+        applied: false,
+        internal_only: true,
+        consequence_controls: {
+          internal_only: true,
+          external_send_performed: false,
+          autonomous_apply_performed: false,
+          network_performed: false,
+          destructive_action_performed: false,
+          durable_product_change_performed: false,
+          deploy_trade_customer_auth_action_performed: false,
+        },
+      };
+      appendJsonl(logPath, held);
+      return held;
+    }
     const noInitiative = {
       schema: MIRA_ACTIVE_INITIATIVE_SCHEMA,
       ok: true,
@@ -3518,8 +3621,11 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
     reason: selected.reason,
     target_role: selected.target_role,
     initiative_kind: selected.initiative_kind,
+    fingerprint: selected.fingerprint,
     score: selected.score,
     candidate_count: candidates.length,
+    suppressed_candidate_count: suppressedCandidates.length,
+    duplicate_cooldown_ms: cooldownMs,
     active_initiative_log_path: logPath,
     curiosity_log_path: curiosityItemsPath(projectRoot),
     curiosity_items_seen: allItems.length,

@@ -44,7 +44,7 @@ function printHelp() {
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-burst [--project-root <path>] [--source repo_files,memory] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
-    '  node ui/scripts/hm-mira-self-direction.js next-initiative [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js next-initiative [--project-root <path>] [--json] [--run-scout] [--no-dispatch] [--force]',
     '  node ui/scripts/hm-mira-self-direction.js email-snapshot --stdin [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js code-mode --script <js>|--stdin [--allow <path>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
@@ -76,6 +76,8 @@ function parseArgs(argv = []) {
     dispatch: true,
     routeInteresting: false,
     runScout: false,
+    force: false,
+    cooldownMs: null,
     sources: [],
     limit: 5,
     script: null,
@@ -119,6 +121,10 @@ function parseArgs(argv = []) {
       args.routeInteresting = true;
     } else if (token === '--run-scout') {
       args.runScout = true;
+    } else if (token === '--force') {
+      args.force = true;
+    } else if (token === '--cooldown-ms') {
+      args.cooldownMs = Number(argv[++index]);
     } else if (token === '--source' || token === '--sources') {
       args.sources.push(...String(argv[++index] || '').split(',').map((item) => item.trim()).filter(Boolean));
     } else if (token === '--script') {
@@ -434,9 +440,13 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
     const result = await selectMiraActiveInitiative({
       runScout: args.runScout,
       dispatch: args.dispatch,
+      force: args.force,
+      cooldownMs: args.cooldownMs,
     }, {
       projectRoot: args.projectRoot,
       dispatch: args.dispatch,
+      force: args.force,
+      cooldownMs: args.cooldownMs,
       sendAgentMessage: args.dispatch
         ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
           projectRoot: args.projectRoot,

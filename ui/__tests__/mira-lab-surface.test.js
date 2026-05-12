@@ -1734,6 +1734,50 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(1);
   });
 
+  test('active initiative suppresses a recent duplicate work order', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:20:00.000Z',
+      item_id: 'mira-curiosity:runtime-duplicate',
+      source: 'mira_runtime',
+      adapter_id: 'mira_runtime_curiosity',
+      status: 'active',
+      observation: 'Mira runtime read 5 modules; active_signals=3; blocked=2; healthy=false.',
+      suggested_question: 'Which Mira runtime gap matters?',
+      possible_action: 'Use runtime health metadata.',
+      route_hint: 'builder',
+      runtime_healthy: false,
+      runtime_blocked_count: 2,
+      runtime_blocked_modules: ['experience', 'growth_loop'],
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const first = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:21:00.000Z',
+      sendAgentMessage,
+    });
+    const second = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:22:00.000Z',
+      sendAgentMessage,
+    });
+
+    expect(first.decision).toBe('routed');
+    expect(second.decision).toBe('duplicate_suppressed');
+    expect(second.recent_matching_initiative).toEqual(expect.objectContaining({
+      initiative_id: first.initiative_id,
+      target_role: 'builder',
+    }));
+    expect(second.dispatch).toEqual(expect.objectContaining({
+      status: 'not_sent',
+      reason: 'duplicate_recent_active_initiative',
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(2);
+  });
+
   test('read-only code mode lets Mira inspect allowed files without mutation', () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
