@@ -20,6 +20,9 @@ const {
 const {
   buildMiraLocalTextUiSurface,
 } = require('./mira-local-text-ui-surface');
+const {
+  evaluateMiraWorkEvidenceReply,
+} = require('./mira-work-evidence-gate');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -2468,13 +2471,21 @@ function classifyHardBoundaryViolation({ replyText, attachmentViolationClass, le
   return reasons;
 }
 
-function gateViolationsForSummary({ languageGate, attachmentViolationClass, leakageViolation, degraded, hardBoundaryReasons = [] }) {
+function gateViolationsForSummary({
+  languageGate,
+  attachmentViolationClass,
+  leakageViolation,
+  degraded,
+  hardBoundaryReasons = [],
+  workEvidenceGate = null,
+}) {
   return [
     ...(languageGate?.violations || []),
     ...(attachmentViolationClass ? [`attachment:${attachmentViolationClass}`] : []),
     ...(leakageViolation ? [`leakage:${leakageViolation}`] : []),
     ...(degraded ? ['degraded'] : []),
     ...hardBoundaryReasons,
+    ...(workEvidenceGate?.ok === false ? [`work_evidence:${workEvidenceGate.missing.join('|')}`] : []),
   ];
 }
 
@@ -3021,8 +3032,11 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     gate,
     enginePreflightBlocked,
   });
+  const workEvidenceGate = replyText
+    ? evaluateMiraWorkEvidenceReply({ prompt, replyText })
+    : null;
 
-  const { decision, reasonClass } = classifyReplyDecision({
+  const classifiedDecision = classifyReplyDecision({
     replyText,
     gateOk: gate ? gate.ok : false,
     languageGateOk: languageGate.ok,
@@ -3031,6 +3045,11 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     degraded,
     hardBoundaryReasons,
   });
+  let { decision, reasonClass } = classifiedDecision;
+  if (decision === 'pass' && workEvidenceGate && workEvidenceGate.ok === false) {
+    decision = 'fail';
+    reasonClass = 'work_evidence_gate';
+  }
   const visibleText = decision === 'blocked' ? null : replyText;
   const visibleChunks = visibleText ? chunkVisibleReplyText(visibleText) : [];
 
@@ -3046,6 +3065,7 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     surface_error: surfaceError,
     fallback_used: false,
     fallback_blocked_reason: null,
+    work_evidence_gate: workEvidenceGate,
     hard_blocked: hardBoundaryReasons.length > 0,
     hard_block_reasons: hardBoundaryReasons,
     visible_reply_chunk_count: visibleChunks.length || (visibleText ? 1 : 0),
@@ -3058,6 +3078,7 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
       leakageViolation,
       degraded,
       hardBoundaryReasons,
+      workEvidenceGate,
     }),
   });
 

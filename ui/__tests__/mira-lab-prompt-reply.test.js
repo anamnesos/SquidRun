@@ -789,6 +789,48 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
+  test('ANNOTATED FAIL: work-critical replies must separate evidence from inference', async () => {
+    const projectRoot = tempProject();
+    const weakReply = 'Observed: customer auth bug in production. Next test: inspect logs.';
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(weakReply, { liveCalled: true, model: 'mock-model' });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'The customer auth bug is in production. What now?',
+      sessionId: 'unit-work-evidence-gate',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('fail');
+    expect(result.ok).toBe(true);
+    expect(result.gates.reason_class).toBe('work_evidence_gate');
+    expect(result.gates.work_evidence_gate).toEqual(expect.objectContaining({
+      ok: false,
+      decision: 'revise_before_send',
+      work_critical: true,
+      domains: expect.arrayContaining(['customer_risk', 'auth_sensitive']),
+      missing: expect.arrayContaining([
+        'assumptions_or_inferences',
+        'unknowns_or_missing_evidence',
+      ]),
+    }));
+    expect(result.reply.text).toBe(weakReply);
+    expect(result.visible_render_hint.kind).toBe('annotated_reply');
+    expect(result.requester_envelope).toBe(`(MIRA): ${weakReply}`);
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries[0].gates.work_evidence_gate.missing).toEqual(expect.arrayContaining([
+      'assumptions_or_inferences',
+      'unknowns_or_missing_evidence',
+    ]));
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('ANNOTATED FAIL: style/persona drift is shown as local conversation, not censored', async () => {
     const projectRoot = tempProject();
     const leakyReply = 'I understand. Happy to help with that — let me break this down for you.';
