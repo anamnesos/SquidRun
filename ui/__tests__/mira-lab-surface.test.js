@@ -184,6 +184,8 @@ describe('Mira Lab sidecar surface', () => {
     const ipcMain = {
       handle: jest.fn((channel, handler) => registered.set(channel, handler)),
       removeHandler: jest.fn(),
+      on: jest.fn(),
+      removeListener: jest.fn(),
     };
 
     registerMiraLabHandlers({ ipcMain }, { projectRoot });
@@ -260,6 +262,8 @@ describe('Mira Lab sidecar surface', () => {
     const ipcMain = {
       handle: jest.fn((channel, handler) => registered.set(channel, handler)),
       removeHandler: jest.fn(),
+      on: jest.fn(),
+      removeListener: jest.fn(),
     };
     const factory = jest.fn(() => ({ htmlPath: '/abs/mira-lab.html', preloadPath: '/abs/preload.js' }));
 

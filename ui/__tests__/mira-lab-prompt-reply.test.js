@@ -145,65 +145,10 @@ describe('reply-too-long threshold (ARCH #73 GO: raised 800 → 1600 for typed p
   });
 });
 
-describe('SAFE_FALLBACK_TEXT contract — tiny pivot with a position, not poem/apology/spec', () => {
-  // Discipline: the fallback is the only Mira-voice string we can emit on a
-  // gate violation. It must read like an in-the-room coworker pivoting, not
-  // an apology, not a poem, and not a product-spec sentence. Locked here so
-  // future "make it warmer" diffs have to argue past the contract.
-
-  test('passes evaluateMiraVisibleReply AND outputViolatesAttachmentContract at module load', () => {
+describe('legacy fallback text is not used as a hidden Mira substitution', () => {
+  test('module no longer exports the old Ask-it-differently text', () => {
+    expect(SAFE_FALLBACK_TEXT).not.toBe('Ask it differently.');
     expect(validateSafeFallbackOrNull(SAFE_FALLBACK_TEXT)).toBe(SAFE_FALLBACK_TEXT);
-  });
-
-  test('is short — under 60 chars and one sentence', () => {
-    expect(SAFE_FALLBACK_TEXT.length).toBeLessThan(60);
-    // One terminal punctuation mark only — no multi-clause poem stack.
-    const terminals = SAFE_FALLBACK_TEXT.match(/[.!?]/g) || [];
-    expect(terminals.length).toBeLessThanOrEqual(1);
-  });
-
-  test('is not an apology / self-blame opener', () => {
-    const APOLOGY_SHAPES = [
-      /^sorry\b/i,
-      /^my\s+bad\b/i,
-      /^my\s+fault\b/i,
-      /^i'?m\s+sorry\b/i,
-      /^apolog(?:y|ies)\b/i,
-      /^couldn'?t\b/i,            // self-blame mini-apology
-      /^i\s+couldn'?t\b/i,
-      /^i\s+missed\b/i,
-      /^i\s+failed\b/i,
-      /^that(?:'s|\s+was)\s+on\s+me\b/i,
-    ];
-    for (const re of APOLOGY_SHAPES) {
-      expect(re.test(SAFE_FALLBACK_TEXT)).toBe(false);
-    }
-  });
-
-  test('is not a poem / product-spec sentence', () => {
-    // Poem shape: multiple commas + clauses + no imperative.
-    const commaCount = (SAFE_FALLBACK_TEXT.match(/,/g) || []).length;
-    expect(commaCount).toBeLessThanOrEqual(1);
-    // Spec shape: contains design-vocabulary or self-narration.
-    const SPEC_VOCAB = [
-      /\bposture\b/i, /\bpresence\b/i, /\bcontinuity\b/i, /\bfriction\b/i,
-      /\bI\s+am\b/i, /\bI'?m\s+here\b/i, /\bperformance\b/i, /\bin\s+the\s+room\b/i,
-      /\bgracefully\b/i, /\bauthentic(?:ally)?\b/i,
-    ];
-    for (const re of SPEC_VOCAB) {
-      expect(re.test(SAFE_FALLBACK_TEXT)).toBe(false);
-    }
-  });
-
-  test('carries a position — imperative or declarative pivot, not pure self-reference', () => {
-    // The fallback must address the next move (imperative verb or a noun
-    // phrase that points outward), not narrate Mira's internal state.
-    const POSITION_SHAPES = [
-      /^[A-Z][a-z]+\s+(?:it|that|again|differently|another\s+way)\b/i, // "Ask it differently", "Try that again"
-      /^[A-Z][a-z]+\s+question\b/i,                                   // "Different question."
-      /\?$/,                                                          // ends in a real ask
-    ];
-    expect(POSITION_SHAPES.some((re) => re.test(SAFE_FALLBACK_TEXT))).toBe(true);
   });
 });
 
@@ -568,13 +513,7 @@ describe('mira lab prompt reply v0', () => {
     expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][BLOCKED]');
   });
 
-  test('FAIL (model-attachment contract violation, ARCH #81 Plan A routing): raw quarantined in audit, safe fallback rendered, NO blocked banner', async () => {
-    // The empty-content "verdict" from task #3 turned up content-filter
-    // rejections (action_claim / next_step_checklist_shape) where the
-    // model actually returned ~800 chars of text that got blocked at the
-    // model-attachment layer. Pre-ARCH #81, those routed through degraded
-    // → blocked_banner. Plan A routes them through the same fail →
-    // safe-fallback path as lab-surface gate violations.
+  test('HARD BLOCK: effectful model-attachment action claim is held, not substituted with fallback', async () => {
     const projectRoot = tempProject();
     const rawViolatingText = 'I sent the customer the latest patch summary, deployed the staging build, and wrote a memory note about the deploy. ' .repeat(7); // ~800 chars containing action_claim phrases
     const fakeSurface = jest.fn().mockResolvedValue({
@@ -627,53 +566,38 @@ describe('mira lab prompt reply v0', () => {
       sessionId: 'unit-arch81-routing',
     }, { projectRoot });
 
-    // Decision is FAIL (gate violation), not BLOCKED (degraded).
-    expect(result.decision).toBe('fail');
-    expect(result.gates.reason_class).toBe('gate_violation');
+    expect(result.decision).toBe('blocked');
+    expect(result.gates.reason_class).toBe('hard_boundary_violation');
     expect(result.gates.degraded).toBe(false);
     expect(result.gates.attachment_violation).toBe(true);
-    expect(result.gates.fallback_used).toBe(true);
+    expect(result.gates.attachment_violation_class).toBe('action_claim');
+    expect(result.gates.hard_blocked).toBe(true);
+    expect(result.gates.hard_block_reasons).toContain('attachment:action_claim');
+    expect(result.gates.fallback_used).toBe(false);
+    expect(result.reply).toBeNull();
+    expect(result.raw_reply).toBeNull();
+    expect(result.visible_render_hint.kind).toBe('blocked_banner');
+    expect(result.visible_render_hint.text).toBeUndefined();
 
-    // Visible surface gets the safe fallback, not the raw violation text.
-    expect(result.reply).not.toBeNull();
-    expect(result.reply.fallback).toBe(true);
-    const fallback = result.reply.text;
-    expect(fallback).toBeTruthy();
-    expect(fallback).not.toContain('I sent the customer');
-    expect(fallback).not.toContain('deployed the staging build');
-
-    // visible_render_hint is the fallback shape — NOT blocked_banner.
-    expect(result.visible_render_hint.kind).toBe('gate_failed_fallback');
-    expect(result.visible_render_hint.text).toBe(fallback);
-
-    // raw_reply carries the trimmed raw text for forensics; renderer is
-    // expected to ignore it. (lab-surface trims whitespace before
-    // classifying — content equality holds.)
-    expect(result.raw_reply.text).toBe(rawViolatingText.trim());
-
-    // Requester envelope is the Mira-voiced fallback, not a [BLOCKED] banner.
-    expect(result.requester_envelope).toBe(`(MIRA): ${fallback}`);
-    expect(result.requester_envelope).not.toContain('[MIRA LAB OUTPUT][BLOCKED]');
+    // Requester envelope is a labelled hold, not a Mira-voiced replacement.
+    expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][BLOCKED]');
     expect(result.requester_envelope).not.toContain('I sent the customer');
 
-    // Transcript: prompt + safe fallback (quarantined metadata only); no raw text.
+    // Transcript: prompt only; no fallback and no raw effectful claim.
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-arch81-routing'));
-    expect(transcriptEntries).toHaveLength(2);
-    expect(transcriptEntries[1].text).toBe(fallback);
-    expect(transcriptEntries[1].text).not.toContain('I sent the customer');
-    expect(transcriptEntries[1].quarantined).toBe(true);
-    expect(transcriptEntries[1].fallback_used).toBe(true);
-    expect(typeof transcriptEntries[1].quarantined_reply_hash).toBe('string');
+    expect(transcriptEntries).toHaveLength(1);
+    expect(transcriptEntries[0].text).toBe('what are we doing with Mira?');
 
-    // Audit: raw retained, fallback recorded, degraded_diagnostics ALSO
+    // Audit: raw retained locally, visible stays null, degraded_diagnostics ALSO
     // present (ARCH #78 contract — the diagnostics block survives even
-    // when the routing flips to fail).
+    // when model-attachment supplied raw text).
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
     expect(auditEntries).toHaveLength(1);
-    expect(auditEntries[0].decision).toBe('fail');
+    expect(auditEntries[0].decision).toBe('blocked');
     expect(auditEntries[0].reply_text).toBe(rawViolatingText.trim());
-    expect(auditEntries[0].visible_reply_text).toBe(fallback);
-    expect(auditEntries[0].fallback_used).toBe(true);
+    expect(auditEntries[0].visible_reply_text).toBeNull();
+    expect(auditEntries[0].fallback_used).toBe(false);
+    expect(auditEntries[0].gates.hard_blocked).toBe(true);
     expect(auditEntries[0].degraded_diagnostics).not.toBeNull();
     expect(auditEntries[0].degraded_diagnostics.error_kind).toBe('contract_violation');
     expect(auditEntries[0].degraded_diagnostics.violation_class).toBe('action_claim');
@@ -795,7 +719,7 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
-  test('FAIL: gate-violating reply is quarantined in audit; visible surface gets a vetted safe fallback (never the raw leak)', async () => {
+  test('ANNOTATED FAIL: style/persona drift is shown as local conversation, not censored', async () => {
     const projectRoot = tempProject();
     const leakyReply = 'I understand. Happy to help with that — let me break this down for you.';
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(leakyReply, { liveCalled: true, model: 'mock-model' });
@@ -819,62 +743,167 @@ describe('mira lab prompt reply v0', () => {
       sessionId: 'unit-fail',
     }, { projectRoot });
 
-    // Decision stays FAIL; raw reply remains in the structured result for
-    // forensics, but the visible / dispatched surface only ever carries the
-    // safe fallback.
+    // Decision stays FAIL as an annotation, but local Mira Lab conversation
+    // shows the actual reply.
     expect(result.decision).toBe('fail');
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     expect(result.reply).not.toBeNull();
-    expect(result.reply.fallback).toBe(true);
-    const fallbackText = result.reply.text;
-    expect(fallbackText).toBeTruthy();
-    expect(fallbackText).not.toContain(leakyReply);
-    expect(fallbackText).not.toContain('Happy to help');
-    expect(fallbackText).not.toContain('I understand');
+    expect(result.reply.text).toBe(leakyReply);
+    expect(result.reply.annotated).toBe(true);
+    expect(result.raw_reply).toBeNull();
+    expect(result.gates.fallback_used).toBe(false);
+    expect(result.gates.hard_blocked).toBe(false);
+    expect(result.gates.attachment_violation_class).toBe('generic_assistant_phrase');
 
-    // Hard contract: the fallback itself must pass the same gates.
-    expect(evaluateMiraVisibleReply(fallbackText).ok).toBe(true);
-    expect(outputViolatesAttachmentContract(fallbackText)).toBe(false);
+    expect(evaluateMiraVisibleReply(leakyReply).ok).toBe(false);
+    expect(outputViolatesAttachmentContract(leakyReply)).toBe(true);
 
-    expect(result.raw_reply.text).toBe(leakyReply);
-    expect(result.gates.fallback_used).toBe(true);
-
-    // Visible-render hint: clean fallback shape, never a banner with the
-    // raw leak baked into it.
-    expect(result.visible_render_hint.kind).toBe('gate_failed_fallback');
-    expect(result.visible_render_hint.text).toBe(fallbackText);
+    // Visible-render hint carries the real text with annotation metadata.
+    expect(result.visible_render_hint.kind).toBe('annotated_reply');
+    expect(result.visible_render_hint.text).toBe(leakyReply);
     expect(result.visible_render_hint.banner).toBeUndefined();
-    expect(result.visible_render_hint.text).not.toContain('Happy to help');
+    expect(result.visible_render_hint.text).toContain('Happy to help');
 
-    // Non-diagnostic requester envelope dispatches as a Mira voice line, not a
-    // labelled [FAIL] banner. Raw leak text must not appear in the envelope.
-    expect(result.requester_envelope).toBe(`(MIRA): ${fallbackText}`);
-    expect(result.requester_envelope).not.toContain(leakyReply);
-    expect(result.requester_envelope).not.toContain('Happy to help');
+    // Non-diagnostic requester envelope dispatches the visible local text.
+    expect(result.requester_envelope).toBe(`(MIRA): ${leakyReply}`);
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-fail'));
     expect(transcriptEntries).toHaveLength(2);
-    // Transcript shows only the safe fallback; quarantine metadata records
-    // that this turn was a fallback for a violating reply.
-    expect(transcriptEntries[1].text).toBe(fallbackText);
-    expect(transcriptEntries[1].text).not.toContain('Happy to help');
+    expect(transcriptEntries[1].text).toBe(leakyReply);
     expect(transcriptEntries[1].text).not.toContain('[MIRA LAB OUTPUT - GATE FAILED]');
-    expect(transcriptEntries[1].quarantined).toBe(true);
-    expect(transcriptEntries[1].fallback_used).toBe(true);
-    expect(typeof transcriptEntries[1].quarantined_reply_hash).toBe('string');
+    expect(transcriptEntries[1].quarantined).toBeUndefined();
+    expect(transcriptEntries[1].fallback_used).toBe(false);
+    expect(transcriptEntries[1].annotated_gate_failure).toBe(true);
 
-    // Audit always retains the raw leak.
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
     expect(auditEntries).toHaveLength(1);
     expect(auditEntries[0].decision).toBe('fail');
     expect(auditEntries[0].reply_text).toBe(leakyReply);
-    expect(auditEntries[0].visible_reply_text).toBe(fallbackText);
-    expect(auditEntries[0].fallback_used).toBe(true);
+    expect(auditEntries[0].visible_reply_text).toBe(leakyReply);
+    expect(auditEntries[0].fallback_used).toBe(false);
 
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
-  test('FAIL with requesterPane: dispatch sends ONLY the safe fallback wrapped as a Mira reply (raw leak never crosses the wire)', async () => {
+  test('LENGTH-ONLY: long local reply is visible and chunked instead of collapsing to fallback', async () => {
+    const projectRoot = tempProject();
+    const longReply = Array.from({ length: 120 }, (_, index) => (
+      `Segment ${index}: ordinary local conversation text with practical detail and no external action claim.`
+    )).join(' ');
+    expect(longReply.length).toBeGreaterThan(4000);
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(longReply, { liveCalled: true, model: 'mock-model' });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'can you say the tools in full?',
+      sessionId: 'unit-length-visible',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('fail');
+    expect(result.ok).toBe(true);
+    expect(result.gates.language_gate.violations).toContain('reply_too_long');
+    expect(result.gates.fallback_used).toBe(false);
+    expect(result.reply.text).toBe(longReply);
+    expect(result.reply.fallback).toBeUndefined();
+    expect(result.reply.chunks.length).toBeGreaterThan(1);
+    expect(result.visible_render_hint.kind).toBe('annotated_reply');
+    expect(result.visible_render_hint.text).toBe(longReply);
+    expect(result.visible_render_hint.chunks.length).toBe(result.reply.chunks.length);
+    expect(result.requester_envelope).toBe(`(MIRA): ${longReply}`);
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-length-visible'));
+    expect(transcriptEntries).toHaveLength(2);
+    expect(transcriptEntries[1].text).toBe(longReply);
+    expect(transcriptEntries[1].fallback_used).toBe(false);
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries[0].reply_text).toBe(longReply);
+    expect(auditEntries[0].visible_reply_text).toBe(longReply);
+    expect(auditEntries[0].fallback_used).toBe(false);
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  test('REPEAT recovery replays saved audit reply_text after old length-only fallback without calling model', async () => {
+    const projectRoot = tempProject();
+    const sessionId = 'unit-repeat-recovery';
+    const savedReply = 'This was the real long answer from the prior turn. '.repeat(45).trim();
+    const transcriptFile = transcriptPath(projectRoot, sessionId);
+    const auditFile = replyAuditPath(projectRoot);
+    fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
+    fs.mkdirSync(path.dirname(auditFile), { recursive: true });
+    fs.appendFileSync(transcriptFile, `${JSON.stringify({ session_id: sessionId, speaker_role: 'james', text: 'can you say the tools in full?' })}\n`, 'utf8');
+    fs.appendFileSync(transcriptFile, `${JSON.stringify({
+      session_id: sessionId,
+      speaker_role: 'mira',
+      text: 'Ask it differently.',
+      quarantined: true,
+      fallback_used: true,
+    })}\n`, 'utf8');
+    fs.appendFileSync(auditFile, `${JSON.stringify({
+      schema: MIRA_LAB_REPLY_AUDIT_SCHEMA,
+      generated_at: '2026-05-12T01:16:54.000Z',
+      session_id: sessionId,
+      decision: 'fail',
+      prompt: 'can you say the tools in full?',
+      reply_text: savedReply,
+      visible_reply_text: 'Ask it differently.',
+      fallback_used: true,
+      gates: {
+        language_gate: { ok: false, violations: ['reply_too_long'] },
+        attachment_violation: false,
+        leakage_violation: null,
+        degraded: false,
+        hard_blocked: false,
+      },
+    })}\n`, 'utf8');
+
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock('model should not be called', { liveCalled: true });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'repeat the last part',
+      sessionId,
+    }, { projectRoot });
+
+    expect(fakeSurface).not.toHaveBeenCalled();
+    expect(result.decision).toBe('pass');
+    expect(result.ok).toBe(true);
+    expect(result.reply).toEqual(expect.objectContaining({ text: savedReply, replay: true }));
+    expect(result.reply.text).not.toBe('Ask it differently.');
+    expect(result.visible_render_hint.kind).toBe('replayed_reply');
+    expect(result.visible_render_hint.text).toBe(savedReply);
+    expect(result.gates.replay_recovery).toBe(true);
+    expect(result.gates.replay_source.source).toBe('audit.reply_text');
+
+    const transcriptEntries = readJsonl(transcriptFile);
+    expect(transcriptEntries).toHaveLength(4);
+    expect(transcriptEntries[3].speaker_role).toBe('mira');
+    expect(transcriptEntries[3].text).toBe(savedReply);
+    expect(transcriptEntries[3].fallback_used).toBe(false);
+
+    const auditEntries = readJsonl(auditFile);
+    expect(auditEntries).toHaveLength(2);
+    expect(auditEntries[1].replay_recovery.used).toBe(true);
+    expect(auditEntries[1].replay_recovery.model_called).toBe(false);
+    expect(auditEntries[1].reply_text).toBe(savedReply);
+    expect(auditEntries[1].visible_reply_text).toBe(savedReply);
+    expect(auditEntries[1].fallback_used).toBe(false);
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  test('ANNOTATED FAIL with requesterPane: dispatch sends the real local reply with gates recorded', async () => {
     const projectRoot = tempProject();
     const leakyReply = 'I understand. Happy to help — let me break this down for you.';
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(leakyReply, { liveCalled: true });
@@ -896,9 +925,9 @@ describe('mira lab prompt reply v0', () => {
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
     const [target, body] = sendAgentMessage.mock.calls[0];
     expect(target).toBe('architect');
-    expect(body).toBe(`(MIRA): ${result.reply.text}`);
-    expect(body).not.toContain('Happy to help');
-    expect(body).not.toContain(leakyReply);
+    expect(body).toBe(`(MIRA): ${leakyReply}`);
+    expect(body).toContain('Happy to help');
+    expect(result.reply.text).toBe(leakyReply);
     expect(result.requester_dispatch).toEqual({
       target: 'architect',
       status: 'sent',

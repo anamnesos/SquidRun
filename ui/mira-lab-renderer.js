@@ -65,11 +65,11 @@
     return line;
   }
 
-  // Generic system-error text that never contains the internal reason_class
-  // names (e.g. reply_engine_degraded, gate_violation). Those stay in audit
-  // logs only; the visible UI shows a non-Mira-voice system state instead of
+  // Generic system-state text that never contains internal reason_class names
+  // (e.g. reply_engine_degraded, hard_boundary_violation). Those stay in
+  // audit logs only; the visible UI shows a non-Mira-voice state instead of
   // pretending Mira said an error code.
-  const SYSTEM_ERROR_BANNER_TEXT = 'Mira is not reachable right now. (system state, not Mira speaking)';
+  const SYSTEM_ERROR_BANNER_TEXT = 'Mira Lab held that reply. (system state, not Mira speaking)';
 
   function setSystemErrorState() {
     const shell = document.getElementById('miraLabShell');
@@ -94,25 +94,16 @@
       return null;
     }
     const hint = result.visible_render_hint || {};
-    if (hint.kind === 'clean_reply' && hint.text) {
+    if (['clean_reply', 'annotated_reply', 'replayed_reply'].includes(hint.kind) && hint.text) {
       clearSystemErrorState();
       return appendLine('mira', hint.text);
     }
-    // gate_failed_fallback: render the vetted safe fallback as a normal Mira
-    // turn. Raw violating text stays in audit/transcript metadata only; it is
-    // never shown in chat.
-    if (hint.kind === 'gate_failed_fallback' && hint.text) {
-      clearSystemErrorState();
-      return appendLine('mira', hint.text);
-    }
-    if (result.decision === 'pass' && result.reply && result.reply.text) {
+    if ((result.decision === 'pass' || result.decision === 'fail') && result.reply && result.reply.text) {
       clearSystemErrorState();
       return appendLine('mira', result.reply.text);
     }
-    // decision === 'blocked' (or any unhandled shape, including fail with no
-    // safe fallback available): system state, not chat. Never surface
-    // result.raw_reply to the visible UI — that would leak the violating
-    // model output past the gate.
+    // decision === 'blocked' (or any unhandled shape): system state, not
+    // chat. Never surface result.raw_reply to the visible UI.
     setSystemErrorState();
     return null;
   }
@@ -167,12 +158,7 @@
           state.textContent = 'Mira reply rendered / gates passed';
           state.classList.remove('mira-lab-state-system-error');
         } else if (replyResult.decision === 'fail') {
-          // d82580c+: fail surfaces a vetted safe fallback as Mira's visible
-          // reply (no raw leak, no dead banner). The status line should
-          // reflect what actually happened — not the old "quarantined / gate
-          // failed" wording, which read like a system error and didn't
-          // describe the fallback substitution James actually sees.
-          state.textContent = 'Mira reply gated — safe fallback shown';
+          state.textContent = 'Mira reply rendered / diagnostic flags recorded';
           state.classList.remove('mira-lab-state-system-error');
         } else if (replyResult.decision === 'blocked') {
           // System state, not Mira-as-speaker. No reason_class in visible text.

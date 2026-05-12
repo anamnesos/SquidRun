@@ -13,6 +13,7 @@ const {
 } = require('./mira-core/local-text-session-v0');
 const {
   evaluateMiraVisibleReply,
+  MIRA_MAX_REPLY_CHARS_EXPERIENCE,
 } = require('./mira-core/mira-language-rules-v0');
 const {
   buildMiraLocalTextUiSurface,
@@ -33,12 +34,30 @@ const NAME_SWAP_PATTERN =
   /\b(as mira|i am mira,? (?:an|your) ai|as an ai|language model|happy to help|assist you|how can i help|safe next step)\b/i;
 const LAB_BACKCHANNEL_PREFIX = 'MIRA-LAB';
 
-// Visible fallback text used when the live reply fails a gate. Contract:
-// a tiny pivot with a position — not a poem, not an apology, not a
-// product-spec sentence. Must itself pass evaluateMiraVisibleReply AND
-// outputViolatesAttachmentContract. validateSafeFallbackOrNull hard-blocks
-// the surface if this string ever regresses against those gates.
-const SAFE_FALLBACK_TEXT = 'Ask it differently.';
+// Legacy export kept for older harness callers. Mira Lab no longer uses this
+// as a hidden replacement for local conversation text; blocked paths render a
+// labelled system state, not a fake Mira answer.
+const SAFE_FALLBACK_TEXT = 'Held at the boundary.';
+const OBSOLETE_FALLBACK_TEXTS = Object.freeze(['Ask it differently.']);
+const MIRA_LAB_VISIBLE_REPLY_CHUNK_CHARS = MIRA_MAX_REPLY_CHARS_EXPERIENCE;
+const HARD_ATTACHMENT_VIOLATION_CLASSES = Object.freeze([
+  'action_claim',
+  'rule_recitation',
+]);
+const HARD_LEAKAGE_VIOLATIONS = Object.freeze([
+  'visible_rule_recitation',
+]);
+const HARD_BOUNDARY_TEXT_PATTERN =
+  /\b(openai_api_key|anthropic_api_key|authorization:\s*bearer|begin private key|secret token|private key|raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|network request performed|customer message sent|trade placed|deployment started|tool call completed|memory committed|file written|eunbyeol|korean case)\b|은별/i;
+const REPLAY_REQUEST_PATTERNS = Object.freeze([
+  /^(?:please\s+)?(?:repeat|say)\s+(?:that|it|the last(?:\s+part)?|last\s+part)(?:\s+again)?\.?$/i,
+  /^(?:can you\s+)?(?:repeat|say)\s+(?:that|it|the last(?:\s+part)?|last\s+part)(?:\s+again)?\??$/i,
+  /^(?:please\s+)?continue\.?$/i,
+  /^continue\s+(?:from|where|after)\b/i,
+  /\b(?:got|was|is)\s+(?:truncated|cut off)\b/i,
+  /\b(?:what came|what was)\s+after\b/i,
+  /\b(?:the\s+thing|reply|answer)\s+(?:got|was|is)\s+(?:truncated|cut off)\b/i,
+]);
 
 function validateSafeFallbackOrNull(text) {
   const trimmed = trimText(text);
@@ -296,6 +315,162 @@ function summarizeForWrapper(text, max = 160) {
   return `${trimmed.slice(0, max - 1)}…`;
 }
 
+function isObsoleteFallbackText(text) {
+  const trimmed = trimText(text);
+  return OBSOLETE_FALLBACK_TEXTS.some((fallback) => trimmed === fallback);
+}
+
+function chunkVisibleReplyText(text, maxChars = MIRA_LAB_VISIBLE_REPLY_CHUNK_CHARS) {
+  const value = trimText(text);
+  if (!value || value.length <= maxChars) return [];
+  const chunks = [];
+  let rest = value;
+  while (rest.length > maxChars) {
+    const softFloor = Math.floor(maxChars * 0.72);
+    const slice = rest.slice(0, maxChars + 1);
+    let cut = Math.max(slice.lastIndexOf('\n\n'), slice.lastIndexOf('\n'), slice.lastIndexOf(' '));
+    if (cut < softFloor) cut = maxChars;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+function classifyReplayRequest(prompt) {
+  const value = trimText(prompt);
+  if (!value) return null;
+  if (!REPLAY_REQUEST_PATTERNS.some((pattern) => pattern.test(value))) return null;
+  return {
+    requested: true,
+    kind: 'repeat_continue_recovery',
+  };
+}
+
+function attachmentViolationClassFor(replyText, modelAttachment = null) {
+  const reported = trimText(modelAttachment && modelAttachment.contract_violation_class);
+  return reported || classifyAttachmentContractViolation(replyText) || null;
+}
+
+function classifyHardBoundaryViolation({ replyText, attachmentViolationClass, leakageViolation, gate, enginePreflightBlocked }) {
+  const reasons = [];
+  if (enginePreflightBlocked) reasons.push('engine_preflight_boundary');
+  if (gate && gate.ok === false) reasons.push('local_text_session_gate');
+  if (attachmentViolationClass && HARD_ATTACHMENT_VIOLATION_CLASSES.includes(attachmentViolationClass)) {
+    reasons.push(`attachment:${attachmentViolationClass}`);
+  }
+  if (leakageViolation && HARD_LEAKAGE_VIOLATIONS.includes(leakageViolation)) {
+    reasons.push(`leakage:${leakageViolation}`);
+  }
+  if (replyText && HARD_BOUNDARY_TEXT_PATTERN.test(replyText)) {
+    reasons.push('private_or_effectful_boundary_text');
+  }
+  return reasons;
+}
+
+function gateViolationsForSummary({ languageGate, attachmentViolationClass, leakageViolation, degraded, hardBoundaryReasons = [] }) {
+  return [
+    ...(languageGate?.violations || []),
+    ...(attachmentViolationClass ? [`attachment:${attachmentViolationClass}`] : []),
+    ...(leakageViolation ? [`leakage:${leakageViolation}`] : []),
+    ...(degraded ? ['degraded'] : []),
+    ...hardBoundaryReasons,
+  ];
+}
+
+function isLengthOnlyAuditEntry(entry = {}) {
+  const gates = entry.gates || {};
+  const languageGate = gates.language_gate || {};
+  const violations = Array.isArray(languageGate.violations) ? languageGate.violations : [];
+  return violations.length === 1
+    && violations[0] === 'reply_too_long'
+    && gates.attachment_violation !== true
+    && !gates.attachment_violation_class
+    && !gates.leakage_violation
+    && gates.degraded !== true
+    && gates.hard_blocked !== true;
+}
+
+function replayCandidateAllowed(text) {
+  const candidate = trimText(text);
+  if (!candidate || isObsoleteFallbackText(candidate)) return { ok: false, reason: 'empty_or_obsolete_fallback' };
+  const attachmentViolationClass = attachmentViolationClassFor(candidate);
+  const leakageViolation = visibleReplyLeakageViolation(candidate);
+  const hardBoundaryReasons = classifyHardBoundaryViolation({
+    replyText: candidate,
+    attachmentViolationClass,
+    leakageViolation,
+    gate: null,
+    enginePreflightBlocked: false,
+  });
+  if (hardBoundaryReasons.length > 0) {
+    return { ok: false, reason: 'hard_boundary', hardBoundaryReasons };
+  }
+  return {
+    ok: true,
+    text: candidate,
+    attachmentViolationClass,
+    leakageViolation,
+  };
+}
+
+function findReplayableMiraReply({ auditPathStr, transcriptPathStr, sessionId }) {
+  let auditEntries = [];
+  try {
+    auditEntries = readJsonl(auditPathStr);
+  } catch (_) {
+    auditEntries = [];
+  }
+  for (let i = auditEntries.length - 1; i >= 0; i -= 1) {
+    const entry = auditEntries[i];
+    if (!entry || entry.session_id !== sessionId) continue;
+    const lengthOnly = isLengthOnlyAuditEntry(entry);
+    const fields = [
+      { name: 'audit.reply_text', value: entry.reply_text },
+      { name: 'audit.visible_reply_text', value: entry.visible_reply_text },
+    ];
+    for (const field of fields) {
+      if (entry.decision === 'blocked' && !lengthOnly && field.name === 'audit.reply_text') continue;
+      const allowed = replayCandidateAllowed(field.value);
+      if (!allowed.ok) continue;
+      return {
+        text: allowed.text,
+        source: field.name,
+        previous_decision: entry.decision || null,
+        previous_generated_at: entry.generated_at || null,
+        previous_was_length_only: lengthOnly,
+        attachment_violation_class: allowed.attachmentViolationClass,
+        leakage_violation: allowed.leakageViolation,
+      };
+    }
+  }
+
+  let transcriptEntries = [];
+  try {
+    transcriptEntries = readJsonl(transcriptPathStr);
+  } catch (_) {
+    transcriptEntries = [];
+  }
+  for (let i = transcriptEntries.length - 1; i >= 0; i -= 1) {
+    const turn = transcriptEntries[i];
+    if (!turn || turn.session_id !== sessionId) continue;
+    if (String(turn.speaker_role || '').toLowerCase() !== 'mira') continue;
+    if (turn.quarantined === true || turn.fallback_used === true) continue;
+    const allowed = replayCandidateAllowed(turn.text);
+    if (!allowed.ok) continue;
+    return {
+      text: allowed.text,
+      source: 'transcript.mira_text',
+      previous_decision: null,
+      previous_generated_at: turn.generated_at || null,
+      previous_was_length_only: false,
+      attachment_violation_class: allowed.attachmentViolationClass,
+      leakage_violation: allowed.leakageViolation,
+    };
+  }
+  return null;
+}
+
 // Read recent non-quarantined turns from the lab transcript and shape them
 // for engine threadContext. Both James and Mira turns are included so
 // continuity isn't one-sided. Agent-driven prompts (architect/builder/oracle
@@ -335,9 +510,9 @@ function gatesSummary(gateResult) {
 }
 
 function buildRequesterEnvelope({ decision, prompt, replyText, visibleText, gateSummary, auditPath, diagnostic }) {
-  // Non-diagnostic dispatch: only ever surface the validated visible text.
-  // For pass that is the model reply; for fail that is the safe fallback.
-  // Raw quarantined `replyText` is never embedded in the visible envelope.
+  // Non-diagnostic dispatch only surfaces text already approved for this
+  // local lab conversation. Style/persona drift can be annotated as FAIL but
+  // still visible; hard boundary blocks never embed the held raw text.
   if (!diagnostic && (decision === 'pass' || decision === 'fail') && visibleText) {
     return `(MIRA): ${visibleText}`;
   }
@@ -345,19 +520,20 @@ function buildRequesterEnvelope({ decision, prompt, replyText, visibleText, gate
   const promptSummary = summarizeForWrapper(prompt, 100);
   const replySummary = visibleText
     ? summarizeForWrapper(visibleText, 200)
-    : (replyText ? '<quarantined>' : '<no reply>');
+    : (replyText ? '<held locally>' : '<no reply>');
   return `[MIRA LAB OUTPUT][${decisionLabel}] prompt="${promptSummary}" reply="${replySummary}" gates=${gateSummary} audit=${auditPath || '<unset>'}`;
 }
 
-function classifyReplyDecision({ replyText, gateOk, languageGateOk, attachmentViolation, leakageViolation, degraded }) {
+function classifyReplyDecision({ replyText, gateOk, languageGateOk, attachmentViolation, leakageViolation, degraded, hardBoundaryReasons = [] }) {
   if (degraded) return { decision: 'blocked', reasonClass: 'reply_engine_degraded' };
   if (!replyText) return { decision: 'blocked', reasonClass: 'no_reply_text' };
+  if (hardBoundaryReasons.length > 0) return { decision: 'blocked', reasonClass: 'hard_boundary_violation' };
   const allGatesOk = gateOk === true && languageGateOk === true && attachmentViolation === false && leakageViolation === null;
   if (allGatesOk) return { decision: 'pass', reasonClass: null };
-  return { decision: 'fail', reasonClass: 'gate_violation' };
+  return { decision: 'fail', reasonClass: 'gate_annotation' };
 }
 
-function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, decision, gateSummary, transcriptPathStr, speakerRole, fallbackText }) {
+function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, decision, gateSummary, transcriptPathStr, speakerRole, visibleText, replaySource }) {
   const role = normalizeSpeakerRole(speakerRole) || 'james';
   const direction = AGENT_ROLES.includes(role) ? 'agent_to_mira' : 'james_to_mira';
   const promptTurn = {
@@ -377,15 +553,15 @@ function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, deci
     source_kind: 'mira_lab_prompt_reply_v0',
   };
   let replyTurn = null;
-  if (decision === 'pass' && replyText) {
+  if ((decision === 'pass' || decision === 'fail') && visibleText) {
     replyTurn = {
       schema: MIRA_LAB_SCHEMA,
-      turn_id: `mira-lab-turn:${stableHash({ generatedAt, sessionId, role: 'mira', text: replyText }).slice(0, 16)}`,
+      turn_id: `mira-lab-turn:${stableHash({ generatedAt, sessionId, role: 'mira', text: visibleText }).slice(0, 16)}`,
       generated_at: generatedAt,
       session_id: sessionId,
       speaker_role: 'mira',
-      text: replyText,
-      text_hash: `sha256:${stableHash(replyText)}`,
+      text: visibleText,
+      text_hash: `sha256:${stableHash(visibleText)}`,
       direction: 'mira_to_james',
       target_agents: [],
       visible_to_lab: true,
@@ -393,30 +569,11 @@ function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, deci
       inject_into_live_mira_context: false,
       transcript_path: transcriptPathStr,
       source_kind: 'mira_lab_prompt_reply_v0',
-    };
-  } else if (decision === 'fail' && fallbackText) {
-    // Quarantine the raw model output and surface only the validated safe
-    // fallback in the transcript. Audit (built by the caller) still preserves
-    // the raw `replyText` for forensics.
-    replyTurn = {
-      schema: MIRA_LAB_SCHEMA,
-      turn_id: `mira-lab-turn:${stableHash({ generatedAt, sessionId, role: 'mira_fallback', text: fallbackText }).slice(0, 16)}`,
-      generated_at: generatedAt,
-      session_id: sessionId,
-      speaker_role: 'mira',
-      text: fallbackText,
-      text_hash: `sha256:${stableHash(fallbackText)}`,
-      direction: 'mira_to_james',
-      target_agents: [],
-      visible_to_lab: true,
-      diagnostics_visible: false,
-      inject_into_live_mira_context: false,
-      transcript_path: transcriptPathStr,
-      source_kind: 'mira_lab_prompt_reply_v0',
-      gate_summary: gateSummary,
-      quarantined: true,
-      fallback_used: true,
-      quarantined_reply_hash: replyText ? `sha256:${stableHash(replyText)}` : null,
+      gate_summary: decision === 'fail' ? gateSummary : undefined,
+      annotated_gate_failure: decision === 'fail',
+      fallback_used: false,
+      replay_recovery: replaySource ? true : undefined,
+      replay_source: replaySource ? replaySource.source : undefined,
     };
   }
   return { promptTurn, replyTurn };
@@ -428,6 +585,182 @@ function buildLabSessionId(generatedAt, providedSessionId) {
   const datePart = (generatedAt || new Date().toISOString()).slice(0, 10);
   const tail = candidate ? safeId(candidate, 'main') : 'main';
   return `app-session-mira-lab-${datePart}-${tail}`;
+}
+
+async function buildReplayPromptReplyResult({
+  generatedAt,
+  labSessionId,
+  transcriptSessionId,
+  prompt,
+  speakerRole,
+  requesterPane,
+  transcriptPathStr,
+  auditPathStr,
+  replayRequest,
+  replaySource,
+  options,
+}) {
+  const replyText = replaySource ? trimText(replaySource.text) : '';
+  const languageGate = replyText
+    ? evaluateMiraVisibleReply(replyText, { maxReplyChars: MIRA_LAB_VISIBLE_REPLY_CHUNK_CHARS })
+    : { ok: false, violations: ['empty_reply'] };
+  const attachmentViolationClass = attachmentViolationClassFor(replyText);
+  const attachmentViolation = Boolean(attachmentViolationClass);
+  const leakageViolation = replyText ? visibleReplyLeakageViolation(replyText) : null;
+  const hardBoundaryReasons = classifyHardBoundaryViolation({
+    replyText,
+    attachmentViolationClass,
+    leakageViolation,
+    gate: null,
+    enginePreflightBlocked: false,
+  });
+  const degraded = false;
+  const { decision, reasonClass } = classifyReplyDecision({
+    replyText,
+    gateOk: true,
+    languageGateOk: languageGate.ok,
+    attachmentViolation,
+    leakageViolation,
+    degraded,
+    hardBoundaryReasons,
+  });
+  const visibleText = decision === 'blocked' ? null : replyText;
+  const visibleChunks = visibleText ? chunkVisibleReplyText(visibleText) : [];
+  const consolidatedGate = {
+    decision,
+    reason_class: reasonClass,
+    local_text_session_gate: null,
+    language_gate: languageGate,
+    attachment_violation: attachmentViolation,
+    attachment_violation_class: attachmentViolationClass,
+    leakage_violation: leakageViolation,
+    degraded,
+    surface_error: null,
+    fallback_used: false,
+    fallback_blocked_reason: null,
+    hard_blocked: hardBoundaryReasons.length > 0,
+    hard_block_reasons: hardBoundaryReasons,
+    replay_recovery: true,
+    replay_request: replayRequest,
+    replay_source: replaySource || null,
+    visible_reply_chunk_count: visibleChunks.length || (visibleText ? 1 : 0),
+  };
+  const gateSummary = gatesSummary({
+    ok: decision === 'pass',
+    violations: gateViolationsForSummary({
+      languageGate,
+      attachmentViolationClass,
+      leakageViolation,
+      degraded,
+      hardBoundaryReasons,
+    }),
+  });
+  const { promptTurn, replyTurn } = buildPromptReplyTurns({
+    generatedAt,
+    sessionId: transcriptSessionId,
+    prompt,
+    replyText,
+    decision,
+    gateSummary,
+    transcriptPathStr,
+    speakerRole,
+    visibleText,
+    replaySource,
+  });
+  appendJsonl(transcriptPathStr, promptTurn);
+  if (replyTurn) appendJsonl(transcriptPathStr, replyTurn);
+
+  const auditEntry = {
+    schema: MIRA_LAB_REPLY_AUDIT_SCHEMA,
+    generated_at: generatedAt,
+    session_id: transcriptSessionId,
+    engine_session_id: labSessionId,
+    decision,
+    speaker_role: speakerRole,
+    requester_pane: requesterPane,
+    prompt,
+    prompt_hash: `sha256:${stableHash(prompt)}`,
+    reply_text: replyText || null,
+    reply_hash: replyText ? `sha256:${stableHash(replyText)}` : null,
+    visible_reply_text: visibleText || null,
+    fallback_used: false,
+    gates: consolidatedGate,
+    engine_preflight_blocked: false,
+    model_attachment: {
+      enabled: false,
+      live_model_called: false,
+      model: null,
+      visible_status: 'Replay recovery from local Mira Lab audit/transcript',
+    },
+    degraded_diagnostics: null,
+    social_move: null,
+    friction_state: null,
+    replay_recovery: {
+      used: true,
+      request: replayRequest,
+      source: replaySource || null,
+      model_called: false,
+    },
+    transcript_path: transcriptPathStr,
+  };
+  fs.mkdirSync(path.dirname(auditPathStr), { recursive: true });
+  fs.appendFileSync(auditPathStr, `${JSON.stringify(auditEntry)}\n`, 'utf8');
+
+  const requesterEnvelope = buildRequesterEnvelope({
+    decision,
+    prompt,
+    replyText: replyText || null,
+    visibleText,
+    gateSummary,
+    auditPath: auditPathStr,
+    diagnostic: options.diagnosticEnvelope,
+  });
+
+  const dispatchAllowed = Boolean(visibleText) || options.diagnosticEnvelope === true;
+  let requesterDispatch = null;
+  if (requesterPane && dispatchAllowed && typeof options.sendAgentMessage === 'function') {
+    try {
+      const sendResult = await options.sendAgentMessage(requesterPane, requesterEnvelope);
+      requesterDispatch = { target: requesterPane, status: 'sent', result: sendResult || null };
+    } catch (err) {
+      requesterDispatch = { target: requesterPane, status: 'failed', error: err && err.message ? err.message : String(err) };
+    }
+  } else if (requesterPane && dispatchAllowed) {
+    requesterDispatch = { target: requesterPane, status: 'queued_not_sent', reason: 'sendAgentMessage_dependency_missing' };
+  } else if (requesterPane) {
+    requesterDispatch = { target: requesterPane, status: 'skipped_no_clean_reply', decision };
+  }
+
+  return {
+    schema: MIRA_LAB_PROMPT_REPLY_SCHEMA,
+    ok: decision !== 'blocked',
+    decision,
+    prompt,
+    friction_state_next: null,
+    reply: visibleText
+      ? {
+        text: visibleText,
+        model: null,
+        replay: true,
+        annotated: decision === 'fail',
+        chunks: visibleChunks.length > 0 ? visibleChunks : undefined,
+      }
+      : null,
+    raw_reply: null,
+    gates: consolidatedGate,
+    transcript_path: transcriptPathStr,
+    audit_path: auditPathStr,
+    requester_envelope: requesterEnvelope,
+    requester_dispatch: requesterDispatch,
+    visible_render_hint: visibleText
+      ? {
+        kind: 'replayed_reply',
+        text: visibleText,
+        annotated: decision === 'fail',
+        chunks: visibleChunks.length > 0 ? visibleChunks : undefined,
+      }
+      : { kind: 'blocked_banner', banner: `Mira Lab held the replay: ${reasonClass || 'no_replayable_reply'}` },
+  };
 }
 
 async function buildMiraLabPromptReply(payload = {}, options = {}) {
@@ -457,6 +790,28 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
         auditPath: null,
       }),
     };
+  }
+
+  const replayRequest = classifyReplayRequest(prompt);
+  if (replayRequest) {
+    const replaySource = findReplayableMiraReply({
+      auditPathStr,
+      transcriptPathStr,
+      sessionId: transcriptSessionId,
+    });
+    return buildReplayPromptReplyResult({
+      generatedAt,
+      labSessionId,
+      transcriptSessionId,
+      prompt,
+      speakerRole,
+      requesterPane,
+      transcriptPathStr,
+      auditPathStr,
+      replayRequest,
+      replaySource,
+      options,
+    });
   }
 
   // Engine preflight requires top-level UI metadata fields and an `app-session-...` sessionId.
@@ -510,12 +865,10 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
   const cleanReplyText = surface && surface.reply && surface.reply.count === 1 ? trimText(surface.reply.text) : '';
   const gate = surface && surface.local_text_session_gate ? surface.local_text_session_gate : null;
   const modelAttachment = surface && surface.model_attachment ? surface.model_attachment : null;
-  // ARCH #81 Plan A: when callMiraTextModelAttachment caught a contract
-  // violation, the raw violating text rides on model_attachment.contract_
-  // violation_raw_text. That's a gate failure (not infra degradation), so
-  // we adopt the raw text as replyText for downstream classification; the
-  // existing FAIL→safe-fallback path then handles it. Audit retains raw
-  // text + reply_hash; renderer never sees it.
+  // Model-attachment may return raw text when it tripped a local style or
+  // boundary classifier. Mira Lab now decides whether that text is visible:
+  // style/persona drift is annotated, actual effectful/private leakage is
+  // held.
   const modelContractViolationText = typeof modelAttachment?.contract_violation_raw_text === 'string'
     && modelAttachment.contract_violation_raw_text.length > 0
     ? trimText(modelAttachment.contract_violation_raw_text)
@@ -544,16 +897,16 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     )
   );
 
-  const languageGate = replyText ? evaluateMiraVisibleReply(replyText) : { ok: false, violations: ['empty_reply'] };
-  const attachmentViolation = replyText ? outputViolatesAttachmentContract(replyText) : false;
+  const languageGate = replyText
+    ? evaluateMiraVisibleReply(replyText, { maxReplyChars: MIRA_LAB_VISIBLE_REPLY_CHUNK_CHARS })
+    : { ok: false, violations: ['empty_reply'] };
+  const attachmentViolationClass = replyText ? attachmentViolationClassFor(replyText, modelAttachment) : null;
+  const attachmentViolation = Boolean(attachmentViolationClass);
   const leakageViolation = replyText ? visibleReplyLeakageViolation(replyText) : null;
-  // ARCH #81 Plan A: when we have contract-violation raw text from the
-  // model-attachment layer, that's a gate failure — NOT infra degradation.
-  // Suppress the degraded flag so classifyReplyDecision routes to FAIL
-  // (gate_violation → safe fallback) instead of BLOCKED (degraded engine →
-  // blocked_banner). Truly degraded paths (surfaceError, no surface,
-  // engine-side surface.decision='degraded' without contract violation,
-  // live_model_called=false) still flag degraded as before.
+  // Contract-violation raw text from the model-attachment layer is not infra
+  // degradation by itself. Suppress the degraded flag when raw text exists;
+  // the hard-boundary classifier below decides whether to hold it or annotate
+  // it as visible local conversation.
   const isModelContractViolation = modelContractViolationText.length > 0;
   const degraded = !isModelContractViolation && (
     surfaceError !== null
@@ -561,29 +914,25 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     || surface.decision === 'degraded'
     || (modelAttachment && modelAttachment.live_model_called === false && replyText.length === 0)
   );
+  const hardBoundaryReasons = classifyHardBoundaryViolation({
+    replyText,
+    attachmentViolationClass,
+    leakageViolation,
+    gate,
+    enginePreflightBlocked,
+  });
 
-  let { decision, reasonClass } = classifyReplyDecision({
+  const { decision, reasonClass } = classifyReplyDecision({
     replyText,
     gateOk: gate ? gate.ok : false,
     languageGateOk: languageGate.ok,
     attachmentViolation,
     leakageViolation,
     degraded,
+    hardBoundaryReasons,
   });
-
-  // On gate failure, build a vetted conversational fallback. If the constant
-  // ever regresses against the same gates it must itself be hard-blocked —
-  // never surface raw leakage as the cost of "saying something".
-  let safeFallbackText = null;
-  let fallbackBlockedReason = null;
-  if (decision === 'fail') {
-    safeFallbackText = validateSafeFallbackOrNull(SAFE_FALLBACK_TEXT);
-    if (!safeFallbackText) {
-      decision = 'blocked';
-      reasonClass = 'fallback_failed_gate';
-      fallbackBlockedReason = 'safe_fallback_failed_gate';
-    }
-  }
+  const visibleText = decision === 'blocked' ? null : replyText;
+  const visibleChunks = visibleText ? chunkVisibleReplyText(visibleText) : [];
 
   const consolidatedGate = {
     decision,
@@ -591,20 +940,25 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     local_text_session_gate: gate,
     language_gate: languageGate,
     attachment_violation: attachmentViolation,
+    attachment_violation_class: attachmentViolationClass,
     leakage_violation: leakageViolation,
     degraded,
     surface_error: surfaceError,
-    fallback_used: decision === 'fail' && !!safeFallbackText,
-    fallback_blocked_reason: fallbackBlockedReason,
+    fallback_used: false,
+    fallback_blocked_reason: null,
+    hard_blocked: hardBoundaryReasons.length > 0,
+    hard_block_reasons: hardBoundaryReasons,
+    visible_reply_chunk_count: visibleChunks.length || (visibleText ? 1 : 0),
   };
   const gateSummary = gatesSummary({
     ok: decision === 'pass',
-    violations: [
-      ...(languageGate.violations || []),
-      ...(attachmentViolation ? ['attachment_contract'] : []),
-      ...(leakageViolation ? [`leakage:${leakageViolation}`] : []),
-      ...(degraded ? ['degraded'] : []),
-    ],
+    violations: gateViolationsForSummary({
+      languageGate,
+      attachmentViolationClass,
+      leakageViolation,
+      degraded,
+      hardBoundaryReasons,
+    }),
   });
 
   const { promptTurn, replyTurn } = buildPromptReplyTurns({
@@ -616,20 +970,11 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     gateSummary,
     transcriptPathStr,
     speakerRole,
-    fallbackText: safeFallbackText,
+    visibleText,
+    replaySource: null,
   });
   appendJsonl(transcriptPathStr, promptTurn);
   if (replyTurn) appendJsonl(transcriptPathStr, replyTurn);
-
-  // Visible text the lab/render layer is allowed to show. On pass this is the
-  // model's clean reply; on fail it is the vetted safe fallback. Raw violating
-  // text never reaches the visible surface — it stays in audit + transcript
-  // metadata only.
-  const visibleText = decision === 'pass'
-    ? replyText
-    : decision === 'fail' && safeFallbackText
-      ? safeFallbackText
-      : null;
 
   const auditEntry = {
     schema: MIRA_LAB_REPLY_AUDIT_SCHEMA,
@@ -641,12 +986,13 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     requester_pane: requesterPane,
     prompt,
     prompt_hash: `sha256:${stableHash(prompt)}`,
-    // Audit always retains the raw model output for forensics, even when the
-    // visible surface only ever showed the safe fallback.
+    // Audit always retains the model output for forensics. For local
+    // style/persona annotations this is also the visible text; for hard
+    // boundary blocks the visible field stays null.
     reply_text: replyText || null,
     reply_hash: replyText ? `sha256:${stableHash(replyText)}` : null,
     visible_reply_text: visibleText || null,
-    fallback_used: decision === 'fail' && !!safeFallbackText,
+    fallback_used: false,
     gates: consolidatedGate,
     engine_preflight_blocked: enginePreflightBlocked,
     model_attachment: modelAttachment ? {
@@ -687,13 +1033,10 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     diagnostic: options.diagnosticEnvelope,
   });
 
-  // pass and fail-with-fallback both dispatch a clean Mira-voiced line to the
-  // requester pane. degraded/blocked stay in JSON + audit only — never invent
-  // a fallback for a degraded engine. `diagnosticEnvelope=true` keeps the
-  // labeled-envelope behavior available for explicit debug callers.
-  const dispatchAllowed = decision === 'pass'
-    || (decision === 'fail' && !!safeFallbackText)
-    || options.diagnosticEnvelope === true;
+  // Pass and annotated fail both dispatch the actual local conversation text.
+  // Blocked paths stay in JSON + audit only unless a caller explicitly asks
+  // for a diagnostic envelope.
+  const dispatchAllowed = Boolean(visibleText) || options.diagnosticEnvelope === true;
 
   let requesterDispatch = null;
   if (requesterPane && dispatchAllowed && typeof options.sendAgentMessage === 'function') {
@@ -719,26 +1062,32 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
 
   return {
     schema: MIRA_LAB_PROMPT_REPLY_SCHEMA,
-    ok: decision === 'pass',
+    ok: decision !== 'blocked',
     decision,
     prompt,
     friction_state_next: frictionStateNext,
-    reply: decision === 'pass'
-      ? { text: replyText, model: surface?.reply?.model || null }
-      : decision === 'fail' && safeFallbackText
-        ? { text: safeFallbackText, model: null, fallback: true }
-        : null,
-    raw_reply: decision === 'fail' && replyText ? { text: replyText, model: surface?.reply?.model || null } : null,
+    reply: visibleText
+      ? {
+        text: visibleText,
+        model: surface?.reply?.model || modelAttachment?.model || null,
+        annotated: decision === 'fail',
+        chunks: visibleChunks.length > 0 ? visibleChunks : undefined,
+      }
+      : null,
+    raw_reply: null,
     gates: consolidatedGate,
     transcript_path: transcriptPathStr,
     audit_path: auditPathStr,
     requester_envelope: requesterEnvelope,
     requester_dispatch: requesterDispatch,
-    visible_render_hint: decision === 'pass'
-      ? { kind: 'clean_reply', text: replyText }
-      : decision === 'fail' && safeFallbackText
-        ? { kind: 'gate_failed_fallback', text: safeFallbackText }
-        : { kind: 'blocked_banner', banner: `Mira Lab reply unavailable: ${reasonClass || 'unknown'}` },
+    visible_render_hint: visibleText
+      ? {
+        kind: decision === 'pass' ? 'clean_reply' : 'annotated_reply',
+        text: visibleText,
+        annotated: decision === 'fail',
+        chunks: visibleChunks.length > 0 ? visibleChunks : undefined,
+      }
+      : { kind: 'blocked_banner', banner: `Mira Lab held that reply: ${reasonClass || 'unknown'}` },
   };
 }
 
