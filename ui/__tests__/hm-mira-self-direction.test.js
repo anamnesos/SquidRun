@@ -290,7 +290,7 @@ describe('hm-mira-self-direction CLI harness', () => {
     });
 
     expect(jsonResult.result.decision).toBe('scouted');
-    expect(jsonResult.result.active_count).toBe(5);
+    expect(jsonResult.result.active_count).toBe(6);
     expect(jsonResult.result.items.some((item) => item.source === 'repo_files')).toBe(true);
     expect(jsonResult.result.items.some((item) => item.status === 'adapter_not_built_yet')).toBe(true);
     expect(jsonResult.result.items.some((item) => item.source === 'source_action_substrate')).toBe(true);

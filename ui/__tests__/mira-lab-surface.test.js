@@ -678,8 +678,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
-    expect(result.active_count).toBe(5);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(12);
+    expect(result.active_count).toBe(6);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(11);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -714,8 +714,12 @@ describe('Mira Lab sidecar surface', () => {
     expect(bySource.email.status).toBe('adapter_not_built_yet');
     expect(bySource.web_research.status).toBe('adapter_not_built_yet');
     expect(bySource.environment_apps.status).toBe('adapter_not_built_yet');
-    expect(bySource.source_action_substrate.suggested_question).toMatch(/which existing SquidRun seam/i);
-    expect(bySource.source_action_substrate.possible_action).toMatch(/MCP-compatible connectors, code-mode wrappers, workflow\/DAG execution, active memory actions, and evaluation loops/i);
+    expect(bySource.source_action_substrate).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+    }));
+    expect(bySource.source_action_substrate.suggested_question).toMatch(/source\/action arm/i);
+    expect(bySource.source_action_substrate.possible_action).toMatch(/starting with active memory or scheduled curiosity/i);
     expect(bySource.code_mode_exploration).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
