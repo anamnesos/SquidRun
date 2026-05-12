@@ -85,12 +85,12 @@ const SOURCE_ACTION_SUBSTRATE_REGISTRY = Object.freeze([
   {
     source: 'web_research',
     scope: 'websites_and_external_research_surfaces',
-    strategy: SUBSTRATE_STRATEGIES.code_mode,
-    status: 'connector_needed',
+    strategy: SUBSTRATE_STRATEGIES.native_adapter,
+    status: 'active',
     priority: 70,
-    existing_seams: ['browser-use skill', 'Chrome connector', 'local research artifacts'],
-    first_probe: 'Use code-mode on saved research artifacts first; use browser connectors only when live web context is necessary.',
-    why_this_strategy: 'Huge source surfaces need search-execute wrappers plus connector escape hatches, not one massive tool list.',
+    existing_seams: ['mira-web-research-curiosity.js', '.squidrun/coord/*research*.md', 'workspace/research/*.md', 'browser-history safe URLs', 'browser-use skill'],
+    first_probe: 'Read compact saved research artifact metadata, titles, excerpts, safe URLs, and domains before live browser/network work.',
+    why_this_strategy: 'Saved research trails are already local context; a native read-only inventory gives Mira web awareness without a crawler.',
   },
   {
     source: 'images_screenshots_assets',

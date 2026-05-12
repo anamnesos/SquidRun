@@ -36,6 +36,9 @@ const {
   readMiraEmailCuriosity,
   writeMiraEmailCuriositySnapshot,
 } = require('./mira-email-curiosity');
+const {
+  readMiraWebResearchCuriosity,
+} = require('./mira-web-research-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -133,7 +136,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'memory', scope: 'local_memory_and_continuity', adapter_id: 'active_memory_tools_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-memory-curiosity.js compact read-only cognitive-memory retrieval, cognitive-memory-*, memory-search/retrieve, team-memory/*, memory-ingest/*, ui/scripts/hm-memory-api.js retrieve' },
   { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-browser-history-curiosity.js compact read-only Chromium History DB metadata via temp-copy' },
   { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-email-curiosity.js compact read-only Gmail/connector metadata snapshot' },
-  { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'scout_model_candidate', existing_seam: 'browser-use/Chrome tools plus local research artifacts' },
+  { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-web-research-curiosity.js compact read-only local research artifact inventory plus safe URLs/domains' },
   { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'screenshot handlers/scripts, ui/scripts/hm-screenshot.js, ui/modules/image-gen.js' },
   { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'future calendar/message connector seam' },
   { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-environment-curiosity.js read-only startup/app health, bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
@@ -1374,6 +1377,16 @@ function compactEmailTopLabels(value) {
     .slice(0, 8);
 }
 
+function compactWebTopDomains(value) {
+  return asArray(value)
+    .map((entry) => ({
+      domain: trimText(entry?.domain || entry?.host) || null,
+      count: Number.isFinite(Number(entry?.count)) ? Number(entry.count) : null,
+    }))
+    .filter((entry) => entry.domain)
+    .slice(0, 8);
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1396,6 +1409,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const emailLabelCount = Number(rawItem.email_label_count ?? rawItem.emailLabelCount);
   const emailUnreadTotal = Number(rawItem.email_unread_total ?? rawItem.emailUnreadTotal);
   const emailRecentMessageCount = Number(rawItem.email_recent_message_count ?? rawItem.emailRecentMessageCount);
+  const webResultCount = Number(rawItem.web_result_count ?? rawItem.webResultCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1442,6 +1456,8 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     email_unread_total: Number.isFinite(emailUnreadTotal) ? emailUnreadTotal : null,
     email_recent_message_count: Number.isFinite(emailRecentMessageCount) ? emailRecentMessageCount : null,
     email_top_labels: compactEmailTopLabels(rawItem.email_top_labels || rawItem.emailTopLabels),
+    web_result_count: Number.isFinite(webResultCount) ? webResultCount : null,
+    web_top_domains: compactWebTopDomains(rawItem.web_top_domains || rawItem.webTopDomains),
   };
 }
 
@@ -1814,6 +1830,66 @@ function activeEmailCuriosityAdapter(context = {}) {
   };
 }
 
+function activeWebResearchCuriosityAdapter(context = {}) {
+  const reader = typeof context.webResearchCuriosityReader === 'function'
+    ? context.webResearchCuriosityReader
+    : readMiraWebResearchCuriosity;
+  const result = reader({
+    researchRoots: context.webResearchRoots,
+    limit: context.webResearchLimit || 12,
+    maxBytes: context.webResearchMaxBytes,
+  }, {
+    projectRoot: context.projectRoot,
+    researchRoots: context.webResearchRoots,
+    limit: context.webResearchLimit || 12,
+    maxBytes: context.webResearchMaxBytes,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'web_research',
+      scope: 'websites_and_research_trails',
+      adapter_id: 'web_research_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'unavailable_in_this_runtime',
+      observation: `Web research artifact read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Local research artifacts can reveal prior investigations and web trails without launching a crawler or asking James for links.',
+      hypothesis: 'Mira may be missing a local research artifact index rather than needing a live web fetch.',
+      suggested_question: 'Which local research folder should Mira index next for web/research context?',
+      possible_action: 'Read compact metadata from local research markdown/text artifacts and browser-history safe URLs, without network fetches or raw query strings.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_web_research_metadata',
+      adapter_error: trimText(result?.reason || result?.error || 'web_research_artifacts_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const topDomains = asArray(result.top_domains).slice(0, 8);
+  const domainText = topDomains.length > 0
+    ? topDomains.map((entry) => `${entry.domain}:${entry.count}`).join(', ')
+    : 'none';
+  const topDomain = topDomains[0]?.domain || null;
+  return {
+    source: 'web_research',
+    scope: 'websites_and_research_trails',
+    adapter_id: 'web_research_curiosity',
+    integration_strategy: 'native_adapter',
+    status: 'active',
+    observation: `Web research artifacts read ${result.result_count || 0} compact item(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; top domains: ${domainText}.`,
+    why_interesting: 'Mira can now inspect prior research trails and saved web context before asking James to reconstruct what he read.',
+    hypothesis: topDomain
+      ? `${topDomain} may be the strongest saved research trail.`
+      : 'The web research source is connected, but the local artifacts did not expose a strong domain pattern.',
+    suggested_question: topDomain
+      ? `What should Mira infer or ask from the saved ${topDomain} research trail?`
+      : 'Which saved research artifact should Mira inspect more deeply next?',
+    possible_action: 'Use compact local web/research artifact metadata as a curiosity signal; keep live network crawling out of this adapter.',
+    route_hint: 'mira_lab',
+    sensitivity_hint: 'local_web_research_metadata',
+    web_result_count: result.result_count || 0,
+    web_top_domains: topDomains,
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -1917,7 +1993,7 @@ function defaultCuriosityAdapters() {
     activeMemoryCuriosityAdapter,
     activeBrowserHistoryCuriosityAdapter,
     activeEmailCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.web_research_curiosity, 'websites visited and research trails'),
+    activeWebResearchCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.visual_asset_curiosity, 'screenshots and visual assets'),
     notImplementedCuriosityAdapter(byAdapter.calendar_message_curiosity, 'calendars and messages'),
     activeEnvironmentCuriosityAdapter,
@@ -2038,6 +2114,10 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     emailCuriosityReader: options.emailCuriosityReader,
     emailSnapshot: options.emailSnapshot,
     emailSnapshotPath: options.emailSnapshotPath,
+    webResearchCuriosityReader: options.webResearchCuriosityReader,
+    webResearchRoots: options.webResearchRoots,
+    webResearchLimit: options.webResearchLimit,
+    webResearchMaxBytes: options.webResearchMaxBytes,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -2095,6 +2175,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'memory',
   'browser_history',
   'email',
+  'web_research',
   'environment_apps',
   'cheap_parallel_scouts',
   'automation_scheduler',
@@ -2107,7 +2188,7 @@ function normalizeCuriosityBurstSources(payload = {}, options = {}) {
     .map((item) => trimText(item))
     .filter((item) => allowed.has(item));
   const unique = Array.from(new Set(values));
-  const maxSources = Math.max(1, Math.min(8, Number(payload.maxSources || options.maxSources || 8) || 8));
+  const maxSources = Math.max(1, Math.min(9, Number(payload.maxSources || options.maxSources || 9) || 9));
   return (unique.length > 0 ? unique : [...CURIOSITY_BURST_DEFAULT_SOURCES]).slice(0, maxSources);
 }
 
@@ -2117,6 +2198,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'memory') return [activeMemoryCuriosityAdapter];
   if (source === 'browser_history') return [activeBrowserHistoryCuriosityAdapter];
   if (source === 'email') return [activeEmailCuriosityAdapter];
+  if (source === 'web_research') return [activeWebResearchCuriosityAdapter];
   if (source === 'environment_apps') return [activeEnvironmentCuriosityAdapter];
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
   if (source === 'automation_scheduler') return [scheduledCuriosityBurstAdapter];
@@ -2130,6 +2212,7 @@ function curiosityBurstRouteForItems(items = []) {
     memory: 76,
     browser_history: 74,
     email: 73,
+    web_research: 72,
     environment_apps: 70,
     runtime_comms: 64,
     repo_files: 42,
@@ -2209,6 +2292,10 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     emailCuriosityReader: options.emailCuriosityReader,
     emailSnapshot: options.emailSnapshot,
     emailSnapshotPath: options.emailSnapshotPath,
+    webResearchCuriosityReader: options.webResearchCuriosityReader,
+    webResearchRoots: options.webResearchRoots,
+    webResearchLimit: options.webResearchLimit,
+    webResearchMaxBytes: options.webResearchMaxBytes,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,
@@ -2366,8 +2453,9 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   web_research: {
     priority: 72,
+    active_priority: 37,
     target_role: 'builder',
-    reason: 'web research needs a scout adapter instead of hand-fed links',
+    reason: 'web research gives Mira compact saved research trails without live crawling',
   },
   images_screenshots_assets: {
     priority: 70,
