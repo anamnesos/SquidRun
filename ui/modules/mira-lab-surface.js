@@ -39,6 +39,9 @@ const {
 const {
   readMiraWebResearchCuriosity,
 } = require('./mira-web-research-curiosity');
+const {
+  readMiraVisualAssetCuriosity,
+} = require('./mira-visual-asset-curiosity');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -137,7 +140,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-browser-history-curiosity.js compact read-only Chromium History DB metadata via temp-copy' },
   { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-email-curiosity.js compact read-only Gmail/connector metadata snapshot' },
   { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-web-research-curiosity.js compact read-only local research artifact inventory plus safe URLs/domains' },
-  { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'screenshot handlers/scripts, ui/scripts/hm-screenshot.js, ui/modules/image-gen.js' },
+  { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-visual-asset-curiosity.js compact screenshot/generated-image inventory' },
   { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'future calendar/message connector seam' },
   { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-environment-curiosity.js read-only startup/app health, bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
   { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
@@ -1387,6 +1390,14 @@ function compactWebTopDomains(value) {
     .slice(0, 8);
 }
 
+function compactVisualAssetBuckets(value) {
+  if (!value || typeof value !== 'object') return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, count]) => [trimText(key), Number(count)])
+    .filter(([key, count]) => key && Number.isFinite(count))
+    .slice(0, 8));
+}
+
 function buildCuriosityItem(rawItem = {}, context = {}) {
   const generatedAt = context.generatedAt;
   const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
@@ -1410,6 +1421,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const emailUnreadTotal = Number(rawItem.email_unread_total ?? rawItem.emailUnreadTotal);
   const emailRecentMessageCount = Number(rawItem.email_recent_message_count ?? rawItem.emailRecentMessageCount);
   const webResultCount = Number(rawItem.web_result_count ?? rawItem.webResultCount);
+  const visualAssetCount = Number(rawItem.visual_asset_count ?? rawItem.visualAssetCount);
   return {
     schema: MIRA_CURIOSITY_ITEM_SCHEMA,
     item_id: `mira-curiosity:${stableHash({
@@ -1458,6 +1470,8 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     email_top_labels: compactEmailTopLabels(rawItem.email_top_labels || rawItem.emailTopLabels),
     web_result_count: Number.isFinite(webResultCount) ? webResultCount : null,
     web_top_domains: compactWebTopDomains(rawItem.web_top_domains || rawItem.webTopDomains),
+    visual_asset_count: Number.isFinite(visualAssetCount) ? visualAssetCount : null,
+    visual_asset_buckets: compactVisualAssetBuckets(rawItem.visual_asset_buckets || rawItem.visualAssetBuckets),
   };
 }
 
@@ -1890,6 +1904,60 @@ function activeWebResearchCuriosityAdapter(context = {}) {
   };
 }
 
+function activeVisualAssetCuriosityAdapter(context = {}) {
+  const reader = typeof context.visualAssetCuriosityReader === 'function'
+    ? context.visualAssetCuriosityReader
+    : readMiraVisualAssetCuriosity;
+  const result = reader({
+    visualRoots: context.visualAssetRoots,
+    limit: context.visualAssetLimit || 24,
+  }, {
+    projectRoot: context.projectRoot,
+    visualRoots: context.visualAssetRoots,
+    limit: context.visualAssetLimit || 24,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'images_screenshots_assets',
+      scope: 'local_visual_context',
+      adapter_id: 'visual_asset_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'unavailable_in_this_runtime',
+      observation: `Visual asset inventory was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Screenshots and generated images are often the fastest proof of what James or the team was just looking at.',
+      hypothesis: 'Mira may be missing a local visual context index rather than needing a vision model call.',
+      suggested_question: 'Which screenshot or generated-image folder should Mira index next?',
+      possible_action: 'Read compact image file metadata and dimensions before using OCR, image models, or external services.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_visual_asset_metadata',
+      adapter_error: trimText(result?.reason || result?.error || 'visual_assets_unavailable'),
+      no_mutation_performed: true,
+    };
+  }
+  const latest = result.latest_asset || null;
+  return {
+    source: 'images_screenshots_assets',
+    scope: 'local_visual_context',
+    adapter_id: 'visual_asset_curiosity',
+    integration_strategy: 'native_adapter',
+    status: 'active',
+    observation: `Visual asset inventory read ${result.result_count || 0} image file(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; latest=${latest?.path || 'none'}.`,
+    why_interesting: 'Mira can now notice fresh screenshots and generated assets before James has to explain what is on screen.',
+    hypothesis: latest?.path
+      ? `${latest.path} may be the freshest visual context worth inspecting.`
+      : 'The visual source is connected, but no specific latest asset stood out.',
+    suggested_question: latest?.path
+      ? `What should Mira infer or ask from latest visual asset ${latest.path}?`
+      : 'Which visual asset folder should Mira check next?',
+    possible_action: 'Use compact visual metadata as a curiosity signal; defer OCR or image-model reads to a separate explicit visual-understanding step.',
+    route_hint: 'mira_lab',
+    sensitivity_hint: 'local_visual_asset_metadata',
+    visual_asset_count: result.result_count || 0,
+    visual_asset_buckets: result.buckets || {},
+    no_mutation_performed: true,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
   const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
   const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
@@ -1994,7 +2062,7 @@ function defaultCuriosityAdapters() {
     activeBrowserHistoryCuriosityAdapter,
     activeEmailCuriosityAdapter,
     activeWebResearchCuriosityAdapter,
-    notImplementedCuriosityAdapter(byAdapter.visual_asset_curiosity, 'screenshots and visual assets'),
+    activeVisualAssetCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.calendar_message_curiosity, 'calendars and messages'),
     activeEnvironmentCuriosityAdapter,
     notImplementedCuriosityAdapter(byAdapter.automation_scheduler_curiosity, 'automation and scheduler state'),
@@ -2118,6 +2186,9 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     webResearchRoots: options.webResearchRoots,
     webResearchLimit: options.webResearchLimit,
     webResearchMaxBytes: options.webResearchMaxBytes,
+    visualAssetCuriosityReader: options.visualAssetCuriosityReader,
+    visualAssetRoots: options.visualAssetRoots,
+    visualAssetLimit: options.visualAssetLimit,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
   };
@@ -2176,6 +2247,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'browser_history',
   'email',
   'web_research',
+  'images_screenshots_assets',
   'environment_apps',
   'cheap_parallel_scouts',
   'automation_scheduler',
@@ -2188,7 +2260,7 @@ function normalizeCuriosityBurstSources(payload = {}, options = {}) {
     .map((item) => trimText(item))
     .filter((item) => allowed.has(item));
   const unique = Array.from(new Set(values));
-  const maxSources = Math.max(1, Math.min(9, Number(payload.maxSources || options.maxSources || 9) || 9));
+  const maxSources = Math.max(1, Math.min(10, Number(payload.maxSources || options.maxSources || 10) || 10));
   return (unique.length > 0 ? unique : [...CURIOSITY_BURST_DEFAULT_SOURCES]).slice(0, maxSources);
 }
 
@@ -2199,6 +2271,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'browser_history') return [activeBrowserHistoryCuriosityAdapter];
   if (source === 'email') return [activeEmailCuriosityAdapter];
   if (source === 'web_research') return [activeWebResearchCuriosityAdapter];
+  if (source === 'images_screenshots_assets') return [activeVisualAssetCuriosityAdapter];
   if (source === 'environment_apps') return [activeEnvironmentCuriosityAdapter];
   if (source === 'cheap_parallel_scouts') return [cheapParallelScoutsCuriosityAdapter];
   if (source === 'automation_scheduler') return [scheduledCuriosityBurstAdapter];
@@ -2213,6 +2286,7 @@ function curiosityBurstRouteForItems(items = []) {
     browser_history: 74,
     email: 73,
     web_research: 72,
+    images_screenshots_assets: 71,
     environment_apps: 70,
     runtime_comms: 64,
     repo_files: 42,
@@ -2296,6 +2370,9 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     webResearchRoots: options.webResearchRoots,
     webResearchLimit: options.webResearchLimit,
     webResearchMaxBytes: options.webResearchMaxBytes,
+    visualAssetCuriosityReader: options.visualAssetCuriosityReader,
+    visualAssetRoots: options.visualAssetRoots,
+    visualAssetLimit: options.visualAssetLimit,
     environmentCuriosityReader: options.environmentCuriosityReader,
     nowMs: options.nowMs,
     burstSources: sources,
@@ -2459,8 +2536,9 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   images_screenshots_assets: {
     priority: 70,
+    active_priority: 36,
     target_role: 'builder',
-    reason: 'visual curiosity needs a source adapter over screenshots and assets',
+    reason: 'visual curiosity gives Mira compact screenshot and generated-image metadata before vision calls',
   },
   environment_apps: {
     priority: 68,

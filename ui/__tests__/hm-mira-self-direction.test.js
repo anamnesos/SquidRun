@@ -350,6 +350,11 @@ describe('hm-mira-self-direction CLI harness', () => {
           decision: 'unavailable_in_this_runtime',
           reason: 'web_research_artifacts_missing',
         }),
+        visualAssetCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'visual_assets_missing',
+        }),
       },
     });
 
@@ -441,6 +446,11 @@ describe('hm-mira-self-direction CLI harness', () => {
           ok: false,
           decision: 'unavailable_in_this_runtime',
           reason: 'web_research_artifacts_missing',
+        }),
+        visualAssetCuriosityReader: () => ({
+          ok: false,
+          decision: 'unavailable_in_this_runtime',
+          reason: 'visual_assets_missing',
         }),
       },
     });

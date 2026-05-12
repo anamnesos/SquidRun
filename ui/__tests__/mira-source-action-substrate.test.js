@@ -67,6 +67,12 @@ describe('Mira source/action substrate plan', () => {
       status: 'active',
     }));
     expect(webResearch.first_probe).toMatch(/saved research artifact metadata/i);
+    const visualAssets = plan.sources.find((entry) => entry.source === 'images_screenshots_assets');
+    expect(visualAssets).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(visualAssets.first_probe).toMatch(/screenshots and generated images/i);
   });
 
   test('chooses a concrete strategy and first probe for a routed source', () => {
