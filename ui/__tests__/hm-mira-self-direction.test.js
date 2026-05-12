@@ -355,6 +355,14 @@ describe('hm-mira-self-direction CLI harness', () => {
           decision: 'unavailable_in_this_runtime',
           reason: 'visual_assets_missing',
         }),
+        calendarMessageCuriosityReader: () => ({
+          ok: true,
+          decision: 'calendar_message_metadata_read_only',
+          result_count: 0,
+          calendar_artifact_count: 0,
+          message_artifact_count: 0,
+          connector_candidates: [{ candidate: 'native_squidrun_comms', seam: 'hm-comms history', writes_or_sends: false }],
+        }),
         schedulerCuriosityReader: () => ({
           ok: true,
           decision: 'scheduler_state_read_only',
@@ -388,7 +396,7 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(jsonResult.result.decision).toBe('scouted');
     expect(jsonResult.result.active_count).toBeGreaterThanOrEqual(6);
     expect(jsonResult.result.items.some((item) => item.source === 'repo_files')).toBe(true);
-    expect(jsonResult.result.items.some((item) => item.status === 'adapter_not_built_yet')).toBe(true);
+    expect(jsonResult.result.items.some((item) => item.source === 'calendar_messages' && item.status === 'active')).toBe(true);
     expect(jsonResult.result.items.some((item) => (
       item.source === 'memory'
       && item.adapter_id === 'active_memory_tools_curiosity'
