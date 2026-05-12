@@ -10,10 +10,12 @@ const PROJECT_ROOT = process.env.SQUIDRUN_PROJECT_ROOT
 
 const {
   buildMiraAuthorityScoreboard,
+  extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
+  runMiraCuriosityBurst,
   runMiraCuriosityScout,
   runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
@@ -37,10 +39,12 @@ function printHelp() {
     'Usage:',
     '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin|--prompt-reply] [--session-id <id>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js curiosity-burst [--project-root <path>] [--source repo_files,memory] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js code-mode --script <js>|--stdin [--allow <path>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scoreboard [--project-root <path>] [--json]',
+    '  node ui/scripts/hm-mira-self-direction.js reflexion [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js outcome --proposal-id <id> --status implemented|not_implemented|false_positive|needs_followup [--evidence <text>] [--note <text>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js list [--status pending_architect_review|all] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js review --proposal-id <id> --action accepted|rejected|routed [--route builder,oracle] [--note <text>] [--project-root <path>] [--json]',
@@ -66,6 +70,7 @@ function parseArgs(argv = []) {
     dispatch: true,
     routeInteresting: false,
     runScout: false,
+    sources: [],
     limit: 5,
     script: null,
     allowPaths: [],
@@ -108,6 +113,8 @@ function parseArgs(argv = []) {
       args.routeInteresting = true;
     } else if (token === '--run-scout') {
       args.runScout = true;
+    } else if (token === '--source' || token === '--sources') {
+      args.sources.push(...String(argv[++index] || '').split(',').map((item) => item.trim()).filter(Boolean));
     } else if (token === '--script') {
       args.script = argv[++index];
     } else if (token === '--allow' || token === '--allowed-path') {
@@ -149,7 +156,16 @@ function output(result, args) {
       ].join(' '));
       process.stdout.write('\n');
     }
-    if (result.review_queue_path) process.stdout.write(`queue=${result.review_queue_path}\n`);
+    return;
+  }
+  if (args.command === 'reflexion') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    process.stdout.write(`lessons=${result.lesson_count}\n`);
+    for (const lesson of result.lessons || []) {
+      process.stdout.write(`[${lesson.category}] ${lesson.proposal_id}: ${lesson.lesson}\n`);
+      if (lesson.next_behavior) process.stdout.write(`  next_behavior: ${lesson.next_behavior}\n`);
+      if (lesson.evidence && lesson.evidence.length > 0) process.stdout.write(`  evidence: ${lesson.evidence.join(', ')}\n`);
+    }
     return;
   }
   if (args.command === 'curiosity-scout') {
@@ -169,6 +185,23 @@ function output(result, args) {
     }
     if (result.architect_notification) process.stdout.write(`architect_notification=${result.architect_notification.status}\n`);
     if (result.curiosity_log_path) process.stdout.write(`log=${result.curiosity_log_path}\n`);
+    return;
+  }
+  if (args.command === 'curiosity-burst') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    process.stdout.write(`burst_id=${result.burst_id}\n`);
+    process.stdout.write(`sources=${(result.sources || []).join(',')}\n`);
+    process.stdout.write(`items=${result.item_count}\n`);
+    process.stdout.write(`active=${result.active_count}\n`);
+    if (result.route_output) {
+      process.stdout.write(`route_decision=${result.route_output.decision}\n`);
+      if (result.route_output.target_role) process.stdout.write(`target=${result.route_output.target_role}\n`);
+      if (result.route_output.source) process.stdout.write(`source=${result.route_output.source}\n`);
+      if (result.route_output.adapter_id) process.stdout.write(`adapter=${result.route_output.adapter_id}\n`);
+    }
+    if (result.dispatch?.status) process.stdout.write(`dispatch=${result.dispatch.status}\n`);
+    if (result.burst_log_path) process.stdout.write(`burst_log=${result.burst_log_path}\n`);
+    if (result.curiosity_log_path) process.stdout.write(`curiosity_log=${result.curiosity_log_path}\n`);
     return;
   }
   if (args.command === 'direct-route') {
@@ -260,6 +293,13 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
     });
     return { args, result };
   }
+  if (args.command === 'reflexion') {
+    const result = extractMiraReflexionLessons({}, {
+      projectRoot: args.projectRoot,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
   if (args.command === 'outcome') {
     const result = recordMiraSelfDirectionOutcome({
       proposalId: args.proposalId,
@@ -308,6 +348,25 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
         };
       }
     }
+    return { args, result };
+  }
+  if (args.command === 'curiosity-burst') {
+    const result = await runMiraCuriosityBurst({
+      sources: args.sources,
+      routeInteresting: args.routeInteresting,
+      dispatch: args.dispatch,
+    }, {
+      projectRoot: args.projectRoot,
+      dispatch: args.dispatch,
+      routeInteresting: args.routeInteresting,
+      sendAgentMessage: args.dispatch
+        ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
+          projectRoot: args.projectRoot,
+          hmSendPath: deps.hmSendPath,
+        })))
+        : undefined,
+      ...(deps.options || {}),
+    });
     return { args, result };
   }
   if (args.command === 'direct-route') {

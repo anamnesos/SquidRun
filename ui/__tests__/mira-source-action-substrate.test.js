@@ -45,6 +45,10 @@ describe('Mira source/action substrate plan', () => {
       status: 'active',
       strategy: SUBSTRATE_STRATEGIES.active_memory,
     }));
+    expect(plan.sources.find((entry) => entry.source === 'environment_apps')).toEqual(expect.objectContaining({
+      status: 'active',
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+    }));
     const browser = plan.sources.find((entry) => entry.source === 'browser_history');
     expect(browser).toEqual(expect.objectContaining({
       strategy: SUBSTRATE_STRATEGIES.mcp_connector,

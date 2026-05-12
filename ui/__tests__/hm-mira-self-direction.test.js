@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process');
 const driver = require('../scripts/hm-mira-self-direction');
 const {
   MIRA_CURIOSITY_ITEM_SCHEMA,
+  curiosityBurstsPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
   readOnlyCodeModeRunsPath,
@@ -290,7 +291,7 @@ describe('hm-mira-self-direction CLI harness', () => {
     });
 
     expect(jsonResult.result.decision).toBe('scouted');
-    expect(jsonResult.result.active_count).toBe(6);
+    expect(jsonResult.result.active_count).toBeGreaterThanOrEqual(6);
     expect(jsonResult.result.items.some((item) => item.source === 'repo_files')).toBe(true);
     expect(jsonResult.result.items.some((item) => item.status === 'adapter_not_built_yet')).toBe(true);
     expect(jsonResult.result.items.some((item) => (
@@ -347,6 +348,59 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(sendAgentMessage.mock.calls[0][1]).not.toMatch(/\btelegram|sms|external-send|customer|deploy|trade\b/i);
     expect(result.result.consequence_controls.external_send_performed).toBe(false);
     expect(result.result.no_mutation_performed).toBe(true);
+  });
+
+  test('curiosity-burst CLI runs bounded scouts and exposes an internal route', async () => {
+    const projectRoot = tempProject();
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const jsonResult = await driver.run([
+      'curiosity-burst',
+      '--project-root', projectRoot,
+      '--source', 'repo_files,runtime_comms,memory,cheap_parallel_scouts,automation_scheduler',
+      '--route-interesting',
+      '--json',
+    ], {
+      sendAgentMessage,
+      options: {
+        generatedAt: '2026-05-12T13:30:00.000Z',
+        repoStatusText: ' M ui/scripts/hm-mira-self-direction.js\n',
+        recentCommsText: '(ARCHITECT #126): scheduled curiosity burst next.',
+        memoryCuriosityReader: () => ({
+          ok: true,
+          decision: 'memory_retrieved_read_only',
+          query: 'Mira current lane memory',
+          result_count: 1,
+          results: [{ nodeId: 'node-cli-memory', title: 'CLI burst memory' }],
+        }),
+      },
+    });
+
+    expect(jsonResult.result.decision).toBe('burst_completed');
+    expect(jsonResult.result.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      target_role: 'builder',
+      source: 'automation_scheduler',
+      adapter_id: 'scheduled_curiosity_burst',
+    }));
+    expect(jsonResult.result.items.some((item) => item.source === 'cheap_parallel_scouts' && item.status === 'active')).toBe(true);
+    expect(jsonResult.result.consequence_controls.external_send_performed).toBe(false);
+    expect(jsonResult.result.consequence_controls.autonomous_apply_performed).toBe(false);
+    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('(MIRA CURIOSITY BURST)'));
+    expect(readJsonl(curiosityBurstsPath(projectRoot))).toHaveLength(1);
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'curiosity-burst',
+      '--project-root', projectRoot,
+      '--source', 'repo_files,cheap_parallel_scouts',
+      '--no-dispatch',
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=burst_completed');
+    expect(textRun.stdout).toContain('route_decision=route_selected');
+    expect(textRun.stdout).toContain('source=cheap_parallel_scouts');
   });
 
   test('create --prompt-reply stages held structured Mira proposals', async () => {
