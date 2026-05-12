@@ -711,13 +711,13 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_REFLEXION_LESSONS_SCHEMA);
     expect(result.lesson_count).toBe(3);
     const byId = Object.fromEntries(result.lessons.map(l => [l.proposal_id, l]));
-    
+
     expect(byId['mira-self-direction:reject-me'].category).toBe('rejected_proposal');
     expect(byId['mira-self-direction:reject-me'].lesson).toContain('Too complex');
-    
+
     expect(byId['mira-self-direction:fp-me'].category).toBe('false_positive_proposal');
     expect(byId['mira-self-direction:fp-me'].lesson).toContain('Not a real issue');
-    
+
     expect(byId['mira-self-direction:impl-me'].category).toBe('successful_implementation_with_notes');
     expect(byId['mira-self-direction:impl-me'].lesson).toContain('Landed in PR 1');
     expect(byId['mira-self-direction:impl-me'].evidence).toEqual([
@@ -841,7 +841,11 @@ describe('Mira Lab sidecar surface', () => {
       integration_strategy: 'existing_seam',
     }));
     expect(bySource.implementation_outcomes.suggested_question).toMatch(/outcome evidence/i);
-    expect(bySource.reflexion_lessons.possible_action).toMatch(/review-to-lesson/i);
+    expect(bySource.reflexion_lessons).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'native_adapter',
+    }));
+    expect(bySource.reflexion_lessons.possible_action).toMatch(/hm-mira-self-direction reflexion/i);
     expect(bySource.cheap_parallel_scouts.suggested_question).toMatch(/curiosity-burst source mix/i);
     expect(bySource.voyager_curriculum.possible_action).toMatch(/curriculum JSONL/i);
     expect(JSON.stringify(result.items)).toContain('Which existing seam should Mira connect first');
@@ -1131,10 +1135,20 @@ describe('Mira Lab sidecar surface', () => {
         generated_at: '2026-05-12T12:11:00.000Z',
         source: 'reflexion_lessons',
         adapter_id: 'scoreboard_reflexion_curiosity',
-        status: 'adapter_not_built_yet',
-        suggested_question: 'What lesson should Mira extract from the last review?',
-        possible_action: 'Build a read-only review-to-lesson extractor.',
+        status: 'active',
+        suggested_question: 'Which lesson should Mira use next?',
+        possible_action: 'Run hm-mira-self-direction reflexion.',
         route_hint: 'oracle',
+      },
+      {
+        item_id: 'mira-curiosity:parallel-next',
+        generated_at: '2026-05-12T12:12:00.000Z',
+        source: 'cheap_parallel_scouts',
+        adapter_id: 'parallel_scout_curiosity',
+        status: 'adapter_not_built_yet',
+        suggested_question: 'Which burst source should Mira run?',
+        possible_action: 'Build curiosity burst routing.',
+        route_hint: 'builder',
       },
     ].forEach((item) => appendJsonl(curiosityItemsPath(projectRoot), {
       schema: MIRA_CURIOSITY_ITEM_SCHEMA,
@@ -1148,10 +1162,10 @@ describe('Mira Lab sidecar surface', () => {
     });
 
     expect(result.decision).toBe('routed');
-    expect(result.candidate_count).toBe(2);
+    expect(result.candidate_count).toBe(3);
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:reflexion-next',
-      source: 'reflexion_lessons',
+      item_id: 'mira-curiosity:parallel-next',
+      source: 'cheap_parallel_scouts',
     }));
   });
 
@@ -1205,6 +1219,91 @@ describe('Mira Lab sidecar surface', () => {
       item_id: 'mira-curiosity:memory-next',
       source: 'memory',
       adapter_id: 'active_memory_tools_curiosity',
+    }));
+  });
+
+  test('direct route does not keep selecting active memory or lessons once those capabilities exist', async () => {
+    projectRoot = tempProject();
+    [
+      {
+        item_id: 'mira-curiosity:active-code-mode',
+        source: 'code_mode_exploration',
+        adapter_id: 'read_only_execute_script_curiosity',
+        status: 'active',
+        suggested_question: 'What runtime file should Mira inspect?',
+        possible_action: 'Use code-mode.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:active-memory',
+        source: 'memory',
+        adapter_id: 'active_memory_tools_curiosity',
+        status: 'active',
+        suggested_question: 'Which memory result matters?',
+        possible_action: 'Use active memory evidence.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:active-reflexion',
+        source: 'reflexion_lessons',
+        adapter_id: 'scoreboard_reflexion_curiosity',
+        status: 'active',
+        suggested_question: 'Which lesson should Mira use?',
+        possible_action: 'Run reflexion.',
+        route_hint: 'oracle',
+      },
+      {
+        item_id: 'mira-curiosity:active-parallel',
+        source: 'cheap_parallel_scouts',
+        adapter_id: 'parallel_scout_curiosity',
+        status: 'active',
+        suggested_question: 'Which burst source mix should run?',
+        possible_action: 'Run curiosity-burst.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:active-environment',
+        source: 'environment_apps',
+        adapter_id: 'environment_app_curiosity',
+        status: 'active',
+        suggested_question: 'Which environment signal matters?',
+        possible_action: 'Use app-health evidence.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:voyager-next',
+        source: 'voyager_curriculum',
+        adapter_id: 'curriculum_skill_library_curiosity',
+        status: 'adapter_not_built_yet',
+        suggested_question: 'What skill should Mira practice into a reusable curriculum?',
+        possible_action: 'Build the curriculum skill-library review.',
+        route_hint: 'architect',
+      },
+      {
+        item_id: 'mira-curiosity:browser-next',
+        source: 'browser_history',
+        adapter_id: 'browser_history_curiosity',
+        status: 'adapter_not_built_yet',
+        suggested_question: 'Which browser history seam should Mira connect?',
+        possible_action: 'Build browser-history curiosity.',
+        route_hint: 'builder',
+      },
+    ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: `2026-05-12T12:4${index}:00.000Z`,
+      sensitivity_hint: 'test_metadata',
+      ...item,
+    }));
+
+    const result = await selectMiraDirectRoute({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T12:50:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      item_id: 'mira-curiosity:voyager-next',
+      source: 'voyager_curriculum',
     }));
   });
 
