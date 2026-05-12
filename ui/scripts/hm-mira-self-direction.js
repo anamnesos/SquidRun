@@ -13,6 +13,7 @@ const {
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   reviewMiraSelfDirectionProposal,
+  runMiraCuriosityScout,
   scanMiraLabConfidenceSource,
 } = require('../modules/mira-lab-surface');
 
@@ -32,6 +33,7 @@ function printHelp() {
     '',
     'Usage:',
     '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin] [--session-id <id>] [--project-root <path>] [--json]',
+    '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scoreboard [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js list [--status pending_architect_review|all] [--project-root <path>] [--json]',
@@ -54,6 +56,7 @@ function parseArgs(argv = []) {
     routeTargets: [],
     note: null,
     dispatch: true,
+    routeInteresting: false,
     limit: 5,
   };
   for (let index = 1; index < argv.length; index += 1) {
@@ -86,6 +89,8 @@ function parseArgs(argv = []) {
       args.dispatch = true;
     } else if (token === '--no-dispatch') {
       args.dispatch = false;
+    } else if (token === '--route-interesting') {
+      args.routeInteresting = true;
     } else {
       throw new Error(`Unknown flag: ${token}`);
     }
@@ -124,6 +129,25 @@ function output(result, args) {
       process.stdout.write('\n');
     }
     if (result.review_queue_path) process.stdout.write(`queue=${result.review_queue_path}\n`);
+    return;
+  }
+  if (args.command === 'curiosity-scout') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    process.stdout.write(`items=${result.item_count}\n`);
+    process.stdout.write(`active=${result.active_count}\n`);
+    process.stdout.write(`adapter_not_built=${result.adapter_not_built_count}\n`);
+    process.stdout.write(`unavailable=${result.unavailable_count}\n`);
+    for (const item of result.items || []) {
+      process.stdout.write([
+        `source=${item.source}`,
+        `status=${item.status}`,
+        `route=${item.route_hint}`,
+        `question="${item.suggested_question}"`,
+      ].join(' '));
+      process.stdout.write('\n');
+    }
+    if (result.architect_notification) process.stdout.write(`architect_notification=${result.architect_notification.status}\n`);
+    if (result.curiosity_log_path) process.stdout.write(`log=${result.curiosity_log_path}\n`);
     return;
   }
   process.stdout.write(`decision=${result.decision}\n`);
@@ -191,6 +215,44 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
       projectRoot: args.projectRoot,
       ...(deps.options || {}),
     });
+    return { args, result };
+  }
+  if (args.command === 'curiosity-scout') {
+    const result = runMiraCuriosityScout({}, {
+      projectRoot: args.projectRoot,
+      ...(deps.options || {}),
+    });
+    if (args.routeInteresting) {
+      const interesting = (result.items || [])
+        .filter((item) => item.status === 'active' || item.status === 'adapter_not_built_yet')
+        .slice(0, 6);
+      const body = [
+        '(MIRA CURIOSITY): initiative scout found local questions.',
+        ...interesting.map((item) => `- ${item.source}/${item.adapter_id}: ${item.suggested_question} possible_action=${item.possible_action}`),
+        `log=${result.curiosity_log_path}`,
+        'no_mutation_performed=true',
+      ].join('\n');
+      if (args.dispatch && typeof (deps.sendAgentMessage || sendInternalHmMessage) === 'function') {
+        const sender = deps.sendAgentMessage || sendInternalHmMessage;
+        const dispatchResult = await sender('architect', body, {
+          projectRoot: args.projectRoot,
+          hmSendPath: deps.hmSendPath,
+        });
+        result.architect_notification = {
+          target: 'architect',
+          status: 'sent',
+          internal_only: true,
+          result: dispatchResult || null,
+        };
+      } else {
+        result.architect_notification = {
+          target: 'architect',
+          status: 'queued_not_sent',
+          internal_only: true,
+          reason: 'dispatch_disabled',
+        };
+      }
+    }
     return { args, result };
   }
   if (args.command === 'scan-confidence') {

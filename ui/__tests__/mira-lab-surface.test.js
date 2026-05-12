@@ -6,6 +6,8 @@ const {
   MIRA_LAB_EVAL_SCHEMA,
   MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
+  MIRA_CURIOSITY_ITEM_SCHEMA,
+  MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
@@ -17,9 +19,11 @@ const {
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   reviewMiraSelfDirectionProposal,
+  runMiraCuriosityScout,
   scanMiraLabConfidenceSource,
   buildMiraLabTurn,
   exportMiraLabTranscript,
+  curiosityItemsPath,
   replyAuditPath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
@@ -509,6 +513,86 @@ describe('Mira Lab sidecar surface', () => {
       rejected: 1,
       false_positive: 1,
       recommended_next_authority: 'observe',
+    }));
+  });
+
+  test('curiosity scout notices repo/runtime/comms signals and records broad pending adapters', () => {
+    projectRoot = tempProject();
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:curious-1',
+      generated_at: '2026-05-12T11:00:00.000Z',
+      target_areas: ['automation'],
+      review_status: 'pending_architect_review',
+      desired_change: 'Let Mira inspect local signals before James hand-feeds the next prompt.',
+    });
+
+    const result = runMiraCuriosityScout({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T11:05:00.000Z',
+      repoStatusText: ' M ui/modules/mira-lab-surface.js\n?? tmp-note.txt\n',
+      recentCommsText: [
+        '(ARCHITECT #74): Mira curiosity lane routed.',
+        '(BUILDER #1): local scout should notice repo/runtime/comms.',
+      ].join('\n'),
+    });
+
+    expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
+    expect(result.decision).toBe('scouted');
+    expect(result.active_count).toBe(3);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(10);
+    expect(result.no_action_taken).toBe(true);
+    expect(result.no_mutation_performed).toBe(true);
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      file_system_action_performed_except_curiosity_log: false,
+    }));
+    expect(MIRA_CURIOSITY_SOURCE_REGISTRY.length).toBeGreaterThanOrEqual(12);
+    expect(Array.from(new Set(MIRA_CURIOSITY_SOURCE_REGISTRY.map((entry) => entry.integration_strategy)))).toEqual(expect.arrayContaining([
+      'existing_seam',
+      'mcp_candidate',
+      'native_adapter',
+      'scout_model_candidate',
+    ]));
+
+    const bySource = Object.fromEntries(result.items.map((item) => [item.source, item]));
+    expect(bySource.repo_files).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      no_action_taken: true,
+      no_mutation_performed: true,
+      sensitivity_hint: 'local_repo_metadata',
+    }));
+    expect(bySource.repo_files.observation).toContain('2 visible git status entries');
+    expect(result.items.some((item) => item.adapter_id === 'self_direction_queue' && item.observation.includes('pending_architect_review=1'))).toBe(true);
+    expect(result.items.some((item) => item.adapter_id === 'recent_comms' && /repeated demand|recent comms/i.test(item.suggested_question))).toBe(true);
+    expect(bySource.browser_history.status).toBe('adapter_not_built_yet');
+    expect(bySource.browser_history.integration_strategy).toBe('mcp_candidate');
+    expect(bySource.email.status).toBe('adapter_not_built_yet');
+    expect(bySource.web_research.status).toBe('adapter_not_built_yet');
+    expect(bySource.environment_apps.status).toBe('adapter_not_built_yet');
+    expect(bySource.source_action_substrate.suggested_question).toMatch(/which existing SquidRun seam/i);
+    expect(bySource.source_action_substrate.possible_action).toMatch(/MCP-compatible connectors, code-mode wrappers, workflow\/DAG execution, active memory actions, and evaluation loops/i);
+    expect(bySource.code_mode_exploration.suggested_question).toMatch(/sandboxed read-only execute_script/i);
+    expect(bySource.implementation_outcomes.suggested_question).toMatch(/implemented, not_implemented, false_positive/i);
+    expect(bySource.reflexion_lessons.possible_action).toMatch(/review-to-lesson/i);
+    expect(bySource.cheap_parallel_scouts.suggested_question).toMatch(/three curiosity scouts/i);
+    expect(bySource.voyager_curriculum.possible_action).toMatch(/curriculum JSONL/i);
+    expect(JSON.stringify(result.items)).toContain('Which existing seam should Mira connect first');
+    expect(JSON.stringify(result.items)).not.toMatch(/requires_permission|forbidden|blocked/i);
+
+    const logEntries = readJsonl(curiosityItemsPath(projectRoot));
+    expect(logEntries).toHaveLength(result.item_count);
+    expect(logEntries[0]).toEqual(expect.objectContaining({
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      observation: expect.any(String),
+      why_interesting: expect.any(String),
+      suggested_question: expect.any(String),
+      no_action_taken: true,
+      no_mutation_performed: true,
     }));
   });
 
