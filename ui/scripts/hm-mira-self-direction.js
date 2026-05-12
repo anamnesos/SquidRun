@@ -12,9 +12,11 @@ const {
   buildMiraAuthorityScoreboard,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
+  recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityScout,
   scanMiraLabConfidenceSource,
+  selectMiraDirectRoute,
 } = require('../modules/mira-lab-surface');
 
 const DEFAULT_FIXTURE = Object.freeze({
@@ -34,8 +36,10 @@ function printHelp() {
     'Usage:',
     '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin] [--session-id <id>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scoreboard [--project-root <path>] [--json]',
+    '  node ui/scripts/hm-mira-self-direction.js outcome --proposal-id <id> --status implemented|not_implemented|false_positive|needs_followup [--evidence <text>] [--note <text>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js list [--status pending_architect_review|all] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js review --proposal-id <id> --action accepted|rejected|routed [--route builder,oracle] [--note <text>] [--project-root <path>] [--json]',
     '',
@@ -54,9 +58,11 @@ function parseArgs(argv = []) {
     proposalId: null,
     action: null,
     routeTargets: [],
+    evidence: [],
     note: null,
     dispatch: true,
     routeInteresting: false,
+    runScout: false,
     limit: 5,
   };
   for (let index = 1; index < argv.length; index += 1) {
@@ -81,6 +87,8 @@ function parseArgs(argv = []) {
       args.action = argv[++index];
     } else if (token === '--route') {
       args.routeTargets = String(argv[++index] || '').split(',').map((item) => item.trim()).filter(Boolean);
+    } else if (token === '--evidence' || token === '--evidence-ref') {
+      args.evidence.push(argv[++index]);
     } else if (token === '--note') {
       args.note = argv[++index];
     } else if (token === '--limit') {
@@ -91,6 +99,8 @@ function parseArgs(argv = []) {
       args.dispatch = false;
     } else if (token === '--route-interesting') {
       args.routeInteresting = true;
+    } else if (token === '--run-scout') {
+      args.runScout = true;
     } else {
       throw new Error(`Unknown flag: ${token}`);
     }
@@ -150,14 +160,27 @@ function output(result, args) {
     if (result.curiosity_log_path) process.stdout.write(`log=${result.curiosity_log_path}\n`);
     return;
   }
+  if (args.command === 'direct-route') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    if (result.route_id) process.stdout.write(`route_id=${result.route_id}\n`);
+    if (result.target_role) process.stdout.write(`target=${result.target_role}\n`);
+    if (result.selected_item?.source) process.stdout.write(`source=${result.selected_item.source}\n`);
+    if (result.selected_item?.adapter_id) process.stdout.write(`adapter=${result.selected_item.adapter_id}\n`);
+    if (result.dispatch?.status) process.stdout.write(`dispatch=${result.dispatch.status}\n`);
+    if (result.direct_route_log_path) process.stdout.write(`log=${result.direct_route_log_path}\n`);
+    return;
+  }
   process.stdout.write(`decision=${result.decision}\n`);
   if (result.proposal_id) process.stdout.write(`proposal_id=${result.proposal_id}\n`);
   if (result.staged_review?.proposal_id) process.stdout.write(`proposal_id=${result.staged_review.proposal_id}\n`);
+  if (result.outcome_id) process.stdout.write(`outcome_id=${result.outcome_id}\n`);
+  if (result.outcome_status) process.stdout.write(`outcome_status=${result.outcome_status}\n`);
   if (result.count !== undefined) process.stdout.write(`count=${result.count}\n`);
   if (result.finding_count !== undefined) process.stdout.write(`findings=${result.finding_count}\n`);
   if (result.review_queue_path) process.stdout.write(`queue=${result.review_queue_path}\n`);
   if (result.staged_review?.review_queue_path) process.stdout.write(`queue=${result.staged_review.review_queue_path}\n`);
   if (result.review_audit_path) process.stdout.write(`review_audit=${result.review_audit_path}\n`);
+  if (result.outcome_path) process.stdout.write(`outcome_path=${result.outcome_path}\n`);
 }
 
 function sendInternalHmMessage(target, body, options = {}) {
@@ -217,6 +240,18 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
     });
     return { args, result };
   }
+  if (args.command === 'outcome') {
+    const result = recordMiraSelfDirectionOutcome({
+      proposalId: args.proposalId,
+      status: args.status,
+      evidence: args.evidence,
+      note: args.note,
+    }, {
+      projectRoot: args.projectRoot,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
   if (args.command === 'curiosity-scout') {
     const result = runMiraCuriosityScout({}, {
       projectRoot: args.projectRoot,
@@ -253,6 +288,23 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
         };
       }
     }
+    return { args, result };
+  }
+  if (args.command === 'direct-route') {
+    const result = await selectMiraDirectRoute({
+      runScout: args.runScout,
+      dispatch: args.dispatch,
+    }, {
+      projectRoot: args.projectRoot,
+      dispatch: args.dispatch,
+      sendAgentMessage: args.dispatch
+        ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
+          projectRoot: args.projectRoot,
+          hmSendPath: deps.hmSendPath,
+        })))
+        : undefined,
+      ...(deps.options || {}),
+    });
     return { args, result };
   }
   if (args.command === 'scan-confidence') {
