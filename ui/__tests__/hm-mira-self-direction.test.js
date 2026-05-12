@@ -9,6 +9,7 @@ const driver = require('../scripts/hm-mira-self-direction');
 const {
   MIRA_CURIOSITY_ITEM_SCHEMA,
   curiosityBurstsPath,
+  curriculumSkillsPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
   readOnlyCodeModeRunsPath,
@@ -267,6 +268,50 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(textRun.status).toBe(0);
     expect(textRun.stdout).toContain('decision=outcome_recorded');
     expect(textRun.stdout).toContain('outcome_status=needs_followup');
+  });
+
+  test('curriculum CLI extracts reusable skill candidates from implemented history', async () => {
+    const projectRoot = tempProject();
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:cli-skill',
+      review_status: 'routed',
+      desired_change: 'Use memory before asking James to restate active context.',
+      target_areas: ['memory', 'continuity'],
+    });
+    appendJsonl(selfDirectionOutcomePath(projectRoot), {
+      proposal_id: 'mira-self-direction:cli-skill',
+      outcome_status: 'implemented',
+      note: 'memory curiosity landed',
+      evidence: ['commit=mem123'],
+    });
+
+    const jsonResult = await driver.run([
+      'curriculum',
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      options: {
+        generatedAt: '2026-05-12T09:00:00.000Z',
+      },
+    });
+
+    expect(jsonResult.result.decision).toBe('curriculum_skills_extracted');
+    expect(jsonResult.result.skill_count).toBeGreaterThan(0);
+    expect(jsonResult.result.skills.some((skill) => (
+      skill.source_kind === 'implemented_proposal'
+      && skill.proposal_id === 'mira-self-direction:cli-skill'
+    ))).toBe(true);
+    expect(readJsonl(curriculumSkillsPath(projectRoot))).toHaveLength(1);
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'curriculum',
+      '--project-root', projectRoot,
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=curriculum_skills_extracted');
+    expect(textRun.stdout).toContain('skills=');
   });
 
   test('curiosity-scout CLI records local curiosity items without external action', async () => {

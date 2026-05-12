@@ -10,6 +10,7 @@ const PROJECT_ROOT = process.env.SQUIDRUN_PROJECT_ROOT
 
 const {
   buildMiraAuthorityScoreboard,
+  extractMiraCurriculumSkills,
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
@@ -45,6 +46,7 @@ function printHelp() {
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scoreboard [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js reflexion [--project-root <path>] [--json]',
+    '  node ui/scripts/hm-mira-self-direction.js curriculum [--project-root <path>] [--limit <n>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js outcome --proposal-id <id> --status implemented|not_implemented|false_positive|needs_followup [--evidence <text>] [--note <text>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js list [--status pending_architect_review|all] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js review --proposal-id <id> --action accepted|rejected|routed [--route builder,oracle] [--note <text>] [--project-root <path>] [--json]',
@@ -166,6 +168,15 @@ function output(result, args) {
       if (lesson.next_behavior) process.stdout.write(`  next_behavior: ${lesson.next_behavior}\n`);
       if (lesson.evidence && lesson.evidence.length > 0) process.stdout.write(`  evidence: ${lesson.evidence.join(', ')}\n`);
     }
+    return;
+  }
+  if (args.command === 'curriculum') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    process.stdout.write(`skills=${result.skill_count}\n`);
+    for (const skill of result.skills || []) {
+      process.stdout.write(`[${skill.source_kind}] ${skill.skill_name}: ${skill.next_behavior}\n`);
+    }
+    if (result.curriculum_log_path) process.stdout.write(`curriculum_log=${result.curriculum_log_path}\n`);
     return;
   }
   if (args.command === 'curiosity-scout') {
@@ -296,6 +307,16 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
   if (args.command === 'reflexion') {
     const result = extractMiraReflexionLessons({}, {
       projectRoot: args.projectRoot,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
+  if (args.command === 'curriculum') {
+    const result = extractMiraCurriculumSkills({
+      limit: args.limit,
+    }, {
+      projectRoot: args.projectRoot,
+      limit: args.limit,
       ...(deps.options || {}),
     });
     return { args, result };

@@ -7,6 +7,7 @@ const {
   MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_CURIOSITY_BURST_SCHEMA,
+  MIRA_CURRICULUM_SKILLS_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_DIRECT_ROUTE_SCHEMA,
@@ -21,6 +22,7 @@ const {
   buildMiraAuthorityScoreboard,
   buildMiraSelfDirectionProposal,
   classifyMiraReplyConfidenceSource,
+  extractMiraCurriculumSkills,
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
@@ -34,6 +36,7 @@ const {
   buildMiraLabTurn,
   exportMiraLabTranscript,
   curiosityBurstsPath,
+  curriculumSkillsPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
   readOnlyCodeModeRunsPath,
@@ -728,6 +731,89 @@ describe('Mira Lab sidecar surface', () => {
     expect(byId['mira-self-direction:impl-me'].next_behavior).toBe('Use this capability in future routes and prompts.');
   });
 
+  test('extractMiraCurriculumSkills turns successful loops into reusable skill candidates', () => {
+    projectRoot = tempProject();
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:skill-me',
+      review_status: 'routed',
+      desired_change: 'Add a pre-answer evidence gate for work-critical replies.',
+      target_areas: ['reality_testing', 'pattern_recognition'],
+      evidence: ['proposal-evidence'],
+    });
+    appendJsonl(selfDirectionReviewAuditPath(projectRoot), {
+      proposal_id: 'mira-self-direction:skill-me',
+      action: 'routed',
+      note: 'Builder should implement this.',
+      evidence: ['review-evidence'],
+    });
+    appendJsonl(selfDirectionOutcomePath(projectRoot), {
+      proposal_id: 'mira-self-direction:skill-me',
+      outcome_status: 'implemented',
+      note: 'Landed and live-tested.',
+      evidence: ['outcome-evidence'],
+    });
+    appendJsonl(miraDirectRoutesPath(projectRoot), {
+      decision: 'routed',
+      route_id: 'mira-direct-route:skill-route',
+      target_role: 'builder',
+      reason: 'memory route worked',
+      selected_item: {
+        item_id: 'mira-curiosity:memory-route',
+        source: 'memory',
+        adapter_id: 'active_memory_tools_curiosity',
+        suggested_question: 'Which memory result matters?',
+        possible_action: 'Use active memory evidence.',
+      },
+    });
+    appendJsonl(curiosityBurstsPath(projectRoot), {
+      decision: 'burst_completed',
+      burst_id: 'mira-curiosity-burst:skill-burst',
+      route_output: {
+        decision: 'route_selected',
+        target_role: 'builder',
+        source: 'cheap_parallel_scouts',
+        adapter_id: 'parallel_scout_curiosity',
+        suggested_question: 'Which scout result matters?',
+        possible_action: 'Run the burst result.',
+        reason: 'burst selected a useful follow-up',
+      },
+    });
+
+    const result = extractMiraCurriculumSkills({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:00:00.000Z',
+    });
+
+    expect(result.schema).toBe(MIRA_CURRICULUM_SKILLS_SCHEMA);
+    expect(result.decision).toBe('curriculum_skills_extracted');
+    expect(result.skill_count).toBeGreaterThanOrEqual(3);
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      curriculum_log_write_performed: true,
+    }));
+    const byKind = Object.fromEntries(result.skills.map((skill) => [skill.source_kind, skill]));
+    expect(byKind.implemented_proposal).toEqual(expect.objectContaining({
+      proposal_id: 'mira-self-direction:skill-me',
+      status: 'ready_to_practice',
+      next_behavior: expect.stringContaining('implemented capability'),
+    }));
+    expect(byKind.implemented_proposal.evidence).toEqual(expect.arrayContaining([
+      'proposal-evidence',
+      'mira-self-direction:skill-me',
+    ]));
+    expect(byKind.direct_route_pattern).toEqual(expect.objectContaining({
+      source: 'memory',
+      adapter_id: 'active_memory_tools_curiosity',
+      target_role: 'builder',
+    }));
+    expect(byKind.curiosity_burst_pattern).toEqual(expect.objectContaining({
+      source: 'cheap_parallel_scouts',
+      adapter_id: 'parallel_scout_curiosity',
+    }));
+    expect(readJsonl(curriculumSkillsPath(projectRoot))).toHaveLength(1);
+  });
+
   test('curiosity scout notices repo/runtime/comms signals and records broad pending adapters', () => {
     projectRoot = tempProject();
     appendJsonl(selfDirectionQueuePath(projectRoot), {
@@ -772,7 +858,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(9);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(8);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -847,7 +933,11 @@ describe('Mira Lab sidecar surface', () => {
     }));
     expect(bySource.reflexion_lessons.possible_action).toMatch(/hm-mira-self-direction reflexion/i);
     expect(bySource.cheap_parallel_scouts.suggested_question).toMatch(/curiosity-burst source mix/i);
-    expect(bySource.voyager_curriculum.possible_action).toMatch(/curriculum JSONL/i);
+    expect(bySource.voyager_curriculum).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'native_adapter',
+    }));
+    expect(bySource.voyager_curriculum.possible_action).toMatch(/hm-mira-self-direction curriculum/i);
     expect(JSON.stringify(result.items)).toContain('Which existing seam should Mira connect first');
     expect(JSON.stringify(result.items)).not.toMatch(/requires_permission|forbidden|blocked/i);
 
@@ -1274,9 +1364,9 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:voyager-next',
         source: 'voyager_curriculum',
         adapter_id: 'curriculum_skill_library_curiosity',
-        status: 'adapter_not_built_yet',
-        suggested_question: 'What skill should Mira practice into a reusable curriculum?',
-        possible_action: 'Build the curriculum skill-library review.',
+        status: 'active',
+        suggested_question: 'Which skill should Mira practice?',
+        possible_action: 'Run curriculum.',
         route_hint: 'architect',
       },
       {
@@ -1302,8 +1392,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:voyager-next',
-      source: 'voyager_curriculum',
+      item_id: 'mira-curiosity:browser-next',
+      source: 'browser_history',
     }));
   });
 
