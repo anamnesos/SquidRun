@@ -343,6 +343,50 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(result.result.no_mutation_performed).toBe(true);
   });
 
+  test('create --prompt-reply stages held structured Mira proposals', async () => {
+    const projectRoot = tempProject();
+    const heldProposal = {
+      voice_text: 'I want my own proposal to enter the work queue.',
+      target_areas: ['automation', 'tests'],
+      desired_change: 'Let held structured prompt replies become internal self-direction proposals.',
+      proposed_experiment: 'Generate one blocked JSON reply and verify it lands in the queue.',
+      success_metric: 'The CLI returns staged without using the fixture proxy.',
+      evidence: ['cli_held_prompt_reply'],
+    };
+
+    const result = await driver.run([
+      'create',
+      '--prompt-reply',
+      '--session-id', 'cli-held-structured',
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      options: {
+        generatedAt: '2026-05-12T13:10:00.000Z',
+        buildMiraLabPromptReply: jest.fn(async () => ({
+          decision: 'blocked',
+          reply: null,
+          visible_render_hint: { kind: 'blocked_banner', banner: 'held' },
+          gates: {
+            reason_class: 'hard_boundary_violation',
+            language_gate: {
+              text: JSON.stringify(heldProposal),
+            },
+          },
+        })),
+      },
+    });
+
+    expect(result.result.decision).toBe('staged');
+    expect(result.result.generation).toEqual(expect.objectContaining({
+      source: 'mira_lab_prompt_reply_held_structured_payload',
+      prompt_reply_blocked: true,
+      proxy_used: false,
+    }));
+    expect(result.result.proposal.desired_change).toBe(heldProposal.desired_change);
+    expect(readJsonl(selfDirectionQueuePath(projectRoot))).toHaveLength(1);
+  });
+
   test('direct-route CLI lets Mira pick and send the next internal handoff', async () => {
     const projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {

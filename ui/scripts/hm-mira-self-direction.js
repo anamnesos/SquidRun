@@ -34,7 +34,7 @@ function printHelp() {
     'hm-mira-self-direction — internal Mira self-direction proposal harness',
     '',
     'Usage:',
-    '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin] [--session-id <id>] [--project-root <path>] [--json]',
+    '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin|--prompt-reply] [--session-id <id>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
@@ -53,6 +53,7 @@ function parseArgs(argv = []) {
     sessionId: null,
     useFixture: false,
     fromStdin: false,
+    usePromptReply: false,
     json: false,
     status: 'pending_architect_review',
     proposalId: null,
@@ -77,6 +78,8 @@ function parseArgs(argv = []) {
       args.useFixture = true;
     } else if (token === '--stdin') {
       args.fromStdin = true;
+    } else if (token === '--prompt-reply' || token === '--use-prompt-reply') {
+      args.usePromptReply = true;
     } else if (token === '--json') {
       args.json = true;
     } else if (token === '--status') {
@@ -218,6 +221,7 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
     const result = await generateMiraSelfDirectionProposal({
       sessionId: args.sessionId || `mira-self-direction-${new Date().toISOString().slice(0, 10)}`,
       proxyProposal,
+      usePromptReply: args.usePromptReply,
       notifyArchitect: false,
     }, {
       projectRoot: args.projectRoot,

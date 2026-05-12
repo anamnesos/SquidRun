@@ -730,6 +730,20 @@ function latestMiraProposalCandidateFromTranscript(projectRoot, sessionId) {
   return null;
 }
 
+function heldStructuredProposalCandidate(promptResult) {
+  if (!promptResult || promptResult.decision !== 'blocked') return null;
+  const heldText = trimText(promptResult.gates?.language_gate?.text);
+  const parsed = parseMiraGeneratedProposalText(heldText);
+  if (!parsed) return null;
+  return {
+    proposal: parsed,
+    source: 'mira_lab_prompt_reply_held_structured_payload',
+    source_reply_model: promptResult?.reply?.model || null,
+    prompt_reply_blocked: true,
+    prompt_reply_gate_reason: promptResult?.gates?.reason_class || null,
+  };
+}
+
 async function generateMiraSelfDirectionProposal(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
   const projectRoot = projectRootFromOptions(options, payload);
@@ -756,6 +770,9 @@ async function generateMiraSelfDirectionProposal(payload = {}, options = {}) {
         source: 'mira_lab_prompt_reply',
         source_reply_model: promptResult?.reply?.model || null,
       };
+    }
+    if (!candidate) {
+      candidate = heldStructuredProposalCandidate(promptResult);
     }
   }
 
@@ -807,6 +824,8 @@ async function generateMiraSelfDirectionProposal(payload = {}, options = {}) {
       source_text_hash: candidate.source_text_hash || null,
       source_reply_model: candidate.source_reply_model || null,
       proxy_used: candidate.source === 'proxy_mira_origin_payload',
+      prompt_reply_blocked: candidate.prompt_reply_blocked === true,
+      prompt_reply_gate_reason: candidate.prompt_reply_gate_reason || null,
     },
   };
 }
