@@ -976,6 +976,38 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(readOnlyCodeModeRunsPath(projectRoot))).toHaveLength(2);
   });
 
+  test('read-only code mode allows normal function declarations but blocks Function constructor', () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:function-ok',
+      source: 'repo_files',
+      adapter_id: 'git_status_short',
+      status: 'active',
+    });
+
+    const allowed = runMiraReadOnlyCodeMode({
+      allowedPaths: ['.squidrun/runtime'],
+      script: [
+        'function countRows(file) {',
+        '  return api.readJsonl(file, 10).length;',
+        '}',
+        "return countRows('.squidrun/runtime/mira-curiosity-items.jsonl');",
+      ].join('\n'),
+    }, { projectRoot, generatedAt: '2026-05-12T14:04:00.000Z' });
+
+    expect(allowed.decision).toBe('completed');
+    expect(allowed.result).toBe(1);
+
+    const blocked = runMiraReadOnlyCodeMode({
+      allowedPaths: ['.squidrun/runtime'],
+      script: "return Function('return 1')();",
+    }, { projectRoot, generatedAt: '2026-05-12T14:05:00.000Z' });
+
+    expect(blocked.decision).toBe('blocked');
+    expect(blocked.reason).toBe('script_contains_blocked_capability');
+  });
+
   test('exports eval packet for three agent conversations without ChatGPT name-swap cadence', async () => {
     projectRoot = tempProject();
     const sessionId = await seedThreeAgentConversation(projectRoot);

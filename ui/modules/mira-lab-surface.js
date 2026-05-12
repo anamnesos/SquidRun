@@ -2171,8 +2171,11 @@ function runMiraReadOnlyCodeMode(payload = {}, options = {}) {
     appendJsonl(logPath, blocked);
     return blocked;
   }
-  const forbiddenPattern = /\b(?:require|import|process|child_process|spawn|exec|writeFile|appendFile|rmSync|unlink|rename|mkdir|rmdir|fetch|XMLHttpRequest|WebSocket|net|http|https|eval|Function)\b/i;
-  if (forbiddenPattern.test(script)) {
+  const forbiddenPatterns = [
+    /\b(?:require|import|process|child_process|spawn|exec|writeFile|appendFile|rmSync|unlink|rename|mkdir|rmdir|fetch|XMLHttpRequest|WebSocket|net|http|https|eval)\b/i,
+    /\bFunction\b/,
+  ];
+  if (forbiddenPatterns.some((pattern) => pattern.test(script))) {
     const blocked = {
       schema: MIRA_READ_ONLY_CODE_MODE_SCHEMA,
       ok: false,
