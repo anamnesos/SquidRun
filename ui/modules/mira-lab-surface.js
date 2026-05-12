@@ -1862,6 +1862,16 @@ function directRouteCandidateForItem(item, index, total) {
   };
 }
 
+function latestCuriosityItemsByAdapter(items = []) {
+  const latest = new Map();
+  for (const item of items) {
+    const key = `${trimText(item.source)}:${trimText(item.adapter_id)}`;
+    if (!key || key === ':') continue;
+    latest.set(key, item);
+  }
+  return Array.from(latest.values());
+}
+
 function directRouteQueueSnapshot(projectRoot) {
   const proposals = readJsonl(selfDirectionQueuePath(projectRoot));
   const counts = proposals.reduce((acc, proposal) => {
@@ -1914,7 +1924,7 @@ async function selectMiraDirectRoute(payload = {}, options = {}) {
   }
   const allItems = readJsonl(curiosityItemsPath(projectRoot))
     .filter((item) => item && item.schema === MIRA_CURIOSITY_ITEM_SCHEMA);
-  const recentItems = allItems.slice(-120);
+  const recentItems = latestCuriosityItemsByAdapter(allItems.slice(-240));
   const scoreboard = buildMiraAuthorityScoreboard({ generatedAt }, { projectRoot, generatedAt });
   const queueSnapshot = directRouteQueueSnapshot(projectRoot);
   const candidates = recentItems
