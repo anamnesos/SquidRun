@@ -51,6 +51,63 @@ function readStartupHealthText(projectRoot, profileName = 'main') {
   };
 }
 
+function defaultLiveHealthSnapshotReader({ projectRoot, profileName, nowMs, jestTimeoutMs }) {
+  try {
+    const {
+      createHealthSnapshot,
+      renderStartupHealthMarkdown,
+    } = require('../scripts/hm-health-snapshot');
+    if (
+      typeof createHealthSnapshot !== 'function'
+      || typeof renderStartupHealthMarkdown !== 'function'
+    ) {
+      return { ok: false, reason: 'live_health_snapshot_unavailable' };
+    }
+    const snapshot = createHealthSnapshot({
+      projectRoot,
+      profileName,
+      nowMs,
+      jestTimeoutMs,
+    });
+    return {
+      ok: true,
+      text: renderStartupHealthMarkdown(snapshot),
+      generated_at: snapshot.generatedAt || null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'live_health_snapshot_failed',
+      error: oneLine(err && err.message ? err.message : String(err || 'unknown error'), 180),
+    };
+  }
+}
+
+function normalizeLiveHealthRead(value) {
+  if (!value) return { ok: false, reason: 'live_health_snapshot_empty' };
+  if (typeof value === 'string') {
+    return { ok: true, text: value };
+  }
+  if (value.ok === false) {
+    return {
+      ok: false,
+      reason: trimText(value.reason) || 'live_health_snapshot_failed',
+      error: trimText(value.error || value.message) || null,
+    };
+  }
+  const text = typeof value.text === 'string'
+    ? value.text
+    : (typeof value.markdown === 'string' ? value.markdown : '');
+  if (!text.trim()) {
+    return { ok: false, reason: 'live_health_snapshot_empty' };
+  }
+  return {
+    ok: true,
+    text,
+    generated_at: trimText(value.generated_at || value.generatedAt) || null,
+  };
+}
+
 function parseStartupHealthMarkdown(text) {
   const values = {};
   const sections = [];
@@ -94,6 +151,8 @@ function readMiraEnvironmentCuriosity(payload = {}, options = {}) {
     ? Number(options.nowMs ?? payload.nowMs)
     : Date.now();
   const staleAfterMs = Math.max(1000, Number(options.staleAfterMs ?? payload.staleAfterMs ?? DEFAULT_STALE_AFTER_MS) || DEFAULT_STALE_AFTER_MS);
+  const allowLiveRefresh = options.allowLiveRefresh ?? payload.allowLiveRefresh ?? true;
+  const jestTimeoutMs = Math.max(1000, Number(options.jestTimeoutMs ?? payload.jestTimeoutMs ?? 10000) || 10000);
   const health = readStartupHealthText(projectRoot, profileName);
   if (!health.ok) {
     return {
@@ -112,19 +171,65 @@ function readMiraEnvironmentCuriosity(payload = {}, options = {}) {
     };
   }
 
-  const parsed = parseStartupHealthMarkdown(health.text);
-  const generatedAtMs = Date.parse(parsed.generated_at || '');
-  const ageMs = Number.isFinite(generatedAtMs) ? Math.max(0, nowMs - generatedAtMs) : null;
-  const stale = ageMs === null ? true : ageMs > staleAfterMs;
+  let parsed = parseStartupHealthMarkdown(health.text);
+  let generatedAtMs = Date.parse(parsed.generated_at || '');
+  let ageMs = Number.isFinite(generatedAtMs) ? Math.max(0, nowMs - generatedAtMs) : null;
+  let stale = ageMs === null ? true : ageMs > staleAfterMs;
+  const startupSnapshot = {
+    generated_at: parsed.generated_at,
+    snapshot_age_ms: ageMs,
+    snapshot_stale: stale,
+  };
+  let snapshotSource = 'startup_health_file';
+  let refreshAttempted = false;
+  let refreshOk = false;
+  let refreshReason = null;
+  let refreshError = null;
+
+  if (stale && allowLiveRefresh !== false) {
+    refreshAttempted = true;
+    const liveReader = typeof options.liveHealthSnapshotReader === 'function'
+      ? options.liveHealthSnapshotReader
+      : defaultLiveHealthSnapshotReader;
+    const liveRead = normalizeLiveHealthRead(liveReader({
+      projectRoot,
+      profileName,
+      nowMs,
+      staleAfterMs,
+      jestTimeoutMs,
+      stale_health_path: health.healthPath,
+      startup_snapshot: startupSnapshot,
+    }));
+    if (liveRead.ok) {
+      parsed = parseStartupHealthMarkdown(liveRead.text);
+      generatedAtMs = Date.parse(parsed.generated_at || liveRead.generated_at || '');
+      ageMs = Number.isFinite(generatedAtMs) ? Math.max(0, nowMs - generatedAtMs) : null;
+      stale = ageMs === null ? true : ageMs > staleAfterMs;
+      snapshotSource = 'live_health_snapshot';
+      refreshOk = true;
+    } else {
+      refreshReason = liveRead.reason || 'live_health_snapshot_failed';
+      refreshError = liveRead.error || null;
+    }
+  }
+
   return {
     schema: MIRA_ENVIRONMENT_CURIOSITY_SCHEMA,
     ok: true,
     decision: 'environment_health_read_only',
     health_path: health.healthPath,
     profile_name: profileName,
+    snapshot_source: snapshotSource,
     generated_at: parsed.generated_at,
     snapshot_age_ms: ageMs,
     snapshot_stale: stale,
+    startup_generated_at: startupSnapshot.generated_at,
+    startup_snapshot_age_ms: startupSnapshot.snapshot_age_ms,
+    startup_snapshot_stale: startupSnapshot.snapshot_stale,
+    snapshot_refresh_attempted: refreshAttempted,
+    snapshot_refresh_ok: refreshOk,
+    snapshot_refresh_reason: refreshReason,
+    snapshot_refresh_error: refreshError,
     overall_label: parsed.overall_label,
     overall_score: parsed.overall_score,
     app_session: parsed.app_session,
@@ -140,7 +245,8 @@ function readMiraEnvironmentCuriosity(payload = {}, options = {}) {
       parsed.overall_label ? `health=${parsed.overall_label}${parsed.overall_score !== null ? `/${parsed.overall_score}` : ''}` : null,
       parsed.memory_sync_status ? `memory=${parsed.memory_sync_status}` : null,
       parsed.bridge_connection ? `bridge=${parsed.bridge_connection}` : null,
-      stale ? 'snapshot=stale' : 'snapshot=fresh',
+      snapshotSource === 'live_health_snapshot' ? 'snapshot=live_refresh' : (stale ? 'snapshot=stale' : 'snapshot=fresh'),
+      refreshAttempted && !refreshOk ? `refresh=${refreshReason || 'failed'}` : null,
     ].filter(Boolean).join('; '), 220),
     no_mutation_performed: true,
     consequence_controls: {
@@ -154,6 +260,8 @@ function readMiraEnvironmentCuriosity(payload = {}, options = {}) {
 
 module.exports = {
   MIRA_ENVIRONMENT_CURIOSITY_SCHEMA,
+  defaultLiveHealthSnapshotReader,
+  normalizeLiveHealthRead,
   parseStartupHealthMarkdown,
   readMiraEnvironmentCuriosity,
 };
