@@ -678,8 +678,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
-    expect(result.active_count).toBe(3);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(10);
+    expect(result.active_count).toBe(5);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(12);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -716,8 +716,16 @@ describe('Mira Lab sidecar surface', () => {
     expect(bySource.environment_apps.status).toBe('adapter_not_built_yet');
     expect(bySource.source_action_substrate.suggested_question).toMatch(/which existing SquidRun seam/i);
     expect(bySource.source_action_substrate.possible_action).toMatch(/MCP-compatible connectors, code-mode wrappers, workflow\/DAG execution, active memory actions, and evaluation loops/i);
-    expect(bySource.code_mode_exploration.suggested_question).toMatch(/sandboxed read-only execute_script/i);
-    expect(bySource.implementation_outcomes.suggested_question).toMatch(/implemented, not_implemented, false_positive/i);
+    expect(bySource.code_mode_exploration).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+    }));
+    expect(bySource.code_mode_exploration.suggested_question).toMatch(/inspect with read-only code-mode/i);
+    expect(bySource.implementation_outcomes).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+    }));
+    expect(bySource.implementation_outcomes.suggested_question).toMatch(/outcome evidence/i);
     expect(bySource.reflexion_lessons.possible_action).toMatch(/review-to-lesson/i);
     expect(bySource.cheap_parallel_scouts.suggested_question).toMatch(/three curiosity scouts/i);
     expect(bySource.voyager_curriculum.possible_action).toMatch(/curriculum JSONL/i);
