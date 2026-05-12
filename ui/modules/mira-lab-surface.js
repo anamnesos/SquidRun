@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const {
   classifyAttachmentContractViolation,
@@ -37,6 +38,7 @@ const MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA = 'squidrun.mira_lab.confidence_source
 const MIRA_AUTHORITY_SCOREBOARD_SCHEMA = 'squidrun.mira_lab.authority_scoreboard_v0';
 const MIRA_CURIOSITY_ITEM_SCHEMA = 'squidrun.mira_lab.curiosity_item_v0';
 const MIRA_DIRECT_ROUTE_SCHEMA = 'squidrun.mira_lab.direct_route_v0';
+const MIRA_READ_ONLY_CODE_MODE_SCHEMA = 'squidrun.mira_lab.read_only_code_mode_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
@@ -384,6 +386,10 @@ function curiosityItemsPath(projectRoot) {
 
 function miraDirectRoutesPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-direct-routes.jsonl');
+}
+
+function readOnlyCodeModeRunsPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-read-only-code-mode-runs.jsonl');
 }
 
 function normalizeRequesterPane(value) {
@@ -2033,6 +2039,207 @@ async function selectMiraDirectRoute(payload = {}, options = {}) {
   return route;
 }
 
+function relativeProjectPath(projectRoot, targetPath) {
+  const resolvedProject = path.resolve(projectRoot);
+  const resolvedTarget = path.resolve(targetPath);
+  const relative = path.relative(resolvedProject, resolvedTarget);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return relative.replace(/\\/g, '/');
+}
+
+function normalizeCodeModePaths(paths = [], projectRoot) {
+  return asArray(paths)
+    .map((item) => trimText(item))
+    .filter(Boolean)
+    .map((item) => path.resolve(projectRoot, item))
+    .map((resolved) => ({
+      absolute_path: resolved,
+      relative_path: relativeProjectPath(projectRoot, resolved),
+    }))
+    .filter((item) => item.relative_path)
+    .slice(0, 24);
+}
+
+function createReadOnlyCodeModeApi({ projectRoot, allowedPaths, maxReadBytes }) {
+  const allowed = allowedPaths.map((item) => item.absolute_path);
+  function isAllowed(targetPath) {
+    const resolved = path.resolve(projectRoot, targetPath);
+    return allowed.some((allowedPath) => resolved === allowedPath || resolved.startsWith(`${allowedPath}${path.sep}`));
+  }
+  function assertAllowed(targetPath) {
+    const resolved = path.resolve(projectRoot, targetPath);
+    if (!isAllowed(resolved)) {
+      throw new Error(`read_path_not_allowed:${relativeProjectPath(projectRoot, resolved) || 'outside_project'}`);
+    }
+    return resolved;
+  }
+  function toPublicEntry(targetPath) {
+    const stat = fs.statSync(targetPath);
+    return {
+      name: path.basename(targetPath),
+      relative_path: relativeProjectPath(projectRoot, targetPath),
+      type: stat.isDirectory() ? 'directory' : 'file',
+      size: stat.size,
+      mtime_ms: stat.mtimeMs,
+    };
+  }
+  return Object.freeze({
+    projectRoot,
+    listDir(relativePath = '.') {
+      const resolved = assertAllowed(relativePath);
+      const entries = fs.readdirSync(resolved, { withFileTypes: true })
+        .slice(0, 200)
+        .map((entry) => toPublicEntry(path.join(resolved, entry.name)));
+      return entries;
+    },
+    readText(relativePath) {
+      const resolved = assertAllowed(relativePath);
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) throw new Error('read_target_not_file');
+      const bytes = Math.min(stat.size, maxReadBytes);
+      const handle = fs.openSync(resolved, 'r');
+      try {
+        const buffer = Buffer.alloc(bytes);
+        const read = fs.readSync(handle, buffer, 0, bytes, 0);
+        return buffer.slice(0, read).toString('utf8');
+      } finally {
+        fs.closeSync(handle);
+      }
+    },
+    readJsonl(relativePath, limit = 50) {
+      const text = this.readText(relativePath);
+      return text.split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(-Math.max(1, Math.min(200, Number(limit) || 50)))
+        .map((line) => JSON.parse(line));
+    },
+    findText(relativePath, pattern, limit = 25) {
+      const text = this.readText(relativePath);
+      const regex = pattern instanceof RegExp ? pattern : new RegExp(String(pattern), 'i');
+      return text.split(/\r?\n/)
+        .map((line, index) => ({ line_number: index + 1, text: line }))
+        .filter((line) => regex.test(line.text))
+        .slice(0, Math.max(1, Math.min(100, Number(limit) || 25)));
+    },
+  });
+}
+
+function summarizeCodeModeValue(value, depth = 0) {
+  if (depth > 5) return '[depth_limit]';
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+  if (Array.isArray(value)) return value.slice(0, 80).map((item) => summarizeCodeModeValue(item, depth + 1));
+  if (typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value)
+      .slice(0, 80)
+      .map(([key, item]) => [key, summarizeCodeModeValue(item, depth + 1)]));
+  }
+  return String(value);
+}
+
+function runMiraReadOnlyCodeMode(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const logPath = readOnlyCodeModeRunsPath(projectRoot);
+  const script = trimText(payload.script || payload.code);
+  const allowedPaths = normalizeCodeModePaths(payload.allowedPaths || payload.allowed_paths || ['.squidrun/runtime'], projectRoot);
+  const maxReadBytes = Math.max(1024, Math.min(512 * 1024, Number(payload.maxReadBytes || payload.max_read_bytes || 128 * 1024)));
+  const timeoutMs = Math.max(50, Math.min(1000, Number(payload.timeoutMs || payload.timeout_ms || 750)));
+  const startedAtMs = Date.now();
+  if (!script) {
+    const blocked = {
+      schema: MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: 'missing_script',
+      generated_at: generatedAt,
+      run_log_path: logPath,
+    };
+    appendJsonl(logPath, blocked);
+    return blocked;
+  }
+  const forbiddenPattern = /\b(?:require|import|process|child_process|spawn|exec|writeFile|appendFile|rmSync|unlink|rename|mkdir|rmdir|fetch|XMLHttpRequest|WebSocket|net|http|https|eval|Function)\b/i;
+  if (forbiddenPattern.test(script)) {
+    const blocked = {
+      schema: MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: 'script_contains_blocked_capability',
+      generated_at: generatedAt,
+      run_log_path: logPath,
+      applied: false,
+      consequence_controls: {
+        internal_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        network_performed: false,
+        file_write_performed: false,
+      },
+    };
+    appendJsonl(logPath, blocked);
+    return blocked;
+  }
+  const api = createReadOnlyCodeModeApi({ projectRoot, allowedPaths, maxReadBytes });
+  const output = [];
+  const sandbox = {
+    api,
+    output,
+    emit(value) {
+      output.push(summarizeCodeModeValue(value));
+      return output.length;
+    },
+    RegExp,
+    JSON,
+    Math,
+    Date,
+  };
+  const context = vm.createContext(sandbox, {
+    name: 'mira-read-only-code-mode',
+    codeGeneration: { strings: false, wasm: false },
+  });
+  let resultValue = null;
+  let error = null;
+  try {
+    const wrapped = `(function(){\n${script}\n})()`;
+    resultValue = new vm.Script(wrapped, { filename: 'mira-read-only-code-mode.vm.js' })
+      .runInContext(context, { timeout: timeoutMs });
+  } catch (err) {
+    error = err?.message || String(err);
+  }
+  const elapsedMs = Date.now() - startedAtMs;
+  const run = {
+    schema: MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+    ok: !error,
+    decision: error ? 'failed' : 'completed',
+    generated_at: generatedAt,
+    run_id: `mira-read-only-code-mode:${stableHash({
+      generatedAt,
+      script,
+      allowedPaths: allowedPaths.map((item) => item.relative_path),
+    }).slice(0, 16)}`,
+    run_log_path: logPath,
+    allowed_paths: allowedPaths.map((item) => item.relative_path),
+    max_read_bytes: maxReadBytes,
+    timeout_ms: timeoutMs,
+    elapsed_ms: elapsedMs,
+    output,
+    result: summarizeCodeModeValue(resultValue),
+    error,
+    applied: false,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      file_write_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    },
+  };
+  appendJsonl(logPath, run);
+  return run;
+}
+
 function summarizeForWrapper(text, max = 160) {
   const trimmed = trimText(text).replace(/\s+/g, ' ');
   if (trimmed.length <= max) return trimmed;
@@ -3014,6 +3221,7 @@ module.exports = {
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_DIRECT_ROUTE_SCHEMA,
+  MIRA_READ_ONLY_CODE_MODE_SCHEMA,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_DECISIONS,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
@@ -3033,6 +3241,7 @@ module.exports = {
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityScout,
+  runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
   selectMiraDirectRoute,
   buildMiraLabTurn,
@@ -3040,6 +3249,7 @@ module.exports = {
   replyAuditPath,
   curiosityItemsPath,
   miraDirectRoutesPath,
+  readOnlyCodeModeRunsPath,
   selfDirectionOutcomePath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,

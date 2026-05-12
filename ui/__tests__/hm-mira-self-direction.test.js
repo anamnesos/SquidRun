@@ -10,6 +10,7 @@ const {
   MIRA_CURIOSITY_ITEM_SCHEMA,
   curiosityItemsPath,
   miraDirectRoutesPath,
+  readOnlyCodeModeRunsPath,
   replyAuditPath,
   selfDirectionOutcomePath,
   selfDirectionReviewAuditPath,
@@ -434,5 +435,43 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(textRun.stdout).toContain('decision=routed');
     expect(textRun.stdout).toContain('target=builder');
     expect(textRun.stdout).toContain('source=code_mode_exploration');
+  });
+
+  test('code-mode CLI runs read-only exploration over allowed runtime files', async () => {
+    const projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:cli-code-mode-read',
+      generated_at: '2026-05-12T14:10:00.000Z',
+      source: 'implementation_outcomes',
+      adapter_id: 'implementation_outcome_recording_curiosity',
+      status: 'adapter_not_built_yet',
+    });
+
+    const result = await driver.run([
+      'code-mode',
+      '--project-root', projectRoot,
+      '--allow', '.squidrun/runtime',
+      '--script', "const rows = api.readJsonl('.squidrun/runtime/mira-curiosity-items.jsonl', 3); emit(rows[0].source); return rows.length;",
+      '--json',
+    ]);
+
+    expect(result.result.decision).toBe('completed');
+    expect(result.result.output).toEqual(['implementation_outcomes']);
+    expect(result.result.result).toBe(1);
+    expect(result.result.consequence_controls.file_write_performed).toBe(false);
+    expect(readJsonl(readOnlyCodeModeRunsPath(projectRoot))).toHaveLength(1);
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'code-mode',
+      '--project-root', projectRoot,
+      '--allow', '.squidrun/runtime',
+      '--script', "return api.findText('.squidrun/runtime/mira-curiosity-items.jsonl', 'implementation_outcomes').length;",
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=completed');
+    expect(textRun.stdout).toContain('elapsed_ms=');
   });
 });

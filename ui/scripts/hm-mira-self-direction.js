@@ -15,6 +15,7 @@ const {
   recordMiraSelfDirectionOutcome,
   reviewMiraSelfDirectionProposal,
   runMiraCuriosityScout,
+  runMiraReadOnlyCodeMode,
   scanMiraLabConfidenceSource,
   selectMiraDirectRoute,
 } = require('../modules/mira-lab-surface');
@@ -37,6 +38,7 @@ function printHelp() {
     '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin|--prompt-reply] [--session-id <id>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js code-mode --script <js>|--stdin [--allow <path>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js scoreboard [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js outcome --proposal-id <id> --status implemented|not_implemented|false_positive|needs_followup [--evidence <text>] [--note <text>] [--project-root <path>] [--json]',
@@ -65,6 +67,8 @@ function parseArgs(argv = []) {
     routeInteresting: false,
     runScout: false,
     limit: 5,
+    script: null,
+    allowPaths: [],
   };
   for (let index = 1; index < argv.length; index += 1) {
     const token = argv[index];
@@ -104,6 +108,10 @@ function parseArgs(argv = []) {
       args.routeInteresting = true;
     } else if (token === '--run-scout') {
       args.runScout = true;
+    } else if (token === '--script') {
+      args.script = argv[++index];
+    } else if (token === '--allow' || token === '--allowed-path') {
+      args.allowPaths.push(argv[++index]);
     } else {
       throw new Error(`Unknown flag: ${token}`);
     }
@@ -171,6 +179,14 @@ function output(result, args) {
     if (result.selected_item?.adapter_id) process.stdout.write(`adapter=${result.selected_item.adapter_id}\n`);
     if (result.dispatch?.status) process.stdout.write(`dispatch=${result.dispatch.status}\n`);
     if (result.direct_route_log_path) process.stdout.write(`log=${result.direct_route_log_path}\n`);
+    return;
+  }
+  if (args.command === 'code-mode') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    if (result.run_id) process.stdout.write(`run_id=${result.run_id}\n`);
+    if (result.elapsed_ms !== undefined) process.stdout.write(`elapsed_ms=${result.elapsed_ms}\n`);
+    if (result.error) process.stdout.write(`error=${result.error}\n`);
+    if (result.run_log_path) process.stdout.write(`log=${result.run_log_path}\n`);
     return;
   }
   process.stdout.write(`decision=${result.decision}\n`);
@@ -307,6 +323,17 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
           hmSendPath: deps.hmSendPath,
         })))
         : undefined,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
+  if (args.command === 'code-mode') {
+    const script = args.fromStdin ? (deps.readStdin || readStdin)() : args.script;
+    const result = runMiraReadOnlyCodeMode({
+      script,
+      allowedPaths: args.allowPaths.length > 0 ? args.allowPaths : undefined,
+    }, {
+      projectRoot: args.projectRoot,
       ...(deps.options || {}),
     });
     return { args, result };
