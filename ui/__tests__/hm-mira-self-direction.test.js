@@ -196,4 +196,80 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(textRun.stdout).toContain('lane=memory');
     expect(textRun.stdout).toContain('next=observe');
   });
+
+  test('curiosity-scout CLI records local curiosity items without external action', async () => {
+    const projectRoot = tempProject();
+    appendJsonl(selfDirectionQueuePath(projectRoot), {
+      proposal_id: 'mira-self-direction:cli-curiosity',
+      generated_at: '2026-05-12T12:00:00.000Z',
+      target_areas: ['automation'],
+      review_status: 'pending_architect_review',
+      desired_change: 'Notice local scout signals.',
+    });
+
+    const jsonResult = await driver.run([
+      'curiosity-scout',
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      options: {
+        repoStatusText: ' M ui/scripts/hm-mira-self-direction.js\n',
+        recentCommsText: '(ARCHITECT #78): move the curiosity scout.',
+      },
+    });
+
+    expect(jsonResult.result.decision).toBe('scouted');
+    expect(jsonResult.result.active_count).toBe(3);
+    expect(jsonResult.result.items.some((item) => item.source === 'repo_files')).toBe(true);
+    expect(jsonResult.result.items.some((item) => item.status === 'adapter_not_built_yet')).toBe(true);
+    expect(jsonResult.result.items.some((item) => item.source === 'source_action_substrate')).toBe(true);
+    expect(jsonResult.result.items.some((item) => item.source === 'code_mode_exploration')).toBe(true);
+    expect(jsonResult.result.items.some((item) => item.source === 'implementation_outcomes')).toBe(true);
+    expect(jsonResult.result.no_action_taken).toBe(true);
+    expect(jsonResult.result.no_mutation_performed).toBe(true);
+    expect(jsonResult.result.consequence_controls.external_send_performed).toBe(false);
+    expect(JSON.stringify(jsonResult.result)).not.toMatch(/requires_permission|forbidden|blocked/i);
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
+    const textRun = spawnSync(process.execPath, [
+      scriptPath,
+      'curiosity-scout',
+      '--project-root', projectRoot,
+    ], { encoding: 'utf8' });
+    expect(textRun.status).toBe(0);
+    expect(textRun.stdout).toContain('decision=scouted');
+    expect(textRun.stdout).toContain('source=browser_history status=adapter_not_built_yet');
+    expect(readJsonl(path.join(projectRoot, '.squidrun', 'runtime', 'mira-curiosity-items.jsonl')).length).toBeGreaterThan(0);
+  });
+
+  test('curiosity-scout can route interesting questions internally without external send', async () => {
+    const projectRoot = tempProject();
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const result = await driver.run([
+      'curiosity-scout',
+      '--project-root', projectRoot,
+      '--route-interesting',
+      '--json',
+    ], {
+      sendAgentMessage,
+      options: {
+        repoStatusText: ' M ui/modules/mira-lab-surface.js\n',
+        recentCommsText: '(ARCHITECT #90): source/action substrate, not MCP as mind.',
+      },
+    });
+
+    expect(result.result.architect_notification).toEqual(expect.objectContaining({
+      target: 'architect',
+      status: 'sent',
+      internal_only: true,
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage.mock.calls[0][0]).toBe('architect');
+    expect(sendAgentMessage.mock.calls[0][1]).toContain('(MIRA CURIOSITY): initiative scout found local questions.');
+    expect(sendAgentMessage.mock.calls[0][1]).toContain('no_mutation_performed=true');
+    expect(sendAgentMessage.mock.calls[0][1]).not.toMatch(/\btelegram|sms|external-send|customer|deploy|trade\b/i);
+    expect(result.result.consequence_controls.external_send_performed).toBe(false);
+    expect(result.result.no_mutation_performed).toBe(true);
+  });
 });

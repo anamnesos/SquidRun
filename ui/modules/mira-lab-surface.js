@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -33,6 +34,7 @@ const MIRA_SELF_DIRECTION_SCHEMA = 'squidrun.mira_lab.self_direction_proposal_v0
 const MIRA_SELF_DIRECTION_REVIEW_SCHEMA = 'squidrun.mira_lab.self_direction_review_v0';
 const MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA = 'squidrun.mira_lab.confidence_source_check_v0';
 const MIRA_AUTHORITY_SCOREBOARD_SCHEMA = 'squidrun.mira_lab.authority_scoreboard_v0';
+const MIRA_CURIOSITY_ITEM_SCHEMA = 'squidrun.mira_lab.curiosity_item_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
@@ -99,6 +101,21 @@ const CONFIDENCE_CLAIM_PATTERN =
   /\b(?:i(?:'m| am)\s+(?:sure|certain|confident|positive)|i know|we know|my confidence is high|high confidence|definitely|certainly|obviously|without (?:a )?doubt|there(?:'s| is) no question|this proves|the answer is|the truth is)\b/ig;
 const CONFIDENCE_SOURCE_GROUNDING_PATTERN =
   /\b(?:source|evidence|test(?:ed|s|ing)?|verified|verifier|audit|transcript|log|fixture|harness|screenshot|trace|checked|ran|passed|failed|observed|measured|repro(?:duced)?|proof|commit|hash|line|file|diff)\b/i;
+const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
+  { source: 'repo_files', scope: 'local_repo_and_files', adapter_id: 'git_status_short', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'git status --short plus repo file reads' },
+  { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'self_direction_queue', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: '.squidrun/runtime/mira-self-direction-proposals.jsonl' },
+  { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'recent_comms', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/scripts/hm-comms.js history --last 20, telegram-poller.js, sms-poller.js, external-notifications.js' },
+  { source: 'memory', scope: 'local_memory_and_continuity', adapter_id: 'memory_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'cognitive-memory-*, memory-search/retrieve, team-memory/*, memory-ingest/*, ui/scripts/hm-memory-api.js retrieve' },
+  { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'Chrome connector or local browser-history reader via mcp-bridge' },
+  { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'Gmail connector or local email adapter via mcp-bridge' },
+  { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'scout_model_candidate', existing_seam: 'browser-use/Chrome tools plus local research artifacts' },
+  { source: 'images_screenshots_assets', scope: 'local_visual_context', adapter_id: 'visual_asset_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'screenshot handlers/scripts, ui/scripts/hm-screenshot.js, ui/modules/image-gen.js' },
+  { source: 'calendar_messages', scope: 'calendar_and_message_context', adapter_id: 'calendar_message_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'mcp_candidate', existing_seam: 'future calendar/message connector seam' },
+  { source: 'environment_apps', scope: 'local_environment_and_app_state', adapter_id: 'environment_app_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'bridge-client.js, mcp-bridge.js, websocket runtime/server, cross-device-target.js, ui/scripts/hm-health-snapshot.js' },
+  { source: 'automation_scheduler', scope: 'local_automation_and_scheduler', adapter_id: 'automation_scheduler_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/scheduler.js + ui/modules/ipc/scheduler-handlers.js' },
+  { source: 'work_continuation', scope: 'background_work_and_routing', adapter_id: 'work_continuation_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'existing_seam', existing_seam: 'background-agent-manager.js, owned-work-continue-broker.js, smart-routing.js, transcript-index.js' },
+  { source: 'mira_runtime', scope: 'mira_internal_growth_runtime', adapter_id: 'mira_runtime_curiosity', default_status: 'adapter_not_built_yet', integration_strategy: 'native_adapter', existing_seam: 'mira-core/growth-loop-v0.js, autonomy-substrate-v0.js, experience-v0.js, perception.js, intent-queue.js' },
+]);
 
 function validateSafeFallbackOrNull(text) {
   const trimmed = trimText(text);
@@ -351,6 +368,10 @@ function selfDirectionQueuePath(projectRoot) {
 
 function selfDirectionReviewAuditPath(projectRoot) {
   return path.join(projectRoot, '.squidrun', 'runtime', 'mira-self-direction-reviews.jsonl');
+}
+
+function curiosityItemsPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-curiosity-items.jsonl');
 }
 
 function normalizeRequesterPane(value) {
@@ -1121,6 +1142,440 @@ function buildMiraAuthorityScoreboard(payload = {}, options = {}) {
       external_send_performed: false,
       autonomous_apply_performed: false,
       network_performed: false,
+      durable_product_change_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    },
+  };
+}
+
+function oneLine(value, max = 220) {
+  return summarizeForWrapper(trimText(value).replace(/\s+/g, ' '), max);
+}
+
+function normalizeCuriosityStatus(value) {
+  const status = trimText(value).toLowerCase();
+  if (status === 'observed' || status === 'no_item') return 'active';
+  if (status === 'skipped') return 'unavailable_in_this_runtime';
+  if (status === 'not_implemented_yet') return 'adapter_not_built_yet';
+  if (['active', 'adapter_not_built_yet', 'unavailable_in_this_runtime'].includes(status)) return status;
+  return 'active';
+}
+
+function buildCuriosityItem(rawItem = {}, context = {}) {
+  const generatedAt = context.generatedAt;
+  const source = trimText(rawItem.source || 'unknown_source') || 'unknown_source';
+  const registryEntry = MIRA_CURIOSITY_SOURCE_REGISTRY.find((entry) => entry.source === source)
+    || MIRA_CURIOSITY_SOURCE_REGISTRY.find((entry) => entry.adapter_id === rawItem.adapter_id);
+  const scope = trimText(rawItem.scope || registryEntry?.scope || 'local_curiosity_source') || 'local_curiosity_source';
+  const adapterId = trimText(rawItem.adapter_id || registryEntry?.adapter_id || source) || source;
+  const integrationStrategy = trimText(rawItem.integration_strategy || registryEntry?.integration_strategy || 'existing_seam') || 'existing_seam';
+  const observation = oneLine(rawItem.observation || rawItem.summary || 'No observation recorded.', 280);
+  const whyInteresting = oneLine(rawItem.why_interesting || rawItem.whyInteresting || 'Mira noticed a local signal worth asking about.', 260);
+  const hypothesis = oneLine(rawItem.hypothesis || 'There may be a pattern here that James has not explicitly named yet.', 220);
+  const suggestedQuestion = oneLine(rawItem.suggested_question || rawItem.suggestedQuestion || 'What should Mira inspect next from this signal?', 220);
+  const possibleAction = oneLine(rawItem.possible_action || rawItem.possibleAction || 'Ask a pointed follow-up or route an internal review item.', 220);
+  const routeHint = trimText(rawItem.route_hint || rawItem.routeHint || 'mira_lab') || 'mira_lab';
+  const status = normalizeCuriosityStatus(rawItem.status);
+  const sensitivityHint = trimText(rawItem.sensitivity_hint || rawItem.sensitivityHint || 'local_metadata_only') || 'local_metadata_only';
+  return {
+    schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+    item_id: `mira-curiosity:${stableHash({
+      generatedAt,
+      source,
+      observation,
+      suggestedQuestion,
+    }).slice(0, 16)}`,
+    generated_at: generatedAt,
+    source,
+    scope,
+    adapter_id: adapterId,
+    integration_strategy: integrationStrategy,
+    status,
+    observation,
+    why_interesting: whyInteresting,
+    hypothesis,
+    suggested_question: suggestedQuestion,
+    possible_action: possibleAction,
+    route_hint: routeHint,
+    sensitivity_hint: sensitivityHint,
+    no_action_taken: true,
+    no_mutation_performed: true,
+    external_send_performed: false,
+    network_performed: false,
+    destructive_action_performed: false,
+    file_system_action_performed: false,
+    adapter_error: rawItem.adapter_error ? oneLine(rawItem.adapter_error, 180) : null,
+  };
+}
+
+function normalizeAdapterResult(result) {
+  if (!result) return [];
+  return Array.isArray(result) ? result : [result];
+}
+
+function gitStatusCuriosityAdapter(context) {
+  const statusText = typeof context.repoStatusText === 'string'
+    ? context.repoStatusText
+    : (() => {
+      const run = spawnSync('git', ['status', '--short'], {
+        cwd: context.projectRoot,
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 5000,
+      });
+      if (run.status !== 0) {
+        return null;
+      }
+      return run.stdout || '';
+    })();
+  if (statusText === null) {
+    return {
+      source: 'repo_files',
+      adapter_id: 'git_status_short',
+      status: 'unavailable_in_this_runtime',
+      observation: 'git status --short was unavailable for this project root.',
+      why_interesting: 'Repo curiosity depends on a readable local git working tree.',
+      hypothesis: 'The repo may still have useful file signals, but this adapter cannot see them in the current runtime.',
+      suggested_question: 'What local file signal should Mira inspect instead of git status?',
+      possible_action: 'Build a read-only file-glance adapter that samples recent filenames and mtimes.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_repo_metadata',
+      adapter_error: 'git_status_unavailable',
+    };
+  }
+  const lines = statusText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) {
+    return {
+      source: 'repo_files',
+      adapter_id: 'git_status_short',
+      status: 'active',
+      observation: 'Working tree has no git status changes.',
+      why_interesting: 'A quiet repo is still useful context for whether Mira should look elsewhere.',
+      hypothesis: 'The active signal may be in runtime state, comms, or user activity rather than code.',
+      suggested_question: 'What runtime signal changed even though the repo is quiet?',
+      possible_action: 'Compare runtime queues and recent comms before asking James for direction.',
+      route_hint: 'mira_lab',
+      sensitivity_hint: 'local_repo_metadata',
+    };
+  }
+  const tracked = lines.filter((line) => !line.startsWith('??')).length;
+  const untracked = lines.filter((line) => line.startsWith('??')).length;
+  return {
+    source: 'repo_files',
+    adapter_id: 'git_status_short',
+    status: 'active',
+    observation: `Working tree has ${lines.length} visible git status entries (${tracked} tracked, ${untracked} untracked). Sample: ${lines.slice(0, 5).join('; ')}`,
+    why_interesting: 'Uncommitted local movement is a natural place for Mira to ask what changed and whether it matches the active lane.',
+    hypothesis: 'Some local edits or scratch files may reveal an unfinished thread James should not have to restate.',
+    suggested_question: 'Which of these local changes is signal, noise, or a leftover scratch artifact?',
+    possible_action: 'Route a local cleanup or follow-up question to Architect if the changes look lane-relevant.',
+    route_hint: 'architect',
+    sensitivity_hint: 'local_repo_metadata',
+  };
+}
+
+function runtimeQueueCuriosityAdapter(context) {
+  const queuePath = selfDirectionQueuePath(context.projectRoot);
+  const proposals = readJsonl(queuePath);
+  if (proposals.length === 0) {
+    return {
+      source: 'runtime_comms',
+      adapter_id: 'self_direction_queue',
+      status: 'active',
+      observation: 'No Mira self-direction proposals are recorded yet.',
+      why_interesting: 'An empty queue means curiosity should look at repo/comms signals before inventing needs.',
+      hypothesis: 'Mira may need to find her next question from ambient local activity rather than an existing proposal.',
+      suggested_question: 'What local evidence should Mira use to propose the next improvement?',
+      possible_action: 'Scout recent comms and repo status for a fresh initiative item.',
+      route_hint: 'mira_lab',
+      sensitivity_hint: 'local_runtime_queue_metadata',
+    };
+  }
+  const counts = proposals.reduce((acc, proposal) => {
+    const status = trimText(proposal.review_status || 'unknown') || 'unknown';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  const latest = proposals[proposals.length - 1];
+  return {
+    source: 'runtime_comms',
+    adapter_id: 'self_direction_queue',
+    status: 'active',
+    observation: `Mira self-direction queue has ${proposals.length} proposal(s): ${Object.entries(counts).map(([key, value]) => `${key}=${value}`).join(', ')}. Latest: ${oneLine(latest.desired_change || latest.voice_text, 120)}`,
+    why_interesting: 'The queue shows what Mira has already tried to lead, so curiosity can follow up instead of starting cold.',
+    hypothesis: 'There may be a proposal that wants a next experiment, review decision, or implementation outcome.',
+    suggested_question: 'Which queued Mira proposal should become a concrete experiment next?',
+    possible_action: 'Ask Architect to route the most alive queued proposal if it is still pending.',
+    route_hint: 'architect',
+    sensitivity_hint: 'local_runtime_queue_metadata',
+  };
+}
+
+function recentCommsCuriosityAdapter(context) {
+  if (typeof context.recentCommsText === 'string') {
+    const lines = context.recentCommsText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-20);
+    return {
+      source: 'runtime_comms',
+      adapter_id: 'recent_comms',
+      status: 'active',
+      observation: lines.length > 0
+        ? `Recent comms fixture has ${lines.length} line(s). Last signal: ${oneLine(lines[lines.length - 1], 160)}`
+        : 'Recent comms fixture is empty.',
+      why_interesting: 'Recent agent chatter can reveal tension, repeated requests, or unfinished product questions.',
+      hypothesis: 'A repeated demand or correction may be telling Mira what to inspect next.',
+      suggested_question: 'What repeated demand in the recent comms should Mira inspect without waiting for James?',
+      possible_action: 'Stage a curiosity item or self-direction proposal from the repeated comms pattern.',
+      route_hint: 'architect',
+      sensitivity_hint: 'internal_comms_metadata',
+    };
+  }
+  const scriptPath = path.join(context.projectRoot, 'ui', 'scripts', 'hm-comms.js');
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      source: 'runtime_comms',
+      adapter_id: 'recent_comms',
+      status: 'unavailable_in_this_runtime',
+      observation: 'hm-comms.js was not available for the recent-comms scout adapter.',
+      why_interesting: 'Recent comms are a useful curiosity source when the local journal helper exists.',
+      hypothesis: 'Mira is missing a local conversation trail that could expose repeated friction.',
+      suggested_question: 'What local comms summary should Mira read when the helper is unavailable?',
+      possible_action: 'Wire the recent-comms adapter to the active journal helper in this runtime.',
+      route_hint: 'builder',
+      sensitivity_hint: 'internal_comms_metadata',
+      adapter_error: 'hm_comms_helper_missing',
+    };
+  }
+  const run = spawnSync(process.execPath, [scriptPath, 'history', '--last', '20'], {
+    cwd: context.projectRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 5000,
+  });
+  if (run.status !== 0) {
+    return {
+      source: 'runtime_comms',
+      adapter_id: 'recent_comms',
+      status: 'unavailable_in_this_runtime',
+      observation: 'Recent comms helper did not return a readable history.',
+      why_interesting: 'Mira should know when her comms window is missing instead of silently pretending.',
+      hypothesis: 'The comms trail may contain useful initiative signals, but the adapter cannot read them yet.',
+      suggested_question: 'What comms journal seam should Mira inspect next?',
+      possible_action: 'Repair or adapt the local comms history command for curiosity reads.',
+      route_hint: 'builder',
+      sensitivity_hint: 'internal_comms_metadata',
+      adapter_error: run.stderr || 'hm_comms_history_failed',
+    };
+  }
+  const lines = (run.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-20);
+  return {
+    source: 'runtime_comms',
+    adapter_id: 'recent_comms',
+    status: 'active',
+    observation: lines.length > 0
+      ? `Recent comms helper returned ${lines.length} line(s). Last signal: ${oneLine(lines[lines.length - 1], 160)}`
+      : 'Recent comms helper returned no lines.',
+    why_interesting: 'Recent comms are where Mira can notice repeated pressure, unfinished work, and routing gaps.',
+    hypothesis: 'Recent team messages may point at a product tension before James turns it into a task.',
+    suggested_question: 'What pattern in the last comms should Mira ask Architect or James about?',
+    possible_action: 'Route a concise internal question to Architect if the pattern looks actionable.',
+    route_hint: 'architect',
+    sensitivity_hint: 'internal_comms_metadata',
+  };
+}
+
+function notImplementedCuriosityAdapter(registryEntry, label) {
+  return () => ({
+    source: registryEntry.source,
+    scope: registryEntry.scope,
+    adapter_id: registryEntry.adapter_id,
+    status: 'adapter_not_built_yet',
+    observation: `${label} is a valid curiosity source, but this v0 scout does not have that adapter yet.`,
+    why_interesting: 'Mira should be able to notice broader local-world patterns as read-only source arms come online.',
+    hypothesis: `${label} may contain repeated interests, friction, obligations, or visual/context clues that James has not translated into an explicit prompt.`,
+    suggested_question: `Which existing seam should Mira connect first for ${label}: ${registryEntry.existing_seam}?`,
+    possible_action: `Ask which existing seam Mira should connect first: ${registryEntry.existing_seam}. If none is enough, build ${registryEntry.adapter_id}.`,
+    route_hint: 'builder',
+    sensitivity_hint: 'broad_local_source_adapter_pending',
+  });
+}
+
+function defaultCuriosityAdapters() {
+  const byAdapter = Object.fromEntries(MIRA_CURIOSITY_SOURCE_REGISTRY.map((entry) => [entry.adapter_id, entry]));
+  return [
+    gitStatusCuriosityAdapter,
+    runtimeQueueCuriosityAdapter,
+    recentCommsCuriosityAdapter,
+    notImplementedCuriosityAdapter(byAdapter.memory_curiosity, 'memory and continuity'),
+    notImplementedCuriosityAdapter(byAdapter.browser_history_curiosity, 'browser history'),
+    notImplementedCuriosityAdapter(byAdapter.email_curiosity, 'email'),
+    notImplementedCuriosityAdapter(byAdapter.web_research_curiosity, 'websites visited and research trails'),
+    notImplementedCuriosityAdapter(byAdapter.visual_asset_curiosity, 'screenshots and visual assets'),
+    notImplementedCuriosityAdapter(byAdapter.calendar_message_curiosity, 'calendars and messages'),
+    notImplementedCuriosityAdapter(byAdapter.environment_app_curiosity, 'environment and app state'),
+    notImplementedCuriosityAdapter(byAdapter.automation_scheduler_curiosity, 'automation and scheduler state'),
+    notImplementedCuriosityAdapter(byAdapter.work_continuation_curiosity, 'work continuation and routing'),
+    notImplementedCuriosityAdapter(byAdapter.mira_runtime_curiosity, 'Mira runtime growth loops'),
+  ];
+}
+
+function buildAccelerationCuriosityItems(context) {
+  return [
+    {
+      source: 'source_action_substrate',
+      scope: 'cross_source_action_substrate',
+      adapter_id: 'source_action_substrate_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'adapter_not_built_yet',
+      observation: 'Mira has many dormant source and action limbs, but no source/action substrate that chooses native adapters, MCP-compatible connectors, or code-mode wrappers by fit.',
+      why_interesting: 'A substrate would let Mira wander, inspect, ask, and route work across files, browser trails, email, web, memory, scheduler, and app state without James hand-scoping each inspection.',
+      hypothesis: 'The fastest jump is a registry-driven source/action substrate: native SquidRun adapters for existing seams, MCP-compatible connectors where ecosystem access is faster, and code-mode/search-execute wrappers for huge surfaces.',
+      suggested_question: 'Which existing SquidRun seam should Mira connect first, and where is an MCP-compatible connector or code-mode wrapper actually faster?',
+      possible_action: 'Route Builder to map native SquidRun seams, MCP-compatible connectors, code-mode wrappers, workflow/DAG execution, active memory actions, and evaluation loops into one substrate plan.',
+      route_hint: 'architect',
+      sensitivity_hint: 'source_action_substrate_design',
+    },
+    {
+      source: 'code_mode_exploration',
+      scope: 'sandboxed_search_execute_curiosity',
+      adapter_id: 'read_only_execute_script_curiosity',
+      integration_strategy: 'scout_model_candidate',
+      status: 'adapter_not_built_yet',
+      observation: 'Fixed adapters will always lag some questions; Mira needs a sandboxed read-only search-execute mode for writing tiny exploration logic over local sources.',
+      why_interesting: 'Code Mode style exploration lets Mira ask sharper questions over large APIs, repos, and logs without exploding the tool schema.',
+      hypothesis: 'A read-only execute_script/search-execute wrapper is the fastest bridge from curiosity to actual inspection.',
+      suggested_question: 'What sandboxed read-only execute_script shape lets Mira explore files, JSONL, logs, and source APIs without mutation?',
+      possible_action: 'Route Builder to design the read-only code-mode/search-execute wrapper as the next source/action substrate patch.',
+      route_hint: 'builder',
+      sensitivity_hint: 'read_only_code_mode_design',
+    },
+    {
+      source: 'memory',
+      scope: 'local_memory_and_continuity',
+      adapter_id: 'active_memory_tools_curiosity',
+      integration_strategy: 'existing_seam',
+      status: 'adapter_not_built_yet',
+      observation: 'Memory tooling already exists in cognitive-memory, memory-search, team-memory, and memory-ingest modules, but curiosity v0 is not using it yet.',
+      why_interesting: 'Mira should inspect her own continuity substrate before asking James to restate what the system already knows.',
+      hypothesis: 'Active memory retrieve can turn vague curiosity into grounded follow-up questions.',
+      suggested_question: 'Which memory retrieve/search seam should Mira call first when she wants context without waiting for James?',
+      possible_action: 'Connect curiosity scout to hm-memory-api retrieve or cognitive-memory-api read-only retrieval.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_memory_metadata',
+    },
+    {
+      source: 'implementation_outcomes',
+      scope: 'scoreboard_fitness_data',
+      adapter_id: 'implementation_outcome_recording_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'adapter_not_built_yet',
+      observation: 'Authority scoreboard can see proposals and reviews, but implementation outcomes are still inferred instead of explicitly recorded.',
+      why_interesting: 'Mira needs real fitness data to learn which initiatives become working capability.',
+      hypothesis: 'Explicit implementation outcomes are the missing reinforcement signal for scoreboard, Reflexion lessons, and evolution loops.',
+      suggested_question: 'Where should routed Mira proposals record implemented, not_implemented, false_positive, and follow-up evidence without note-scraping?',
+      possible_action: 'Add formal implementation-outcome recording for routed proposals after the curiosity v0 scout ships.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_review_metadata',
+    },
+    {
+      source: 'reflexion_lessons',
+      scope: 'proposal_review_learning',
+      adapter_id: 'scoreboard_reflexion_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'adapter_not_built_yet',
+      observation: 'Authority scoreboard and proposal reviews now contain success/failure traces, but Mira has no Reflexion-style lesson extractor over them.',
+      why_interesting: 'Review outcomes are exactly where Mira can learn which initiatives earn more reins.',
+      hypothesis: 'Rejected and routed proposals can become compact lessons for better next proposals.',
+      suggested_question: 'What lesson should Mira extract from the last routed, rejected, or false-positive proposal before proposing again?',
+      possible_action: 'Build a read-only review-to-lesson extractor over mira-self-direction-proposals and reviews JSONL.',
+      route_hint: 'oracle',
+      sensitivity_hint: 'local_review_metadata',
+    },
+    {
+      source: 'cheap_parallel_scouts',
+      scope: 'parallel_curiosity_execution',
+      adapter_id: 'parallel_scout_curiosity',
+      integration_strategy: 'scout_model_candidate',
+      status: 'adapter_not_built_yet',
+      observation: 'Mira curiosity can split into cheap scouts for repo, memory, comms, web, and assets instead of serially waiting for one broad pass.',
+      why_interesting: 'Parallel scouting is how Mira starts noticing more than the current prompt without becoming slow or heavy.',
+      hypothesis: 'Small bounded scouts can surface questions faster than one large agentic sweep.',
+      suggested_question: 'Which three curiosity scouts should run cheaply in parallel after each quiet interval?',
+      possible_action: 'Define a scout budget and route independent read-only adapters through background Builder/Oracle lanes or a small scheduler hook.',
+      route_hint: 'architect',
+      sensitivity_hint: 'local_runtime_planning',
+    },
+    {
+      source: 'voyager_curriculum',
+      scope: 'automatic_skill_library',
+      adapter_id: 'curriculum_skill_library_curiosity',
+      integration_strategy: 'native_adapter',
+      status: 'adapter_not_built_yet',
+      observation: 'Mira can propose improvements, but does not yet grow an automatic curriculum or reusable skill library from successful curiosity loops.',
+      why_interesting: 'A curriculum turns one-off curiosity into compounding capability instead of more chat.',
+      hypothesis: 'Repeated successful scout-route-implement loops should become named skills Mira can reuse.',
+      suggested_question: 'What small curiosity skill should Mira practice repeatedly until it graduates into the default toolkit?',
+      possible_action: 'Add a curriculum JSONL over successful curiosity items and route candidates into a reusable skill-library review.',
+      route_hint: 'architect',
+      sensitivity_hint: 'local_capability_growth_metadata',
+    },
+  ].map((item) => buildCuriosityItem(item, { generatedAt: context.generatedAt }));
+}
+
+function runMiraCuriosityScout(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const logPath = curiosityItemsPath(projectRoot);
+  const adapters = Array.isArray(options.curiosityAdapters)
+    ? options.curiosityAdapters
+    : defaultCuriosityAdapters();
+  const context = {
+    projectRoot,
+    generatedAt,
+    repoStatusText: options.repoStatusText,
+    recentCommsText: options.recentCommsText,
+  };
+  const items = [];
+  for (const adapter of adapters) {
+    try {
+      for (const rawItem of normalizeAdapterResult(adapter(context))) {
+        items.push(buildCuriosityItem(rawItem, { generatedAt }));
+      }
+    } catch (err) {
+      items.push(buildCuriosityItem({
+        source: adapter.name || 'curiosity_adapter',
+        status: 'skipped',
+        observation: 'Curiosity adapter failed and was recorded as skipped.',
+        why_interesting: 'A failed curiosity arm is itself a local capability gap.',
+        suggested_question: 'Which scout adapter failed and should be repaired first?',
+        sensitivity_hint: 'local_adapter_error',
+        adapter_error: err?.message || String(err),
+      }, { generatedAt }));
+    }
+  }
+  items.push(...buildAccelerationCuriosityItems(context));
+  for (const item of items) appendJsonl(logPath, item);
+  return {
+    schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+    ok: true,
+    decision: 'scouted',
+    generated_at: generatedAt,
+    curiosity_log_path: logPath,
+    item_count: items.length,
+    active_count: items.filter((item) => item.status === 'active').length,
+    adapter_not_built_count: items.filter((item) => item.status === 'adapter_not_built_yet').length,
+    unavailable_count: items.filter((item) => item.status === 'unavailable_in_this_runtime').length,
+    items,
+    source_registry: MIRA_CURIOSITY_SOURCE_REGISTRY,
+    no_action_taken: true,
+    no_mutation_performed: true,
+    applied: false,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      file_system_action_performed_except_curiosity_log: false,
       durable_product_change_performed: false,
       deploy_trade_customer_auth_action_performed: false,
     },
@@ -2105,6 +2560,8 @@ module.exports = {
   MIRA_LAB_TURN_CHANNEL,
   MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
+  MIRA_CURIOSITY_ITEM_SCHEMA,
+  MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_DECISIONS,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
@@ -2120,10 +2577,12 @@ module.exports = {
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   reviewMiraSelfDirectionProposal,
+  runMiraCuriosityScout,
   scanMiraLabConfidenceSource,
   buildMiraLabTurn,
   exportMiraLabTranscript,
   replyAuditPath,
+  curiosityItemsPath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
   transcriptPath,
