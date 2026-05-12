@@ -79,6 +79,12 @@ describe('Mira source/action substrate plan', () => {
       status: 'active',
     }));
     expect(scheduler.first_probe).toMatch(/schedules\.json metadata/i);
+    const workContinuation = plan.sources.find((entry) => entry.source === 'work_continuation');
+    expect(workContinuation).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(workContinuation.first_probe).toMatch(/owned-work queue totals/i);
   });
 
   test('chooses a concrete strategy and first probe for a routed source', () => {

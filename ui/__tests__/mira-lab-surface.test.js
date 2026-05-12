@@ -898,6 +898,25 @@ describe('Mira Lab sidecar surface', () => {
         next_schedule: { name: 'Quiet interval curiosity burst' },
         schedules: [],
       }),
+      workContinuationCuriosityReader: () => ({
+        ok: true,
+        decision: 'work_continuation_read_only',
+        totals: {
+          active_count: 1,
+          carried_count: 3,
+          stale_count: 2,
+          blocked_count: 1,
+          approval_required_count: 1,
+        },
+        due_count: 2,
+        held_count: 1,
+        next_action: {
+          agent: 'builder',
+          task_id: 'builder-safe-1',
+          title: 'Continue safe work',
+          next_step: 'Run focused continuation tests.',
+        },
+      }),
       environmentCuriosityReader: () => ({
         ok: true,
         decision: 'environment_health_read_only',
@@ -912,7 +931,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(3);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(2);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -980,6 +999,17 @@ describe('Mira Lab sidecar surface', () => {
       scheduler_due_soon_count: 1,
       scheduler_type_counts: { interval: 1, event: 1 },
     }));
+    expect(bySource.work_continuation).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      work_carried_count: 3,
+      work_stale_count: 2,
+      work_approval_required_count: 1,
+      work_due_count: 2,
+      work_held_count: 1,
+      work_next_agent: 'builder',
+      work_next_task_id: 'builder-safe-1',
+    }));
     expect(bySource.environment_apps).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
@@ -1027,7 +1057,7 @@ describe('Mira Lab sidecar surface', () => {
     }));
     expect(bySource.voyager_curriculum.possible_action).toMatch(/hm-mira-self-direction curriculum/i);
     expect(JSON.stringify(result.items)).toContain('Which existing seam should Mira connect first');
-    expect(JSON.stringify(result.items)).not.toMatch(/requires_permission|forbidden|blocked/i);
+    expect(JSON.stringify(result.items)).not.toMatch(/requires_permission|forbidden/i);
 
     const logEntries = readJsonl(curiosityItemsPath(projectRoot));
     expect(logEntries).toHaveLength(result.item_count);
@@ -1516,9 +1546,18 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:work-continuation-next',
         source: 'work_continuation',
         adapter_id: 'work_continuation_curiosity',
-        status: 'adapter_not_built_yet',
+        status: 'active',
         suggested_question: 'Which owned work route is stalled?',
-        possible_action: 'Build work continuation curiosity.',
+        possible_action: 'Use compact work-continuation metadata.',
+        route_hint: 'builder',
+      },
+      {
+        item_id: 'mira-curiosity:runtime-next',
+        source: 'mira_runtime',
+        adapter_id: 'mira_runtime_curiosity',
+        status: 'adapter_not_built_yet',
+        suggested_question: 'Which Mira runtime gap matters?',
+        possible_action: 'Build Mira runtime curiosity integration.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1535,8 +1574,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:work-continuation-next',
-      source: 'work_continuation',
+      item_id: 'mira-curiosity:runtime-next',
+      source: 'mira_runtime',
     }));
   });
 
