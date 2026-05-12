@@ -1734,6 +1734,38 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.consequence_controls.file_write_performed).toBe(false);
   });
 
+  test('read-only code mode reads the tail of large JSONL logs instead of stale heads', () => {
+    projectRoot = tempProject();
+    const runtimePath = path.join(projectRoot, '.squidrun', 'runtime');
+    fs.mkdirSync(runtimePath, { recursive: true });
+    const rows = [];
+    for (let index = 0; index < 80; index += 1) {
+      rows.push(JSON.stringify({
+        source: index < 70 ? 'stale_source' : 'live_source',
+        adapter_id: `adapter-${index}`,
+        status: index < 70 ? 'adapter_not_built_yet' : 'active',
+        filler: 'x'.repeat(80),
+      }));
+    }
+    fs.writeFileSync(path.join(runtimePath, 'large-curiosity.jsonl'), `${rows.join('\n')}\n`, 'utf8');
+
+    const result = runMiraReadOnlyCodeMode({
+      allowedPaths: ['.squidrun/runtime'],
+      maxReadBytes: 1400,
+      script: [
+        "const rows = api.readJsonl('.squidrun/runtime/large-curiosity.jsonl', 5);",
+        'emit(rows.map((row) => row.adapter_id));',
+        'return rows.map((row) => row.source);',
+      ].join('\n'),
+    }, { projectRoot, generatedAt: '2026-05-12T14:03:45.000Z' });
+
+    expect(result.decision).toBe('completed');
+    expect(result.ok).toBe(true);
+    expect(result.output[0]).toEqual(['adapter-75', 'adapter-76', 'adapter-77', 'adapter-78', 'adapter-79']);
+    expect(result.result).toEqual(['live_source', 'live_source', 'live_source', 'live_source', 'live_source']);
+    expect(result.consequence_controls.file_write_performed).toBe(false);
+  });
+
   test('read-only code mode allows normal function declarations but blocks Function constructor', () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
