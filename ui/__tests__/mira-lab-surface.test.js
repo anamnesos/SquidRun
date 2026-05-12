@@ -1816,6 +1816,81 @@ describe('Mira Lab sidecar surface', () => {
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
   });
 
+  test('active initiative names live memory drift as memory consistency repair', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:27:00.000Z',
+      item_id: 'mira-curiosity:memory-drift-env',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health snapshot read OK score=100/100; memory=drift_detected (attention needed); bridge=connected; snapshot=fresh.',
+      suggested_question: 'Which environment signal should Mira act on first: memory drift, bridge state, app session, or local models?',
+      possible_action: 'Use the compact environment health read as evidence for the next runtime, bridge, or memory-consistency route.',
+      route_hint: 'builder',
+      environment_overall_label: 'OK',
+      environment_overall_score: 100,
+      environment_snapshot_stale: false,
+      environment_memory_sync_status: 'drift_detected (attention needed)',
+      environment_memory_counts: { missing: 8, orphans: 67, duplicates: 0 },
+      environment_bridge_connection: 'connected',
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:28:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('memory_consistency_repair');
+    expect(result.target_role).toBe('builder');
+    expect(result.work_order.title).toBe('Repair memory consistency drift: missing=8 orphans=67');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'memory_counts=missing:8 orphans:67 duplicates:0',
+    ]));
+  });
+
+  test('active initiative treats review-only memory drift as triage, not repair', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:29:00.000Z',
+      item_id: 'mira-curiosity:memory-review-queue',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health snapshot read OK score=100/100; memory=review_queue_only(orphans=67); bridge=connected; snapshot=fresh.',
+      suggested_question: 'Which environment signal should Mira act on first: memory drift, bridge state, app session, or local models?',
+      possible_action: 'Use the compact environment health read as evidence for the next runtime, bridge, or memory-consistency route.',
+      route_hint: 'builder',
+      environment_overall_label: 'OK',
+      environment_overall_score: 100,
+      environment_snapshot_stale: false,
+      environment_memory_sync_status: 'drift_detected (attention needed)',
+      environment_memory_counts: { missing: 0, orphans: 67, duplicates: 0 },
+      environment_memory_repair_state: 'review_queue_only',
+      environment_memory_review_only: true,
+      environment_memory_review_queue: { orphans: 67, actions: 0, skips: 67 },
+      environment_bridge_connection: 'connected',
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:30:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('memory_review_queue_triage');
+    expect(result.target_role).toBe('oracle');
+    expect(result.work_order.title).toBe('Triage memory review queue: orphans=67 actions=0');
+    expect(result.work_order.action).toContain('mapping plan');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'memory_repair_state=review_queue_only',
+      'memory_review_queue=orphans:67 actions:0 skips:67',
+    ]));
+  });
+
   test('active initiative outcomes close the work loop and feed curriculum skills', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {

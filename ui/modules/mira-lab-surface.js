@@ -1429,6 +1429,22 @@ function compactSchedulerTypeCounts(value) {
     .slice(0, 8));
 }
 
+function compactEnvironmentMemoryCounts(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return Object.fromEntries(Object.entries(value)
+      .map(([key, count]) => [trimText(key), Number(count)])
+      .filter(([key, count]) => key && Number.isFinite(count))
+      .slice(0, 8));
+  }
+  const counts = {};
+  for (const part of String(value).split(',')) {
+    const match = /^\s*([A-Za-z0-9_-]+)\s*=\s*(\d+)\s*$/.exec(part);
+    if (match) counts[match[1]] = Number(match[2]);
+  }
+  return counts;
+}
+
 function compactWorkContinuationTotals(value) {
   if (!value || typeof value !== 'object') return {};
   const fields = [
@@ -1533,6 +1549,12 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
       ? Boolean(rawItem.environment_snapshot_stale ?? rawItem.environmentSnapshotStale)
       : null,
     environment_memory_sync_status: trimText(rawItem.environment_memory_sync_status || rawItem.environmentMemorySyncStatus) || null,
+    environment_memory_counts: compactEnvironmentMemoryCounts(rawItem.environment_memory_counts || rawItem.environmentMemoryCounts),
+    environment_memory_repair_state: trimText(rawItem.environment_memory_repair_state || rawItem.environmentMemoryRepairState) || null,
+    environment_memory_review_only: typeof (rawItem.environment_memory_review_only ?? rawItem.environmentMemoryReviewOnly) === 'boolean'
+      ? Boolean(rawItem.environment_memory_review_only ?? rawItem.environmentMemoryReviewOnly)
+      : null,
+    environment_memory_review_queue: compactEnvironmentMemoryCounts(rawItem.environment_memory_review_queue || rawItem.environmentMemoryReviewQueue),
     environment_bridge_connection: trimText(rawItem.environment_bridge_connection || rawItem.environmentBridgeConnection) || null,
     browser_result_count: Number.isFinite(browserResultCount) ? browserResultCount : null,
     browser_top_hosts: compactBrowserHistoryTopHosts(rawItem.browser_top_hosts || rawItem.browserTopHosts),
@@ -2359,6 +2381,10 @@ function activeEnvironmentCuriosityAdapter(context = {}) {
     environment_overall_score: score,
     environment_snapshot_stale: Boolean(result.snapshot_stale),
     environment_memory_sync_status: memoryStatus || null,
+    environment_memory_counts: result.memory_counts || null,
+    environment_memory_repair_state: result.memory_repair_state || null,
+    environment_memory_review_only: result.memory_review_only === true,
+    environment_memory_review_queue: result.memory_review_queue || null,
     environment_bridge_connection: bridgeConnection || null,
     no_mutation_performed: true,
   };
@@ -3316,6 +3342,17 @@ function activeInitiativeEvidenceForItem(item = {}) {
   if (trimText(item.environment_memory_sync_status) || trimText(item.environment_bridge_connection)) {
     evidence.push(`environment=memory:${trimText(item.environment_memory_sync_status) || 'unknown'} bridge:${trimText(item.environment_bridge_connection) || 'unknown'}`);
   }
+  if (item.environment_memory_counts && Object.keys(item.environment_memory_counts).length > 0) {
+    const counts = item.environment_memory_counts;
+    evidence.push(`memory_counts=missing:${counts.missing ?? 'unknown'} orphans:${counts.orphans ?? 'unknown'} duplicates:${counts.duplicates ?? 'unknown'}`);
+  }
+  if (trimText(item.environment_memory_repair_state)) {
+    evidence.push(`memory_repair_state=${trimText(item.environment_memory_repair_state)}`);
+  }
+  if (item.environment_memory_review_queue && Object.keys(item.environment_memory_review_queue).length > 0) {
+    const queue = item.environment_memory_review_queue;
+    evidence.push(`memory_review_queue=orphans:${queue.orphans ?? 'unknown'} actions:${queue.actions ?? 'unknown'} skips:${queue.skips ?? 'unknown'}`);
+  }
   if (numberSignal(item.scheduler_due_soon_count) > 0 || numberSignal(item.scheduler_overdue_count) > 0) {
     evidence.push(`scheduler=due_soon:${numberSignal(item.scheduler_due_soon_count)} overdue:${numberSignal(item.scheduler_overdue_count)}`);
   }
@@ -3373,6 +3410,8 @@ function activeInitiativeCandidateForItem(item, index, total) {
   if (!plan) return null;
   let score = plan.priority;
   let targetRole = normalizeDirectRouteTarget(plan.target_role) || 'builder';
+  let initiativeKind = plan.initiative_kind;
+  let reason = plan.reason;
   let title = oneLine(item.suggested_question || `Use ${source} for the next internal initiative.`, 160);
   let action = oneLine(item.possible_action || 'Route the next internal follow-up from this active signal.', 220);
   const modules = asArray(item.runtime_blocked_modules).map(trimText).filter(Boolean);
@@ -3408,14 +3447,34 @@ function activeInitiativeCandidateForItem(item, index, total) {
     const scoreValue = item.environment_overall_score;
     const memory = trimText(item.environment_memory_sync_status);
     const bridge = trimText(item.environment_bridge_connection);
+    const memoryCounts = item.environment_memory_counts || {};
+    const memoryRepairState = trimText(item.environment_memory_repair_state);
+    const reviewQueue = item.environment_memory_review_queue || {};
+    const memoryReviewOnly = item.environment_memory_review_only === true || memoryRepairState === 'review_queue_only';
+    const memoryNeedsRepair = Boolean(memory && !memoryReviewOnly && !/^(ok|synced|clean|in_sync|synced\s+\(in sync\))$/i.test(memory));
+    const bridgeNeedsRepair = Boolean(bridge && !/^(connected|disabled|not_required)$/i.test(bridge));
     if (item.environment_snapshot_stale === true) score += 16;
     if (label && label !== 'OK') score += 16;
     if (Number.isFinite(Number(scoreValue)) && Number(scoreValue) < 95) score += 8;
-    if (memory && !/^(ok|synced|clean)$/i.test(memory)) score += 18;
-    if (bridge && !/^(connected|disabled|not_required)$/i.test(bridge)) score += 12;
+    if (memoryNeedsRepair) score += 18;
+    if (memoryReviewOnly) score += 10;
+    if (bridgeNeedsRepair) score += 12;
     if (score > plan.priority) {
-      title = `Repair environment drift: memory=${memory || 'unknown'} bridge=${bridge || 'unknown'}`;
-      action = 'Have Builder refresh or repair the local health/memory/bridge signal that can mislead later routes.';
+      if (memoryReviewOnly && !bridgeNeedsRepair && label === 'OK') {
+        initiativeKind = 'memory_review_queue_triage';
+        targetRole = 'oracle';
+        reason = 'memory drift is now a review/migration queue, not an automatic repair target';
+        title = `Triage memory review queue: orphans=${reviewQueue.orphans ?? memoryCounts.orphans ?? 'unknown'} actions=${reviewQueue.actions ?? 'unknown'}`;
+        action = 'Have Oracle inspect the memory review/migration queue and identify whether a mapping plan, skip confirmation, or no-op closure is the right next move.';
+      } else if (memoryNeedsRepair && !bridgeNeedsRepair && label === 'OK') {
+        initiativeKind = 'memory_consistency_repair';
+        reason = 'memory consistency drift is the live environment signal still requiring repair';
+        title = `Repair memory consistency drift: missing=${memoryCounts.missing ?? 'unknown'} orphans=${memoryCounts.orphans ?? 'unknown'}`;
+        action = 'Have Builder inspect the memory consistency drift and choose the smallest repair path for missing/orphaned knowledge coverage.';
+      } else {
+        title = `Repair environment drift: memory=${memory || 'unknown'} bridge=${bridge || 'unknown'}`;
+        action = 'Have Builder refresh or repair the local health/memory/bridge signal that can mislead later routes.';
+      }
     } else {
       score -= 24;
     }
@@ -3455,15 +3514,15 @@ function activeInitiativeCandidateForItem(item, index, total) {
   return {
     item,
     target_role: targetRole,
-    initiative_kind: plan.initiative_kind,
+    initiative_kind: initiativeKind,
     title,
     action,
     success_metric: 'The target agent reports a concrete patch, proof, or rejected-with-evidence outcome that can be recorded back into Mira outcomes.',
     score: score + recencyWeight,
-    reason: plan.reason,
+    reason,
     evidence: activeInitiativeEvidenceForItem(item),
     fingerprint: activeInitiativeFingerprint({
-      initiative_kind: plan.initiative_kind,
+      initiative_kind: initiativeKind,
       item,
       title,
     }),
