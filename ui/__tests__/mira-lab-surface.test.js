@@ -878,6 +878,14 @@ describe('Mira Lab sidecar surface', () => {
           { path: '.squidrun/coord/ui-research.md', title: 'UI Research', domains: ['research.example.com'] },
         ],
       }),
+      visualAssetCuriosityReader: () => ({
+        ok: true,
+        decision: 'visual_assets_read_only',
+        result_count: 3,
+        buckets: { screenshots: 2, generated_images: 1 },
+        latest_asset: { path: '.squidrun/screenshots/latest.png', width: 900, height: 760 },
+        results: [],
+      }),
       environmentCuriosityReader: () => ({
         ok: true,
         decision: 'environment_health_read_only',
@@ -892,7 +900,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.schema).toBe(MIRA_CURIOSITY_ITEM_SCHEMA);
     expect(result.decision).toBe('scouted');
     expect(result.active_count).toBeGreaterThanOrEqual(8);
-    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(5);
+    expect(result.adapter_not_built_count).toBeGreaterThanOrEqual(4);
     expect(result.no_action_taken).toBe(true);
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -946,6 +954,12 @@ describe('Mira Lab sidecar surface', () => {
       web_result_count: 2,
     }));
     expect(bySource.web_research.web_top_domains).toEqual([{ domain: 'research.example.com', count: 2 }]);
+    expect(bySource.images_screenshots_assets).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'native_adapter',
+      visual_asset_count: 3,
+      visual_asset_buckets: { screenshots: 2, generated_images: 1 },
+    }));
     expect(bySource.environment_apps).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
@@ -1454,9 +1468,18 @@ describe('Mira Lab sidecar surface', () => {
         item_id: 'mira-curiosity:visual-next',
         source: 'images_screenshots_assets',
         adapter_id: 'visual_asset_curiosity',
+        status: 'active',
+        suggested_question: 'Which latest visual asset matters?',
+        possible_action: 'Use compact visual metadata.',
+        route_hint: 'mira_lab',
+      },
+      {
+        item_id: 'mira-curiosity:scheduler-next',
+        source: 'automation_scheduler',
+        adapter_id: 'scheduled_curiosity_loop',
         status: 'adapter_not_built_yet',
-        suggested_question: 'Which visual asset seam should Mira connect?',
-        possible_action: 'Build visual asset curiosity.',
+        suggested_question: 'Which scheduler seam should Mira connect?',
+        possible_action: 'Build recurring curiosity scheduling.',
         route_hint: 'builder',
       },
     ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
@@ -1473,8 +1496,8 @@ describe('Mira Lab sidecar surface', () => {
 
     expect(result.decision).toBe('routed');
     expect(result.selected_item).toEqual(expect.objectContaining({
-      item_id: 'mira-curiosity:visual-next',
-      source: 'images_screenshots_assets',
+      item_id: 'mira-curiosity:scheduler-next',
+      source: 'automation_scheduler',
     }));
   });
 
