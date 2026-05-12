@@ -87,6 +87,8 @@ describe('Mira environment curiosity read adapter', () => {
       overall_label: 'WARN',
       overall_score: 88,
       memory_sync_status: 'drift_detected (attention needed)',
+      memory_repair_state: 'actionable_drift',
+      memory_actionable: true,
       bridge_connection: 'disconnected',
       local_models_enabled: 'no',
     }));
@@ -154,6 +156,8 @@ describe('Mira environment curiosity read adapter', () => {
     expect(result.startup_snapshot_stale).toBe(true);
     expect(result.snapshot_stale).toBe(false);
     expect(result.memory_sync_status).toBe('synced (in sync)');
+    expect(result.memory_repair_state).toBe('synced');
+    expect(result.memory_actionable).toBe(false);
     expect(result.bridge_connection).toBe('connected');
     expect(result.observation_excerpt).toContain('snapshot=live_refresh');
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -196,7 +200,45 @@ describe('Mira environment curiosity read adapter', () => {
     expect(result.snapshot_refresh_error).toBe('health snapshot timed out');
     expect(result.snapshot_stale).toBe(true);
     expect(result.memory_sync_status).toBe('drift_detected (attention needed)');
+    expect(result.memory_repair_state).toBe('actionable_drift');
     expect(result.observation_excerpt).toContain('refresh=health_cli_busy');
+  });
+
+  test('classifies memory drift with zero actions as review queue instead of repairable drift', () => {
+    const projectRoot = tempProject();
+    writeStartupHealth(projectRoot, [
+      'STARTUP HEALTH',
+      '- Overall: OK (score=100/100)',
+      '- Generated: 2026-05-12T23:07:21.929Z',
+      '- Profile: main',
+      '',
+      'MEMORY CONSISTENCY',
+      '- Sync Status: drift_detected (attention needed)',
+      '- Counts: entries=164, nodes=231, missing=0, orphans=67, duplicates=0',
+      '',
+      'BRIDGE HEALTH',
+      '- Connection: connected',
+      '- Runtime: mode=connected, enabled=yes, configured=yes, required=no',
+      '- Warnings: memory_consistency_review_queue:orphans=67,actions=0,skips=67',
+    ].join('\n'));
+
+    const result = readMiraEnvironmentCuriosity({}, {
+      projectRoot,
+      nowMs: Date.parse('2026-05-12T23:08:00.000Z'),
+    });
+
+    expect(result.snapshot_stale).toBe(false);
+    expect(result.memory_sync_status).toBe('drift_detected (attention needed)');
+    expect(result.memory_repair_state).toBe('review_queue_only');
+    expect(result.memory_actionable).toBe(false);
+    expect(result.memory_review_only).toBe(true);
+    expect(result.memory_review_queue).toEqual({
+      orphans: 67,
+      actions: 0,
+      skips: 67,
+    });
+    expect(result.observation_excerpt).toContain('memory=review_queue_only(orphans=67)');
+    expect(result.observation_excerpt).not.toContain('memory=drift_detected');
   });
 
   test('reports missing startup health without creating a file', () => {
