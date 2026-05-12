@@ -1801,12 +1801,12 @@ function buildAccelerationCuriosityItems(context) {
       scope: 'proposal_review_learning',
       adapter_id: 'scoreboard_reflexion_curiosity',
       integration_strategy: 'native_adapter',
-      status: 'adapter_not_built_yet',
-      observation: 'Authority scoreboard and proposal reviews now contain success/failure traces, but Mira has no Reflexion-style lesson extractor over them.',
+      status: 'active',
+      observation: 'Mira now has a read-only Reflexion lesson extractor over proposal reviews and implementation outcomes.',
       why_interesting: 'Review outcomes are exactly where Mira can learn which initiatives earn more reins.',
-      hypothesis: 'Rejected and routed proposals can become compact lessons for better next proposals.',
-      suggested_question: 'What lesson should Mira extract from the last routed, rejected, or false-positive proposal before proposing again?',
-      possible_action: 'Build a read-only review-to-lesson extractor over mira-self-direction-proposals and reviews JSONL.',
+      hypothesis: 'Extracted lessons can shape better next proposals and default routes instead of leaving review history inert.',
+      suggested_question: 'Which extracted lesson should Mira feed into the next proposal or direct-route decision?',
+      possible_action: 'Run hm-mira-self-direction reflexion and feed the strongest lesson into future Mira context.',
       route_hint: 'oracle',
       sensitivity_hint: 'local_review_metadata',
     },
@@ -2133,11 +2133,13 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
   },
   memory: {
     priority: 88,
+    active_priority: 46,
     target_role: 'builder',
     reason: 'active memory retrieval lets Mira inspect continuity without waiting for James to restate it',
   },
   reflexion_lessons: {
     priority: 84,
+    active_priority: 50,
     target_role: 'oracle',
     reason: 'review traces should become compact lessons before the next initiative cycle',
   },
@@ -3656,24 +3658,24 @@ function extractMiraReflexionLessons(payload = {}, options = {}) {
   const queuePath = selfDirectionQueuePath(projectRoot);
   const reviewPath = selfDirectionReviewAuditPath(projectRoot);
   const outcomePath = selfDirectionOutcomePath(projectRoot);
-  
+
   const proposals = readJsonl(queuePath);
   const reviews = readJsonl(reviewPath);
   const outcomes = readJsonl(outcomePath);
-  
+
   const groupedReviews = reviewsByProposalId(reviews);
   const groupedOutcomes = outcomesByProposalId(outcomes);
-  
+
   const lessons = [];
-  
+
   for (const proposal of proposals) {
     const proposalId = trimText(proposal.proposal_id || proposal.proposalId);
     if (!proposalId) continue;
-    
+
     const pReviews = groupedReviews.get(proposalId) || [];
     const pOutcomes = groupedOutcomes.get(proposalId) || [];
     const outcomeScore = proposalOutcomeForScoreboard(proposal, pReviews, pOutcomes);
-    
+
     const notes = Array.from(new Set([
       proposal.review_note,
       proposal.note,
@@ -3712,7 +3714,7 @@ function extractMiraReflexionLessons(payload = {}, options = {}) {
       lessonText = `Proposal was routed. Notes: ${notes.join('; ')}`;
       nextBehavior = 'Acknowledge routing and wait for implementation evidence.';
     }
-    
+
     if (lessonText) {
       lessons.push({
         proposal_id: proposalId,
@@ -3726,7 +3728,7 @@ function extractMiraReflexionLessons(payload = {}, options = {}) {
       });
     }
   }
-  
+
   lessons.reverse();
 
   return {
