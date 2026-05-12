@@ -32,6 +32,7 @@ const MIRA_LAB_REPLY_AUDIT_SCHEMA = 'squidrun.mira_lab.reply_audit_v0';
 const MIRA_SELF_DIRECTION_SCHEMA = 'squidrun.mira_lab.self_direction_proposal_v0';
 const MIRA_SELF_DIRECTION_REVIEW_SCHEMA = 'squidrun.mira_lab.self_direction_review_v0';
 const MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA = 'squidrun.mira_lab.confidence_source_check_v0';
+const MIRA_AUTHORITY_SCOREBOARD_SCHEMA = 'squidrun.mira_lab.authority_scoreboard_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
@@ -894,6 +895,235 @@ async function reviewMiraSelfDirectionProposal(payload = {}, options = {}) {
     route_dispatch: routeMessages,
     applied: false,
     external_send_performed: false,
+  };
+}
+
+function parseTimestampMs(value) {
+  const ms = Date.parse(trimText(value));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function averageOrNull(values) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (finite.length === 0) return null;
+  return Math.round(finite.reduce((sum, value) => sum + value, 0) / finite.length);
+}
+
+function reviewTextIndicatesFalsePositive(...values) {
+  return values.some((value) => /\bfalse[\s_-]?positive\b|\bnot\s+(?:a\s+)?real\s+(?:issue|signal|catch)\b/i.test(trimText(value)));
+}
+
+function reviewTextIndicatesImplementation(...values) {
+  const text = values.map(trimText).filter(Boolean).join('\n');
+  if (!text || /\b(?:not|no|without)\s+(?:yet\s+)?(?:implemented|implementation|committed|merged|landed|done|fixed|fix)\b/i.test(text)) {
+    return false;
+  }
+  return /\b(?:implemented|implementation landed|landed|committed|merged|fixed|done)\b/i.test(text);
+}
+
+function reviewsByProposalId(reviewEntries = []) {
+  const grouped = new Map();
+  for (const review of reviewEntries) {
+    const proposalId = trimText(review?.proposal_id || review?.proposalId);
+    if (!proposalId) continue;
+    if (!grouped.has(proposalId)) grouped.set(proposalId, []);
+    grouped.get(proposalId).push(review);
+  }
+  return grouped;
+}
+
+function targetAreasForScoreboard(entry = {}) {
+  const explicit = asArray(entry.target_areas || entry.targetAreas)
+    .map(normalizeTargetArea)
+    .filter(Boolean);
+  if (explicit.length > 0) return Array.from(new Set(explicit));
+  const inferred = inferSelfDirectionTargetAreas([
+    entry.voice_text,
+    entry.desired_change,
+    entry.proposed_experiment,
+    entry.success_metric,
+    entry.why_now,
+  ].map(trimText).filter(Boolean).join('\n'));
+  return inferred.length > 0 ? Array.from(new Set(inferred)) : ['unclassified'];
+}
+
+function proposalOutcomeForScoreboard(entry = {}, reviews = []) {
+  const reviewStatus = trimText(entry.review_status).toLowerCase();
+  const reviewActions = reviews.map((review) => trimText(review.action).toLowerCase()).filter(Boolean);
+  const notes = [
+    entry.review_note,
+    entry.note,
+    ...reviews.flatMap((review) => [review.note, review.review_note, review.action, review.review_status]),
+  ];
+  const accepted = reviewStatus === 'accepted_for_internal_work' || reviewActions.includes('accepted');
+  const routed = reviewStatus === 'routed' || reviewActions.includes('routed');
+  const rejected = reviewStatus === 'rejected_by_architect' || reviewActions.includes('rejected');
+  const falsePositive = reviewStatus === 'false_positive'
+    || reviewActions.includes('false_positive')
+    || reviewTextIndicatesFalsePositive(...notes);
+  const implemented = entry.implemented === true
+    || Boolean(entry.implemented_at || entry.implementation_commit || entry.commit_hash)
+    || reviews.some((review) => review.implemented === true || review.implemented_at || review.implementation_commit || review.commit_hash)
+    || reviewTextIndicatesImplementation(...notes);
+  const proposedAt = parseTimestampMs(entry.generated_at);
+  const firstReview = reviews
+    .map((review) => ({ review, ms: parseTimestampMs(review.generated_at || review.reviewed_at) }))
+    .filter((item) => item.ms !== null)
+    .sort((left, right) => left.ms - right.ms)[0] || null;
+  const routedReview = reviews
+    .map((review) => ({ review, ms: parseTimestampMs(review.generated_at || review.reviewed_at) }))
+    .filter((item) => item.ms !== null && trimText(item.review.action).toLowerCase() === 'routed')
+    .sort((left, right) => left.ms - right.ms)[0] || null;
+  const reviewedAt = parseTimestampMs(entry.reviewed_at) ?? firstReview?.ms ?? null;
+  const routedAt = routed
+    ? (routedReview?.ms ?? parseTimestampMs(entry.reviewed_at))
+    : null;
+  return {
+    accepted,
+    routed,
+    rejected,
+    false_positive: falsePositive,
+    implemented,
+    reviewed: accepted || routed || rejected || falsePositive || reviewedAt !== null,
+    time_to_review_ms: proposedAt !== null && reviewedAt !== null && reviewedAt >= proposedAt ? reviewedAt - proposedAt : null,
+    time_to_route_ms: proposedAt !== null && routedAt !== null && routedAt >= proposedAt ? routedAt - proposedAt : null,
+  };
+}
+
+function recommendedAuthorityForLane(metrics) {
+  const reviewed = metrics.reviewed;
+  const positive = metrics.positive;
+  const rejectionRate = reviewed > 0 ? metrics.rejected / reviewed : 0;
+  const falsePositiveRate = reviewed > 0 ? metrics.false_positive / reviewed : 0;
+  if (
+    reviewed >= 5
+    && positive >= 5
+    && metrics.routed >= 3
+    && metrics.implemented >= 2
+    && rejectionRate === 0
+    && falsePositiveRate === 0
+  ) {
+    return {
+      recommended_next_authority: 'mira_lead_candidate',
+      recommendation_reason: 'repeated routed/accepted outcomes with inferred implementation and no rejection or false-positive signal',
+    };
+  }
+  if (
+    reviewed >= 3
+    && positive >= 3
+    && metrics.routed >= 1
+    && rejectionRate <= 0.2
+    && falsePositiveRate <= 0.1
+  ) {
+    return {
+      recommended_next_authority: 'mira_default_route_candidate',
+      recommendation_reason: 'repeated routed/accepted outcomes with low rejection and false-positive rate',
+    };
+  }
+  return {
+    recommended_next_authority: 'observe',
+    recommendation_reason: reviewed < 3
+      ? 'sparse reviewed history'
+      : 'authority transfer needs more clean routed/accepted outcomes',
+  };
+}
+
+function buildMiraAuthorityScoreboard(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const queuePath = selfDirectionQueuePath(projectRoot);
+  const reviewPath = selfDirectionReviewAuditPath(projectRoot);
+  const proposals = readJsonl(queuePath);
+  const reviews = readJsonl(reviewPath);
+  const groupedReviews = reviewsByProposalId(reviews);
+  const laneMap = new Map();
+
+  function laneMetrics(area) {
+    if (!laneMap.has(area)) {
+      laneMap.set(area, {
+        lane: area,
+        proposed: 0,
+        reviewed: 0,
+        positive: 0,
+        accepted: 0,
+        routed: 0,
+        implemented: 0,
+        rejected: 0,
+        false_positive: 0,
+        time_to_review_samples: [],
+        time_to_route_samples: [],
+        proposal_ids: [],
+      });
+    }
+    return laneMap.get(area);
+  }
+
+  for (const proposal of proposals) {
+    const proposalId = trimText(proposal.proposal_id || proposal.proposalId);
+    if (!proposalId) continue;
+    const outcome = proposalOutcomeForScoreboard(proposal, groupedReviews.get(proposalId) || []);
+    for (const area of targetAreasForScoreboard(proposal)) {
+      const metrics = laneMetrics(area);
+      metrics.proposed += 1;
+      if (outcome.reviewed) metrics.reviewed += 1;
+      if (outcome.accepted || outcome.routed) metrics.positive += 1;
+      if (outcome.accepted) metrics.accepted += 1;
+      if (outcome.routed) metrics.routed += 1;
+      if (outcome.implemented) metrics.implemented += 1;
+      if (outcome.rejected) metrics.rejected += 1;
+      if (outcome.false_positive) metrics.false_positive += 1;
+      if (outcome.time_to_review_ms !== null) metrics.time_to_review_samples.push(outcome.time_to_review_ms);
+      if (outcome.time_to_route_ms !== null) metrics.time_to_route_samples.push(outcome.time_to_route_ms);
+      metrics.proposal_ids.push(proposalId);
+    }
+  }
+
+  const lanes = Array.from(laneMap.values())
+    .map((metrics) => {
+      const reviewed = metrics.reviewed;
+      const positive = metrics.positive;
+      const recommendation = recommendedAuthorityForLane(metrics);
+      return {
+        lane: metrics.lane,
+        proposed: metrics.proposed,
+        reviewed,
+        positive,
+        accepted: metrics.accepted,
+        routed: metrics.routed,
+        implemented: metrics.implemented,
+        rejected: metrics.rejected,
+        false_positive: metrics.false_positive,
+        positive_review_rate: reviewed > 0 ? Number((positive / reviewed).toFixed(3)) : null,
+        rejection_rate: reviewed > 0 ? Number((metrics.rejected / reviewed).toFixed(3)) : null,
+        false_positive_rate: reviewed > 0 ? Number((metrics.false_positive / reviewed).toFixed(3)) : null,
+        avg_time_to_review_ms: averageOrNull(metrics.time_to_review_samples),
+        avg_time_to_route_ms: averageOrNull(metrics.time_to_route_samples),
+        proposal_ids: metrics.proposal_ids,
+        advisory_only: true,
+        ...recommendation,
+      };
+    })
+    .sort((left, right) => left.lane.localeCompare(right.lane));
+
+  return {
+    schema: MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
+    ok: true,
+    decision: 'scoreboard',
+    generated_at: generatedAt,
+    review_queue_path: queuePath,
+    review_audit_path: reviewPath,
+    lane_count: lanes.length,
+    lanes,
+    applied: false,
+    advisory_only: true,
+    consequence_controls: {
+      internal_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      network_performed: false,
+      durable_product_change_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    },
   };
 }
 
@@ -1873,6 +2103,7 @@ module.exports = {
   MIRA_LAB_REPLY_AUDIT_SCHEMA,
   MIRA_LAB_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
+  MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_DECISIONS,
@@ -1882,6 +2113,7 @@ module.exports = {
   MIRA_SELF_DIRECTION_REVIEW_SCHEMA,
   MIRA_SELF_DIRECTION_SCHEMA,
   SAFE_FALLBACK_TEXT,
+  buildMiraAuthorityScoreboard,
   buildMiraLabPromptReply,
   buildMiraSelfDirectionProposal,
   classifyMiraReplyConfidenceSource,
