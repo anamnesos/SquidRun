@@ -2129,10 +2129,21 @@ function createReadOnlyCodeModeApi({ projectRoot, allowedPaths, maxReadBytes }) 
     readJsonl(relativePath, limit = 50) {
       const text = this.readText(relativePath);
       return text.split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
+        .map((line, index) => ({ line: line.trim(), line_number: index + 1 }))
+        .filter((entry) => entry.line)
         .slice(-Math.max(1, Math.min(200, Number(limit) || 50)))
-        .map((line) => JSON.parse(line));
+        .map((entry) => {
+          try {
+            return JSON.parse(entry.line);
+          } catch (err) {
+            return {
+              parse_error: true,
+              line_number: entry.line_number,
+              error: err?.message || String(err),
+              text: entry.line.slice(0, 240),
+            };
+          }
+        });
     },
     findText(relativePath, pattern, limit = 25) {
       const text = this.readText(relativePath);

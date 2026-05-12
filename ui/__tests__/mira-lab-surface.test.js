@@ -1033,6 +1033,44 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(readOnlyCodeModeRunsPath(projectRoot))).toHaveLength(2);
   });
 
+  test('read-only code mode reports malformed JSONL rows without failing the whole inspection', () => {
+    projectRoot = tempProject();
+    const runtimePath = path.join(projectRoot, '.squidrun', 'runtime');
+    fs.mkdirSync(runtimePath, { recursive: true });
+    fs.writeFileSync(
+      path.join(runtimePath, 'mixed.jsonl'),
+      [
+        JSON.stringify({ source: 'good_first' }),
+        '{"source":"truncated',
+        JSON.stringify({ source: 'good_last' }),
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const result = runMiraReadOnlyCodeMode({
+      allowedPaths: ['.squidrun/runtime'],
+      script: [
+        "const rows = api.readJsonl('.squidrun/runtime/mixed.jsonl', 10);",
+        'emit(rows);',
+        'return rows.filter((row) => row.parse_error).length;',
+      ].join('\n'),
+    }, { projectRoot, generatedAt: '2026-05-12T14:03:30.000Z' });
+
+    expect(result.decision).toBe('completed');
+    expect(result.ok).toBe(true);
+    expect(result.result).toBe(1);
+    expect(result.output[0]).toEqual([
+      { source: 'good_first' },
+      expect.objectContaining({
+        parse_error: true,
+        line_number: 2,
+      }),
+      { source: 'good_last' },
+    ]);
+    expect(result.consequence_controls.file_write_performed).toBe(false);
+  });
+
   test('read-only code mode allows normal function declarations but blocks Function constructor', () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
