@@ -920,6 +920,24 @@ describe('Mira Lab sidecar surface', () => {
         result_count: 3,
         buckets: { screenshots: 2, generated_images: 1 },
         latest_asset: { path: '.squidrun/screenshots/latest.png', width: 900, height: 760 },
+        latest_asset_followup: {
+          path: '.squidrun/screenshots/latest.png',
+          name: 'latest.png',
+          source_bucket: 'screenshots',
+          ext: '.png',
+          width: 900,
+          height: 760,
+          aspect_hint: 'landscape',
+          suggested_question: 'What changed in latest visual asset .squidrun/screenshots/latest.png (900x760)?',
+          possible_action: 'Use compact file metadata first; route a separate visual-understanding step only if visible content decides the next move.',
+          visual_understanding_step: {
+            status: 'separate_explicit_step_required',
+            image_ocr_performed: false,
+            image_model_performed: false,
+            file_write_performed: false,
+            external_send_performed: false,
+          },
+        },
         results: [],
       }),
       calendarMessageCuriosityReader: () => ({
@@ -1085,6 +1103,19 @@ describe('Mira Lab sidecar surface', () => {
       integration_strategy: 'native_adapter',
       visual_asset_count: 3,
       visual_asset_buckets: { screenshots: 2, generated_images: 1 },
+    }));
+    expect(bySource.images_screenshots_assets.suggested_question).toContain('latest visual asset .squidrun/screenshots/latest.png');
+    expect(bySource.images_screenshots_assets.possible_action).toContain('separate visual-understanding step');
+    expect(bySource.images_screenshots_assets.visual_latest_asset_followup).toEqual(expect.objectContaining({
+      path: '.squidrun/screenshots/latest.png',
+      aspect_hint: 'landscape',
+      visual_understanding_step: expect.objectContaining({
+        status: 'separate_explicit_step_required',
+        image_ocr_performed: false,
+        image_model_performed: false,
+        file_write_performed: false,
+        external_send_performed: false,
+      }),
     }));
     expect(bySource.calendar_messages).toEqual(expect.objectContaining({
       status: 'active',
@@ -2122,6 +2153,68 @@ describe('Mira Lab sidecar surface', () => {
       'memory_excerpt=Session 345 showed James wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
     ]));
     expect(result.route_message).toContain('memory_excerpt=Session 345 showed James wanted Mira');
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+  });
+
+  test('visual asset followups drive active initiatives with explicit visual-understanding separation', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:45:00.000Z',
+      item_id: 'mira-curiosity:visual-followup',
+      source: 'images_screenshots_assets',
+      adapter_id: 'visual_asset_curiosity',
+      status: 'active',
+      observation: 'Visual asset inventory read 4 image file(s); latest=.squidrun/screenshots/latest.png.',
+      suggested_question: 'Which latest visual asset matters?',
+      possible_action: 'Use compact visual metadata.',
+      route_hint: 'mira_lab',
+      visual_asset_count: 4,
+      visual_latest_asset_followup: {
+        path: '.squidrun/screenshots/latest.png',
+        name: 'latest.png',
+        source_bucket: 'screenshots',
+        ext: '.png',
+        width: 900,
+        height: 760,
+        aspect_hint: 'landscape',
+        suggested_question: 'What changed in latest visual asset .squidrun/screenshots/latest.png (900x760)?',
+        possible_action: 'Use compact file metadata first; route a separate visual-understanding step only if visible content decides the next move.',
+        visual_understanding_step: {
+          status: 'separate_explicit_step_required',
+          image_ocr_performed: false,
+          image_model_performed: false,
+          file_write_performed: false,
+          external_send_performed: false,
+        },
+      },
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:46:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('visual_context_followup');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'images_screenshots_assets',
+      adapter_id: 'visual_asset_curiosity',
+    }));
+    expect(result.work_order.title).toContain('latest visual asset .squidrun/screenshots/latest.png');
+    expect(result.work_order.action).toContain('separate visual-understanding step');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'visual_latest_asset=.squidrun/screenshots/latest.png 900x760 aspect=landscape',
+      'visual_understanding_step=separate_explicit_step_required image_ocr_performed=false image_model_performed=false file_write_performed=false external_send_performed=false',
+    ]));
+    expect(result.route_message).toContain('visual_understanding_step=separate_explicit_step_required');
+    expect(result.route_message).toContain('image_ocr_performed=false');
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       external_send_performed: false,

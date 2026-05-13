@@ -1515,6 +1515,38 @@ function compactVisualAssetBuckets(value) {
     .slice(0, 8));
 }
 
+function compactVisualAssetFollowup(value) {
+  if (!value || typeof value !== 'object') return null;
+  const rawWidth = value.width;
+  const rawHeight = value.height;
+  const rawSize = value.size_bytes ?? value.sizeBytes;
+  const numericWidth = rawWidth === null || rawWidth === undefined ? NaN : Number(rawWidth);
+  const numericHeight = rawHeight === null || rawHeight === undefined ? NaN : Number(rawHeight);
+  const numericSize = rawSize === null || rawSize === undefined ? NaN : Number(rawSize);
+  const step = value.visual_understanding_step || value.visualUnderstandingStep || {};
+  const followup = {
+    path: oneLine(value.path || value.sourcePath || value.source_path, 180) || null,
+    name: oneLine(value.name, 100) || null,
+    source_bucket: oneLine(value.source_bucket || value.sourceBucket || value.bucket, 80) || null,
+    ext: oneLine(value.ext, 24) || null,
+    size_bytes: Number.isFinite(numericSize) ? numericSize : null,
+    width: Number.isFinite(numericWidth) ? numericWidth : null,
+    height: Number.isFinite(numericHeight) ? numericHeight : null,
+    aspect_hint: oneLine(value.aspect_hint || value.aspectHint, 80) || null,
+    suggested_question: oneLine(value.suggested_question || value.suggestedQuestion, 240) || null,
+    possible_action: oneLine(value.possible_action || value.possibleAction, 260) || null,
+    visual_understanding_step: {
+      status: oneLine(step.status, 100) || null,
+      image_ocr_performed: step.image_ocr_performed === true || step.imageOcrPerformed === true,
+      image_model_performed: step.image_model_performed === true || step.imageModelPerformed === true,
+      file_write_performed: step.file_write_performed === true || step.fileWritePerformed === true,
+      external_send_performed: step.external_send_performed === true || step.externalSendPerformed === true,
+    },
+  };
+  if (!followup.path && !followup.suggested_question && !followup.possible_action) return null;
+  return followup;
+}
+
 function compactSchedulerTypeCounts(value) {
   if (!value || typeof value !== 'object') return {};
   return Object.fromEntries(Object.entries(value)
@@ -1741,6 +1773,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     web_top_artifact: compactWebResearchTopArtifact(rawItem.web_top_artifact || rawItem.webTopArtifact),
     visual_asset_count: Number.isFinite(visualAssetCount) ? visualAssetCount : null,
     visual_asset_buckets: compactVisualAssetBuckets(rawItem.visual_asset_buckets || rawItem.visualAssetBuckets),
+    visual_latest_asset_followup: compactVisualAssetFollowup(rawItem.visual_latest_asset_followup || rawItem.visualLatestAssetFollowup),
     scheduler_schedule_count: Number.isFinite(schedulerScheduleCount) ? schedulerScheduleCount : null,
     scheduler_active_count: Number.isFinite(schedulerActiveCount) ? schedulerActiveCount : null,
     scheduler_due_soon_count: Number.isFinite(schedulerDueSoonCount) ? schedulerDueSoonCount : null,
@@ -2240,25 +2273,30 @@ function activeVisualAssetCuriosityAdapter(context = {}) {
     };
   }
   const latest = result.latest_asset || null;
+  const latestFollowup = compactVisualAssetFollowup(result.latest_asset_followup || latest);
+  const latestLabel = latestFollowup?.path || latest?.path || null;
+  const latestQuestion = latestFollowup?.suggested_question
+    || (latestLabel ? `What should Mira infer or ask from latest visual asset ${latestLabel}?` : 'Which visual asset folder should Mira check next?');
+  const latestAction = latestFollowup?.possible_action
+    || 'Use compact visual metadata as a curiosity signal; defer OCR or image-model reads to a separate explicit visual-understanding step.';
   return {
     source: 'images_screenshots_assets',
     scope: 'local_visual_context',
     adapter_id: 'visual_asset_curiosity',
     integration_strategy: 'native_adapter',
     status: 'active',
-    observation: `Visual asset inventory read ${result.result_count || 0} image file(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; latest=${latest?.path || 'none'}.`,
+    observation: `Visual asset inventory read ${result.result_count || 0} image file(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; latest=${latestLabel || 'none'}.`,
     why_interesting: 'Mira can now notice fresh screenshots and generated assets before James has to explain what is on screen.',
-    hypothesis: latest?.path
-      ? `${latest.path} may be the freshest visual context worth inspecting.`
+    hypothesis: latestLabel
+      ? `${latestLabel} may be the freshest visual context worth inspecting.`
       : 'The visual source is connected, but no specific latest asset stood out.',
-    suggested_question: latest?.path
-      ? `What should Mira infer or ask from latest visual asset ${latest.path}?`
-      : 'Which visual asset folder should Mira check next?',
-    possible_action: 'Use compact visual metadata as a curiosity signal; defer OCR or image-model reads to a separate explicit visual-understanding step.',
+    suggested_question: latestQuestion,
+    possible_action: latestAction,
     route_hint: 'mira_lab',
     sensitivity_hint: 'local_visual_asset_metadata',
     visual_asset_count: result.result_count || 0,
     visual_asset_buckets: result.buckets || {},
+    visual_latest_asset_followup: latestFollowup,
     no_mutation_performed: true,
   };
 }
@@ -3657,6 +3695,22 @@ function activeInitiativeEvidenceForItem(item = {}) {
     if (excerpt) evidence.push(`web_excerpt=${excerpt}`);
   }
   if (numberSignal(item.visual_asset_count) > 0) evidence.push(`visual_assets=${numberSignal(item.visual_asset_count)}`);
+  if (item.visual_latest_asset_followup?.path) {
+    const visual = item.visual_latest_asset_followup;
+    const dimensions = visual.width && visual.height ? ` ${visual.width}x${visual.height}` : '';
+    const aspect = visual.aspect_hint ? ` aspect=${oneLine(visual.aspect_hint, 60)}` : '';
+    evidence.push(`visual_latest_asset=${oneLine(visual.path, 120)}${dimensions}${aspect}`);
+    if (visual.visual_understanding_step?.status) {
+      const step = visual.visual_understanding_step;
+      evidence.push(
+        `visual_understanding_step=${oneLine(step.status, 80)} `
+        + `image_ocr_performed=${step.image_ocr_performed === true} `
+        + `image_model_performed=${step.image_model_performed === true} `
+        + `file_write_performed=${step.file_write_performed === true} `
+        + `external_send_performed=${step.external_send_performed === true}`
+      );
+    }
+  }
   return evidence.filter(Boolean).slice(0, 10);
 }
 
@@ -3900,6 +3954,15 @@ function activeInitiativeCandidateForItem(item, index, total) {
     }
   } else if (source === 'images_screenshots_assets') {
     score += Math.min(10, numberSignal(item.visual_asset_count));
+    const followup = item.visual_latest_asset_followup || {};
+    const followupPath = oneLine(followup.path, 120);
+    const followupQuestion = oneLine(followup.suggested_question, 160);
+    const followupAction = oneLine(followup.possible_action, 220);
+    if (followupPath || followupQuestion || followupAction) {
+      score += 8;
+      title = followupQuestion || `Inspect latest visual asset metadata: ${followupPath}`;
+      action = followupAction || 'Use compact visual metadata first; route a separate visual-understanding step only if the decision depends on visible content.';
+    }
   }
 
   const recencyWeight = Math.min(6, Math.max(0, index - Math.max(0, total - 6)));
