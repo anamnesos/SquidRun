@@ -850,6 +850,31 @@ describe('Mira Lab sidecar surface', () => {
           contentExcerpt: 'Mira can retrieve current lane memory before asking James.',
         }],
       }),
+      memoryBrokerCuriosityReader: () => ({
+        ok: true,
+        decision: 'memory_broker_recalled_read_only',
+        query: 'Mira source action substrate current lane memory continuity',
+        result_count: 2,
+        sources: [
+          { source: 'cognitive_memory', sourceKind: 'vector_cognitive', ok: true, itemCount: 1, elapsedMs: 9 },
+          { source: 'team_memory', sourceKind: 'graph_team', ok: true, itemCount: 1, elapsedMs: 14 },
+          { source: 'evidence_ledger', sourceKind: 'episodic_ledger', ok: true, itemCount: 0, elapsedMs: 5 },
+        ],
+        results: [{
+          rank: 1,
+          score: 0.035,
+          source: 'cognitive_memory',
+          sourceKind: 'vector_cognitive',
+          id: 'mem-plain-english',
+          ref: 'workspace/research/mira-continuity.md',
+          title: 'Plain English continuity',
+          excerpt: 'James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+          contributors: [
+            { source: 'cognitive_memory', sourceKind: 'vector_cognitive', rank: 1 },
+            { source: 'team_memory', sourceKind: 'graph_team', rank: 2 },
+          ],
+        }],
+      }),
       browserHistoryCuriosityReader: () => ({
         ok: true,
         decision: 'browser_history_read_only',
@@ -1187,12 +1212,30 @@ describe('Mira Lab sidecar surface', () => {
       && item.memory_result_count === 1
       && /memory result node-memory-1/i.test(item.suggested_question)
     ))).toBe(true);
+    expect(bySource.memory_broker).toEqual(expect.objectContaining({
+      status: 'active',
+      integration_strategy: 'existing_seam',
+      memory_broker_query: 'Mira source action substrate current lane memory continuity',
+      memory_broker_result_count: 2,
+    }));
+    expect(bySource.memory_broker.memory_broker_top_result).toEqual(expect.objectContaining({
+      id: 'mem-plain-english',
+      title: 'Plain English continuity',
+      sourceKind: 'vector_cognitive',
+      excerpt: 'James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+    }));
+    expect(bySource.memory_broker.memory_broker_sources[0]).toEqual(expect.objectContaining({
+      source: 'cognitive_memory',
+      sourceKind: 'vector_cognitive',
+      itemCount: 1,
+    }));
+    expect(bySource.memory_broker.possible_action).toMatch(/hm-memory-broker recall/i);
     expect(bySource.source_action_substrate).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
     }));
     expect(bySource.source_action_substrate.suggested_question).toMatch(/source\/action arm/i);
-    expect(bySource.source_action_substrate.possible_action).toMatch(/starting with active memory or scheduled curiosity/i);
+    expect(bySource.source_action_substrate.possible_action).toMatch(/starting with memory broker or scheduled curiosity/i);
     expect(bySource.code_mode_exploration).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'existing_seam',
@@ -2245,6 +2288,81 @@ describe('Mira Lab sidecar surface', () => {
       'memory_excerpt=Session 345 showed James wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
     ]));
     expect(result.route_message).toContain('memory_excerpt=Session 345 showed James wanted Mira');
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+  });
+
+  test('active initiative turns unified memory broker hits into practiced recall work orders', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:browser-weaker-broker',
+      generated_at: '2026-05-12T15:33:00.000Z',
+      source: 'browser_history',
+      adapter_id: 'browser_history_curiosity',
+      status: 'active',
+      observation: 'Browser history read returned 4 compact recent metadata row(s).',
+      suggested_question: 'What should Mira infer from the browsing trail?',
+      possible_action: 'Use compact browser-history metadata as one curiosity signal.',
+      browser_result_count: 4,
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:memory-broker-stronger',
+      generated_at: '2026-05-12T15:34:00.000Z',
+      source: 'memory_broker',
+      adapter_id: 'unified_memory_broker_curiosity',
+      status: 'active',
+      observation: 'Unified memory broker returned 2 ranked result(s) for the active lane query; top=Plain English continuity.',
+      suggested_question: 'Which current route changes if Mira uses unified recall result mem-plain-english?',
+      possible_action: 'Use hm-memory-broker recall as ranked private context before choosing the next internal route.',
+      memory_broker_query: 'Mira current lane',
+      memory_broker_result_count: 2,
+      memory_broker_top_result: {
+        rank: 1,
+        sourceKind: 'vector_cognitive',
+        source: 'cognitive_memory',
+        id: 'mem-plain-english',
+        ref: 'workspace/research/mira-continuity.md',
+        title: 'Plain English continuity',
+        excerpt: 'James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+        contributors: [
+          { source: 'cognitive_memory', sourceKind: 'vector_cognitive', rank: 1 },
+          { source: 'team_memory', sourceKind: 'graph_team', rank: 2 },
+        ],
+      },
+      memory_broker_sources: [
+        { source: 'cognitive_memory', sourceKind: 'vector_cognitive', itemCount: 1 },
+        { source: 'team_memory', sourceKind: 'graph_team', itemCount: 1 },
+        { source: 'evidence_ledger', sourceKind: 'episodic_ledger', itemCount: 0 },
+      ],
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:35:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('unified_memory_recall_practice');
+    expect(result.target_role).toBe('builder');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'memory_broker',
+      adapter_id: 'unified_memory_broker_curiosity',
+    }));
+    expect(result.work_order.title).toContain('Plain English continuity');
+    expect(result.work_order.action).toContain('vector, graph, and episodic contributors');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'memory_broker_results=2 top=mem-plain-english title=Plain English continuity source_kind=vector_cognitive',
+      'memory_broker_excerpt=James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+      'memory_broker_sources=cognitive_memory:1,team_memory:1,evidence_ledger:0',
+    ]));
+    expect(result.route_message).toContain('memory_broker_excerpt=James wants non-jargon status');
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       external_send_performed: false,
