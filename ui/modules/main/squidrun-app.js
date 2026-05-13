@@ -143,6 +143,10 @@ const {
   recordRecallUsageFromMessage,
 } = require('../memory-recall');
 const {
+  createDefaultMemoryBroker,
+  prependRecallToMessage,
+} = require('../memory-broker');
+const {
   readPairedConfig,
   writePairedConfig,
 } = require('./device-pairing-store');
@@ -630,6 +634,11 @@ class SquidRunApp {
       },
     });
     this.problemOrchestrator = createProblemOrchestrator();
+    this.memoryBroker = Object.prototype.hasOwnProperty.call(managers, 'memoryBroker')
+      ? managers.memoryBroker
+      : createDefaultMemoryBroker({
+        providerTimeoutMs: process.env.SQUIDRUN_MEMORY_BROKER_TIMEOUT_MS || 900,
+      });
     this.pendingAgentResponseWatchdogs = new Map();
     try {
       this.problemOrchestrator.ensureState();
@@ -9268,7 +9277,38 @@ class SquidRunApp {
     };
   }
 
+  async buildHumanMessageWithUnifiedRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const originalMessage = String(message || '');
+    if (!originalMessage.trim()) return originalMessage;
+    if (recallContext?.disableUnifiedRecall === true || recallContext?.unifiedRecall === false) {
+      return originalMessage;
+    }
+    if (!this.memoryBroker || typeof this.memoryBroker.recall !== 'function') {
+      return originalMessage;
+    }
+
+    try {
+      const query = toNonEmptyString(recallContext.recallQuery) || originalMessage;
+      const recall = await this.memoryBroker.recall(query, {
+        ...((recallContext && typeof recallContext === 'object') ? recallContext : {}),
+        logLabel,
+        paneId: String(recallContext.paneId || '1'),
+      }, {
+        limit: recallContext.recallLimit || 4,
+        providerLimit: recallContext.recallProviderLimit || 3,
+        timeoutMs: recallContext.recallTimeoutMs || process.env.SQUIDRUN_MEMORY_BROKER_TIMEOUT_MS || 900,
+      });
+      return prependRecallToMessage(originalMessage, recall, {
+        limit: recallContext.recallLimit || 4,
+      });
+    } catch (err) {
+      log.warn('MemoryBroker', `Unified recall skipped for ${logLabel}: ${err.message}`);
+      return originalMessage;
+    }
+  }
+
   async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);
     const meta = {
       ...((recallContext.meta && typeof recallContext.meta === 'object') ? recallContext.meta : {}),
       ...((recallContext.metadata && typeof recallContext.metadata === 'object') ? recallContext.metadata : {}),
@@ -9278,7 +9318,7 @@ class SquidRunApp {
     }
     const result = await this.deliverPaneMessageReliably({
       paneId: String(recallContext.paneId || '1'),
-      message,
+      message: messageWithRecall,
       fromRole: null,
       traceContext: recallContext.traceContext || null,
       meta: Object.keys(meta).length > 0 ? meta : null,

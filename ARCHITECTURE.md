@@ -168,6 +168,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/mira-lab-surface.js: Dev-only canonical transcript/backchannel/eval substrate for the separate Mira Lab sidecar. Records durable JSONL lab turns, projects comms-journal-shaped entries, supports role-separated Mira-to-agent backchannel dispatch, marks agent-to-Mira injection turns, and exports transcript eval packets. Not wired into default app startup yet.
 - ui/modules/mira-local-text-ui-surface.js: Builds the right-panel Mira typed conversation surface, joining local shell gating, optional text model attachment, bounded thread context, tentative-understanding persistence counts, and developmental-understanding validation.
 - ui/modules/memory-consistency-check.js: On-demand drift checker that compares `workspace/knowledge/` chunks against knowledge-backed nodes in `workspace/memory/cognitive-memory.db`.
+- ui/modules/memory-broker.js: Unified recall broker that queries cognitive/vector memory, team-memory graph claims, evidence-ledger episodic decisions, and optional knowledge search providers, then merges ranked context with Reciprocal Rank Fusion for pane delivery and agent tooling.
 - ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
 - ui/modules/memory-ingest/journal.js: Shared ingest journal / retry queue / dedupe state backing Phases 1-4 of the memory contract.
 - ui/modules/memory-ingest/lifecycle.js: Session-based lifecycle advancement for memory objects (stale/archive/reactivation review flows).
@@ -273,6 +274,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-image-gen.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-investigate.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, `salience`, and `set-immune` over the cognitive-memory store.
+- ui/scripts/hm-memory-broker.js: Unified recall CLI exposing the memory broker contract for agent tool paths, returning ranked JSON or a compact pane-ready recall block.
 - ui/scripts/hm-startup-transcript-context.js: Startup helper CLI that builds the automatic transcript-recall block injected into pane SessionStart hooks from active items plus recent comms.
 - ui/scripts/hm-transcript-index.js: Transcript-index CLI that builds/searches `.squidrun/runtime/transcript-index.jsonl` from Claude session JSONL archives under `~/.claude/projects/`.
 - ui/scripts/hm-memory-consistency.js: On-demand CLI that reports drift between tracked knowledge markdown and knowledge-backed cognitive-memory nodes.
