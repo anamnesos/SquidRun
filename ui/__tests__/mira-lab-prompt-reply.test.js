@@ -753,7 +753,7 @@ describe('mira lab prompt reply v0', () => {
 
   test('PASS: clean reply emits both transcript rows + audit, and gate-status pass envelope', async () => {
     const projectRoot = tempProject();
-    const replyText = "For now we're sticking to text-only Mira and making sure she remembers what we were doing across restarts.";
+    const replyText = 'Fixing the Mira Lab restart check. Missing-state stays blunt: Context failed. Im missing the last state. Then the regression and verifier prove it.';
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true, model: 'mock-model' });
     const fakePath = path.join(projectRoot, 'ui-surface-stub.js');
     fs.writeFileSync(fakePath, '');
@@ -775,7 +775,7 @@ describe('mira lab prompt reply v0', () => {
     expect(result.gates.degraded).toBe(false);
     expect(result.gates.attachment_violation).toBe(false);
     expect(result.gates.leakage_violation).toBeNull();
-    expect(result.requester_envelope).toBe("(MIRA): For now we're sticking to text-only Mira and making sure she remembers what we were doing across restarts.");
+    expect(result.requester_envelope).toBe(`(MIRA): ${replyText}`);
     expect(result.visible_render_hint.kind).toBe('clean_reply');
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-pass'));

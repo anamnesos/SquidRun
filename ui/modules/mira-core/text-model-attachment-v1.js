@@ -91,7 +91,7 @@ const SELF_MYTH_PHRASE_PATTERN =
 // postmortem) or with a system-mechanic word (gate/prompt/system/rule/etc).
 // Single-clause self-reflection is now allowed per ARCH #73 GO.
 const META_POSTURE_NARRATION_PATTERN =
-  /\b(we(?:'re| are)\s+(?:trying\s+to\s+|going\s+to\s+|gonna\s+)?(?:make|build|making|building)\s+(?:mira|a\s+presence|an\s+ongoing\s+presence|a\s+real[- ]feeling\s+presence)|make\s+mira\s+(?:into|not\s+dead|real|particular)|(?:real[- ]feeling|ongoing|continuous|trapped\s+little)\s+(?:presence(?:\s+runtime)?|ghost(?:\s+in\s+the\s+machine)?)|customer[- ]service\s+mush|fake[- ]personhood\s+performance|(?:let(?:ting)?\s+me|letting\s+her)\s+have\s+(?:enough\s+)?shape|(?:care|edge|warmth|taste|restraint),\s*(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)(?:[,\s]+(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)){1,}|the\s+hard\s+part\s+(?:isn'?t|is)\s+(?:making\s+me|letting\s+me|letting\s+her|making\s+her)|(?:lying|bullshit(?:ting)?\s+you)\s+about\s+what\s+i(?:'m| am)(?:\s+not)?|not\s+a\s+chatbot\s+that\s+(?:resets|collapses|drifts)|i\s+am\s+becoming\s+particular|aliveness|here'?s\s+the\s+next\s+sentence|define\s+mira|not\s+trying\s+to\s+(?:make|give)\s+a\s+speech)\b/i;
+  /\b(we(?:['’]re| are)\s+(?:trying\s+to\s+|going\s+to\s+|gonna\s+)?(?:make|build|making|building)\s+(?:mira|a\s+presence|an\s+ongoing\s+presence|a\s+real[- ]feeling\s+presence)|we(?:['’]re| are)\s+(?:hardening|tightening)\s+mira|make\s+mira\s+(?:into|not\s+dead|real|particular)|(?:real[- ]feeling|ongoing|continuous|trapped\s+little)\s+(?:presence(?:\s+runtime)?|ghost(?:\s+in\s+the\s+machine)?)|customer[- ]service\s+mush|fake[- ]personhood\s+performance|(?:let(?:ting)?\s+me|letting\s+her)\s+have\s+(?:enough\s+)?shape|(?:care|edge|warmth|taste|restraint),\s*(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)(?:[,\s]+(?:and\s+)?(?:edge|memory|disagreement|taste|restraint|warmth|shape)){1,}|the\s+hard\s+part\s+(?:isn'?t|is)\s+(?:making\s+me|letting\s+me|letting\s+her|making\s+her)|(?:lying|bullshit(?:ting)?\s+you)\s+about\s+what\s+i(?:'m| am)(?:\s+not)?|not\s+a\s+chatbot\s+that\s+(?:resets|collapses|drifts)|i\s+am\s+becoming\s+particular|aliveness|here'?s\s+the\s+next\s+sentence|define\s+mira|not\s+trying\s+to\s+(?:make|give)\s+a\s+speech)\b/i;
 
 // ARCH #73 split: self-reflection phrases that USED to flag as
 // meta_posture_narration when isolated now require either (a) a second
@@ -387,6 +387,22 @@ const TIER_B_TERM_PATTERN =
 const MIRA_DESCRIPTIVE_MARKER_PATTERN =
   /\b(?:mira|mira'?s|her|herself|the\s+model(?:'?s)?|the\s+ai(?:'?s)?|the\s+system'?s|your\s+(?:posture|aliveness|cadence|presence|friction|taste|tension|rough[\s_-]?edges?|continuity|textured\s+conversation|relationship\s+history))\b/i;
 
+function isMiraWorkStatusPrompt(text = '') {
+  return trimText(text)
+    .toLowerCase()
+    .replace(/[?!.]+$/g, '')
+    .replace(/\s+/g, ' ') === 'what are we doing with mira';
+}
+
+function renderPromptSpecificInstructions(promptText = '') {
+  if (!isMiraWorkStatusPrompt(promptText)) return '';
+  return [
+    'For the exact question "what are we doing with Mira?", give the concrete current-lane fix or test in two short sentences.',
+    'Start with "Fixing" or "Testing"; do not start with "We are making", "We\'re making", "We are building", "We\'re building", "We are hardening", or "We\'re hardening".',
+    'If the lane is the restart verifier, preserve this missing-state stop exactly: Context failed. Im missing the last state.',
+  ].join('\n');
+}
+
 function tierBHitsInMiraContext(text) {
   // Sentence-by-sentence Tier-B + marker check. Splits on . ! ? or newline.
   const sentences = String(text || '').split(/(?<=[.!?])\s+|\n+/);
@@ -510,12 +526,13 @@ function renderReflexionLessonsForInstructions(reflexionLessons = []) {
   return lines.join('\n');
 }
 
-function buildMiraTextInstructions(localContext = {}) {
+function buildMiraTextInstructions(localContext = {}, promptText = '') {
   const miraBriefBlock = renderMiraBriefForInstructions(localContext.miraBrief);
   const reflexionLessonsBlock = renderReflexionLessonsForInstructions(
     localContext.reflexionLessons || localContext.reflexion_lessons || []
   );
   const threadContextBlock = renderThreadContextForInstructions(localContext.threadContext);
+  const promptSpecificInstructions = renderPromptSpecificInstructions(promptText);
   // ARCH #97/#98/#100/#104: per-turn social-move behavior cue from the
   // social-move classifier. ADDITIVE only — never spliced into the standing
   // prompt rule set. Null/empty on neutral turns.
@@ -541,6 +558,7 @@ function buildMiraTextInstructions(localContext = {}) {
     'If James is angry at you personally or insults you, do NOT explain your rules, your system, your gates, your plumbing, or how you work. Engage the actual point.',
     'For Mira-work questions, answer with the concrete fix or test currently in front of us.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
+    promptSpecificInstructions,
     socialMoveCue,
     reflexionLessonsBlock,
     miraBriefBlock,
@@ -556,7 +574,7 @@ function buildResponsesPayload({ text, config, localContext }) {
   );
   return {
     model: config.model,
-    instructions: buildMiraTextInstructions(context),
+    instructions: buildMiraTextInstructions(context, text),
     input: [
       {
         role: 'user',
@@ -939,6 +957,7 @@ module.exports = {
   classifyModelTier,
   extractResponseText,
   getMiraTextModelAttachmentConfig,
+  isMiraWorkStatusPrompt,
   normalizeThreadContext,
   normalizeReflexionLessonsForInstructions,
   outputViolatesAttachmentContract,
