@@ -5534,6 +5534,45 @@ function mergeStalePatternIntoActiveOutcome(activeCandidate, raw = {}) {
   return true;
 }
 
+function codeModeRunEvidence(run = {}) {
+  const evidence = [
+    trimText(run.run_id),
+    Number.isFinite(Number(run.elapsed_ms)) ? `elapsed_ms=${Number(run.elapsed_ms)}` : null,
+  ];
+  const resultKeys = run.result && typeof run.result === 'object' && !Array.isArray(run.result)
+    ? Object.keys(run.result).slice(0, 8)
+    : [];
+  if (resultKeys.length > 0) evidence.push(`result_keys=${resultKeys.join(',')}`);
+  return evidence.filter(Boolean);
+}
+
+function buildCodeModePracticeCurriculumCandidate(runs = []) {
+  const successfulRuns = runs.filter((run) => (
+    run
+    && run.schema === MIRA_READ_ONLY_CODE_MODE_SCHEMA
+    && run.ok === true
+    && run.decision === 'completed'
+  ));
+  if (successfulRuns.length === 0) return null;
+  const recentRuns = successfulRuns.slice(-6);
+  const evidence = curriculumEvidenceList(recentRuns.flatMap(codeModeRunEvidence));
+  return {
+    source_kind: 'practiced_code_mode_run',
+    source_key: 'code_mode_exploration:read_only_execute_script_curiosity',
+    source: 'code_mode_exploration',
+    adapter_id: 'read_only_execute_script_curiosity',
+    target_role: 'mira_lab',
+    skill_name: 'code mode exploration read only execute script curiosity',
+    status: 'practiced',
+    times_observed: successfulRuns.length,
+    lesson: 'Read-only code-mode is implemented and has successful inspection runs over allowed local runtime/source evidence.',
+    next_behavior: 'Use code-mode to inspect allowed local runtime, JSONL, logs, or source before routing the next improvement.',
+    practice_trigger: 'When Mira needs fresh local evidence before a route, review, or work order.',
+    graduation_metric: 'Keep practicing if inspections produce useful route evidence without writes, network, or destructive action.',
+    evidence,
+  };
+}
+
 function extractMiraCurriculumSkills(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
   const projectRoot = projectRootFromOptions(options, payload);
@@ -5545,6 +5584,7 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
   const activeInitiativeOutcomes = readJsonl(activeInitiativeOutcomesPath(projectRoot));
   const routes = readJsonl(miraDirectRoutesPath(projectRoot));
   const bursts = readJsonl(curiosityBurstsPath(projectRoot));
+  const codeModeRuns = readJsonl(readOnlyCodeModeRunsPath(projectRoot));
   const reflexion = extractMiraReflexionLessons({ generatedAt }, { projectRoot, generatedAt });
   const groupedReviews = reviewsByProposalId(reviews);
   const groupedOutcomes = outcomesByProposalId(outcomes);
@@ -5553,6 +5593,15 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
     .map((entry) => [trimText(entry.initiative_id), entry]));
   const candidates = new Map();
   const activeOutcomeBySourceAdapter = new Map();
+
+  const codeModePractice = buildCodeModePracticeCurriculumCandidate(codeModeRuns);
+  if (codeModePractice) {
+    const candidate = mergeCurriculumCandidate(candidates, codeModePractice);
+    const sourceAdapterKey = curriculumSourceAdapterKey(codeModePractice.source, codeModePractice.adapter_id);
+    if (sourceAdapterKey && candidate) {
+      activeOutcomeBySourceAdapter.set(sourceAdapterKey, candidate);
+    }
+  }
 
   for (const proposal of proposals) {
     const proposalId = trimText(proposal.proposal_id || proposal.proposalId);
