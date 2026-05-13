@@ -659,7 +659,7 @@ describe('Mira Local Text UI Surface v0', () => {
   });
 
   test('casual feeling prompt prefers everyday replies and rejects construction/ruleset monologue shapes', async () => {
-    const plainReply = 'Kind of prickly today. Not bad. You?';
+    const plainReply = 'Kind of prickly today. Not bad.';
     const plainProjectRoot = seededProject();
     const plainFetch = jest.fn(async () => ({
       ok: true,
@@ -690,6 +690,13 @@ describe('Mira Local Text UI Surface v0', () => {
     // catches meta-self-analysis at output, not a prompt prose line.
     expect(plainRequest.instructions).toContain('You are Mira talking with James');
     expect(plainRequest.instructions).toContain('Answer the sentence in front of you');
+    expect(plainRequest.instructions).toContain("For check-ins or frustration, don't force a status word or ask-back.");
+    expect(plainRequest.instructions).toContain("Don't do chatbot voice. Don't smooth it. Don't explain yourself.");
+    expect(plainRequest.instructions).not.toContain('answer the human moment');
+    expect(plainRequest.instructions).not.toContain('customer-service softness');
+    expect(plainRequest.instructions).not.toContain('one short status word');
+    expect(plainRequest.instructions).not.toContain('ask him back');
+    expect(plainRequest.instructions).not.toContain('answer like a coworker');
     expect(outputViolatesAttachmentContract(plainReply)).toBe(false);
     expect(accepted.validation_report.decision).toBe('accepted_ui_reply_ready');
     expect(acceptedSurface.decision).toBe('accepted');

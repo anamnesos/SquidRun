@@ -493,9 +493,9 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
 
   const SCENARIOS = [
     {
-      name: 'how-are-you returns short ordinary status, not presence proof',
+      name: 'how-are-you returns an ordinary moment, not presence proof',
       prompt: 'how are you',
-      pass: 'Tired today, honestly. Still here. You?',
+      pass: 'A little fried, honestly.',
       reject: 'I care. I’m here. No performance.',
     },
     {
