@@ -774,6 +774,244 @@ describe('WebSocket Delivery Audit', () => {
     expect(executedByScopedBuilder).toBe(false);
   });
 
+  test('allows side-profile builder to receive repo-relative implementation diagnostic', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port, role: 'architect', paneId: '1', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+    const scopedBuilder = await connectAndRegister({
+      port, role: 'builder', paneId: '2', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedBuilder);
+
+    const messageId = 'allow-repo-relative-diag-1';
+    const deliveryPromise = waitForMessage(
+      scopedBuilder,
+      (msg) => msg.type === 'message' && msg.content.includes('websocket-runtime.js:1742')
+    );
+    const ackPromise = waitForMessage(
+      scopedArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'ui/modules/websocket-runtime.js:1742 has the wrongContext block',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const [ack, delivered] = await Promise.all([ackPromise, deliveryPromise]);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).not.toBe('routing_error');
+    expect(delivered.content).toContain('websocket-runtime.js:1742');
+  });
+
+  test('allows side-profile builder to receive generic operational words like worktree', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port, role: 'architect', paneId: '1', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+    const scopedBuilder = await connectAndRegister({
+      port, role: 'builder', paneId: '2', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedBuilder);
+
+    const messageId = 'allow-worktree-word-1';
+    const deliveryPromise = waitForMessage(
+      scopedBuilder,
+      (msg) => msg.type === 'message' && msg.content.includes('worktree state')
+    );
+    const ackPromise = waitForMessage(
+      scopedArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'worktree state for the eunbyeol profile got out of sync',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const [ack, delivered] = await Promise.all([ackPromise, deliveryPromise]);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).not.toBe('routing_error');
+    expect(delivered.content).toContain('worktree state');
+  });
+
+  test('allows side-profile builder to receive within-profile absolute path', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port, role: 'architect', paneId: '1', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+    const scopedBuilder = await connectAndRegister({
+      port, role: 'builder', paneId: '2', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedBuilder);
+
+    const messageId = 'allow-within-profile-path-1';
+    const deliveryPromise = waitForMessage(
+      scopedBuilder,
+      (msg) => msg.type === 'message' && msg.content.includes('/profiles/eunbyeol/workspace/')
+    );
+    const ackPromise = waitForMessage(
+      scopedArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'open D:/projects/squidrun/.squidrun/profiles/eunbyeol/workspace/notes/draft.md',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const [ack, delivered] = await Promise.all([ackPromise, deliveryPromise]);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).not.toBe('routing_error');
+    expect(delivered.content).toContain('/profiles/eunbyeol/workspace/');
+  });
+
+  test('allows side-profile builder to receive the word fixture in implementation notes', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port, role: 'architect', paneId: '1', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+    const scopedBuilder = await connectAndRegister({
+      port, role: 'builder', paneId: '2', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedBuilder);
+
+    const messageId = 'allow-fixture-word-1';
+    const deliveryPromise = waitForMessage(
+      scopedBuilder,
+      (msg) => msg.type === 'message' && msg.content.includes('test fixture')
+    );
+    const ackPromise = waitForMessage(
+      scopedArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'the test fixture at __tests__/hm-send.test.js needs an extra assertion',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const [ack, delivered] = await Promise.all([ackPromise, deliveryPromise]);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).not.toBe('routing_error');
+    expect(delivered.content).toContain('test fixture');
+  });
+
+  test('still rejects main-bound trading term aimed at side-profile builder', async () => {
+    const scopedReceiver = await connectAndRegister({
+      port, role: 'builder', paneId: '2', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedReceiver);
+    const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainSender);
+
+    const messageId = 'reject-hyperliquid-1';
+    const ackPromise = waitForMessage(
+      mainSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'hyperliquid order failed retry now',
+      messageId,
+      ackRequired: true,
+      metadata: { routing: { profileName: 'eunbyeol', windowKey: 'eunbyeol' } },
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('routing_error');
+    expect(ack.contextGuard).toEqual(expect.objectContaining({
+      reason: 'content_context_mismatch',
+      pattern: 'MAIN_CONTEXT_PATTERN',
+      targetRole: 'builder',
+      targetProfile: 'eunbyeol',
+    }));
+  });
+
+  test('rejects foreign main-tree absolute path aimed at side-profile builder', async () => {
+    const scopedReceiver = await connectAndRegister({
+      port, role: 'builder', paneId: '2', profileName: 'eunbyeol', windowKey: 'eunbyeol',
+    });
+    activeClients.add(scopedReceiver);
+    const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainSender);
+
+    const messageId = 'reject-foreign-main-path-1';
+    const ackPromise = waitForMessage(
+      mainSender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainSender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'look at D:/projects/squidrun/ui/scripts/hm-send.js for the patch',
+      messageId,
+      ackRequired: true,
+      metadata: { routing: { profileName: 'eunbyeol', windowKey: 'eunbyeol' } },
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('routing_error');
+    expect(ack.contextGuard).toEqual(expect.objectContaining({
+      reason: 'content_context_mismatch',
+      pattern: 'foreign_main_tree_path',
+      targetRole: 'builder',
+      targetProfile: 'eunbyeol',
+    }));
+  });
+
+  test('rejects side context aimed at main builder with SIDE_CONTEXT_PATTERN', async () => {
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+    const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainReceiver);
+
+    const messageId = 'reject-side-pattern-on-main-1';
+    const ackPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'eunbyeol case file is at ./notes/draft.md',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('routing_error');
+    expect(ack.contextGuard).toEqual(expect.objectContaining({
+      reason: 'content_context_mismatch',
+      pattern: 'SIDE_CONTEXT_PATTERN',
+      targetRole: 'builder',
+      targetProfile: 'main',
+    }));
+  });
+
   test('allows scoped diagnostic channel only between architects', async () => {
     const scopedArchitect = await connectAndRegister({
       port,

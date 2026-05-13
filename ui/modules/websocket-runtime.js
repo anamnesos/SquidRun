@@ -48,7 +48,7 @@ const PANE_TO_CANONICAL_ROLE = new Map(
   Array.from(CANONICAL_ROLE_TO_PANE.entries()).map(([role, paneId]) => [paneId, role])
 );
 const SIDE_CONTEXT_PATTERN = /\b(eunbyeol|eunby[e]?ol|rachel|side-window|case\s+(?:file|folder|context)|scoped\s+case)\b/i;
-const MAIN_CONTEXT_PATTERN = /\b(squidrun|main\s+builder|main\s+architect|main\s+oracle|trading|trade|hood|hyperliquid|ci\s+fix|worktree|fixture)\b/i;
+const MAIN_CONTEXT_PATTERN = /\b(main\s+(?:builder|architect|oracle)|trading|trade|hood|hyperliquid|ci\s+fix)\b/i;
 let wss = null;
 let clients = new Map(); // clientId -> { ws, paneId, role }
 let clientIdCounter = 0;
@@ -201,6 +201,24 @@ function inferProfileFromPathHint(value) {
   return normalizeScopeProfile(match[1]);
 }
 
+function classifyAbsolutePathsByProfile(content) {
+  const profiles = new Set();
+  if (!content) return profiles;
+  const text = String(content).replace(/\\/g, '/');
+  const re = /\bD:\/projects\/squidrun(?:\/(\S*))?/gi;
+  let match;
+  while ((match = re.exec(text))) {
+    const rest = (match[1] || '').replace(/[.,;:)\]'"]+$/, '');
+    const sideMatch = rest.match(/^\.squidrun\/profiles\/([^/]+)\/workspace(?:\/|$)/i);
+    if (sideMatch && sideMatch[1]) {
+      profiles.add(normalizeScopeProfile(sideMatch[1]));
+    } else {
+      profiles.add(DEFAULT_PROFILE);
+    }
+  }
+  return profiles;
+}
+
 function extractMessageProfileHints(message = {}) {
   const metadata = getObject(message.metadata);
   const envelope = getObject(metadata.envelope);
@@ -294,12 +312,22 @@ function detectWrongContextRoute(clientInfo = {}, message = {}, routeScope = {})
   const targetRole = getTargetRole(message.target);
   const senderRole = normalizeRoleId(clientInfo.role) || clientInfo.role || null;
   const targetProfile = normalizeScopeProfile(routeScope?.targetScope?.profileName || DEFAULT_PROFILE);
+  const senderProfile = normalizeScopeProfile(clientInfo.profileName || DEFAULT_PROFILE);
   const content = String(message.content || '');
   const profileHints = extractMessageProfileHints(message);
   const hasNonMainHint = profileHints.some((profileName) => !isMainProfile(profileName));
   const hasMainHint = profileHints.some((profileName) => isMainProfile(profileName));
-  const hasSideContent = SIDE_CONTEXT_PATTERN.test(content);
-  const hasMainContent = MAIN_CONTEXT_PATTERN.test(content);
+  const pathProfiles = classifyAbsolutePathsByProfile(content);
+  const hasForeignMainPath = !isMainProfile(targetProfile)
+    && pathProfiles.has(DEFAULT_PROFILE);
+  const hasForeignSidePath = [...pathProfiles].some(
+    (profileName) => !isMainProfile(profileName) && profileName !== targetProfile
+  );
+  const sameSideProfile = !isMainProfile(targetProfile)
+    && senderProfile === targetProfile
+    && (profileHints.length === 0 || profileHints.every((profileName) => profileName === targetProfile));
+  const hasSideContent = !sameSideProfile && SIDE_CONTEXT_PATTERN.test(content);
+  const hasMainContent = !sameSideProfile && MAIN_CONTEXT_PATTERN.test(content);
   const scopedDiagnostic = isScopedDiagnosticMessage(message);
 
   if (scopedDiagnostic && (senderRole !== 'architect' || targetRole !== 'architect')) {
@@ -314,12 +342,16 @@ function detectWrongContextRoute(clientInfo = {}, message = {}, routeScope = {})
     return null;
   }
 
-  if (isMainProfile(targetProfile) && (hasNonMainHint || hasSideContent) && targetRole !== 'architect') {
+  if (isMainProfile(targetProfile) && (hasNonMainHint || hasSideContent || hasForeignSidePath) && targetRole !== 'architect') {
+    const pattern = hasNonMainHint
+      ? null
+      : (hasSideContent ? 'SIDE_CONTEXT_PATTERN' : 'foreign_side_profile_path');
     return {
       status: 'routing_error',
       error: 'Side-profile/case context cannot be delivered to main Builder or Oracle',
       details: {
         reason: hasNonMainHint ? 'profile_metadata_mismatch' : 'content_context_mismatch',
+        pattern,
         targetRole,
         targetProfile,
         profileHints,
@@ -327,12 +359,16 @@ function detectWrongContextRoute(clientInfo = {}, message = {}, routeScope = {})
     };
   }
 
-  if (!isMainProfile(targetProfile) && (hasMainHint || hasMainContent) && targetRole !== 'architect') {
+  if (!isMainProfile(targetProfile) && (hasMainHint || hasMainContent || hasForeignMainPath) && targetRole !== 'architect') {
+    const pattern = hasMainHint
+      ? null
+      : (hasMainContent ? 'MAIN_CONTEXT_PATTERN' : 'foreign_main_tree_path');
     return {
       status: 'routing_error',
       error: 'Main SquidRun context cannot be delivered to a side-profile Builder or Oracle',
       details: {
         reason: hasMainHint ? 'profile_metadata_mismatch' : 'content_context_mismatch',
+        pattern,
         targetRole,
         targetProfile,
         profileHints,
