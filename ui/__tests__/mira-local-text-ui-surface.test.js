@@ -24,6 +24,7 @@ const {
   CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN,
   GENERIC_ASSISTANT_PATTERN,
   META_REWRITE_PATTERN,
+  MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
   classifyAttachmentContractViolation,
   outputViolatesAttachmentContract,
   renderMiraBriefForInstructions,
@@ -450,7 +451,7 @@ describe('Mira Local Text UI Surface v0', () => {
 
   test('Mira-work status prompt steers to current-lane answer and keeps meta-posture gate intact', async () => {
     const projectRoot = seededProject();
-    const verifierReply = 'Fixing the Mira Lab restart check. Missing-state stays blunt: Context failed. Im missing the last state. Then the regression and verifier prove it.';
+    const verifierReply = `Fixing the Mira Lab restart check. Missing-state stays blunt: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP} Then the regression and verifier prove it.`;
     const fetchImpl = jest.fn(async () => ({
       ok: true,
       status: 200,
@@ -477,7 +478,8 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(requestBody.instructions).toContain('For the exact question "what are we doing with Mira?"');
     expect(requestBody.instructions).toContain('give the concrete current-lane fix or test');
-    expect(requestBody.instructions).toContain('Context failed. Im missing the last state.');
+    expect(requestBody.instructions).toContain(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP);
+    expect(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP).toBe('Context failed. Im missing the last state.');
     expect(surface.decision).toBe('accepted');
     expect(surface.reply).toEqual(expect.objectContaining({
       count: 1,
