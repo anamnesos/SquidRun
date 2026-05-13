@@ -835,8 +835,9 @@ describe('Mira Lab sidecar surface', () => {
       generatedAt: '2026-05-12T11:05:00.000Z',
       repoStatusText: ' M ui/modules/mira-lab-surface.js\n?? tmp-note.txt\n',
       recentCommsText: [
-        '(ARCHITECT #74): Mira curiosity lane routed.',
-        '(BUILDER #1): local scout should notice repo/runtime/comms.',
+        '2026-05-12 11:04:00.000 user -> architect (USER): local scout should notice repo/runtime/comms.',
+        '2026-05-12 11:03:00.000 architect -> builder (ARCHITECT #74): Mira curiosity lane routed.',
+        'Rows: 2',
       ].join('\n'),
       memoryCuriosityReader: () => ({
         ok: true,
@@ -1082,6 +1083,10 @@ describe('Mira Lab sidecar surface', () => {
     expect(bySource.repo_files.observation).toContain('2 visible git status entries');
     expect(result.items.some((item) => item.adapter_id === 'self_direction_queue' && item.observation.includes('pending_architect_review=1'))).toBe(true);
     expect(result.items.some((item) => item.adapter_id === 'recent_comms' && /repeated demand|recent comms/i.test(item.suggested_question))).toBe(true);
+    const recentCommsItem = result.items.find((item) => item.adapter_id === 'recent_comms');
+    expect(recentCommsItem.observation).toContain('Newest signal: 2026-05-12 11:04:00.000 user -> architect (USER): local scout should notice repo/runtime/comms.');
+    expect(recentCommsItem.recent_comms_actionable).toBe(true);
+    expect(recentCommsItem.observation).not.toContain('Rows: 2');
     expect(bySource.browser_history).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'native_adapter',
@@ -1252,6 +1257,19 @@ describe('Mira Lab sidecar surface', () => {
     }));
     expect(bySource.reflexion_lessons.possible_action).toMatch(/hm-mira-self-direction reflexion/i);
     expect(bySource.cheap_parallel_scouts.suggested_question).toMatch(/curiosity-burst source mix/i);
+    expect(bySource.cheap_parallel_scouts.parallel_scout_plan).toEqual(expect.objectContaining({
+      plan_kind: 'reviewed_parallel_curiosity_burst',
+      cadence: 'quiet_interval',
+      candidate_sources: ['runtime_comms', 'memory_broker', 'environment_apps', 'work_continuation', 'browser_history', 'email'],
+      route_strongest_internal_followup: true,
+      dispatch_performed: false,
+      schedule_created: false,
+      external_send_performed: false,
+    }));
+    expect(bySource.cheap_parallel_scouts.parallel_scout_plan.command_harness).toContain(
+      'curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email',
+    );
+    expect(bySource.cheap_parallel_scouts.possible_action).toContain('--no-dispatch');
     expect(bySource.voyager_curriculum).toEqual(expect.objectContaining({
       status: 'active',
       integration_strategy: 'native_adapter',
@@ -1357,6 +1375,108 @@ describe('Mira Lab sidecar surface', () => {
     expect(JSON.stringify(result)).not.toMatch(/james permission|requires_permission|forbidden/i);
     expect(readJsonl(curiosityBurstsPath(projectRoot))).toHaveLength(1);
     expect(readJsonl(curiosityItemsPath(projectRoot)).length).toBe(result.item_count);
+  });
+
+  test('curiosity burst suppresses recently implemented outcome candidates', async () => {
+    projectRoot = tempProject();
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      outcome_id: 'mira-active-initiative-outcome:recent-broker',
+      generated_at: '2026-05-12T13:10:00.000Z',
+      initiative_id: 'mira-active-initiative:recent-broker',
+      outcome_status: 'implemented',
+      target_role: 'builder',
+      initiative_kind: 'unified_memory_recall_practice',
+      source: 'memory_broker',
+      adapter_id: 'unified_memory_broker_curiosity',
+      evidence: ['already_practiced'],
+    });
+
+    const result = await runMiraCuriosityBurst({
+      source: 'memory_broker,browser_history',
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:15:00.000Z',
+      memoryBrokerCuriosityReader: () => ({
+        ok: true,
+        decision: 'memory_broker_recalled_read_only',
+        query: 'recently implemented broker',
+        result_count: 2,
+        sources: [{ source: 'cognitive_memory', sourceKind: 'vector_cognitive', ok: true, itemCount: 2 }],
+        results: [{ rank: 1, sourceKind: 'vector_cognitive', id: 'mem-recent', title: 'Recent broker result', excerpt: 'Already handled.' }],
+      }),
+      browserHistoryCuriosityReader: () => ({
+        ok: true,
+        decision: 'browser_history_read_only',
+        browser: 'chrome',
+        profile: 'Default',
+        result_count: 3,
+        top_hosts: [{ host: 'huggingface.co', count: 3 }],
+        results: [],
+      }),
+    });
+
+    expect(result.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      source: 'browser_history',
+      adapter_id: 'browser_history_curiosity',
+      suppressed_candidate_count: 1,
+    }));
+    expect(result.route_output.source).not.toBe('memory_broker');
+    expect(result.no_mutation_performed).toBe(true);
+  });
+
+  test('curiosity burst does not route empty work-continuation items', async () => {
+    projectRoot = tempProject();
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      outcome_id: 'mira-active-initiative-outcome:recent-broker-empty-work',
+      generated_at: '2026-05-12T13:20:00.000Z',
+      initiative_id: 'mira-active-initiative:recent-broker-empty-work',
+      outcome_status: 'implemented',
+      initiative_kind: 'unified_memory_recall_practice',
+      source: 'memory_broker',
+      adapter_id: 'unified_memory_broker_curiosity',
+      evidence: ['already_practiced'],
+    });
+
+    const result = await runMiraCuriosityBurst({
+      source: 'memory_broker,work_continuation,runtime_comms',
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:25:00.000Z',
+      recentCommsText: '2026-05-12 13:25:00.000 user -> architect (USER): recent pressure exists.',
+      memoryBrokerCuriosityReader: () => ({
+        ok: true,
+        decision: 'memory_broker_recalled_read_only',
+        query: 'recently implemented broker',
+        result_count: 1,
+        sources: [{ source: 'cognitive_memory', sourceKind: 'vector_cognitive', ok: true, itemCount: 1 }],
+        results: [{ rank: 1, sourceKind: 'vector_cognitive', id: 'mem-recent', title: 'Recent broker result', excerpt: 'Already handled.' }],
+      }),
+      workContinuationCuriosityReader: () => ({
+        ok: true,
+        decision: 'work_continuation_read_only',
+        totals: {
+          active_count: 0,
+          carried_count: 0,
+          stale_count: 0,
+          blocked_count: 0,
+          approval_required_count: 0,
+        },
+        due_count: 0,
+        held_count: 0,
+        next_action: null,
+      }),
+    });
+
+    expect(result.items.some((item) => item.source === 'work_continuation' && item.work_due_count === 0)).toBe(true);
+    expect(result.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      source: 'runtime_comms',
+      suppressed_candidate_count: 1,
+    }));
+    expect(result.route_output.source).not.toBe('work_continuation');
   });
 
   test('direct route handoff lets Mira choose Builder from curiosity evidence', async () => {
@@ -2363,6 +2483,59 @@ describe('Mira Lab sidecar surface', () => {
       'memory_broker_sources=cognitive_memory:1,team_memory:1,evidence_ledger:0',
     ]));
     expect(result.route_message).toContain('memory_broker_excerpt=James wants non-jargon status');
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+  });
+
+  test('active initiative turns parallel scout followthrough into a concrete source mix', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:parallel-plan',
+      generated_at: '2026-05-12T15:36:00.000Z',
+      source: 'cheap_parallel_scouts',
+      adapter_id: 'parallel_scout_curiosity',
+      status: 'active',
+      observation: 'Curiosity burst has a reviewed read-only source mix ready: runtime_comms, memory_broker, environment_apps, work_continuation, browser_history, email.',
+      suggested_question: 'Should Mira run the reviewed curiosity-burst source mix during the next quiet interval?',
+      possible_action: 'Run the reviewed curiosity burst.',
+      parallel_scout_plan: {
+        plan_kind: 'reviewed_parallel_curiosity_burst',
+        cadence: 'quiet_interval',
+        candidate_sources: ['runtime_comms', 'memory_broker', 'environment_apps', 'work_continuation', 'browser_history', 'email'],
+        max_sources: 6,
+        command_harness: 'node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --route-interesting --no-dispatch',
+        followup_rule: 'Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
+        route_strongest_internal_followup: true,
+        dispatch_performed: false,
+        schedule_created: false,
+        schedule_run_performed: false,
+        external_send_performed: false,
+      },
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:37:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('parallel_scout_followup');
+    expect(result.target_role).toBe('builder');
+    expect(result.work_order.title).toContain('runtime_comms, memory_broker, environment_apps, work_continuation, browser_history, email');
+    expect(result.work_order.action).toContain('curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email');
+    expect(result.work_order.action).toContain('record a no-op outcome');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'parallel_scout_sources=runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email',
+      'parallel_scout_command=node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --route-interesting --no-dispatch',
+      'parallel_scout_followup_rule=Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
+    ]));
+    expect(result.route_message).toContain('parallel_scout_command=node ui/scripts/hm-mira-self-direction.js curiosity-burst');
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       external_send_performed: false,

@@ -1624,6 +1624,30 @@ function compactSchedulerFollowthroughDesign(value) {
   };
 }
 
+function compactParallelScoutPlan(value) {
+  if (!value || typeof value !== 'object') return null;
+  const candidateSources = asArray(value.candidate_sources || value.candidateSources)
+    .map(trimText)
+    .filter((source) => CURIOSITY_BURST_DEFAULT_SOURCES.includes(source) && source !== 'cheap_parallel_scouts')
+    .slice(0, 8);
+  if (candidateSources.length === 0) return null;
+  return {
+    plan_kind: trimText(value.plan_kind || value.planKind) || 'reviewed_parallel_curiosity_burst',
+    cadence: trimText(value.cadence) || 'quiet_interval',
+    candidate_sources: candidateSources,
+    max_sources: Number.isFinite(Number(value.max_sources ?? value.maxSources))
+      ? Number(value.max_sources ?? value.maxSources)
+      : candidateSources.length,
+    command_harness: oneLine(value.command_harness || value.commandHarness, 280) || null,
+    followup_rule: oneLine(value.followup_rule || value.followupRule, 240) || null,
+    route_strongest_internal_followup: value.route_strongest_internal_followup !== false,
+    dispatch_performed: value.dispatch_performed === true,
+    schedule_created: value.schedule_created === true,
+    schedule_run_performed: value.schedule_run_performed === true,
+    external_send_performed: value.external_send_performed === true,
+  };
+}
+
 function compactEnvironmentMemoryCounts(value) {
   if (!value) return {};
   if (typeof value === 'object' && !Array.isArray(value)) {
@@ -1730,11 +1754,13 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const whyInteresting = oneLine(rawItem.why_interesting || rawItem.whyInteresting || 'Mira noticed a local signal worth asking about.', 260);
   const hypothesis = oneLine(rawItem.hypothesis || 'There may be a pattern here that James has not explicitly named yet.', 220);
   const suggestedQuestion = oneLine(rawItem.suggested_question || rawItem.suggestedQuestion || 'What should Mira inspect next from this signal?', 220);
-  const possibleAction = oneLine(rawItem.possible_action || rawItem.possibleAction || 'Ask a pointed follow-up or route an internal review item.', 220);
+  const rawPossibleAction = rawItem.possible_action ?? rawItem.possibleAction;
+  const possibleAction = oneLine(rawPossibleAction == null ? 'Ask a pointed follow-up or route an internal review item.' : rawPossibleAction, 220);
   const routeHint = trimText(rawItem.route_hint || rawItem.routeHint || 'mira_lab') || 'mira_lab';
   const status = normalizeCuriosityStatus(rawItem.status);
   const sensitivityHint = trimText(rawItem.sensitivity_hint || rawItem.sensitivityHint || 'local_metadata_only') || 'local_metadata_only';
   const memoryResultCount = Number(rawItem.memory_result_count ?? rawItem.memoryResultCount);
+  const selfDirectionPendingCount = Number(rawItem.self_direction_pending_count ?? rawItem.selfDirectionPendingCount);
   const memoryBrokerResultCount = Number(rawItem.memory_broker_result_count ?? rawItem.memoryBrokerResultCount);
   const environmentScore = Number(rawItem.environment_overall_score ?? rawItem.environmentOverallScore);
   const browserResultCount = Number(rawItem.browser_result_count ?? rawItem.browserResultCount);
@@ -1785,6 +1811,11 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     destructive_action_performed: false,
     file_system_action_performed: false,
     adapter_error: rawItem.adapter_error ? oneLine(rawItem.adapter_error, 180) : null,
+    self_direction_pending_count: Number.isFinite(selfDirectionPendingCount) ? selfDirectionPendingCount : null,
+    recent_comms_signal: oneLine(rawItem.recent_comms_signal || rawItem.recentCommsSignal, 220) || null,
+    recent_comms_actionable: typeof (rawItem.recent_comms_actionable ?? rawItem.recentCommsActionable) === 'boolean'
+      ? Boolean(rawItem.recent_comms_actionable ?? rawItem.recentCommsActionable)
+      : null,
     memory_query: trimText(rawItem.memory_query || rawItem.memoryQuery) || null,
     memory_result_count: Number.isFinite(memoryResultCount) ? memoryResultCount : null,
     memory_top_result: compactCuriosityMemoryTopResult(rawItem.memory_top_result || rawItem.memoryTopResult),
@@ -1829,6 +1860,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     scheduler_overdue_count: Number.isFinite(schedulerOverdueCount) ? schedulerOverdueCount : null,
     scheduler_type_counts: compactSchedulerTypeCounts(rawItem.scheduler_type_counts || rawItem.schedulerTypeCounts),
     scheduler_followthrough_design: compactSchedulerFollowthroughDesign(rawItem.scheduler_followthrough_design || rawItem.schedulerFollowthroughDesign),
+    parallel_scout_plan: compactParallelScoutPlan(rawItem.parallel_scout_plan || rawItem.parallelScoutPlan),
     work_continuation_totals: compactWorkContinuationTotals(rawItem.work_continuation_totals || rawItem.workContinuationTotals),
     work_carried_count: Number.isFinite(workCarriedCount) ? workCarriedCount : null,
     work_stale_count: Number.isFinite(workStaleCount) ? workStaleCount : null,
@@ -1943,6 +1975,9 @@ function runtimeQueueCuriosityAdapter(context) {
     acc[status] = (acc[status] || 0) + 1;
     return acc;
   }, {});
+  const pendingCount = Object.entries(counts).reduce((total, [status, count]) => (
+    /pending|queued|needs_review|review_required/i.test(status) ? total + count : total
+  ), 0);
   const latest = proposals[proposals.length - 1];
   return {
     source: 'runtime_comms',
@@ -1952,28 +1987,65 @@ function runtimeQueueCuriosityAdapter(context) {
     why_interesting: 'The queue shows what Mira has already tried to lead, so curiosity can follow up instead of starting cold.',
     hypothesis: 'There may be a proposal that wants a next experiment, review decision, or implementation outcome.',
     suggested_question: 'Which queued Mira proposal should become a concrete experiment next?',
-    possible_action: 'Ask Architect to route the most alive queued proposal if it is still pending.',
+    possible_action: pendingCount > 0
+      ? 'Ask Architect to route the most alive queued proposal if it is still pending.'
+      : '',
     route_hint: 'architect',
     sensitivity_hint: 'local_runtime_queue_metadata',
+    self_direction_pending_count: pendingCount,
   };
+}
+
+function compactRecentCommsLines(text, limit = 20) {
+  const maxLines = Math.max(1, Math.min(100, Number(limit) || 20));
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^Rows:\s*\d+\s*$/i.test(line))
+    .filter((line) => !/^\[dotenv@/i.test(line))
+    .filter((line) => !/^\(node:\d+\)\s+ExperimentalWarning:/i.test(line))
+    .slice(-maxLines);
+}
+
+function newestRecentCommsSignal(lines = []) {
+  if (!Array.isArray(lines) || lines.length === 0) return '';
+  if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/.test(lines[0])) return lines[0];
+  return lines[lines.length - 1];
+}
+
+function actionableRecentCommsSignal(lines = []) {
+  if (!Array.isArray(lines) || lines.length === 0) return '';
+  const newestFirst = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/.test(lines[0]);
+  const ordered = newestFirst ? lines : [...lines].reverse();
+  return ordered.find((line) => (
+    /\buser\s*->\s*(architect|builder|oracle|mira)\b/i.test(line)
+    || /^\[Telegram from /i.test(line)
+  )) || '';
 }
 
 function recentCommsCuriosityAdapter(context) {
   if (typeof context.recentCommsText === 'string') {
-    const lines = context.recentCommsText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-20);
+    const lines = compactRecentCommsLines(context.recentCommsText);
+    const newestSignal = newestRecentCommsSignal(lines);
+    const actionableSignal = actionableRecentCommsSignal(lines);
     return {
       source: 'runtime_comms',
       adapter_id: 'recent_comms',
       status: 'active',
       observation: lines.length > 0
-        ? `Recent comms fixture has ${lines.length} line(s). Last signal: ${oneLine(lines[lines.length - 1], 160)}`
+        ? `Recent comms fixture has ${lines.length} line(s). Newest signal: ${oneLine(newestSignal, 160)}${actionableSignal ? ` Actionable signal: ${oneLine(actionableSignal, 160)}` : ' No current user/Mira-origin action signal.'}`
         : 'Recent comms fixture is empty.',
       why_interesting: 'Recent agent chatter can reveal tension, repeated requests, or unfinished product questions.',
       hypothesis: 'A repeated demand or correction may be telling Mira what to inspect next.',
       suggested_question: 'What repeated demand in the recent comms should Mira inspect without waiting for James?',
-      possible_action: 'Stage a curiosity item or self-direction proposal from the repeated comms pattern.',
+      possible_action: actionableSignal
+        ? 'Stage a curiosity item or self-direction proposal from the repeated comms pattern.'
+        : '',
       route_hint: 'architect',
       sensitivity_hint: 'internal_comms_metadata',
+      recent_comms_signal: actionableSignal || newestSignal,
+      recent_comms_actionable: Boolean(actionableSignal),
     };
   }
   const scriptPath = path.join(context.projectRoot, 'ui', 'scripts', 'hm-comms.js');
@@ -2013,20 +2085,26 @@ function recentCommsCuriosityAdapter(context) {
       adapter_error: run.stderr || 'hm_comms_history_failed',
     };
   }
-  const lines = (run.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-20);
+  const lines = compactRecentCommsLines(run.stdout);
+  const newestSignal = newestRecentCommsSignal(lines);
+  const actionableSignal = actionableRecentCommsSignal(lines);
   return {
     source: 'runtime_comms',
     adapter_id: 'recent_comms',
     status: 'active',
     observation: lines.length > 0
-      ? `Recent comms helper returned ${lines.length} line(s). Last signal: ${oneLine(lines[lines.length - 1], 160)}`
+      ? `Recent comms helper returned ${lines.length} line(s). Newest signal: ${oneLine(newestSignal, 160)}${actionableSignal ? ` Actionable signal: ${oneLine(actionableSignal, 160)}` : ' No current user/Mira-origin action signal.'}`
       : 'Recent comms helper returned no lines.',
     why_interesting: 'Recent comms are where Mira can notice repeated pressure, unfinished work, and routing gaps.',
     hypothesis: 'Recent team messages may point at a product tension before James turns it into a task.',
     suggested_question: 'What pattern in the last comms should Mira ask Architect or James about?',
-    possible_action: 'Route a concise internal question to Architect if the pattern looks actionable.',
+    possible_action: actionableSignal
+      ? 'Route a concise internal question to Architect if the pattern looks actionable.'
+      : '',
     route_hint: 'architect',
     sensitivity_hint: 'internal_comms_metadata',
+    recent_comms_signal: actionableSignal || newestSignal,
+    recent_comms_actionable: Boolean(actionableSignal),
   };
 }
 
@@ -2813,22 +2891,55 @@ function activeCalendarMessageCuriosityAdapter(context = {}) {
   };
 }
 
+function buildParallelScoutFollowthroughPlan(context = {}) {
+  const defaultSources = [
+    'runtime_comms',
+    'memory_broker',
+    'environment_apps',
+    'work_continuation',
+    'browser_history',
+    'email',
+  ];
+  const requested = asArray(context.parallelScoutSources || context.recommendedScoutSources || context.burstSources)
+    .map(trimText)
+    .filter((source) => (
+      source
+      && source !== 'cheap_parallel_scouts'
+      && CURIOSITY_BURST_DEFAULT_SOURCES.includes(source)
+    ));
+  const candidateSources = Array.from(new Set(requested.length > 0 ? requested : defaultSources)).slice(0, 8);
+  return {
+    plan_kind: 'reviewed_parallel_curiosity_burst',
+    cadence: 'quiet_interval',
+    candidate_sources: candidateSources,
+    max_sources: candidateSources.length,
+    command_harness: `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${candidateSources.join(',')} --route-interesting --no-dispatch`,
+    followup_rule: 'Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
+    route_strongest_internal_followup: true,
+    dispatch_performed: false,
+    schedule_created: false,
+    schedule_run_performed: false,
+    external_send_performed: false,
+  };
+}
+
 function cheapParallelScoutsCuriosityAdapter(context = {}) {
-  const sources = asArray(context.burstSources).map(trimText).filter(Boolean);
-  const sourceText = sources.length > 0 ? sources.join(', ') : 'repo_files, runtime_comms, memory';
+  const plan = buildParallelScoutFollowthroughPlan(context);
+  const sourceText = plan.candidate_sources.join(', ');
   return {
     source: 'cheap_parallel_scouts',
     scope: 'parallel_curiosity_execution',
     adapter_id: 'parallel_scout_curiosity',
     integration_strategy: 'native_adapter',
     status: 'active',
-    observation: `Curiosity burst can now run bounded read-only scout slices over ${sourceText}.`,
+    observation: `Curiosity burst has a reviewed read-only source mix ready: ${sourceText}.`,
     why_interesting: 'This gives Mira initiative during quiet intervals without waiting for one giant prompt or a single serial scout.',
-    hypothesis: 'Cheap bursts can surface routeable questions faster when repo, comms, memory, and capability-gap signals are inspected together.',
-    suggested_question: 'Which scout result from this burst should Mira route before the window goes stale?',
-    possible_action: 'Run curiosity-burst with a small source budget, then route the strongest internal follow-up from the burst output.',
+    hypothesis: 'Cheap bursts surface routeable questions fastest when comms, unified memory, environment, work continuation, browser, and email signals are inspected together.',
+    suggested_question: `Should Mira run the reviewed curiosity-burst source mix (${sourceText}) during the next quiet interval?`,
+    possible_action: `Run ${plan.command_harness}; then route only the strongest changed-decision follow-up or record a no-op outcome.`,
     route_hint: 'builder',
     sensitivity_hint: 'local_runtime_planning',
+    parallel_scout_plan: plan,
     no_mutation_performed: true,
   };
 }
@@ -2913,6 +3024,7 @@ function defaultCuriosityAdapters() {
 }
 
 function buildAccelerationCuriosityItems(context) {
+  const parallelScoutPlan = buildParallelScoutFollowthroughPlan(context);
   return [
     {
       source: 'source_action_substrate',
@@ -2980,9 +3092,10 @@ function buildAccelerationCuriosityItems(context) {
       why_interesting: 'Parallel scouting is how Mira starts noticing more than the current prompt without becoming slow or heavy.',
       hypothesis: 'Small bounded bursts can surface questions faster than one large serial sweep.',
       suggested_question: 'Which curiosity-burst source mix should Mira run during the next quiet interval?',
-      possible_action: 'Run hm-mira-self-direction curiosity-burst and route its strongest internal follow-up.',
+      possible_action: `Run ${parallelScoutPlan.command_harness}; then route only the strongest changed-decision follow-up or record a no-op outcome.`,
       route_hint: 'builder',
       sensitivity_hint: 'local_runtime_planning',
+      parallel_scout_plan: parallelScoutPlan,
     },
     {
       source: 'voyager_curriculum',
@@ -3145,7 +3258,27 @@ function curiosityBurstAdaptersForSource(source) {
   return [];
 }
 
-function curiosityBurstRouteForItems(items = []) {
+function curiosityBurstSemanticKeyForItem(item = {}) {
+  const plan = ACTIVE_INITIATIVE_SOURCE_PLAN[trimText(item.source)] || null;
+  if (!plan) return null;
+  return activeInitiativeSemanticKey({
+    initiative_kind: plan.initiative_kind,
+    item,
+  });
+}
+
+function workContinuationHasActionableSignal(item = {}) {
+  return Boolean(
+    numberSignal(item.work_due_count) > 0
+    || numberSignal(item.work_stale_count) > 0
+    || numberSignal(item.work_carried_count) > 0
+    || numberSignal(item.work_approval_required_count) > 0
+    || numberSignal(item.work_held_count) > 0
+    || trimText(item.work_next_task_id)
+  );
+}
+
+function curiosityBurstRouteForItems(items = [], options = {}) {
   const priority = {
     automation_scheduler: 96,
     cheap_parallel_scouts: 88,
@@ -3162,21 +3295,42 @@ function curiosityBurstRouteForItems(items = []) {
     runtime_comms: 64,
     repo_files: 42,
   };
-  const candidates = items
+  const generatedAt = trimText(options.generatedAt || options.generated_at) || new Date().toISOString();
+  const projectRoot = trimText(options.projectRoot || options.project_root) || null;
+  const outcomeCooldownMs = Math.max(0, Math.min(
+    7 * 24 * 60 * 60 * 1000,
+    Number(options.outcomeCooldownMs || options.outcome_cooldown_ms || 24 * 60 * 60 * 1000) || 0
+  ));
+  const recentOutcomes = projectRoot && outcomeCooldownMs > 0
+    ? recentImplementedActiveInitiativeOutcomes(activeInitiativeOutcomesPath(projectRoot), generatedAt, outcomeCooldownMs)
+    : new Map();
+  const allCandidates = items
     .filter((item) => item && ['active', 'adapter_not_built_yet'].includes(item.status))
+    .filter((item) => !(trimText(item.source) === 'work_continuation' && !workContinuationHasActionableSignal(item)))
     .filter((item) => trimText(item.suggested_question) && trimText(item.possible_action))
-    .map((item, index) => ({
-      item,
-      score: (priority[item.source] || 20)
-        + (item.status === 'adapter_not_built_yet' ? 8 : 2)
-        + Math.min(4, index),
-    }))
+    .map((item, index) => {
+      const semanticKey = curiosityBurstSemanticKeyForItem(item);
+      const recentOutcome = semanticKey ? recentOutcomes.get(semanticKey) || null : null;
+      return {
+        item,
+        semantic_key: semanticKey,
+        recent_outcome: recentOutcome,
+        score: (priority[item.source] || 20)
+          + (item.status === 'adapter_not_built_yet' ? 8 : 2)
+          + Math.min(4, index),
+      };
+    })
     .sort((left, right) => right.score - left.score);
+  const suppressedCandidates = allCandidates.filter((candidate) => candidate.recent_outcome);
+  const candidates = allCandidates.filter((candidate) => !candidate.recent_outcome);
   if (candidates.length === 0) {
     return {
       decision: 'no_route',
       target_role: null,
-      reason: 'burst_found_no_actionable_internal_item',
+      reason: suppressedCandidates.length > 0
+        ? 'burst_candidates_suppressed_by_recent_outcomes'
+        : 'burst_found_no_actionable_internal_item',
+      suppressed_candidate_count: suppressedCandidates.length,
       internal_only: true,
       external_send_performed: false,
     };
@@ -3194,6 +3348,7 @@ function curiosityBurstRouteForItems(items = []) {
     reason: selected.source === 'automation_scheduler'
       ? 'scheduled curiosity is the next useful way to make bursts recur without James hand-running them'
       : 'burst selected the strongest internal follow-up from bounded read-only scout results',
+    suppressed_candidate_count: suppressedCandidates.length,
     internal_only: true,
     applied: false,
     external_send_performed: false,
@@ -3319,7 +3474,7 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     unavailable_count: items.filter((item) => item.status === 'unavailable_in_this_runtime').length,
     scout_runs: scoutRuns,
     items,
-    route_output: curiosityBurstRouteForItems(items),
+    route_output: curiosityBurstRouteForItems(items, { projectRoot, generatedAt }),
     route_message: null,
     dispatch: {
       status: 'queued_not_sent',
@@ -3943,6 +4098,14 @@ function activeInitiativeEvidenceForItem(item = {}) {
       evidence.push('scheduler_review_plan=quiet_interval_curiosity_burst review=architect before_schedule_creation=true schedule_mutation=false');
     }
   }
+  if (trimText(item.source) === 'cheap_parallel_scouts') {
+    const plan = compactParallelScoutPlan(item.parallel_scout_plan || item.parallelScoutPlan);
+    if (plan) {
+      evidence.push(`parallel_scout_sources=${plan.candidate_sources.join(',')}`);
+      if (plan.command_harness) evidence.push(`parallel_scout_command=${plan.command_harness}`);
+      if (plan.followup_rule) evidence.push(`parallel_scout_followup_rule=${plan.followup_rule}`);
+    }
+  }
   if (numberSignal(item.email_unread_total) > 0) evidence.push(`email_unread=${numberSignal(item.email_unread_total)}`);
   if (numberSignal(item.memory_result_count) > 0) {
     const top = item.memory_top_result || {};
@@ -4116,7 +4279,10 @@ function activeInitiativeCandidateForItem(item, index, total) {
   let reviewedRecurringBurstPlan = null;
   const modules = asArray(item.runtime_blocked_modules).map(trimText).filter(Boolean);
 
-  if (source === 'mira_runtime') {
+  if (source === 'runtime_comms') {
+    if (trimText(item.adapter_id) === 'recent_comms' && item.recent_comms_actionable !== true) return null;
+    if (trimText(item.adapter_id) === 'self_direction_queue' && numberSignal(item.self_direction_pending_count) <= 0) return null;
+  } else if (source === 'mira_runtime') {
     const blocked = numberSignal(item.runtime_blocked_count);
     if (blocked > 0) {
       score += 36 + Math.min(12, blocked * 4);
@@ -4129,13 +4295,13 @@ function activeInitiativeCandidateForItem(item, index, total) {
       score -= 44;
     }
   } else if (source === 'work_continuation') {
-    const due = numberSignal(item.work_due_count);
-    const stale = numberSignal(item.work_stale_count);
-    const carried = numberSignal(item.work_carried_count);
-    const approval = numberSignal(item.work_approval_required_count);
-    const held = numberSignal(item.work_held_count);
-    const nextTaskId = trimText(item.work_next_task_id);
-    if (due > 0 || stale > 0 || carried > 0 || approval > 0 || held > 0 || nextTaskId) {
+    if (workContinuationHasActionableSignal(item)) {
+      const due = numberSignal(item.work_due_count);
+      const stale = numberSignal(item.work_stale_count);
+      const carried = numberSignal(item.work_carried_count);
+      const approval = numberSignal(item.work_approval_required_count);
+      const held = numberSignal(item.work_held_count);
+      const nextTaskId = trimText(item.work_next_task_id);
       score += 28 + Math.min(12, due * 3 + stale + carried + approval * 2 + held);
       const nextAgent = normalizeDirectRouteTarget(item.work_next_agent) || null;
       if (nextAgent && AGENT_ROLES.includes(nextAgent)) targetRole = nextAgent;
@@ -4203,6 +4369,16 @@ function activeInitiativeCandidateForItem(item, index, total) {
         || schedulerReviewedCuriosityBurstPlan(item);
       title = 'Design reviewed quiet-interval curiosity burst for the empty scheduler.';
       action = 'Have Builder stage a review-only recurring curiosity-burst design using runtime_comms, memory, environment_apps, work_continuation, browser_history, and email metadata; do not create, update, delete, or run schedules from scout output.';
+    } else {
+      score -= 18;
+    }
+  } else if (source === 'cheap_parallel_scouts') {
+    const plan = compactParallelScoutPlan(item.parallel_scout_plan || item.parallelScoutPlan)
+      || buildParallelScoutFollowthroughPlan();
+    if (plan && plan.candidate_sources.length > 0) {
+      score += 10 + Math.min(8, plan.candidate_sources.length);
+      title = `Run reviewed curiosity-burst mix: ${plan.candidate_sources.join(', ')}.`;
+      action = `${plan.command_harness}; ${plan.followup_rule || 'route the strongest internal follow-up if it changes a decision.'}`;
     } else {
       score -= 18;
     }
