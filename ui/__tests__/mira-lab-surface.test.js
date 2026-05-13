@@ -2930,7 +2930,7 @@ describe('Mira Lab sidecar surface', () => {
       type: 'interval',
       active: true,
       interval_minutes: 45,
-      task_type: 'implementation',
+      task_type: 'mira-curiosity-burst',
     }));
     expect(JSON.stringify(result)).not.toMatch(/automation_scheduler|cheap_parallel_scouts|email body|external_send_performed":true/);
     expect(fs.existsSync(schedulerStatePath)).toBe(false);
@@ -2979,7 +2979,7 @@ describe('Mira Lab sidecar surface', () => {
       name: 'Mira quiet curiosity burst',
       type: 'interval',
       active: true,
-      taskType: 'implementation',
+      taskType: 'mira-curiosity-burst',
       intervalMs: 45 * 60 * 1000,
     }));
     expect(state.schedules[0].metadata).toEqual(expect.objectContaining({

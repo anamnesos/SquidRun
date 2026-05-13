@@ -4136,7 +4136,7 @@ function writeJsonAtomic(filePath, payload) {
 }
 
 function quietCuriosityCommandHarness(sources) {
-  return `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --route-interesting`;
+  return `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --route-interesting --json`;
 }
 
 function quietCuriosityScheduleInput(sources) {
@@ -4159,7 +4159,7 @@ function buildQuietCuriositySchedulePayload({ sources, intervalMs, generatedAt }
     name: MIRA_QUIET_CURIOSITY_SCHEDULE_NAME,
     type: 'interval',
     input: quietCuriosityScheduleInput(sources),
-    taskType: 'implementation',
+    taskType: 'mira-curiosity-burst',
     active: true,
     runAt: null,
     intervalMs,
@@ -4204,6 +4204,7 @@ function quietScheduleNeedsUpdate(existing = {}, next = {}) {
   return (
     existing.active === false
     || trimText(existing.type) !== trimText(next.type)
+    || trimText(existing.taskType) !== trimText(next.taskType)
     || Number(existing.intervalMs) !== Number(next.intervalMs)
     || trimText(existing.input) !== trimText(next.input)
     || existingSources !== nextSources
