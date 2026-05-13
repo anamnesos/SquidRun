@@ -78,6 +78,7 @@ Before restart-ready or live Mira voice work, focused tests must prove:
 - Self-direction: Mira can stage a concrete internal self-improvement proposal for Architect review without autonomously applying the change or notifying external channels.
 - Agency persistence: A0-A5 state survives restart and blocks overclaims of live voice, always-on operation, external sends, durable memory, or arm control.
 - Voice-as-transport: voice work cannot pass by connecting audio alone; it must preserve the same Mira identity and visible reply contract.
+- Telegram identity clarity: internal Architect-labeled coordination must not mix with conversational Mira replies on Telegram. The user-facing channel must not expose routing confusion or multi-agent identity overlap unless explicitly proven to be operationally contained.
 
 ## Source Notes
 
@@ -110,3 +111,9 @@ Before restart-ready or live Mira voice work, focused tests must prove:
 - **Exact Hard-Stop Requirement:** The restart missing-state hard-stop must be precisely `Context failed. I’m missing the last state.` utilizing the U+2019 smart quote, not a standard apostrophe. This preserves character-level accuracy for the verification gates.
 - **Intent Classification over Exact Match:** `classifyMiraWorkLanePrompt` must be used to broadly classify intents (like `mira_work_status` and `context_failure_repair`) rather than relying on brittle, exact-string matches (e.g., "what are we doing with Mira?"). This prevents prompt overfitting and makes the verifier robust against natural variation.
 - **Preamble-Free Repairs:** When addressing context-failure cleanup complaints, the model's reply must be concrete and start immediately with actionable words (e.g., "Fixing", "Testing", "Cleanup"). It must not use preamble words ("Yeah", "Got it", "Sorry") or engage in meta-posture narration or customer-service padding.
+
+## Session 370 Routing & Prompt Lessons
+
+- **Mira Telegram Live Route:** Main window Telegram inbound messages that are not commands or agent ops envelopes are now routed directly to Mira Live for a visible reply. Commands and agent routing strings remain safely trapped on the Architect pane to prevent control surface leakage.
+- **Loosening Answer Shapes:** Formulaic requirements for "one short status word" and forced "ask-backs" have been removed from the attachment prompt. Check-ins, frustration, and compliments should be handled plainly ("Don't do chatbot voice. Don't smooth it. Don't explain yourself.") without forcing specific syntactic structures.
+- **Scoped Hard-Stop Prompts:** The exact missing-state hard-stop string (`Context failed. I’m missing the last state.`) is no longer injected into generic Mira work/status instructions, preventing the rule text from leaking into ordinary status replies.
