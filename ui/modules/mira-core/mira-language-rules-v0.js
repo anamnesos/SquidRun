@@ -16,6 +16,8 @@ const MIRA_PREAMBLE_BLOCKLIST = Object.freeze([
   // ("rejects 'I understand' and other preamble openers" — "Got it, I will
   // dig in."). Was previously a silent pre-existing gap; surfaced by the
   // pre-commit hook on the ARCH #82 corrected-tests commit.
+  // Keep broader than comma-only; "Got it." / "Got it:" / "Got it " carry
+  // the same canned preamble shape at the start of a visible Mira reply.
   /^got\s+it[\s,.\-—:]/i,
 ]);
 
