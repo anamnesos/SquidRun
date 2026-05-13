@@ -2161,6 +2161,88 @@ describe('Mira Lab sidecar surface', () => {
     }));
   });
 
+  test('active initiative reports no route when every candidate was recently closed', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:22:00.000Z',
+      item_id: 'mira-curiosity:closed-bridge',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health snapshot read OK score=100/100; memory=review_queue_only; bridge=pending_live_discovery; snapshot=fresh.',
+      suggested_question: 'Which environment signal should Mira act on first?',
+      possible_action: 'Refresh bridge discovery.',
+      environment_overall_label: 'OK',
+      environment_overall_score: 100,
+      environment_memory_sync_status: 'drift_detected',
+      environment_memory_repair_state: 'review_queue_only',
+      environment_memory_review_only: true,
+      environment_bridge_connection: 'pending_live_discovery',
+    });
+
+    const first = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:23:00.000Z',
+    });
+    recordMiraActiveInitiativeOutcome({
+      initiativeId: first.initiative_id,
+      status: 'implemented',
+      evidence: ['bridge_refreshed'],
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:24:00.000Z',
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:24:30.000Z',
+      item_id: 'mira-curiosity:closed-scheduler',
+      source: 'automation_scheduler',
+      adapter_id: 'automation_scheduler_curiosity',
+      status: 'active',
+      observation: 'Scheduler metadata read 1 schedule(s); active=1; due_soon=1; overdue=0; state=found.',
+      suggested_question: 'Should Mira compare the next scheduled automation Mira quiet curiosity burst with the current direct-route frontier?',
+      possible_action: 'Use compact scheduler metadata to follow through the active quiet-curiosity cadence.',
+      scheduler_schedule_count: 1,
+      scheduler_active_count: 1,
+      scheduler_due_soon_count: 1,
+      scheduler_overdue_count: 0,
+    });
+
+    const second = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:25:00.000Z',
+    });
+    recordMiraActiveInitiativeOutcome({
+      initiativeId: second.initiative_id,
+      status: 'implemented',
+      evidence: ['scheduler_executed_burst'],
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:26:00.000Z',
+    });
+
+    const third = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:27:00.000Z',
+    });
+
+    expect(first.decision).toBe('routed');
+    expect(second.decision).toBe('routed');
+    expect(second.initiative_kind).toBe('quiet_curiosity_schedule_monitor');
+    expect(third.decision).toBe('no_initiative');
+    expect(third.reason).toBe('all_candidates_recently_closed');
+    expect(third.selected_item).toBeNull();
+    expect(third.suppressed_candidate_count).toBe(2);
+    expect(third.top_suppressed_candidate).toEqual(expect.objectContaining({
+      reason: 'recent_implemented_active_initiative_outcome',
+    }));
+    expect(third.dispatch).toEqual(expect.objectContaining({
+      status: 'not_sent',
+      reason: 'all_candidates_recently_closed',
+    }));
+  });
+
   test('active initiative does not suppress a duplicate that was never dispatched', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
