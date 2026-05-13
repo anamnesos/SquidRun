@@ -36,6 +36,7 @@ function seedHistoryDb(filePath) {
       INSERT INTO urls (url, title, visit_count, typed_count, last_visit_time)
       VALUES (?, ?, ?, ?, ?)
     `);
+    insert.run('https://huggingface.co/email_confirmation/raw-token-12345', 'Confirm Hugging Face email', 1, 0, chromeTime('2026-05-12T11:00:00.000Z'));
     insert.run('https://example.com/search?q=secret-token#private', 'Example search', 4, 1, chromeTime('2026-05-12T10:00:00.000Z'));
     insert.run('https://docs.example.com/guide?session=abc', 'Docs guide', 2, 0, chromeTime('2026-05-12T09:00:00.000Z'));
     insert.run('notaurl', 'Broken row', 1, 0, chromeTime('2026-05-12T08:00:00.000Z'));
@@ -67,12 +68,21 @@ describe('Mira browser history curiosity', () => {
     expect(result.decision).toBe('browser_history_read_only');
     expect(result.browser).toBe('chrome');
     expect(result.profile).toBe('Default');
-    expect(result.result_count).toBe(2);
+    expect(result.result_count).toBe(3);
     expect(result.top_hosts).toEqual(expect.arrayContaining([
       { host: 'docs.example.com', count: 1 },
       { host: 'example.com', count: 1 },
+      { host: 'huggingface.co', count: 1 },
     ]));
     expect(result.results[0]).toEqual(expect.objectContaining({
+      host: 'huggingface.co',
+      title: 'Confirm Hugging Face email',
+      safe_url: 'https://huggingface.co/email_confirmation/__redacted__',
+      visit_count: 1,
+      typed_count: 0,
+      last_visit_at: '2026-05-12T11:00:00.000Z',
+    }));
+    expect(result.results[1]).toEqual(expect.objectContaining({
       host: 'example.com',
       title: 'Example search',
       safe_url: 'https://example.com/search',
@@ -80,7 +90,7 @@ describe('Mira browser history curiosity', () => {
       typed_count: 1,
       last_visit_at: '2026-05-12T10:00:00.000Z',
     }));
-    expect(JSON.stringify(result)).not.toMatch(/secret-token|session=abc|#private|\?/);
+    expect(JSON.stringify(result)).not.toMatch(/raw-token-12345|secret-token|session=abc|#private|\?/);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       read_only: true,

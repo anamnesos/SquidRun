@@ -90,10 +90,34 @@ function safeHostname(value) {
 function safeUrlForOutput(value) {
   try {
     const parsed = new URL(String(value));
-    return `${parsed.protocol}//${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+    const pathForOutput = safePathForOutput(parsed.pathname);
+    return `${parsed.protocol}//${parsed.hostname}${pathForOutput}`;
   } catch {
     return null;
   }
+}
+
+const SENSITIVE_PATH_MARKER_PATTERN = /\b(?:auth|callback|confirm|confirmation|email[-_]?confirmation|invite|login|magic[-_]?link|oauth|password|reset|session|token|verify|verification)\b/i;
+
+function safePathForOutput(pathname) {
+  const rawPath = trimText(pathname);
+  if (!rawPath || rawPath === '/') return '';
+  const segments = rawPath.split('/').filter(Boolean);
+  const safe = [];
+  let redactTail = false;
+  for (const segment of segments) {
+    if (redactTail) {
+      safe.push('__redacted__');
+      break;
+    }
+    safe.push(segment);
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch {}
+    if (SENSITIVE_PATH_MARKER_PATTERN.test(decoded)) {
+      redactTail = true;
+    }
+  }
+  return safe.length > 0 ? `/${safe.join('/')}` : '';
 }
 
 function copyHistoryForRead(historyPath, tempRoot) {
