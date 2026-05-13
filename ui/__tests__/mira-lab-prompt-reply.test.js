@@ -19,12 +19,24 @@ const {
 const {
   MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
 } = require('../modules/mira-core/text-model-attachment-v1');
+const {
+  CURRENT_LANE_RELATIVE_PATH,
+  PRESENCE_SUMMARY_RELATIVE_PATH,
+} = require('../modules/mira-core/typed-restart-continuity-context-v0');
 
 const {
   MIRA_LAB_PROMPT_REPLY_CHANNEL: HANDLER_CHANNEL,
   buildMiraLabPromptReplyResponse,
   registerMiraLabHandlers,
 } = require('../modules/ipc/mira-lab-handlers');
+
+const seedContract = require('./fixtures/mira-core-durable-state-seed-v0-contract.json');
+const relationshipContract = require('./fixtures/mira-core-relationship-presence-v1-contract.json');
+const growthContract = require('./fixtures/mira-core-growth-loop-v0-contract.json');
+const identityContract = require('./fixtures/mira-core-identity-anchor-v0-contract.json');
+const {
+  buildMiraCoreDurableStateSeedV0,
+} = require('../modules/mira-core/durable-state-seed-v0');
 
 function tempProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sq-mira-lab-prompt-reply-'));
@@ -42,6 +54,84 @@ function readJsonl(filePath) {
 function appendJsonl(filePath, entry) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+}
+
+function seedDurableMiraState(projectRoot) {
+  const output = buildMiraCoreDurableStateSeedV0({
+    contract: seedContract,
+    relationshipContract,
+    growthContract,
+    identityContract,
+    projectRoot,
+    apply: true,
+    inputSignals: {
+      profile: { name: 'main', windowKey: 'main', sessionScopeId: 'app-session-mira-lab' },
+      sessionId: 'app-session-mira-lab',
+      deviceId: 'VIGIL',
+    },
+    nowMs: Date.parse('2026-05-13T17:00:00.000Z'),
+  });
+  expect(output.validation_report.decision).toBe('accepted');
+}
+
+function writeJson(projectRoot, relativePath, payload) {
+  const filePath = path.join(projectRoot, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  return filePath;
+}
+
+function seedTypedRestartContinuity(projectRoot) {
+  writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+    version: 1,
+    generatedAt: '2026-05-13T17:00:00.000Z',
+    sessionId: 'app-session-372',
+    source: 'comms_journal',
+    status: 'active',
+    activeLane: {
+      laneId: 'app-session-372:architect-48:m-main',
+      objective: 'LAB_MAIN_TYPED_LANE_SENTINEL: private restart proof',
+      kind: 'current_lane',
+      status: 'active',
+      sourceMessageId: 'm-main',
+      sourceRef: 'architect#48',
+      sourceTimestampMs: Date.parse('2026-05-13T16:59:00.000Z'),
+      senderRole: 'architect',
+      targetRole: 'builder',
+    },
+  });
+  writeJson(projectRoot, PRESENCE_SUMMARY_RELATIVE_PATH, {
+    schema: 'squidrun.startup_ai_briefing.mira_presence_runtime_state_summary.v0',
+    surface: 'backstage_internal_only',
+    visible_injection_allowed: false,
+    generated_at: '2026-05-13T17:00:00.000Z',
+    context: {
+      present: true,
+      decision: 'durable_state_loaded',
+      surface: 'backstage_internal_only',
+      visible_injection_allowed: false,
+      summary: {
+        active_mira_presence_lane: 'typed_restart_continuity_context_v0',
+        accepted_critique: 'private structured context only',
+        next_product_action: 'LAB_MAIN_PRESENCE_ACTION_SENTINEL: keep context private',
+        proof_test_state: 'lab request proof running',
+        stale_markers: ['renderer thread non-durable'],
+      },
+    },
+  });
+  writeJson(projectRoot, path.join('.squidrun', 'handoffs-eunbyeol', 'current-lane.json'), {
+    version: 1,
+    generatedAt: '2026-05-13T17:00:00.000Z',
+    sessionId: 'app-session-372:eunbyeol',
+    status: 'active',
+    activeLane: { objective: 'LAB_EUNBYEOL_SENTINEL should stay out' },
+  });
+  fs.mkdirSync(path.join(projectRoot, '.squidrun', 'handoffs'), { recursive: true });
+  fs.writeFileSync(
+    path.join(projectRoot, '.squidrun', 'handoffs', 'ai-briefing.md'),
+    'LAB STARTUP PROSE SENTINEL should stay out of model request\n',
+    'utf8'
+  );
 }
 
 function makeBuildMiraLocalTextUiSurfaceMock(replyText, options = {}) {
@@ -870,6 +960,72 @@ describe('mira lab prompt reply v0', () => {
     }));
 
     jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  test('Lab typed restart continuity uses private context with no transcript or audit leak', async () => {
+    const projectRoot = tempProject();
+    seedDurableMiraState(projectRoot);
+    seedTypedRestartContinuity(projectRoot);
+    const replyText = 'Testing Lab continuity. The visible reply stays clean.';
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_lab_restart_continuity',
+        output_text: replyText,
+      }),
+    }));
+
+    const result = await buildMiraLabPromptReply({
+      prompt: 'restart continuity check: what were we doing?',
+      sessionId: 'unit-lab-restart-continuity',
+      threadContext: { messages: [] },
+    }, {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+    });
+
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(requestBody.instructions).toContain('Private typed restart-continuity context');
+    expect(requestBody.instructions).toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(requestBody.instructions).toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(requestBody.instructions).not.toContain('LAB_EUNBYEOL_SENTINEL');
+    expect(requestBody.instructions).not.toContain('LAB STARTUP PROSE SENTINEL');
+    expect(requestBody.instructions).not.toContain('Startup-Facing Durable Requirements');
+    expect(requestBody.instructions).not.toContain('Recent Current-Scope Comms');
+
+    expect(result.decision).not.toBe('blocked');
+    expect(result.reply.text).toBe(replyText);
+    expect(result.visible_render_hint.text).toBe(replyText);
+    const visibleJson = JSON.stringify({
+      reply: result.reply,
+      requester_envelope: result.requester_envelope,
+      visible_render_hint: result.visible_render_hint,
+    });
+    expect(visibleJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(visibleJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(visibleJson).not.toContain('LAB_EUNBYEOL_SENTINEL');
+    expect(visibleJson).not.toContain('LAB STARTUP PROSE SENTINEL');
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-lab-restart-continuity'));
+    const transcriptJson = JSON.stringify(transcriptEntries);
+    expect(transcriptEntries).toHaveLength(2);
+    expect(transcriptJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(transcriptJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(transcriptJson).not.toContain('LAB_EUNBYEOL_SENTINEL');
+    expect(transcriptJson).not.toContain('LAB STARTUP PROSE SENTINEL');
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    const auditJson = JSON.stringify(auditEntries[0]);
+    expect(auditJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(auditJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(auditJson).not.toContain('LAB_EUNBYEOL_SENTINEL');
+    expect(auditJson).not.toContain('LAB STARTUP PROSE SENTINEL');
   });
 
   test('PASS: context-failure verifier prompt reply starts preamble-free', async () => {

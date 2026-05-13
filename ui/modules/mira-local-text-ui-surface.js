@@ -28,6 +28,9 @@ const {
   classifySocialMove,
   getSocialMoveBehaviorCue,
 } = require('./mira-core/social-move-classifier-v0');
+const {
+  buildTypedRestartContinuityContextV0,
+} = require('./mira-core/typed-restart-continuity-context-v0');
 
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
@@ -122,6 +125,7 @@ function parseTimeMs(value) {
 function getPayloadValue(payload = {}, key) {
   if (hasOwn(payload, key)) return payload[key];
   if (key === 'sourceScope' && hasOwn(payload, 'source_scope')) return payload.source_scope;
+  if (key === 'sessionScopeId' && hasOwn(payload, 'session_scope_id')) return payload.session_scope_id;
   if (key === 'activeState' && hasOwn(payload, 'active_state')) return payload.active_state;
   if (key === 'visibleIndicatorPresent' && hasOwn(payload, 'visible_indicator_present')) {
     return payload.visible_indicator_present;
@@ -866,6 +870,21 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     priorFrameState: payload.priorFrameState || payload.prior_frame_state || null,
   });
   const socialMoveBehaviorCue = getSocialMoveBehaviorCue(socialMoveClassification);
+  const restartContinuityContext = buildTypedRestartContinuityContextV0({
+    projectRoot,
+    metadata: {
+      profileName: getPayloadValue(payload, 'profileName'),
+      windowKey: getPayloadValue(payload, 'windowKey'),
+      sourceScope: getPayloadValue(payload, 'sourceScope'),
+      deviceId: getPayloadValue(payload, 'deviceId'),
+      sessionId: getPayloadValue(payload, 'sessionId'),
+      sessionScopeId: getPayloadValue(payload, 'sessionScopeId'),
+      activeState: getPayloadValue(payload, 'activeState'),
+      visibleIndicatorPresent: getPayloadValue(payload, 'visibleIndicatorPresent'),
+    },
+    nowMs: Date.parse(generatedAt),
+    staleAfterMs: options.typedRestartContinuityMaxAgeMs || options.restartContinuityMaxAgeMs,
+  });
   if (localReply && attachment.enabled === true) {
     modelResult = await callMiraTextModelAttachment({
       text,
@@ -874,6 +893,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
         scope,
         miraBrief: session.presence_runtime_read_path_gate?.speakable_mira_brief || null,
         threadContext: payload.threadContext || payload.thread_context || {},
+        restartContinuityContext,
         reflexionLessons: payload.reflexionLessons || payload.reflexion_lessons || options.reflexionLessons || options.reflexion_lessons || [],
         socialMoveBehaviorCue,
       },

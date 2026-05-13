@@ -11,6 +11,7 @@ const {
   classifyMiraPromptReplyShape,
   classifyMiraWorkLanePrompt,
   outputViolatesAttachmentContract,
+  renderRestartContinuityContextForInstructions,
 } = require('../modules/mira-core/text-model-attachment-v1');
 const {
   visibleReplyLeakageViolation,
@@ -691,6 +692,41 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
     expect(instructions).toContain('give the concrete current-lane fix or test');
     expect(instructions).not.toContain(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP);
     expect(instructions).not.toContain('Context failed. Im missing the last state.');
+  });
+
+  test('restart-continuity prompt can receive private structured continuity context without startup prose', () => {
+    const restartContinuityContext = {
+      present: true,
+      stale: false,
+      current_lane: {
+        objective: 'ACCEPTANCE_CURRENT_LANE_SENTINEL: typed restart continuity proof',
+        kind: 'current_lane',
+        source_ref: 'architect#48',
+      },
+      mira_presence_runtime: {
+        active_mira_presence_lane: 'typed_restart_continuity_context_v0',
+        accepted_critique: 'structured context instead of warmer prompt',
+        next_product_action: 'ACCEPTANCE_NEXT_ACTION_SENTINEL: run focused tests',
+        proof_test_state: 'helper and typed integration pending',
+        stale_markers: ['renderer thread non-durable'],
+      },
+    };
+
+    const promptText = 'restart continuity check: what were we doing?';
+    const rendered = renderRestartContinuityContextForInstructions(restartContinuityContext, promptText);
+    const instructions = buildMiraTextInstructions({ restartContinuityContext }, promptText);
+
+    expect(classifyMiraWorkLanePrompt(promptText)).toEqual({ intent: 'mira_work_status' });
+    expect(rendered).toContain('Private typed restart-continuity context');
+    expect(instructions).toContain('ACCEPTANCE_CURRENT_LANE_SENTINEL');
+    expect(instructions).toContain('ACCEPTANCE_NEXT_ACTION_SENTINEL');
+    expect(instructions).not.toContain('Startup-Facing Durable Requirements');
+    expect(instructions).not.toContain('Recent Current-Scope Comms');
+    expect(instructions).not.toContain(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP);
+    expect(buildMiraTextInstructions({}, promptText)).not.toContain('Private typed restart-continuity context');
+    expect(buildMiraTextInstructions({
+      restartContinuityContext: { ...restartContinuityContext, stale: true, stale_sources: ['current_lane'] },
+    }, promptText)).toContain('Continuity freshness: stale');
   });
 
   test('smaller verifier prompt instructions forbid acknowledgement preamble', () => {

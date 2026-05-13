@@ -35,6 +35,10 @@ const {
   buildMiraLocalTextUiSurfaceResponse,
   registerMiraLocalTextUiSurfaceHandlers,
 } = require('../modules/ipc/mira-local-text-ui-surface-handlers');
+const {
+  CURRENT_LANE_RELATIVE_PATH,
+  PRESENCE_SUMMARY_RELATIVE_PATH,
+} = require('../modules/mira-core/typed-restart-continuity-context-v0');
 
 function tempProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-local-text-ui-'));
@@ -104,6 +108,72 @@ function payload(overrides = {}) {
     expiresAt: '2026-05-08T00:40:00.000Z',
     ...overrides,
   };
+}
+
+function writeJson(projectRoot, relativePath, payload) {
+  const filePath = path.join(projectRoot, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  return filePath;
+}
+
+function seedTypedRestartContinuity(projectRoot, {
+  currentLaneObjective = 'MAIN_TYPED_LANE_SENTINEL: continue typed restart proof',
+  presenceAction = 'MAIN_PRESENCE_ACTION_SENTINEL: land private typed continuity context',
+  generatedAt = '2026-05-08T00:25:00.000Z',
+} = {}) {
+  writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+    version: 1,
+    generatedAt,
+    sessionId: 'app-session-local-text-ui',
+    source: 'comms_journal',
+    status: 'active',
+    activeLane: {
+      laneId: 'app-session-local-text-ui:architect-48:m-main',
+      objective: currentLaneObjective,
+      kind: 'current_lane',
+      status: 'active',
+      sourceMessageId: 'm-main',
+      sourceRef: 'architect#48',
+      sourceTimestampMs: Date.parse(generatedAt),
+      senderRole: 'architect',
+      targetRole: 'builder',
+    },
+  });
+  writeJson(projectRoot, PRESENCE_SUMMARY_RELATIVE_PATH, {
+    schema: 'squidrun.startup_ai_briefing.mira_presence_runtime_state_summary.v0',
+    surface: 'backstage_internal_only',
+    visible_injection_allowed: false,
+    generated_at: generatedAt,
+    context: {
+      present: true,
+      decision: 'durable_state_loaded',
+      surface: 'backstage_internal_only',
+      visible_injection_allowed: false,
+      summary: {
+        active_mira_presence_lane: 'typed_restart_continuity_context_v0',
+        accepted_critique: 'structured private context only',
+        next_product_action: presenceAction,
+        proof_test_state: 'focused typed restart tests running',
+        stale_markers: ['renderer thread non-durable'],
+      },
+    },
+  });
+  writeJson(projectRoot, path.join('.squidrun', 'handoffs-eunbyeol', 'current-lane.json'), {
+    version: 1,
+    generatedAt,
+    sessionId: 'app-session-local-text-ui:eunbyeol',
+    status: 'active',
+    activeLane: {
+      objective: 'EUNBYEOL_TYPED_LANE_SENTINEL should stay out',
+    },
+  });
+  fs.mkdirSync(path.join(projectRoot, '.squidrun', 'handoffs'), { recursive: true });
+  fs.writeFileSync(
+    path.join(projectRoot, '.squidrun', 'handoffs', 'ai-briefing.md'),
+    'STARTUP PROSE SENTINEL should stay out of typed model instructions\n',
+    'utf8'
+  );
 }
 
 function disabledAttachmentEnv() {
@@ -571,6 +641,54 @@ describe('Mira Local Text UI Surface v0', () => {
       .toBe('meta_posture_narration');
     expect(classifyAttachmentContractViolation("We’re hardening Mira so she doesn't fake continuity."))
       .toBe('meta_posture_narration');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('typed restart-continuity prompt sends private structured context without renderer leak', async () => {
+    const projectRoot = seededProject();
+    seedTypedRestartContinuity(projectRoot);
+    const verifierReply = 'Testing typed continuity. The private context reached the request without leaking into the visible surface.';
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_typed_restart_continuity',
+        output_text: verifierReply,
+      }),
+    }));
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'restart continuity check: what were we doing?',
+      threadContext: { messages: [] },
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+    });
+
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(requestBody.instructions).toContain('Private typed restart-continuity context');
+    expect(requestBody.instructions).toContain('MAIN_TYPED_LANE_SENTINEL');
+    expect(requestBody.instructions).toContain('MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(requestBody.instructions).not.toContain('STARTUP PROSE SENTINEL');
+    expect(requestBody.instructions).not.toContain('EUNBYEOL_TYPED_LANE_SENTINEL');
+    expect(requestBody.instructions).not.toContain('Recent Current-Scope Comms');
+    expect(requestBody.instructions).not.toContain('Startup-Facing Durable Requirements');
+
+    const surface = output.ui_surface_v0;
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply.text).toBe(verifierReply);
+    expect(surface.checked_output_counters.non_tentative_write_count).toBe(0);
+    expect(surface.checked_output_counters.durable_memory_commit_count).toBe(0);
+    const rendererJson = JSON.stringify(output);
+    expect(rendererJson).not.toContain('MAIN_TYPED_LANE_SENTINEL');
+    expect(rendererJson).not.toContain('MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(rendererJson).not.toContain('STARTUP PROSE SENTINEL');
+    expect(rendererJson).not.toContain('EUNBYEOL_TYPED_LANE_SENTINEL');
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
