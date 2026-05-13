@@ -462,7 +462,6 @@ function renderPromptSpecificInstructions(promptText = '') {
     'For Mira work/status questions, give the concrete current-lane fix or test in two short sentences.',
     'Start with "Fixing" or "Testing"; do not define Mira, summarize the project, or narrate a meta process.',
     'Do not start with "We are making", "We\'re making", "We are building", "We\'re building", "We are hardening", or "We\'re hardening".',
-    `If the lane is the restart verifier, preserve this missing-state stop exactly: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP}`,
   ].join('\n');
 }
 
