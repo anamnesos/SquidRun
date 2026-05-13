@@ -18,12 +18,13 @@ describe('Mira live entrypoint', () => {
     expect(buildMiraLivePromptPayload({
       prompt: 'what are we doing with Mira?',
       sessionId: 'Session 369',
+      source: 'telegram-mira-live',
     })).toEqual({
       sessionId: 'app-session-369',
       prompt: 'what are we doing with Mira?',
       speakerRole: 'james',
       requesterPane: null,
-      source: 'main-command-bar-mira-live',
+      source: 'telegram-mira-live',
     });
   });
 

@@ -266,6 +266,15 @@ jest.mock('../scripts/hm-telegram-routing', () => ({
   })),
 }));
 
+jest.mock('../modules/mira-live-entrypoint', () => ({
+  MIRA_LIVE_PROMPT_REPLY_CHANNEL: 'mira:lab-prompt-reply',
+  sendMiraLivePrompt: jest.fn(async () => ({
+    ok: true,
+    state: 'ready',
+    message: 'Mira visible reply from Telegram.',
+  })),
+}));
+
 // Mock organic-ui-handlers
 jest.mock('../modules/ipc/organic-ui-handlers', () => ({
   registerHandlers: jest.fn(),
@@ -3828,8 +3837,9 @@ describe('SquidRunApp', () => {
       app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
-    it('wires inbound Telegram callback to pane 1 trigger injection', async () => {
+    it('wires Telegram command callbacks to pane 1 trigger injection', async () => {
       const telegramPoller = require('../modules/telegram-poller');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
         accepted: true,
@@ -3843,10 +3853,11 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       expect(typeof options.onMessage).toBe('function');
 
-      options.onMessage('build passed', 'james');
+      options.onMessage('/task build passed', 'james');
       await new Promise((resolve) => setImmediate(resolve));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
       expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from james]: build passed',
+        '[Telegram from james]: /task build passed',
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
@@ -3919,9 +3930,10 @@ describe('SquidRunApp', () => {
       expect(app.telegramInboundContext).toEqual(previousContext);
     });
 
-    it('routes main Telegram chat inbound to the main window scope', async () => {
+    it('routes main Telegram chat inbound to Mira live reply and sends visible reply to Telegram', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
         accepted: true,
@@ -3935,20 +3947,18 @@ describe('SquidRunApp', () => {
       options.onMessage('main hello', 'james', { chatId: 5613428850, updateId: 101 });
 
       await new Promise((resolve) => setImmediate(resolve));
-      expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from james]: main hello',
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(sendMiraLivePrompt).toHaveBeenCalledWith(
         expect.objectContaining({
-          paneId: '1',
-          role: 'architect',
-          windowKey: 'main',
-          chatId: 5613428850,
-          metadata: expect.objectContaining({
-            chatId: 5613428850,
-            windowKey: 'main',
-          }),
+          prompt: 'main hello',
+          sessionId: expect.any(String),
+          source: 'telegram-mira-live',
         }),
-        'Telegram'
+        expect.objectContaining({
+          invoke: expect.any(Function),
+        })
       );
+      expect(deliverySpy).not.toHaveBeenCalled();
       expect(app.telegramInboundContext).toEqual(expect.objectContaining({
         sender: 'james',
         chatId: '5613428850',
@@ -3956,21 +3966,16 @@ describe('SquidRunApp', () => {
         profile: 'main',
       }));
 
-      const replyResult = await app.routeTelegramReply({
-        target: 'user',
-        content: 'Main reply still allowed.',
-        messageId: 'telegram-main-reply-ok',
-      });
-
       expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
-        'Main reply still allowed.',
+        'Mira visible reply from Telegram.',
         process.env,
         expect.objectContaining({
-          messageId: 'telegram-main-reply-ok',
+          messageId: 'telegram-in-101-mira-reply',
+          senderRole: 'mira',
           chatId: '5613428850',
           metadata: expect.objectContaining({
             routeKind: 'telegram',
-            targetRaw: 'user',
+            targetRaw: 'telegram',
             windowKey: 'main',
             profile: 'main',
             chatId: '5613428850',
@@ -3979,13 +3984,70 @@ describe('SquidRunApp', () => {
           }),
         })
       );
-      expect(replyResult).toEqual(expect.objectContaining({
-        handled: true,
-        ok: true,
-        status: 'telegram_delivered',
-        windowKey: 'main',
-        profile: 'main',
-      }));
+    });
+
+    it('keeps Telegram commands on the existing Architect pane route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('/task fix the route', 'james', { chatId: 5613428850, updateId: 108 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from james]: /task fix the route',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'main',
+          channel: 'telegram',
+          messageId: 'telegram-in-108',
+        }),
+        'Telegram'
+      );
+    });
+
+    it('keeps Telegram agent ops envelopes on the existing Architect pane route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('(ARCHITECT #1): route Builder this check', 'james', { chatId: 5613428850, updateId: 109 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[Telegram from james]: (ARCHITECT #1): route Builder this check',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'main',
+          channel: 'telegram',
+          messageId: 'telegram-in-109',
+        }),
+        'Telegram'
+      );
     });
 
     it('routes scoped Telegram chat inbound through the scoped runtime even when a side window is registered', async () => {
