@@ -166,7 +166,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/mira-work-continuation-curiosity.js: Native read-only work-continuation curiosity adapter that summarizes owned-work queue state and next resume metadata without queue mutation, dispatch, or external sends.
 - ui/modules/mira-runtime-curiosity.js: Native read-only Mira runtime curiosity adapter that evaluates growth/autonomy/experience/perception/intent module health and isolates runtime gaps without applying mutations, queue writes, captures, or sends.
 - ui/modules/mira-lab-surface.js: Dev-only canonical transcript/backchannel/eval substrate for the separate Mira Lab sidecar. Records durable JSONL lab turns, projects comms-journal-shaped entries, supports role-separated Mira-to-agent backchannel dispatch, marks agent-to-Mira injection turns, and exports transcript eval packets. Not wired into default app startup yet.
-- ui/modules/mira-local-text-ui-surface.js: Builds the right-panel Mira typed conversation surface, joining local shell gating, optional text model attachment, bounded thread context, tentative-understanding persistence counts, and developmental-understanding validation.
+- ui/modules/mira-local-text-ui-surface.js: Builds the Mira typed conversation surface used by Mira Lab/local-text seams, joining local shell gating, optional text model attachment, bounded thread context, tentative-understanding persistence counts, and developmental-understanding validation.
 - ui/modules/memory-consistency-check.js: On-demand drift checker that compares `workspace/knowledge/` chunks against knowledge-backed nodes in `workspace/memory/cognitive-memory.db`.
 - ui/modules/memory-broker.js: Unified recall broker that queries cognitive/vector memory, team-memory graph claims, evidence-ledger episodic decisions, and optional knowledge search providers, then merges ranked context with Reciprocal Rank Fusion for pane delivery and agent tooling.
 - ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
@@ -201,11 +201,11 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/mira-lab-renderer.js: Mira Lab renderer logic for the prototype conversation/lab surface.
 - ui/styles/mira-lab.css: Mira Lab styling, including low-power/reduced-motion rendering fallback.
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
-- ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, api-keys).
+- ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, voice, api-keys); Mira is no longer mounted as a main SquidRun tab.
 - ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.
 - ui/modules/tabs/bridge.js: Exports setupBridgeTab. Renders the existing Bridge tab in the right-side panel and hydrates relay health from `bridge:get-status` plus live kernel bridge events.
 - ui/modules/tabs/comms-console.js: Exports setupCommsConsoleTab, destroy. The existing Comms tab backfills `comms_journal`, correlates live `comms.*` events by `messageId`, and surfaces delivery status/attempt/error metadata for external channels.
-- ui/modules/tabs/mira-local-text.js: Right-panel Mira typed conversation tab wiring, including local session calls and visible output rendering.
+- ui/modules/tabs/mira-local-text.js: Legacy/extraction-stage Mira typed conversation controller retained for Lab/local-text migration work; no longer wired into the main SquidRun right-panel lifecycle.
 - ui/modules/tabs/oracle.js: Exports setupOracleTab, destroyOracleTab, applyImageGenCapability.
 - ui/modules/tabs/screenshots.js: Exports setupScreenshots, destroyScreenshots, loadScreenshots.
 - ui/modules/tabs/utils.js: Exports escapeHtml.
@@ -397,4 +397,5 @@ This is a curated orientation map for agents, not a complete generated inventory
   - Shared IPC harness helpers in `ui/__tests__/helpers/ipc-harness.js`.
   - Config mocking helpers in `ui/__tests__/helpers/mock-config.js` and `ui/__tests__/helpers/real-config.js`.
   - Frequent fake-timer tests for watcher/terminal/runtime behavior.
+- `ui/__tests__/mira-extraction-main-ui.test.js` locks the extraction boundary by asserting the main right panel has no Mira tab while the standalone Mira Lab opener remains available.
 - Current suite scale: 298 suites / 4325 tests discovered in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.

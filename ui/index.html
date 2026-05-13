@@ -523,7 +523,6 @@
           </svg>
           Comms
         </button>
-        <button class="panel-tab" data-tab="mira" data-tab-group="primary" title="Local Mira text surface">Mira</button>
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Screenshots</button>
         <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image Gen</button>
         <button class="panel-tab" data-tab="voice" data-tab-group="primary" title="Voice broker status and controls">Voice</button>
@@ -548,35 +547,6 @@
             <div class="comms-console-list" id="commsConsoleList">
               <div class="comms-console-empty">Waiting for comms traffic...</div>
             </div>
-          </div>
-        </div>
-        <div class="tab-pane" id="tab-mira">
-          <div class="tab-title">Mira</div>
-          <div class="mira-local-text-panel" id="miraLocalTextPanel" data-status="ready">
-            <div class="mira-local-text-head">
-              <span class="mira-local-text-pill" id="miraLocalTextStatus" data-state="ready">Active</span>
-              <span class="mira-local-text-scope" id="miraLocalTextScope">VIGIL / main</span>
-            </div>
-            <div class="mira-coordinator-strip" id="miraCoordinatorStrip" data-status="hidden" hidden>
-              <div class="mira-coordinator-strip-head">
-                <span class="mira-coordinator-status" id="miraCoordinatorStatus"></span>
-                <button type="button" class="btn btn-secondary" id="miraCoordinatorRefreshBtn" title="Refresh Mira coordinator snapshot">Refresh</button>
-              </div>
-              <div class="mira-coordinator-focus" id="miraCoordinatorFocus"></div>
-              <div class="mira-coordinator-lanes" id="miraCoordinatorLanes"></div>
-              <div class="mira-coordinator-model-attachment" id="miraCoordinatorModelAttachment"></div>
-              <div class="mira-coordinator-next" id="miraCoordinatorNext"></div>
-              <div class="mira-coordinator-blockers" id="miraCoordinatorBlockers"></div>
-              <div class="mira-coordinator-rationale" id="miraCoordinatorRationale"></div>
-            </div>
-            <textarea id="miraLocalTextInput" class="mira-local-text-input" rows="4" placeholder="Type to Mira" autocomplete="off" spellcheck="true"></textarea>
-            <div class="mira-local-text-actions">
-              <button type="button" class="btn btn-secondary" id="miraLocalTextSubmitBtn" title="Ask Mira from local state">Ask</button>
-              <span class="mira-local-text-counters" id="miraLocalTextCounters" hidden>module 0 / reply 0 / writes 0 / tools 0 / sends 0</span>
-            </div>
-            <div class="mira-local-text-reply" id="miraLocalTextReply" data-count="0" hidden></div>
-            <div class="mira-developmental-understanding" id="miraDevelopmentalUnderstanding" data-count="0" hidden></div>
-            <div class="mira-local-text-meta" id="miraLocalTextMeta"></div>
           </div>
         </div>
         <div class="tab-pane active" id="tab-screenshots">
