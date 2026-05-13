@@ -1485,6 +1485,31 @@ function compactSchedulerTypeCounts(value) {
     .slice(0, 8));
 }
 
+function compactSchedulerFollowthroughDesign(value) {
+  if (!value || typeof value !== 'object') return null;
+  const candidateSources = asArray(value.candidate_sources || value.candidateSources)
+    .map(trimText)
+    .filter((source) => CURIOSITY_BURST_DEFAULT_SOURCES.includes(source))
+    .slice(0, 13);
+  return {
+    proposal_kind: trimText(value.proposal_kind || value.proposalKind) || 'reviewed_recurring_curiosity_burst',
+    cadence: trimText(value.cadence) || 'quiet_interval',
+    review_owner: trimText(value.review_owner || value.reviewOwner) || 'architect',
+    review_required_before_schedule_creation: value.review_required_before_schedule_creation !== false,
+    candidate_sources: candidateSources,
+    command_harness: oneLine(value.command_harness || value.commandHarness, 260) || null,
+    followup_code_mode_practice_step: oneLine(value.followup_code_mode_practice_step || value.followupCodeModePracticeStep, 220) || null,
+    schedule_count: numberSignal(value.schedule_count ?? value.scheduleCount),
+    active_count: numberSignal(value.active_count ?? value.activeCount),
+    due_soon_count: numberSignal(value.due_soon_count ?? value.dueSoonCount),
+    overdue_count: numberSignal(value.overdue_count ?? value.overdueCount),
+    schedule_created: value.schedule_created === true,
+    schedule_updated: value.schedule_updated === true,
+    schedule_deleted: value.schedule_deleted === true,
+    schedule_run_performed: value.schedule_run_performed === true,
+  };
+}
+
 function compactEnvironmentMemoryCounts(value) {
   if (!value) return {};
   if (typeof value === 'object' && !Array.isArray(value)) {
@@ -1682,6 +1707,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     scheduler_due_soon_count: Number.isFinite(schedulerDueSoonCount) ? schedulerDueSoonCount : null,
     scheduler_overdue_count: Number.isFinite(schedulerOverdueCount) ? schedulerOverdueCount : null,
     scheduler_type_counts: compactSchedulerTypeCounts(rawItem.scheduler_type_counts || rawItem.schedulerTypeCounts),
+    scheduler_followthrough_design: compactSchedulerFollowthroughDesign(rawItem.scheduler_followthrough_design || rawItem.schedulerFollowthroughDesign),
     work_continuation_totals: compactWorkContinuationTotals(rawItem.work_continuation_totals || rawItem.workContinuationTotals),
     work_carried_count: Number.isFinite(workCarriedCount) ? workCarriedCount : null,
     work_stale_count: Number.isFinite(workStaleCount) ? workStaleCount : null,
@@ -2225,6 +2251,12 @@ function activeAutomationSchedulerCuriosityAdapter(context = {}) {
   const dueSoonCount = Number(result.due_soon_count || 0);
   const overdueCount = Number(result.overdue_count || 0);
   const nextName = result.next_schedule?.name || null;
+  const schedulerCounts = {
+    scheduler_schedule_count: count,
+    scheduler_active_count: activeCount,
+    scheduler_due_soon_count: dueSoonCount,
+    scheduler_overdue_count: overdueCount,
+  };
   return {
     source: 'automation_scheduler',
     scope: 'local_automation_and_scheduler',
@@ -2247,6 +2279,9 @@ function activeAutomationSchedulerCuriosityAdapter(context = {}) {
     scheduler_due_soon_count: dueSoonCount,
     scheduler_overdue_count: overdueCount,
     scheduler_type_counts: result.type_counts || {},
+    scheduler_followthrough_design: count === 0 && activeCount === 0 && dueSoonCount === 0 && overdueCount === 0
+      ? schedulerReviewedCuriosityBurstPlan(schedulerCounts)
+      : null,
     no_mutation_performed: true,
   };
 }
@@ -3466,6 +3501,35 @@ function curiosityStatusCounts(items = []) {
   });
 }
 
+function schedulerReviewedCuriosityBurstPlan(item = {}) {
+  const candidateSources = [
+    'runtime_comms',
+    'memory',
+    'environment_apps',
+    'work_continuation',
+    'browser_history',
+    'email',
+  ];
+  return {
+    proposal_kind: 'reviewed_recurring_curiosity_burst',
+    cadence: 'quiet_interval',
+    review_owner: 'architect',
+    review_required_before_schedule_creation: true,
+    candidate_sources: candidateSources,
+    command_harness: `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${candidateSources.join(',')} --route-interesting --no-dispatch`,
+    followup_code_mode_practice_step: 'Use hm-mira-self-direction code-mode separately when the reviewed burst output needs deeper local JSONL/source inspection.',
+    trigger_basis: 'no_active_scheduler_entries',
+    schedule_count: numberSignal(item.scheduler_schedule_count),
+    active_count: numberSignal(item.scheduler_active_count),
+    due_soon_count: numberSignal(item.scheduler_due_soon_count),
+    overdue_count: numberSignal(item.scheduler_overdue_count),
+    schedule_created: false,
+    schedule_updated: false,
+    schedule_deleted: false,
+    schedule_run_performed: false,
+  };
+}
+
 function activeInitiativeEvidenceForItem(item = {}) {
   const evidence = [
     `source=${trimText(item.source)}/${trimText(item.adapter_id || item.adapterId)}`,
@@ -3495,6 +3559,22 @@ function activeInitiativeEvidenceForItem(item = {}) {
   }
   if (numberSignal(item.scheduler_due_soon_count) > 0 || numberSignal(item.scheduler_overdue_count) > 0) {
     evidence.push(`scheduler=due_soon:${numberSignal(item.scheduler_due_soon_count)} overdue:${numberSignal(item.scheduler_overdue_count)}`);
+  }
+  if (trimText(item.source) === 'automation_scheduler') {
+    evidence.push(`scheduler_state=schedules:${numberSignal(item.scheduler_schedule_count)} active:${numberSignal(item.scheduler_active_count)} due_soon:${numberSignal(item.scheduler_due_soon_count)} overdue:${numberSignal(item.scheduler_overdue_count)}`);
+    const design = compactSchedulerFollowthroughDesign(item.scheduler_followthrough_design || item.schedulerFollowthroughDesign);
+    if (design) {
+      evidence.push(`scheduler_design_sources=${design.candidate_sources.join(',')}`);
+      if (design.command_harness) evidence.push(`scheduler_design_command=${design.command_harness}`);
+    }
+    if (
+      numberSignal(item.scheduler_schedule_count) === 0
+      && numberSignal(item.scheduler_active_count) === 0
+      && numberSignal(item.scheduler_due_soon_count) === 0
+      && numberSignal(item.scheduler_overdue_count) === 0
+    ) {
+      evidence.push('scheduler_review_plan=quiet_interval_curiosity_burst review=architect before_schedule_creation=true schedule_mutation=false');
+    }
   }
   if (numberSignal(item.email_unread_total) > 0) evidence.push(`email_unread=${numberSignal(item.email_unread_total)}`);
   if (numberSignal(item.memory_result_count) > 0) {
@@ -3624,6 +3704,7 @@ function activeInitiativeCandidateForItem(item, index, total) {
   let reason = plan.reason;
   let title = oneLine(item.suggested_question || `Use ${source} for the next internal initiative.`, 160);
   let action = oneLine(item.possible_action || 'Route the next internal follow-up from this active signal.', 220);
+  let reviewedRecurringBurstPlan = null;
   const modules = asArray(item.runtime_blocked_modules).map(trimText).filter(Boolean);
 
   if (source === 'mira_runtime') {
@@ -3689,12 +3770,20 @@ function activeInitiativeCandidateForItem(item, index, total) {
       score -= 24;
     }
   } else if (source === 'automation_scheduler') {
+    const scheduleCount = numberSignal(item.scheduler_schedule_count);
+    const activeCount = numberSignal(item.scheduler_active_count);
     const dueSoon = numberSignal(item.scheduler_due_soon_count);
     const overdue = numberSignal(item.scheduler_overdue_count);
     if (dueSoon > 0 || overdue > 0) {
       score += 18 + overdue * 4 + dueSoon * 2;
       title = `Follow through scheduler curiosity: due_soon=${dueSoon} overdue=${overdue}`;
       action = 'Have Builder connect the scheduler signal to the next read-only curiosity run without creating or firing new schedules from this selector.';
+    } else if (scheduleCount === 0 && activeCount === 0) {
+      score += 8;
+      reviewedRecurringBurstPlan = compactSchedulerFollowthroughDesign(item.scheduler_followthrough_design)
+        || schedulerReviewedCuriosityBurstPlan(item);
+      title = 'Design reviewed quiet-interval curiosity burst for the empty scheduler.';
+      action = 'Have Builder stage a review-only recurring curiosity-burst design using runtime_comms, memory, environment_apps, work_continuation, browser_history, and email metadata; do not create, update, delete, or run schedules from scout output.';
     } else {
       score -= 18;
     }
@@ -3756,6 +3845,7 @@ function activeInitiativeCandidateForItem(item, index, total) {
     score: score + recencyWeight,
     reason,
     evidence: activeInitiativeEvidenceForItem(item),
+    reviewed_recurring_burst_plan: reviewedRecurringBurstPlan,
     fingerprint: activeInitiativeFingerprint({
       initiative_kind: initiativeKind,
       item,
@@ -3962,6 +4052,7 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
       title: selected.title,
       action: selected.action,
       success_metric: selected.success_metric,
+      reviewed_recurring_burst_plan: selected.reviewed_recurring_burst_plan || undefined,
     },
     evidence: selected.evidence,
     applied: false,

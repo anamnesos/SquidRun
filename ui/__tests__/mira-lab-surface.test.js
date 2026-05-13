@@ -2131,6 +2131,158 @@ describe('Mira Lab sidecar surface', () => {
     }));
   });
 
+  test('empty scheduler scouts stage a reviewed recurring burst design with runnable sources', async () => {
+    projectRoot = tempProject();
+    const schedulerStatePath = path.join(projectRoot, '.squidrun', 'runtime', 'schedules.json');
+    const runnableSources = [
+      'runtime_comms',
+      'memory',
+      'environment_apps',
+      'work_continuation',
+      'browser_history',
+      'email',
+    ];
+
+    const scout = runMiraCuriosityScout({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:00:00.000Z',
+      repoStatusText: '',
+      recentCommsText: '',
+      schedulerStatePaths: [schedulerStatePath],
+      memoryCuriosityReader: () => ({
+        ok: true,
+        decision: 'memory_retrieved_read_only',
+        query: 'scheduler followthrough',
+        result_count: 0,
+        results: [],
+      }),
+      browserHistoryCuriosityReader: () => ({
+        ok: true,
+        decision: 'browser_history_read_only',
+        result_count: 0,
+        top_hosts: [],
+        results: [],
+      }),
+      emailCuriosityReader: () => ({
+        ok: true,
+        decision: 'email_snapshot_read_only',
+        label_count: 0,
+        unread_total: 0,
+        recent_message_count: 0,
+        labels: [],
+        recent_messages: [],
+      }),
+      webResearchCuriosityReader: () => ({
+        ok: true,
+        decision: 'web_research_artifacts_read_only',
+        result_count: 0,
+        top_domains: [],
+        buckets: {},
+        results: [],
+      }),
+      visualAssetCuriosityReader: () => ({
+        ok: true,
+        decision: 'visual_assets_read_only',
+        result_count: 0,
+        buckets: {},
+        results: [],
+      }),
+      calendarMessageCuriosityReader: () => ({
+        ok: true,
+        decision: 'calendar_message_metadata_read_only',
+        result_count: 0,
+        calendar_artifact_count: 0,
+        message_artifact_count: 0,
+        connector_candidates: [],
+      }),
+      workContinuationCuriosityReader: () => ({
+        ok: true,
+        decision: 'work_continuation_read_only',
+        totals: {
+          active_count: 0,
+          carried_count: 0,
+          stale_count: 0,
+          blocked_count: 0,
+          approval_required_count: 0,
+        },
+        due_count: 0,
+        held_count: 0,
+      }),
+      miraRuntimeCuriosityReader: () => ({
+        ok: true,
+        decision: 'runtime_read_with_gaps',
+        healthy_runtime: true,
+        module_count: 5,
+        active_signal_count: 5,
+        active_signals: ['autonomy_substrate', 'intent_queue', 'perception', 'experience', 'growth_loop'],
+        blocked_modules: [],
+      }),
+      environmentCuriosityReader: () => ({
+        ok: true,
+        decision: 'environment_health_read_only',
+        overall_label: 'OK',
+        overall_score: 100,
+        memory_sync_status: 'ok',
+        bridge_connection: 'connected',
+        snapshot_stale: false,
+      }),
+    });
+
+    const schedulerItem = scout.items.find((item) => (
+      item.source === 'automation_scheduler'
+      && item.adapter_id === 'automation_scheduler_curiosity'
+    ));
+    expect(schedulerItem).toEqual(expect.objectContaining({
+      status: 'active',
+      scheduler_schedule_count: 0,
+      scheduler_active_count: 0,
+      scheduler_due_soon_count: 0,
+      scheduler_overdue_count: 0,
+    }));
+    expect(schedulerItem.scheduler_followthrough_design).toEqual(expect.objectContaining({
+      proposal_kind: 'reviewed_recurring_curiosity_burst',
+      cadence: 'quiet_interval',
+      review_owner: 'architect',
+      review_required_before_schedule_creation: true,
+      candidate_sources: runnableSources,
+      schedule_created: false,
+      schedule_updated: false,
+      schedule_deleted: false,
+      schedule_run_performed: false,
+    }));
+    expect(schedulerItem.scheduler_followthrough_design.command_harness).toContain(
+      `curiosity-burst --source ${runnableSources.join(',')}`,
+    );
+    expect(JSON.stringify(schedulerItem.scheduler_followthrough_design)).not.toMatch(/code_mode_exploration|voyager_curriculum/);
+    expect(JSON.stringify(schedulerItem)).not.toMatch(/raw_schedule_input|schedule_body|secret/i);
+    expect(fs.existsSync(schedulerStatePath)).toBe(false);
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:01:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('scheduler_followthrough');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'automation_scheduler',
+      adapter_id: 'automation_scheduler_curiosity',
+    }));
+    expect(result.work_order.reviewed_recurring_burst_plan).toEqual(expect.objectContaining({
+      candidate_sources: runnableSources,
+      schedule_created: false,
+      schedule_updated: false,
+      schedule_deleted: false,
+      schedule_run_performed: false,
+    }));
+    expect(result.work_order.action).not.toMatch(/code-mode|code_mode_exploration|voyager_curriculum/i);
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      `scheduler_design_sources=${runnableSources.join(',')}`,
+      'scheduler_review_plan=quiet_interval_curiosity_burst review=architect before_schedule_creation=true schedule_mutation=false',
+    ]));
+    expect(JSON.stringify(result.work_order.reviewed_recurring_burst_plan)).not.toMatch(/code_mode_exploration|voyager_curriculum/);
+  });
+
   test('active initiative outcomes close the work loop and feed curriculum skills', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
