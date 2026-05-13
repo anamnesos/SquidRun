@@ -2797,7 +2797,7 @@ describe('Mira Lab sidecar surface', () => {
     });
 
     expect(result.decision).toBe('routed');
-    expect(result.initiative_kind).toBe('scheduler_followthrough');
+    expect(result.initiative_kind).toBe('quiet_curiosity_schedule_install');
     expect(result.selected_item).toEqual(expect.objectContaining({
       source: 'automation_scheduler',
       adapter_id: 'automation_scheduler_curiosity',
@@ -2815,6 +2815,87 @@ describe('Mira Lab sidecar surface', () => {
       'scheduler_review_plan=quiet_interval_curiosity_burst review=architect before_schedule_creation=true schedule_mutation=false',
     ]));
     expect(JSON.stringify(result.work_order.reviewed_recurring_burst_plan)).not.toMatch(/code_mode_exploration|voyager_curriculum/);
+  });
+
+  test('active initiative skips suppressed bridge and old scheduler-design outcomes to monitor active schedule cadence', async () => {
+    projectRoot = tempProject();
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      outcome_id: 'mira-active-initiative-outcome:bridge-done',
+      initiative_id: 'mira-active-initiative:bridge-done',
+      generated_at: '2026-05-12T16:10:00.000Z',
+      outcome_status: 'implemented',
+      initiative_kind: 'bridge_live_discovery_refresh',
+      target_role: 'builder',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      evidence: ['bridge already refreshed'],
+      note: 'Do not reopen bridge refresh from the stale cache alone.',
+    });
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      outcome_id: 'mira-active-initiative-outcome:scheduler-design-done',
+      initiative_id: 'mira-active-initiative:scheduler-design-done',
+      generated_at: '2026-05-12T16:11:00.000Z',
+      outcome_status: 'implemented',
+      initiative_kind: 'scheduler_followthrough',
+      target_role: 'builder',
+      source: 'automation_scheduler',
+      adapter_id: 'automation_scheduler_curiosity',
+      evidence: ['old reviewed design landed'],
+      note: 'The old scheduler design lane should not suppress the later active cadence monitor.',
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T16:12:00.000Z',
+      item_id: 'mira-curiosity:bridge-suppressed-again',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health snapshot read OK score=100/100; memory=review_queue_only; bridge=pending_live_discovery; snapshot=fresh.',
+      suggested_question: 'Which environment signal should Mira act on first?',
+      possible_action: 'Refresh bridge discovery.',
+      environment_overall_label: 'OK',
+      environment_overall_score: 100,
+      environment_memory_sync_status: 'drift_detected',
+      environment_memory_repair_state: 'review_queue_only',
+      environment_memory_review_only: true,
+      environment_bridge_connection: 'pending_live_discovery',
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T16:13:00.000Z',
+      item_id: 'mira-curiosity:quiet-schedule-active',
+      source: 'automation_scheduler',
+      adapter_id: 'automation_scheduler_curiosity',
+      status: 'active',
+      observation: 'Scheduler metadata read 1 schedule(s); active=1; due_soon=1; overdue=0; state=found.',
+      suggested_question: 'Should Mira compare the next scheduled automation Mira quiet curiosity burst with the current direct-route frontier?',
+      possible_action: 'Use compact scheduler metadata to follow through the active quiet-curiosity cadence.',
+      scheduler_schedule_count: 1,
+      scheduler_active_count: 1,
+      scheduler_due_soon_count: 1,
+      scheduler_overdue_count: 0,
+      scheduler_type_counts: { interval: 1 },
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:14:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('quiet_curiosity_schedule_monitor');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'automation_scheduler',
+      adapter_id: 'automation_scheduler_curiosity',
+    }));
+    expect(result.suppressed_candidate_count).toBe(1);
+    expect(result.work_order.title).toBe('Verify quiet curiosity scheduler cadence: due_soon=1 overdue=0');
+    expect(result.work_order.action).toContain('picked up by the running scheduler');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'scheduler_state=schedules:1 active:1 due_soon:1 overdue:0',
+    ]));
   });
 
   test('quiet curiosity schedule dry-run builds an installable bounded interval schedule', async () => {
