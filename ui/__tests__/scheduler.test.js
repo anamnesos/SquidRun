@@ -592,9 +592,9 @@ describe('Scheduler Module', () => {
         fs.readFileSync.mockReturnValue(JSON.stringify({
           schedules: [{
             id: 'external-quiet-burst',
-            name: 'Mira quiet curiosity burst',
+            name: 'External due task',
             type: 'once',
-            input: 'Run Mira quiet curiosity burst now',
+            input: 'Run external task now',
             active: true,
             runAt,
             nextRun: runAt,
@@ -607,6 +607,83 @@ describe('Scheduler Module', () => {
         expect(fired).toBe(1);
         expect(fs.readFileSync).toHaveBeenCalled();
         expect(mockTriggers.routeTask).toHaveBeenCalledWith('general', 'test task');
+      });
+
+      test('executes Mira quiet-curiosity schedules directly and records burst history', () => {
+        const runAt = new Date(Date.now() - 1000).toISOString();
+        const quietRunner = jest.fn(() => ({
+          success: true,
+          status: 0,
+          stdout: JSON.stringify({
+            decision: 'burst_completed',
+            burst_id: 'mira-curiosity-burst:test',
+            route_output: {
+              decision: 'no_route',
+              source: null,
+              adapter_id: null,
+            },
+            dispatch: { status: 'queued_not_sent' },
+          }),
+          stderr: '',
+          parsed: {
+            decision: 'burst_completed',
+            burst_id: 'mira-curiosity-burst:test',
+            route_output: {
+              decision: 'no_route',
+              source: null,
+              adapter_id: null,
+            },
+            dispatch: { status: 'queued_not_sent' },
+          },
+        }));
+        const quietScheduler = createScheduler({
+          triggers: mockTriggers,
+          workspacePath: '/test/workspace',
+          projectRoot: '/test/project',
+          quietCuriosityCommandRunner: quietRunner,
+        });
+        const schedule = quietScheduler.addSchedule({
+          id: 'mira-quiet-curiosity-burst-v1',
+          name: 'Mira quiet curiosity burst',
+          type: 'once',
+          runAt,
+          metadata: {
+            schedule_kind: 'quiet_curiosity_burst',
+            sources: ['runtime_comms', 'memory_broker'],
+            command_harness: 'node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker --route-interesting --json',
+            external_send_performed: false,
+          },
+        });
+
+        const result = quietScheduler.runNow(schedule.id);
+        const updated = quietScheduler.listSchedules().find(s => s.id === schedule.id);
+
+        expect(result).toEqual(expect.objectContaining({
+          success: true,
+          quietCuriosityBurst: true,
+        }));
+        expect(quietRunner).toHaveBeenCalledWith(expect.objectContaining({
+          projectRoot: '/test/project',
+          sources: ['runtime_comms', 'memory_broker'],
+          reason: 'manual',
+        }));
+        expect(mockTriggers.routeTask).not.toHaveBeenCalled();
+        expect(updated.history).toHaveLength(1);
+        expect(updated.history[0]).toEqual(expect.objectContaining({
+          status: 'success',
+          reason: 'manual',
+          burst: expect.objectContaining({
+            decision: 'burst_completed',
+            burst_id: 'mira-curiosity-burst:test',
+            route_decision: 'no_route',
+            dispatch_status: 'queued_not_sent',
+          }),
+        }));
+        expect(updated.history[0].tasks[0]).toEqual(expect.objectContaining({
+          taskType: 'mira-curiosity-burst',
+          success: true,
+        }));
+        quietScheduler.stop();
       });
 
       test('respects chain dependencies - child blocked when parent failed', () => {

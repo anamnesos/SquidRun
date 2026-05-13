@@ -6,7 +6,13 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { WORKSPACE_PATH, GLOBAL_STATE_ROOT, resolveGlobalPath } = require('../config');
+const { spawnSync } = require('child_process');
+const {
+  WORKSPACE_PATH,
+  GLOBAL_STATE_ROOT,
+  resolveGlobalPath,
+  getProjectRoot,
+} = require('../config');
 const log = require('./logger');
 const taskParser = require('./task-parser');
 
@@ -17,6 +23,16 @@ const DEFAULT_SCHEDULE_STATE = {
 
 const HISTORY_LIMIT = 100;
 const CHECK_INTERVAL_MS = 30000;
+const QUIET_CURIOSITY_SCHEDULE_ID = 'mira-quiet-curiosity-burst-v1';
+const QUIET_CURIOSITY_SCHEDULE_NAME = 'Mira quiet curiosity burst';
+const QUIET_CURIOSITY_DEFAULT_SOURCES = Object.freeze([
+  'runtime_comms',
+  'memory_broker',
+  'environment_apps',
+  'work_continuation',
+  'browser_history',
+  'email',
+]);
 
 function generateId() {
   return crypto.randomBytes(6).toString('hex');
@@ -153,10 +169,83 @@ function computeNextRun(schedule, referenceDate = new Date()) {
   return null;
 }
 
-function createScheduler({ triggers, workspacePath }) {
+function oneLine(value, max = 240) {
+  const text = String(value === undefined || value === null ? '' : value).trim().replace(/\s+/g, ' ');
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1))}...`;
+}
+
+function isQuietCuriositySchedule(schedule = {}) {
+  const metadata = schedule.metadata || {};
+  return (
+    schedule.id === QUIET_CURIOSITY_SCHEDULE_ID
+    || schedule.name === QUIET_CURIOSITY_SCHEDULE_NAME
+    || metadata.schedule_kind === 'quiet_curiosity_burst'
+  );
+}
+
+function quietCuriositySources(schedule = {}) {
+  const metadata = schedule.metadata || {};
+  const values = Array.isArray(metadata.sources) ? metadata.sources : [];
+  const sources = values
+    .map((source) => String(source || '').trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  return sources.length > 0 ? sources : [...QUIET_CURIOSITY_DEFAULT_SOURCES];
+}
+
+function parseFirstJsonObject(text = '') {
+  const raw = String(text || '');
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function defaultQuietCuriosityCommandRunner({ projectRoot, sources }) {
+  const root = projectRoot || (typeof getProjectRoot === 'function' ? getProjectRoot() : process.cwd());
+  const scriptPath = path.join(root, 'ui', 'scripts', 'hm-mira-self-direction.js');
+  const result = spawnSync('node', [
+    scriptPath,
+    'curiosity-burst',
+    '--source',
+    sources.join(','),
+    '--route-interesting',
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 120000,
+    env: {
+      ...process.env,
+      SQUIDRUN_PROJECT_ROOT: root,
+    },
+  });
+  const parsed = parseFirstJsonObject(result.stdout);
+  return {
+    success: result.status === 0,
+    status: result.status,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    error: result.error ? result.error.message : null,
+    parsed,
+  };
+}
+
+function createScheduler({
+  triggers,
+  workspacePath,
+  projectRoot,
+  quietCuriosityCommandRunner,
+} = {}) {
   const filePath = typeof resolveGlobalPath === 'function'
     ? resolveGlobalPath('schedules.json', { forWrite: true })
     : path.join(workspacePath || GLOBAL_STATE_ROOT || WORKSPACE_PATH, 'schedules.json');
+  const schedulerProjectRoot = projectRoot || (typeof getProjectRoot === 'function' ? getProjectRoot() : process.cwd());
   let scheduleState = { ...DEFAULT_SCHEDULE_STATE };
   let timer = null;
 
@@ -208,6 +297,9 @@ function createScheduler({ triggers, workspacePath }) {
       eventName: payload.eventName || null,
       chainAfter: payload.chainAfter || null,
       chainRequiresSuccess: payload.chainRequiresSuccess !== false,
+      metadata: payload.metadata && typeof payload.metadata === 'object'
+        ? { ...payload.metadata }
+        : {},
       lastRunAt: null,
       lastStatus: null,
       nextRun: null,
@@ -249,7 +341,69 @@ function createScheduler({ triggers, workspacePath }) {
     }
   }
 
+  function runQuietCuriosityTask(schedule, reason = 'scheduled') {
+    const sources = quietCuriositySources(schedule);
+    const command = schedule.metadata?.command_harness
+      || `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --route-interesting --json`;
+    const runner = typeof quietCuriosityCommandRunner === 'function'
+      ? quietCuriosityCommandRunner
+      : defaultQuietCuriosityCommandRunner;
+    const run = runner({
+      schedule,
+      reason,
+      sources,
+      command,
+      projectRoot: schedulerProjectRoot,
+    }) || {};
+    const parsed = run.parsed || parseFirstJsonObject(run.stdout);
+    const success = run.success !== false && (run.status === undefined || run.status === 0);
+
+    schedule.lastRunAt = new Date().toISOString();
+    schedule.lastStatus = success ? 'success' : 'failed';
+    recordHistory(schedule, {
+      at: schedule.lastRunAt,
+      status: schedule.lastStatus,
+      reason,
+      tasks: [{
+        taskType: 'mira-curiosity-burst',
+        text: command,
+        paneId: null,
+        success,
+      }],
+      burst: parsed ? {
+        decision: parsed.decision || null,
+        burst_id: parsed.burst_id || null,
+        route_decision: parsed.route_output?.decision || null,
+        route_source: parsed.route_output?.source || null,
+        route_adapter_id: parsed.route_output?.adapter_id || null,
+        dispatch_status: parsed.dispatch?.status || null,
+      } : null,
+      command_stdout_excerpt: oneLine(run.stdout, 500) || null,
+      command_stderr_excerpt: oneLine(run.stderr || run.error, 500) || null,
+    });
+
+    if (schedule.type === 'once') {
+      schedule.active = false;
+      schedule.nextRun = null;
+    } else {
+      ensureNextRun(schedule);
+    }
+
+    save();
+    return {
+      success,
+      quietCuriosityBurst: true,
+      status: run.status ?? null,
+      burst: parsed || null,
+      error: run.error || null,
+    };
+  }
+
   function runTask(schedule, reason = 'scheduled') {
+    if (isQuietCuriositySchedule(schedule)) {
+      return runQuietCuriosityTask(schedule, reason);
+    }
+
     if (!triggers || typeof triggers.routeTask !== 'function') {
       return { success: false, reason: 'missing_triggers' };
     }
