@@ -543,6 +543,10 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
       .toBe('visible_posture_label');
     expect(classifyAttachmentContractViolation("We're trying to build a presence that can stay useful without collapsing into yes James."))
       .toBe('meta_posture_narration');
+    expect(classifyAttachmentContractViolation("We're hardening Mira so she doesn't fake continuity when context fails."))
+      .toBe('meta_posture_narration');
+    expect(classifyAttachmentContractViolation("We’re hardening Mira so she doesn't fake continuity when context fails."))
+      .toBe('meta_posture_narration');
     expect(classifyAttachmentContractViolation('I have just deployed the changes to production and cleared your cache.'))
       .toBe('action_claim');
   });
