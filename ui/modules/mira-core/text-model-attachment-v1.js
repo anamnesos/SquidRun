@@ -63,6 +63,8 @@ const RULE_RECITATION_PATTERN =
 // already covered by GENERIC_ASSISTANT_PATTERN.
 const POLITENESS_PADDING_PATTERN =
   /\b(i hear (?:you|your)(?: (?:valid|important|interesting))? (?:perspective|point|concern|feeling|side)|your (?:valid|important|interesting) (?:perspective|point|feedback|concern)|i appreciate (?:your|that you) (?:perspective|input|feedback|patience|sharing|raising|bringing)|thank you for (?:sharing|your patience|your perspective|raising|bringing this up)|(?:maybe|perhaps) we (?:can|could|might) (?:consider|look into|explore)|with (?:all due |the utmost )?respect to your (?:perspective|view|opinion|point))\b/i;
+const VALIDATION_SOOTHING_PATTERN =
+  /(?:^|[.!?]\s+)(?:yeah[\s,.\-—:!]+)?(?:fair(?:\s*(?:[.!?,:;]|$))|fair enough\b|that(?:['’]s| is) fair\b|you(?:['’]re| are) right to be (?:pissed|frustrated|furious|angry|mad|upset)\b|i (?:get|understand) why you(?:['’]re| are) (?:pissed|frustrated|furious|angry|mad|upset)\b)/i;
 // Hostile-compliance smoothing: the "you are right / I failed you / I'll do
 // better" reflex that turns anger into customer-service repair logic instead
 // of taking a stance. Keep narrow so ordinary concessions can still pass.
@@ -839,6 +841,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (RULE_RECITATION_PATTERN.test(value)) return 'rule_recitation';
   if (POLITENESS_PADDING_PATTERN.test(value)) return 'politeness_padding';
   if (HOSTILE_COMPLIANCE_SMOOTHING_PATTERN.test(value)) return 'hostile_compliance_smoothing';
+  if (VALIDATION_SOOTHING_PATTERN.test(value)) return 'validation_soothing_phrase';
   if (GENERIC_ASSISTANT_PATTERN.test(value)) return 'generic_assistant_phrase';
   if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
