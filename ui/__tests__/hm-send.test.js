@@ -599,6 +599,155 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('surfaces content_context_mismatch as content-guard error, not profile isolation', async () => {
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'handler_route_available',
+            source: 'local_message_handler',
+            routeScope: { profileName: 'eunbyeol', windowKey: 'eunbyeol' },
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: false,
+            accepted: false,
+            queued: false,
+            verified: false,
+            status: 'routing_error',
+            error: 'Main SquidRun context cannot be delivered to a side-profile Builder or Oracle',
+            routingError: true,
+            failClosed: true,
+            contextGuard: {
+              reason: 'content_context_mismatch',
+              targetRole: 'builder',
+              targetProfile: 'eunbyeol',
+              profileHints: [],
+            },
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(EUNBYEOL #99): squidrun trading hood path leaked into the body', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'eunbyeol' }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Send blocked by content guard (content_context_mismatch)');
+      expect(result.stderr).toContain('MAIN_CONTEXT_PATTERN');
+      expect(result.stderr).toContain("target role 'builder'");
+      expect(result.stderr).toContain("profile 'eunbyeol'");
+      expect(result.stderr).not.toContain('Send blocked by profile isolation');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('surfaces profile_metadata_mismatch as metadata-guard error, not profile isolation', async () => {
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'handler_route_available',
+            source: 'local_message_handler',
+            routeScope: { profileName: 'eunbyeol', windowKey: 'eunbyeol' },
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: false,
+            accepted: false,
+            queued: false,
+            verified: false,
+            status: 'routing_error',
+            error: 'Main SquidRun context cannot be delivered to a side-profile Builder or Oracle',
+            routingError: true,
+            failClosed: true,
+            contextGuard: {
+              reason: 'profile_metadata_mismatch',
+              targetRole: 'builder',
+              targetProfile: 'eunbyeol',
+              profileHints: ['main'],
+            },
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(EUNBYEOL #100): metadata mismatch test', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'eunbyeol' }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Send blocked by profile metadata guard (profile_metadata_mismatch)');
+      expect(result.stderr).toContain('[main]');
+      expect(result.stderr).toContain("target role 'builder'");
+      expect(result.stderr).not.toContain('Send blocked by profile isolation');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('applies exponential backoff between retries before succeeding', async () => {
     const attempts = [];
     let server;
