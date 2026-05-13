@@ -2515,6 +2515,76 @@ describe('Mira Lab sidecar surface', () => {
     ))).toBe(false);
   });
 
+  test('curriculum lets later false-positive outcomes override stale implemented active lessons', () => {
+    projectRoot = tempProject();
+    const initiativeId = 'mira-active-initiative:web-research-noisy';
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      generated_at: '2026-05-12T16:00:00.000Z',
+      outcome_id: 'mira-active-initiative-outcome:web-research-old-implemented',
+      initiative_id: initiativeId,
+      outcome_status: 'implemented',
+      target_role: 'oracle',
+      initiative_kind: 'research_trail_investigation',
+      source: 'web_research',
+      adapter_id: 'web_research_curiosity',
+      work_order: { title: 'What should Mira infer or ask from the saved reddit.com research trail?' },
+      evidence: ['reddit_occurrences=11 primary_context=agent_income_stack_research'],
+      note: 'The reddit.com trail reveals operator stack breakdowns. This was later corrected.',
+    });
+    appendJsonl(activeInitiativeOutcomesPath(projectRoot), {
+      schema: MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
+      generated_at: '2026-05-12T16:03:00.000Z',
+      outcome_id: 'mira-active-initiative-outcome:web-research-later-fp',
+      initiative_id: initiativeId,
+      outcome_status: 'false_positive',
+      target_role: 'oracle',
+      initiative_kind: 'research_trail_investigation',
+      source: 'web_research',
+      adapter_id: 'web_research_curiosity',
+      work_order: { title: 'What should Mira infer or ask from the saved reddit.com research trail?' },
+      evidence: ['weak_signal=reddit.com strong_signal=research-ai-companion-memory-2026-04-29.md'],
+      note: 'The reddit.com domain count was noisy; the substantive artifact was the hybrid memory research memo.',
+    });
+    appendJsonl(miraDirectRoutesPath(projectRoot), {
+      decision: 'routed',
+      route_id: 'mira-direct-route:web-research-stale',
+      reason: 'web research needs a scout adapter before Mira can inspect research trails',
+      target_role: 'oracle',
+      selected_item: {
+        item_id: 'mira-curiosity:web-research-stale',
+        source: 'web_research',
+        adapter_id: 'web_research_curiosity',
+        suggested_question: 'What should Mira infer or ask from the saved reddit.com research trail?',
+        possible_action: 'Treat the loud reddit domain count as the leading research signal.',
+      },
+    });
+    appendJsonl(curiosityBurstsPath(projectRoot), {
+      decision: 'burst_completed',
+      burst_id: 'mira-curiosity-burst:web-research-stale',
+      route_output: {
+        decision: 'route_selected',
+        source: 'web_research',
+        adapter_id: 'web_research_curiosity',
+        target_role: 'oracle',
+        reason: 'burst selected the old reddit domain-count follow-up',
+        suggested_question: 'What should Mira infer from reddit.com?',
+        possible_action: 'Promote the reddit trail as a reusable lesson.',
+      },
+    });
+
+    const curriculum = extractMiraCurriculumSkills({ limit: 12 }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:05:00.000Z',
+    });
+
+    expect(curriculum.skills.some((skill) => (
+      skill.source === 'web_research'
+      && skill.adapter_id === 'web_research_curiosity'
+    ))).toBe(false);
+    expect(JSON.stringify(curriculum.skills)).not.toMatch(/reddit_occurrences|operator stack|loud reddit|domain-count/i);
+  });
+
   test('curriculum promotes practiced read-only code-mode runs over stale build-wrapper route lessons', () => {
     projectRoot = tempProject();
     appendJsonl(readOnlyCodeModeRunsPath(projectRoot), {

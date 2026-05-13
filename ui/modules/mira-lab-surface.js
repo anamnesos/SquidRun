@@ -5714,6 +5714,108 @@ function mergeStalePatternIntoActiveOutcome(activeCandidate, raw = {}) {
   return true;
 }
 
+const NEGATIVE_ACTIVE_INITIATIVE_OUTCOME_STATUSES = new Set(['false_positive', 'not_implemented', 'needs_followup']);
+
+function activeInitiativeOutcomeCurriculumKeys(outcome = {}, initiativesById = new Map()) {
+  const initiativeId = trimText(outcome.initiative_id);
+  const initiative = initiativesById.get(initiativeId) || {};
+  const selected = initiative.selected_item || {};
+  const source = trimText(outcome.source || selected.source);
+  const adapterId = trimText(outcome.adapter_id || selected.adapter_id || selected.adapterId);
+  const initiativeKind = trimText(outcome.initiative_kind || initiative.initiative_kind);
+  return {
+    initiative_id: initiativeId || null,
+    semantic_key: activeInitiativeSemanticKey({
+      initiative_kind: initiativeKind,
+      source,
+      adapter_id: adapterId,
+    }),
+    source_adapter_key: curriculumSourceAdapterKey(source, adapterId),
+  };
+}
+
+function activeInitiativeOutcomeEntry(outcome = {}, initiativesById = new Map()) {
+  const status = normalizeActiveInitiativeOutcomeStatus(outcome.outcome_status || outcome.status);
+  if (!status) return null;
+  return {
+    outcome,
+    status,
+    outcome_id: trimText(outcome.outcome_id),
+    generated_at: trimText(outcome.generated_at),
+    generated_ms: parseTimestampMs(outcome.generated_at),
+    keys: activeInitiativeOutcomeCurriculumKeys(outcome, initiativesById),
+  };
+}
+
+function isSameOrLaterActiveInitiativeOutcome(entry, outcome = {}) {
+  if (!entry || !outcome) return false;
+  const outcomeId = trimText(outcome.outcome_id);
+  if (entry.outcome_id && outcomeId && entry.outcome_id === outcomeId) return false;
+  const outcomeMs = parseTimestampMs(outcome.generated_at);
+  if (entry.generated_ms !== null && outcomeMs !== null) return entry.generated_ms >= outcomeMs;
+  const outcomeGeneratedAt = trimText(outcome.generated_at);
+  if (entry.generated_at && outcomeGeneratedAt) return entry.generated_at >= outcomeGeneratedAt;
+  return true;
+}
+
+function newerActiveInitiativeOutcomeEntry(left, right) {
+  if (!left) return right;
+  if (!right) return left;
+  if (left.generated_ms !== null && right.generated_ms !== null) {
+    if (right.generated_ms !== left.generated_ms) return right.generated_ms > left.generated_ms ? right : left;
+  } else if (left.generated_at && right.generated_at && right.generated_at !== left.generated_at) {
+    return right.generated_at > left.generated_at ? right : left;
+  }
+  return (right.outcome_id || '').localeCompare(left.outcome_id || '') > 0 ? right : left;
+}
+
+function buildActiveInitiativeOutcomeCurriculumIndex(outcomes = [], initiativesById = new Map()) {
+  const latestByInitiative = new Map();
+  const latestBySemantic = new Map();
+  const latestBySourceAdapter = new Map();
+  for (const outcome of outcomes) {
+    if (!outcome || outcome.schema !== MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA) continue;
+    const entry = activeInitiativeOutcomeEntry(outcome, initiativesById);
+    if (!entry) continue;
+    if (entry.keys.initiative_id) {
+      latestByInitiative.set(
+        entry.keys.initiative_id,
+        newerActiveInitiativeOutcomeEntry(latestByInitiative.get(entry.keys.initiative_id), entry),
+      );
+    }
+    if (entry.keys.semantic_key) {
+      latestBySemantic.set(
+        entry.keys.semantic_key,
+        newerActiveInitiativeOutcomeEntry(latestBySemantic.get(entry.keys.semantic_key), entry),
+      );
+    }
+    if (entry.keys.source_adapter_key) {
+      latestBySourceAdapter.set(
+        entry.keys.source_adapter_key,
+        newerActiveInitiativeOutcomeEntry(latestBySourceAdapter.get(entry.keys.source_adapter_key), entry),
+      );
+    }
+  }
+  const negativeSourceAdapterKeys = new Set();
+  for (const [key, entry] of latestBySourceAdapter.entries()) {
+    if (NEGATIVE_ACTIVE_INITIATIVE_OUTCOME_STATUSES.has(entry.status)) negativeSourceAdapterKeys.add(key);
+  }
+  return {
+    negativeSourceAdapterKeys,
+    suppressesImplementedOutcome(outcome = {}) {
+      const keys = activeInitiativeOutcomeCurriculumKeys(outcome, initiativesById);
+      const latestEntries = [
+        keys.initiative_id ? latestByInitiative.get(keys.initiative_id) : null,
+        keys.semantic_key ? latestBySemantic.get(keys.semantic_key) : null,
+      ].filter(Boolean);
+      return latestEntries.some((entry) => (
+        NEGATIVE_ACTIVE_INITIATIVE_OUTCOME_STATUSES.has(entry.status)
+        && isSameOrLaterActiveInitiativeOutcome(entry, outcome)
+      ));
+    },
+  };
+}
+
 function codeModeRunEvidence(run = {}) {
   const evidence = [
     trimText(run.run_id),
@@ -5773,6 +5875,7 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
     .map((entry) => [trimText(entry.initiative_id), entry]));
   const candidates = new Map();
   const activeOutcomeBySourceAdapter = new Map();
+  const activeOutcomeCurriculumIndex = buildActiveInitiativeOutcomeCurriculumIndex(activeInitiativeOutcomes, initiativesById);
 
   const codeModePractice = buildCodeModePracticeCurriculumCandidate(codeModeRuns);
   if (codeModePractice) {
@@ -5824,6 +5927,7 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
   for (const outcome of activeInitiativeOutcomes) {
     if (!outcome || outcome.schema !== MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA) continue;
     if (outcome.outcome_status !== 'implemented') continue;
+    if (activeOutcomeCurriculumIndex.suppressesImplementedOutcome(outcome)) continue;
     const initiativeId = trimText(outcome.initiative_id);
     const initiative = initiativesById.get(initiativeId) || {};
     const selected = initiative.selected_item || {};
@@ -5855,6 +5959,7 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
     if (route?.decision !== 'routed') continue;
     const item = route.selected_item || {};
     const sourceAdapterKey = curriculumSourceAdapterKey(item.source, item.adapter_id);
+    if (sourceAdapterKey && activeOutcomeCurriculumIndex.negativeSourceAdapterKeys.has(sourceAdapterKey)) continue;
     const activeCandidate = sourceAdapterKey ? activeOutcomeBySourceAdapter.get(sourceAdapterKey) : null;
     if (mergeStalePatternIntoActiveOutcome(activeCandidate, {
       route_id: route.route_id,
@@ -5883,6 +5988,7 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
     const route = burst.route_output || {};
     if (burst?.decision !== 'burst_completed' || route.decision !== 'route_selected') continue;
     const sourceAdapterKey = curriculumSourceAdapterKey(route.source, route.adapter_id);
+    if (sourceAdapterKey && activeOutcomeCurriculumIndex.negativeSourceAdapterKeys.has(sourceAdapterKey)) continue;
     const activeCandidate = sourceAdapterKey ? activeOutcomeBySourceAdapter.get(sourceAdapterKey) : null;
     if (mergeStalePatternIntoActiveOutcome(activeCandidate, {
       burst_id: burst.burst_id,
