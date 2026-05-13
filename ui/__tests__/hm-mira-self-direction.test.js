@@ -614,6 +614,71 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(textRun.stdout).toContain('source=cheap_parallel_scouts');
   });
 
+  test('quiet-burst-schedule CLI installs one duplicate-protected schedule and can run now', async () => {
+    const projectRoot = tempProject();
+    const schedulerStatePath = path.join(projectRoot, '.squidrun', 'runtime', 'schedules.json');
+    const curiosityBurstRunner = jest.fn(async () => ({
+      decision: 'burst_completed',
+      burst_id: 'mira-curiosity-burst:cli',
+      route_output: {
+        decision: 'route_selected',
+        source: 'memory_broker',
+        adapter_id: 'memory_broker_curiosity',
+      },
+      dispatch: { status: 'sent' },
+    }));
+
+    const first = await driver.run([
+      'quiet-burst-schedule',
+      '--install',
+      '--run-now',
+      '--interval-minutes', '45',
+      '--schedule-path', schedulerStatePath,
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      options: {
+        generatedAt: '2026-05-12T17:00:00.000Z',
+        curiosityBurstRunner,
+      },
+    });
+    const second = await driver.run([
+      'quiet-burst-schedule',
+      '--install',
+      '--interval-minutes', '45',
+      '--schedule-path', schedulerStatePath,
+      '--project-root', projectRoot,
+      '--json',
+    ], {
+      options: {
+        generatedAt: '2026-05-12T17:01:00.000Z',
+        curiosityBurstRunner,
+      },
+    });
+    const state = JSON.parse(fs.readFileSync(schedulerStatePath, 'utf8'));
+
+    expect(first.result.decision).toBe('schedule_installed');
+    expect(first.result.schedule_created).toBe(true);
+    expect(first.result.schedule_run_performed).toBe(true);
+    expect(first.result.route_dispatch_performed).toBe(true);
+    expect(first.result.burst_result).toEqual(expect.objectContaining({
+      route_decision: 'route_selected',
+      dispatch_status: 'sent',
+    }));
+    expect(second.result.decision).toBe('schedule_already_active');
+    expect(second.result.duplicate_suppressed).toBe(true);
+    expect(state.schedules).toHaveLength(1);
+    expect(state.schedules[0].metadata.sources).toEqual([
+      'runtime_comms',
+      'memory_broker',
+      'environment_apps',
+      'work_continuation',
+      'browser_history',
+      'email',
+    ]);
+    expect(curiosityBurstRunner).toHaveBeenCalledTimes(1);
+  });
+
   test('create --prompt-reply stages held structured Mira proposals', async () => {
     const projectRoot = tempProject();
     const heldProposal = {

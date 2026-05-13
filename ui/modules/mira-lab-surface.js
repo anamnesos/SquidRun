@@ -44,6 +44,7 @@ const {
 } = require('./mira-visual-asset-curiosity');
 const {
   readMiraAutomationSchedulerCuriosity,
+  defaultSchedulerStatePaths,
 } = require('./mira-automation-scheduler-curiosity');
 const {
   readMiraWorkContinuationCuriosity,
@@ -78,6 +79,7 @@ const MIRA_DIRECT_ROUTE_SCHEMA = 'squidrun.mira_lab.direct_route_v0';
 const MIRA_ACTIVE_INITIATIVE_SCHEMA = 'squidrun.mira_lab.active_initiative_v0';
 const MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA = 'squidrun.mira_lab.active_initiative_outcome_v0';
 const MIRA_READ_ONLY_CODE_MODE_SCHEMA = 'squidrun.mira_lab.read_only_code_mode_v0';
+const MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA = 'squidrun.mira_lab.quiet_curiosity_schedule_v0';
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
@@ -4015,7 +4017,7 @@ function curiosityStatusCounts(items = []) {
 function schedulerReviewedCuriosityBurstPlan(item = {}) {
   const candidateSources = [
     'runtime_comms',
-    'memory',
+    'memory_broker',
     'environment_apps',
     'work_continuation',
     'browser_history',
@@ -4039,6 +4041,329 @@ function schedulerReviewedCuriosityBurstPlan(item = {}) {
     schedule_deleted: false,
     schedule_run_performed: false,
   };
+}
+
+const MIRA_QUIET_CURIOSITY_SCHEDULE_ID = 'mira-quiet-curiosity-burst-v1';
+const MIRA_QUIET_CURIOSITY_SCHEDULE_NAME = 'Mira quiet curiosity burst';
+const MIRA_QUIET_CURIOSITY_DEFAULT_INTERVAL_MS = 45 * 60 * 1000;
+const MIRA_QUIET_CURIOSITY_MIN_INTERVAL_MS = 15 * 60 * 1000;
+const MIRA_QUIET_CURIOSITY_MAX_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const MIRA_QUIET_CURIOSITY_DEFAULT_SOURCES = Object.freeze([
+  'runtime_comms',
+  'memory_broker',
+  'environment_apps',
+  'work_continuation',
+  'browser_history',
+  'email',
+]);
+
+function quietCuriosityScheduleLogPath(projectRoot) {
+  return path.join(projectRoot, '.squidrun', 'runtime', 'mira-quiet-curiosity-schedules.jsonl');
+}
+
+function normalizeQuietCuriositySources(payload = {}, options = {}) {
+  const raw = payload.sources || payload.source || options.sources || options.source || MIRA_QUIET_CURIOSITY_DEFAULT_SOURCES;
+  const allowed = new Set(CURIOSITY_BURST_DEFAULT_SOURCES);
+  const blocked = new Set(['automation_scheduler', 'cheap_parallel_scouts']);
+  const values = (Array.isArray(raw) ? raw : String(raw).split(','))
+    .map((item) => trimText(item))
+    .filter((source) => allowed.has(source) && !blocked.has(source));
+  const unique = Array.from(new Set(values));
+  return (unique.length > 0 ? unique : [...MIRA_QUIET_CURIOSITY_DEFAULT_SOURCES]).slice(0, 8);
+}
+
+function normalizeQuietCuriosityIntervalMs(payload = {}, options = {}) {
+  const rawMinutes = payload.intervalMinutes ?? payload.interval_minutes ?? options.intervalMinutes ?? options.interval_minutes;
+  const rawMs = payload.intervalMs ?? payload.interval_ms ?? options.intervalMs ?? options.interval_ms;
+  const requested = Number.isFinite(Number(rawMs))
+    ? Number(rawMs)
+    : Number(rawMinutes) * 60 * 1000;
+  const intervalMs = Number.isFinite(requested) && requested > 0
+    ? requested
+    : MIRA_QUIET_CURIOSITY_DEFAULT_INTERVAL_MS;
+  return Math.max(MIRA_QUIET_CURIOSITY_MIN_INTERVAL_MS, Math.min(MIRA_QUIET_CURIOSITY_MAX_INTERVAL_MS, Math.round(intervalMs)));
+}
+
+function quietCuriositySchedulerStatePath(projectRoot, payload = {}, options = {}) {
+  const raw = trimText(
+    payload.schedulerStatePath
+    || payload.scheduleStatePath
+    || options.schedulerStatePath
+    || options.scheduleStatePath
+  );
+  if (raw) return path.resolve(projectRoot, raw);
+  const paths = typeof defaultSchedulerStatePaths === 'function'
+    ? defaultSchedulerStatePaths(projectRoot)
+    : [path.join(projectRoot, '.squidrun', 'runtime', 'schedules.json')];
+  return paths[0];
+}
+
+function readSchedulerStateForQuietCuriosity(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {
+      ok: true,
+      existed: false,
+      state: { schedules: [], lastUpdated: null },
+    };
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const state = parsed && typeof parsed === 'object' ? parsed : {};
+    return {
+      ok: true,
+      existed: true,
+      state: {
+        ...state,
+        schedules: Array.isArray(state.schedules) ? state.schedules : [],
+      },
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      existed: true,
+      reason: 'scheduler_state_parse_error',
+      error: err?.message || String(err),
+      state: null,
+    };
+  }
+}
+
+function writeJsonAtomic(filePath, payload) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  fs.renameSync(tempPath, filePath);
+}
+
+function quietCuriosityCommandHarness(sources) {
+  return `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --route-interesting`;
+}
+
+function quietCuriosityScheduleInput(sources) {
+  const command = quietCuriosityCommandHarness(sources);
+  return [
+    'Run Mira quiet curiosity burst and route only the strongest changed internal follow-up.',
+    `Command: ${command}`,
+    'If the burst reports no actionable route, record a no-op implemented outcome so Mira advances.',
+    'Do not send external messages, read email bodies, mutate labels/calendars/schedules, deploy, trade, or perform customer/auth actions.',
+  ].join(' ');
+}
+
+function buildQuietCuriositySchedulePayload({ sources, intervalMs, generatedAt }) {
+  const generatedMs = Date.parse(generatedAt);
+  const startMs = Number.isFinite(generatedMs) ? generatedMs : Date.now();
+  const nextRun = new Date(startMs + intervalMs).toISOString();
+  const command = quietCuriosityCommandHarness(sources);
+  return {
+    id: MIRA_QUIET_CURIOSITY_SCHEDULE_ID,
+    name: MIRA_QUIET_CURIOSITY_SCHEDULE_NAME,
+    type: 'interval',
+    input: quietCuriosityScheduleInput(sources),
+    taskType: 'implementation',
+    active: true,
+    runAt: null,
+    intervalMs,
+    cron: null,
+    timeZone: null,
+    eventName: null,
+    chainAfter: null,
+    chainRequiresSuccess: true,
+    lastRunAt: null,
+    lastStatus: null,
+    nextRun,
+    history: [],
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
+    metadata: {
+      owner: 'mira',
+      schedule_kind: 'quiet_curiosity_burst',
+      schema: MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA,
+      sources,
+      command_harness: command,
+      followup_rule: 'Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome.',
+      internal_only: true,
+      external_send_performed: false,
+      body_read_required: false,
+      destructive_action_performed: false,
+    },
+  };
+}
+
+function isQuietCuriositySchedule(schedule = {}) {
+  const metadata = schedule.metadata || {};
+  return (
+    trimText(schedule.id) === MIRA_QUIET_CURIOSITY_SCHEDULE_ID
+    || trimText(schedule.name) === MIRA_QUIET_CURIOSITY_SCHEDULE_NAME
+    || trimText(metadata.schedule_kind) === 'quiet_curiosity_burst'
+  );
+}
+
+function quietScheduleNeedsUpdate(existing = {}, next = {}) {
+  const existingSources = asArray(existing.metadata?.sources).map(trimText).filter(Boolean).join(',');
+  const nextSources = asArray(next.metadata?.sources).map(trimText).filter(Boolean).join(',');
+  return (
+    existing.active === false
+    || trimText(existing.type) !== trimText(next.type)
+    || Number(existing.intervalMs) !== Number(next.intervalMs)
+    || trimText(existing.input) !== trimText(next.input)
+    || existingSources !== nextSources
+  );
+}
+
+function compactQuietCuriositySchedule(schedule = {}) {
+  return {
+    id: trimText(schedule.id) || null,
+    name: oneLine(schedule.name, 120) || null,
+    type: trimText(schedule.type) || null,
+    active: schedule.active !== false,
+    interval_minutes: Number.isFinite(Number(schedule.intervalMs))
+      ? Math.round((Number(schedule.intervalMs) / 60000) * 100) / 100
+      : null,
+    next_run: trimText(schedule.nextRun) || null,
+    task_type: trimText(schedule.taskType) || null,
+    sources: asArray(schedule.metadata?.sources).map(trimText).filter(Boolean),
+    command_harness: oneLine(schedule.metadata?.command_harness, 260) || null,
+  };
+}
+
+async function ensureMiraQuietCuriositySchedule(payload = {}, options = {}) {
+  const generatedAt = generatedAtFromOptions(options, payload);
+  const projectRoot = projectRootFromOptions(options, payload);
+  const sources = normalizeQuietCuriositySources(payload, options);
+  const intervalMs = normalizeQuietCuriosityIntervalMs(payload, options);
+  const install = payload.install === true || options.install === true;
+  const runNow = payload.runNow === true || payload.run_now === true || options.runNow === true || options.run_now === true;
+  const dispatch = payload.dispatch !== false && options.dispatch !== false;
+  const schedulerStatePath = quietCuriositySchedulerStatePath(projectRoot, payload, options);
+  const logPath = quietCuriosityScheduleLogPath(projectRoot);
+  const read = readSchedulerStateForQuietCuriosity(schedulerStatePath);
+  if (!read.ok) {
+    const blocked = {
+      schema: MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA,
+      ok: false,
+      decision: 'blocked',
+      reason: read.reason,
+      error: read.error,
+      generated_at: generatedAt,
+      scheduler_state_path: schedulerStatePath,
+      internal_only: true,
+      external_send_performed: false,
+      consequence_controls: {
+        internal_only: true,
+        schedule_created: false,
+        schedule_updated: false,
+        schedule_run_performed: false,
+        external_send_performed: false,
+        destructive_action_performed: false,
+      },
+    };
+    appendJsonl(logPath, blocked);
+    return blocked;
+  }
+
+  const state = read.state;
+  const nextSchedule = buildQuietCuriositySchedulePayload({ sources, intervalMs, generatedAt });
+  const schedules = asArray(state.schedules);
+  const existingIndex = schedules.findIndex(isQuietCuriositySchedule);
+  const existing = existingIndex >= 0 ? schedules[existingIndex] : null;
+  let scheduleCreated = false;
+  let scheduleUpdated = false;
+  let duplicateSuppressed = false;
+  let activeSchedule = existing || nextSchedule;
+
+  if (install) {
+    if (existing) {
+      if (quietScheduleNeedsUpdate(existing, nextSchedule)) {
+        activeSchedule = {
+          ...existing,
+          ...nextSchedule,
+          id: trimText(existing.id) || nextSchedule.id,
+          createdAt: existing.createdAt || nextSchedule.createdAt,
+          history: asArray(existing.history),
+          updatedAt: generatedAt,
+        };
+        schedules[existingIndex] = activeSchedule;
+        scheduleUpdated = true;
+      } else {
+        activeSchedule = existing;
+        duplicateSuppressed = true;
+      }
+    } else {
+      schedules.push(nextSchedule);
+      activeSchedule = nextSchedule;
+      scheduleCreated = true;
+    }
+    state.schedules = schedules;
+    state.lastUpdated = generatedAt;
+    writeJsonAtomic(schedulerStatePath, state);
+  }
+
+  let burstResult = null;
+  if (runNow) {
+    const runner = typeof options.curiosityBurstRunner === 'function'
+      ? options.curiosityBurstRunner
+      : runMiraCuriosityBurst;
+    burstResult = await runner({
+      sources,
+      routeInteresting: true,
+      dispatch,
+    }, {
+      ...options,
+      projectRoot,
+      generatedAt,
+      dispatch,
+      routeInteresting: true,
+    });
+  }
+
+  const decision = !install
+    ? 'schedule_ready_for_install'
+    : scheduleCreated
+      ? 'schedule_installed'
+      : scheduleUpdated
+        ? 'schedule_updated'
+        : 'schedule_already_active';
+  const result = {
+    schema: MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA,
+    ok: true,
+    decision,
+    generated_at: generatedAt,
+    scheduler_state_path: schedulerStatePath,
+    state_existed: read.existed,
+    schedule_created: scheduleCreated,
+    schedule_updated: scheduleUpdated,
+    duplicate_suppressed: duplicateSuppressed,
+    schedule_run_performed: runNow,
+    route_dispatch_performed: Boolean(runNow && dispatch && burstResult?.dispatch?.status === 'sent'),
+    interval_minutes: Math.round((intervalMs / 60000) * 100) / 100,
+    sources,
+    command_harness: quietCuriosityCommandHarness(sources),
+    schedule: compactQuietCuriositySchedule(activeSchedule),
+    burst_result: burstResult ? {
+      decision: burstResult.decision,
+      burst_id: burstResult.burst_id || null,
+      route_decision: burstResult.route_output?.decision || null,
+      route_source: burstResult.route_output?.source || null,
+      route_adapter_id: burstResult.route_output?.adapter_id || null,
+      dispatch_status: burstResult.dispatch?.status || null,
+    } : null,
+    schedule_log_path: logPath,
+    internal_only: true,
+    external_send_performed: false,
+    consequence_controls: {
+      internal_only: true,
+      schedule_created: scheduleCreated,
+      schedule_updated: scheduleUpdated,
+      schedule_deleted: false,
+      schedule_run_performed: runNow,
+      curiosity_burst_run_performed: runNow,
+      external_send_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    },
+  };
+  appendJsonl(logPath, result);
+  return result;
 }
 
 function activeInitiativeEvidenceForItem(item = {}) {
@@ -4368,7 +4693,7 @@ function activeInitiativeCandidateForItem(item, index, total) {
       reviewedRecurringBurstPlan = compactSchedulerFollowthroughDesign(item.scheduler_followthrough_design)
         || schedulerReviewedCuriosityBurstPlan(item);
       title = 'Design reviewed quiet-interval curiosity burst for the empty scheduler.';
-      action = 'Have Builder stage a review-only recurring curiosity-burst design using runtime_comms, memory, environment_apps, work_continuation, browser_history, and email metadata; do not create, update, delete, or run schedules from scout output.';
+      action = 'Have Builder stage or install the reviewed recurring curiosity-burst design using runtime_comms, memory_broker, environment_apps, work_continuation, browser_history, and email metadata; keep schedule creation explicit and duplicate-protected.';
     } else {
       score -= 18;
     }
@@ -6621,6 +6946,7 @@ module.exports = {
   MIRA_ACTIVE_INITIATIVE_OUTCOME_STATUSES,
   MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+  MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA,
   MIRA_REFLEXION_LESSONS_SCHEMA,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_DECISIONS,
@@ -6638,6 +6964,7 @@ module.exports = {
   classifyMiraReplyConfidenceSource,
   extractMiraCurriculumSkills,
   extractMiraReflexionLessons,
+  ensureMiraQuietCuriositySchedule,
   generateMiraSelfDirectionProposal,
   listMiraSelfDirectionProposals,
   recordMiraActiveInitiativeOutcome,
@@ -6654,6 +6981,7 @@ module.exports = {
   buildMiraLabTurn,
   exportMiraLabTranscript,
   curiosityBurstsPath,
+  quietCuriosityScheduleLogPath,
   curriculumSkillsPath,
   replyAuditPath,
   activeInitiativesPath,

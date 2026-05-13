@@ -10,6 +10,7 @@ const PROJECT_ROOT = process.env.SQUIDRUN_PROJECT_ROOT
 
 const {
   buildMiraAuthorityScoreboard,
+  ensureMiraQuietCuriositySchedule,
   extractMiraCurriculumSkills,
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
@@ -46,6 +47,7 @@ function printHelp() {
     '  node ui/scripts/hm-mira-self-direction.js curiosity-burst [--project-root <path>] [--source repo_files,memory] [--json] [--route-interesting] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js next-initiative [--project-root <path>] [--json] [--run-scout] [--no-dispatch] [--force]',
+    '  node ui/scripts/hm-mira-self-direction.js quiet-burst-schedule [--install] [--run-now] [--interval-minutes <n>] [--schedule-path <path>] [--source runtime_comms,memory_broker,...] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js email-snapshot --stdin [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js code-mode --script <js>|--stdin [--allow <path>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js scan-confidence [--limit 5] [--session-id <id>] [--project-root <path>] [--json] [--no-dispatch]',
@@ -80,7 +82,11 @@ function parseArgs(argv = []) {
     routeInteresting: false,
     runScout: false,
     force: false,
+    install: false,
+    runNow: false,
     cooldownMs: null,
+    intervalMinutes: null,
+    schedulerStatePath: null,
     sources: [],
     limit: 5,
     script: null,
@@ -128,8 +134,16 @@ function parseArgs(argv = []) {
       args.runScout = true;
     } else if (token === '--force') {
       args.force = true;
+    } else if (token === '--install') {
+      args.install = true;
+    } else if (token === '--run-now') {
+      args.runNow = true;
     } else if (token === '--cooldown-ms') {
       args.cooldownMs = Number(argv[++index]);
+    } else if (token === '--interval-minutes') {
+      args.intervalMinutes = Number(argv[++index]);
+    } else if (token === '--schedule-path' || token === '--scheduler-state-path') {
+      args.schedulerStatePath = argv[++index];
     } else if (token === '--source' || token === '--sources') {
       args.sources.push(...String(argv[++index] || '').split(',').map((item) => item.trim()).filter(Boolean));
     } else if (token === '--script') {
@@ -250,6 +264,19 @@ function output(result, args) {
     if (result.work_order?.title) process.stdout.write(`job=${result.work_order.title}\n`);
     if (result.dispatch?.status) process.stdout.write(`dispatch=${result.dispatch.status}\n`);
     if (result.active_initiative_log_path) process.stdout.write(`log=${result.active_initiative_log_path}\n`);
+    return;
+  }
+  if (args.command === 'quiet-burst-schedule') {
+    process.stdout.write(`decision=${result.decision}\n`);
+    process.stdout.write(`schedule_created=${result.schedule_created}\n`);
+    process.stdout.write(`schedule_updated=${result.schedule_updated}\n`);
+    process.stdout.write(`duplicate_suppressed=${result.duplicate_suppressed}\n`);
+    process.stdout.write(`run_now=${result.schedule_run_performed}\n`);
+    if (result.scheduler_state_path) process.stdout.write(`scheduler_state=${result.scheduler_state_path}\n`);
+    if (result.schedule?.id) process.stdout.write(`schedule_id=${result.schedule.id}\n`);
+    if (result.command_harness) process.stdout.write(`command=${result.command_harness}\n`);
+    if (result.burst_result?.route_decision) process.stdout.write(`burst_route=${result.burst_result.route_decision}\n`);
+    if (result.burst_result?.dispatch_status) process.stdout.write(`dispatch=${result.burst_result.dispatch_status}\n`);
     return;
   }
   if (args.command === 'email-snapshot') {
@@ -465,6 +492,32 @@ async function run(rawArgs = process.argv.slice(2), deps = {}) {
       dispatch: args.dispatch,
       force: args.force,
       cooldownMs: args.cooldownMs,
+      sendAgentMessage: args.dispatch
+        ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
+          projectRoot: args.projectRoot,
+          hmSendPath: deps.hmSendPath,
+        })))
+        : undefined,
+      ...(deps.options || {}),
+    });
+    return { args, result };
+  }
+  if (args.command === 'quiet-burst-schedule') {
+    const result = await ensureMiraQuietCuriositySchedule({
+      install: args.install,
+      runNow: args.runNow,
+      dispatch: args.dispatch,
+      sources: args.sources,
+      intervalMinutes: args.intervalMinutes,
+      schedulerStatePath: args.schedulerStatePath,
+    }, {
+      projectRoot: args.projectRoot,
+      dispatch: args.dispatch,
+      install: args.install,
+      runNow: args.runNow,
+      sources: args.sources,
+      intervalMinutes: args.intervalMinutes,
+      schedulerStatePath: args.schedulerStatePath,
       sendAgentMessage: args.dispatch
         ? (deps.sendAgentMessage || ((target, body) => sendInternalHmMessage(target, body, {
           projectRoot: args.projectRoot,

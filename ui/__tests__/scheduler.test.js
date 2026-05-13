@@ -586,6 +586,29 @@ describe('Scheduler Module', () => {
         expect(fired).toBe(0);
       });
 
+      test('reloads externally installed schedules before due checks', () => {
+        const runAt = new Date(Date.now() - 1000).toISOString();
+        fs.existsSync.mockReturnValue(true);
+        fs.readFileSync.mockReturnValue(JSON.stringify({
+          schedules: [{
+            id: 'external-quiet-burst',
+            name: 'Mira quiet curiosity burst',
+            type: 'once',
+            input: 'Run Mira quiet curiosity burst now',
+            active: true,
+            runAt,
+            nextRun: runAt,
+            history: [],
+          }],
+        }));
+
+        const fired = scheduler.checkDueSchedules();
+
+        expect(fired).toBe(1);
+        expect(fs.readFileSync).toHaveBeenCalled();
+        expect(mockTriggers.routeTask).toHaveBeenCalledWith('general', 'test task');
+      });
+
       test('respects chain dependencies - child blocked when parent failed', () => {
         const isolatedScheduler = createScheduler({
           triggers: mockTriggers,

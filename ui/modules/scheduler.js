@@ -294,6 +294,7 @@ function createScheduler({ triggers, workspacePath }) {
   }
 
   function checkDueSchedules() {
+    load();
     const now = new Date();
     let fired = 0;
     for (const schedule of scheduleState.schedules) {
