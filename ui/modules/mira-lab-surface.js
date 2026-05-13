@@ -4685,14 +4685,18 @@ function activeInitiativeCandidateForItem(item, index, total) {
     const dueSoon = numberSignal(item.scheduler_due_soon_count);
     const overdue = numberSignal(item.scheduler_overdue_count);
     if (dueSoon > 0 || overdue > 0) {
+      initiativeKind = 'quiet_curiosity_schedule_monitor';
+      reason = 'an active curiosity schedule is now present, so the next scheduler work is proving the operational cadence instead of redesigning it';
       score += 18 + overdue * 4 + dueSoon * 2;
-      title = `Follow through scheduler curiosity: due_soon=${dueSoon} overdue=${overdue}`;
-      action = 'Have Builder connect the scheduler signal to the next read-only curiosity run without creating or firing new schedules from this selector.';
+      title = `Verify quiet curiosity scheduler cadence: due_soon=${dueSoon} overdue=${overdue}`;
+      action = 'Have Builder verify the active Mira quiet-curiosity schedule is picked up by the running scheduler and records its next automatic burst/history without creating duplicates, sending externally, or mutating calendars/email.';
     } else if (scheduleCount === 0 && activeCount === 0) {
+      initiativeKind = 'quiet_curiosity_schedule_install';
+      reason = 'an empty scheduler should become an actual reviewed quiet-curiosity cadence, not another inert design';
       score += 8;
       reviewedRecurringBurstPlan = compactSchedulerFollowthroughDesign(item.scheduler_followthrough_design)
         || schedulerReviewedCuriosityBurstPlan(item);
-      title = 'Design reviewed quiet-interval curiosity burst for the empty scheduler.';
+      title = 'Install reviewed quiet-interval curiosity burst for the empty scheduler.';
       action = 'Have Builder stage or install the reviewed recurring curiosity-burst design using runtime_comms, memory_broker, environment_apps, work_continuation, browser_history, and email metadata; keep schedule creation explicit and duplicate-protected.';
     } else {
       score -= 18;
