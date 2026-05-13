@@ -205,6 +205,46 @@ describe('hm-telegram', () => {
     expect(postedBody.text.endsWith('[message truncated]')).toBe(true);
   });
 
+  test('sendTelegram removes internal pane wrappers and project markers from user-facing text', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 1001,
+        chat: { id: 123456 },
+      },
+    });
+
+    const result = await hmTelegram.sendTelegram(
+      '[AGENT MSG - reply via hm-send.js] (ARCH #36): Mira: I am here now.\n[CURRENT PROJECT] name=squidrun | path=D:\\projects\\squidrun',
+      {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    const firstRequest = https.request.mock.results[0].value;
+    const postedBody = JSON.parse(firstRequest.write.mock.calls[0][0]);
+    expect(postedBody.text).toBe('I am here now.');
+    expect(postedBody.text).not.toMatch(/ARCH|AGENT MSG|CURRENT PROJECT|hm-send/i);
+  });
+
+  test('sendTelegram fails closed when diagnostic fallback text is fully sanitized', async () => {
+    const result = await hmTelegram.sendTelegram(
+      'Mira held that reply. Open Mira Lab for diagnostics.',
+      {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      }
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      code: 'telegram_empty_after_sanitization',
+    }));
+    expect(https.request).not.toHaveBeenCalled();
+  });
+
   test('sendTelegram rejects chat ids not in TELEGRAM_CHAT_ALLOWLIST', async () => {
     mockTelegramResponse(200, {
       ok: true,

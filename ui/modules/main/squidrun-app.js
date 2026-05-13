@@ -181,6 +181,11 @@ const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
   process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
   10
 );
+const TELEGRAM_REPLY_DEDUPE_WINDOW_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_DEDUPE_WINDOW_MS || '45000', 10) || 45_000
+);
+const MIRA_TELEGRAM_FIRST_CONTACT_TEXT = 'Mira speaking in Telegram now. This is new; just talk to me here. I will route the team backstage if needed. No action needed.';
 const TEAM_MEMORY_BACKFILL_LIMIT = Number.parseInt(process.env.SQUIDRUN_TEAM_MEMORY_BACKFILL_LIMIT || '5000', 10);
 const TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS = Number.parseInt(
   process.env.SQUIDRUN_TEAM_MEMORY_INTEGRITY_SWEEP_MS || String(24 * 60 * 60 * 1000),
@@ -695,6 +700,7 @@ class SquidRunApp {
       sender: null,
       chatId: null,
     };
+    this.telegramReplyDedupe = new Map();
     this.autonomousSmoke = {
       inFlight: false,
       queuedRun: null,
@@ -8047,6 +8053,131 @@ class SquidRunApp {
     return true;
   }
 
+  getMiraTelegramChannelStatePath() {
+    return resolveCoordPath(path.join('runtime', 'mira-telegram-channel-state.json'), { forWrite: true });
+  }
+
+  readMiraTelegramChannelState() {
+    const statePath = this.getMiraTelegramChannelStatePath();
+    try {
+      if (!fs.existsSync(statePath)) {
+        return { version: 1, chats: {} };
+      }
+      const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { version: 1, chats: {} };
+      }
+      return {
+        version: 1,
+        chats: (parsed.chats && typeof parsed.chats === 'object' && !Array.isArray(parsed.chats))
+          ? parsed.chats
+          : {},
+      };
+    } catch (_) {
+      return { version: 1, chats: {} };
+    }
+  }
+
+  writeMiraTelegramChannelState(state = {}) {
+    const statePath = this.getMiraTelegramChannelStatePath();
+    try {
+      fs.mkdirSync(path.dirname(statePath), { recursive: true });
+      fs.writeFileSync(statePath, `${JSON.stringify({
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        chats: state.chats || {},
+      }, null, 2)}\n`, 'utf8');
+      return true;
+    } catch (error) {
+      log.warn('Telegram', `Failed writing Mira Telegram channel state: ${error.message}`);
+      return false;
+    }
+  }
+
+  getMiraTelegramChannelKey(chatId = null) {
+    return normalizeChatId(chatId) || 'default';
+  }
+
+  shouldOrientMiraTelegramChannel(chatId = null) {
+    const key = this.getMiraTelegramChannelKey(chatId);
+    const state = this.readMiraTelegramChannelState();
+    return !state.chats?.[key]?.firstContactAt;
+  }
+
+  markMiraTelegramChannelOriented(chatId = null, metadata = {}) {
+    const key = this.getMiraTelegramChannelKey(chatId);
+    const state = this.readMiraTelegramChannelState();
+    state.chats = state.chats || {};
+    state.chats[key] = {
+      ...(state.chats[key] || {}),
+      firstContactAt: new Date().toISOString(),
+      chatId: normalizeChatId(chatId) || null,
+      messageId: toNonEmptyString(metadata.messageId) || null,
+      mode: 'mira-telegram',
+    };
+    return this.writeMiraTelegramChannelState(state);
+  }
+
+  buildMiraTelegramUserFacingReply(replyText, { chatId = null } = {}) {
+    const text = toNonEmptyString(replyText);
+    if (!text) return { text: '', oriented: false };
+    if (!this.shouldOrientMiraTelegramChannel(chatId)) {
+      return { text, oriented: false };
+    }
+    return {
+      text: `${MIRA_TELEGRAM_FIRST_CONTACT_TEXT}\n\n${text}`,
+      oriented: true,
+    };
+  }
+
+  getTelegramReplyDedupeKey({ message, chatId = null, target = null, fromRole = null } = {}) {
+    const text = toNonEmptyString(message);
+    if (!text) return null;
+    const normalizedChatId = normalizeChatId(chatId) || 'default';
+    return createHash('sha256')
+      .update(JSON.stringify({
+        chatId: normalizedChatId,
+        target: toNonEmptyString(target) || '',
+        fromRole: toNonEmptyString(fromRole) || '',
+        message: text,
+      }))
+      .digest('hex');
+  }
+
+  pruneTelegramReplyDedupe(nowMs = Date.now()) {
+    for (const [key, entry] of this.telegramReplyDedupe.entries()) {
+      if (!entry || (nowMs - Number(entry.atMs || 0)) > TELEGRAM_REPLY_DEDUPE_WINDOW_MS) {
+        this.telegramReplyDedupe.delete(key);
+      }
+    }
+  }
+
+  hasSentTelegramReply({ message, chatId = null, target = null, fromRole = null } = {}, nowMs = Date.now()) {
+    const key = this.getTelegramReplyDedupeKey({ message, chatId, target, fromRole });
+    if (!key) return { duplicate: false, key: null };
+    this.pruneTelegramReplyDedupe(nowMs);
+    const previous = this.telegramReplyDedupe.get(key);
+    if (previous && (nowMs - Number(previous.atMs || 0)) <= TELEGRAM_REPLY_DEDUPE_WINDOW_MS) {
+      return { duplicate: true, key, previous };
+    }
+    return { duplicate: false, key };
+  }
+
+  markTelegramReplySent({ message, chatId = null, target = null, fromRole = null, messageId = null } = {}, nowMs = Date.now()) {
+    const key = this.getTelegramReplyDedupeKey({ message, chatId, target, fromRole });
+    if (!key) return { ok: false, key: null };
+    this.pruneTelegramReplyDedupe(nowMs);
+    this.telegramReplyDedupe.set(key, {
+      atMs: nowMs,
+      chatId: normalizeChatId(chatId) || 'default',
+      target: toNonEmptyString(target) || null,
+      fromRole: toNonEmptyString(fromRole) || null,
+      messageId: toNonEmptyString(messageId) || null,
+      status: 'sent',
+    });
+    return { ok: true, key };
+  }
+
   async buildTelegramMiraLiveReply(body, options = {}) {
     const prompt = toNonEmptyString(body);
     if (!prompt) {
@@ -8093,13 +8224,21 @@ class SquidRunApp {
       };
     }
 
+    const userFacingReply = this.buildMiraTelegramUserFacingReply(visibleReply, {
+      chatId: metadata?.chatId,
+    });
     const telegramResult = await this.routeTelegramReply({
       target: 'telegram',
-      content: visibleReply,
+      content: userFacingReply.text,
       fromRole: 'mira',
       messageId: inboundMessageId ? `${inboundMessageId}-mira-reply` : null,
       chatId: metadata?.chatId,
     });
+    if (telegramResult?.ok && userFacingReply.oriented) {
+      this.markMiraTelegramChannelOriented(metadata?.chatId, {
+        messageId: telegramResult.messageId || (inboundMessageId ? `${inboundMessageId}-mira-reply` : null),
+      });
+    }
 
     return {
       ok: Boolean(telegramResult?.ok),
@@ -8228,6 +8367,26 @@ class SquidRunApp {
           status: 'telegram_privacy_route_missing_chat',
         };
       }
+      const dedupe = this.hasSentTelegramReply({
+        message,
+        chatId: replyChatId,
+        target: normalizedTarget,
+        fromRole,
+      });
+      if (dedupe.duplicate) {
+        return {
+          handled: true,
+          ok: true,
+          accepted: true,
+          queued: false,
+          verified: true,
+          status: 'telegram_duplicate_suppressed',
+          chatId: replyChatId || null,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          sessionScopeId: routeSessionScopeId,
+        };
+      }
       const result = await sendRoutedTelegramMessage(message, process.env, {
         messageId,
         senderRole: fromRole,
@@ -8254,6 +8413,13 @@ class SquidRunApp {
           error: result?.error || 'unknown_error',
         };
       }
+      this.markTelegramReplySent({
+        message,
+        chatId: replyChatId,
+        target: normalizedTarget,
+        fromRole,
+        messageId: result.messageId || messageId,
+      });
 
       return {
         handled: true,

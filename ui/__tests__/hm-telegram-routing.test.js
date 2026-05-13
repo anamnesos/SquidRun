@@ -134,6 +134,41 @@ describe('hm-telegram-routing', () => {
     }));
   });
 
+  it('chunks long owner-route messages instead of silently truncating', async () => {
+    const { sendTelegram } = require('../scripts/hm-telegram');
+    const routing = require('../scripts/hm-telegram-routing');
+    const longMessage = `${'A'.repeat(3900)}\n\n${'B'.repeat(3900)}`;
+
+    const result = await routing.sendRoutedTelegramMessage(longMessage, process.env, {
+      chatId: '123456789',
+      messageId: 'route-owner-long',
+      senderRole: 'mira',
+    });
+
+    expect(sendTelegram).toHaveBeenCalledTimes(2);
+    expect(sendTelegram.mock.calls[0][2]).toEqual(expect.objectContaining({
+      messageId: 'route-owner-long-part1',
+      metadata: expect.objectContaining({
+        routeMethod: 'send-long-telegram',
+        chunkIndex: 1,
+        chunkCount: 2,
+      }),
+    }));
+    expect(sendTelegram.mock.calls[1][2]).toEqual(expect.objectContaining({
+      messageId: 'route-owner-long-part2',
+      metadata: expect.objectContaining({
+        routeMethod: 'send-long-telegram',
+        chunkIndex: 2,
+        chunkCount: 2,
+      }),
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      method: 'send-long-telegram',
+      chunkCount: 2,
+    }));
+  });
+
   it('resolves explicit non-owner inbound chats to their configured window/profile', () => {
     fs.writeFileSync(
       path.join(tempRoot, 'runtime', 'telegram-routing.json'),

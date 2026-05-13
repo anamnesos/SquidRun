@@ -287,7 +287,8 @@ async function sendRoutedTelegramMessage(message, env = process.env, options = {
     },
   };
 
-  if (route?.method === 'send-long-telegram') {
+  const needsChunking = splitLongTelegramMessage(message).length > 1;
+  if (route?.method === 'send-long-telegram' || needsChunking) {
     const result = await sendLongTelegramMessage(message, env, dispatchOptions);
     return {
       ...result,
