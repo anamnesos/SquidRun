@@ -17,6 +17,10 @@ const {
 } = require('../modules/mira-lab-surface');
 
 const {
+  MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
+} = require('../modules/mira-core/text-model-attachment-v1');
+
+const {
   MIRA_LAB_PROMPT_REPLY_CHANNEL: HANDLER_CHANNEL,
   buildMiraLabPromptReplyResponse,
   registerMiraLabHandlers,
@@ -753,7 +757,7 @@ describe('mira lab prompt reply v0', () => {
 
   test('PASS: clean reply emits both transcript rows + audit, and gate-status pass envelope', async () => {
     const projectRoot = tempProject();
-    const replyText = 'Fixing the Mira Lab restart check. Missing-state stays blunt: Context failed. Im missing the last state. Then the regression and verifier prove it.';
+    const replyText = `Fixing the Mira Lab restart check. Missing-state stays blunt: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP} Then the regression and verifier prove it.`;
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true, model: 'mock-model' });
     const fakePath = path.join(projectRoot, 'ui-surface-stub.js');
     fs.writeFileSync(fakePath, '');

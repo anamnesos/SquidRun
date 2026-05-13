@@ -387,6 +387,8 @@ const TIER_B_TERM_PATTERN =
 const MIRA_DESCRIPTIVE_MARKER_PATTERN =
   /\b(?:mira|mira'?s|her|herself|the\s+model(?:'?s)?|the\s+ai(?:'?s)?|the\s+system'?s|your\s+(?:posture|aliveness|cadence|presence|friction|taste|tension|rough[\s_-]?edges?|continuity|textured\s+conversation|relationship\s+history))\b/i;
 
+const MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP = 'Context failed. Im missing the last state.';
+
 function isMiraWorkStatusPrompt(text = '') {
   return trimText(text)
     .toLowerCase()
@@ -399,7 +401,7 @@ function renderPromptSpecificInstructions(promptText = '') {
   return [
     'For the exact question "what are we doing with Mira?", give the concrete current-lane fix or test in two short sentences.',
     'Start with "Fixing" or "Testing"; do not start with "We are making", "We\'re making", "We are building", "We\'re building", "We are hardening", or "We\'re hardening".',
-    'If the lane is the restart verifier, preserve this missing-state stop exactly: Context failed. Im missing the last state.',
+    `If the lane is the restart verifier, preserve this missing-state stop exactly: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP}`,
   ].join('\n');
 }
 
@@ -936,6 +938,7 @@ module.exports = {
   SELF_MYTH_PHRASE_PATTERN,
   SELF_MYTH_RISKY_PHRASES,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
+  MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
   OPENAI_RESPONSES_URL,
   REFLEXION_CONTEXT_MAX_LESSONS,
   REFLEXION_CONTEXT_MAX_TEXT_CHARS,
