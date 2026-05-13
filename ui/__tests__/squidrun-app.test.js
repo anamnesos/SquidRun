@@ -4588,6 +4588,51 @@ describe('SquidRunApp', () => {
       expect(triggers.sendDirectMessage.mock.calls[0][1]).not.toContain('[SQUIDRUN RECALL START]');
     });
 
+    it('prepends unified memory broker recall when ranked context exists', async () => {
+      const triggers = require('../modules/triggers');
+      mockManagers.memoryBroker = {
+        recall: jest.fn(async () => ({
+          ok: true,
+          results: [
+            {
+              rank: 1,
+              sourceKind: 'vector_cognitive',
+              title: 'Communication preference',
+              excerpt: 'James wants non-jargon plain English updates.',
+              ref: 'memory:plain-english',
+            },
+          ],
+        })),
+      };
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        '[Telegram from james]: what did you do?',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'james',
+          messageId: 'telegram-in-recall-1',
+        },
+        'Telegram'
+      );
+
+      expect(mockManagers.memoryBroker.recall).toHaveBeenCalledWith(
+        '[Telegram from james]: what did you do?',
+        expect.objectContaining({ channel: 'telegram', paneId: '1' }),
+        expect.objectContaining({ limit: 4, providerLimit: 3 })
+      );
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[SQUIDRUN MEMORY RECALL]');
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('James wants non-jargon plain English updates.');
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[Telegram from james]: what did you do?');
+    });
+
     it('replays queued pane deliveries and clears them once pane delivery verifies', async () => {
       const triggers = require('../modules/triggers');
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-replay-'));
