@@ -3,9 +3,12 @@ const path = require('path');
 
 const contract = require('./fixtures/mira-presence-runtime-acceptance-v0-contract.json');
 const {
+  MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
   SELF_MYTH_RISKY_PHRASES,
+  buildMiraTextInstructions,
   callMiraTextModelAttachment,
   classifyAttachmentContractViolation,
+  classifyMiraWorkLanePrompt,
   outputViolatesAttachmentContract,
 } = require('../modules/mira-core/text-model-attachment-v1');
 const {
@@ -620,6 +623,24 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
   test('typed-panel acceptance prompt-path lane is COMPLETE for all four ordinary prompts (including angry-friction) per ARCH #44 live verifier evidence', () => {
     const angryFrictionPromptPathStatus = 'complete';
     expect(angryFrictionPromptPathStatus).toBe('complete');
+  });
+
+  test('restart verifier prompt instructions use broad intent classification and no-preamble shape', () => {
+    const promptText = 'the context just failed and I had to clean up manually AGAIN.';
+    const instructions = buildMiraTextInstructions({}, promptText);
+    const hardStopCodePoints = [...MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP]
+      .map((char) => char.codePointAt(0).toString(16));
+
+    expect(classifyMiraWorkLanePrompt('Where are we at with the Mira Lab verifier?'))
+      .toEqual({ intent: 'mira_work_status' });
+    expect(classifyMiraWorkLanePrompt(promptText))
+      .toEqual({ intent: 'context_failure_repair' });
+    expect(instructions).toContain('For context-failure cleanup complaints');
+    expect(instructions).toContain('do not start with preamble words');
+    expect(instructions).toContain(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP);
+    expect(hardStopCodePoints.slice(16, 19)).toEqual(['49', '2019', '6d']);
+    expect(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP)
+      .not.toBe('Context failed. Im missing the last state.');
   });
 
   test('cold-start continuity: empty thread context still drives one model call with a concrete reply', async () => {

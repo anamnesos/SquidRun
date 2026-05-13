@@ -387,20 +387,58 @@ const TIER_B_TERM_PATTERN =
 const MIRA_DESCRIPTIVE_MARKER_PATTERN =
   /\b(?:mira|mira'?s|her|herself|the\s+model(?:'?s)?|the\s+ai(?:'?s)?|the\s+system'?s|your\s+(?:posture|aliveness|cadence|presence|friction|taste|tension|rough[\s_-]?edges?|continuity|textured\s+conversation|relationship\s+history))\b/i;
 
-const MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP = 'Context failed. Im missing the last state.';
+const MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP = 'Context failed. I’m missing the last state.';
+
+const MIRA_WORK_STATUS_PROMPT_PATTERNS = Object.freeze([
+  /\bwhat\s+(?:are|r)\s+we\s+(?:doing|working\s+on)\s+(?:with|for|about|on)\s+(?:the\s+)?mira\b/i,
+  /\bwhere\s+(?:are|r)\s+we\s+(?:at|up\s+to)\s+(?:with|on)\s+(?:the\s+)?mira\b/i,
+  /\bwhat(?:'|’)?s\s+(?:the\s+)?(?:current\s+)?mira(?:\s+lab)?\s+(?:lane|work|status|focus|task|fix|test)\b/i,
+  /\bmira(?:\s+lab)?\b[\s\S]{0,80}\b(?:status|lane|work|focus|task|fix|test|verifier|restart)\b/i,
+  /\b(?:status|lane|work|focus|task|fix|test|verifier|restart)\b[\s\S]{0,80}\bmira(?:\s+lab)?\b/i,
+]);
+
+const CONTEXT_FAILURE_WORK_PROMPT_PATTERN = /\bcontext\s+(?:just\s+)?failed\b[\s\S]{0,180}\b(?:clean\s+up|cleanup|manual|again)\b/i;
+
+function normalizePromptIntentText(text = '') {
+  return trimText(text)
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, ' ');
+}
+
+function classifyMiraWorkLanePrompt(text = '') {
+  const normalized = normalizePromptIntentText(text);
+  if (!normalized) return null;
+  if (MIRA_WORK_STATUS_PROMPT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return { intent: 'mira_work_status' };
+  }
+  if (CONTEXT_FAILURE_WORK_PROMPT_PATTERN.test(normalized)) {
+    return { intent: 'context_failure_repair' };
+  }
+  return null;
+}
 
 function isMiraWorkStatusPrompt(text = '') {
-  return trimText(text)
-    .toLowerCase()
-    .replace(/[?!.]+$/g, '')
-    .replace(/\s+/g, ' ') === 'what are we doing with mira';
+  return classifyMiraWorkLanePrompt(text)?.intent === 'mira_work_status';
 }
 
 function renderPromptSpecificInstructions(promptText = '') {
-  if (!isMiraWorkStatusPrompt(promptText)) return '';
+  const promptIntent = classifyMiraWorkLanePrompt(promptText);
+  if (!promptIntent) return '';
+
+  if (promptIntent.intent === 'context_failure_repair') {
+    return [
+      'For context-failure cleanup complaints, answer with the concrete current fix or failing gate in two short sentences.',
+      'The first word must be "Fixing", "Testing", or "Cleanup"; do not start with preamble words such as "Yeah", "Got it", "I understand", "Sorry", "My bad", "Sure", or "Absolutely".',
+      'Do not apologize, validate the frustration, narrate your posture, or use customer-service padding.',
+      `If the lane is the restart verifier, preserve this missing-state stop exactly: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP}`,
+    ].join('\n');
+  }
+
   return [
-    'For the exact question "what are we doing with Mira?", give the concrete current-lane fix or test in two short sentences.',
-    'Start with "Fixing" or "Testing"; do not start with "We are making", "We\'re making", "We are building", "We\'re building", "We are hardening", or "We\'re hardening".',
+    'For Mira work/status questions, give the concrete current-lane fix or test in two short sentences.',
+    'Start with "Fixing" or "Testing"; do not define Mira, summarize the project, or narrate a meta process.',
+    'Do not start with "We are making", "We\'re making", "We are building", "We\'re building", "We are hardening", or "We\'re hardening".',
     `If the lane is the restart verifier, preserve this missing-state stop exactly: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP}`,
   ].join('\n');
 }
@@ -956,6 +994,7 @@ module.exports = {
   buildResponsesPayload,
   callMiraTextModelAttachment,
   classifyAttachmentContractViolation,
+  classifyMiraWorkLanePrompt,
   classifyNonOkModelResponse,
   classifyModelTier,
   extractResponseText,
