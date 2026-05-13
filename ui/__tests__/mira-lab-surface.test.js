@@ -2103,6 +2103,62 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(2);
   });
 
+  test('active initiative treats implemented outcomes as the stronger suppression reason', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:22:00.000Z',
+      item_id: 'mira-curiosity:bridge-duplicate-outcome',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health snapshot read OK score=100/100; memory=review_queue_only; bridge=pending_live_discovery; snapshot=fresh.',
+      suggested_question: 'Which environment signal should Mira act on first?',
+      possible_action: 'Refresh bridge discovery.',
+      environment_overall_label: 'OK',
+      environment_overall_score: 100,
+      environment_memory_sync_status: 'drift_detected',
+      environment_memory_repair_state: 'review_queue_only',
+      environment_memory_review_only: true,
+      environment_bridge_connection: 'pending_live_discovery',
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+    const first = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:23:00.000Z',
+      sendAgentMessage,
+    });
+    recordMiraActiveInitiativeOutcome({
+      initiativeId: first.initiative_id,
+      status: 'implemented',
+      evidence: ['bridge_refreshed'],
+      note: 'Bridge discovery refresh completed.',
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:24:00.000Z',
+    });
+
+    const second = await selectMiraActiveInitiative({}, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:25:00.000Z',
+      sendAgentMessage,
+    });
+
+    expect(first.decision).toBe('routed');
+    expect(first.initiative_kind).toBe('bridge_live_discovery_refresh');
+    expect(second.decision).toBe('duplicate_suppressed');
+    expect(second.reason).toBe('recent_implemented_active_initiative_outcome');
+    expect(second.recent_matching_initiative).toBeNull();
+    expect(second.recent_matching_outcome).toEqual(expect.objectContaining({
+      initiative_id: first.initiative_id,
+      outcome_status: 'implemented',
+    }));
+    expect(second.dispatch).toEqual(expect.objectContaining({
+      status: 'not_sent',
+      reason: 'recent_implemented_active_initiative_outcome',
+    }));
+  });
+
   test('active initiative does not suppress a duplicate that was never dispatched', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {

@@ -4247,18 +4247,18 @@ function recentImplementedActiveInitiativeOutcomes(outcomePath, generatedAt, coo
 
 function activeInitiativeSuppressionForCandidate(candidate, recentInitiatives, recentOutcomes) {
   if (!candidate) return null;
-  if (recentInitiatives.has(candidate.fingerprint)) {
-    return {
-      reason: 'recent_duplicate_active_initiative',
-      initiative: recentInitiatives.get(candidate.fingerprint) || null,
-      outcome: null,
-    };
-  }
   if (recentOutcomes.has(candidate.semantic_key)) {
     return {
       reason: 'recent_implemented_active_initiative_outcome',
       initiative: null,
       outcome: recentOutcomes.get(candidate.semantic_key) || null,
+    };
+  }
+  if (recentInitiatives.has(candidate.fingerprint)) {
+    return {
+      reason: 'recent_duplicate_active_initiative',
+      initiative: recentInitiatives.get(candidate.fingerprint) || null,
+      outcome: null,
     };
   }
   return null;
