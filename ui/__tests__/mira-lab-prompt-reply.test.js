@@ -837,6 +837,56 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
+  test('PASS: smaller verifier prompt reply stays out of preamble gate', async () => {
+    const projectRoot = tempProject();
+    const replyText = 'Smaller.';
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true, model: 'mock-model' });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'smaller',
+      sessionId: 'unit-smaller-preamble-free',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('pass');
+    expect(result.ok).toBe(true);
+    expect(result.reply.text).toBe(replyText);
+    expect(result.gates.language_gate.ok).toBe(true);
+    expect(result.gates.language_gate.violations || []).not.toContain('preamble');
+    expect(result.gates.attachment_violation).toBe(false);
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  test('ANNOTATED FAIL: smaller prompt rejects Got it preamble opener', async () => {
+    const projectRoot = tempProject();
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock('Got it.', { liveCalled: true, model: 'mock-model' });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'smaller',
+      sessionId: 'unit-smaller-got-it-preamble',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('fail');
+    expect(result.gates.reason_class).toBe('gate_annotation');
+    expect(result.gates.language_gate.ok).toBe(false);
+    expect(result.gates.language_gate.violations).toContain('preamble');
+    expect(result.reply.text).toBe('Got it.');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('ANNOTATED FAIL: work-critical replies must separate evidence from inference', async () => {
     const projectRoot = tempProject();
     const weakReply = 'Observed: customer auth bug in production. Next test: inspect logs.';
