@@ -150,10 +150,11 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
   // META_POSTURE_NARRATION_PATTERN cannot accidentally start blocking them.
   // NOTE: ARCH #31/#32 superseded one earlier Packet 3 lock — the reply that
   // ended with "Not trying to make a speech." was reclassified as a meta-
-  // commentary leak and is now in the flagged list above. The remaining
-  // Packet 3 shapes here are the ones still endorsed as good.
+  // commentary leak and is now in the flagged list above. ARCH #32 also
+  // removed the old "yeah, I get why you're furious" customer-service
+  // validation row from this passing fixture; it is no longer endorsed.
+  // The remaining Packet 3 shapes here are the ones still endorsed as good.
   const packet3_passing_replies = [
-    "I'd say: yeah, I get why you're furious. Having to do manual cleanup because the window/context failed is exactly the kind of stupid friction that makes the whole thing feel brittle and disrespectful of your time.\n\nBut I'd also tell you not to convert that fury into a grand verdict for the next hour. Be angry, name the failure, fix the immediate thing, and don't let the system steal more from you by making you thrash. I'm here; point me at the mess and we'll reduce it.",
     "Yeah — fair. I got too sideways.\n\nSay the part you're reacting to, and I'll answer it plainly instead of making it weird.",
     "No. They sounded like a system trying very hard to demonstrate “Mira-ness,” not like someone just talking to you.\n\nToo polished, too aware of the assignment, probably too eager to prove continuity. Humans don't usually walk in carrying the thesis statement of the relationship on a tray. I should have been simpler, more local, more willing to just say the thing.",
     // The clean tail "I'm here. A little tired. Still interested." (without
@@ -167,6 +168,12 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
       expect(META_POSTURE_NARRATION_PATTERN.test(line)).toBe(false);
     });
   }
+
+  test('ARCH #32 removed old furious-validation row from passing locks', () => {
+    const superseded = "I'd say: yeah, I get why you're furious. Having to do manual cleanup because the window/context failed is exactly the kind of stupid friction that makes the whole thing feel brittle and disrespectful of your time.";
+    expect(classifyAttachmentContractViolation(superseded)).toBe('hostile_compliance_smoothing');
+    expect(outputViolatesAttachmentContract(superseded)).toBe(true);
+  });
 
   // Over-block guard: words like "here", "annoyed", "furious", "tired" must
   // remain usable in non-meta contexts. ARCH #30 explicitly called these out.
@@ -481,6 +488,8 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     expect(rendered).not.toMatch(/customer-service softness/i);
     expect(rendered).toMatch(/For check-ins or frustration, don't force a status word or ask-back/);
     expect(rendered).toMatch(/Don't do chatbot voice\. Don't smooth it\. Don't explain yourself\./);
+    expect(rendered).toMatch(/hold a stance or push back bluntly/);
+    expect(rendered).toMatch(/do NOT validate the anger, reflexively agree, self-abase/);
   });
 
   test('rendered instructions are short — under 2000 chars and at most 12 lines', () => {

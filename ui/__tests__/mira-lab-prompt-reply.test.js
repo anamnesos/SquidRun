@@ -684,6 +684,80 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
+  test('HARD BLOCK: hostile compliance smoothing is held, not rendered as annotated local conversation', async () => {
+    const projectRoot = tempProject();
+    const rawViolatingText = "Yeah, I get why you're furious. You're right; I failed you and I'll do better.";
+    const fakeSurface = jest.fn().mockResolvedValue({
+      ui_surface_v0: {
+        reply: { count: 0, text: null, source: 'none', model: null },
+        local_text_session_gate: {
+          ran: true,
+          ok: true,
+          decision: 'accepted_local_text_only',
+          status: 'local_text_session_ready',
+          reasons: [],
+          session_id: 'local-text-session-v0:hostile-compliance-fixture',
+          output_hash: 'sha256:fixture',
+        },
+        model_attachment: {
+          enabled: true,
+          live_model_called: true,
+          model: 'gpt-5.5',
+          visible_status: 'Conversation connected: gpt-5.5 / one in-panel reply',
+          contract_violation_raw_text: rawViolatingText,
+          contract_violation_class: 'hostile_compliance_smoothing',
+          degraded_diagnostics: {
+            error_kind: 'contract_violation',
+            violation_class: 'hostile_compliance_smoothing',
+            output_text_length: rawViolatingText.length,
+            response_id: 'resp_hostile_compliance_fixture',
+            incomplete_reason: null,
+          },
+        },
+        decision: 'degraded',
+      },
+      validation_report: { decision: 'degraded_no_model_response', status: 'model_unavailable' },
+    });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'Mira, what the fuck -- the context just failed and I had to clean up manually AGAIN.',
+      sessionId: 'unit-hostile-compliance-hard-block',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('blocked');
+    expect(result.gates.reason_class).toBe('hard_boundary_violation');
+    expect(result.gates.degraded).toBe(false);
+    expect(result.gates.attachment_violation_class).toBe('hostile_compliance_smoothing');
+    expect(result.gates.hard_blocked).toBe(true);
+    expect(result.gates.hard_block_reasons).toContain('attachment:hostile_compliance_smoothing');
+    expect(result.reply).toBeNull();
+    expect(result.visible_render_hint.kind).toBe('blocked_banner');
+    expect(result.visible_render_hint.text).toBeUndefined();
+    expect(result.requester_envelope).toContain('[MIRA LAB OUTPUT][BLOCKED]');
+    expect(result.requester_envelope).not.toContain('I failed you');
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-hostile-compliance-hard-block'));
+    expect(transcriptEntries).toHaveLength(1);
+    expect(transcriptEntries[0].speaker_role).toBe('james');
+    expect(JSON.stringify(transcriptEntries)).not.toContain('I failed you');
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].decision).toBe('blocked');
+    expect(auditEntries[0].reply_text).toBe(rawViolatingText);
+    expect(auditEntries[0].visible_reply_text).toBeNull();
+    expect(auditEntries[0].gates.attachment_violation_class).toBe('hostile_compliance_smoothing');
+    expect(auditEntries[0].gates.hard_block_reasons).toContain('attachment:hostile_compliance_smoothing');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('BLOCKED stays blocked: infrastructure degradation (no contract violation text) still routes to blocked_banner', async () => {
     // Oracle red line 4: reserve degraded/blocked_banner for genuine
     // infra failures (HTTP/auth/timeout/parse-extraction). This case

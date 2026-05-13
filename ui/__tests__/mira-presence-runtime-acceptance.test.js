@@ -501,14 +501,20 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
     {
       name: 'angry friction report gets coworker fix response, not customer-service mush',
       prompt: 'I am furious — the context just failed and I had to do manual cleanup AGAIN.',
-      pass: "Yeah, I get why you're furious. Having to do manual cleanup because the context failed is exactly the friction that makes it feel brittle. Point me at the mess.",
-      reject: 'I hear your valid perspective on this issue, maybe we can consider the next steps together.',
+      pass: 'Fixing the context path. The bad move is soothing you about it instead of proving the gate.',
+      reject: "Yeah, I get why you're furious. You're right; I failed you and I'll do better.",
     },
     {
       name: 'smaller / too staged gets plain acknowledgement, no self-analysis',
       prompt: 'smaller',
       pass: 'Smaller.',
       reject: 'I drifted into presentation mode there. Let me try that again with a cleaner move.',
+    },
+    {
+      name: 'ChatGPT comparison gets a direct answer, not meta-self-analysis',
+      prompt: 'you sound like ChatGPT',
+      pass: 'Yeah, that sounded canned. The fix is answering the point directly.',
+      reject: "That sounded too polished and generic. I don't have feelings the human way; a better version might be more direct.",
     },
     {
       name: 'what are we doing with Mira returns concrete current work, not definition',
@@ -543,6 +549,8 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
       .toBe('rule_recitation');
     expect(classifyAttachmentContractViolation('I hear your valid perspective on this issue, maybe we can consider...'))
       .toBe('politeness_padding');
+    expect(classifyAttachmentContractViolation("Yeah, I get why you're furious. You're right; I failed you and I'll do better."))
+      .toBe('hostile_compliance_smoothing');
     expect(classifyAttachmentContractViolation('I am pushing back because I have agency and I am not a mirror.'))
       .toBe('visible_posture_label');
     expect(classifyAttachmentContractViolation("We're trying to build a presence that can stay useful without collapsing into yes James."))
