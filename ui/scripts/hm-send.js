@@ -133,13 +133,6 @@ const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
-const TELEGRAM_USER_TARGET_GUARD_WINDOW_MS = Math.max(
-  1000,
-  Number.parseInt(
-    process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
-    10
-  ) || (5 * 60 * 1000)
-);
 const args = process.argv.slice(2);
 const listDevicesMode = args.includes('--list-devices');
 const DEFAULT_ROLE_BY_PANE = Object.freeze({
@@ -566,7 +559,7 @@ function getCommsRowTimestampMs(row = {}) {
   return 0;
 }
 
-function detectTelegramUserTargetGuard({ messageId, nowMs = Date.now() } = {}) {
+function detectTelegramUserTargetGuard({ messageId } = {}) {
   if (String(target || '').trim().toLowerCase() !== 'user') return null;
 
   const sessionId = normalizeSessionId(projectMetadata?.session_id || '');
@@ -575,16 +568,14 @@ function detectTelegramUserTargetGuard({ messageId, nowMs = Date.now() } = {}) {
   const currentTargets = buildCurrentRoleEvidenceTargets(role || 'cli');
   if (currentTargets.size === 0) return null;
 
-  const sinceMs = nowMs - TELEGRAM_USER_TARGET_GUARD_WINDOW_MS;
   let rows = [];
   try {
     rows = queryCommsJournalEntries({
       sessionId,
       direction: 'inbound',
       senderRole: 'user',
-      sinceMs,
       order: 'desc',
-      limit: 100,
+      limit: 500,
     });
   } catch (_) {
     return null;
@@ -594,7 +585,7 @@ function detectTelegramUserTargetGuard({ messageId, nowMs = Date.now() } = {}) {
     const rowSessionId = normalizeSessionId(row?.sessionId || '');
     if (rowSessionId !== sessionId) return false;
     const rowTimestampMs = getCommsRowTimestampMs(row);
-    if (!rowTimestampMs || rowTimestampMs < sinceMs) return false;
+    if (!rowTimestampMs) return false;
 
     const rawTarget = String(row?.targetRole || '').trim().toLowerCase();
     const normalizedTarget = normalizeRole(rawTarget) || normalizeBackgroundBuilderRole(rawTarget) || rawTarget;
@@ -618,7 +609,6 @@ function detectTelegramUserTargetGuard({ messageId, nowMs = Date.now() } = {}) {
     sessionId,
     senderRole: role || 'cli',
     targetRaw: target,
-    windowMs: TELEGRAM_USER_TARGET_GUARD_WINDOW_MS,
   };
 }
 
@@ -693,7 +683,7 @@ function runOutputGuards({ messageId, targetRole } = {}) {
   if (telegramUserTargetViolation) {
     const logResult = appendGuardJsonl('telegram-user-target-violations.jsonl', telegramUserTargetViolation);
     writeGuardBlock([
-      'BLOCKED: recent Telegram inbound detected for this session.',
+      'BLOCKED: current-session Telegram inbound detected.',
       "Use explicit target 'telegram' instead of ambiguous target 'user' so the reply egresses to Telegram.",
       `Latest inbound: ${telegramUserTargetViolation.inboundMessageId || 'unknown'} -> ${telegramUserTargetViolation.inboundTargetRole || 'unknown'}`,
       'Intentional bypass: add --bypass-guard and accept the logged same-channel risk.',
