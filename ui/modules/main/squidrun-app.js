@@ -4950,11 +4950,20 @@ class SquidRunApp {
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
       performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
       createMiraLabWindow: (opts = {}) => miraLabWindowModule.createMiraLabWindow({ BrowserWindow, ...opts }),
-      sendAgentMessage: (target, body) => {
+      sendAgentMessage: (target, body, metadata = {}) => {
         const PANE_BY_ROLE = { architect: '1', builder: '2', oracle: '3' };
         const paneId = PANE_BY_ROLE[String(target || '').toLowerCase()];
         if (!paneId) return Promise.resolve({ ok: false, reason: `unknown_target:${target}` });
-        return Promise.resolve(triggers.sendDirectMessage([paneId], body, 'mira-lab'));
+        const senderRole = typeof metadata?.senderRole === 'string' && metadata.senderRole.trim()
+          ? metadata.senderRole.trim()
+          : 'mira-lab';
+        return Promise.resolve(triggers.sendDirectMessage([paneId], body, senderRole, {
+          meta: {
+            ...(metadata && typeof metadata === 'object' ? metadata : {}),
+            deliverySource: metadata?.source || 'mira-lab',
+            targetRole: String(target || '').toLowerCase(),
+          },
+        }));
       },
     });
 
@@ -8069,6 +8078,7 @@ class SquidRunApp {
     if (!text || inboundWindowKey !== 'main') return false;
     if (archivePath || media || photo || document) return false;
     if (isTelegramAgentOpsOrCommandText(text)) return false;
+    if (String(process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED || '').trim() !== '1') return false;
     return true;
   }
 
