@@ -117,6 +117,9 @@ describe('mira-architect-route-v0 / visible-reply language lint', () => {
     expect(evaluateMiraVisibleReply('Sure, let me look.').violations).toContain('preamble');
     expect(evaluateMiraVisibleReply('Of course — checking now.').violations).toContain('preamble');
     expect(evaluateMiraVisibleReply('Got it, I will dig in.').violations).toContain('preamble');
+    expect(evaluateMiraVisibleReply('Got it. I will dig in.').violations).toContain('preamble');
+    expect(evaluateMiraVisibleReply('Got it: checking now.').violations).toContain('preamble');
+    expect(evaluateMiraVisibleReply('Got it checking now.').violations).toContain('preamble');
     expect(evaluateMiraVisibleReply('Happy to help with that.').violations).toContain('preamble');
     expect(evaluateMiraVisibleReply('Here is the answer: lease is fine.').violations).toContain('preamble');
     expect(evaluateMiraVisibleReply("Here's the summary: lease is fine.").violations).toContain('preamble');
