@@ -108,6 +108,16 @@ const setInjectionInFlight = (value) => { injectionInFlight = value; };
 // Startup injection readiness tracking (per pane)
 const startupInjectionState = new Map();
 const intentStateByPane = new Map();
+let startupWindowContext = {
+  loaded: false,
+  windowKey: 'main',
+  windowTeam: 'main',
+  profileName: 'main',
+  profileLabel: 'Main',
+  sessionScopeId: '',
+  startupBundlePath: '',
+  startupBundleReady: false,
+};
 
 // Terminal write flow control - prevents xterm buffer overflow
 // When PTY sends data faster than xterm can render, writes get discarded
@@ -1101,8 +1111,13 @@ function ensureSearchAddon(paneId) {
   }
 }
 
-function fetchStartupHealthSummary() {
-  const healthPath = resolveCoordPath(path.join('build', 'startup-health.md'));
+function fetchStartupHealthSummary(options = {}) {
+  const context = normalizeStartupWindowContext(options.windowContext || startupWindowContext);
+  const profileKey = getStartupProfileKey(context);
+  const healthFileName = profileKey === 'main'
+    ? 'startup-health.md'
+    : `startup-health-${profileKey}.md`;
+  const healthPath = resolveCoordPath(path.join('build', healthFileName));
   if (!healthPath || typeof fs.existsSync !== 'function' || !fs.existsSync(healthPath)) return '';
   try {
     if (typeof fs.readFileSync !== 'function') return '';
@@ -1113,23 +1128,110 @@ function fetchStartupHealthSummary() {
   }
 }
 
-function fetchStartupAiBriefing() {
+function normalizeStartupContextValue(value, fallback = '') {
+  const text = String(value || '').trim();
+  return text || fallback;
+}
+
+function normalizeStartupScopeName(value) {
+  const normalized = normalizeStartupContextValue(value, 'main').toLowerCase();
+  return normalized.replace(/[^a-z0-9_-]+/g, '-') || 'main';
+}
+
+function normalizeStartupWindowContext(context = startupWindowContext) {
+  const payload = context && typeof context === 'object' ? context : {};
+  const windowKey = normalizeStartupScopeName(payload.windowKey || 'main');
+  const profileName = normalizeStartupScopeName(payload.profileName || (windowKey !== 'main' ? windowKey : 'main'));
+  return {
+    loaded: payload.loaded === true,
+    windowKey,
+    windowTeam: normalizeStartupScopeName(payload.windowTeam || windowKey),
+    profileName,
+    profileLabel: normalizeStartupContextValue(payload.profileLabel, profileName === 'main' ? 'Main' : profileName),
+    sessionScopeId: normalizeStartupContextValue(payload.sessionScopeId, ''),
+    startupBundlePath: normalizeStartupContextValue(payload.startupBundlePath, ''),
+    startupBundleReady: payload.startupBundleReady === true,
+  };
+}
+
+function getStartupProfileKey(context = startupWindowContext) {
+  const normalized = normalizeStartupWindowContext(context);
+  if (normalized.windowKey !== 'main') return normalized.windowKey;
+  return normalized.profileName || 'main';
+}
+
+function isSideStartupContext(context = startupWindowContext) {
+  return getStartupProfileKey(context) !== 'main';
+}
+
+function setStartupWindowContext(context = {}) {
+  startupWindowContext = normalizeStartupWindowContext(context);
+  return { ...startupWindowContext };
+}
+
+function getStartupWindowContext() {
+  return { ...startupWindowContext };
+}
+
+function readStartupBundleForContext(context = startupWindowContext) {
+  const normalized = normalizeStartupWindowContext(context);
+  if (!isSideStartupContext(normalized)) return '';
+  if (!normalized.startupBundlePath || normalized.startupBundleReady !== true) {
+    return [
+      `SIDE-PROFILE STARTUP CONTEXT PENDING: ${normalized.profileLabel || normalized.profileName}`,
+      '',
+      `Profile: ${normalized.profileName}`,
+      `Window: ${normalized.windowKey}`,
+      normalized.sessionScopeId ? `Session Scope: ${normalized.sessionScopeId}` : '',
+      'Main startup continuity intentionally omitted to prevent cross-profile lane leakage.',
+    ].filter(Boolean).join('\n');
+  }
   try {
-    return readStartupBriefingForInjection();
+    if (typeof fs.existsSync !== 'function' || !fs.existsSync(normalized.startupBundlePath)) {
+      return [
+        `SIDE-PROFILE STARTUP CONTEXT PENDING: ${normalized.profileLabel || normalized.profileName}`,
+        '',
+        `Profile: ${normalized.profileName}`,
+        `Window: ${normalized.windowKey}`,
+        normalized.sessionScopeId ? `Session Scope: ${normalized.sessionScopeId}` : '',
+        `Bundle missing: ${normalized.startupBundlePath}`,
+        'Main startup continuity intentionally omitted to prevent cross-profile lane leakage.',
+      ].filter(Boolean).join('\n');
+    }
+    if (typeof fs.readFileSync !== 'function') return '';
+    return String(fs.readFileSync(normalized.startupBundlePath, 'utf8') || '').trim();
+  } catch (err) {
+    log.warn('spawnAgent', `Side-profile startup bundle read failed: ${err.message}`);
+    return '';
+  }
+}
+
+function fetchStartupAiBriefing(options = {}) {
+  const context = normalizeStartupWindowContext(options.windowContext || startupWindowContext);
+  if (isSideStartupContext(context)) {
+    return readStartupBundleForContext(context);
+  }
+  try {
+    return readStartupBriefingForInjection({
+      windowKey: context.windowKey,
+      profileName: context.profileName,
+      sessionScopeId: context.sessionScopeId,
+    });
   } catch (err) {
     log.warn('spawnAgent', `Startup AI briefing read failed: ${err.message}`);
     return '';
   }
 }
 
-async function buildStartupIdentityMessage(paneId) {
+async function buildStartupIdentityMessage(paneId, options = {}) {
   const role = getPaneIdentityLabel(paneId);
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const header = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
+  const context = normalizeStartupWindowContext(options.windowContext || startupWindowContext);
   const [briefingSummary, healthSummary] = await Promise.all([
-    Promise.resolve(fetchStartupAiBriefing()),
-    Promise.resolve(fetchStartupHealthSummary()),
+    Promise.resolve(fetchStartupAiBriefing({ windowContext: context })),
+    Promise.resolve(fetchStartupHealthSummary({ windowContext: context })),
   ]);
   return [header, briefingSummary, healthSummary].filter(Boolean).join('\n');
 }
@@ -2780,6 +2882,8 @@ module.exports = {
   registerCodexPane,   // CLI Identity: mark pane as Codex
   unregisterCodexPane, // CLI Identity: unmark pane as Codex
   isCodexPane,         // CLI Identity: query Codex status
+  setStartupWindowContext,
+  getStartupWindowContext,
   hasPendingStartupInjection,
   getPaneInjectionCapabilities, // Runtime capability profile for injection paths
   messageQueue,   // Message queue for busy panes
@@ -2812,6 +2916,10 @@ module.exports = {
     buildStartupIdentityMessage,
     fetchStartupHealthSummary,
     fetchStartupAiBriefing,
+    normalizeStartupWindowContext,
+    readStartupBundleForContext,
+    setStartupWindowContext,
+    getStartupWindowContext,
     getPaneIdentityLabel,
     queueTerminalWrite,
     resizeSinglePane,

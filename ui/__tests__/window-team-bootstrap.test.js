@@ -28,6 +28,7 @@ describe('window-team-bootstrap', () => {
       sessionScopeId: 'app-test:scoped',
       startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\scoped\\startup-bundle.md',
       startupSourceFiles: ['D:\\projects\\squidrun\\workspace\\knowledge\\case-operations.md'],
+      startupBundleReady: true,
       autoBootAgents: true,
     });
 
@@ -51,6 +52,8 @@ describe('window-team-bootstrap', () => {
       windowKey: 'scoped',
       windowTeam: 'scoped',
       autoBootAgents: true,
+      startupBundlePath: 'D:\\bundle.md',
+      startupBundleReady: true,
     });
 
     await expect(bootstrap.maybeRunSecondaryAutoBoot({ reconnectedToExisting: false })).resolves.toEqual(
@@ -104,22 +107,45 @@ describe('window-team-bootstrap', () => {
     }));
   });
 
-  test('treats rich loadFile query context as ready for side-profile auto-boot fallback', () => {
+  test('does not treat a side-profile loadFile bundle path as ready unless it was freshly materialized', () => {
     const initialContext = readInitialWindowContextFromLocation(
       '?windowKey=sideprofile&windowTeam=sideprofile&profileName=sideprofile&profileLabel=sideprofile&sessionScopeId=app-test%3Asideprofile&startupBundlePath=D%3A%5Cbundle.md&autoBootAgents=true&standaloneWindow=true&lifecycleMode=standalone-profile-app&contextReady=true'
     );
 
     expect(initialContext).toEqual(expect.objectContaining({
-      loaded: true,
+      loaded: false,
       windowKey: 'sideprofile',
       windowTeam: 'sideprofile',
       profileName: 'sideprofile',
       profileLabel: 'sideprofile',
       sessionScopeId: 'app-test:sideprofile',
       startupBundlePath: 'D:\\bundle.md',
+      startupBundleReady: false,
       autoBootAgents: true,
       standaloneWindow: true,
       lifecycleMode: 'standalone-profile-app',
+    }));
+
+    const bootstrap = createWindowTeamBootstrap({
+      settings: { checkAutoSpawn: jest.fn() },
+      terminal: { spawnAllAgents: jest.fn() },
+      initialContext,
+    });
+    expect(bootstrap.shouldDeferAutoSpawn()).toBe(true);
+  });
+
+  test('treats rich loadFile query context as ready when side bundle freshness is explicit', () => {
+    const initialContext = readInitialWindowContextFromLocation(
+      '?windowKey=sideprofile&windowTeam=sideprofile&profileName=sideprofile&profileLabel=sideprofile&sessionScopeId=app-test%3Asideprofile&startupBundlePath=D%3A%5Cbundle.md&startupBundleReady=true&autoBootAgents=true&standaloneWindow=true&lifecycleMode=standalone-profile-app&contextReady=true'
+    );
+
+    expect(initialContext).toEqual(expect.objectContaining({
+      loaded: true,
+      windowKey: 'sideprofile',
+      profileName: 'sideprofile',
+      startupBundlePath: 'D:\\bundle.md',
+      startupBundleReady: true,
+      autoBootAgents: true,
     }));
 
     const bootstrap = createWindowTeamBootstrap({

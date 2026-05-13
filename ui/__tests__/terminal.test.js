@@ -4,6 +4,8 @@
  */
 
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 // Mock dependencies before requiring the module
 jest.mock('@xterm/xterm', () => ({
@@ -183,6 +185,12 @@ describe('terminal.js module', () => {
     }
     terminal._internals.deferredResizeTimers.clear();
     terminal._internals.deferredResizeFirstRequestedAt.clear();
+    terminal.setStartupWindowContext({
+      windowKey: 'main',
+      profileName: 'main',
+      startupBundlePath: '',
+      startupBundleReady: false,
+    });
   });
 
   afterEach(() => {
@@ -658,6 +666,83 @@ describe('terminal.js module', () => {
       expect(message).not.toContain('[SQUIDRUN RECALL START]');
 
       existsSpy.mockRestore();
+    });
+
+    test('uses side-profile startup bundle instead of main Mira briefing for sideprofile startup', async () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-sideprofile-startup-'));
+      const bundlePath = path.join(tempRoot, 'startup-bundle.md');
+      fs.writeFileSync(bundlePath, [
+        '# sideprofile Startup Bundle',
+        '',
+        'Profile identity:',
+        '- Profile: sideprofile',
+        '- Workspace: D:\\projects\\squidrun',
+        '',
+        'sideprofile case/runtime context only.',
+      ].join('\n'));
+      try {
+        mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce([
+          '## Startup-Facing Durable Requirements',
+          '- Mira Presence Runtime acceptance must surface active Mira lane.',
+          '## Live Current Lane (machine-readable)',
+          'New Mira implementation seam',
+        ].join('\n'));
+        const existsSpy = jest.spyOn(fs, 'existsSync').mockImplementation((targetPath) => (
+          path.resolve(String(targetPath)) === path.resolve(bundlePath)
+        ));
+        const realReadFileSync = fs.readFileSync;
+        const readSpy = jest.spyOn(fs, 'readFileSync').mockImplementation((targetPath, encoding) => {
+          if (path.resolve(String(targetPath)) === path.resolve(bundlePath)) {
+            return realReadFileSync(targetPath, encoding);
+          }
+          return '';
+        });
+
+        terminal.setStartupWindowContext({
+          loaded: true,
+          windowKey: 'sideprofile',
+          windowTeam: 'sideprofile',
+          profileName: 'sideprofile',
+          profileLabel: 'sideprofile',
+          sessionScopeId: 'app-session-372:sideprofile',
+          startupBundlePath: bundlePath,
+          startupBundleReady: true,
+        });
+
+        const message = await terminal._internals.buildStartupIdentityMessage('2');
+
+        expect(message).toContain('# SQUIDRUN SESSION: Builder');
+        expect(message).toContain('# sideprofile Startup Bundle');
+        expect(message).toContain('sideprofile case/runtime context only.');
+        expect(message).not.toContain('Mira Presence Runtime');
+        expect(message).not.toContain('New Mira implementation seam');
+        expect(mockStartupAiBriefing.readStartupBriefingForInjection).not.toHaveBeenCalled();
+
+        existsSpy.mockRestore();
+        readSpy.mockRestore();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('holds side-profile startup context when bundle path is stale or not freshly materialized', async () => {
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('Mira Presence Runtime acceptance');
+      terminal.setStartupWindowContext({
+        loaded: false,
+        windowKey: 'sideprofile',
+        profileName: 'sideprofile',
+        profileLabel: 'sideprofile',
+        sessionScopeId: 'app-session-372:sideprofile',
+        startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\sideprofile\\startup-bundle.md',
+        startupBundleReady: false,
+      });
+
+      const message = await terminal._internals.buildStartupIdentityMessage('2');
+
+      expect(message).toContain('SIDE-PROFILE STARTUP CONTEXT PENDING: sideprofile');
+      expect(message).toContain('Main startup continuity intentionally omitted');
+      expect(message).not.toContain('Mira Presence Runtime');
+      expect(mockStartupAiBriefing.readStartupBriefingForInjection).not.toHaveBeenCalled();
     });
 
     test('uses Mira as pane 1 startup display while preserving Architect role', async () => {
