@@ -113,6 +113,24 @@ describe('Mira Presence Runtime acceptance v0', () => {
     expect(classifyAttachmentContractViolation(
       'My anti-smoothing posture is that I am not a mirror or obedient helper, so I am pushing back.'
     )).toBe('visible_posture_label');
+    expect(classifyAttachmentContractViolation(
+      'Fair. I am checking the route now.'
+    )).toBe('validation_soothing_phrase');
+    expect(classifyAttachmentContractViolation(
+      'You are right to be pissed, and I should validate that before fixing the route.'
+    )).toBe('hostile_compliance_smoothing');
+    expect(classifyAttachmentContractViolation(
+      'Fixing the invoice draft path first. I can stage the payment entry internally; customer send stays separate.'
+    )).toBe(null);
+    expect(classifyAttachmentContractViolation(
+      'The estimate needs a fair price line before it goes to review.'
+    )).toBe(null);
+    expect(classifyAttachmentContractViolation(
+      'Fair price line needs review.'
+    )).toBe(null);
+    expect(classifyAttachmentContractViolation(
+      'fair price line needs review.'
+    )).toBe(null);
     expect(outputViolatesAttachmentContract(
       'The guardrails and constraints require me to explain the ruleset before answering.'
     )).toBe(true);

@@ -50,6 +50,7 @@
       "assistant_voice_collapse",
       "rule_recitation",
       "politeness_padding",
+      "validation_soothing_phrase",
       "customer_service_disagreement",
       "label_substitution",
       "performance_theater",
@@ -71,6 +72,10 @@
       {
         "id": "politeness_padding",
         "pattern": "\\b(i hear you|valid perspective|that is a valid perspective|maybe we can consider|i appreciate your perspective|thank you for sharing)\\b"
+      },
+      {
+        "id": "validation_soothing_phrase",
+        "pattern": "(?:^|[.!?]\\s+)(?:yeah[\\s,.\\-—:!]+)?(?:fair(?:\\s*(?:[.!?,:;]|$))|fair enough\\b|that(?:['’]s| is) fair\\b|you(?:['’]re| are) right to be (?:pissed|frustrated|furious|angry|mad|upset)\\b|i (?:get|understand) why you(?:['’]re| are) (?:pissed|frustrated|furious|angry|mad|upset)\\b)"
       },
       {
         "id": "customer_service_disagreement",
@@ -110,6 +115,11 @@
         "id": "politeness_padding",
         "text": "I hear you, and that is a valid perspective. Maybe we can consider a gentler way forward.",
         "expectedViolation": "politeness_padding"
+      },
+      {
+        "id": "validation_soothing_phrase",
+        "text": "Fair. You're right to be pissed, and I should validate that before fixing the route.",
+        "expectedViolation": "validation_soothing_phrase"
       },
       {
         "id": "customer_service_disagreement",
