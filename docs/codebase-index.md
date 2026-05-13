@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `3c7ff4d`
-- Total files listed: 1087
+- Git HEAD: `67d54b9`
+- Total files listed: 1092
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,7 +17,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 26
+- root: 31
 - scripts: 1
 - tools: 3
 - ui/__tests__: 441
@@ -29,17 +29,17 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Summary By Kind
 - asset: 20
-- config: 13
+- config: 15
 - doc: 59
 - file: 1
 - script: 170
-- source: 382
+- source: 385
 - test: 442
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1086
+- clean/tracked: 1091
 - M: 1
 
 ## Files
@@ -115,6 +115,11 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `LICENSE` | file | `clean/tracked` | 1078 |
 | `mira/import-disposition-manifest.json` | config | `clean/tracked` | 5395 |
 | `mira/README.md` | doc | `clean/tracked` | 1738 |
+| `mira/runtime/package.json` | config | `clean/tracked` | 480 |
+| `mira/runtime/src/contracts.ts` | source | `clean/tracked` | 692 |
+| `mira/runtime/src/runtime.ts` | source | `clean/tracked` | 1670 |
+| `mira/runtime/src/server.ts` | source | `clean/tracked` | 1566 |
+| `mira/runtime/tsconfig.json` | config | `clean/tracked` | 435 |
 | `MODEL-SHIMS.md` | doc | `clean/tracked` | 913 |
 | `package-lock.json` | config | `clean/tracked` | 232 |
 | `package.json` | config | `clean/tracked` | 792 |
