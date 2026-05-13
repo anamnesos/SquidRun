@@ -675,7 +675,7 @@ describe('terminal.js module', () => {
   });
 
   describe('broadcast', () => {
-    test('should send message to pane 1 (Mira) through the architect role contract', async () => {
+    test('should send message to pane 1 through the architect role contract', async () => {
       jest.useRealTimers();
       terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
       const statusCb = jest.fn();
@@ -690,7 +690,7 @@ describe('terminal.js module', () => {
       // so the queue may already be empty. Verify the message was routed
       // to pane 1 via the connection status callback.
       expect(terminal.messageQueue['1']).toBeDefined();
-      expect(connectionCb).toHaveBeenCalledWith('Message sent to Mira');
+      expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
       expect(mockSquidRun.invoke).toHaveBeenCalledWith(
         'evidence-ledger:upsert-comms-journal',
         expect.objectContaining({
@@ -713,7 +713,7 @@ describe('terminal.js module', () => {
       terminal.setStatusCallbacks(null, connectionCb);
 
       expect(() => terminal.broadcast('best effort')).not.toThrow();
-      expect(connectionCb).toHaveBeenCalledWith('Message sent to Mira');
+      expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
     });
 
     test('sends raw pane-1 user text without adding a second recall block', async () => {

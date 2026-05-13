@@ -288,12 +288,12 @@ describe('renderer.js smoke tests', () => {
 
   });
 
-  describe('command bar Mira routing', () => {
+  describe('command bar routing', () => {
     beforeEach(() => {
       require('../modules/terminal').broadcast.mockClear();
     });
 
-    it('routes plain command-bar messages to Mira-native prompt/reply without Architect PTY broadcast', async () => {
+    it('routes plain command-bar messages to Architect pane broadcast by default', async () => {
       const terminal = require('../modules/terminal');
       const sendMira = jest.fn().mockResolvedValue(true);
       const routeTask = jest.fn();
@@ -307,11 +307,11 @@ describe('renderer.js smoke tests', () => {
         sendMira,
       });
 
-      await expect(routeMessage('  message Mira  ')).resolves.toBe(true);
+      await expect(routeMessage('  message Architect  ')).resolves.toBe(true);
 
-      expect(sendMira).toHaveBeenCalledWith('message Mira');
+      expect(terminal.broadcast).toHaveBeenCalledWith('message Architect');
+      expect(sendMira).not.toHaveBeenCalled();
       expect(routeTask).not.toHaveBeenCalled();
-      expect(terminal.broadcast).not.toHaveBeenCalled();
       expect(statuses).toEqual(['sending']);
     });
 
@@ -331,6 +331,25 @@ describe('renderer.js smoke tests', () => {
 
       expect(routeTask).toHaveBeenCalledWith('fix the route');
       expect(sendMira).not.toHaveBeenCalled();
+      expect(terminal.broadcast).not.toHaveBeenCalled();
+    });
+
+    it('keeps live Mira available only through an explicit /mira command', async () => {
+      const terminal = require('../modules/terminal');
+      const sendMira = jest.fn().mockResolvedValue(true);
+      const routeTask = jest.fn();
+
+      const routeMessage = renderer.createCommandBarMessageRouter({
+        now: () => 1000,
+        rateLimitMs: 0,
+        routeTask,
+        sendMira,
+      });
+
+      await expect(routeMessage('/mira hold this live')).resolves.toBe(true);
+
+      expect(sendMira).toHaveBeenCalledWith('hold this live');
+      expect(routeTask).not.toHaveBeenCalled();
       expect(terminal.broadcast).not.toHaveBeenCalled();
     });
   });
