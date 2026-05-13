@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `67d54b9`
-- Total files listed: 1092
+- Git HEAD: `4f49420`
+- Total files listed: 1094
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,10 +17,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 31
+- root: 32
 - scripts: 1
 - tools: 3
-- ui/__tests__: 441
+- ui/__tests__: 442
 - ui/modules: 363
 - ui/other: 29
 - ui/scripts: 169
@@ -30,16 +30,16 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Summary By Kind
 - asset: 20
 - config: 15
-- doc: 59
+- doc: 60
 - file: 1
 - script: 170
 - source: 385
-- test: 442
+- test: 443
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1091
+- clean/tracked: 1093
 - M: 1
 
 ## Files
@@ -113,6 +113,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `GEMINI.md` | doc | `clean/tracked` | 675 |
 | `jest.config.js` | source | `clean/tracked` | 221 |
 | `LICENSE` | file | `clean/tracked` | 1078 |
+| `mira/bridge/squidrun-adapter-protocol-v0.md` | doc | `clean/tracked` | 6791 |
 | `mira/import-disposition-manifest.json` | config | `clean/tracked` | 5395 |
 | `mira/README.md` | doc | `clean/tracked` | 1738 |
 | `mira/runtime/package.json` | config | `clean/tracked` | 480 |
@@ -378,6 +379,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/migration-008.test.js` | test | `clean/tracked` | 2472 |
 | `ui/__tests__/mira-architect-route-v0.test.js` | test | `clean/tracked` | 25344 |
 | `ui/__tests__/mira-automation-scheduler-curiosity.test.js` | test | `clean/tracked` | 4598 |
+| `ui/__tests__/mira-bridge-protocol.test.js` | test | `clean/tracked` | 1545 |
 | `ui/__tests__/mira-browser-history-curiosity.test.js` | test | `clean/tracked` | 5118 |
 | `ui/__tests__/mira-calendar-message-curiosity.test.js` | test | `clean/tracked` | 5480 |
 | `ui/__tests__/mira-coordinator-snapshot.test.js` | test | `clean/tracked` | 10881 |
