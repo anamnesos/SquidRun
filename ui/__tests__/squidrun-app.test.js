@@ -3934,6 +3934,9 @@ describe('SquidRunApp', () => {
       const telegramPoller = require('../modules/telegram-poller');
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-mira-telegram-state-'));
+      const statePath = path.join(tempRoot, 'mira-telegram-channel-state.json');
+      jest.spyOn(app, 'getMiraTelegramChannelStatePath').mockReturnValue(statePath);
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
         accepted: true,
@@ -3941,53 +3944,65 @@ describe('SquidRunApp', () => {
         verified: true,
       });
 
-      app.startTelegramPoller();
+      try {
+        app.startTelegramPoller();
 
-      const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('main hello', 'james', { chatId: 5613428850, updateId: 101 });
+        const options = telegramPoller.start.mock.calls[0][0];
+        options.onMessage('main hello', 'james', { chatId: 5613428850, updateId: 101 });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(sendMiraLivePrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          prompt: 'main hello',
-          sessionId: expect.any(String),
-          source: 'telegram-mira-live',
-        }),
-        expect.objectContaining({
-          invoke: expect.any(Function),
-        })
-      );
-      expect(deliverySpy).not.toHaveBeenCalled();
-      expect(app.telegramInboundContext).toEqual(expect.objectContaining({
-        sender: 'james',
-        chatId: '5613428850',
-        windowKey: 'main',
-        profile: 'main',
-      }));
-
-      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
-        expect.stringContaining('Mira speaking in Telegram now.'),
-        process.env,
-        expect.objectContaining({
-          messageId: 'telegram-in-101-mira-reply',
-          senderRole: 'mira',
-          chatId: '5613428850',
-          metadata: expect.objectContaining({
-            routeKind: 'telegram',
-            targetRaw: 'telegram',
-            windowKey: 'main',
-            profile: 'main',
-            chatId: '5613428850',
-            telegramChatId: '5613428850',
-            sessionScopeId: expect.any(String),
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(sendMiraLivePrompt).toHaveBeenCalledWith(
+          expect.objectContaining({
+            prompt: 'main hello',
+            sessionId: expect.any(String),
+            source: 'telegram-mira-live',
           }),
-        })
-      );
-      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('This is new; just talk to me here.');
-      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('I will route the team backstage if needed.');
-      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Mira visible reply from Telegram.');
-      expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toMatch(/ARCH|Architect|Builder|Oracle|hm-send|\[AGENT MSG/i);
+          expect.objectContaining({
+            invoke: expect.any(Function),
+          })
+        );
+        expect(deliverySpy).not.toHaveBeenCalled();
+        expect(app.telegramInboundContext).toEqual(expect.objectContaining({
+          sender: 'james',
+          chatId: '5613428850',
+          windowKey: 'main',
+          profile: 'main',
+        }));
+
+        expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Mira speaking in Telegram now.'),
+          process.env,
+          expect.objectContaining({
+            messageId: 'telegram-in-101-mira-reply',
+            senderRole: 'mira',
+            chatId: '5613428850',
+            metadata: expect.objectContaining({
+              routeKind: 'telegram',
+              targetRaw: 'telegram',
+              windowKey: 'main',
+              profile: 'main',
+              chatId: '5613428850',
+              telegramChatId: '5613428850',
+              sessionScopeId: expect.any(String),
+            }),
+          })
+        );
+        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('This is new; just talk to me here.');
+        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('I will route the team backstage if needed.');
+        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Mira visible reply from Telegram.');
+        expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toMatch(/ARCH|Architect|Builder|Oracle|hm-send|\[AGENT MSG/i);
+        expect(JSON.parse(fs.readFileSync(statePath, 'utf8'))).toEqual(expect.objectContaining({
+          chats: expect.objectContaining({
+            '5613428850': expect.objectContaining({
+              mode: 'mira-telegram',
+              messageId: '42',
+            }),
+          }),
+        }));
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
     });
 
     it('does not repeat Mira Telegram first-contact orientation after channel state is marked', async () => {
