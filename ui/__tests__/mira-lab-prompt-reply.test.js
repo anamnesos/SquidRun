@@ -1028,6 +1028,101 @@ describe('mira lab prompt reply v0', () => {
     expect(auditJson).not.toContain('LAB STARTUP PROSE SENTINEL');
   });
 
+  test('Lab capability roundtable runs private internal drill without transcript or audit leak', async () => {
+    const projectRoot = tempProject();
+    seedDurableMiraState(projectRoot);
+    seedTypedRestartContinuity(projectRoot);
+    const replyText = 'I can read the current work, recall memory, run a harmless check, stage a proposal preview, and inject a Mira-authored note to Architect. I want the next chain to turn those attempts into a patch without James hand-driving it.';
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_lab_capability_roundtable',
+        output_text: replyText,
+      }),
+    }));
+    const sendAgentMessage = jest.fn(async () => ({ ok: true, routed: true }));
+    const runLocalCheck = jest.fn(async () => ({ ok: true, decision: 'lab_harmless_check_completed' }));
+    const memoryBrokerRecall = jest.fn(async () => ({
+      ok: true,
+      sources: [{ source: 'team_memory', ok: true, itemCount: 1 }],
+      results: [{ sourceKind: 'graph_team', title: 'lab capability route', ref: 'team:capability' }],
+    }));
+    const readMemory = jest.fn(async () => ({
+      ok: true,
+      decision: 'memory_retrieved_read_only',
+      result_count: 1,
+      results: [{ sourceType: 'cognitive', title: 'lab capability memory' }],
+      no_mutation_performed: true,
+    }));
+
+    const result = await buildMiraLabPromptReply({
+      prompt: 'Mira capability roundtable: what can you see, do, and remember?',
+      sessionId: 'unit-lab-capability-roundtable',
+      threadContext: { messages: [] },
+    }, {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+      sendAgentMessage,
+      runLocalCheck,
+      stageProposalPreview: jest.fn(async () => ({ ok: true, decision: 'preview_only' })),
+      memoryBrokerRecall,
+      readMemory,
+    });
+
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(runLocalCheck).toHaveBeenCalledTimes(1);
+    expect(memoryBrokerRecall).toHaveBeenCalledTimes(1);
+    expect(readMemory).toHaveBeenCalledTimes(1);
+    expect(requestBody.tools).toEqual([]);
+    expect(requestBody.instructions).toContain('Private typed capability roundtable context');
+    expect(requestBody.instructions).toContain('SquidRun ran this controller outside OpenAI tool-calling');
+    expect(requestBody.instructions).toContain('run_memory_broker_recall=succeeded');
+    expect(requestBody.instructions).toContain('message_internal_agent=succeeded');
+    expect(requestBody.instructions).toContain('Mira-authored Architect pane injection: status=succeeded');
+    expect(requestBody.instructions).toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(requestBody.instructions).toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(requestBody.instructions).not.toContain('LAB_EUNBYEOL_SENTINEL');
+    expect(requestBody.instructions).not.toContain('LAB STARTUP PROSE SENTINEL');
+    expect(requestBody.instructions).not.toContain('system-capabilities.json');
+
+    expect(result.decision).not.toBe('blocked');
+    expect(result.reply.text).toBe(replyText);
+    const visibleJson = JSON.stringify({
+      reply: result.reply,
+      requester_envelope: result.requester_envelope,
+      visible_render_hint: result.visible_render_hint,
+    });
+    expect(visibleJson).not.toContain('Private typed capability roundtable context');
+    expect(visibleJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(visibleJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(visibleJson).not.toContain('message_internal_agent');
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-lab-capability-roundtable'));
+    const transcriptJson = JSON.stringify(transcriptEntries);
+    expect(transcriptEntries).toHaveLength(2);
+    expect(transcriptJson).not.toContain('Private typed capability roundtable context');
+    expect(transcriptJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(transcriptJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(transcriptJson).not.toContain('LAB_EUNBYEOL_SENTINEL');
+    expect(transcriptJson).not.toContain('message_internal_agent');
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    const auditJson = JSON.stringify(auditEntries[0]);
+    expect(auditJson).not.toContain('Private typed capability roundtable context');
+    expect(auditJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
+    expect(auditJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
+    expect(auditJson).not.toContain('LAB_EUNBYEOL_SENTINEL');
+    expect(auditJson).not.toContain('message_internal_agent');
+  });
+
   test('PASS: context-failure verifier prompt reply starts preamble-free', async () => {
     const projectRoot = tempProject();
     const replyText = 'Fixing the context cleanup reply path. Evidence: the current verifier prompt starts clean; assumption: the instability came from preamble drift. Unknown: live model variance until the second verifier run. Next test: keep the reply preamble-free and rerun both verifier sessions.';

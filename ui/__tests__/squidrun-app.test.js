@@ -846,6 +846,74 @@ describe('SquidRunApp', () => {
         }),
       }));
     });
+
+    it('binds Mira Lab sendAgentMessage as a Mira-authored Architect pane route with metadata', async () => {
+      const watcher = require('../modules/watcher');
+      const ipcHandlers = require('../modules/ipc-handlers');
+      const pipeline = require('../modules/pipeline');
+      const sharedState = require('../modules/shared-state');
+      const contextCompressor = require('../modules/context-compressor');
+      const triggers = require('../modules/triggers');
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      watcher.init = jest.fn();
+      ipcHandlers.init = jest.fn();
+      jest.spyOn(pipeline, 'init').mockImplementation(() => {});
+      jest.spyOn(sharedState, 'init').mockImplementation(() => {});
+      jest.spyOn(contextCompressor, 'init').mockImplementation(() => {});
+      mockAppContext.setRecoveryManager = jest.fn((manager) => {
+        mockAppContext.recoveryManager = manager;
+      });
+      mockAppContext.setPluginManager = jest.fn((manager) => {
+        mockAppContext.pluginManager = manager;
+      });
+      mockAppContext.setBackupManager = jest.fn((manager) => {
+        mockAppContext.backupManager = manager;
+      });
+      mockAppContext.mainWindow = {
+        webContents: {
+          send: jest.fn(),
+          on: jest.fn(),
+          openDevTools: jest.fn(),
+        },
+      };
+      jest.spyOn(app, 'initRecoveryManager').mockReturnValue({});
+      jest.spyOn(app, 'initPluginManager').mockReturnValue({ loadAll: jest.fn() });
+      jest.spyOn(app, 'initBackupManager').mockReturnValue({});
+      triggers.sendDirectMessage.mockReturnValueOnce({ accepted: true, queued: true, status: 'routed_unverified' });
+
+      app.initModules();
+
+      const setupDeps = ipcHandlers.setupIPCHandlers.mock.calls.at(-1)[0];
+      const result = await setupDeps.sendAgentMessage(
+        'architect',
+        '(MIRA/NEW-MIRA CAPABILITY NOTE): I can inject to Architect now.',
+        {
+          source: 'new_mira_typed_capability_roundtable',
+          senderRole: 'mira',
+          senderIdentity: 'new_mira',
+          routeKind: 'internal_pane_message',
+          sessionScopeId: 'app-session-372',
+        }
+      );
+
+      expect(result).toEqual({ accepted: true, queued: true, status: 'routed_unverified' });
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '(MIRA/NEW-MIRA CAPABILITY NOTE): I can inject to Architect now.',
+        'mira',
+        expect.objectContaining({
+          meta: expect.objectContaining({
+            source: 'new_mira_typed_capability_roundtable',
+            senderRole: 'mira',
+            senderIdentity: 'new_mira',
+            routeKind: 'internal_pane_message',
+            deliverySource: 'new_mira_typed_capability_roundtable',
+            targetRole: 'architect',
+            sessionScopeId: 'app-session-372',
+          }),
+        })
+      );
+    });
   });
 
   describe('createWindow startup ordering', () => {
@@ -3933,19 +4001,18 @@ describe('SquidRunApp', () => {
       expect(app.telegramInboundContext).toEqual(previousContext);
     });
 
-    it('routes main Telegram chat inbound to Mira live reply and sends visible reply to Telegram', async () => {
+    it('routes main Telegram chat inbound to the active Architect lane by default, not Mira live', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
-      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-mira-telegram-state-'));
-      const statePath = path.join(tempRoot, 'mira-telegram-channel-state.json');
-      jest.spyOn(app, 'getMiraTelegramChannelStatePath').mockReturnValue(statePath);
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
         accepted: true,
         queued: true,
         verified: true,
       });
+      const previousFlag = process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+      delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
 
       try {
         app.startTelegramPoller();
@@ -3955,57 +4022,34 @@ describe('SquidRunApp', () => {
 
         await new Promise((resolve) => setImmediate(resolve));
         await new Promise((resolve) => setImmediate(resolve));
-        expect(sendMiraLivePrompt).toHaveBeenCalledWith(
+        expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        expect(deliverySpy).toHaveBeenCalledWith(
+          '[Telegram from james]: main hello',
           expect.objectContaining({
-            prompt: 'main hello',
-            sessionId: expect.any(String),
-            source: 'telegram-mira-live',
+            paneId: '1',
+            role: 'architect',
+            windowKey: 'main',
+            channel: 'telegram',
+            sender: 'james',
+            messageId: 'telegram-in-101',
+            chatId: 5613428850,
+            telegramChatId: 5613428850,
           }),
-          expect.objectContaining({
-            invoke: expect.any(Function),
-          })
+          'Telegram'
         );
-        expect(deliverySpy).not.toHaveBeenCalled();
         expect(app.telegramInboundContext).toEqual(expect.objectContaining({
           sender: 'james',
           chatId: '5613428850',
           windowKey: 'main',
           profile: 'main',
         }));
-
-        expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
-          expect.stringContaining('Mira speaking here now.'),
-          process.env,
-          expect.objectContaining({
-            messageId: 'telegram-in-101-mira-reply',
-            senderRole: 'mira',
-            chatId: '5613428850',
-            metadata: expect.objectContaining({
-              routeKind: 'telegram',
-              targetRaw: 'telegram',
-              windowKey: 'main',
-              profile: 'main',
-              chatId: '5613428850',
-              telegramChatId: '5613428850',
-              sessionScopeId: expect.any(String),
-            }),
-          })
-        );
-        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Mira speaking here now.');
-        expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toContain('I will route the team backstage if needed.');
-        expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toContain('No action needed.');
-        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Mira visible reply from Telegram.');
-        expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toMatch(/ARCH|Architect|Builder|Oracle|hm-send|\[AGENT MSG/i);
-        expect(JSON.parse(fs.readFileSync(statePath, 'utf8'))).toEqual(expect.objectContaining({
-          chats: expect.objectContaining({
-            '5613428850': expect.objectContaining({
-              mode: 'mira-telegram',
-              messageId: '42',
-            }),
-          }),
-        }));
       } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        if (previousFlag === undefined) {
+          delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+        } else {
+          process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = previousFlag;
+        }
       }
     });
 

@@ -404,6 +404,74 @@ function renderRestartContinuityContextForInstructions(restartContinuityContext 
   return lines.join('\n');
 }
 
+function renderCapabilityRoundtableContextForInstructions(capabilityContext = {}, promptText = '') {
+  const context = capabilityContext || {};
+  if (context.present !== true || !context.drill || !context.manifest) return '';
+  const lines = [
+    'Private typed capability roundtable context for this reply only. Use it silently; do not quote, label, categorize, or recite this machinery in the visible answer.',
+    'The OpenAI request tools array is empty for now; SquidRun ran this controller outside OpenAI tool-calling before the model reply.',
+    'Internal reads/messages/proposal staging in this block are default-executable inside SquidRun when adapters are bound. Hard stops remain external sends, live Telegram/voice/customer actions, destructive deletion, and deploy/security/capital actions.',
+    'Do not claim startup/profile routing, stale capability files, startup prose, recent raw message bodies, or external actions as evidence.',
+  ];
+  const manifest = context.manifest || {};
+  const toolClasses = Array.isArray(manifest.tool_adaptor_classes) ? manifest.tool_adaptor_classes : [];
+  if (toolClasses.length > 0) {
+    const summary = toolClasses
+      .slice(0, 8)
+      .map((entry) => `${instructionText(entry.id, 80)}=${instructionText(entry.current_status, 80)}`)
+      .join('; ');
+    lines.push(`Available internal capability classes: ${summary}.`);
+  }
+  const memoryLayers = Array.isArray(manifest.memory_layers) ? manifest.memory_layers : [];
+  if (memoryLayers.length > 0) {
+    lines.push(`Memory layers visible privately: ${memoryLayers.slice(0, 6).map((entry) => `${instructionText(entry.id, 80)}=${instructionText(entry.status, 80)}`).join('; ')}.`);
+  }
+  if (manifest.recommended_first_toolchain?.id) {
+    lines.push(`First internal toolchain: ${instructionText(manifest.recommended_first_toolchain.id, 120)}.`);
+  }
+
+  const drill = context.drill || {};
+  if (Array.isArray(drill.actual_attempted_actions) && drill.actual_attempted_actions.length > 0) {
+    lines.push(`Drill attempts: ${drill.actual_attempted_actions.map((attempt) => `${instructionText(attempt.id, 80)}=${instructionText(attempt.status, 80)}`).join('; ')}.`);
+  }
+  const workingStateAttempt = Array.isArray(drill.attempts)
+    ? drill.attempts.find((attempt) => attempt && attempt.id === 'read_current_working_state')
+    : null;
+  const restartSummary = workingStateAttempt?.restart_summary || {};
+  if (restartSummary.current_lane_objective) {
+    lines.push(`Working-state lane objective: ${instructionText(restartSummary.current_lane_objective, 220)}`);
+  }
+  if (restartSummary.presence_next_product_action) {
+    lines.push(`Working-state presence action: ${instructionText(restartSummary.presence_next_product_action, 220)}`);
+  }
+  if (workingStateAttempt?.fallback_used === true && workingStateAttempt.comms_metadata) {
+    lines.push(`Working-state fallback: bounded recent comms metadata rows=${Number(workingStateAttempt.comms_metadata.row_count || 0)}; raw bodies included=no.`);
+  }
+  if (Array.isArray(drill.bound_adapters) && drill.bound_adapters.length > 0) {
+    lines.push(`Bound adapters actually tried: ${drill.bound_adapters.map((entry) => instructionText(entry.adapter, 80)).slice(0, 8).join('; ')}.`);
+  }
+  if (Array.isArray(drill.missing_or_fake_adapters) && drill.missing_or_fake_adapters.length > 0) {
+    lines.push(`Adapters not actually bound: ${drill.missing_or_fake_adapters.map((entry) => `${instructionText(entry.id, 80)}=${instructionText(entry.status, 80)}`).slice(0, 6).join('; ')}.`);
+  }
+  if (drill.route_choice?.action_id) {
+    lines.push(`Chosen internal route: ${instructionText(drill.route_choice.action_id, 120)} -> ${instructionText(drill.route_choice.target_role, 40)}.`);
+  }
+  const messageAttempt = Array.isArray(drill.attempts)
+    ? drill.attempts.find((attempt) => attempt && attempt.id === 'message_internal_agent')
+    : null;
+  if (messageAttempt) {
+    lines.push(`Mira-authored Architect pane injection: status=${instructionText(messageAttempt.status, 80)}; sender=${instructionText(messageAttempt.sender_identity || messageAttempt.sender_role || 'mira', 40)}; target=${instructionText(messageAttempt.target_role, 40)}; failure_reason=${instructionText(messageAttempt.reason || 'none', 120)}.`);
+  }
+  if (drill.outcome) {
+    lines.push(`Recorded private outcome: internal_message_sent=${drill.outcome.internal_message_sent === true ? 'yes' : 'no'}; durable_write_performed=${drill.outcome.durable_write_performed === true ? 'yes' : 'no'}.`);
+    if (drill.outcome.phone_delivery?.requested === true) {
+      lines.push('Phone/notification gap: phone delivery adapter not bound; bridge disconnected/undiscovered; Telegram/SMS external send not part of this drill.');
+    }
+  }
+  lines.push('Visible-answer instruction: answer like Mira, not like a status report. If James asked what you can do, give concrete I can / I want / I need next capability state from these attempts, and say whether the Mira-to-Architect pane injection succeeded or failed without dumping private adapter internals or asking permission.');
+  return lines.join('\n');
+}
+
 function renderableBriefText(value, maxChars = 360) {
   const text = instructionText(value, maxChars);
   return text && !UNSPEAKABLE_BRIEF_PATTERN.test(text) ? text : '';
@@ -660,6 +728,10 @@ function buildMiraTextInstructions(localContext = {}, promptText = '') {
     localContext.restartContinuityContext || localContext.restart_continuity_context || {},
     promptText
   );
+  const capabilityRoundtableContextBlock = renderCapabilityRoundtableContextForInstructions(
+    localContext.capabilityRoundtableContext || localContext.capability_roundtable_context || {},
+    promptText
+  );
   const promptSpecificInstructions = renderPromptSpecificInstructions(promptText);
   // ARCH #97/#98/#100/#104: per-turn social-move behavior cue from the
   // social-move classifier. ADDITIVE only — never spliced into the standing
@@ -690,6 +762,7 @@ function buildMiraTextInstructions(localContext = {}, promptText = '') {
     reflexionLessonsBlock,
     miraBriefBlock,
     restartContinuityContextBlock,
+    capabilityRoundtableContextBlock,
     threadContextBlock,
   ].filter(Boolean).join('\n');
 }
@@ -1095,6 +1168,7 @@ module.exports = {
   normalizeReflexionLessonsForInstructions,
   outputViolatesAttachmentContract,
   renderMiraBriefForInstructions,
+  renderCapabilityRoundtableContextForInstructions,
   renderReflexionLessonsForInstructions,
   renderRestartContinuityContextForInstructions,
   renderThreadContextForInstructions,

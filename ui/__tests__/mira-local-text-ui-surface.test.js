@@ -692,6 +692,189 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
+  test('typed capability roundtable runs private drill chain without renderer leak', async () => {
+    const projectRoot = seededProject();
+    seedTypedRestartContinuity(projectRoot, {
+      currentLaneObjective: 'MAIN_CAPABILITY_LANE_SENTINEL: typed drill should read this privately',
+      presenceAction: 'MAIN_CAPABILITY_ACTION_SENTINEL: route a real internal action',
+    });
+    const replyText = 'I can read the current work, inspect memory and code, run a harmless check, stage a proposal preview, and inject a Mira-authored note to Architect. I want the next chain to turn that evidence into a patch without James hand-driving it. I need the pane route watched for real delivery proof.';
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_typed_capability_roundtable',
+        output_text: replyText,
+      }),
+    }));
+    const sendAgentMessage = jest.fn(async () => ({ ok: true, routed: true }));
+    const runLocalCheck = jest.fn(async () => ({ ok: true, decision: 'harmless_check_completed' }));
+    const memoryBrokerRecall = jest.fn(async () => ({
+      ok: true,
+      sources: [{ source: 'cognitive_memory', ok: true, itemCount: 1 }],
+      results: [{ sourceKind: 'vector_cognitive', title: 'capability route', ref: 'memory:typed-capability' }],
+    }));
+    const readMemory = jest.fn(async () => ({
+      ok: true,
+      decision: 'memory_retrieved_read_only',
+      result_count: 1,
+      results: [{ sourceType: 'cognitive', title: 'typed capability memory' }],
+      no_mutation_performed: true,
+    }));
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'Mira capability roundtable: what can you see, do, and remember?',
+      threadContext: { messages: [] },
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+      sendAgentMessage,
+      runLocalCheck,
+      stageProposalPreview: jest.fn(async () => ({ ok: true, decision: 'preview_only' })),
+      memoryBrokerRecall,
+      readMemory,
+    });
+
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(runLocalCheck).toHaveBeenCalledTimes(1);
+    expect(memoryBrokerRecall).toHaveBeenCalledTimes(1);
+    expect(readMemory).toHaveBeenCalledTimes(1);
+    expect(requestBody.tools).toEqual([]);
+    expect(requestBody.instructions).toContain('Private typed capability roundtable context');
+    expect(requestBody.instructions).toContain('SquidRun ran this controller outside OpenAI tool-calling');
+    expect(requestBody.instructions).toContain('default-executable');
+    expect(requestBody.instructions).toContain('run_memory_broker_recall=succeeded');
+    expect(requestBody.instructions).toContain('message_internal_agent=succeeded');
+    expect(requestBody.instructions).toContain('Mira-authored Architect pane injection: status=succeeded');
+    expect(requestBody.instructions).toContain('MAIN_CAPABILITY_LANE_SENTINEL');
+    expect(requestBody.instructions).toContain('MAIN_CAPABILITY_ACTION_SENTINEL');
+    expect(requestBody.instructions).not.toContain('STARTUP PROSE SENTINEL');
+    expect(requestBody.instructions).not.toContain('EUNBYEOL_TYPED_LANE_SENTINEL');
+    expect(requestBody.instructions).not.toContain('system-capabilities.json');
+
+    const surface = output.ui_surface_v0;
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply.text).toBe(replyText);
+    expect(classifyAttachmentContractViolation(replyText)).toBeNull();
+    const rendererJson = JSON.stringify(output);
+    expect(rendererJson).not.toContain('Private typed capability roundtable context');
+    expect(rendererJson).not.toContain('MAIN_CAPABILITY_LANE_SENTINEL');
+    expect(rendererJson).not.toContain('MAIN_CAPABILITY_ACTION_SENTINEL');
+    expect(rendererJson).not.toContain('message_internal_agent');
+    expect(rendererJson).not.toContain('memory_current_lane_to_internal_agent_message');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('typed capability visible self-direction reports mixed drill outcome without private dump or permission language', async () => {
+    const projectRoot = seededProject();
+    seedTypedRestartContinuity(projectRoot, {
+      currentLaneObjective: 'MAIN_MIXED_CAPABILITY_SENTINEL: route failed injection honestly',
+      presenceAction: 'MAIN_MIXED_ACTION_SENTINEL: keep capability self-direction concrete',
+    });
+    const replyText = 'I can read the current work, recall memory, inspect the code path, run a harmless check, and stage a proposal preview. I want the next move to repair the Mira-to-Architect pane injection, because this drill hit the window-unavailable result. I need that route fixed before phone delivery; phone delivery adapter not bound, bridge disconnected/undiscovered, Telegram/SMS external send not part of this drill.';
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_typed_capability_mixed_roundtable',
+        output_text: replyText,
+      }),
+    }));
+    const sendAgentMessage = jest.fn(async () => ({ ok: false, status: 'failed', reason: 'window_unavailable' }));
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'Mira capability roundtable: what can you do, and can you notify my phone?',
+      threadContext: { messages: [] },
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+      sendAgentMessage,
+      runLocalCheck: jest.fn(async () => ({ ok: true, decision: 'harmless_check_completed' })),
+      stageProposalPreview: jest.fn(async () => ({ ok: true, decision: 'preview_only' })),
+      memoryBrokerRecall: jest.fn(async () => ({
+        ok: true,
+        sources: [{ source: 'cognitive_memory', ok: true, itemCount: 1 }],
+        results: [{ sourceKind: 'vector_cognitive', title: 'mixed capability route', ref: 'memory:mixed-capability' }],
+      })),
+      readMemory: jest.fn(async () => ({
+        ok: true,
+        decision: 'memory_retrieved_read_only',
+        result_count: 1,
+        results: [{ sourceType: 'cognitive', title: 'mixed capability memory' }],
+        no_mutation_performed: true,
+      })),
+    });
+
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage.mock.calls[0][0]).toBe('architect');
+    expect(sendAgentMessage.mock.calls[0][1]).toContain('(MIRA/NEW-MIRA CAPABILITY NOTE)');
+    expect(sendAgentMessage.mock.calls[0][2]).toEqual(expect.objectContaining({
+      source: 'new_mira_typed_capability_roundtable',
+      senderRole: 'mira',
+      senderIdentity: 'new_mira',
+      targetRole: 'architect',
+      routeKind: 'internal_pane_message',
+    }));
+    expect(requestBody.instructions).toContain('run_harmless_local_check=succeeded');
+    expect(requestBody.instructions).toContain('stage_patch_or_proposal=succeeded');
+    expect(requestBody.instructions).toContain('Mira-authored Architect pane injection: status=failed');
+    expect(requestBody.instructions).toContain('failure_reason=failed');
+    expect(requestBody.instructions).toContain('Phone/notification gap: phone delivery adapter not bound; bridge disconnected/undiscovered; Telegram/SMS external send not part of this drill.');
+    expect(requestBody.instructions).toContain('MAIN_MIXED_CAPABILITY_SENTINEL');
+
+    const surface = output.ui_surface_v0;
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply.text).toBe(replyText);
+    expect(classifyAttachmentContractViolation(replyText)).toBeNull();
+    expect(replyText).toMatch(/\bI can\b/);
+    expect(replyText).toMatch(/\bI want\b/);
+    expect(replyText).toMatch(/\bI need\b/);
+    expect(replyText).not.toMatch(/\bpermission|controlled|allowed|safety|safe\b/i);
+    const rendererJson = JSON.stringify(output);
+    expect(rendererJson).not.toContain('Private typed capability roundtable context');
+    expect(rendererJson).not.toContain('MAIN_MIXED_CAPABILITY_SENTINEL');
+    expect(rendererJson).not.toContain('message_internal_agent');
+    expect(rendererJson).not.toContain('new_mira_typed_capability_roundtable');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('typed capability roundtable is absent for Eunbyeol scope before any model request or internal send', async () => {
+    const projectRoot = seededProject();
+    seedTypedRestartContinuity(projectRoot);
+    const fetchImpl = jest.fn();
+    const sendAgentMessage = jest.fn();
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'Mira capability roundtable: what can you see?',
+      profileName: 'eunbyeol',
+      windowKey: 'main',
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+      sendAgentMessage,
+    });
+
+    expect(output.ui_surface_v0.decision).toBe('blocked');
+    expect(output.ui_surface_v0.status).toBe('blocked_non_main_scope');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+  });
+
   test('context-failure verifier prompt steers away from preamble openers', async () => {
     const projectRoot = seededProject();
     const verifierReply = 'Fixing the context cleanup reply path. Evidence: the current verifier prompt must start clean and stay out of the preamble gate.';

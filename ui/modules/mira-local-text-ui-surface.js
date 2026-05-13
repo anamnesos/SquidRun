@@ -31,6 +31,9 @@ const {
 const {
   buildTypedRestartContinuityContextV0,
 } = require('./mira-core/typed-restart-continuity-context-v0');
+const {
+  buildTypedCapabilityRoundtableContextV0,
+} = require('./mira-core/typed-capability-roundtable-v0');
 
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
@@ -886,6 +889,34 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     staleAfterMs: options.typedRestartContinuityMaxAgeMs || options.restartContinuityMaxAgeMs,
   });
   if (localReply && attachment.enabled === true) {
+    const capabilityRoundtableContext = await buildTypedCapabilityRoundtableContextV0({
+      projectRoot,
+      promptText: text,
+      metadata: {
+        profileName: getPayloadValue(payload, 'profileName'),
+        windowKey: getPayloadValue(payload, 'windowKey'),
+        sourceScope: getPayloadValue(payload, 'sourceScope'),
+        deviceId: getPayloadValue(payload, 'deviceId'),
+        sessionId: getPayloadValue(payload, 'sessionId'),
+        sessionScopeId: getPayloadValue(payload, 'sessionScopeId'),
+        activeState: getPayloadValue(payload, 'activeState'),
+        visibleIndicatorPresent: getPayloadValue(payload, 'visibleIndicatorPresent'),
+      },
+      nowMs: Date.parse(generatedAt),
+      staleAfterMs: options.typedRestartContinuityMaxAgeMs || options.restartContinuityMaxAgeMs,
+      restartContinuityContext,
+      sendAgentMessage: options.sendAgentMessage,
+      runLocalCheck: options.runLocalCheck,
+      stageProposal: options.stageProposal,
+      stageProposalPreview: options.stageProposalPreview,
+      allowDurableCapabilityWrites: options.allowDurableCapabilityWrites === true,
+      commsMetadataReader: options.commsMetadataReader,
+      memoryBrokerRecall: options.memoryBrokerRecall,
+      readMemory: options.readMemory,
+      memoryDbPath: options.memoryDbPath,
+      evidenceLedgerDbPath: options.evidenceLedgerDbPath,
+      internalMessageTarget: options.internalMessageTarget,
+    });
     modelResult = await callMiraTextModelAttachment({
       text,
       localContext: {
@@ -894,6 +925,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
         miraBrief: session.presence_runtime_read_path_gate?.speakable_mira_brief || null,
         threadContext: payload.threadContext || payload.thread_context || {},
         restartContinuityContext,
+        capabilityRoundtableContext,
         reflexionLessons: payload.reflexionLessons || payload.reflexion_lessons || options.reflexionLessons || options.reflexion_lessons || [],
         socialMoveBehaviorCue,
       },

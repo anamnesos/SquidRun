@@ -6216,6 +6216,17 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
       modelAttachment: options.modelAttachment,
       fetchImpl: options.fetchImpl,
       contractBundle: options.contractBundle,
+      sendAgentMessage: options.sendAgentMessage,
+      runLocalCheck: options.runLocalCheck,
+      stageProposal: options.stageProposal,
+      stageProposalPreview: options.stageProposalPreview,
+      allowDurableCapabilityWrites: options.allowDurableCapabilityWrites === true,
+      commsMetadataReader: options.commsMetadataReader,
+      memoryBrokerRecall: options.memoryBrokerRecall,
+      readMemory: options.readMemory,
+      memoryDbPath: options.memoryDbPath,
+      evidenceLedgerDbPath: options.evidenceLedgerDbPath,
+      internalMessageTarget: options.internalMessageTarget,
     });
   } catch (err) {
     surfaceError = err && err.message ? err.message : String(err);

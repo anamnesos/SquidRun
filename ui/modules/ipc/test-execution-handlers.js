@@ -15,6 +15,45 @@ function execFileAsync(file, args, options) {
   });
 }
 
+function detectTestFrameworks(projectPath) {
+  const pkgPath = path.join(projectPath, 'package.json');
+  const frameworks = [];
+  if (!fs.existsSync(pkgPath)) return frameworks;
+  let pkg = null;
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+  } catch {
+    return frameworks;
+  }
+  if (pkg.devDependencies?.jest || pkg.dependencies?.jest || pkg.scripts?.test?.includes('jest')) {
+    frameworks.push('jest');
+  }
+  if (pkg.scripts?.test) frameworks.push('npm');
+  return Array.from(new Set(frameworks));
+}
+
+function runTestExecutionProbe(projectPath, options = {}) {
+  const resolvedProjectPath = path.resolve(String(projectPath || process.cwd()));
+  const frameworks = detectTestFrameworks(resolvedProjectPath);
+  const recommended = frameworks[0] || null;
+  const focusedTestPaths = Array.isArray(options.focusedTestPaths)
+    ? options.focusedTestPaths.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+  return {
+    success: frameworks.length > 0,
+    projectPath: resolvedProjectPath,
+    frameworks,
+    recommended,
+    focusedTestPaths,
+    executor: recommended === 'jest'
+      ? 'npx jest'
+      : (recommended === 'npm' ? 'npm test' : null),
+    dryRun: true,
+    noProcessSpawned: true,
+    reason: frameworks.length > 0 ? null : 'no_test_framework_detected',
+  };
+}
+
 function registerTestExecutionHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerTestExecutionHandlers requires ctx.ipcMain');
@@ -183,16 +222,7 @@ function registerTestExecutionHandlers(ctx) {
   ctx.runTests = runTests;
 
   ipcMain.handle('detect-test-framework', (event, projectPath) => {
-    const detected = [];
-    for (const [name, framework] of Object.entries(TEST_FRAMEWORKS)) {
-      try {
-        if (framework.detect(projectPath)) {
-          detected.push(name);
-        }
-      } catch {
-        // Skip detection errors
-      }
-    }
+    const detected = detectTestFrameworks(projectPath);
     return {
       success: true,
       frameworks: detected,
@@ -237,5 +267,7 @@ function unregisterTestExecutionHandlers(ctx) {
 
 registerTestExecutionHandlers.unregister = unregisterTestExecutionHandlers;
 module.exports = {
+  detectTestFrameworks,
   registerTestExecutionHandlers,
+  runTestExecutionProbe,
 };
