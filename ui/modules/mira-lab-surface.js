@@ -3497,6 +3497,15 @@ function activeInitiativeEvidenceForItem(item = {}) {
     evidence.push(`scheduler=due_soon:${numberSignal(item.scheduler_due_soon_count)} overdue:${numberSignal(item.scheduler_overdue_count)}`);
   }
   if (numberSignal(item.email_unread_total) > 0) evidence.push(`email_unread=${numberSignal(item.email_unread_total)}`);
+  if (numberSignal(item.memory_result_count) > 0) {
+    const top = item.memory_top_result || {};
+    const topId = trimText(top.nodeId || top.node_id || top.title || top.heading || 'unknown');
+    const topTitle = oneLine(top.title || top.heading || top.category, 80);
+    const sourcePath = trimText(top.sourcePath || top.source_path);
+    evidence.push(`memory_results=${numberSignal(item.memory_result_count)} top=${topId}${topTitle ? ` title=${topTitle}` : ''}${sourcePath ? ` source=${sourcePath}` : ''}`);
+    const excerpt = oneLine(top.contentExcerpt || top.content_excerpt, 160);
+    if (excerpt) evidence.push(`memory_excerpt=${excerpt}`);
+  }
   if (item.email_snapshot_gaps?.thread_poor_snapshot) {
     evidence.push(`email_snapshot_gaps=sender_domain:${numberSignal(item.email_snapshot_gaps.missing_sender_domain_count)} subject:${numberSignal(item.email_snapshot_gaps.missing_subject_count)} timestamp:${numberSignal(item.email_snapshot_gaps.missing_timestamp_count)}`);
   }
@@ -3688,6 +3697,18 @@ function activeInitiativeCandidateForItem(item, index, total) {
       action = 'Have Builder connect the scheduler signal to the next read-only curiosity run without creating or firing new schedules from this selector.';
     } else {
       score -= 18;
+    }
+  } else if (source === 'memory') {
+    const memoryResults = numberSignal(item.memory_result_count);
+    const top = item.memory_top_result || {};
+    const topId = trimText(top.nodeId || top.node_id || top.title || top.heading);
+    const topLabel = oneLine(top.title || top.heading || top.category || topId, 96);
+    if (memoryResults > 0 && topId) {
+      score += 18 + Math.min(8, memoryResults);
+      title = `Use active memory result ${topId} before routing the next Mira improvement.`;
+      action = `Compare compact memory evidence (${topLabel || topId}) against current curiosity/curriculum candidates and route only the decision it actually changes.`;
+    } else {
+      score -= 24;
     }
   } else if (source === 'email') {
     const unread = numberSignal(item.email_unread_total);
