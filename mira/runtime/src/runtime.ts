@@ -4,6 +4,7 @@ import type {
   RuntimeCapability,
   SessionResponse,
 } from "./contracts.js";
+import { getStateRootReadiness } from "./state-root.js";
 
 const version = "0.1.0";
 
@@ -41,13 +42,23 @@ const capabilities: RuntimeCapability[] = [
 ];
 
 export function getHealth(startedAt: number): HealthResponse {
+  const stateRoot = getStateRootReadiness();
+
   return {
     service: "mira-runtime",
     status: "ready",
     version,
     nodeVersion: process.version,
     uptimeSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
-    stateRootConfigured: Boolean(process.env.MIRA_STATE_ROOT),
+    stateRootConfigured: stateRoot.configured,
+    stateRoot,
+  };
+}
+
+export function getStateRootStatus() {
+  return {
+    service: "mira-runtime" as const,
+    stateRoot: getStateRootReadiness(),
   };
 }
 

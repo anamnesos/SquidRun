@@ -1,5 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import { getCapabilities, getHealth, getSessionSkeleton } from "./runtime.js";
+import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -35,6 +35,11 @@ function route(request: IncomingMessage, response: ServerResponse): void {
 
   if (requestUrl.pathname === "/session") {
     sendJson(response, 200, getSessionSkeleton());
+    return;
+  }
+
+  if (requestUrl.pathname === "/state-root") {
+    sendJson(response, 200, getStateRootStatus());
     return;
   }
 

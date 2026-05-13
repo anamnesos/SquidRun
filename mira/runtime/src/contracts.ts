@@ -1,5 +1,20 @@
 export type RuntimeStatus = "starting" | "ready";
 
+export type StateRootBucket = {
+  id: string;
+  relativePath: string;
+  purpose: string;
+};
+
+export type StateRootReadiness = {
+  configured: boolean;
+  ready: boolean;
+  path: string | null;
+  error: string | null;
+  requiredBuckets: StateRootBucket[];
+  importsLoaded: false;
+};
+
 export type HealthResponse = {
   service: "mira-runtime";
   status: RuntimeStatus;
@@ -7,6 +22,7 @@ export type HealthResponse = {
   nodeVersion: string;
   uptimeSeconds: number;
   stateRootConfigured: boolean;
+  stateRoot: StateRootReadiness;
 };
 
 export type CapabilityStatus = "available" | "planned" | "blocked";
