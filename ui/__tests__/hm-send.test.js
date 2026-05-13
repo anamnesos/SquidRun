@@ -90,15 +90,43 @@ function extractFallbackPath(stderr) {
   return match && match[1] ? match[1].trim() : null;
 }
 
-function createLinkedProject() {
+function createLinkedProject(options = {}) {
   const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-guard-'));
+  const includeSquidrunRoot = options.squidrunRoot !== null;
+  const squidrunRoot = typeof options.squidrunRoot === 'string'
+    ? options.squidrunRoot
+    : path.join(__dirname, '..', '..');
   fs.mkdirSync(path.join(tempProject, '.squidrun'), { recursive: true });
-  fs.writeFileSync(path.join(tempProject, '.squidrun', 'link.json'), JSON.stringify({
+  const linkPayload = {
     workspace: tempProject,
-    squidrun_root: path.join(__dirname, '..', '..'),
     version: 1,
-  }, null, 2));
+  };
+  if (includeSquidrunRoot) {
+    linkPayload.squidrun_root = squidrunRoot;
+  }
+  fs.writeFileSync(path.join(tempProject, '.squidrun', 'link.json'), JSON.stringify(linkPayload, null, 2));
   return tempProject;
+}
+
+function writeAppStatus(tempProject, sessionId = 'app-session-777') {
+  fs.writeFileSync(path.join(tempProject, '.squidrun', 'app-status.json'), JSON.stringify({
+    session_id: sessionId,
+  }, null, 2));
+  return sessionId;
+}
+
+function seedCommsJournal(tempProject, entry = {}, nowMs = Date.now()) {
+  const dbPath = path.join(tempProject, '.squidrun', 'runtime', 'evidence-ledger.db');
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const store = new EvidenceLedgerStore({ dbPath, enabled: true });
+  expect(store.init().ok).toBe(true);
+  try {
+    const result = store.upsertCommsJournal(entry, { nowMs });
+    expect(result.ok).toBe(true);
+  } finally {
+    store.close();
+  }
+  return dbPath;
 }
 
 function createTelegramHttpsMockPreload() {
@@ -1231,6 +1259,176 @@ describe('hm-send retry behavior', () => {
     expect(sendAttempts).toHaveLength(1);
     expect(sendAttempts[0].target).toBe('user');
     expect(result.stdout).toContain('ack: telegram_delivered');
+  });
+
+  test('blocks user target after recent current-session Telegram inbound evidence', async () => {
+    const tempProject = createLinkedProject({ squidrunRoot: null });
+    const sessionId = writeAppStatus(tempProject, 'app-session-777');
+    const nowMs = Date.now();
+    seedCommsJournal(tempProject, {
+      messageId: 'telegram-in-guard-1',
+      sessionId,
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'telegram',
+      direction: 'inbound',
+      sentAtMs: nowMs - 1000,
+      brokeredAtMs: nowMs - 1000,
+      rawBody: 'raw unwrapped Telegram body',
+      status: 'brokered',
+    }, nowMs);
+
+    const result = await runHmSend(
+      ['user', '(ARCHITECT #55): Reply that must not go app-only', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+      },
+      { cwd: tempProject }
+    );
+
+    try {
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('BLOCKED: recent Telegram inbound detected');
+      expect(result.stderr).toContain("Use explicit target 'telegram'");
+      expect(result.stderr).toContain('telegram-in-guard-1');
+      expect(result.stdout).not.toContain('Delivered to user');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
+  test('allows explicit telegram target after recent Telegram inbound evidence', async () => {
+    const tempProject = createLinkedProject({ squidrunRoot: null });
+    const telegramMock = createTelegramHttpsMockPreload();
+    const mockLogPath = path.join(telegramMock.tempRoot, 'telegram-requests.jsonl');
+    const sessionId = writeAppStatus(tempProject, 'app-session-778');
+    const nowMs = Date.now();
+    seedCommsJournal(tempProject, {
+      messageId: 'telegram-in-guard-telegram-ok',
+      sessionId,
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'telegram',
+      direction: 'inbound',
+      sentAtMs: nowMs - 1000,
+      brokeredAtMs: nowMs - 1000,
+      rawBody: 'telegram body without visible wrapper',
+      status: 'brokered',
+    }, nowMs);
+
+    const result = await runHmSend(
+      ['telegram', '--stdin', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '12345',
+        TELEGRAM_CHAT_ALLOWLIST: '12345',
+        HM_SEND_TELEGRAM_MOCK_LOG: mockLogPath,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+      },
+      { cwd: tempProject, stdin: '(ARCHITECT #56): Explicit Telegram reply' }
+    );
+
+    try {
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Delivered to telegram');
+      expect(result.stdout).toContain('ack: telegram_delivered');
+      expect(result.stderr).not.toContain('BLOCKED: recent Telegram inbound detected');
+      const [request] = fs.readFileSync(mockLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(JSON.parse(request.body)).toEqual(expect.objectContaining({
+        chat_id: '12345',
+        text: '(ARCHITECT #56): Explicit Telegram reply',
+      }));
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      fs.rmSync(telegramMock.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps non-Telegram user target behavior intact', async () => {
+    const tempProject = createLinkedProject({ squidrunRoot: null });
+    const sessionId = writeAppStatus(tempProject, 'app-session-779');
+    const nowMs = Date.now();
+    seedCommsJournal(tempProject, {
+      messageId: 'ws-in-guard-non-telegram',
+      sessionId,
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'inbound',
+      sentAtMs: nowMs - 1000,
+      brokeredAtMs: nowMs - 1000,
+      rawBody: 'normal app user message',
+      status: 'brokered',
+    }, nowMs);
+
+    const result = await runHmSend(
+      ['user', '(ARCHITECT #57): Normal user route still works', '--role', 'architect', '--timeout', '80', '--retries', '0'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+      },
+      { cwd: tempProject }
+    );
+
+    try {
+      const combinedOutput = `${result.stdout}\n${result.stderr}`;
+      expect(result.code).toBe(0);
+      expect(combinedOutput).toContain('voice egress');
+      expect(combinedOutput).not.toContain('BLOCKED: recent Telegram inbound detected');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
+  test('does not block user target when a newer current-session user inbound is not Telegram', async () => {
+    const tempProject = createLinkedProject({ squidrunRoot: null });
+    const sessionId = writeAppStatus(tempProject, 'app-session-780');
+    const nowMs = Date.now();
+    seedCommsJournal(tempProject, {
+      messageId: 'telegram-in-guard-older',
+      sessionId,
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'telegram',
+      direction: 'inbound',
+      sentAtMs: nowMs - 2000,
+      brokeredAtMs: nowMs - 2000,
+      rawBody: 'older telegram body',
+      status: 'brokered',
+    }, nowMs);
+    seedCommsJournal(tempProject, {
+      messageId: 'ws-in-guard-newer',
+      sessionId,
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'inbound',
+      sentAtMs: nowMs - 500,
+      brokeredAtMs: nowMs - 500,
+      rawBody: 'newer app body',
+      status: 'brokered',
+    }, nowMs);
+
+    const result = await runHmSend(
+      ['user', '(ARCHITECT #58): Newer app-origin reply stays on user route', '--role', 'architect', '--timeout', '80', '--retries', '0'],
+      {
+        HM_SEND_PORT: '65534',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+      },
+      { cwd: tempProject }
+    );
+
+    try {
+      const combinedOutput = `${result.stdout}\n${result.stderr}`;
+      expect(result.code).toBe(0);
+      expect(combinedOutput).toContain('voice egress');
+      expect(combinedOutput).not.toContain('BLOCKED: recent Telegram inbound detected');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
   });
 
   test('explicit telegram --stdin uses Bot API direct delivery and does not append voice egress', async () => {

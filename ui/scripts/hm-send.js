@@ -22,6 +22,7 @@ const {
 } = require('../profile');
 const {
   appendCommsJournalEntry,
+  queryCommsJournalEntries,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
 const { sendTelegram, sendTelegramPhoto, normalizeChatId } = require('./hm-telegram');
@@ -132,6 +133,13 @@ const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
+const TELEGRAM_USER_TARGET_GUARD_WINDOW_MS = Math.max(
+  1000,
+  Number.parseInt(
+    process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
+    10
+  ) || (5 * 60 * 1000)
+);
 const args = process.argv.slice(2);
 const listDevicesMode = args.includes('--list-devices');
 const DEFAULT_ROLE_BY_PANE = Object.freeze({
@@ -515,6 +523,105 @@ function writeGuardBlock(messageLines = []) {
   console.error('');
 }
 
+function appendGuardJsonl(fileName, payload = {}) {
+  const logPath = resolveGuardLogPath(fileName);
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(
+      logPath,
+      `${JSON.stringify({
+        ts: new Date().toISOString(),
+        ...payload,
+      })}\n`,
+      'utf8'
+    );
+    return { ok: true, path: logPath };
+  } catch (err) {
+    return { ok: false, path: logPath, error: err.message };
+  }
+}
+
+function buildCurrentRoleEvidenceTargets(senderRole) {
+  const targets = new Set();
+  const rawRole = String(senderRole || '').trim().toLowerCase();
+  const normalizedRole = normalizeRole(rawRole) || normalizeBackgroundBuilderRole(rawRole) || rawRole;
+  const add = (value) => {
+    const text = String(value || '').trim().toLowerCase();
+    if (text) targets.add(text);
+  };
+
+  add(rawRole);
+  add(normalizedRole);
+  add(resolvePaneIdForRole(normalizedRole));
+  add(envPaneId);
+
+  return targets;
+}
+
+function getCommsRowTimestampMs(row = {}) {
+  for (const value of [row.brokeredAtMs, row.sentAtMs, row.updatedAtMs]) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return 0;
+}
+
+function detectTelegramUserTargetGuard({ messageId, nowMs = Date.now() } = {}) {
+  if (String(target || '').trim().toLowerCase() !== 'user') return null;
+
+  const sessionId = normalizeSessionId(projectMetadata?.session_id || '');
+  if (!sessionId) return null;
+
+  const currentTargets = buildCurrentRoleEvidenceTargets(role || 'cli');
+  if (currentTargets.size === 0) return null;
+
+  const sinceMs = nowMs - TELEGRAM_USER_TARGET_GUARD_WINDOW_MS;
+  let rows = [];
+  try {
+    rows = queryCommsJournalEntries({
+      sessionId,
+      direction: 'inbound',
+      senderRole: 'user',
+      sinceMs,
+      order: 'desc',
+      limit: 100,
+    });
+  } catch (_) {
+    return null;
+  }
+
+  const latestUserInboundForRole = rows.find((row) => {
+    const rowSessionId = normalizeSessionId(row?.sessionId || '');
+    if (rowSessionId !== sessionId) return false;
+    const rowTimestampMs = getCommsRowTimestampMs(row);
+    if (!rowTimestampMs || rowTimestampMs < sinceMs) return false;
+
+    const rawTarget = String(row?.targetRole || '').trim().toLowerCase();
+    const normalizedTarget = normalizeRole(rawTarget) || normalizeBackgroundBuilderRole(rawTarget) || rawTarget;
+    return currentTargets.has(rawTarget) || currentTargets.has(normalizedTarget);
+  });
+
+  const inboundMessageId = String(latestUserInboundForRole?.messageId || '');
+  if (
+    String(latestUserInboundForRole?.channel || '').toLowerCase() !== 'telegram'
+    || !/^telegram-in-/i.test(inboundMessageId)
+  ) {
+    return null;
+  }
+
+  return {
+    violation_class: 'telegram_user_target_requires_explicit_telegram',
+    messageId,
+    inboundMessageId: latestUserInboundForRole.messageId || null,
+    inboundTargetRole: latestUserInboundForRole.targetRole || null,
+    inboundAtMs: getCommsRowTimestampMs(latestUserInboundForRole) || null,
+    sessionId,
+    senderRole: role || 'cli',
+    targetRaw: target,
+    windowMs: TELEGRAM_USER_TARGET_GUARD_WINDOW_MS,
+  };
+}
+
 function runOutputGuards({ messageId, targetRole } = {}) {
   const guardInput = {
     content: message,
@@ -526,6 +633,14 @@ function runOutputGuards({ messageId, targetRole } = {}) {
   };
 
   if (bypassGuard) {
+    const telegramUserTargetBypass = detectTelegramUserTargetGuard({ messageId });
+    if (telegramUserTargetBypass) {
+      appendGuardJsonl('telegram-user-target-bypasses.jsonl', {
+        ...telegramUserTargetBypass,
+        bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+      });
+    }
+
     const permissionBypass = detectPermissionAskViolation({
       ...guardInput,
       bypass: '0',
@@ -572,6 +687,19 @@ function runOutputGuards({ messageId, targetRole } = {}) {
     }
 
     return { ok: true, bypassed: true };
+  }
+
+  const telegramUserTargetViolation = detectTelegramUserTargetGuard({ messageId });
+  if (telegramUserTargetViolation) {
+    const logResult = appendGuardJsonl('telegram-user-target-violations.jsonl', telegramUserTargetViolation);
+    writeGuardBlock([
+      'BLOCKED: recent Telegram inbound detected for this session.',
+      "Use explicit target 'telegram' instead of ambiguous target 'user' so the reply egresses to Telegram.",
+      `Latest inbound: ${telegramUserTargetViolation.inboundMessageId || 'unknown'} -> ${telegramUserTargetViolation.inboundTargetRole || 'unknown'}`,
+      'Intentional bypass: add --bypass-guard and accept the logged same-channel risk.',
+      `Log: ${logResult.path}`,
+    ]);
+    return { ok: false, type: 'telegram_user_target', violation: telegramUserTargetViolation };
   }
 
   const permissionViolation = detectPermissionAskViolation({
