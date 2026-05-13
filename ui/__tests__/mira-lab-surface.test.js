@@ -1846,6 +1846,56 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(activeInitiativesPath(projectRoot))).toHaveLength(1);
   });
 
+  test('active initiative ignores empty owned-work continuation signals', async () => {
+    projectRoot = tempProject();
+    [
+      {
+        item_id: 'mira-curiosity:empty-work-continuation',
+        source: 'work_continuation',
+        adapter_id: 'work_continuation_curiosity',
+        status: 'active',
+        observation: 'Owned-work continuation read carried=0; stale=0; blocked=0; approval_required=0; next=none/none.',
+        suggested_question: 'Which fresh runtime lane should Mira choose now that no owned-work continuation is due?',
+        possible_action: 'Use compact owned-work metadata to decide whether to resume existing work.',
+        route_hint: 'builder',
+        work_carried_count: 0,
+        work_stale_count: 0,
+        work_approval_required_count: 0,
+        work_due_count: 0,
+        work_held_count: 0,
+      },
+      {
+        item_id: 'mira-curiosity:active-code-mode',
+        source: 'code_mode_exploration',
+        adapter_id: 'read_only_execute_script_curiosity',
+        status: 'active',
+        observation: 'Code-mode can inspect runtime JSONL tails.',
+        suggested_question: 'What runtime file should Mira inspect after completed lanes are suppressed?',
+        possible_action: 'Use code-mode to inspect allowed local runtime evidence.',
+        route_hint: 'builder',
+      },
+    ].forEach((item, index) => appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: `2026-05-12T15:1${index}:00.000Z`,
+      sensitivity_hint: 'test_metadata',
+      no_mutation_performed: true,
+      ...item,
+    }));
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:20:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('read_only_code_exploitation');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+    }));
+    expect(result.evidence.join(' ')).not.toContain('work_due=0');
+  });
+
   test('active initiative suppresses a recent duplicate work order', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
