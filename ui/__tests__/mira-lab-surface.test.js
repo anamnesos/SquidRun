@@ -2149,6 +2149,48 @@ describe('Mira Lab sidecar surface', () => {
     ]));
   });
 
+  test('active initiative does not reopen closed memory review queue when bridge discovery is pending', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      generated_at: '2026-05-12T15:30:30.000Z',
+      item_id: 'mira-curiosity:memory-review-bridge-pending',
+      source: 'environment_apps',
+      adapter_id: 'environment_app_curiosity',
+      status: 'active',
+      observation: 'Environment health snapshot read OK score=100/100; memory=drift_detected (attention needed); bridge=pending_live_discovery; snapshot=fresh.',
+      suggested_question: 'Which environment signal should Mira act on first: memory drift, bridge state, app session, or local models?',
+      possible_action: 'Use the compact environment health read as evidence for the next runtime, bridge, or memory-consistency route.',
+      route_hint: 'builder',
+      environment_overall_label: 'OK',
+      environment_overall_score: 100,
+      environment_snapshot_stale: false,
+      environment_memory_sync_status: 'drift_detected (attention needed)',
+      environment_memory_counts: { missing: 0, orphans: 57, duplicates: 0 },
+      environment_memory_repair_state: 'review_queue_only',
+      environment_memory_review_only: true,
+      environment_memory_review_queue: { orphans: 57, actions: 0, skips: 57 },
+      environment_bridge_connection: 'pending_live_discovery',
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:31:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('bridge_live_discovery_refresh');
+    expect(result.target_role).toBe('builder');
+    expect(result.work_order.title).toBe('Refresh bridge live discovery signal: pending_live_discovery');
+    expect(result.work_order.action).toContain('without reopening the already manual memory orphan queue');
+    expect(result.work_order.title).not.toMatch(/memory drift|orphan/i);
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'environment=memory:drift_detected (attention needed) bridge:pending_live_discovery',
+      'memory_repair_state=review_queue_only',
+      'memory_review_queue=orphans:57 actions:0 skips:57',
+    ]));
+  });
+
   test('active initiative turns memory hits into compact evidence-bearing work orders', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {

@@ -3872,6 +3872,7 @@ function activeInitiativeCandidateForItem(item, index, total) {
     const memoryReviewOnly = item.environment_memory_review_only === true || memoryRepairState === 'review_queue_only';
     const memoryNeedsRepair = Boolean(memory && !memoryReviewOnly && !/^(ok|synced|clean|in_sync|synced\s+\(in sync\))$/i.test(memory));
     const bridgeNeedsRepair = Boolean(bridge && !/^(connected|disabled|not_required)$/i.test(bridge));
+    const bridgePendingLiveDiscovery = /^pending_live_discovery$/i.test(bridge);
     if (item.environment_snapshot_stale === true) score += 16;
     if (label && label !== 'OK') score += 16;
     if (Number.isFinite(Number(scoreValue)) && Number(scoreValue) < 95) score += 8;
@@ -3885,6 +3886,11 @@ function activeInitiativeCandidateForItem(item, index, total) {
         reason = 'memory drift is now a review/migration queue, not an automatic repair target';
         title = `Triage memory review queue: orphans=${reviewQueue.orphans ?? memoryCounts.orphans ?? 'unknown'} actions=${reviewQueue.actions ?? 'unknown'}`;
         action = 'Have Oracle inspect the memory review/migration queue and identify whether a mapping plan, skip confirmation, or no-op closure is the right next move.';
+      } else if (memoryReviewOnly && bridgePendingLiveDiscovery && label === 'OK') {
+        initiativeKind = 'bridge_live_discovery_refresh';
+        reason = 'memory review-only residue is closed for automatic repair, leaving bridge live discovery as the environment signal';
+        title = 'Refresh bridge live discovery signal: pending_live_discovery';
+        action = 'Have Builder verify or refresh the bridge live-discovery signal without reopening the already manual memory orphan queue.';
       } else if (memoryNeedsRepair && !bridgeNeedsRepair && label === 'OK') {
         initiativeKind = 'memory_consistency_repair';
         reason = 'memory consistency drift is the live environment signal still requiring repair';
