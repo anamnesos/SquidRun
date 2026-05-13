@@ -3626,8 +3626,19 @@ function activeInitiativeEvidenceForItem(item = {}) {
   if (numberSignal(item.runtime_blocked_count) > 0) {
     evidence.push(`runtime_blocked_modules=${asArray(item.runtime_blocked_modules).map(trimText).filter(Boolean).join(',')}`);
   }
-  if (numberSignal(item.work_due_count) > 0 || numberSignal(item.work_stale_count) > 0) {
-    evidence.push(`work_due=${numberSignal(item.work_due_count)} stale=${numberSignal(item.work_stale_count)} next=${trimText(item.work_next_agent) || 'none'}/${trimText(item.work_next_task_id) || 'none'}`);
+  if (
+    numberSignal(item.work_due_count) > 0
+    || numberSignal(item.work_stale_count) > 0
+    || numberSignal(item.work_carried_count) > 0
+    || numberSignal(item.work_approval_required_count) > 0
+    || numberSignal(item.work_held_count) > 0
+    || trimText(item.work_next_task_id)
+  ) {
+    evidence.push(
+      `work_due=${numberSignal(item.work_due_count)} stale=${numberSignal(item.work_stale_count)} `
+      + `carried=${numberSignal(item.work_carried_count)} approval=${numberSignal(item.work_approval_required_count)} `
+      + `held=${numberSignal(item.work_held_count)} next=${trimText(item.work_next_agent) || 'none'}/${trimText(item.work_next_task_id) || 'none'}`
+    );
   }
   if (trimText(item.environment_memory_sync_status) || trimText(item.environment_bridge_connection)) {
     evidence.push(`environment=memory:${trimText(item.environment_memory_sync_status) || 'unknown'} bridge:${trimText(item.environment_bridge_connection) || 'unknown'}`);
@@ -3835,16 +3846,20 @@ function activeInitiativeCandidateForItem(item, index, total) {
   } else if (source === 'work_continuation') {
     const due = numberSignal(item.work_due_count);
     const stale = numberSignal(item.work_stale_count);
-    if (due > 0 || stale > 0) {
-      score += 28 + Math.min(12, due * 3 + stale);
+    const carried = numberSignal(item.work_carried_count);
+    const approval = numberSignal(item.work_approval_required_count);
+    const held = numberSignal(item.work_held_count);
+    const nextTaskId = trimText(item.work_next_task_id);
+    if (due > 0 || stale > 0 || carried > 0 || approval > 0 || held > 0 || nextTaskId) {
+      score += 28 + Math.min(12, due * 3 + stale + carried + approval * 2 + held);
       const nextAgent = normalizeDirectRouteTarget(item.work_next_agent) || null;
       if (nextAgent && AGENT_ROLES.includes(nextAgent)) targetRole = nextAgent;
-      title = item.work_next_task_id
-        ? `Resume owned work ${trimText(item.work_next_agent) || 'agent'}/${trimText(item.work_next_task_id)}`
-        : `Resolve owned-work due=${due} stale=${stale}`;
+      title = nextTaskId
+        ? `Resume owned work ${trimText(item.work_next_agent) || 'agent'}/${nextTaskId}`
+        : `Resolve owned-work due=${due} stale=${stale} carried=${carried} approval=${approval} held=${held}`;
       action = 'Route the next dispatch-ready continuation internally before opening a new capability lane.';
     } else {
-      score -= 38;
+      return null;
     }
   } else if (source === 'environment_apps') {
     const label = trimText(item.environment_overall_label).toUpperCase();
