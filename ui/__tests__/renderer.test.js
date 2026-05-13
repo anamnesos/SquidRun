@@ -248,6 +248,7 @@ describe('renderer.js smoke tests', () => {
       statusStrip: require('../modules/status-strip'),
       paneVisibility: require('../modules/pane-visibility'),
       windowTeamBootstrap: require('../modules/window-team-bootstrap'),
+      miraLiveEntrypoint: require('../modules/mira-live-entrypoint'),
       modelSelector: require('../modules/model-selector'),
       config: require('../config'),
       bus: require('../modules/event-bus'),
@@ -282,8 +283,56 @@ describe('renderer.js smoke tests', () => {
     it('should expose rendererModules on the bridge', () => {
       expect(window.squidrun.rendererModules).toBeDefined();
       expect(window.squidrun.rendererModules.windowTeamBootstrap).toBeDefined();
+      expect(window.squidrun.rendererModules.miraLiveEntrypoint).toBeDefined();
     });
 
+  });
+
+  describe('command bar Mira routing', () => {
+    beforeEach(() => {
+      require('../modules/terminal').broadcast.mockClear();
+    });
+
+    it('routes plain command-bar messages to Mira-native prompt/reply without Architect PTY broadcast', async () => {
+      const terminal = require('../modules/terminal');
+      const sendMira = jest.fn().mockResolvedValue(true);
+      const routeTask = jest.fn();
+      const statuses = [];
+
+      const routeMessage = renderer.createCommandBarMessageRouter({
+        now: () => 1000,
+        rateLimitMs: 0,
+        setDeliveryStatus: (status) => statuses.push(status),
+        routeTask,
+        sendMira,
+      });
+
+      await expect(routeMessage('  message Mira  ')).resolves.toBe(true);
+
+      expect(sendMira).toHaveBeenCalledWith('message Mira');
+      expect(routeTask).not.toHaveBeenCalled();
+      expect(terminal.broadcast).not.toHaveBeenCalled();
+      expect(statuses).toEqual(['sending']);
+    });
+
+    it('preserves /task routing without Mira prompt/reply or Architect PTY broadcast', async () => {
+      const terminal = require('../modules/terminal');
+      const sendMira = jest.fn();
+      const routeTask = jest.fn().mockResolvedValue(true);
+
+      const routeMessage = renderer.createCommandBarMessageRouter({
+        now: () => 1000,
+        rateLimitMs: 0,
+        routeTask,
+        sendMira,
+      });
+
+      await expect(routeMessage('/task fix the route')).resolves.toBe(true);
+
+      expect(routeTask).toHaveBeenCalledWith('fix the route');
+      expect(sendMira).not.toHaveBeenCalled();
+      expect(terminal.broadcast).not.toHaveBeenCalled();
+    });
   });
 
   // Note: Callback wiring tests removed - Jest module caching makes them unreliable.
