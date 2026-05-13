@@ -39,12 +39,23 @@ describe('Mira source/action substrate plan', () => {
     }));
     expect(plan.recommended_sequence.map((entry) => entry.source)).toEqual(expect.arrayContaining([
       'memory',
+      'memory_broker',
       'runtime_comms',
     ]));
     expect(plan.sources.find((entry) => entry.source === 'memory')).toEqual(expect.objectContaining({
       status: 'active',
       strategy: SUBSTRATE_STRATEGIES.active_memory,
     }));
+    const broker = plan.sources.find((entry) => entry.source === 'memory_broker');
+    expect(broker).toEqual(expect.objectContaining({
+      status: 'active',
+      strategy: SUBSTRATE_STRATEGIES.active_memory,
+    }));
+    expect(broker.first_probe).toMatch(/hm-memory-broker recall/i);
+    expect(broker.existing_seams).toEqual(expect.arrayContaining([
+      'ui/modules/memory-broker.js recall(query, context)',
+      'ui/scripts/hm-memory-broker.js recall',
+    ]));
     expect(plan.sources.find((entry) => entry.source === 'environment_apps')).toEqual(expect.objectContaining({
       status: 'active',
       strategy: SUBSTRATE_STRATEGIES.native_adapter,
@@ -109,6 +120,15 @@ describe('Mira source/action substrate plan', () => {
     }));
     expect(codeMode.first_probe).toMatch(/JSONL/i);
     expect(codeMode.existing_seams).toContain('hm-mira-self-direction.js code-mode');
+
+    const broker = chooseMiraSourceActionSubstrate('memory_broker');
+    expect(broker).toEqual(expect.objectContaining({
+      ok: true,
+      decision: 'source_strategy',
+      strategy: SUBSTRATE_STRATEGIES.active_memory,
+      status: 'active',
+    }));
+    expect(broker.why_this_strategy).toMatch(/ranked action surface/i);
   });
 
   test('can hide deferred connectors for immediate native-first implementation planning', () => {
@@ -117,6 +137,7 @@ describe('Mira source/action substrate plan', () => {
     expect(plan.sources.map((entry) => entry.source)).toEqual(expect.arrayContaining([
       'code_mode_exploration',
       'memory',
+      'memory_broker',
       'automation_scheduler',
       'mira_runtime',
     ]));

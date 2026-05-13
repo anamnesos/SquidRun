@@ -152,6 +152,7 @@ const MIRA_CURIOSITY_SOURCE_REGISTRY = Object.freeze([
   { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'self_direction_queue', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: '.squidrun/runtime/mira-self-direction-proposals.jsonl' },
   { source: 'runtime_comms', scope: 'local_runtime_and_agent_comms', adapter_id: 'recent_comms', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/scripts/hm-comms.js history --last 20, telegram-poller.js, sms-poller.js, external-notifications.js' },
   { source: 'memory', scope: 'local_memory_and_continuity', adapter_id: 'active_memory_tools_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/mira-memory-curiosity.js compact read-only cognitive-memory retrieval, cognitive-memory-*, memory-search/retrieve, team-memory/*, memory-ingest/*, ui/scripts/hm-memory-api.js retrieve' },
+  { source: 'memory_broker', scope: 'hybrid_memory_recall', adapter_id: 'unified_memory_broker_curiosity', default_status: 'active', integration_strategy: 'existing_seam', existing_seam: 'ui/modules/memory-broker.js RRF recall + ui/scripts/hm-memory-broker.js recall + deliverHumanMessageWithRecall' },
   { source: 'browser_history', scope: 'local_browser_history', adapter_id: 'browser_history_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-browser-history-curiosity.js compact read-only Chromium History DB metadata via temp-copy' },
   { source: 'email', scope: 'local_email', adapter_id: 'email_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-email-curiosity.js compact read-only Gmail/connector metadata snapshot' },
   { source: 'web_research', scope: 'websites_and_research_trails', adapter_id: 'web_research_curiosity', default_status: 'active', integration_strategy: 'native_adapter', existing_seam: 'ui/modules/mira-web-research-curiosity.js compact read-only local research artifact inventory plus safe URLs/domains' },
@@ -1374,6 +1375,49 @@ function compactCuriosityMemoryTopResult(value) {
   };
 }
 
+function compactMemoryBrokerTopResult(value) {
+  if (!value || typeof value !== 'object') return null;
+  const rank = Number(value.rank);
+  const score = Number(value.score);
+  const contributors = asArray(value.contributors)
+    .map((entry) => ({
+      source: trimText(entry?.source) || null,
+      sourceKind: trimText(entry?.sourceKind || entry?.source_kind) || null,
+      rank: Number.isFinite(Number(entry?.rank)) ? Number(entry.rank) : null,
+    }))
+    .filter((entry) => entry.source || entry.sourceKind)
+    .slice(0, 5);
+  return {
+    rank: Number.isFinite(rank) ? rank : null,
+    score: Number.isFinite(score) ? Number(score.toFixed(6)) : null,
+    sourceKind: trimText(value.sourceKind || value.source_kind) || null,
+    source: trimText(value.source) || null,
+    id: trimText(value.id) || null,
+    ref: oneLine(value.ref, 160) || null,
+    title: oneLine(value.title, 140) || null,
+    excerpt: oneLine(value.excerpt, 240) || null,
+    contributors,
+  };
+}
+
+function compactMemoryBrokerSources(value) {
+  return asArray(value)
+    .map((entry) => ({
+      source: trimText(entry?.source) || null,
+      sourceKind: trimText(entry?.sourceKind || entry?.source_kind) || null,
+      ok: entry?.ok !== false,
+      reason: trimText(entry?.reason) || null,
+      itemCount: Number.isFinite(Number(entry?.itemCount ?? entry?.item_count))
+        ? Number(entry.itemCount ?? entry.item_count)
+        : 0,
+      elapsedMs: Number.isFinite(Number(entry?.elapsedMs ?? entry?.elapsed_ms))
+        ? Number(entry.elapsedMs ?? entry.elapsed_ms)
+        : null,
+    }))
+    .filter((entry) => entry.source || entry.sourceKind)
+    .slice(0, 8);
+}
+
 function compactBrowserHistoryTopHosts(value) {
   return asArray(value)
     .map((entry) => ({
@@ -1691,6 +1735,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const status = normalizeCuriosityStatus(rawItem.status);
   const sensitivityHint = trimText(rawItem.sensitivity_hint || rawItem.sensitivityHint || 'local_metadata_only') || 'local_metadata_only';
   const memoryResultCount = Number(rawItem.memory_result_count ?? rawItem.memoryResultCount);
+  const memoryBrokerResultCount = Number(rawItem.memory_broker_result_count ?? rawItem.memoryBrokerResultCount);
   const environmentScore = Number(rawItem.environment_overall_score ?? rawItem.environmentOverallScore);
   const browserResultCount = Number(rawItem.browser_result_count ?? rawItem.browserResultCount);
   const emailLabelCount = Number(rawItem.email_label_count ?? rawItem.emailLabelCount);
@@ -1743,6 +1788,10 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     memory_query: trimText(rawItem.memory_query || rawItem.memoryQuery) || null,
     memory_result_count: Number.isFinite(memoryResultCount) ? memoryResultCount : null,
     memory_top_result: compactCuriosityMemoryTopResult(rawItem.memory_top_result || rawItem.memoryTopResult),
+    memory_broker_query: trimText(rawItem.memory_broker_query || rawItem.memoryBrokerQuery) || null,
+    memory_broker_result_count: Number.isFinite(memoryBrokerResultCount) ? memoryBrokerResultCount : null,
+    memory_broker_top_result: compactMemoryBrokerTopResult(rawItem.memory_broker_top_result || rawItem.memoryBrokerTopResult),
+    memory_broker_sources: compactMemoryBrokerSources(rawItem.memory_broker_sources || rawItem.memoryBrokerSources),
     environment_overall_label: trimText(rawItem.environment_overall_label || rawItem.environmentOverallLabel) || null,
     environment_overall_score: Number.isFinite(environmentScore) ? environmentScore : null,
     environment_snapshot_stale: typeof (rawItem.environment_snapshot_stale ?? rawItem.environmentSnapshotStale) === 'boolean'
@@ -2033,6 +2082,199 @@ function activeMemoryCuriosityAdapter(context = {}) {
       sourcePath: top.sourcePath || null,
       contentExcerpt: top.contentExcerpt || null,
     } : null,
+    no_mutation_performed: true,
+  };
+}
+
+function memoryBrokerHasReadableStore(projectRoot) {
+  const root = path.resolve(projectRoot || process.cwd());
+  return [
+    path.join(root, '.squidrun', 'runtime', 'cognitive-memory.db'),
+    path.join(root, '.squidrun', 'memory', 'cognitive-memory.db'),
+    path.join(root, '.squidrun', 'runtime', 'team-memory.sqlite'),
+    path.join(root, '.squidrun', 'runtime', 'evidence-ledger.db'),
+  ].some((candidate) => {
+    try {
+      return fs.existsSync(candidate);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function readMiraMemoryBrokerCuriosity(payload = {}, options = {}) {
+  const projectRoot = projectRootFromOptions(options, payload);
+  const query = oneLine(payload.query || options.query || 'Mira current lane source/action substrate continuity', 1000);
+  const limit = Math.max(1, Math.min(8, Number(payload.limit || options.limit || 3) || 3));
+  const providerLimit = Math.max(1, Math.min(8, Number(payload.providerLimit || payload.provider_limit || options.providerLimit || 2) || 2));
+  const timeoutMs = Math.max(100, Math.min(5000, Number(payload.timeoutMs || payload.timeout_ms || options.timeoutMs || 600) || 600));
+  const storePreflight = payload.storePreflight !== false && options.storePreflight !== false;
+  if (storePreflight && !memoryBrokerHasReadableStore(projectRoot)) {
+    return {
+      ok: false,
+      decision: 'memory_broker_unavailable',
+      reason: 'no_local_memory_broker_stores_found',
+      query,
+      results: [],
+      sources: [],
+      consequence_controls: {
+        internal_only: true,
+        read_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        file_write_performed: false,
+        network_performed: false,
+      },
+    };
+  }
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-memory-broker.js');
+  const run = spawnSync(process.execPath, [
+    scriptPath,
+    'recall',
+    query,
+    '--limit', String(limit),
+    '--provider-limit', String(providerLimit),
+    '--timeout-ms', String(timeoutMs),
+    '--json',
+  ], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: Math.max(3500, timeoutMs * 6),
+    maxBuffer: 1024 * 1024,
+    env: {
+      ...process.env,
+      NODE_NO_WARNINGS: '1',
+    },
+  });
+  if (run.status !== 0) {
+    return {
+      ok: false,
+      decision: 'memory_broker_unavailable',
+      reason: 'hm_memory_broker_failed',
+      error: oneLine(run.stderr || run.stdout || 'memory broker command failed', 260),
+      query,
+      results: [],
+      sources: [],
+      consequence_controls: {
+        internal_only: true,
+        read_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        file_write_performed: false,
+        network_performed: false,
+      },
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(run.stdout || '{}');
+  } catch (err) {
+    return {
+      ok: false,
+      decision: 'memory_broker_unavailable',
+      reason: 'hm_memory_broker_json_parse_failed',
+      error: err.message,
+      query,
+      results: [],
+      sources: [],
+      consequence_controls: {
+        internal_only: true,
+        read_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        file_write_performed: false,
+        network_performed: false,
+      },
+    };
+  }
+  const results = asArray(parsed.results).slice(0, limit);
+  return {
+    ok: parsed.ok === true,
+    decision: parsed.ok === true ? 'memory_broker_recalled_read_only' : 'memory_broker_unavailable',
+    query: trimText(parsed.query || query),
+    result_count: results.length,
+    results,
+    sources: compactMemoryBrokerSources(parsed.sources),
+    consequence_controls: {
+      internal_only: true,
+      read_only: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      file_write_performed: false,
+      network_performed: false,
+      ...(parsed.consequence_controls || {}),
+    },
+  };
+}
+
+function activeMemoryBrokerCuriosityAdapter(context = {}) {
+  const query = trimText(context.memoryBrokerCuriosityQuery || context.memoryCuriosityQuery)
+    || 'Mira source action substrate current lane memory continuity';
+  const reader = typeof context.memoryBrokerCuriosityReader === 'function'
+    ? context.memoryBrokerCuriosityReader
+    : readMiraMemoryBrokerCuriosity;
+  const result = reader({
+    query,
+    limit: context.memoryBrokerLimit || 3,
+    providerLimit: context.memoryBrokerProviderLimit || 2,
+    timeoutMs: context.memoryBrokerTimeoutMs || 600,
+    storePreflight: context.memoryBrokerStorePreflight,
+  }, {
+    projectRoot: context.projectRoot,
+    query,
+    limit: context.memoryBrokerLimit || 3,
+    providerLimit: context.memoryBrokerProviderLimit || 2,
+    timeoutMs: context.memoryBrokerTimeoutMs || 600,
+    storePreflight: context.memoryBrokerStorePreflight,
+  });
+  if (!result || result.ok !== true) {
+    return {
+      source: 'memory_broker',
+      scope: 'hybrid_memory_recall',
+      adapter_id: 'unified_memory_broker_curiosity',
+      integration_strategy: 'existing_seam',
+      status: 'unavailable_in_this_runtime',
+      observation: `Unified memory broker recall was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
+      why_interesting: 'Mira should have one ranked recall arm over vector/cognitive, graph/team, and episodic/ledger stores instead of choosing memory stores manually.',
+      hypothesis: 'The substrate should keep the unified broker as the next memory arm once local stores are present.',
+      suggested_question: 'What local memory broker store or provider is missing from this runtime?',
+      possible_action: 'Verify hm-memory-broker recall over local cognitive, team, and evidence stores before routing memory-based initiatives.',
+      route_hint: 'builder',
+      sensitivity_hint: 'local_memory_metadata',
+      adapter_error: trimText(result?.reason || result?.error || 'memory_broker_unavailable'),
+      memory_broker_query: query,
+      memory_broker_result_count: 0,
+      memory_broker_sources: compactMemoryBrokerSources(result?.sources),
+      no_mutation_performed: true,
+    };
+  }
+  const top = compactMemoryBrokerTopResult(asArray(result.results)[0]);
+  const topLabel = top?.title || top?.ref || top?.id || 'no titled result';
+  const sourceText = compactMemoryBrokerSources(result.sources)
+    .map((entry) => `${entry.source || entry.sourceKind}:${entry.itemCount}`)
+    .join(', ') || 'no provider counts';
+  return {
+    source: 'memory_broker',
+    scope: 'hybrid_memory_recall',
+    adapter_id: 'unified_memory_broker_curiosity',
+    integration_strategy: 'existing_seam',
+    status: 'active',
+    observation: `Unified memory broker returned ${result.result_count || 0} ranked result(s) for the active lane query; top=${topLabel}; sources=${sourceText}.`,
+    why_interesting: 'Mira can now treat memory as one ranked source/action arm across vector, graph, and episodic stores.',
+    hypothesis: top
+      ? `The broker result "${topLabel}" may change which internal route Mira should pick next.`
+      : 'The broker is connected, but this query did not produce a strong ranked result yet.',
+    suggested_question: top
+      ? `Which current route changes if Mira uses unified recall result ${top.id || topLabel}?`
+      : 'Which broker query should Mira practice next for the active lane?',
+    possible_action: 'Use hm-memory-broker recall as ranked private context before choosing the next internal route; compare contributors and route only if it changes the decision.',
+    route_hint: 'builder',
+    sensitivity_hint: 'local_memory_metadata',
+    memory_broker_query: result.query || query,
+    memory_broker_result_count: result.result_count || 0,
+    memory_broker_top_result: top,
+    memory_broker_sources: compactMemoryBrokerSources(result.sources),
     no_mutation_performed: true,
   };
 }
@@ -2657,6 +2899,7 @@ function defaultCuriosityAdapters() {
     runtimeQueueCuriosityAdapter,
     recentCommsCuriosityAdapter,
     activeMemoryCuriosityAdapter,
+    activeMemoryBrokerCuriosityAdapter,
     activeBrowserHistoryCuriosityAdapter,
     activeEmailCuriosityAdapter,
     activeWebResearchCuriosityAdapter,
@@ -2680,8 +2923,8 @@ function buildAccelerationCuriosityItems(context) {
       observation: 'Mira now has a source/action substrate map that classifies source arms by native adapters, MCP-compatible connectors, code-mode wrappers, workflow/DAG execution, active memory, and evolution loops.',
       why_interesting: 'A substrate would let Mira wander, inspect, ask, and route work across files, browser trails, email, web, memory, scheduler, and app state without James hand-scoping each inspection.',
       hypothesis: 'The next jump is wiring the highest-value substrate arm instead of repeatedly mapping the same source/action surface.',
-      suggested_question: 'Which active or adapter-ready source/action arm should Mira connect next: memory retrieval, scheduler workflow, work continuation, environment state, or visual assets?',
-      possible_action: 'Use the source/action substrate plan to pick and route the next concrete adapter, starting with active memory or scheduled curiosity.',
+      suggested_question: 'Which active or adapter-ready source/action arm should Mira connect next: unified memory broker, scheduler workflow, work continuation, environment state, or visual assets?',
+      possible_action: 'Use the source/action substrate plan to pick and route the next concrete adapter, starting with memory broker or scheduled curiosity.',
       route_hint: 'architect',
       sensitivity_hint: 'source_action_substrate_design',
     },
@@ -2772,6 +3015,12 @@ function runMiraCuriosityScout(payload = {}, options = {}) {
     recentCommsText: options.recentCommsText,
     memoryCuriosityReader: options.memoryCuriosityReader,
     memoryCuriosityQuery: options.memoryCuriosityQuery,
+    memoryBrokerCuriosityReader: options.memoryBrokerCuriosityReader,
+    memoryBrokerCuriosityQuery: options.memoryBrokerCuriosityQuery,
+    memoryBrokerLimit: options.memoryBrokerLimit,
+    memoryBrokerProviderLimit: options.memoryBrokerProviderLimit,
+    memoryBrokerTimeoutMs: options.memoryBrokerTimeoutMs,
+    memoryBrokerStorePreflight: options.memoryBrokerStorePreflight,
     browserHistoryCuriosityReader: options.browserHistoryCuriosityReader,
     browserHistoryPaths: options.browserHistoryPaths,
     browserHistoryLimit: options.browserHistoryLimit,
@@ -2854,6 +3103,7 @@ const CURIOSITY_BURST_DEFAULT_SOURCES = Object.freeze([
   'repo_files',
   'runtime_comms',
   'memory',
+  'memory_broker',
   'browser_history',
   'email',
   'web_research',
@@ -2873,7 +3123,7 @@ function normalizeCuriosityBurstSources(payload = {}, options = {}) {
     .map((item) => trimText(item))
     .filter((item) => allowed.has(item));
   const unique = Array.from(new Set(values));
-  const maxSources = Math.max(1, Math.min(13, Number(payload.maxSources || options.maxSources || 13) || 13));
+  const maxSources = Math.max(1, Math.min(14, Number(payload.maxSources || options.maxSources || 14) || 14));
   return (unique.length > 0 ? unique : [...CURIOSITY_BURST_DEFAULT_SOURCES]).slice(0, maxSources);
 }
 
@@ -2881,6 +3131,7 @@ function curiosityBurstAdaptersForSource(source) {
   if (source === 'repo_files') return [gitStatusCuriosityAdapter];
   if (source === 'runtime_comms') return [runtimeQueueCuriosityAdapter, recentCommsCuriosityAdapter];
   if (source === 'memory') return [activeMemoryCuriosityAdapter];
+  if (source === 'memory_broker') return [activeMemoryBrokerCuriosityAdapter];
   if (source === 'browser_history') return [activeBrowserHistoryCuriosityAdapter];
   if (source === 'email') return [activeEmailCuriosityAdapter];
   if (source === 'web_research') return [activeWebResearchCuriosityAdapter];
@@ -2898,6 +3149,7 @@ function curiosityBurstRouteForItems(items = []) {
   const priority = {
     automation_scheduler: 96,
     cheap_parallel_scouts: 88,
+    memory_broker: 77,
     memory: 76,
     browser_history: 74,
     email: 73,
@@ -2977,6 +3229,12 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     recentCommsText: options.recentCommsText,
     memoryCuriosityReader: options.memoryCuriosityReader,
     memoryCuriosityQuery: options.memoryCuriosityQuery,
+    memoryBrokerCuriosityReader: options.memoryBrokerCuriosityReader,
+    memoryBrokerCuriosityQuery: options.memoryBrokerCuriosityQuery,
+    memoryBrokerLimit: options.memoryBrokerLimit,
+    memoryBrokerProviderLimit: options.memoryBrokerProviderLimit,
+    memoryBrokerTimeoutMs: options.memoryBrokerTimeoutMs,
+    memoryBrokerStorePreflight: options.memoryBrokerStorePreflight,
     browserHistoryCuriosityReader: options.browserHistoryCuriosityReader,
     browserHistoryPaths: options.browserHistoryPaths,
     browserHistoryLimit: options.browserHistoryLimit,
@@ -3116,6 +3374,12 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
     active_priority: 56,
     target_role: 'builder',
     reason: 'source/action substrate turns many dormant curiosity arms into one usable capability surface',
+  },
+  memory_broker: {
+    priority: 90,
+    active_priority: 55,
+    target_role: 'builder',
+    reason: 'unified memory broker turns fragmented recall stores into one ranked action source',
   },
   implementation_outcomes: {
     priority: 94,
@@ -3502,6 +3766,12 @@ const ACTIVE_INITIATIVE_SOURCE_PLAN = Object.freeze({
     initiative_kind: 'skill_practice',
     reason: 'successful loops should become reusable skills Mira can practice and promote',
   },
+  memory_broker: {
+    priority: 80,
+    target_role: 'builder',
+    initiative_kind: 'unified_memory_recall_practice',
+    reason: 'unified memory recall should ground the next move across vector, graph, and episodic stores',
+  },
   memory: {
     priority: 78,
     target_role: 'builder',
@@ -3682,6 +3952,21 @@ function activeInitiativeEvidenceForItem(item = {}) {
     evidence.push(`memory_results=${numberSignal(item.memory_result_count)} top=${topId}${topTitle ? ` title=${topTitle}` : ''}${sourcePath ? ` source=${sourcePath}` : ''}`);
     const excerpt = oneLine(top.contentExcerpt || top.content_excerpt, 160);
     if (excerpt) evidence.push(`memory_excerpt=${excerpt}`);
+  }
+  if (numberSignal(item.memory_broker_result_count) > 0) {
+    const top = item.memory_broker_top_result || {};
+    const topId = trimText(top.id || top.ref || top.title || 'unknown');
+    const topTitle = oneLine(top.title || top.ref || top.sourceKind, 80);
+    const sourceKind = trimText(top.sourceKind || top.source_kind);
+    evidence.push(`memory_broker_results=${numberSignal(item.memory_broker_result_count)} top=${topId}${topTitle ? ` title=${topTitle}` : ''}${sourceKind ? ` source_kind=${sourceKind}` : ''}`);
+    const excerpt = oneLine(top.excerpt, 160);
+    if (excerpt) evidence.push(`memory_broker_excerpt=${excerpt}`);
+    const sourceText = asArray(item.memory_broker_sources)
+      .map((entry) => `${trimText(entry.source || entry.sourceKind)}:${numberSignal(entry.itemCount ?? entry.item_count)}`)
+      .filter((entry) => entry && !entry.startsWith(':'))
+      .slice(0, 5)
+      .join(',');
+    if (sourceText) evidence.push(`memory_broker_sources=${sourceText}`);
   }
   if (item.email_snapshot_gaps?.thread_poor_snapshot) {
     evidence.push(`email_snapshot_gaps=sender_domain:${numberSignal(item.email_snapshot_gaps.missing_sender_domain_count)} subject:${numberSignal(item.email_snapshot_gaps.missing_subject_count)} timestamp:${numberSignal(item.email_snapshot_gaps.missing_timestamp_count)}`);
@@ -3920,6 +4205,18 @@ function activeInitiativeCandidateForItem(item, index, total) {
       action = 'Have Builder stage a review-only recurring curiosity-burst design using runtime_comms, memory, environment_apps, work_continuation, browser_history, and email metadata; do not create, update, delete, or run schedules from scout output.';
     } else {
       score -= 18;
+    }
+  } else if (source === 'memory_broker') {
+    const brokerResults = numberSignal(item.memory_broker_result_count);
+    const top = item.memory_broker_top_result || {};
+    const topId = trimText(top.id || top.ref || top.title);
+    const topLabel = oneLine(top.title || top.ref || top.sourceKind || topId, 96);
+    if (brokerResults > 0 && topId) {
+      score += 20 + Math.min(10, brokerResults);
+      title = `Practice unified recall broker on ${topLabel || topId}.`;
+      action = 'Use hm-memory-broker recall output as ranked context before routing the next Mira improvement; compare vector, graph, and episodic contributors and record whether it changed the decision.';
+    } else {
+      score -= 22;
     }
   } else if (source === 'memory') {
     const memoryResults = numberSignal(item.memory_result_count);
@@ -6176,6 +6473,7 @@ module.exports = {
   scanMiraLabConfidenceSource,
   selectMiraActiveInitiative,
   selectMiraDirectRoute,
+  readMiraMemoryBrokerCuriosity,
   writeMiraEmailCuriositySnapshot,
   buildMiraLabTurn,
   exportMiraLabTranscript,
