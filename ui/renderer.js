@@ -1671,6 +1671,12 @@ function createCommandBarMessageRouter(options = {}) {
     : () => {};
   const routeTask = typeof options.routeTask === 'function' ? options.routeTask : async () => false;
   const sendMira = typeof options.sendMira === 'function' ? options.sendMira : async () => false;
+  const sendArchitect = typeof options.sendArchitect === 'function'
+    ? options.sendArchitect
+    : async (text) => {
+      terminal.broadcast(text);
+      return true;
+    };
 
   let lastSentAt = -Infinity;
 
@@ -1689,7 +1695,11 @@ function createCommandBarMessageRouter(options = {}) {
       return await routeTask(trimmed.slice(6));
     }
 
-    return await sendMira(trimmed);
+    if (trimmed.toLowerCase().startsWith('/mira ')) {
+      return await sendMira(trimmed.slice(6));
+    }
+
+    return await sendArchitect(trimmed);
   };
 }
 
@@ -1755,8 +1765,8 @@ function setupEventListeners() {
   // Keep command bar copy explicit now that target selection UI is removed.
   function updateCommandPlaceholder() {
     if (!broadcastInput) return;
-    broadcastInput.placeholder = 'Type here to message Mira (Enter to send)';
-    broadcastInput.title = 'Send message to Mira';
+    broadcastInput.placeholder = 'Message Architect / pane 1 (Enter to send)';
+    broadcastInput.title = 'Send message to Architect pane';
   }
 
   // showStatusNotice now imported from ./modules/notifications
