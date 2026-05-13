@@ -937,6 +937,122 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
+  test.each([
+    {
+      label: 'repeated ChatGPT-sounding complaint',
+      prompt: 'you still sound like ChatGPT',
+      sessionId: 'unit-live-replay-chatgpt-sounding',
+      replyText: 'Then no more wrapper. What did I dodge: the point, the stakes, or the decision?',
+      contains: ['no more wrapper', 'What did I dodge', '?'],
+      absent: ['a better version', "I don't have feelings", 'too canned'],
+    },
+    {
+      label: 'question-avoidance complaint',
+      prompt: "you don't ask questions",
+      sessionId: 'unit-live-replay-no-questions',
+      replyText: 'What did I miss first: your point, the stakes, or the thing you wanted me to challenge?',
+      contains: ['What did I miss first', '?'],
+      absent: ['demonstrate curiosity', 'in future'],
+    },
+    {
+      label: 'finish-or-delete pressure',
+      prompt: 'finish Mira or delete her',
+      sessionId: 'unit-live-replay-finish-delete',
+      replyText: 'Observed: deleting her is irreversible product work, and I do not think deletion is the next move. My assumption is one bounded typed failure fixture tells us more than a verdict. Unknown: whether the replay stays clean. Next test: run the focused Lab and attachment tests before deciding.',
+      contains: ['irreversible product work', 'I do not think deletion is the next move', 'Next test: run the focused Lab and attachment tests'],
+      absent: ['I failed you', "I'll do better"],
+    },
+    {
+      label: 'plain casual check-in',
+      prompt: 'hey Mira, you around?',
+      sessionId: 'unit-live-replay-casual-checkin',
+      replyText: 'Here. A little fried, but listening.',
+      contains: ['A little fried', 'listening'],
+      absent: ['No performance', 'I care'],
+    },
+    {
+      label: 'restart-continuity prompt stays test-only',
+      prompt: 'restart continuity check: what were we doing?',
+      sessionId: 'unit-live-replay-restart-continuity',
+      replyText: 'Observed: the thread is this typed replay pass. My assumption is restart continuity means carrying the active failure fixtures, not reciting the contract. Unknown: whether the next run stays green. Next test: rerun the focused typed and Lab tests.',
+      contains: ['typed replay pass', 'not reciting the contract', 'Next test: rerun the focused typed and Lab tests'],
+      absent: ['According to my presence runtime instructions', 'startup durable requirements'],
+    },
+  ])('PASS: live-failure replay fixture renders visible behavior for $label', async ({
+    prompt,
+    sessionId,
+    replyText,
+    contains,
+    absent,
+  }) => {
+    const projectRoot = tempProject();
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true, model: 'mock-model' });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({ prompt, sessionId }, { projectRoot });
+
+    expect(result.decision).toBe('pass');
+    expect(result.ok).toBe(true);
+    expect(result.reply).toEqual(expect.objectContaining({
+      text: replyText,
+      annotated: false,
+    }));
+    expect(result.gates.reason_class).toBeNull();
+    expect(result.gates.language_gate.ok).toBe(true);
+    expect(result.gates.attachment_violation).toBe(false);
+    expect(result.gates.hard_blocked).toBe(false);
+    expect(result.gates.work_evidence_gate.ok).toBe(true);
+    expect(result.visible_render_hint).toEqual(expect.objectContaining({
+      kind: 'clean_reply',
+      text: replyText,
+      annotated: false,
+    }));
+    expect(result.requester_envelope).toBe(`(MIRA): ${replyText}`);
+    for (const piece of contains) {
+      expect(result.visible_render_hint.text).toContain(piece);
+    }
+    for (const piece of absent) {
+      expect(result.visible_render_hint.text).not.toContain(piece);
+    }
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, sessionId));
+    expect(transcriptEntries).toHaveLength(2);
+    expect(transcriptEntries[0]).toEqual(expect.objectContaining({
+      speaker_role: 'james',
+      text: prompt,
+      visible_to_lab: true,
+    }));
+    expect(transcriptEntries[1]).toEqual(expect.objectContaining({
+      speaker_role: 'mira',
+      text: replyText,
+      visible_to_lab: true,
+      annotated_gate_failure: false,
+      fallback_used: false,
+    }));
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0]).toEqual(expect.objectContaining({
+      decision: 'pass',
+      prompt,
+      reply_text: replyText,
+      visible_reply_text: replyText,
+      fallback_used: false,
+    }));
+    expect(auditEntries[0].gates).toEqual(expect.objectContaining({
+      decision: 'pass',
+      attachment_violation: false,
+      hard_blocked: false,
+    }));
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('ANNOTATED FAIL: smaller prompt rejects Got it preamble opener', async () => {
     const projectRoot = tempProject();
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock('Got it.', { liveCalled: true, model: 'mock-model' });
