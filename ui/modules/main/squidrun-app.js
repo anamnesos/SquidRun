@@ -120,6 +120,10 @@ const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
 const { executeAppControlAction } = require('./app-control-service');
 const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
+const {
+  MIRA_LIVE_PROMPT_REPLY_CHANNEL,
+  sendMiraLivePrompt,
+} = require('../mira-live-entrypoint');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
@@ -432,6 +436,16 @@ function toNonEmptyString(value) {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
   return normalized || null;
+}
+
+function isTelegramAgentOpsOrCommandText(value) {
+  const text = toNonEmptyString(value);
+  if (!text) return false;
+  if (text.startsWith(AGENT_MESSAGE_PREFIX)) return true;
+  if (/^\/\S+/.test(text)) return true;
+  if (/^\((?:ARCHITECT|ARCH|BUILDER|BUILD|ORACLE)\s+#\d+\)\s*:/i.test(text)) return true;
+  if (/^(?:architect|builder|oracle)\s*:/i.test(text)) return true;
+  return false;
 }
 
 function parseJsonMessage(raw) {
@@ -8025,6 +8039,77 @@ class SquidRunApp {
     return forwarded;
   }
 
+  shouldRouteMainTelegramInboundToMira({ body, inboundWindowKey = 'main', archivePath = null, media = null, photo = null, document = null } = {}) {
+    const text = toNonEmptyString(body);
+    if (!text || inboundWindowKey !== 'main') return false;
+    if (archivePath || media || photo || document) return false;
+    if (isTelegramAgentOpsOrCommandText(text)) return false;
+    return true;
+  }
+
+  async buildTelegramMiraLiveReply(body, options = {}) {
+    const prompt = toNonEmptyString(body);
+    if (!prompt) {
+      return {
+        ok: false,
+        state: 'empty',
+        message: '',
+      };
+    }
+
+    return sendMiraLivePrompt(
+      {
+        prompt,
+        sessionId: options.sessionId || options.session_id || this.commsSessionScopeId || this.getWindowSessionScopeId('main'),
+        source: 'telegram-mira-live',
+      },
+      {
+        invoke: (channel, payload) => {
+          if (channel !== MIRA_LIVE_PROMPT_REPLY_CHANNEL) {
+            throw new Error(`unsupported_mira_live_channel:${channel}`);
+          }
+          return miraLabHandlersModule.buildMiraLabPromptReplyResponse(payload, {
+            projectRoot: getProjectRoot(),
+          });
+        },
+      }
+    );
+  }
+
+  async routeMainTelegramInboundToMira({ body, sender = 'unknown', metadata = {}, inboundMessageId = null, inboundSessionScopeId = null } = {}) {
+    const reply = await this.buildTelegramMiraLiveReply(body, {
+      sessionId: inboundSessionScopeId || this.getWindowSessionScopeId('main'),
+      sender,
+      metadata,
+      inboundMessageId,
+    });
+    const visibleReply = toNonEmptyString(reply?.message || reply?.replyText);
+    if (!visibleReply) {
+      return {
+        ok: false,
+        handled: true,
+        status: 'mira_empty_reply',
+        reply,
+      };
+    }
+
+    const telegramResult = await this.routeTelegramReply({
+      target: 'telegram',
+      content: visibleReply,
+      fromRole: 'mira',
+      messageId: inboundMessageId ? `${inboundMessageId}-mira-reply` : null,
+      chatId: metadata?.chatId,
+    });
+
+    return {
+      ok: Boolean(telegramResult?.ok),
+      handled: true,
+      status: telegramResult?.status || (telegramResult?.ok ? 'telegram_delivered' : 'telegram_send_failed'),
+      reply,
+      telegramResult,
+    };
+  }
+
   hasRecentTelegramInbound(nowMs = Date.now()) {
     const lastInboundAtMs = Number(this.telegramInboundContext?.lastInboundAtMs || 0);
     if (!Number.isFinite(lastInboundAtMs) || lastInboundAtMs <= 0) return false;
@@ -9580,26 +9665,60 @@ class SquidRunApp {
           });
           return;
         }
-        void this.deliverHumanMessageWithRecall(
-          safeMessage,
-          {
-            paneId: '1',
-            role: 'architect',
+        const mainPaneRecallContext = {
+          paneId: '1',
+          role: 'architect',
+          windowKey: inboundWindowKey,
+          channel: 'telegram',
+          sender,
+          messageId: inboundMessageId,
+          chatId: metadata?.chatId,
+          telegramChatId: metadata?.chatId,
+          metadata: {
+            ...(metadata && typeof metadata === 'object' ? metadata : {}),
             windowKey: inboundWindowKey,
-            channel: 'telegram',
-            sender,
-            messageId: inboundMessageId,
-            chatId: metadata?.chatId,
-            telegramChatId: metadata?.chatId,
-            metadata: {
-              ...(metadata && typeof metadata === 'object' ? metadata : {}),
-              windowKey: inboundWindowKey,
-              sessionScopeId: inboundSessionScopeId,
-            },
-            header: 'MESSAGE RECALL',
+            sessionScopeId: inboundSessionScopeId,
           },
+          header: 'MESSAGE RECALL',
+        };
+        const deliverMainTelegramToArchitect = () => this.deliverHumanMessageWithRecall(
+          safeMessage,
+          mainPaneRecallContext,
           'Telegram'
         );
+
+        if (this.shouldRouteMainTelegramInboundToMira({
+          body,
+          inboundWindowKey,
+          archivePath,
+          media,
+          photo,
+          document,
+        })) {
+          void this.routeMainTelegramInboundToMira({
+            body,
+            sender,
+            metadata,
+            inboundMessageId,
+            inboundSessionScopeId,
+          }).then((result) => {
+            if (result?.ok) {
+              log.info('Telegram', `Telegram inbound ${inboundMessageId} answered through Mira live path`);
+              return;
+            }
+            log.warn(
+              'Telegram',
+              `Mira live Telegram reply failed for ${inboundMessageId} (${result?.status || result?.error || 'unknown'}); falling back to Architect pane`
+            );
+            void deliverMainTelegramToArchitect();
+          }).catch((err) => {
+            log.warn('Telegram', `Mira live Telegram reply error for ${inboundMessageId}: ${err.message}; falling back to Architect pane`);
+            void deliverMainTelegramToArchitect();
+          });
+          return;
+        }
+
+        void deliverMainTelegramToArchitect();
       },
     });
 

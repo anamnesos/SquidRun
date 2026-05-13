@@ -20,12 +20,13 @@ function normalizeMiraLiveSessionId(value) {
 function buildMiraLivePromptPayload(input = {}) {
   const prompt = trimText(input.prompt || input.message || input.text);
   const sessionId = normalizeMiraLiveSessionId(input.sessionId || input.session_id);
+  const source = trimText(input.source) || 'main-command-bar-mira-live';
   return {
     sessionId,
     prompt,
     speakerRole: USER_SPEAKER_ROLE,
     requesterPane: null,
-    source: 'main-command-bar-mira-live',
+    source,
   };
 }
 
