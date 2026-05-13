@@ -3971,7 +3971,7 @@ describe('SquidRunApp', () => {
         }));
 
         expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
-          expect.stringContaining('Mira speaking in Telegram now.'),
+          expect.stringContaining('Mira speaking here now.'),
           process.env,
           expect.objectContaining({
             messageId: 'telegram-in-101-mira-reply',
@@ -3988,8 +3988,9 @@ describe('SquidRunApp', () => {
             }),
           })
         );
-        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('This is new; just talk to me here.');
-        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('I will route the team backstage if needed.');
+        expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Mira speaking here now.');
+        expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toContain('I will route the team backstage if needed.');
+        expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toContain('No action needed.');
         expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Mira visible reply from Telegram.');
         expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toMatch(/ARCH|Architect|Builder|Oracle|hm-send|\[AGENT MSG/i);
         expect(JSON.parse(fs.readFileSync(statePath, 'utf8'))).toEqual(expect.objectContaining({
@@ -4003,6 +4004,28 @@ describe('SquidRunApp', () => {
       } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
       }
+    });
+
+    it('contains angry Telegram meta-repair replies before egress', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+      sendMiraLivePrompt.mockResolvedValueOnce({
+        ok: true,
+        state: 'ready',
+        message: 'Yeah. Fair. I just said "no machinery" and then pointed at the machinery in nicer clothes. Bad turn. I should have said it sooner instead of wasting your time.',
+      });
+
+      await app.routeMainTelegramInboundToMira({
+        body: 'wtf worthless chat gpt output again',
+        sender: 'james',
+        metadata: { chatId: '5613428850' },
+        inboundMessageId: 'telegram-in-meta-loop',
+      });
+
+      const sentText = sendRoutedTelegramMessage.mock.calls[0][0];
+      expect(sentText).toBe("No. I'm stopping here.");
+      expect(sentText).not.toMatch(/yeah|fair|model|persona|output|voice|machinery|assistant|chat\s*gpt|team|routing|rules|because|failed|should have/i);
     });
 
     it('does not repeat Mira Telegram first-contact orientation after channel state is marked', async () => {
