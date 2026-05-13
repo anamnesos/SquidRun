@@ -475,6 +475,9 @@ const windowTeamBootstrap = createWindowTeamBootstrap({
   log,
   initialContext: initialWindowContext,
 });
+if (typeof terminal.setStartupWindowContext === 'function') {
+  terminal.setStartupWindowContext(initialWindowContext);
+}
 const STARTUP_OVERLAY_FADE_MS = 280;
 const DAEMON_TIMEOUT_FALLBACK_MESSAGE = "SquidRun couldn't start the background daemon. Make sure Node.js 18+ is installed and try restarting the app.";
 const STARTUP_LOADING_DEFAULT_MESSAGE = 'Starting SquidRun...';
@@ -500,6 +503,9 @@ function getCurrentWindowContext() {
 
 function handleRendererWindowContext(payload = {}) {
   const windowContext = windowTeamBootstrap.handleWindowContext(payload || {});
+  if (typeof terminal.setStartupWindowContext === 'function') {
+    terminal.setStartupWindowContext(windowContext);
+  }
   applyWindowChrome(windowContext);
   if (!initState.autoSpawnChecked) {
     checkInitComplete();

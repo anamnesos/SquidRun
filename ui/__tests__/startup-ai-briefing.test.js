@@ -12,6 +12,13 @@ const {
 } = require('../modules/startup-ai-briefing');
 
 describe('startup-ai-briefing', () => {
+  test('startup scope keeps non-main profileName when windowKey is generic main', () => {
+    expect(_internals.resolveStartupScopeKey({
+      windowKey: 'main',
+      profileName: 'eunbyeol',
+    })).toBe('eunbyeol');
+  });
+
   test('selects newest transcript files first', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-files-'));
     try {
@@ -192,6 +199,73 @@ describe('startup-ai-briefing', () => {
       expect(guarded).toContain('New Mira implementation seam');
       expect(guarded.indexOf('## Live Current Lane')).toBeLessThan(guarded.indexOf('# AI Startup Briefing'));
       expect(guarded.indexOf('## Recent Current-Scope Comms')).toBeLessThan(guarded.indexOf('# AI Startup Briefing'));
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('excludes main Mira durable requirements and current lane from Eunbyeol startup scope', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-eunbyeol-scope-'));
+
+    try {
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'handoffs'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'runtime'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, 'docs'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tempRoot, '.squidrun', 'handoffs', 'ai-briefing.md'),
+        '# AI Startup Briefing\n\n- Main Mira startup prose.\n'
+      );
+      fs.writeFileSync(
+        path.join(tempRoot, '.squidrun', 'handoffs', 'current-lane.json'),
+        JSON.stringify({
+          version: 1,
+          sessionId: 'app-session-372',
+          status: 'active',
+          activeLane: {
+            laneId: 'app-session-372:architect-9:mira',
+            objective: 'Main Mira Presence Runtime acceptance',
+          },
+        })
+      );
+      fs.writeFileSync(
+        path.join(tempRoot, 'docs', 'mira-presence-runtime-acceptance-v0.md'),
+        '# Mira Presence Runtime Acceptance v0\n\nVisible Mira replies must satisfy anti-smoothing constraints.\n'
+      );
+
+      const guarded = readStartupBriefingForInjection({
+        projectRoot: tempRoot,
+        windowKey: 'eunbyeol',
+        profileName: 'eunbyeol',
+        sessionScopeId: 'app-session-372:eunbyeol',
+        nowMs: Date.parse('2026-05-13T16:45:00.000Z'),
+        recentCommsRows: [
+          {
+            senderRole: 'architect',
+            targetRole: 'builder',
+            status: 'routed',
+            rawBody: '(ARCHITECT #9): Main Mira Presence lane should stay main.',
+            brokeredAtMs: 1000,
+            sessionId: 'app-session-372',
+            metadata: { windowKey: 'main', profileName: 'main' },
+          },
+          {
+            senderRole: 'architect',
+            targetRole: 'builder',
+            status: 'routed',
+            rawBody: '(ARCHITECT #10): Eunbyeol case runtime context.',
+            brokeredAtMs: 2000,
+            sessionId: 'app-session-372:eunbyeol',
+            metadata: { windowKey: 'eunbyeol', profileName: 'eunbyeol' },
+          },
+        ],
+      });
+
+      expect(guarded).toContain('Eunbyeol case runtime context');
+      expect(guarded).not.toContain('Startup-Facing Durable Requirements');
+      expect(guarded).not.toContain('Main Mira Presence Runtime acceptance');
+      expect(guarded).not.toContain('Main Mira startup prose');
+      expect(guarded).not.toContain('Main Mira Presence lane should stay main');
+      expect(guarded).not.toContain('anti-smoothing');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

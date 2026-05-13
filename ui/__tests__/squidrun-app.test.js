@@ -1205,6 +1205,7 @@ describe('SquidRunApp', () => {
           windowKey: 'scoped',
           startupBundlePath: '/test/workspace/runtime/window-teams/scoped/startup-bundle.md',
           startupSourceFiles: [],
+          startupBundleReady: false,
           standaloneWindow: false,
           lifecycleMode: 'secondary-window',
         })
@@ -1246,6 +1247,7 @@ describe('SquidRunApp', () => {
             windowTeam: 'eunbyeol',
             profileName: 'eunbyeol',
             profileLabel: 'Eunbyeol',
+            startupBundleReady: 'true',
             autoBootAgents: 'true',
             standaloneWindow: 'true',
             lifecycleMode: 'standalone-profile-app',
@@ -1265,6 +1267,7 @@ describe('SquidRunApp', () => {
           profileName: 'eunbyeol',
           profileLabel: 'Eunbyeol',
           startupBundlePath: '/test/workspace/runtime/window-teams/eunbyeol/startup-bundle.md',
+          startupBundleReady: true,
           autoBootAgents: true,
           standaloneWindow: true,
           lifecycleMode: 'standalone-profile-app',

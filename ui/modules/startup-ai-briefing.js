@@ -5,6 +5,7 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env'
 const fs = require('fs');
 const path = require('path');
 const { getProjectRoot, resolveCoordPath } = require('../config');
+const { isMainProfile, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
 const { resolveClaudeTranscriptProjectsDir } = require('./transcript-index');
 const { queryCommsJournalEntries } = require('./main/comms-journal');
 const {
@@ -46,6 +47,49 @@ function toText(value, fallback = '') {
   return normalized || fallback;
 }
 
+function normalizeScopeKey(value) {
+  return normalizeProfileName(value || 'main');
+}
+
+function extractSessionScopeSuffix(value) {
+  const text = toText(value, '').toLowerCase();
+  if (!text || !text.includes(':')) return '';
+  const suffix = text.split(':').pop().trim();
+  return suffix || '';
+}
+
+function resolveStartupScopeKey(options = {}) {
+  const directCandidates = [
+    options.windowKey,
+    options.window_key,
+    options.profileName,
+    options.profile_name,
+    options.profile,
+  ].map((candidate) => normalizeScopeKey(candidate));
+  const nonMainDirect = directCandidates.find((candidate) => candidate && candidate !== 'main');
+  if (nonMainDirect) return nonMainDirect;
+
+  const sessionScope = extractSessionScopeSuffix(
+    options.sessionScopeId
+    || options.session_scope_id
+    || options.currentSessionId
+    || options.sessionId
+  );
+  if (sessionScope && sessionScope !== 'main') return normalizeScopeKey(sessionScope);
+
+  return 'main';
+}
+
+function resolveCoordFileForStartupScope(relativePath, options = {}) {
+  const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+  const scopeKey = resolveStartupScopeKey(options);
+  if (isMainProfile(scopeKey)) {
+    return resolveCoordFile(relativePath, options);
+  }
+  const scopedRelPath = namespaceCoordRelPath(relativePath, scopeKey);
+  return path.join(projectRoot, '.squidrun', scopedRelPath);
+}
+
 function resolveCoordFile(relativePath, options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
   try {
@@ -56,7 +100,7 @@ function resolveCoordFile(relativePath, options = {}) {
 }
 
 function resolveBriefingPath(options = {}) {
-  return path.resolve(String(options.outputPath || resolveCoordFile(DEFAULT_OUTPUT_RELATIVE_PATH, options)));
+  return path.resolve(String(options.outputPath || resolveCoordFileForStartupScope(DEFAULT_OUTPUT_RELATIVE_PATH, options)));
 }
 
 function resolveCurrentLanePath(options = {}) {
@@ -66,11 +110,11 @@ function resolveCurrentLanePath(options = {}) {
   if (options.outputPath && !options.projectRoot) {
     return path.join(path.dirname(resolveBriefingPath(options)), 'current-lane.json');
   }
-  return path.resolve(String(options.currentLanePath || resolveCoordFile(DEFAULT_CURRENT_LANE_RELATIVE_PATH, options)));
+  return path.resolve(String(options.currentLanePath || resolveCoordFileForStartupScope(DEFAULT_CURRENT_LANE_RELATIVE_PATH, options)));
 }
 
 function resolveStatusPath(options = {}) {
-  return path.resolve(String(options.statusPath || resolveCoordFile(DEFAULT_STATUS_RELATIVE_PATH, options)));
+  return path.resolve(String(options.statusPath || resolveCoordFileForStartupScope(DEFAULT_STATUS_RELATIVE_PATH, options)));
 }
 
 function ensureParentDir(filePath) {
@@ -134,7 +178,7 @@ function resolveCurrentSessionScopeId(options = {}) {
   if (explicit) return explicit;
   if (options.outputPath && !options.projectRoot && !options.appStatusPath) return null;
 
-  const appStatusPath = options.appStatusPath || resolveCoordFile('app-status.json', options);
+  const appStatusPath = options.appStatusPath || resolveCoordFileForStartupScope('app-status.json', options);
   const appStatus = safeReadJson(appStatusPath);
   return normalizeAppSessionScopeId(
     appStatus?.session_id
@@ -151,6 +195,7 @@ function readCurrentLaneSnapshot(options = {}) {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   if (String(snapshot.status || '').toLowerCase() !== 'active') return null;
   if (!snapshot.activeLane || typeof snapshot.activeLane !== 'object') return null;
+  if (!snapshotMatchesStartupScope(snapshot, options)) return null;
   return snapshot;
 }
 
@@ -194,11 +239,94 @@ function isStartupContinuityRow(row = {}) {
     || ['user', 'architect', 'builder', 'oracle'].includes(targetRole);
 }
 
+function parseMetadataObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function extractRowScopeKey(row = {}) {
+  const metadata = parseMetadataObject(row?.metadata || row?.metadataJson || row?.metadata_json);
+  const directScope = normalizeScopeKey(
+    metadata.windowKey
+    || metadata.window_key
+    || metadata.profile
+    || metadata.profileName
+    || metadata.profile_name
+  );
+  if (directScope !== 'main') return directScope;
+
+  const sessionScope = extractSessionScopeSuffix(
+    metadata.sessionScopeId
+    || metadata.session_scope_id
+    || metadata.sessionId
+    || metadata.session_id
+    || row?.sessionScopeId
+    || row?.sessionId
+    || row?.session_id
+  );
+  if (sessionScope && sessionScope !== 'main') return normalizeScopeKey(sessionScope);
+
+  return 'main';
+}
+
+function rowMatchesStartupScope(row = {}, options = {}) {
+  const requestedScope = resolveStartupScopeKey(options);
+  const rowScope = extractRowScopeKey(row);
+  return isMainProfile(requestedScope) ? rowScope === 'main' : rowScope === requestedScope;
+}
+
+function extractSnapshotScopeKey(snapshot = {}) {
+  const activeLane = snapshot?.activeLane && typeof snapshot.activeLane === 'object'
+    ? snapshot.activeLane
+    : {};
+  const directScope = normalizeScopeKey(
+    snapshot.windowKey
+    || snapshot.window_key
+    || snapshot.profile
+    || snapshot.profileName
+    || snapshot.profile_name
+    || activeLane.windowKey
+    || activeLane.window_key
+    || activeLane.profile
+    || activeLane.profileName
+    || activeLane.profile_name
+  );
+  if (directScope !== 'main') return directScope;
+
+  const sessionScope = extractSessionScopeSuffix(
+    snapshot.sessionScopeId
+    || snapshot.session_scope_id
+    || snapshot.sessionId
+    || snapshot.session_id
+    || activeLane.sessionScopeId
+    || activeLane.session_scope_id
+    || activeLane.sessionId
+    || activeLane.session_id
+  );
+  if (sessionScope && sessionScope !== 'main') return normalizeScopeKey(sessionScope);
+
+  return 'main';
+}
+
+function snapshotMatchesStartupScope(snapshot = {}, options = {}) {
+  const requestedScope = resolveStartupScopeKey(options);
+  const snapshotScope = extractSnapshotScopeKey(snapshot);
+  return isMainProfile(requestedScope) ? snapshotScope === 'main' : snapshotScope === requestedScope;
+}
+
 function readRecentCurrentScopeComms(options = {}) {
   const limit = Math.max(1, Math.min(200, Number(options.recentCommsLimit) || DEFAULT_RECENT_COMMS_LIMIT));
   if (Array.isArray(options.recentCommsRows)) {
     const filtered = options.recentCommsRows
       .filter((row) => isStartupContinuityRow(row))
+      .filter((row) => rowMatchesStartupScope(row, options))
       .sort((left, right) => toEventTsMs(left) - toEventTsMs(right));
     return filtered.slice(Math.max(0, filtered.length - limit));
   }
@@ -218,6 +346,7 @@ function readRecentCurrentScopeComms(options = {}) {
     });
     return (Array.isArray(rows) ? rows : [])
       .filter((row) => isStartupContinuityRow(row))
+      .filter((row) => rowMatchesStartupScope(row, options))
       .slice(0, limit)
       .sort((left, right) => toEventTsMs(left) - toEventTsMs(right));
   } catch (_) {
@@ -310,10 +439,13 @@ function readMiraLabVerifyBootstrapStaleBlock(options = {}) {
 function readStartupBriefingForInjection(options = {}) {
   let body = readStartupBriefing(options).trim();
   const status = safeReadJson(resolveStatusPath(options));
+  const startupScopeKey = resolveStartupScopeKey(options);
   const startupDurableBlock = buildStartupDurableRequirementsBlock(resolveStartupDurableSourceFiles(options), options);
   const currentLaneBlock = formatCurrentLaneBlock(readCurrentLaneSnapshot(options));
   const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
-  const miraLabBootstrapBlock = readMiraLabVerifyBootstrapStaleBlock(options);
+  const miraLabBootstrapBlock = isMainProfile(startupScopeKey)
+    ? readMiraLabVerifyBootstrapStaleBlock(options)
+    : '';
   const continuityBlock = [startupDurableBlock, miraLabBootstrapBlock, currentLaneBlock, recentCommsBlock].filter(Boolean).join('\n\n');
   if (!body && !continuityBlock) return '';
   if (!body && continuityBlock) {
@@ -381,6 +513,9 @@ function resolveCanonicalSourceFiles(options = {}) {
 }
 
 function resolveStartupDurableSourceFiles(options = {}) {
+  if (!isMainProfile(resolveStartupScopeKey(options))) {
+    return [];
+  }
   return resolveRelativeSourceFiles(STARTUP_DURABLE_SOURCE_RELATIVE_PATHS, options);
 }
 
@@ -1104,6 +1239,9 @@ module.exports = {
     resolveCurrentLanePath,
     readCurrentLaneSnapshot,
     readRecentCurrentScopeComms,
+    resolveStartupScopeKey,
+    rowMatchesStartupScope,
+    snapshotMatchesStartupScope,
     formatCurrentLaneBlock,
     formatRecentCommsWindow,
     resolveCurrentSessionScopeId,

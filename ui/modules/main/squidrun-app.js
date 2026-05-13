@@ -3828,8 +3828,11 @@ class SquidRunApp {
     this.autoHandoffWriteInFlight = true;
     this.autoHandoffWritePromise = (async () => {
       try {
+        const handoffWindowKey = isMainProfile(this.activeProfileName) ? 'main' : this.activeProfileName;
         const result = await materializeSessionHandoff({
           sessionId: this.commsSessionScopeId || null,
+          windowKey: handoffWindowKey,
+          profileName: this.activeProfileName,
           enableSessionHistory: true,
           querySessionSnapshot: ({ sessionId }) => executeEvidenceLedgerOperation(
             'get-context',
@@ -4008,7 +4011,15 @@ class SquidRunApp {
       || this.isStandaloneProfileWindow(windowKey);
     const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
     const lifecycleMode = this.getWindowLifecycleMode(windowKey);
-    const startupBundlePath = this.getProfileStartupBundlePath(windowKey);
+    let initialStartupBundle = null;
+    if (this.activeProfileName !== 'scoped' && windowKey !== 'scoped' && (this.activeProfileName !== 'main' || windowKey !== 'main')) {
+      try {
+        initialStartupBundle = await this.writeProfileStartupBundle(windowKey === 'main' ? this.activeProfileName : windowKey);
+      } catch (err) {
+        log.warn('Window', `Failed to prebuild ${windowKey} startup bundle before renderer load: ${err.message}`);
+      }
+    }
+    const startupBundlePath = initialStartupBundle?.bundlePath || this.getProfileStartupBundlePath(windowKey);
     const query = {
       windowKey,
       windowTeam: String(rawOptions.windowTeam || windowKey).trim() || windowKey,
@@ -4017,6 +4028,8 @@ class SquidRunApp {
       roleLayout: 'standard',
       sessionScopeId: this.getWindowSessionScopeId(windowKey),
       startupBundlePath: startupBundlePath || '',
+      startupSourceFiles: JSON.stringify(initialStartupBundle?.sourcePaths || []),
+      startupBundleReady: String(Boolean(initialStartupBundle?.bundlePath && initialStartupBundle?.text)),
       autoBootAgents: String(shouldAutoBootWindowAgents),
       standaloneWindow: String(standaloneWindow),
       lifecycleMode,
@@ -5377,6 +5390,7 @@ class SquidRunApp {
           sessionScopeId: this.getWindowSessionScopeId(windowKey),
           startupBundlePath: startupBundle?.bundlePath || startupBundlePath || null,
           startupSourceFiles: startupBundle?.sourcePaths || [],
+          startupBundleReady: Boolean(startupBundle?.bundlePath && startupBundle?.text),
           autoBootAgents: shouldAutoBootWindowAgents,
           standaloneWindow,
           lifecycleMode,

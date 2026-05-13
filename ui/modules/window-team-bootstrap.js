@@ -35,6 +35,7 @@ function normalizeWindowContext(payload = {}) {
     sessionScopeId: toText(payload.sessionScopeId, ''),
     startupBundlePath: toText(payload.startupBundlePath, ''),
     startupSourceFiles: Array.isArray(payload.startupSourceFiles) ? payload.startupSourceFiles.slice() : [],
+    startupBundleReady: payload.startupBundleReady === true,
     autoBootAgents: payload.autoBootAgents === true,
     standaloneWindow: payload.standaloneWindow === true,
     lifecycleMode: toText(payload.lifecycleMode, ''),
@@ -46,21 +47,29 @@ function readInitialWindowContextFromLocation(search = '') {
     const params = new URLSearchParams(String(search || ''));
     const windowKey = toText(params.get('windowKey'), 'main');
     const windowTeam = toText(params.get('windowTeam'), windowKey);
-    const hasReadyContext = toBoolean(params.get('contextReady'), false)
+    const profileName = toText(params.get('profileName'), 'main');
+    const startupBundlePath = toText(params.get('startupBundlePath'), '');
+    const startupBundleReady = toBoolean(params.get('startupBundleReady'), false);
+    const sideProfileWindow = windowKey !== 'main' || profileName !== 'main';
+    const rawReadyContext = toBoolean(params.get('contextReady'), false)
       || params.has('autoBootAgents')
       || params.has('standaloneWindow')
       || params.has('lifecycleMode')
       || params.has('startupBundlePath');
+    const hasReadyContext = sideProfileWindow
+      ? rawReadyContext && startupBundlePath && startupBundleReady
+      : rawReadyContext;
     return {
       loaded: hasReadyContext,
       windowKey,
       windowTeam,
-      profileName: toText(params.get('profileName'), 'main'),
+      profileName,
       profileLabel: toText(params.get('profileLabel'), 'Main'),
       roleLayout: 'standard',
       sessionScopeId: toText(params.get('sessionScopeId'), ''),
-      startupBundlePath: toText(params.get('startupBundlePath'), ''),
+      startupBundlePath,
       startupSourceFiles: parseList(params.get('startupSourceFiles')),
+      startupBundleReady,
       autoBootAgents: toBoolean(params.get('autoBootAgents'), false),
       standaloneWindow: toBoolean(params.get('standaloneWindow'), false),
       lifecycleMode: toText(params.get('lifecycleMode'), ''),
@@ -76,6 +85,7 @@ function readInitialWindowContextFromLocation(search = '') {
       sessionScopeId: '',
       startupBundlePath: '',
       startupSourceFiles: [],
+      startupBundleReady: false,
       autoBootAgents: false,
       standaloneWindow: false,
       lifecycleMode: '',
@@ -94,7 +104,10 @@ function createWindowTeamBootstrap({ settings, terminal, log, initialContext } =
   }
 
   function shouldDeferAutoSpawn() {
-    return state.windowKey !== 'main' && state.loaded !== true;
+    if (state.windowKey === 'main') return false;
+    if (state.loaded !== true) return true;
+    if (state.autoBootAgents === true && state.startupBundleReady !== true) return true;
+    return false;
   }
 
   function handleWindowContext(payload = {}) {
@@ -114,6 +127,9 @@ function createWindowTeamBootstrap({ settings, terminal, log, initialContext } =
     }
     if (state.autoBootAgents !== true) {
       return { ok: false, skipped: true, reason: 'auto_boot_disabled' };
+    }
+    if (state.startupBundleReady !== true) {
+      return { ok: false, skipped: true, reason: 'startup_bundle_not_ready' };
     }
     await settings.checkAutoSpawn(
       terminal.spawnAllAgents,
