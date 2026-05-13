@@ -2068,6 +2068,69 @@ describe('Mira Lab sidecar surface', () => {
     ]));
   });
 
+  test('active initiative turns memory hits into compact evidence-bearing work orders', async () => {
+    projectRoot = tempProject();
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:browser-weaker',
+      generated_at: '2026-05-12T15:30:00.000Z',
+      source: 'browser_history',
+      adapter_id: 'browser_history_curiosity',
+      status: 'active',
+      observation: 'Browser history read returned 8 compact recent metadata row(s) from chrome/Default; top hosts: huggingface.co:3.',
+      suggested_question: 'What should Mira infer from the browsing trail?',
+      possible_action: 'Use compact browser-history metadata as one curiosity signal.',
+      browser_result_count: 8,
+    });
+    appendJsonl(curiosityItemsPath(projectRoot), {
+      schema: MIRA_CURIOSITY_ITEM_SCHEMA,
+      item_id: 'mira-curiosity:memory-stronger',
+      generated_at: '2026-05-12T15:31:00.000Z',
+      source: 'memory',
+      adapter_id: 'active_memory_tools_curiosity',
+      status: 'active',
+      observation: 'Memory read path returned 5 result(s) for the active lane query; top=Session 345 Summary.',
+      suggested_question: 'Which current-lane decision changes if Mira uses memory result node-aee20bc7-1def-4521-8836-7d065bd1d540?',
+      possible_action: 'Use active memory read results as evidence before routing the next Mira improvement.',
+      memory_result_count: 5,
+      memory_top_result: {
+        nodeId: 'node-aee20bc7-1def-4521-8836-7d065bd1d540',
+        category: 'session_summary',
+        title: 'Session 345 Summary',
+        heading: 'session_summary',
+        sourcePath: 'session:345',
+        contentExcerpt: 'Session 345 showed James wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
+      },
+    });
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T15:32:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('active_memory_use');
+    expect(result.target_role).toBe('builder');
+    expect(result.selected_item).toEqual(expect.objectContaining({
+      source: 'memory',
+      adapter_id: 'active_memory_tools_curiosity',
+    }));
+    expect(result.work_order.title).toContain('node-aee20bc7-1def-4521-8836-7d065bd1d540');
+    expect(result.work_order.action).toContain('Session 345 Summary');
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'memory_results=5 top=node-aee20bc7-1def-4521-8836-7d065bd1d540 title=Session 345 Summary source=session:345',
+      'memory_excerpt=Session 345 showed James wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
+    ]));
+    expect(result.route_message).toContain('memory_excerpt=Session 345 showed James wanted Mira');
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      deploy_trade_customer_auth_action_performed: false,
+    }));
+  });
+
   test('active initiative outcomes close the work loop and feed curriculum skills', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
