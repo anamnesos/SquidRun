@@ -78,7 +78,9 @@ Before restart-ready or live Mira voice work, focused tests must prove:
 - Self-direction: Mira can stage a concrete internal self-improvement proposal for Architect review without autonomously applying the change or notifying external channels.
 - Agency persistence: A0-A5 state survives restart and blocks overclaims of live voice, always-on operation, external sends, durable memory, or arm control.
 - Voice-as-transport: voice work cannot pass by connecting audio alone; it must preserve the same Mira identity and visible reply contract.
-- Telegram identity clarity: internal Architect-labeled coordination must not mix with conversational Mira replies on Telegram. The user-facing channel must not expose routing confusion or multi-agent identity overlap unless explicitly proven to be operationally contained.
+- Telegram identity clarity: James talks to Mira in Telegram. Mira may route internally to Architect, Builder, or Oracle backstage, but Telegram must not require James to understand or address Architect/Mira as separate surfaces. Ledger attribution and pane labels may remain internal only.
+- Telegram first-contact orientation: the first Mira response in Telegram or any new channel/mode must briefly orient James before answering: who/mode is speaking, that this is new, and whether he needs to do anything next.
+- Telegram output integrity: user-facing Telegram egress must not leak raw pane/ops labels, internal project markers, or agent-routing wrappers, and must suppress short-window duplicate replies. Long replies must chunk rather than truncate silently when routed through the Telegram boundary.
 
 ## Source Notes
 
@@ -117,3 +119,4 @@ Before restart-ready or live Mira voice work, focused tests must prove:
 - **Mira Telegram Live Route:** Main window Telegram inbound messages that are not commands or agent ops envelopes are now routed directly to Mira Live for a visible reply. Commands and agent routing strings remain safely trapped on the Architect pane to prevent control surface leakage.
 - **Loosening Answer Shapes:** Formulaic requirements for "one short status word" and forced "ask-backs" have been removed from the attachment prompt. Check-ins, frustration, and compliments should be handled plainly ("Don't do chatbot voice. Don't smooth it. Don't explain yourself.") without forcing specific syntactic structures.
 - **Scoped Hard-Stop Prompts:** The exact missing-state hard-stop string (`Context failed. I’m missing the last state.`) is no longer injected into generic Mira work/status instructions, preventing the rule text from leaking into ordinary status replies.
+- **Telegram User Model:** James's external Telegram model is "James talks to Mira." Mira routes to Architect, Builder, or Oracle backstage when needed. Telegram must orient on first contact/channel shift, hide internal pane/routing labels from user-facing text, and keep duplicate/truncated sends from making Mira feel like mixed internal machinery.

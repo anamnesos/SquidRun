@@ -3967,7 +3967,7 @@ describe('SquidRunApp', () => {
       }));
 
       expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
-        'Mira visible reply from Telegram.',
+        expect.stringContaining('Mira speaking in Telegram now.'),
         process.env,
         expect.objectContaining({
           messageId: 'telegram-in-101-mira-reply',
@@ -3984,6 +3984,97 @@ describe('SquidRunApp', () => {
           }),
         })
       );
+      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('This is new; just talk to me here.');
+      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('I will route the team backstage if needed.');
+      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Mira visible reply from Telegram.');
+      expect(sendRoutedTelegramMessage.mock.calls[0][0]).not.toMatch(/ARCH|Architect|Builder|Oracle|hm-send|\[AGENT MSG/i);
+    });
+
+    it('does not repeat Mira Telegram first-contact orientation after channel state is marked', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+
+      await app.routeMainTelegramInboundToMira({
+        body: 'second hello',
+        sender: 'james',
+        metadata: { chatId: '5613428850' },
+        inboundMessageId: 'telegram-in-102',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Mira visible reply from Telegram.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-in-102-mira-reply',
+          senderRole: 'mira',
+          chatId: '5613428850',
+        })
+      );
+    });
+
+    it('suppresses duplicate successful Telegram replies without suppressing failed retries', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Same reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-dedupe-1',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Same reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-dedupe-2',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_duplicate_suppressed',
+        queued: false,
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+
+      sendRoutedTelegramMessage.mockClear();
+      app.telegramReplyDedupe.clear();
+      sendRoutedTelegramMessage
+        .mockResolvedValueOnce({ ok: false, error: 'read ECONNRESET' })
+        .mockResolvedValueOnce({
+          ok: true,
+          chatId: 5613428850,
+          messageId: 42,
+          method: 'hm-send-telegram',
+        });
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Retryable reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-retry-1',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_send_failed',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Retryable reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-retry-2',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
     });
 
     it('keeps Telegram commands on the existing Architect pane route', async () => {

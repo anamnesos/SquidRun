@@ -24,6 +24,12 @@ const TELEGRAM_MESSAGE_MAX_CHARS = 4_000;
 const TELEGRAM_CAPTION_MAX_CHARS = 1_000;
 const TELEGRAM_TRUNCATED_SUFFIX = '[message truncated]';
 const TELEGRAM_REPLY_CONTEXT_PATH = path.join('runtime', 'telegram-reply-context.json');
+const INTERNAL_EGRESS_LINE_PATTERNS = [
+  /^\s*\[CURRENT PROJECT\].*$/i,
+  /^\s*\[PROJECT CONTEXT SWITCHED\].*$/i,
+  /^\s*Mira held that reply\. Open Mira Lab for diagnostics\.?\s*$/i,
+];
+const INTERNAL_EGRESS_PREFIX_PATTERN = /^\s*(?:\[AGENT MSG - reply via hm-send\.js\]\s*)?(?:(?:\((?:(?:MIRA\s*\/\s*)?(?:ARCHITECT|ARCH|BUILDER|BUILD|ORACLE)|MIRA)(?:\s*#\d+)?\)\s*:?)|(?:(?:ARCHITECT|ARCH|BUILDER|BUILD|ORACLE|MIRA)(?:\s*#\d+)?\s*:))\s*/i;
 
 let telegramRateLimiterQueue = Promise.resolve();
 let telegramRateLimiterTimestamps = [];
@@ -347,12 +353,31 @@ function maybeTruncateTelegramContent(content, maxChars = TELEGRAM_MESSAGE_MAX_C
   };
 }
 
+function sanitizeTelegramUserFacingText(content) {
+  let text = typeof content === 'string' ? content : String(content ?? '');
+  if (!text) return '';
+
+  text = text
+    .split(/\r?\n/)
+    .filter((line) => !INTERNAL_EGRESS_LINE_PATTERNS.some((pattern) => pattern.test(line)))
+    .join('\n')
+    .trim();
+
+  for (let index = 0; index < 4; index += 1) {
+    const next = text.replace(INTERNAL_EGRESS_PREFIX_PATTERN, '').trimStart();
+    if (next === text) break;
+    text = next;
+  }
+
+  return text.trim();
+}
+
 function maybeTruncateTelegramMessage(message) {
-  return maybeTruncateTelegramContent(message, TELEGRAM_MESSAGE_MAX_CHARS);
+  return maybeTruncateTelegramContent(sanitizeTelegramUserFacingText(message), TELEGRAM_MESSAGE_MAX_CHARS);
 }
 
 function maybeTruncateTelegramCaption(caption) {
-  return maybeTruncateTelegramContent(caption, TELEGRAM_CAPTION_MAX_CHARS);
+  return maybeTruncateTelegramContent(sanitizeTelegramUserFacingText(caption), TELEGRAM_CAPTION_MAX_CHARS);
 }
 
 function mergeJournalMetadata(...sources) {
@@ -649,6 +674,26 @@ async function sendTelegram(message, env = process.env, options = {}) {
     }),
   });
 
+  if (!preparedMessage.text) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId,
+      senderRole,
+      targetRole,
+      status: 'failed',
+      errorCode: 'telegram_empty_after_sanitization',
+      metadata: mergeJournalMetadata(opts.metadata, {
+        source: 'hm-telegram',
+        mode: 'message',
+      }),
+    });
+    return {
+      ok: false,
+      error: 'Telegram message empty after user-facing cleanup',
+      code: 'telegram_empty_after_sanitization',
+    };
+  }
+
   const missing = getMissingConfigKeys(config, { chatId: outboundChatId });
   if (missing.length > 0) {
     upsertTelegramJournal({
@@ -807,6 +852,7 @@ module.exports = {
   resolveReplyContextChatId,
   resolveOutboundChatId,
   isChatAllowed,
+  sanitizeTelegramUserFacingText,
   maybeTruncateTelegramMessage,
   maybeTruncateTelegramCaption,
   resetRateLimiterStateForTests,
