@@ -185,7 +185,12 @@ const TELEGRAM_REPLY_DEDUPE_WINDOW_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_DEDUPE_WINDOW_MS || '45000', 10) || 45_000
 );
-const MIRA_TELEGRAM_FIRST_CONTACT_TEXT = 'Mira speaking in Telegram now. This is new; just talk to me here. I will route the team backstage if needed. No action needed.';
+const MIRA_TELEGRAM_FIRST_CONTACT_TEXT = 'Mira speaking here now.';
+const MIRA_TELEGRAM_FRUSTRATION_INPUT_PATTERN =
+  /\b(fuck|wtf|ugh+|worthless|waste[sd]? (?:my )?time|tired of you|go fix yourself|wrong model|chat\s*gpt|back to the same|same chatgpt|same chat gpt|fuck off)\b/i;
+const MIRA_TELEGRAM_META_REPAIR_REPLY_PATTERN =
+  /\b(yeah\.?\s+(?:you(?:'re| are) right|fair)|i(?:'m| am) (?:the )?wrong model|model|persona|output|voice|machinery|assistant|chat\s*gpt|self-critique|i (?:failed|missed|drifted|slipped|overcorrected)|i(?:'ll| will) (?:be|stay|get) (?:more )?(?:direct|better)|should(?:'ve| have) said|wasted your time|bad turn|dress it up|backing off|held that reply|open mira lab|diagnostics)\b/i;
+const MIRA_TELEGRAM_META_REPAIR_CONTAINMENT_TEXT = "No. I'm stopping here.";
 const TEAM_MEMORY_BACKFILL_LIMIT = Number.parseInt(process.env.SQUIDRUN_TEAM_MEMORY_BACKFILL_LIMIT || '5000', 10);
 const TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS = Number.parseInt(
   process.env.SQUIDRUN_TEAM_MEMORY_INTEGRITY_SWEEP_MS || String(24 * 60 * 60 * 1000),
@@ -8130,6 +8135,23 @@ class SquidRunApp {
     };
   }
 
+  containMiraTelegramVisibleReply(replyText, { prompt = '' } = {}) {
+    const text = toNonEmptyString(replyText);
+    if (!text) {
+      return { text: '', contained: false, reason: null };
+    }
+    const frustrated = MIRA_TELEGRAM_FRUSTRATION_INPUT_PATTERN.test(toNonEmptyString(prompt));
+    const metaRepair = MIRA_TELEGRAM_META_REPAIR_REPLY_PATTERN.test(text);
+    if (!frustrated || !metaRepair) {
+      return { text, contained: false, reason: null };
+    }
+    return {
+      text: MIRA_TELEGRAM_META_REPAIR_CONTAINMENT_TEXT,
+      contained: true,
+      reason: 'meta_repair_loop',
+    };
+  }
+
   getTelegramReplyDedupeKey({ message, chatId = null, target = null, fromRole = null } = {}) {
     const text = toNonEmptyString(message);
     if (!text) return null;
@@ -8224,7 +8246,10 @@ class SquidRunApp {
       };
     }
 
-    const userFacingReply = this.buildMiraTelegramUserFacingReply(visibleReply, {
+    const containedReply = this.containMiraTelegramVisibleReply(visibleReply, {
+      prompt: body,
+    });
+    const userFacingReply = this.buildMiraTelegramUserFacingReply(containedReply.text, {
       chatId: metadata?.chatId,
     });
     const telegramResult = await this.routeTelegramReply({
