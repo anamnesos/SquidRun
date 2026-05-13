@@ -1261,10 +1261,11 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('ack: telegram_delivered');
   });
 
-  test('blocks user target after recent current-session Telegram inbound evidence', async () => {
+  test('blocks user target after current-session Telegram inbound evidence even outside reply window', async () => {
     const tempProject = createLinkedProject({ squidrunRoot: null });
     const sessionId = writeAppStatus(tempProject, 'app-session-777');
     const nowMs = Date.now();
+    const olderThanDefaultReplyWindowMs = nowMs - (10 * 60 * 1000);
     seedCommsJournal(tempProject, {
       messageId: 'telegram-in-guard-1',
       sessionId,
@@ -1272,8 +1273,8 @@ describe('hm-send retry behavior', () => {
       targetRole: 'architect',
       channel: 'telegram',
       direction: 'inbound',
-      sentAtMs: nowMs - 1000,
-      brokeredAtMs: nowMs - 1000,
+      sentAtMs: olderThanDefaultReplyWindowMs,
+      brokeredAtMs: olderThanDefaultReplyWindowMs,
       rawBody: 'raw unwrapped Telegram body',
       status: 'brokered',
     }, nowMs);
@@ -1289,7 +1290,7 @@ describe('hm-send retry behavior', () => {
 
     try {
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain('BLOCKED: recent Telegram inbound detected');
+      expect(result.stderr).toContain('BLOCKED: current-session Telegram inbound detected');
       expect(result.stderr).toContain("Use explicit target 'telegram'");
       expect(result.stderr).toContain('telegram-in-guard-1');
       expect(result.stdout).not.toContain('Delivered to user');
@@ -1304,6 +1305,7 @@ describe('hm-send retry behavior', () => {
     const mockLogPath = path.join(telegramMock.tempRoot, 'telegram-requests.jsonl');
     const sessionId = writeAppStatus(tempProject, 'app-session-778');
     const nowMs = Date.now();
+    const olderThanDefaultReplyWindowMs = nowMs - (10 * 60 * 1000);
     seedCommsJournal(tempProject, {
       messageId: 'telegram-in-guard-telegram-ok',
       sessionId,
@@ -1311,8 +1313,8 @@ describe('hm-send retry behavior', () => {
       targetRole: 'architect',
       channel: 'telegram',
       direction: 'inbound',
-      sentAtMs: nowMs - 1000,
-      brokeredAtMs: nowMs - 1000,
+      sentAtMs: olderThanDefaultReplyWindowMs,
+      brokeredAtMs: olderThanDefaultReplyWindowMs,
       rawBody: 'telegram body without visible wrapper',
       status: 'brokered',
     }, nowMs);
@@ -1335,7 +1337,7 @@ describe('hm-send retry behavior', () => {
       expect(result.code).toBe(0);
       expect(result.stdout).toContain('Delivered to telegram');
       expect(result.stdout).toContain('ack: telegram_delivered');
-      expect(result.stderr).not.toContain('BLOCKED: recent Telegram inbound detected');
+      expect(result.stderr).not.toContain('BLOCKED: current-session Telegram inbound detected');
       const [request] = fs.readFileSync(mockLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
       expect(JSON.parse(request.body)).toEqual(expect.objectContaining({
         chat_id: '12345',
@@ -1377,7 +1379,7 @@ describe('hm-send retry behavior', () => {
       const combinedOutput = `${result.stdout}\n${result.stderr}`;
       expect(result.code).toBe(0);
       expect(combinedOutput).toContain('voice egress');
-      expect(combinedOutput).not.toContain('BLOCKED: recent Telegram inbound detected');
+      expect(combinedOutput).not.toContain('BLOCKED: current-session Telegram inbound detected');
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
     }
@@ -1387,6 +1389,7 @@ describe('hm-send retry behavior', () => {
     const tempProject = createLinkedProject({ squidrunRoot: null });
     const sessionId = writeAppStatus(tempProject, 'app-session-780');
     const nowMs = Date.now();
+    const olderThanDefaultReplyWindowMs = nowMs - (10 * 60 * 1000);
     seedCommsJournal(tempProject, {
       messageId: 'telegram-in-guard-older',
       sessionId,
@@ -1394,8 +1397,8 @@ describe('hm-send retry behavior', () => {
       targetRole: 'architect',
       channel: 'telegram',
       direction: 'inbound',
-      sentAtMs: nowMs - 2000,
-      brokeredAtMs: nowMs - 2000,
+      sentAtMs: olderThanDefaultReplyWindowMs,
+      brokeredAtMs: olderThanDefaultReplyWindowMs,
       rawBody: 'older telegram body',
       status: 'brokered',
     }, nowMs);
@@ -1425,7 +1428,7 @@ describe('hm-send retry behavior', () => {
       const combinedOutput = `${result.stdout}\n${result.stderr}`;
       expect(result.code).toBe(0);
       expect(combinedOutput).toContain('voice egress');
-      expect(combinedOutput).not.toContain('BLOCKED: recent Telegram inbound detected');
+      expect(combinedOutput).not.toContain('BLOCKED: current-session Telegram inbound detected');
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
     }
