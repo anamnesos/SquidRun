@@ -2283,6 +2283,85 @@ describe('Mira Lab sidecar surface', () => {
     expect(JSON.stringify(result.work_order.reviewed_recurring_burst_plan)).not.toMatch(/code_mode_exploration|voyager_curriculum/);
   });
 
+  test('web research initiatives prefer top artifact substance over loud domain counts', async () => {
+    projectRoot = tempProject();
+    const burst = await runMiraCuriosityBurst({ source: 'web_research' }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:10:00.000Z',
+      webResearchCuriosityReader: () => ({
+        ok: true,
+        decision: 'web_research_artifacts_read_only',
+        result_count: 2,
+        top_domains: [
+          { domain: 'reddit.com', count: 9 },
+          { domain: 'ai-companion.example', count: 1 },
+        ],
+        buckets: { workspace_research: 1, social_roundups: 1 },
+        results: [
+          {
+            source_bucket: 'workspace_research',
+            path: 'workspace/research/research-ai-companion-memory-2026-04-29.md',
+            title: 'Hybrid memory standard for AI companions',
+            excerpt: 'Hybrid memory (Vector+Graph+Episodic) is the standard; long context does not replace durable memory; platform updates can cause memory drift.',
+            domains: ['ai-companion.example'],
+            safe_urls: ['https://ai-companion.example/memory?token=raw-secret'],
+          },
+          {
+            source_bucket: 'social_roundups',
+            path: 'workspace/research/reddit-roundup.md',
+            title: 'Reddit roundup',
+            excerpt: 'Saved reddit trail from https://reddit.com/r/LocalLLaMA/comments/abc?utm_source=raw.',
+            domains: ['reddit.com'],
+            safe_urls: ['https://reddit.com/r/LocalLLaMA/comments/abc?utm_source=raw'],
+          },
+        ],
+      }),
+    });
+
+    expect(burst.sources).toEqual(['web_research']);
+    expect(burst.no_mutation_performed).toBe(true);
+    expect(burst.consequence_controls).toEqual(expect.objectContaining({
+      network_performed: false,
+      destructive_action_performed: false,
+      external_send_performed: false,
+    }));
+
+    const webItem = burst.items.find((item) => item.source === 'web_research');
+    expect(webItem).toEqual(expect.objectContaining({
+      status: 'active',
+      web_result_count: 2,
+      web_top_domains: [{ domain: 'reddit.com', count: 9 }, { domain: 'ai-companion.example', count: 1 }],
+    }));
+    expect(webItem.web_top_artifact).toEqual(expect.objectContaining({
+      title: 'Hybrid memory standard for AI companions',
+      path: 'workspace/research/research-ai-companion-memory-2026-04-29.md',
+      source_bucket: 'workspace_research',
+      excerpt: 'Hybrid memory (Vector+Graph+Episodic) is the standard; long context does not replace durable memory; platform updates can cause memory drift.',
+      domains: ['ai-companion.example'],
+      safe_urls: ['https://ai-companion.example/memory'],
+    }));
+    expect(JSON.stringify(webItem)).not.toMatch(/token=raw-secret|utm_source=raw|\?token|\?utm_source/);
+
+    const result = await selectMiraActiveInitiative({ dispatch: false }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:11:00.000Z',
+    });
+
+    expect(result.decision).toBe('routed');
+    expect(result.initiative_kind).toBe('research_trail_investigation');
+    expect(result.work_order.title).toContain('Hybrid memory standard for AI companions');
+    expect(result.work_order.title).not.toMatch(/reddit/i);
+    expect(result.work_order.action).toContain('workspace/research/research-ai-companion-memory-2026-04-29.md');
+    expect(result.work_order.action).toContain('Hybrid memory');
+    expect(result.work_order.action).toContain('durable memory');
+    expect(result.work_order.action).not.toMatch(/reddit/i);
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      'web_top_artifact=Hybrid memory standard for AI companions path=workspace/research/research-ai-companion-memory-2026-04-29.md bucket=workspace_research',
+      'web_excerpt=Hybrid memory (Vector+Graph+Episodic) is the standard; long context does not replace durable memory; platform updates can cause memory drift.',
+    ]));
+    expect(JSON.stringify(result)).not.toMatch(/token=raw-secret|utm_source=raw|\?token|\?utm_source/);
+  });
+
   test('active initiative outcomes close the work loop and feed curriculum skills', async () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
