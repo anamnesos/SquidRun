@@ -1,0 +1,22 @@
+{
+  "schema": "mira.state_root_contract.v1",
+  "env_var": "MIRA_STATE_ROOT",
+  "default_policy": "required_for_live_runtime_state",
+  "dev_state_directory_policy": "gitignored_mira_local_directory_allowed",
+  "required_subdirectories": [
+    "continuity",
+    "conversation-evidence",
+    "permissions",
+    "acceptance",
+    "imports"
+  ],
+  "forbidden_destinations": [
+    ".squidrun",
+    ".squidrun/**",
+    "workspace/memory",
+    "workspace/memory/**",
+    "workspace/cognitive-memory.db",
+    "workspace/evidence-ledger.db"
+  ],
+  "copy_policy": "no_copy_delete_or_move_until_import_record_is_reviewed"
+}

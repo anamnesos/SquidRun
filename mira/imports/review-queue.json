@@ -1,0 +1,131 @@
+{
+  "schema": "mira.import_queue.v1",
+  "records": [
+    {
+      "id": "mira_self_profile",
+      "source_path": "workspace/knowledge/mira-self-profile.json",
+      "source_kind": "profile_state",
+      "status": "not_imported",
+      "destination": "continuity/mira-self-profile.json",
+      "selection_policy": "review_current_fields_only",
+      "notes": "Candidate Mira self-profile continuity. Review before import; do not copy wholesale."
+    },
+    {
+      "id": "james_relationship_state",
+      "source_path": "workspace/knowledge/james-relationship-state.json",
+      "source_kind": "relationship_state",
+      "status": "not_imported",
+      "destination": "continuity/james-relationship-state.json",
+      "selection_policy": "review_current_fields_only",
+      "notes": "Candidate relationship continuity. Must remain Mira-owned after import."
+    },
+    {
+      "id": "relationship_presence_permissions",
+      "source_path": "workspace/knowledge/relationship-presence-permissions.json",
+      "source_kind": "permission_state",
+      "status": "not_imported",
+      "destination": "permissions/relationship-presence-permissions.json",
+      "selection_policy": "review_permissions_only",
+      "notes": "Candidate permission state for Mira-owned local presence boundaries."
+    },
+    {
+      "id": "relationship_growth_history",
+      "source_path": "workspace/knowledge/relationship-growth-history.jsonl",
+      "source_kind": "growth_history",
+      "status": "not_imported",
+      "destination": "continuity/relationship-growth-history.jsonl",
+      "selection_policy": "review_events_for_current_relevance",
+      "notes": "Historical growth events. Import only selected durable entries."
+    },
+    {
+      "id": "relationship_growth_audit",
+      "source_path": "workspace/knowledge/relationship-growth-audit.jsonl",
+      "source_kind": "growth_audit",
+      "status": "not_imported",
+      "destination": "continuity/relationship-growth-audit.jsonl",
+      "selection_policy": "review_events_for_current_relevance",
+      "notes": "Growth audit trail. Import only if needed for continuity review."
+    },
+    {
+      "id": "presence_runtime_acceptance",
+      "source_path": "docs/mira-presence-runtime-acceptance-v0.md",
+      "source_kind": "acceptance_doc",
+      "status": "not_imported",
+      "destination": "acceptance/mira-presence-runtime-acceptance-v0.md",
+      "selection_policy": "preserve_as_acceptance_contract",
+      "notes": "Presence runtime acceptance contract for visible Mira behavior."
+    },
+    {
+      "id": "north_star_acceptance",
+      "source_path": "docs/mira-north-star-acceptance.md",
+      "source_kind": "acceptance_doc",
+      "status": "not_imported",
+      "destination": "acceptance/mira-north-star-acceptance.md",
+      "selection_policy": "preserve_as_acceptance_contract",
+      "notes": "North-star product target for Mira slices."
+    },
+    {
+      "id": "pc_embodiment_permission",
+      "source_path": "docs/mira-pc-embodiment-permission-v0.md",
+      "source_kind": "acceptance_doc",
+      "status": "not_imported",
+      "destination": "acceptance/mira-pc-embodiment-permission-v0.md",
+      "selection_policy": "preserve_as_permission_contract",
+      "notes": "PC embodiment permission model candidate."
+    },
+    {
+      "id": "mira_lab_2026_05_10",
+      "source_path": "workspace/mira-lab/transcripts/mira-lab-2026-05-10.jsonl",
+      "source_kind": "transcript_evidence",
+      "status": "not_imported",
+      "destination": "conversation-evidence/mira-lab-2026-05-10.jsonl",
+      "selection_policy": "sample_or_summarize_after_review",
+      "notes": "Conversation evidence. Do not treat as durable memory without review."
+    },
+    {
+      "id": "mira_lab_2026_05_11",
+      "source_path": "workspace/mira-lab/transcripts/mira-lab-2026-05-11.jsonl",
+      "source_kind": "transcript_evidence",
+      "status": "not_imported",
+      "destination": "conversation-evidence/mira-lab-2026-05-11.jsonl",
+      "selection_policy": "sample_or_summarize_after_review",
+      "notes": "Conversation evidence. Do not treat as durable memory without review."
+    },
+    {
+      "id": "mira_lab_2026_05_12",
+      "source_path": "workspace/mira-lab/transcripts/mira-lab-2026-05-12.jsonl",
+      "source_kind": "transcript_evidence",
+      "status": "not_imported",
+      "destination": "conversation-evidence/mira-lab-2026-05-12.jsonl",
+      "selection_policy": "sample_or_summarize_after_review",
+      "notes": "Conversation evidence. Do not treat as durable memory without review."
+    },
+    {
+      "id": "mira_lab_2026_05_13",
+      "source_path": "workspace/mira-lab/transcripts/mira-lab-2026-05-13.jsonl",
+      "source_kind": "transcript_evidence",
+      "status": "not_imported",
+      "destination": "conversation-evidence/mira-lab-2026-05-13.jsonl",
+      "selection_policy": "sample_or_summarize_after_review",
+      "notes": "Conversation evidence. Do not treat as durable memory without review."
+    },
+    {
+      "id": "mira_authority_handoff_2026_05_12",
+      "source_path": "workspace/mira-lab/transcripts/mira-authority-handoff-2026-05-12.jsonl",
+      "source_kind": "transcript_evidence",
+      "status": "not_imported",
+      "destination": "conversation-evidence/mira-authority-handoff-2026-05-12.jsonl",
+      "selection_policy": "review_for_authority_boundary_only",
+      "notes": "Evidence for Mira authority handoff behavior."
+    },
+    {
+      "id": "verify_answer_shape_cleanup",
+      "source_path": "workspace/mira-lab/transcripts/verify-answer-shape-cleanup.jsonl",
+      "source_kind": "transcript_evidence",
+      "status": "not_imported",
+      "destination": "conversation-evidence/verify-answer-shape-cleanup.jsonl",
+      "selection_policy": "review_for_acceptance_regression_only",
+      "notes": "Verification evidence for answer-shape cleanup."
+    }
+  ]
+}

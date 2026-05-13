@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mira.import_record.v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "records"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mira.import_queue.v1"
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_path",
+          "source_kind",
+          "status",
+          "destination",
+          "selection_policy",
+          "notes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "source_kind": {
+            "enum": [
+              "profile_state",
+              "relationship_state",
+              "permission_state",
+              "growth_history",
+              "growth_audit",
+              "acceptance_doc",
+              "transcript_evidence"
+            ]
+          },
+          "status": {
+            "enum": [
+              "not_imported",
+              "reviewed_ready",
+              "imported",
+              "rejected"
+            ]
+          },
+          "destination": {
+            "type": "string"
+          },
+          "selection_policy": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
