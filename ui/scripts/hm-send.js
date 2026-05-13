@@ -2157,16 +2157,38 @@ async function main() {
   }
 
   if (shouldFailClosedWithoutFallback(sendResult, wsError)) {
-    const status = getIsolationFailureStatus(sendResult)
-      || sendResult?.health?.status
-      || sendResult?.ack?.status
-      || sendResult?.error
-      || wsError?.message
-      || 'profile_route_unavailable';
-    console.error(
-      `Send blocked by profile isolation (${status}). `
-      + `Profile '${effectiveProfileName}' cannot fall back to main target '${target}'.`
-    );
+    const contextGuard = sendResult?.ack?.contextGuard || null;
+    if (contextGuard && contextGuard.reason === 'content_context_mismatch') {
+      const family = contextGuard.targetProfile === 'main'
+        ? 'SIDE_CONTEXT_PATTERN'
+        : 'MAIN_CONTEXT_PATTERN';
+      console.error(
+        `Send blocked by content guard (content_context_mismatch). `
+        + `Body matched ${family} for target role '${contextGuard.targetRole || 'unknown'}' `
+        + `in profile '${contextGuard.targetProfile || 'unknown'}'. `
+        + `Move details into a file and pass via --file, or address the message to architect.`
+      );
+    } else if (contextGuard && contextGuard.reason === 'profile_metadata_mismatch') {
+      const hints = Array.isArray(contextGuard.profileHints) && contextGuard.profileHints.length > 0
+        ? contextGuard.profileHints.join(', ')
+        : '<none>';
+      console.error(
+        `Send blocked by profile metadata guard (profile_metadata_mismatch). `
+        + `Message metadata hints [${hints}] do not match target role '${contextGuard.targetRole || 'unknown'}' `
+        + `in profile '${contextGuard.targetProfile || 'unknown'}'.`
+      );
+    } else {
+      const status = getIsolationFailureStatus(sendResult)
+        || sendResult?.health?.status
+        || sendResult?.ack?.status
+        || sendResult?.error
+        || wsError?.message
+        || 'profile_route_unavailable';
+      console.error(
+        `Send blocked by profile isolation (${status}). `
+        + `Profile '${effectiveProfileName}' cannot fall back to main target '${target}'.`
+      );
+    }
     closeCommsJournalStores();
     process.exit(1);
   }
