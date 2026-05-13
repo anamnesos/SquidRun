@@ -94,6 +94,42 @@ function readImageDimensions(filePath) {
   }
 }
 
+function aspectRatioLabel(width, height) {
+  const numericWidth = Number(width);
+  const numericHeight = Number(height);
+  if (!Number.isFinite(numericWidth) || !Number.isFinite(numericHeight) || numericWidth <= 0 || numericHeight <= 0) return null;
+  const ratio = numericWidth / numericHeight;
+  if (ratio > 1.15) return 'landscape';
+  if (ratio < 0.87) return 'portrait';
+  return 'square_or_near_square';
+}
+
+function buildLatestAssetFollowup(latestAsset) {
+  if (!latestAsset) return null;
+  const dimensions = latestAsset.width && latestAsset.height
+    ? `${latestAsset.width}x${latestAsset.height}`
+    : 'unknown dimensions';
+  return {
+    path: latestAsset.path,
+    name: latestAsset.name,
+    source_bucket: latestAsset.source_bucket,
+    ext: latestAsset.ext,
+    size_bytes: latestAsset.size_bytes,
+    width: latestAsset.width,
+    height: latestAsset.height,
+    aspect_hint: aspectRatioLabel(latestAsset.width, latestAsset.height),
+    suggested_question: `What changed in latest visual asset ${latestAsset.path} (${dimensions}) that Mira should ask about before deciding whether visual understanding is needed?`,
+    possible_action: 'Use compact file metadata as the first visual-context signal; if the answer depends on visible content, route a separate reviewed visual-understanding step.',
+    visual_understanding_step: {
+      status: 'separate_explicit_step_required',
+      image_ocr_performed: false,
+      image_model_performed: false,
+      file_write_performed: false,
+      external_send_performed: false,
+    },
+  };
+}
+
 function normalizeVisualRoots(payload = {}, options = {}) {
   const projectRoot = path.resolve(options.projectRoot || payload.projectRoot || process.cwd());
   const raw = options.visualRoots || payload.visualRoots || payload.roots;
@@ -193,6 +229,7 @@ function readMiraVisualAssetCuriosity(payload = {}, options = {}) {
     acc[entry.ext] = (acc[entry.ext] || 0) + 1;
     return acc;
   }, {});
+  const latestAsset = results[0] || null;
 
   return {
     schema: MIRA_VISUAL_ASSET_CURIOSITY_SCHEMA,
@@ -201,7 +238,8 @@ function readMiraVisualAssetCuriosity(payload = {}, options = {}) {
     result_count: results.length,
     buckets,
     extension_counts,
-    latest_asset: results[0] || null,
+    latest_asset: latestAsset,
+    latest_asset_followup: buildLatestAssetFollowup(latestAsset),
     results,
     no_mutation_performed: true,
     consequence_controls: {

@@ -37,8 +37,12 @@ describe('Mira visual asset curiosity', () => {
     const generated = path.join(projectRoot, 'workspace', 'generated-images');
     fs.mkdirSync(screenshots, { recursive: true });
     fs.mkdirSync(generated, { recursive: true });
-    fs.writeFileSync(path.join(screenshots, 'latest.png'), tinyPngBuffer(11, 7));
-    fs.writeFileSync(path.join(generated, 'asset.svg'), '<svg width="32" height="16"></svg>', 'utf8');
+    const latestPath = path.join(screenshots, 'latest.png');
+    const generatedPath = path.join(generated, 'asset.svg');
+    fs.writeFileSync(latestPath, tinyPngBuffer(11, 7));
+    fs.writeFileSync(generatedPath, '<svg width="32" height="16"></svg>', 'utf8');
+    fs.utimesSync(generatedPath, new Date('2026-05-12T10:00:00.000Z'), new Date('2026-05-12T10:00:00.000Z'));
+    fs.utimesSync(latestPath, new Date('2026-05-12T10:05:00.000Z'), new Date('2026-05-12T10:05:00.000Z'));
 
     const result = readMiraVisualAssetCuriosity({}, { projectRoot, limit: 5 });
 
@@ -64,6 +68,32 @@ describe('Mira visual asset curiosity', () => {
         height: 16,
       }),
     ]));
+    expect(result.latest_asset).toEqual(expect.objectContaining({
+      path: '.squidrun/screenshots/latest.png',
+      name: 'latest.png',
+      source_bucket: 'screenshots',
+      ext: '.png',
+      width: 11,
+      height: 7,
+    }));
+    expect(result.latest_asset_followup).toEqual(expect.objectContaining({
+      path: '.squidrun/screenshots/latest.png',
+      name: 'latest.png',
+      source_bucket: 'screenshots',
+      ext: '.png',
+      width: 11,
+      height: 7,
+      aspect_hint: 'landscape',
+      suggested_question: expect.stringContaining('latest visual asset .squidrun/screenshots/latest.png (11x7)'),
+      possible_action: expect.stringContaining('separate reviewed visual-understanding step'),
+      visual_understanding_step: expect.objectContaining({
+        status: 'separate_explicit_step_required',
+        image_ocr_performed: false,
+        image_model_performed: false,
+        file_write_performed: false,
+        external_send_performed: false,
+      }),
+    }));
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       read_only: true,
@@ -83,5 +113,33 @@ describe('Mira visual asset curiosity', () => {
     expect(result.reason).toBe('visual_assets_missing');
     expect(result.result_count).toBe(0);
     expect(result.no_mutation_performed).toBe(true);
+  });
+
+  test('builds latest portrait asset follow-up without visual understanding side effects', () => {
+    projectRoot = tempProject();
+    const screenshots = path.join(projectRoot, '.squidrun', 'screenshots');
+    fs.mkdirSync(screenshots, { recursive: true });
+    fs.writeFileSync(path.join(screenshots, 'latest.png'), tinyPngBuffer(9, 16));
+
+    const result = readMiraVisualAssetCuriosity({}, { projectRoot, limit: 3 });
+
+    expect(result.latest_asset_followup).toEqual(expect.objectContaining({
+      path: '.squidrun/screenshots/latest.png',
+      name: 'latest.png',
+      aspect_hint: 'portrait',
+      visual_understanding_step: expect.objectContaining({
+        status: 'separate_explicit_step_required',
+        image_ocr_performed: false,
+        image_model_performed: false,
+        file_write_performed: false,
+        external_send_performed: false,
+      }),
+    }));
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      image_ocr_performed: false,
+      image_model_performed: false,
+      file_write_performed: false,
+      external_send_performed: false,
+    }));
   });
 });
