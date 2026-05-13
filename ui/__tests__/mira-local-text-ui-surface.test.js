@@ -448,6 +448,59 @@ describe('Mira Local Text UI Surface v0', () => {
     expectSourceSnapshotUnchanged(projectRoot, before);
   });
 
+  test('private Reflexion lessons are passed to the model instructions without changing visible reply text', async () => {
+    const projectRoot = seededProject();
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_mira_text_reflexion_lessons',
+        output_text: 'I will separate observed facts from assumptions before I recommend the action.',
+      }),
+    }));
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'Mira, what should you do before recommending the next route?',
+      reflexionLessons: [
+        {
+          proposal_id: 'mira-self-direction:f96a8694ba0c688d',
+          category: 'successful_implementation_with_notes',
+          desired_change: 'Add a lightweight pre-answer check for work-critical replies.',
+          next_behavior: 'Use this capability in future routes and prompts.',
+          lesson: 'Long raw report text should not be needed in the live prompt.',
+        },
+        {
+          proposal_id: 'mira-self-direction:false-positive',
+          category: 'false_positive_proposal',
+          desired_change: 'False positive lesson should not enter model context.',
+          next_behavior: 'Do not inject this rejected lesson.',
+        },
+      ],
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+    });
+
+    const surface = output.ui_surface_v0;
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+
+    expect(requestBody.instructions).toContain('Private learned work lessons for this reply only');
+    expect(requestBody.instructions).toContain('Add a lightweight pre-answer check for work-critical replies.');
+    expect(requestBody.instructions).toContain('Next behavior: Use this capability in future routes and prompts.');
+    expect(requestBody.instructions).not.toContain('False positive lesson should not enter model context');
+    expect(requestBody.instructions).not.toContain('Long raw report text should not be needed in the live prompt');
+    expect(requestBody.metadata).toEqual(expect.objectContaining({
+      reflexion_lesson_count: '1',
+    }));
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply.text).toBe('I will separate observed facts from assumptions before I recommend the action.');
+    expect(surface.reply.text).not.toContain('pre-answer check');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
   test('casual feeling prompt prefers everyday replies and rejects construction/ruleset monologue shapes', async () => {
     const plainReply = 'Kind of prickly today. Not bad. You?';
     const plainProjectRoot = seededProject();

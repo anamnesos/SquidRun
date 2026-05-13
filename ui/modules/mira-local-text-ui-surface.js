@@ -874,6 +874,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
         scope,
         miraBrief: session.presence_runtime_read_path_gate?.speakable_mira_brief || null,
         threadContext: payload.threadContext || payload.thread_context || {},
+        reflexionLessons: payload.reflexionLessons || payload.reflexion_lessons || options.reflexionLessons || options.reflexion_lessons || [],
         socialMoveBehaviorCue,
       },
     }, {
