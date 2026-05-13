@@ -439,6 +439,14 @@ describe('social-move classifier v0 — output shape contract', () => {
     // neutral is intentionally null (no cue appended).
     expect(MOVE_TYPE_BEHAVIOR_CUES.neutral).toBeNull();
   });
+
+  test('compliment cue does not force an ask-back formula', () => {
+    const cue = MOVE_TYPE_BEHAVIOR_CUES.compliment;
+    expect(cue).toContain('James gave you a compliment');
+    expect(cue).toContain('Ask something back only if you mean it');
+    expect(cue).not.toMatch(/ask him back/i);
+    expect(cue).not.toMatch(/one short status word/i);
+  });
 });
 
 describe('emotional_discovery_residue_v0 — friction-state machine (ARCH #122/#129)', () => {

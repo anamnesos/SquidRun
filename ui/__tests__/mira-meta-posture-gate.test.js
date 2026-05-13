@@ -473,6 +473,14 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     expect(rendered).not.toMatch(/Disagree if you disagree/);
     expect(rendered).not.toMatch(/Do not describe your reply or yourself/);
     expect(rendered).not.toMatch(/If you missed something, say it short/);
+    expect(rendered).not.toMatch(/one short status word/i);
+    expect(rendered).not.toMatch(/ask him back/i);
+    expect(rendered).not.toMatch(/answer like a coworker/i);
+    expect(rendered).not.toMatch(/If James is angry about the software/i);
+    expect(rendered).not.toMatch(/answer the human moment/i);
+    expect(rendered).not.toMatch(/customer-service softness/i);
+    expect(rendered).toMatch(/For check-ins or frustration, don't force a status word or ask-back/);
+    expect(rendered).toMatch(/Don't do chatbot voice\. Don't smooth it\. Don't explain yourself\./);
   });
 
   test('rendered instructions are short — under 2000 chars and at most 12 lines', () => {
