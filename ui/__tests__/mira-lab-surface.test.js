@@ -2221,6 +2221,103 @@ describe('Mira Lab sidecar surface', () => {
     ))).toBe(false);
   });
 
+  test('curriculum promotes practiced read-only code-mode runs over stale build-wrapper route lessons', () => {
+    projectRoot = tempProject();
+    appendJsonl(readOnlyCodeModeRunsPath(projectRoot), {
+      schema: MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+      ok: true,
+      decision: 'completed',
+      generated_at: '2026-05-12T17:00:00.000Z',
+      run_id: 'mira-read-only-code-mode:route-summary',
+      allowed_paths: ['.squidrun/runtime'],
+      elapsed_ms: 7,
+      output: [{ route_count: 3, proposal_count: 2 }],
+      result: { routes: 3, proposals: 2, runtime_summary: 'fresh' },
+      applied: false,
+      consequence_controls: {
+        internal_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        network_performed: false,
+        destructive_action_performed: false,
+        file_write_performed: false,
+      },
+    });
+    appendJsonl(readOnlyCodeModeRunsPath(projectRoot), {
+      schema: MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+      ok: true,
+      decision: 'completed',
+      generated_at: '2026-05-12T17:01:00.000Z',
+      run_id: 'mira-read-only-code-mode:runtime-summary',
+      allowed_paths: ['ui/modules', '.squidrun/runtime'],
+      elapsed_ms: 21,
+      output: [{ runtime_gap_count: 0 }],
+      result: { runtime: 'healthy', summaries: 1 },
+      applied: false,
+      consequence_controls: {
+        internal_only: true,
+        external_send_performed: false,
+        autonomous_apply_performed: false,
+        network_performed: false,
+        destructive_action_performed: false,
+        file_write_performed: false,
+      },
+    });
+    for (const [routeId, reason] of [
+      ['mira-direct-route:code-mode-old-1', 'read-only search-execute is the fastest bridge from broad curiosity to real inspection'],
+      ['mira-direct-route:code-mode-old-2', 'read-only search-execute is the fastest bridge from broad curiosity to real inspection'],
+    ]) {
+      appendJsonl(miraDirectRoutesPath(projectRoot), {
+        decision: 'routed',
+        route_id: routeId,
+        reason,
+        target_role: 'builder',
+        selected_item: {
+          item_id: `${routeId}:item`,
+          source: 'code_mode_exploration',
+          adapter_id: 'read_only_execute_script_curiosity',
+          suggested_question: 'What sandboxed read-only execute_script shape lets Mira inspect JSONL and logs?',
+          possible_action: 'Route Builder to design the read-only code-mode/search-execute wrapper.',
+        },
+      });
+    }
+
+    const curriculum = extractMiraCurriculumSkills({ limit: 5 }, {
+      projectRoot,
+      generatedAt: '2026-05-12T17:05:00.000Z',
+    });
+
+    expect(curriculum.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      external_send_performed: false,
+      network_performed: false,
+      destructive_action_performed: false,
+      curriculum_log_write_performed: true,
+    }));
+    expect(curriculum.skills[0]).toEqual(expect.objectContaining({
+      source_kind: 'practiced_code_mode_run',
+      source: 'code_mode_exploration',
+      adapter_id: 'read_only_execute_script_curiosity',
+      status: 'practiced',
+      times_observed: 4,
+      next_behavior: expect.stringContaining('Use code-mode to inspect allowed local runtime'),
+    }));
+    expect(curriculum.skills[0].evidence).toEqual(expect.arrayContaining([
+      'mira-read-only-code-mode:route-summary',
+      'mira-read-only-code-mode:runtime-summary',
+      'elapsed_ms=7',
+      'elapsed_ms=21',
+      'result_keys=routes,proposals,runtime_summary',
+      'mira-direct-route:code-mode-old-1',
+    ]));
+    expect(curriculum.skills[0].next_behavior).not.toMatch(/design the read-only code-mode|build-wrapper|build the wrapper/i);
+    expect(curriculum.skills.some((skill) => (
+      skill.source_kind === 'direct_route_pattern'
+      && skill.source === 'code_mode_exploration'
+      && /design the read-only code-mode|build-wrapper|build the wrapper/i.test(skill.next_behavior || '')
+    ))).toBe(false);
+  });
+
   test('read-only code mode lets Mira inspect allowed files without mutation', () => {
     projectRoot = tempProject();
     appendJsonl(curiosityItemsPath(projectRoot), {
