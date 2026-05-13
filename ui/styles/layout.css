@@ -978,6 +978,28 @@
   color: rgba(122, 138, 158, 0.35);
 }
 
+.mira-live-reply {
+  background: rgba(9, 13, 23, 0.96);
+  border-top: 1px solid rgba(122, 138, 158, 0.18);
+  color: var(--color-text);
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4);
+  white-space: pre-wrap;
+}
+
+.mira-live-reply[hidden] {
+  display: none;
+}
+
+.mira-live-reply[data-state="held"],
+.mira-live-reply[data-state="unavailable"] {
+  color: var(--color-text-muted);
+}
+
 /* Command delivery status */
 .command-delivery-status {
   font-size: var(--text-sm);

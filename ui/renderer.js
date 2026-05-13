@@ -126,6 +126,7 @@ const { initCommandPalette } = rendererModules.commandPalette;
 const { initStatusStrip } = rendererModules.statusStrip;
 const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
+const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
 const bus = rendererModules.bus;
@@ -1661,6 +1662,37 @@ function createRafTextareaAutoGrow(input, options = {}) {
   return { schedule, cancel, flush: apply };
 }
 
+function createCommandBarMessageRouter(options = {}) {
+  const now = typeof options.now === 'function' ? options.now : () => Date.now();
+  const rateLimitMs = Number.isFinite(options.rateLimitMs) ? options.rateLimitMs : 500;
+  const logInfo = typeof options.logInfo === 'function' ? options.logInfo : () => {};
+  const setDeliveryStatus = typeof options.setDeliveryStatus === 'function'
+    ? options.setDeliveryStatus
+    : () => {};
+  const routeTask = typeof options.routeTask === 'function' ? options.routeTask : async () => false;
+  const sendMira = typeof options.sendMira === 'function' ? options.sendMira : async () => false;
+
+  let lastSentAt = -Infinity;
+
+  return async function routeCommandBarMessage(message) {
+    const sentAt = now();
+    if (sentAt - lastSentAt < rateLimitMs) {
+      logInfo('Broadcast', 'Rate limited');
+      return false;
+    }
+    lastSentAt = sentAt;
+
+    setDeliveryStatus('sending');
+
+    const trimmed = String(message || '').trim();
+    if (trimmed.toLowerCase().startsWith('/task ')) {
+      return await routeTask(trimmed.slice(6));
+    }
+
+    return await sendMira(trimmed);
+  };
+}
+
 // Wire up module callbacks
 terminal.setStatusCallbacks(null, updateConnectionStatus);
 tabs.setConnectionStatusCallback(updateConnectionStatus);
@@ -1719,7 +1751,6 @@ function setupEventListeners() {
     'please subscribe', 'like and subscribe',
     'the end', 'so', 'um', 'uh', 'hmm', 'ah', 'oh',
   ]);
-  let lastBroadcastTime = 0;
 
   // Keep command bar copy explicit now that target selection UI is removed.
   function updateCommandPlaceholder() {
@@ -2093,48 +2124,61 @@ function setupEventListeners() {
 
   updateCommandPlaceholder();
 
-  // Helper function to send user text through PTY delivery path.
-  function resolveDeliveryState(result) {
-    const accepted = !result || result.success !== false;
-    if (!accepted) {
+  function getMiraLiveSessionId() {
+    if (typeof normalizeMiraLiveSessionId !== 'function') return undefined;
+    const badge = document.getElementById('headerSessionBadge');
+    return normalizeMiraLiveSessionId(badge?.textContent);
+  }
+
+  function renderMiraLiveReplySurface(result) {
+    const surface = document.getElementById('miraLiveReply');
+    if (!surface) return;
+    const message = String(result?.message || '').trim();
+    if (!message) {
+      surface.textContent = '';
+      surface.dataset.state = 'idle';
+      surface.hidden = true;
+      return;
+    }
+    surface.textContent = message;
+    surface.dataset.state = result?.state || (result?.ok ? 'ready' : 'unavailable');
+    surface.hidden = false;
+  }
+
+  async function sendMiraLiveMessage(message) {
+    if (typeof sendMiraLivePrompt !== 'function') {
+      const result = {
+        ok: false,
+        state: 'unavailable',
+        message: 'Mira is unavailable. Open Mira Lab for diagnostics.',
+      };
+      renderMiraLiveReplySurface(result);
       showDeliveryStatus('failed');
       return false;
     }
-    if (result?.verified === false) {
-      showDeliveryStatus('queued');
-      return true;
-    }
-    showDeliveryStatus('delivered');
-    return true;
+
+    const result = await sendMiraLivePrompt(
+      {
+        prompt: message,
+        sessionId: getMiraLiveSessionId(),
+      },
+      {
+        invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+      }
+    );
+
+    renderMiraLiveReplySurface(result);
+    showDeliveryStatus(result.ok ? 'delivered' : 'failed');
+    return Boolean(result.ok);
   }
 
-  function sendArchitectMessage(content) {
-    return new Promise((resolve) => {
-      terminal.broadcast(content, {
-        onComplete: (result) => resolve(resolveDeliveryState(result)),
-      });
-    });
-  }
-
-  async function sendBroadcast(message) {
-    const now = Date.now();
-    if (now - lastBroadcastTime < 500) {
-      log.info('Broadcast', 'Rate limited');
-      return false;
-    }
-    lastBroadcastTime = now;
-
-    // Show sending status
-    showDeliveryStatus('sending');
-
-    const trimmed = message.trim();
-    if (trimmed.toLowerCase().startsWith('/task ')) {
-      return await routeNaturalTask(trimmed.slice(6));
-    }
-
-    // Direct command-bar messages default to Mira's Architect pane.
-    return await sendArchitectMessage(message + '\r');
-  }
+  const sendBroadcast = createCommandBarMessageRouter({
+    now: () => Date.now(),
+    logInfo: (...args) => log.info(...args),
+    setDeliveryStatus: showDeliveryStatus,
+    routeTask: routeNaturalTask,
+    sendMira: sendMiraLiveMessage,
+  });
 
   if (broadcastInput) {
     const autoGrow = createRafTextareaAutoGrow(broadcastInput);
@@ -3059,6 +3103,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    createCommandBarMessageRouter,
     createRafTextareaAutoGrow,
   };
 }
