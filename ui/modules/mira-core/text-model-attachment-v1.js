@@ -349,6 +349,61 @@ function instructionText(value, maxChars = 360) {
   return truncateText(value, maxChars).replace(/\s+/g, ' ').trim();
 }
 
+function renderRestartContinuityContextForInstructions(restartContinuityContext = {}, promptText = '') {
+  const promptIntent = classifyMiraWorkLanePrompt(promptText);
+  const context = restartContinuityContext || {};
+  if (!promptIntent || context.present !== true) return '';
+
+  const lines = [
+    'Private typed restart-continuity context for this reply only. Use it silently; do not quote, label, categorize, or recite this context in the visible answer.',
+    'Answer Mira-work or restart-continuity questions from these structured fields. If the source is stale, say so briefly only when it changes confidence.',
+    'Boundary: structured current-lane JSON and structured Mira presence runtime summary/state only; no startup prose, no recent comms, no memory write.',
+  ];
+  if (context.stale === true) {
+    const staleSources = Array.isArray(context.stale_sources) && context.stale_sources.length > 0
+      ? context.stale_sources.join(', ')
+      : 'structured source';
+    lines.push(`Continuity freshness: stale (${instructionText(staleSources, 120)}).`);
+  } else {
+    lines.push('Continuity freshness: current enough for typed reply context.');
+  }
+
+  const lane = context.current_lane && typeof context.current_lane === 'object'
+    ? context.current_lane
+    : null;
+  if (lane) {
+    if (lane.objective) lines.push(`Current lane objective: ${instructionText(lane.objective, 240)}`);
+    if (lane.kind) lines.push(`Current lane kind: ${instructionText(lane.kind, 80)}`);
+    if (lane.source_ref) lines.push(`Current lane source: ${instructionText(lane.source_ref, 80)}`);
+  } else {
+    lines.push('Current lane objective: absent from structured current-lane JSON.');
+  }
+
+  const presence = context.mira_presence_runtime && typeof context.mira_presence_runtime === 'object'
+    ? context.mira_presence_runtime
+    : null;
+  if (presence) {
+    if (presence.active_mira_presence_lane) {
+      lines.push(`Mira presence lane: ${instructionText(presence.active_mira_presence_lane, 180)}`);
+    }
+    if (presence.accepted_critique) {
+      lines.push(`Accepted critique: ${instructionText(presence.accepted_critique, 220)}`);
+    }
+    if (presence.next_product_action) {
+      lines.push(`Next product action: ${instructionText(presence.next_product_action, 240)}`);
+    }
+    if (presence.proof_test_state) {
+      lines.push(`Proof/test state: ${instructionText(presence.proof_test_state, 220)}`);
+    }
+    if (Array.isArray(presence.stale_markers) && presence.stale_markers.length > 0) {
+      lines.push(`Stale markers: ${presence.stale_markers.map((marker) => instructionText(marker, 120)).join('; ')}`);
+    }
+  } else {
+    lines.push('Mira presence runtime summary: absent from structured state.');
+  }
+  return lines.join('\n');
+}
+
 function renderableBriefText(value, maxChars = 360) {
   const text = instructionText(value, maxChars);
   return text && !UNSPEAKABLE_BRIEF_PATTERN.test(text) ? text : '';
@@ -400,6 +455,8 @@ const MIRA_WORK_STATUS_PROMPT_PATTERNS = Object.freeze([
   /\bwhat(?:'|’)?s\s+(?:the\s+)?(?:current\s+)?mira(?:\s+lab)?\s+(?:lane|work|status|focus|task|fix|test)\b/i,
   /\bmira(?:\s+lab)?\b[\s\S]{0,80}\b(?:status|lane|work|focus|task|fix|test|verifier|restart)\b/i,
   /\b(?:status|lane|work|focus|task|fix|test|verifier|restart)\b[\s\S]{0,80}\bmira(?:\s+lab)?\b/i,
+  /\brestart[-\s]+continuity\b[\s\S]{0,120}\b(?:check|what\s+(?:are|were)\s+we\s+doing|current|lane|status|focus|task)\b/i,
+  /\bwhat\s+were\s+we\s+doing\b[\s\S]{0,120}\b(?:restart|continuity|cold[-\s]+start)\b/i,
 ]);
 
 const CONTEXT_FAILURE_WORK_PROMPT_PATTERN = /\bcontext\s+(?:just\s+)?failed\b[\s\S]{0,180}\b(?:clean\s+up|cleanup|manual|again)\b/i;
@@ -599,6 +656,10 @@ function buildMiraTextInstructions(localContext = {}, promptText = '') {
     localContext.reflexionLessons || localContext.reflexion_lessons || []
   );
   const threadContextBlock = renderThreadContextForInstructions(localContext.threadContext);
+  const restartContinuityContextBlock = renderRestartContinuityContextForInstructions(
+    localContext.restartContinuityContext || localContext.restart_continuity_context || {},
+    promptText
+  );
   const promptSpecificInstructions = renderPromptSpecificInstructions(promptText);
   // ARCH #97/#98/#100/#104: per-turn social-move behavior cue from the
   // social-move classifier. ADDITIVE only — never spliced into the standing
@@ -628,6 +689,7 @@ function buildMiraTextInstructions(localContext = {}, promptText = '') {
     socialMoveCue,
     reflexionLessonsBlock,
     miraBriefBlock,
+    restartContinuityContextBlock,
     threadContextBlock,
   ].filter(Boolean).join('\n');
 }
@@ -1034,5 +1096,6 @@ module.exports = {
   outputViolatesAttachmentContract,
   renderMiraBriefForInstructions,
   renderReflexionLessonsForInstructions,
+  renderRestartContinuityContextForInstructions,
   renderThreadContextForInstructions,
 };
