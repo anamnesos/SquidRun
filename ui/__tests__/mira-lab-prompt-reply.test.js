@@ -35,6 +35,11 @@ function readJsonl(filePath) {
     .map((line) => JSON.parse(line));
 }
 
+function appendJsonl(filePath, entry) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+}
+
 function makeBuildMiraLocalTextUiSurfaceMock(replyText, options = {}) {
   return jest.fn().mockResolvedValue({
     ui_surface_v0: {
@@ -1389,6 +1394,66 @@ describe('mira lab prompt reply v0', () => {
     expect(auditEntries[0].engine_session_id).toMatch(/^app-session-mira-lab-/);
     // Transcript path uses the friendly session id, not the engine one.
     expect(auditEntries[0].session_id).toBe('mira-lab-2026-05-10');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
+  test('prompt reply derives compact implemented Reflexion lessons for private engine context only', async () => {
+    const projectRoot = tempProject();
+    const runtimeDir = path.join(projectRoot, '.squidrun', 'runtime');
+    appendJsonl(path.join(runtimeDir, 'mira-self-direction-proposals.jsonl'), {
+      proposal_id: 'mira-self-direction:f96a8694ba0c688d',
+      generated_at: '2026-05-12T20:00:00.000Z',
+      target_areas: ['reality_testing'],
+      desired_change: 'Add a lightweight pre-answer check for work-critical replies.',
+    });
+    appendJsonl(path.join(runtimeDir, 'mira-self-direction-outcomes.jsonl'), {
+      proposal_id: 'mira-self-direction:f96a8694ba0c688d',
+      generated_at: '2026-05-12T20:10:00.000Z',
+      outcome_status: 'implemented',
+      note: 'Implemented the pre-answer evidence gate.',
+    });
+    appendJsonl(path.join(runtimeDir, 'mira-self-direction-proposals.jsonl'), {
+      proposal_id: 'mira-self-direction:false-positive',
+      generated_at: '2026-05-12T20:11:00.000Z',
+      target_areas: ['tests'],
+      desired_change: 'False positive lesson should not enter model context.',
+    });
+    appendJsonl(path.join(runtimeDir, 'mira-self-direction-outcomes.jsonl'), {
+      proposal_id: 'mira-self-direction:false-positive',
+      generated_at: '2026-05-12T20:12:00.000Z',
+      outcome_status: 'false_positive',
+      note: 'This trigger was a false positive.',
+    });
+
+    const replyText = 'I would check what we actually know before recommending the route.';
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'Mira, what should happen before this work-critical recommendation?',
+      sessionId: 'unit-reflexion-private-context',
+    }, { projectRoot, generatedAt: '2026-05-12T20:20:00.000Z' });
+
+    expect(fakeSurface).toHaveBeenCalledTimes(1);
+    const enginePayload = fakeSurface.mock.calls[0][0];
+    expect(enginePayload.reflexionLessons).toEqual([
+      expect.objectContaining({
+        proposal_id: 'mira-self-direction:f96a8694ba0c688d',
+        category: 'successful_implementation_with_notes',
+        lesson: 'Add a lightweight pre-answer check for work-critical replies.',
+        next_behavior: 'Use this capability in future routes and prompts.',
+      }),
+    ]);
+    expect(JSON.stringify(enginePayload.reflexionLessons)).not.toContain('False positive lesson should not enter model context');
+    expect(result.decision).toBe('pass');
+    expect(result.reply.text).toBe(replyText);
+    expect(JSON.stringify(result)).not.toContain('Use this capability in future routes and prompts.');
 
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });

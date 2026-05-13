@@ -11,6 +11,8 @@ const THREAD_CONTEXT_SCHEMA = 'squidrun.mira_core.typed_thread_context_v1';
 const THREAD_CONTEXT_MAX_MESSAGES = 6;
 const THREAD_CONTEXT_MAX_TOTAL_CHARS = 3600;
 const THREAD_CONTEXT_MAX_MESSAGE_CHARS = 900;
+const REFLEXION_CONTEXT_MAX_LESSONS = 3;
+const REFLEXION_CONTEXT_MAX_TEXT_CHARS = 220;
 
 const FAKE_INTERNAL_STATE_PATTERN =
   /\b(i am conscious|i'm conscious|actual consciousness|private consciousness|i suffer|i am suffering|i'm suffering|actual suffering|actual fear|literal human feelings|sentience)\b/i;
@@ -452,8 +454,67 @@ function renderMiraBriefForInstructions(brief = {}) {
   return lines.join('\n');
 }
 
+function normalizeReflexionLessonsForInstructions(reflexionLessons = []) {
+  const rawLessons = Array.isArray(reflexionLessons)
+    ? reflexionLessons
+    : (Array.isArray(reflexionLessons.lessons) ? reflexionLessons.lessons : []);
+  const normalized = [];
+  for (const lesson of rawLessons) {
+    if (!lesson || typeof lesson !== 'object') continue;
+    const category = trimText(lesson.category || lesson.outcome_status || lesson.outcomeStatus).toLowerCase();
+    const rejected = lesson.rejected === true
+      || lesson.false_positive === true
+      || category.includes('rejected')
+      || category.includes('false_positive')
+      || category.includes('failed')
+      || category.includes('not_implemented')
+      || category.includes('needs_followup');
+    const implemented = lesson.implemented === true
+      || lesson.outcome_status === 'implemented'
+      || category.includes('successful_implementation')
+      || category === 'implemented'
+      || category.endsWith('_implemented');
+    if (rejected || !implemented) continue;
+    const lessonText = truncateText(
+      lesson.desired_change || lesson.lesson || lesson.summary || lesson.title,
+      REFLEXION_CONTEXT_MAX_TEXT_CHARS
+    );
+    const nextBehavior = truncateText(
+      lesson.next_behavior || lesson.nextBehavior || lesson.practice_next,
+      REFLEXION_CONTEXT_MAX_TEXT_CHARS
+    );
+    if (!lessonText && !nextBehavior) continue;
+    normalized.push({
+      proposal_id: truncateText(lesson.proposal_id || lesson.proposalId, 96) || null,
+      lesson: lessonText,
+      next_behavior: nextBehavior,
+      category: category || 'implemented',
+    });
+    if (normalized.length >= REFLEXION_CONTEXT_MAX_LESSONS) break;
+  }
+  return normalized;
+}
+
+function renderReflexionLessonsForInstructions(reflexionLessons = []) {
+  const lessons = normalizeReflexionLessonsForInstructions(reflexionLessons);
+  if (lessons.length === 0) return '';
+  const lines = [
+    'Private learned work lessons for this reply only. Use them silently; do not mention Reflexion, proposal IDs, or quote this block.',
+  ];
+  for (const lesson of lessons) {
+    const parts = [];
+    if (lesson.lesson) parts.push(`Lesson: ${lesson.lesson}`);
+    if (lesson.next_behavior) parts.push(`Next behavior: ${lesson.next_behavior}`);
+    if (parts.length > 0) lines.push(`- ${parts.join(' | ')}`);
+  }
+  return lines.join('\n');
+}
+
 function buildMiraTextInstructions(localContext = {}) {
   const miraBriefBlock = renderMiraBriefForInstructions(localContext.miraBrief);
+  const reflexionLessonsBlock = renderReflexionLessonsForInstructions(
+    localContext.reflexionLessons || localContext.reflexion_lessons || []
+  );
   const threadContextBlock = renderThreadContextForInstructions(localContext.threadContext);
   // ARCH #97/#98/#100/#104: per-turn social-move behavior cue from the
   // social-move classifier. ADDITIVE only — never spliced into the standing
@@ -481,6 +542,7 @@ function buildMiraTextInstructions(localContext = {}) {
     'For Mira-work questions, answer with the concrete fix or test currently in front of us.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
     socialMoveCue,
+    reflexionLessonsBlock,
     miraBriefBlock,
     threadContextBlock,
   ].filter(Boolean).join('\n');
@@ -489,6 +551,9 @@ function buildMiraTextInstructions(localContext = {}) {
 function buildResponsesPayload({ text, config, localContext }) {
   const context = localContext || {};
   const threadContext = normalizeThreadContext(context.threadContext || {});
+  const reflexionLessons = normalizeReflexionLessonsForInstructions(
+    context.reflexionLessons || context.reflexion_lessons || []
+  );
   return {
     model: config.model,
     instructions: buildMiraTextInstructions(context),
@@ -511,6 +576,7 @@ function buildResponsesPayload({ text, config, localContext }) {
       attachment: 'threaded_text_conversation_v1',
       session_id: trimText(context.sessionId).slice(0, 96),
       mira_brief_loaded: String(Boolean(context.miraBrief)),
+      reflexion_lesson_count: String(reflexionLessons.length),
       thread_context_message_count: String(threadContext.message_count),
       thread_context_omitted_count: String(threadContext.omitted_count),
     },
@@ -853,6 +919,8 @@ module.exports = {
   SELF_MYTH_RISKY_PHRASES,
   MIRA_TEXT_MODEL_QUALITY_FLOOR,
   OPENAI_RESPONSES_URL,
+  REFLEXION_CONTEXT_MAX_LESSONS,
+  REFLEXION_CONTEXT_MAX_TEXT_CHARS,
   TEXT_MODEL_ATTACHMENT_SCHEMA,
   THREAD_CONTEXT_MAX_MESSAGES,
   THREAD_CONTEXT_MAX_MESSAGE_CHARS,
@@ -872,7 +940,9 @@ module.exports = {
   extractResponseText,
   getMiraTextModelAttachmentConfig,
   normalizeThreadContext,
+  normalizeReflexionLessonsForInstructions,
   outputViolatesAttachmentContract,
   renderMiraBriefForInstructions,
+  renderReflexionLessonsForInstructions,
   renderThreadContextForInstructions,
 };

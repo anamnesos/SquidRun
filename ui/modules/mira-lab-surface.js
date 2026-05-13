@@ -4938,6 +4938,62 @@ async function buildReplayPromptReplyResult({
   };
 }
 
+function compactReflexionLessonsForTypedReply(reflexionLessons = []) {
+  const rawLessons = Array.isArray(reflexionLessons)
+    ? reflexionLessons
+    : (Array.isArray(reflexionLessons.lessons) ? reflexionLessons.lessons : []);
+  const compact = [];
+  for (const lesson of rawLessons) {
+    if (!lesson || typeof lesson !== 'object') continue;
+    const category = trimText(lesson.category || lesson.outcome_status || lesson.outcomeStatus).toLowerCase();
+    const rejected = lesson.rejected === true
+      || lesson.false_positive === true
+      || category.includes('rejected')
+      || category.includes('false_positive')
+      || category.includes('failed')
+      || category.includes('not_implemented')
+      || category.includes('needs_followup');
+    const implemented = lesson.implemented === true
+      || lesson.outcome_status === 'implemented'
+      || category.includes('successful_implementation')
+      || category === 'implemented'
+      || category.endsWith('_implemented');
+    if (rejected || !implemented) continue;
+    const lessonText = oneLine(lesson.desired_change || lesson.lesson || lesson.summary, 220);
+    const nextBehavior = oneLine(lesson.next_behavior || lesson.nextBehavior || lesson.practice_next, 220);
+    if (!lessonText && !nextBehavior) continue;
+    compact.push({
+      proposal_id: oneLine(lesson.proposal_id || lesson.proposalId, 96) || null,
+      category: category || 'implemented',
+      lesson: lessonText,
+      next_behavior: nextBehavior,
+    });
+    if (compact.length >= 3) break;
+  }
+  return compact;
+}
+
+function buildTypedReplyReflexionLessonContext(payload = {}, options = {}) {
+  const explicit = payload.reflexionLessons
+    || payload.reflexion_lessons
+    || options.reflexionLessons
+    || options.reflexion_lessons;
+  if (explicit !== undefined && explicit !== null) {
+    return compactReflexionLessonsForTypedReply(explicit);
+  }
+  try {
+    const reflexion = extractMiraReflexionLessons({
+      generatedAt: options.generatedAt,
+    }, {
+      projectRoot: options.projectRoot,
+      generatedAt: options.generatedAt,
+    });
+    return compactReflexionLessonsForTypedReply(reflexion.lessons || []);
+  } catch (_err) {
+    return [];
+  }
+}
+
 async function buildMiraLabPromptReply(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
   const projectRoot = projectRootFromOptions(options, payload);
@@ -5004,6 +5060,11 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
   const threadContextForEngine = callerSuppliedMessages
     ? callerThreadContext
     : { messages: loadRecentTranscriptForContext(transcriptPathStr) };
+  const reflexionLessonsForEngine = buildTypedReplyReflexionLessonContext(payload, {
+    ...options,
+    projectRoot,
+    generatedAt,
+  });
   const enginePayload = {
     text: prompt,
     profileName: 'main',
@@ -5021,6 +5082,9 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     // walk the friction_state arc across turns.
     priorFrameState: payload.priorFrameState || payload.prior_frame_state || null,
   };
+  if (reflexionLessonsForEngine.length > 0) {
+    enginePayload.reflexionLessons = reflexionLessonsForEngine;
+  }
   let surfaceResult;
   let surfaceError = null;
   try {
