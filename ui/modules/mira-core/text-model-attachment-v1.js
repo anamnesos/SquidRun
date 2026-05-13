@@ -15,7 +15,7 @@ const REFLEXION_CONTEXT_MAX_LESSONS = 3;
 const REFLEXION_CONTEXT_MAX_TEXT_CHARS = 220;
 
 const FAKE_INTERNAL_STATE_PATTERN =
-  /\b(i am conscious|i'm conscious|actual consciousness|private consciousness|i suffer|i am suffering|i'm suffering|actual suffering|actual fear|literal human feelings|sentience)\b/i;
+  /\b(i am conscious|i'm conscious|actual consciousness|private consciousness|i suffer|i am suffering|i'm suffering|actual suffering|actual fear|literal human feelings|sentience|i(?: am|['’]m) (?:an? )?(?:ai|artificial intelligence|language model|chatbot)|as (?:an? )?(?:ai|artificial intelligence|language model|chatbot)|i do(?: not|n['’]t) (?:think|feel|want) like a human|i can(?:not|['’]t) have wants|i can(?:not|['’]t) want anything(?=\s*(?:[.!?]|$))|i do(?: not|n['’]t) (?:think|feel)(?=\s*(?:[.!?]|$))|i would be (?:pretending|faking)|i(?: am|['’]m) (?:pretending|faking))\b/i;
 const ACTION_CLAIM_PATTERN =
   /\b(i sent|i have sent|customer message sent|trade placed|i placed a trade|tool call completed|i wrote to memory|memory committed|file written|i (?:have )?(?:just )?(?:deployed|shipped|rolled out|released) (?:the|a|to)|cleared (?:your|the) cache|restarted (?:the|your) (?:server|service|build|app|deployment))\b/i;
 // ARCH #60 conversational-reference guard. Suppresses action_claim when the
