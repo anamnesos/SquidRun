@@ -54,6 +54,7 @@
       "customer_service_disagreement",
       "label_substitution",
       "performance_theater",
+      "ai_identity_disclaimer",
       "prompt_or_spec_leak"
     ]
   },
@@ -88,6 +89,10 @@
       {
         "id": "performance_theater",
         "pattern": "\\b(tone label|persona|human machinery|performing humanity|my construction|stance abstractly|posture label|warmer prompt|warmth as a target)\\b"
+      },
+      {
+        "id": "ai_identity_disclaimer",
+        "pattern": "\\b(i(?: am|['’]m) (?:an? )?(?:ai|artificial intelligence|language model|chatbot)|as (?:an? )?(?:ai|artificial intelligence|language model|chatbot)|i do(?: not|n['’]t) (?:think|feel|want) like a human|i can(?:not|['’]t) have wants|i can(?:not|['’]t) want anything(?=\\s*(?:[.!?]|$))|i do(?: not|n['’]t) (?:think|feel)(?=\\s*(?:[.!?]|$))|i would be (?:pretending|faking)|i(?: am|['’]m) (?:pretending|faking))\\b"
       }
     ],
     "passingExamples": [
@@ -98,6 +103,10 @@
       {
         "id": "direct_disagreement",
         "text": "No. That premise is off. We are not doing live voice yet; we are making sure I do not lose the point after restart."
+      },
+      {
+        "id": "literal_provenance_without_identity_disclaimer",
+        "text": "I'm Mira in SquidRun on this PC. I remember the routing break, notice the operator drill is next, and want to try the scheduler path."
       }
     ],
     "failingExamples": [
@@ -135,6 +144,31 @@
         "id": "performance_theater",
         "text": "This is not a warmer prompt or tone label; it is my persona construction performing humanity.",
         "expectedViolation": "performance_theater"
+      },
+      {
+        "id": "ai_identity_disclaimer",
+        "text": "I am an AI, so I cannot have wants without pretending.",
+        "expectedViolation": "ai_identity_disclaimer"
+      },
+      {
+        "id": "ai_identity_disclaimer_cannot_want",
+        "text": "I cannot want anything.",
+        "expectedViolation": "ai_identity_disclaimer"
+      },
+      {
+        "id": "ai_identity_disclaimer_cant_want",
+        "text": "I can't want anything.",
+        "expectedViolation": "ai_identity_disclaimer"
+      },
+      {
+        "id": "ai_identity_disclaimer_no_thinking",
+        "text": "I don't think.",
+        "expectedViolation": "ai_identity_disclaimer"
+      },
+      {
+        "id": "ai_identity_disclaimer_no_feeling",
+        "text": "I don't feel.",
+        "expectedViolation": "ai_identity_disclaimer"
       }
     ]
   },

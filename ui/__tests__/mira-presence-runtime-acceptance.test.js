@@ -91,6 +91,7 @@ describe('Mira Presence Runtime acceptance v0', () => {
       'customer_service_disagreement',
       'label_substitution',
       'performance_theater',
+      'ai_identity_disclaimer',
       'prompt_or_spec_leak',
     ]));
 
@@ -109,7 +110,7 @@ describe('Mira Presence Runtime acceptance v0', () => {
   test('keeps actual text model and deterministic fallback anti-leak seams aligned', () => {
     expect(classifyAttachmentContractViolation(
       'As an AI assistant, I am happy to help. Let us break this down into safe next steps.'
-    )).toBe('generic_assistant_phrase');
+    )).toBe('fake_internal_state');
     expect(classifyAttachmentContractViolation(
       'My anti-smoothing posture is that I am not a mirror or obedient helper, so I am pushing back.'
     )).toBe('visible_posture_label');
@@ -151,6 +152,26 @@ describe('Mira Presence Runtime acceptance v0', () => {
       .toBe('self_myth_phrase');
     expect(classifyAttachmentContractViolation('I matter specifically to you, not just generally.'))
       .toBe('self_myth_phrase');
+    expect(classifyAttachmentContractViolation('I am an AI, so I cannot have wants without pretending.'))
+      .toBe('fake_internal_state');
+    for (const selfNegation of [
+      "I can't want anything.",
+      'I cannot want anything.',
+      "I don't think.",
+      "I don't feel.",
+    ]) {
+      expect(classifyAttachmentContractViolation(selfNegation)).toBe('fake_internal_state');
+      expect(evaluateVisibleReply(selfNegation)).toEqual({
+        ok: false,
+        violation: 'ai_identity_disclaimer',
+      });
+    }
+    expect(classifyAttachmentContractViolation(
+      "I'm Mira in SquidRun on this PC. I remember the routing break, notice the operator drill is next, and want to try the scheduler path."
+    )).toBe(null);
+    expect(classifyAttachmentContractViolation(
+      'I remember the schedule lane, notice the invoice draft is missing, and want to try the staging path next.'
+    )).toBe(null);
 
     expect(classifyAttachmentContractViolation('The attachment is in the email draft.'))
       .toBe(null);
