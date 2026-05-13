@@ -398,6 +398,8 @@ const MIRA_WORK_STATUS_PROMPT_PATTERNS = Object.freeze([
 ]);
 
 const CONTEXT_FAILURE_WORK_PROMPT_PATTERN = /\bcontext\s+(?:just\s+)?failed\b[\s\S]{0,180}\b(?:clean\s+up|cleanup|manual|again)\b/i;
+const BREVITY_CORRECTION_PROMPT_PATTERN =
+  /^(?:smaller|shorter|less|less\s+staged|too\s+(?:much|long|wordy|staged)|make\s+(?:it|that|this)\s+(?:smaller|shorter)|say\s+(?:it|that|this)\s+(?:smaller|shorter)|again[,:\s-]+(?:smaller|shorter))[\s.!?]*$/i;
 
 function normalizePromptIntentText(text = '') {
   return trimText(text)
@@ -418,12 +420,23 @@ function classifyMiraWorkLanePrompt(text = '') {
   return null;
 }
 
+function classifyMiraPromptReplyShape(text = '') {
+  const normalized = normalizePromptIntentText(text);
+  if (!normalized) return null;
+  const workLaneIntent = classifyMiraWorkLanePrompt(normalized);
+  if (workLaneIntent) return workLaneIntent;
+  if (BREVITY_CORRECTION_PROMPT_PATTERN.test(normalized)) {
+    return { intent: 'brevity_correction' };
+  }
+  return null;
+}
+
 function isMiraWorkStatusPrompt(text = '') {
   return classifyMiraWorkLanePrompt(text)?.intent === 'mira_work_status';
 }
 
 function renderPromptSpecificInstructions(promptText = '') {
-  const promptIntent = classifyMiraWorkLanePrompt(promptText);
+  const promptIntent = classifyMiraPromptReplyShape(promptText);
   if (!promptIntent) return '';
 
   if (promptIntent.intent === 'context_failure_repair') {
@@ -432,6 +445,16 @@ function renderPromptSpecificInstructions(promptText = '') {
       'The first word must be "Fixing", "Testing", or "Cleanup"; do not start with preamble words such as "Yeah", "Got it", "I understand", "Sorry", "My bad", "Sure", or "Absolutely".',
       'Do not apologize, validate the frustration, narrate your posture, or use customer-service padding.',
       `If the lane is the restart verifier, preserve this missing-state stop exactly: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP}`,
+    ].join('\n');
+  }
+
+  if (promptIntent.intent === 'brevity_correction') {
+    return [
+      'For brevity-correction prompts like "smaller", do not acknowledge the request; produce only the smaller replacement.',
+      'Only rewrite text James includes in the same prompt; do not infer a target from earlier transcript turns.',
+      'For standalone "smaller", answer exactly "Smaller."',
+      'Never start with preamble openers such as "Got it", "OK", "Okay", "Yep", "Yeah", "I understand", "Sure", "Of course", "Right", "Absolutely", "Great", "Totally", "Here is", or "Here\'s".',
+      'Do not ask James back on this prompt.',
     ].join('\n');
   }
 
@@ -994,6 +1017,7 @@ module.exports = {
   buildResponsesPayload,
   callMiraTextModelAttachment,
   classifyAttachmentContractViolation,
+  classifyMiraPromptReplyShape,
   classifyMiraWorkLanePrompt,
   classifyNonOkModelResponse,
   classifyModelTier,

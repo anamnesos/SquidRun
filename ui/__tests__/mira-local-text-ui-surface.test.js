@@ -26,6 +26,7 @@ const {
   META_REWRITE_PATTERN,
   MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
   classifyAttachmentContractViolation,
+  classifyMiraPromptReplyShape,
   classifyMiraWorkLanePrompt,
   outputViolatesAttachmentContract,
   renderMiraBriefForInstructions,
@@ -473,6 +474,49 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(classifyMiraWorkLanePrompt('the context just failed and I had to clean up manually AGAIN.'))
       .toEqual({ intent: 'context_failure_repair' });
     expect(classifyMiraWorkLanePrompt('what are we doing with billing?')).toBeNull();
+    expect(classifyMiraPromptReplyShape('smaller'))
+      .toEqual({ intent: 'brevity_correction' });
+    expect(classifyMiraPromptReplyShape('make it shorter'))
+      .toEqual({ intent: 'brevity_correction' });
+  });
+
+  test('smaller prompt steers to no-preamble brevity reply', async () => {
+    const projectRoot = seededProject();
+    const verifierReply = 'Smaller.';
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_smaller_no_preamble',
+        output_text: verifierReply,
+      }),
+    }));
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'smaller',
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+    });
+
+    const surface = output.ui_surface_v0;
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(requestBody.instructions).toContain('For brevity-correction prompts like "smaller"');
+    expect(requestBody.instructions).toContain('Only rewrite text James includes in the same prompt');
+    expect(requestBody.instructions).toContain('For standalone "smaller", answer exactly "Smaller."');
+    expect(requestBody.instructions).toContain('Never start with preamble openers');
+    expect(requestBody.instructions).toContain('"Got it"');
+    expect(requestBody.instructions).toContain('"OK"');
+    expect(requestBody.instructions).toContain('Do not ask James back on this prompt.');
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply.text).toBe(verifierReply);
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
   test('Mira-work status prompt steers to current-lane answer and keeps meta-posture gate intact', async () => {

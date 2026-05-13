@@ -8,6 +8,7 @@ const {
   buildMiraTextInstructions,
   callMiraTextModelAttachment,
   classifyAttachmentContractViolation,
+  classifyMiraPromptReplyShape,
   classifyMiraWorkLanePrompt,
   outputViolatesAttachmentContract,
 } = require('../modules/mira-core/text-model-attachment-v1');
@@ -506,7 +507,7 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
     {
       name: 'smaller / too staged gets plain acknowledgement, no self-analysis',
       prompt: 'smaller',
-      pass: 'Got it. Smaller.',
+      pass: 'Smaller.',
       reject: 'I drifted into presentation mode there. Let me try that again with a cleaner move.',
     },
     {
@@ -641,6 +642,20 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
     expect(hardStopCodePoints.slice(16, 19)).toEqual(['49', '2019', '6d']);
     expect(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP)
       .not.toBe('Context failed. Im missing the last state.');
+  });
+
+  test('smaller verifier prompt instructions forbid acknowledgement preamble', () => {
+    const instructions = buildMiraTextInstructions({}, 'smaller');
+
+    expect(classifyMiraPromptReplyShape('smaller'))
+      .toEqual({ intent: 'brevity_correction' });
+    expect(instructions).toContain('For brevity-correction prompts like "smaller"');
+    expect(instructions).toContain('Only rewrite text James includes in the same prompt');
+    expect(instructions).toContain('For standalone "smaller", answer exactly "Smaller."');
+    expect(instructions).toContain('Never start with preamble openers');
+    expect(instructions).toContain('"Got it"');
+    expect(instructions).toContain('"OK"');
+    expect(instructions).toContain('Do not ask James back on this prompt.');
   });
 
   test('cold-start continuity: empty thread context still drives one model call with a concrete reply', async () => {
