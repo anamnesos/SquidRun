@@ -14,6 +14,7 @@ const {
   MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
   MIRA_DIRECT_ROUTE_SCHEMA,
   MIRA_READ_ONLY_CODE_MODE_SCHEMA,
+  MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA,
   MIRA_REFLEXION_LESSONS_SCHEMA,
   MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
   MIRA_LAB_TURN_CHANNEL,
@@ -24,6 +25,7 @@ const {
   buildMiraAuthorityScoreboard,
   buildMiraSelfDirectionProposal,
   classifyMiraReplyConfidenceSource,
+  ensureMiraQuietCuriositySchedule,
   extractMiraCurriculumSkills,
   extractMiraReflexionLessons,
   generateMiraSelfDirectionProposal,
@@ -2668,7 +2670,7 @@ describe('Mira Lab sidecar surface', () => {
     const schedulerStatePath = path.join(projectRoot, '.squidrun', 'runtime', 'schedules.json');
     const runnableSources = [
       'runtime_comms',
-      'memory',
+      'memory_broker',
       'environment_apps',
       'work_continuation',
       'browser_history',
@@ -2813,6 +2815,152 @@ describe('Mira Lab sidecar surface', () => {
       'scheduler_review_plan=quiet_interval_curiosity_burst review=architect before_schedule_creation=true schedule_mutation=false',
     ]));
     expect(JSON.stringify(result.work_order.reviewed_recurring_burst_plan)).not.toMatch(/code_mode_exploration|voyager_curriculum/);
+  });
+
+  test('quiet curiosity schedule dry-run builds an installable bounded interval schedule', async () => {
+    projectRoot = tempProject();
+    const schedulerStatePath = path.join(projectRoot, '.squidrun', 'runtime', 'schedules.json');
+
+    const result = await ensureMiraQuietCuriositySchedule({
+      intervalMinutes: 45,
+      schedulerStatePath,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:10:00.000Z',
+    });
+
+    expect(result.schema).toBe(MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA);
+    expect(result.decision).toBe('schedule_ready_for_install');
+    expect(result.schedule_created).toBe(false);
+    expect(result.schedule_updated).toBe(false);
+    expect(result.schedule_run_performed).toBe(false);
+    expect(result.sources).toEqual([
+      'runtime_comms',
+      'memory_broker',
+      'environment_apps',
+      'work_continuation',
+      'browser_history',
+      'email',
+    ]);
+    expect(result.command_harness).toContain('curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --route-interesting');
+    expect(result.schedule).toEqual(expect.objectContaining({
+      id: 'mira-quiet-curiosity-burst-v1',
+      name: 'Mira quiet curiosity burst',
+      type: 'interval',
+      active: true,
+      interval_minutes: 45,
+      task_type: 'implementation',
+    }));
+    expect(JSON.stringify(result)).not.toMatch(/automation_scheduler|cheap_parallel_scouts|email body|external_send_performed":true/);
+    expect(fs.existsSync(schedulerStatePath)).toBe(false);
+    expect(result.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      schedule_created: false,
+      schedule_updated: false,
+      schedule_deleted: false,
+      schedule_run_performed: false,
+      external_send_performed: false,
+    }));
+  });
+
+  test('quiet curiosity schedule install is duplicate-protected', async () => {
+    projectRoot = tempProject();
+    const schedulerStatePath = path.join(projectRoot, '.squidrun', 'runtime', 'schedules.json');
+
+    const first = await ensureMiraQuietCuriositySchedule({
+      install: true,
+      intervalMinutes: 45,
+      schedulerStatePath,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:20:00.000Z',
+    });
+    const second = await ensureMiraQuietCuriositySchedule({
+      install: true,
+      intervalMinutes: 45,
+      schedulerStatePath,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:21:00.000Z',
+    });
+    const state = JSON.parse(fs.readFileSync(schedulerStatePath, 'utf8'));
+
+    expect(first.decision).toBe('schedule_installed');
+    expect(first.schedule_created).toBe(true);
+    expect(first.schedule_updated).toBe(false);
+    expect(second.decision).toBe('schedule_already_active');
+    expect(second.schedule_created).toBe(false);
+    expect(second.schedule_updated).toBe(false);
+    expect(second.duplicate_suppressed).toBe(true);
+    expect(state.schedules).toHaveLength(1);
+    expect(state.schedules[0]).toEqual(expect.objectContaining({
+      id: 'mira-quiet-curiosity-burst-v1',
+      name: 'Mira quiet curiosity burst',
+      type: 'interval',
+      active: true,
+      taskType: 'implementation',
+      intervalMs: 45 * 60 * 1000,
+    }));
+    expect(state.schedules[0].metadata).toEqual(expect.objectContaining({
+      owner: 'mira',
+      schedule_kind: 'quiet_curiosity_burst',
+      external_send_performed: false,
+      body_read_required: false,
+      destructive_action_performed: false,
+    }));
+    expect(state.schedules[0].metadata.sources).toEqual([
+      'runtime_comms',
+      'memory_broker',
+      'environment_apps',
+      'work_continuation',
+      'browser_history',
+      'email',
+    ]);
+  });
+
+  test('quiet curiosity schedule run-now executes the bounded burst runner without requiring schedule mutation', async () => {
+    projectRoot = tempProject();
+    const schedulerStatePath = path.join(projectRoot, '.squidrun', 'runtime', 'schedules.json');
+    const burstRunner = jest.fn(async () => ({
+      decision: 'burst_completed',
+      burst_id: 'mira-curiosity-burst:test',
+      route_output: {
+        decision: 'route_selected',
+        source: 'memory_broker',
+        adapter_id: 'memory_broker_curiosity',
+      },
+      dispatch: { status: 'sent' },
+    }));
+
+    const result = await ensureMiraQuietCuriositySchedule({
+      runNow: true,
+      dispatch: true,
+      schedulerStatePath,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T16:30:00.000Z',
+      curiosityBurstRunner: burstRunner,
+    });
+
+    expect(result.decision).toBe('schedule_ready_for_install');
+    expect(result.schedule_created).toBe(false);
+    expect(result.schedule_run_performed).toBe(true);
+    expect(result.route_dispatch_performed).toBe(true);
+    expect(result.burst_result).toEqual(expect.objectContaining({
+      decision: 'burst_completed',
+      route_decision: 'route_selected',
+      route_source: 'memory_broker',
+      dispatch_status: 'sent',
+    }));
+    expect(burstRunner).toHaveBeenCalledWith(expect.objectContaining({
+      routeInteresting: true,
+      dispatch: true,
+    }), expect.objectContaining({
+      projectRoot,
+      dispatch: true,
+      routeInteresting: true,
+    }));
+    expect(fs.existsSync(schedulerStatePath)).toBe(false);
   });
 
   test('web research initiatives prefer top artifact substance over loud domain counts', async () => {
