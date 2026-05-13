@@ -1,0 +1,150 @@
+{
+  "schema": "mira.product.import_disposition.v1",
+  "status": "foundation_manifest_only",
+  "created_for": "session_373_mira_product_extraction",
+  "product_root": "mira/",
+  "runtime_decision": {
+    "v1_core": "node_typescript_local_service",
+    "reason": "Current Mira behavior, tests, IPC seams, and bridge-adjacent modules are JavaScript/Node; Node/TypeScript minimizes rewrite risk while extracting Mira from SquidRun.",
+    "python_policy": "sidecars_only_when_earned",
+    "python_sidecar_candidates": [
+      "ml",
+      "audio",
+      "vision",
+      "vector_search",
+      "evals"
+    ]
+  },
+  "state_boundary": {
+    "owner": "mira",
+    "env_var": "MIRA_STATE_ROOT",
+    "must_not_use": [
+      ".squidrun as Mira durable state",
+      "SquidRun cognitive memory as Mira-owned continuity"
+    ],
+    "migration_policy": "reviewed_imports_only_no_blind_copy"
+  },
+  "bridge_boundary": {
+    "owner": "squidrun_bridge",
+    "responsibilities": [
+      "deliver Mira messages to Architect, Builder, and Oracle panes",
+      "receive pane replies and current session context",
+      "report health and capability readiness",
+      "carry message id, session id, target pane, source surface, and evidence metadata"
+    ],
+    "mira_must_not_import": [
+      "SquidRun Electron window internals",
+      "SquidRun tab lifecycle internals",
+      "Telegram route ownership"
+    ]
+  },
+  "non_scope": [
+    "telegram_route_changes",
+    "primary_telegram_ownership_changes",
+    "new_temporary_ui_surface",
+    "runtime_code_move",
+    "live_data_copy",
+    "live_data_delete"
+  ],
+  "starts_mira_as_mira": [
+    {
+      "path": "mira/README.md",
+      "disposition": "foundation",
+      "notes": "Human-readable product boundary and next-extraction constraints."
+    },
+    {
+      "path": "mira/import-disposition-manifest.json",
+      "disposition": "foundation",
+      "notes": "Machine-readable import, cleanup, and bridge boundary map."
+    }
+  ],
+  "preserve_for_reviewed_import": [
+    {
+      "path": "ui/modules/mira-core/",
+      "disposition": "preserve_import_selectively",
+      "notes": "Core Mira behavior candidates for the Node/TypeScript runtime. Import deliberately; do not preserve Electron assumptions."
+    },
+    {
+      "path": "ui/modules/mira-local-text-ui-surface.js",
+      "disposition": "preserve_import_selectively",
+      "notes": "Typed conversation behavior and model attachment seam."
+    },
+    {
+      "path": "ui/modules/mira-lab-surface.js",
+      "disposition": "preserve_import_selectively",
+      "notes": "Transcript, backchannel, prompt reply, and eval concepts for the new runtime protocol."
+    },
+    {
+      "path": "workspace/mira-lab/transcripts/",
+      "disposition": "preserve_data_reviewed_import_only",
+      "notes": "Historical Mira Lab transcript/eval evidence. Do not copy wholesale into Mira durable memory."
+    },
+    {
+      "path": "docs/mira-presence-runtime-acceptance-v0.md",
+      "disposition": "preserve_import_selectively",
+      "notes": "Presence runtime acceptance contract."
+    },
+    {
+      "path": "docs/mira-north-star-acceptance.md",
+      "disposition": "preserve_import_selectively",
+      "notes": "North-star acceptance target for Mira product slices."
+    },
+    {
+      "path": "docs/mira-pc-embodiment-permission-v0.md",
+      "disposition": "preserve_import_selectively",
+      "notes": "Local PC presence permission model candidate for Mira-owned permissions."
+    },
+    {
+      "path": "ui/__tests__/mira-*.test.js",
+      "disposition": "preserve_import_selectively",
+      "notes": "Acceptance and regression coverage to migrate into product/runtime contract tests."
+    },
+    {
+      "path": "ui/__tests__/fixtures/mira-*-contract.json",
+      "disposition": "preserve_import_selectively",
+      "notes": "Existing Mira contract fixtures to review before product import."
+    }
+  ],
+  "delete_after_parity": [
+    {
+      "path": "ui/modules/main/mira-lab-window.js",
+      "disposition": "delete_after_runtime_ui_bridge_parity",
+      "notes": "Embedded Electron Mira Lab window factory."
+    },
+    {
+      "path": "ui/mira-lab.html",
+      "disposition": "delete_after_runtime_ui_bridge_parity",
+      "notes": "Embedded Mira Lab HTML shell."
+    },
+    {
+      "path": "ui/mira-lab-renderer.js",
+      "disposition": "delete_after_runtime_ui_bridge_parity",
+      "notes": "Embedded Mira Lab renderer."
+    },
+    {
+      "path": "ui/styles/mira-lab.css",
+      "disposition": "delete_after_runtime_ui_bridge_parity",
+      "notes": "Embedded Mira Lab styles."
+    },
+    {
+      "path": "ui/modules/ipc/mira-lab-handlers.js",
+      "disposition": "delete_after_runtime_ui_bridge_parity",
+      "notes": "Electron IPC handlers replaced by runtime and bridge API."
+    },
+    {
+      "path": "ui/modules/tabs/mira-local-text.js",
+      "disposition": "delete_after_runtime_ui_bridge_parity",
+      "notes": "Legacy main-tab text controller, no longer mounted as a primary tab."
+    },
+    {
+      "path": "ui/styles/tabs/mira-local-text.css",
+      "disposition": "delete_after_runtime_ui_bridge_parity",
+      "notes": "Legacy main-tab text styles."
+    },
+    {
+      "path": "ui/scripts/hm-mira-lab-*.js",
+      "disposition": "delete_or_replace_after_runtime_tooling_parity",
+      "notes": "Embedded Lab helper scripts; keep only if converted into Mira product tooling."
+    }
+  ]
+}
