@@ -644,6 +644,17 @@ describe('Mira typed-panel scenario harness (ARCH #15/#18)', () => {
       .not.toBe('Context failed. Im missing the last state.');
   });
 
+  test('generic Mira status prompt instructions do not expose missing-state hard-stop text', () => {
+    const instructions = buildMiraTextInstructions({}, 'what are we doing with Mira?');
+
+    expect(classifyMiraWorkLanePrompt('what are we doing with Mira?'))
+      .toEqual({ intent: 'mira_work_status' });
+    expect(instructions).toContain('For Mira work/status questions');
+    expect(instructions).toContain('give the concrete current-lane fix or test');
+    expect(instructions).not.toContain(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP);
+    expect(instructions).not.toContain('Context failed. Im missing the last state.');
+  });
+
   test('smaller verifier prompt instructions forbid acknowledgement preamble', () => {
     const instructions = buildMiraTextInstructions({}, 'smaller');
 
