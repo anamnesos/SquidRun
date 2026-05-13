@@ -4870,6 +4870,60 @@ async function selectMiraActiveInitiative(payload = {}, options = {}) {
     .filter((candidate) => !activeInitiativeSuppressionForCandidate(candidate, recentInitiatives, recentOutcomes));
 
   if (candidates.length === 0) {
+    if (suppressedCandidates.length > 1) {
+      const topSuppressed = suppressedCandidates[0];
+      const suppression = activeInitiativeSuppressionForCandidate(topSuppressed, recentInitiatives, recentOutcomes) || {};
+      const noInitiative = {
+        schema: MIRA_ACTIVE_INITIATIVE_SCHEMA,
+        ok: true,
+        decision: 'no_initiative',
+        generated_at: generatedAt,
+        initiative_id: `mira-active-initiative:${stableHash({
+          generatedAt,
+          reason: 'all_candidates_recently_closed',
+          suppressed: suppressedCandidates.map((candidate) => candidate.semantic_key || candidate.fingerprint).slice(0, 12),
+        }).slice(0, 16)}`,
+        reason: 'all_candidates_recently_closed',
+        active_initiative_log_path: logPath,
+        curiosity_log_path: curiosityItemsPath(projectRoot),
+        curiosity_items_seen: allItems.length,
+        latest_adapter_count: recentItems.length,
+        current_state: statusCounts,
+        duplicate_cooldown_ms: cooldownMs,
+        outcome_cooldown_ms: outcomeCooldownMs,
+        suppressed_candidate_count: suppressedCandidates.length,
+        top_suppressed_candidate: topSuppressed ? {
+          reason: suppression.reason || null,
+          fingerprint: topSuppressed.fingerprint || null,
+          semantic_key: topSuppressed.semantic_key || null,
+          target_role: topSuppressed.target_role || null,
+          initiative_kind: topSuppressed.initiative_kind || null,
+          source: topSuppressed.item?.source || null,
+          adapter_id: topSuppressed.item?.adapter_id || null,
+          recent_matching_initiative: suppression.initiative || null,
+          recent_matching_outcome: suppression.outcome || null,
+        } : null,
+        target_role: null,
+        selected_item: null,
+        dispatch: {
+          status: 'not_sent',
+          reason: 'all_candidates_recently_closed',
+        },
+        applied: false,
+        internal_only: true,
+        consequence_controls: {
+          internal_only: true,
+          external_send_performed: false,
+          autonomous_apply_performed: false,
+          network_performed: false,
+          destructive_action_performed: false,
+          durable_product_change_performed: false,
+          deploy_trade_customer_auth_action_performed: false,
+        },
+      };
+      appendJsonl(logPath, noInitiative);
+      return noInitiative;
+    }
     if (suppressedCandidates.length > 0) {
       const suppressed = suppressedCandidates[0];
       const suppression = activeInitiativeSuppressionForCandidate(suppressed, recentInitiatives, recentOutcomes) || {};
