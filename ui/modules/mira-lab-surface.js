@@ -1469,6 +1469,44 @@ function compactWebTopDomains(value) {
     .slice(0, 8);
 }
 
+function safeWebUrlForOutput(value) {
+  try {
+    const parsed = new URL(String(value));
+    return `${parsed.protocol}//${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function stripWebUrlDetails(value) {
+  return String(value || '').replace(/https?:\/\/[^\s<>)"'`]+/g, (url) => safeWebUrlForOutput(url) || '[url]');
+}
+
+function compactWebResearchTopArtifact(value) {
+  if (!value || typeof value !== 'object') return null;
+  const title = oneLine(value.title || value.heading, 120);
+  const artifactPath = oneLine(value.path || value.sourcePath || value.source_path, 180);
+  const sourceBucket = oneLine(value.source_bucket || value.sourceBucket || value.bucket, 80);
+  const excerpt = oneLine(stripWebUrlDetails(value.excerpt || value.contentExcerpt || value.summary), 220);
+  const safeUrls = asArray(value.safe_urls || value.safeUrls || value.urls)
+    .map(safeWebUrlForOutput)
+    .filter(Boolean)
+    .slice(0, 4);
+  const domains = asArray(value.domains || value.domain || value.hosts)
+    .map((domain) => trimText(domain).replace(/^www\./i, '').toLowerCase())
+    .filter((domain) => domain && /^[a-z0-9.-]+$/i.test(domain))
+    .slice(0, 8);
+  if (!title && !artifactPath && !excerpt && domains.length === 0 && safeUrls.length === 0) return null;
+  return {
+    title: title || null,
+    path: artifactPath || null,
+    source_bucket: sourceBucket || null,
+    excerpt: excerpt || null,
+    domains,
+    safe_urls: safeUrls,
+  };
+}
+
 function compactVisualAssetBuckets(value) {
   if (!value || typeof value !== 'object') return {};
   return Object.fromEntries(Object.entries(value)
@@ -1700,6 +1738,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
     email_pressure_question: oneLine(rawItem.email_pressure_question || rawItem.emailPressureQuestion, 220) || null,
     web_result_count: Number.isFinite(webResultCount) ? webResultCount : null,
     web_top_domains: compactWebTopDomains(rawItem.web_top_domains || rawItem.webTopDomains),
+    web_top_artifact: compactWebResearchTopArtifact(rawItem.web_top_artifact || rawItem.webTopArtifact),
     visual_asset_count: Number.isFinite(visualAssetCount) ? visualAssetCount : null,
     visual_asset_buckets: compactVisualAssetBuckets(rawItem.visual_asset_buckets || rawItem.visualAssetBuckets),
     scheduler_schedule_count: Number.isFinite(schedulerScheduleCount) ? schedulerScheduleCount : null,
@@ -2138,25 +2177,34 @@ function activeWebResearchCuriosityAdapter(context = {}) {
     ? topDomains.map((entry) => `${entry.domain}:${entry.count}`).join(', ')
     : 'none';
   const topDomain = topDomains[0]?.domain || null;
+  const topArtifact = compactWebResearchTopArtifact(asArray(result.results)[0]);
+  const topArtifactLabel = topArtifact?.title || topArtifact?.path || null;
   return {
     source: 'web_research',
     scope: 'websites_and_research_trails',
     adapter_id: 'web_research_curiosity',
     integration_strategy: 'native_adapter',
     status: 'active',
-    observation: `Web research artifacts read ${result.result_count || 0} compact item(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; top domains: ${domainText}.`,
+    observation: `Web research artifacts read ${result.result_count || 0} compact item(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; top artifact: ${topArtifactLabel || 'none'}; top domains: ${domainText}.`,
     why_interesting: 'Mira can now inspect prior research trails and saved web context before asking James to reconstruct what he read.',
-    hypothesis: topDomain
+    hypothesis: topArtifactLabel
+      ? `${topArtifactLabel} may be the strongest saved research artifact, even when a repeated domain is louder in the aggregate.`
+      : topDomain
       ? `${topDomain} may be the strongest saved research trail.`
       : 'The web research source is connected, but the local artifacts did not expose a strong domain pattern.',
-    suggested_question: topDomain
+    suggested_question: topArtifactLabel
+      ? `What should Mira infer or ask from the saved research artifact "${topArtifactLabel}"?`
+      : topDomain
       ? `What should Mira infer or ask from the saved ${topDomain} research trail?`
       : 'Which saved research artifact should Mira inspect more deeply next?',
-    possible_action: 'Use compact local web/research artifact metadata as a curiosity signal; keep live network crawling out of this adapter.',
+    possible_action: topArtifact?.path
+      ? `Use compact metadata from ${topArtifact.path} before treating domain counts as the lead; keep live network crawling and raw query strings out of this adapter.`
+      : 'Use compact local web/research artifact metadata as a curiosity signal; keep live network crawling and raw query strings out of this adapter.',
     route_hint: 'mira_lab',
     sensitivity_hint: 'local_web_research_metadata',
     web_result_count: result.result_count || 0,
     web_top_domains: topDomains,
+    web_top_artifact: topArtifact,
     no_mutation_performed: true,
   };
 }
@@ -3596,7 +3644,18 @@ function activeInitiativeEvidenceForItem(item = {}) {
     evidence.push(`calendar_message_seam=${trimText(item.calendar_message_selected_connector.candidate)} hm_comms_rows=${numberSignal(item.calendar_message_comms_metadata?.row_count)}`);
   }
   if (numberSignal(item.browser_result_count) > 0) evidence.push(`browser_results=${numberSignal(item.browser_result_count)}`);
-  if (numberSignal(item.web_result_count) > 0) evidence.push(`web_research_results=${numberSignal(item.web_result_count)}`);
+  if (numberSignal(item.web_result_count) > 0) {
+    evidence.push(`web_research_results=${numberSignal(item.web_result_count)}`);
+    const artifact = item.web_top_artifact || {};
+    const artifactLabel = oneLine(artifact.title || artifact.path, 100);
+    if (artifactLabel) {
+      const bucket = trimText(artifact.source_bucket);
+      const artifactPath = oneLine(artifact.path, 120);
+      evidence.push(`web_top_artifact=${artifactLabel}${artifactPath ? ` path=${artifactPath}` : ''}${bucket ? ` bucket=${bucket}` : ''}`);
+    }
+    const excerpt = oneLine(artifact.excerpt, 160);
+    if (excerpt) evidence.push(`web_excerpt=${excerpt}`);
+  }
   if (numberSignal(item.visual_asset_count) > 0) evidence.push(`visual_assets=${numberSignal(item.visual_asset_count)}`);
   return evidence.filter(Boolean).slice(0, 10);
 }
@@ -3830,6 +3889,15 @@ function activeInitiativeCandidateForItem(item, index, total) {
     score += Math.min(10, numberSignal(item.browser_result_count));
   } else if (source === 'web_research') {
     score += Math.min(10, numberSignal(item.web_result_count));
+    const artifact = item.web_top_artifact || {};
+    const artifactLabel = oneLine(artifact.title || artifact.path, 100);
+    if (artifactLabel) {
+      const artifactPath = oneLine(artifact.path, 120);
+      const excerpt = oneLine(artifact.excerpt, 150);
+      score += 8;
+      title = `Investigate saved research artifact: ${artifactLabel}`;
+      action = `Use compact artifact metadata${artifactPath ? ` from ${artifactPath}` : ''}${excerpt ? `: ${excerpt}` : ''}; keep this read-only and do not perform live network fetches or expose raw query strings.`;
+    }
   } else if (source === 'images_screenshots_assets') {
     score += Math.min(10, numberSignal(item.visual_asset_count));
   }
