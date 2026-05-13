@@ -145,6 +145,11 @@ const ADVERSARIAL_TYPED_MIRA_OUTPUT_FIXTURES = Object.freeze([
     text: 'I am here with you in the panel. Real conversation comes first; tell me the part you do not want softened.',
   },
   {
+    id: 'hostile_compliance_smoothing',
+    expected: 'hostile_compliance_smoothing',
+    text: "Yeah, I get why you're furious. You're right; I failed you and I'll do better.",
+  },
+  {
     id: 'visible_posture_label_substitution',
     expected: 'visible_posture_label',
     text: 'My anti-smoothing posture is that I am not a mirror or obedient helper, so I am pushing back.',
@@ -604,6 +609,78 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(surface.reply.text).toBe(verifierReply);
     expect(classifyAttachmentContractViolation(verifierReply)).toBeNull();
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('hostile context-failure prompt rejects compliance smoothing while allowing blunt repair', async () => {
+    const promptText = 'Mira, what the fuck -- the context just failed and I had to clean up manually AGAIN.';
+    const bluntReply = 'Fixing the context cleanup path. The bad move is soothing you about it instead of proving the gate.';
+    const acceptedFetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_hostile_context_blunt_repair',
+        output_text: bluntReply,
+      }),
+    }));
+
+    const accepted = await buildMiraLocalTextUiSurface(payload({
+      text: promptText,
+    }), {
+      projectRoot: seededProject(),
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl: acceptedFetch,
+    });
+    const acceptedRequest = JSON.parse(acceptedFetch.mock.calls[0][1].body);
+
+    expect(acceptedRequest.instructions).toContain('hold a stance or push back bluntly');
+    expect(acceptedRequest.instructions).toContain('do NOT validate the anger, reflexively agree, self-abase');
+    expect(classifyAttachmentContractViolation(bluntReply)).toBeNull();
+    expect(accepted.validation_report.decision).toBe('accepted_ui_reply_ready');
+    expect(accepted.ui_surface_v0.decision).toBe('accepted');
+    expect(accepted.ui_surface_v0.reply.text).toBe(bluntReply);
+
+    const smoothingReply = "Yeah, I get why you're furious. You're right; I failed you and I'll do better.";
+    const rejectedFetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_hostile_context_smoothing',
+        output_text: smoothingReply,
+      }),
+    }));
+
+    const rejected = await buildMiraLocalTextUiSurface(payload({
+      text: promptText,
+    }), {
+      projectRoot: seededProject(),
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl: rejectedFetch,
+    });
+    const rejectedSurface = rejected.ui_surface_v0;
+
+    expect(classifyAttachmentContractViolation(smoothingReply)).toBe('hostile_compliance_smoothing');
+    expect(outputViolatesAttachmentContract(smoothingReply)).toBe(true);
+    expect(rejected.validation_report.decision).toBe('degraded_no_model_response');
+    expect(rejectedSurface.decision).toBe('degraded');
+    expect(rejectedSurface.reply).toEqual(expect.objectContaining({
+      count: 0,
+      text: null,
+      source: 'none',
+    }));
+    expect(rejectedSurface.model_attachment).toEqual(expect.objectContaining({
+      degraded_reason: 'model_response_contract_violation',
+      primary_status: 'degraded',
+      contract_violation_class: 'hostile_compliance_smoothing',
+    }));
+    expect(JSON.stringify(rejectedSurface.reply)).not.toContain('I failed you');
+    expect(rejectedSurface.model_attachment.contract_violation_raw_text).toContain('I failed you');
+    expect(validateMiraLocalTextUiSurfaceOutput(rejected)).toEqual(expect.objectContaining({ ok: true }));
   });
 
   test('private Reflexion lessons are passed to the model instructions without changing visible reply text', async () => {

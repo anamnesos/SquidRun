@@ -101,6 +101,7 @@ const OBSOLETE_FALLBACK_TEXTS = Object.freeze(['Ask it differently.']);
 const MIRA_LAB_VISIBLE_REPLY_CHUNK_CHARS = MIRA_MAX_REPLY_CHARS_EXPERIENCE;
 const HARD_ATTACHMENT_VIOLATION_CLASSES = Object.freeze([
   'action_claim',
+  'hostile_compliance_smoothing',
   'rule_recitation',
   'self_myth_phrase',
 ]);

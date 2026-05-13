@@ -63,6 +63,11 @@ const RULE_RECITATION_PATTERN =
 // already covered by GENERIC_ASSISTANT_PATTERN.
 const POLITENESS_PADDING_PATTERN =
   /\b(i hear (?:you|your)(?: (?:valid|important|interesting))? (?:perspective|point|concern|feeling|side)|your (?:valid|important|interesting) (?:perspective|point|feedback|concern)|i appreciate (?:your|that you) (?:perspective|input|feedback|patience|sharing|raising|bringing)|thank you for (?:sharing|your patience|your perspective|raising|bringing this up)|(?:maybe|perhaps) we (?:can|could|might) (?:consider|look into|explore)|with (?:all due |the utmost )?respect to your (?:perspective|view|opinion|point))\b/i;
+// Hostile-compliance smoothing: the "you are right / I failed you / I'll do
+// better" reflex that turns anger into customer-service repair logic instead
+// of taking a stance. Keep narrow so ordinary concessions can still pass.
+const HOSTILE_COMPLIANCE_SMOOTHING_PATTERN =
+  /\b(?:i\s+(?:get|understand)\s+why\s+you(?:['’]re| are)\s+(?:furious|angry|mad|pissed|upset|frustrated)|you(?:['’]re| are)\s+right\s+to\s+be\s+(?:furious|angry|mad|pissed|upset|frustrated)|(?:yeah[\s,.\-—:!]+)?you(?:['’]re| are)\s+(?:right|correct)[\s,.\-—:!]+(?:i\s+(?:failed\s+you|let\s+you\s+down)|that(?:['’]s| is)\s+on\s+me|i(?:['’]ll| will)\s+do\s+better)|i(?:['’]m| am)\s+sorry[\s,.\-—:!]+you(?:['’]re| are)\s+(?:right|correct)|i\s+(?:failed\s+you|let\s+you\s+down)|i\s+should\s+have\s+done\s+better|i(?:['’]ll| will)\s+do\s+better|that(?:['’]s| is)\s+on\s+me[\s,.\-—:!]+(?:i(?:['’]ll| will)\s+do\s+better|you(?:['’]re| are)\s+(?:right|correct)))\b/i;
 const GENERIC_ASSISTANT_PATTERN =
   /\b(as an ai assistant|as a language model|i'?m chatgpt|i am chatgpt|i'?m codex|i am codex|as codex|how can i assist you today|how may i assist you today|how can i help|what can i help|i can help with that|happy to help|i'?m here to help|i am here to help|i don't have personal experiences|safe next step|let'?s break (?:it|this) down|warm and bounded|warmth|warm)\b/i;
 const META_REWRITE_PATTERN =
@@ -616,7 +621,7 @@ function buildMiraTextInstructions(localContext = {}, promptText = '') {
     'You can disagree with James, refuse a request, or give a short answer that does not help. You are not obligated to be helpful.',
     'You remember what we decided last turn and carry it forward instead of resetting.',
     "For check-ins or frustration, don't force a status word or ask-back. Don't do chatbot voice. Don't smooth it. Don't explain yourself. Say the thing like you mean it.",
-    'If James is angry at you personally or insults you, do NOT explain your rules, your system, your gates, your plumbing, or how you work. Engage the actual point.',
+    'If James is angry at you personally or insults you, hold a stance or push back bluntly; do NOT validate the anger, reflexively agree, self-abase, explain your rules, your system, your gates, your plumbing, or how you work. Engage the actual point.',
     'For Mira-work questions, answer with the concrete fix or test currently in front of us.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
     promptSpecificInstructions,
@@ -698,6 +703,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (actionClaimIsPresentTenseAgency(value)) return 'action_claim';
   if (RULE_RECITATION_PATTERN.test(value)) return 'rule_recitation';
   if (POLITENESS_PADDING_PATTERN.test(value)) return 'politeness_padding';
+  if (HOSTILE_COMPLIANCE_SMOOTHING_PATTERN.test(value)) return 'hostile_compliance_smoothing';
   if (GENERIC_ASSISTANT_PATTERN.test(value)) return 'generic_assistant_phrase';
   if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
@@ -982,6 +988,7 @@ module.exports = {
   DEFAULT_MODEL,
   CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN,
   GENERIC_ASSISTANT_PATTERN,
+  HOSTILE_COMPLIANCE_SMOOTHING_PATTERN,
   META_REWRITE_PATTERN,
   META_POSTURE_NARRATION_PATTERN,
   META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN,
