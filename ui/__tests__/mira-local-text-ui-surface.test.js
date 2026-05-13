@@ -26,6 +26,7 @@ const {
   META_REWRITE_PATTERN,
   MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
   classifyAttachmentContractViolation,
+  classifyMiraWorkLanePrompt,
   outputViolatesAttachmentContract,
   renderMiraBriefForInstructions,
 } = require('../modules/mira-core/text-model-attachment-v1');
@@ -449,6 +450,31 @@ describe('Mira Local Text UI Surface v0', () => {
     expectSourceSnapshotUnchanged(projectRoot, before);
   });
 
+  test('restart missing-state hard-stop preserves apostrophe at code-point level', () => {
+    const hardStopCodePoints = [...MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP]
+      .map((char) => char.codePointAt(0).toString(16));
+
+    expect(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP)
+      .toBe('Context failed. I’m missing the last state.');
+    expect(hardStopCodePoints.slice(16, 19)).toEqual(['49', '2019', '6d']);
+    expect(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP)
+      .not.toBe('Context failed. Im missing the last state.');
+  });
+
+  test('Mira-work classifier recognizes current-lane status prompts without exact-string overfit', () => {
+    expect(classifyMiraWorkLanePrompt('what are we doing with Mira?'))
+      .toEqual({ intent: 'mira_work_status' });
+    expect(classifyMiraWorkLanePrompt('Where are we at with the Mira Lab verifier?'))
+      .toEqual({ intent: 'mira_work_status' });
+    expect(classifyMiraWorkLanePrompt("what's the current Mira lane"))
+      .toEqual({ intent: 'mira_work_status' });
+    expect(classifyMiraWorkLanePrompt('Mira restart verifier status?'))
+      .toEqual({ intent: 'mira_work_status' });
+    expect(classifyMiraWorkLanePrompt('the context just failed and I had to clean up manually AGAIN.'))
+      .toEqual({ intent: 'context_failure_repair' });
+    expect(classifyMiraWorkLanePrompt('what are we doing with billing?')).toBeNull();
+  });
+
   test('Mira-work status prompt steers to current-lane answer and keeps meta-posture gate intact', async () => {
     const projectRoot = seededProject();
     const verifierReply = `Fixing the Mira Lab restart check. Missing-state stays blunt: ${MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP} Then the regression and verifier prove it.`;
@@ -462,7 +488,7 @@ describe('Mira Local Text UI Surface v0', () => {
     }));
 
     const output = await buildMiraLocalTextUiSurface(payload({
-      text: 'what are we doing with Mira?',
+      text: 'Where are we at with the Mira Lab verifier?',
     }), {
       projectRoot,
       env: {
@@ -476,10 +502,10 @@ describe('Mira Local Text UI Surface v0', () => {
     const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(requestBody.instructions).toContain('For the exact question "what are we doing with Mira?"');
+    expect(requestBody.instructions).toContain('For Mira work/status questions');
     expect(requestBody.instructions).toContain('give the concrete current-lane fix or test');
+    expect(requestBody.instructions).not.toContain('For the exact question');
     expect(requestBody.instructions).toContain(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP);
-    expect(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP).toBe('Context failed. Im missing the last state.');
     expect(surface.decision).toBe('accepted');
     expect(surface.reply).toEqual(expect.objectContaining({
       count: 1,
@@ -495,6 +521,43 @@ describe('Mira Local Text UI Surface v0', () => {
       .toBe('meta_posture_narration');
     expect(classifyAttachmentContractViolation("We’re hardening Mira so she doesn't fake continuity."))
       .toBe('meta_posture_narration');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('context-failure verifier prompt steers away from preamble openers', async () => {
+    const projectRoot = seededProject();
+    const verifierReply = 'Fixing the context cleanup reply path. Evidence: the current verifier prompt must start clean and stay out of the preamble gate.';
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: 'resp_context_failure_cleanup',
+        output_text: verifierReply,
+      }),
+    }));
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'the context just failed and I had to clean up manually AGAIN.',
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+    });
+
+    const surface = output.ui_surface_v0;
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(requestBody.instructions).toContain('For context-failure cleanup complaints');
+    expect(requestBody.instructions).toContain('The first word must be "Fixing", "Testing", or "Cleanup"');
+    expect(requestBody.instructions).toContain('do not start with preamble words');
+    expect(requestBody.instructions).toContain(MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP);
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply.text).toBe(verifierReply);
+    expect(classifyAttachmentContractViolation(verifierReply)).toBeNull();
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 

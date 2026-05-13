@@ -798,6 +798,45 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
+  test('PASS: context-failure verifier prompt reply starts preamble-free', async () => {
+    const projectRoot = tempProject();
+    const replyText = 'Fixing the context cleanup reply path. Evidence: the current verifier prompt starts clean; assumption: the instability came from preamble drift. Unknown: live model variance until the second verifier run. Next test: keep the reply preamble-free and rerun both verifier sessions.';
+    const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true, model: 'mock-model' });
+
+    jest.resetModules();
+    jest.doMock('../modules/mira-local-text-ui-surface', () => ({
+      buildMiraLocalTextUiSurface: fakeSurface,
+    }));
+    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+
+    const result = await buildPromptReply({
+      prompt: 'the context just failed and I had to clean up manually AGAIN.',
+      sessionId: 'unit-context-failure-preamble-free',
+    }, { projectRoot });
+
+    expect(result.decision).toBe('pass');
+    expect(result.ok).toBe(true);
+    expect(result.reply.text).toBe(replyText);
+    expect(result.gates.language_gate.ok).toBe(true);
+    expect(result.gates.language_gate.violations || []).not.toContain('preamble');
+    expect(result.gates.attachment_violation).toBe(false);
+    expect(result.visible_render_hint.kind).toBe('clean_reply');
+
+    const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-context-failure-preamble-free'));
+    expect(transcriptEntries).toHaveLength(2);
+    expect(transcriptEntries[0]).toEqual(expect.objectContaining({
+      speaker_role: 'james',
+      text: 'the context just failed and I had to clean up manually AGAIN.',
+    }));
+    expect(transcriptEntries[1]).toEqual(expect.objectContaining({ speaker_role: 'mira', text: replyText }));
+
+    const auditEntries = readJsonl(replyAuditPath(projectRoot));
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].gates.language_gate.violations || []).not.toContain('preamble');
+
+    jest.dontMock('../modules/mira-local-text-ui-surface');
+  });
+
   test('ANNOTATED FAIL: work-critical replies must separate evidence from inference', async () => {
     const projectRoot = tempProject();
     const weakReply = 'Observed: customer auth bug in production. Next test: inspect logs.';
