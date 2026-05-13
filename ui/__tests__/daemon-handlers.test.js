@@ -911,6 +911,52 @@ describe('daemon-handlers.js module', () => {
         );
       });
 
+      test('forwards clipboardPasteThresholdBytes so long payloads route via clipboard-paste', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'short msg',
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'short msg',
+          expect.objectContaining({
+            clipboardPasteThresholdBytes: 1024,
+          })
+        );
+      });
+
+      test('forwards clipboardPasteThresholdBytes for long payloads alongside other options', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        const longPayload = 'A'.repeat(4096);
+        injectHandler({}, {
+          panes: ['2'],
+          message: longPayload,
+          deliveryId: 'delivery-long-1',
+          traceContext: { traceId: 'trace-long-1', parentEventId: 'evt-long-1' },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          longPayload,
+          expect.objectContaining({
+            clipboardPasteThresholdBytes: 1024,
+            traceContext: expect.objectContaining({ traceId: 'trace-long-1' }),
+          })
+        );
+      });
+
       test('defers startupInjection delivery until startup readiness gate clears', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {

@@ -32,6 +32,12 @@ const {
   createPayloadFingerprint,
 } = require('./bus-reliability-trace');
 
+// Above this byte count, route inject-message payloads through the
+// renderer's clipboard-paste path instead of chunked PTY writes to avoid
+// PTY ingestion truncation. Mirrors USER_BROADCAST_CLIPBOARD_PASTE_THRESHOLD_BYTES
+// in ./terminal.js.
+const INJECT_CLIPBOARD_PASTE_THRESHOLD_BYTES = 1024;
+
 // Terminal module for health handlers (lazy loaded)
 let terminal = null;
 function getTerminal() {
@@ -1189,6 +1195,7 @@ function processThrottleQueue(paneId) {
       traceContext: traceContext || undefined,
       hmSendFastEnter,
       startupInjection: isStartupInjection,
+      clipboardPasteThresholdBytes: INJECT_CLIPBOARD_PASTE_THRESHOLD_BYTES,
       onComplete: (result) => {
         appendBusTraceEvent({
           eventType: 'renderer_pty_write_completed',
