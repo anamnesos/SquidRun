@@ -15,6 +15,7 @@ const elements = {
   contextToggle: document.getElementById('contextToggle'),
   contextPanel: document.getElementById('contextPanel'),
   brainLine: document.getElementById('brainLine'),
+  modelPill: document.getElementById('modelPill'),
   operatorSummary: document.getElementById('operatorSummary'),
   coreSummary: document.getElementById('coreSummary'),
   lastTurn: document.getElementById('lastTurn'),
@@ -84,13 +85,17 @@ function updateRuntimeState(payload) {
 function updateModelSummary(payload) {
   modelStatus = payload || null;
   if (!payload) {
+    document.body.dataset.modelReady = 'false';
     setText(elements.brainLine, 'model unknown');
+    setText(elements.modelPill, 'model unknown');
     setText(elements.modelSummary, 'unknown');
     return;
   }
   const state = payload.available ? 'ready' : 'not ready';
   const provider = payload.selectedProvider === 'ollama_chat' ? 'Gemma/Ollama' : 'OpenAI';
+  document.body.dataset.modelReady = payload.available ? 'true' : 'false';
   setText(elements.brainLine, `${provider}: ${payload.model} ${state}`);
+  setText(elements.modelPill, payload.available ? payload.model : 'model not ready');
   setText(elements.modelSummary, `${payload.model} (${payload.selectedProvider}) is ${state}. ${payload.nextLocalModelStep || ''}`.trim());
 }
 

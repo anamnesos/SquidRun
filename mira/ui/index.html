@@ -10,12 +10,23 @@
     <main class="shell">
       <section class="conversation" aria-label="Mira conversation">
         <header class="topbar">
-          <div>
-            <h1>Mira</h1>
-            <p class="presence-line">Here.</p>
-            <p class="brain-line" id="brainLine">checking model</p>
+          <div class="identity">
+            <div class="signal-mark" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div>
+              <h1>Mira</h1>
+              <p class="presence-line">Here.</p>
+              <p class="brain-line" id="brainLine">checking model</p>
+            </div>
           </div>
-          <button class="quiet-icon" type="button" id="contextToggle" aria-expanded="false" aria-controls="contextPanel">Context</button>
+          <div class="top-actions">
+            <span class="model-pill" id="modelPill">model check</span>
+            <button class="quiet-icon" type="button" id="contextToggle" aria-expanded="false" aria-controls="contextPanel" title="Context">...</button>
+          </div>
         </header>
 
         <div class="thread" id="thread" aria-live="polite">
