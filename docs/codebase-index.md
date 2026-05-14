@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `e338ede`
-- Total files listed: 1144
+- Git HEAD: `f0024ad`
+- Total files listed: 1146
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,10 +17,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 69
+- root: 70
 - scripts: 1
 - tools: 3
-- ui/__tests__: 455
+- ui/__tests__: 456
 - ui/modules: 363
 - ui/other: 29
 - ui/scripts: 169
@@ -33,13 +33,13 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 71
 - file: 1
 - script: 170
-- source: 397
-- test: 456
+- source: 398
+- test: 457
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1144
+- clean/tracked: 1146
 
 ## Files
 
@@ -113,6 +113,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `jest.config.js` | source | `clean/tracked` | 221 |
 | `LICENSE` | file | `clean/tracked` | 1078 |
 | `mira/bridge/hm-send-adapter.js` | source | `clean/tracked` | 4997 |
+| `mira/bridge/send-pane-message.js` | source | `clean/tracked` | 2886 |
 | `mira/bridge/squidrun-adapter-protocol-v0.md` | doc | `clean/tracked` | 6791 |
 | `mira/import-disposition-manifest.json` | config | `clean/tracked` | 5395 |
 | `mira/imports/approvals/batch-2a-normalized-core-approval-v1.json` | config | `clean/tracked` | 1195 |
@@ -528,6 +529,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-runtime-continuity-loader-contract.test.js` | test | `clean/tracked` | 2431 |
 | `ui/__tests__/mira-runtime-curiosity.test.js` | test | `clean/tracked` | 5594 |
 | `ui/__tests__/mira-runtime-state-root.test.js` | test | `clean/tracked` | 18995 |
+| `ui/__tests__/mira-send-pane-message-cli.test.js` | test | `clean/tracked` | 4136 |
 | `ui/__tests__/mira-source-action-substrate.test.js` | test | `clean/tracked` | 6719 |
 | `ui/__tests__/mira-state-import-tooling.test.js` | test | `clean/tracked` | 2140 |
 | `ui/__tests__/mira-tab-language-gate.test.js` | test | `clean/tracked` | 6322 |
