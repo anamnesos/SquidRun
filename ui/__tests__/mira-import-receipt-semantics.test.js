@@ -45,9 +45,9 @@ describe('Mira import receipt design', () => {
     expect(schema.properties.mutation_flags.properties.report_mutated.const).toBe(false);
     expect(schema.properties.mutation_flags.properties.status_mutated.const).toBe(false);
     expect(schema.properties.queue_status_before.additionalProperties.const).toBe('not_imported');
-    expect(semantics).toContain('Status: receipt design only.');
-    expect(semantics).toContain('No apply/import execution.');
-    expect(semantics).toContain('No approval marker.');
+    expect(semantics).toContain('Status: apply mode and receipt writing exist');
+    expect(semantics).toContain('Persistent/dev-state import execution');
+    expect(semantics).toContain('No persistent/dev-state import execution without explicit approval.');
     expect(semantics).toContain('No queue status mutation.');
   });
 });

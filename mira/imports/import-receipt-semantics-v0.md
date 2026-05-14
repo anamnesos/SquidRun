@@ -1,7 +1,8 @@
 # Mira Import Receipt Semantics v0
 
-Status: receipt design only. No apply code, approval marker, copy, import, or
-queue mutation is introduced by this milestone.
+Status: apply mode and receipt writing exist in
+`mira/tools/execute-reviewed-import.js`. Persistent/dev-state import execution
+and runtime continuity loading remain gated by explicit approval.
 
 A future approved import apply lane must write an import receipt under:
 
@@ -30,9 +31,9 @@ Each receipt must include:
 - destination relative path and destination `sha256`;
 - destination-created proof for every record.
 
-## Write Rules For Future Apply Lane
+## Write Rules For Apply Lane
 
-A future apply lane must:
+The apply lane must:
 
 - fail the whole batch before writing if any destination already exists;
 - copy with exclusive-create/no-overwrite behavior;
@@ -43,8 +44,7 @@ A future apply lane must:
 
 ## Non-Scope
 
-- No apply/import execution.
-- No approval marker.
+- No persistent/dev-state import execution without explicit approval.
 - No queue status mutation.
 - No runtime auto-load of imported continuity.
 - No bridge, UI, or Telegram route work.
