@@ -22,7 +22,7 @@ const capabilities: RuntimeCapability[] = [
   {
     id: "session",
     status: "planned",
-    notes: "Returns an empty session skeleton until a reviewed bridge contract exists.",
+    notes: "Returns an empty session skeleton and state-root readiness without loading continuity data.",
   },
   {
     id: "model_behavior",
@@ -70,6 +70,8 @@ export function getCapabilities(): CapabilitiesResponse {
 }
 
 export function getSessionSkeleton(): SessionResponse {
+  const stateRoot = getStateRootReadiness();
+
   return {
     service: "mira-runtime",
     session: {
@@ -77,6 +79,10 @@ export function getSessionSkeleton(): SessionResponse {
       source: "none",
       modelBehaviorLoaded: false,
       liveDataImported: false,
+      continuityLoaded: false,
+      stateRootReady: stateRoot.ready,
+      stateRootPath: stateRoot.path,
+      stateRootError: stateRoot.error,
     },
   };
 }

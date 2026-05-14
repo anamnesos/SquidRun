@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `98f6be2`
+- Git HEAD: `ae000b7`
 - Total files listed: 1110
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -122,8 +122,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/imports/review-queue.json` | config | `clean/tracked` | 5874 |
 | `mira/README.md` | doc | `clean/tracked` | 1738 |
 | `mira/runtime/package.json` | config | `clean/tracked` | 480 |
-| `mira/runtime/src/contracts.ts` | source | `clean/tracked` | 1007 |
-| `mira/runtime/src/runtime.ts` | source | `clean/tracked` | 1908 |
+| `mira/runtime/src/contracts.ts` | source | `clean/tracked` | 1134 |
+| `mira/runtime/src/runtime.ts` | source | `clean/tracked` | 2117 |
 | `mira/runtime/src/server.ts` | source | `clean/tracked` | 1701 |
 | `mira/runtime/src/state-root.ts` | source | `clean/tracked` | 2035 |
 | `mira/runtime/tsconfig.json` | config | `clean/tracked` | 435 |
@@ -494,7 +494,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-product-foundation.test.js` | test | `clean/tracked` | 2780 |
 | `ui/__tests__/mira-reviewed-import-plan.test.js` | test | `clean/tracked` | 3657 |
 | `ui/__tests__/mira-runtime-curiosity.test.js` | test | `clean/tracked` | 5594 |
-| `ui/__tests__/mira-runtime-state-root.test.js` | test | `clean/tracked` | 3636 |
+| `ui/__tests__/mira-runtime-state-root.test.js` | test | `clean/tracked` | 4344 |
 | `ui/__tests__/mira-source-action-substrate.test.js` | test | `clean/tracked` | 6719 |
 | `ui/__tests__/mira-state-import-tooling.test.js` | test | `clean/tracked` | 2140 |
 | `ui/__tests__/mira-tab-language-gate.test.js` | test | `clean/tracked` | 6322 |

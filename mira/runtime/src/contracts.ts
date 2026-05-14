@@ -45,5 +45,9 @@ export type SessionResponse = {
     source: "none";
     modelBehaviorLoaded: false;
     liveDataImported: false;
+    continuityLoaded: false;
+    stateRootReady: boolean;
+    stateRootPath: string | null;
+    stateRootError: string | null;
   };
 };

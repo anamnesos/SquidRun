@@ -103,4 +103,23 @@ describe('Mira runtime state-root readiness', () => {
       importsLoaded: false,
     }));
   });
+
+  test('session consumes state-root readiness without loading continuity data', () => {
+    const stateRoot = path.join(repoRoot, 'mira', '.state-dev-test');
+    const session = runRuntimeSnippet(`
+      process.env.MIRA_STATE_ROOT = ${JSON.stringify(stateRoot)};
+      import { getSessionSkeleton } from ${JSON.stringify(compiledRuntimeUrl)};
+      console.log(JSON.stringify(getSessionSkeleton()));
+    `);
+
+    expect(session.session).toEqual(expect.objectContaining({
+      source: 'none',
+      modelBehaviorLoaded: false,
+      liveDataImported: false,
+      continuityLoaded: false,
+      stateRootReady: true,
+      stateRootPath: path.resolve(stateRoot),
+      stateRootError: null,
+    }));
+  });
 });
