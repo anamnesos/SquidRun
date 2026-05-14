@@ -127,47 +127,123 @@
       "minItems": 3,
       "maxItems": 3,
       "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "source_path",
-          "source_sha256",
-          "destination_relative_path",
-          "destination_sha256",
-          "output_schema",
-          "destination_created"
-        ],
-        "properties": {
-          "id": {
-            "enum": [
-              "mira_self_profile",
-              "james_relationship_state",
-              "relationship_presence_permissions"
-            ]
+        "oneOf": [
+          {
+            "$ref": "#/$defs/mira_self_profile_receipt_record"
           },
-          "source_path": {
-            "type": "string"
+          {
+            "$ref": "#/$defs/james_relationship_state_receipt_record"
           },
-          "source_sha256": {
-            "type": "string",
-            "pattern": "^sha256:[a-f0-9]{64}$"
-          },
-          "destination_relative_path": {
-            "type": "string"
-          },
-          "destination_sha256": {
-            "type": "string",
-            "pattern": "^sha256:[a-f0-9]{64}$"
-          },
-          "output_schema": {
-            "type": "string"
-          },
-          "destination_created": {
-            "const": true
+          {
+            "$ref": "#/$defs/relationship_presence_permissions_receipt_record"
           }
-        },
-        "additionalProperties": false
+        ]
       }
+    }
+  },
+  "$defs": {
+    "base_receipt_record": {
+      "type": "object",
+      "required": [
+        "id",
+        "source_path",
+        "source_sha256",
+        "preview_normalized_sha256",
+        "destination_relative_path",
+        "destination_sha256",
+        "output_schema",
+        "destination_created"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "preview_normalized_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "destination_relative_path": {
+          "type": "string"
+        },
+        "destination_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "output_schema": {
+          "type": "string"
+        },
+        "destination_created": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "mira_self_profile_receipt_record": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_receipt_record"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "mira_self_profile"
+            },
+            "destination_relative_path": {
+              "const": "continuity/core/mira-self-profile.normalized.json"
+            },
+            "output_schema": {
+              "const": "mira.normalized.self_profile.v1"
+            }
+          }
+        }
+      ]
+    },
+    "james_relationship_state_receipt_record": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_receipt_record"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "james_relationship_state"
+            },
+            "destination_relative_path": {
+              "const": "continuity/core/james-relationship-state.normalized.json"
+            },
+            "output_schema": {
+              "const": "mira.normalized.james_relationship_state.v1"
+            }
+          }
+        }
+      ]
+    },
+    "relationship_presence_permissions_receipt_record": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_receipt_record"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "relationship_presence_permissions"
+            },
+            "destination_relative_path": {
+              "const": "permissions/core/relationship-presence-permissions.normalized.json"
+            },
+            "output_schema": {
+              "const": "mira.normalized.relationship_presence_permissions.v1"
+            }
+          }
+        }
+      ]
     }
   },
   "additionalProperties": false

@@ -55,9 +55,14 @@ The future receipt must use schema `mira.normalized_core_receipt.v0` and include
 - normalized timestamp;
 - mutation flags proving normalized writes only;
 - source path and source sha256 for each record;
+- preview normalized sha256 for each record, copied from the dry-run preview;
 - destination relative path and destination sha256 for each record;
 - normalized output schema for each record;
 - preserved caveat flags.
+
+Each approved record id must be constrained to its exact destination relative
+path and normalized output schema; hash-shaped values are not enough if they are
+attached to the wrong destination or schema.
 
 ## Non-Scope
 

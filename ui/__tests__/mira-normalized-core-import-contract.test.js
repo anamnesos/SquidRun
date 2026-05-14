@@ -322,4 +322,69 @@ describe('Mira normalized core import contract', () => {
       growth_events_excluded: { const: true },
     }));
   });
+
+  test('normalized receipt schema constrains each record id to exact destination and output schema', () => {
+    const schema = readJson(normalizedReceiptSchemaPath);
+    const recordDefs = schema.$defs;
+
+    expect(schema.properties.records.items.oneOf).toEqual([
+      { $ref: '#/$defs/mira_self_profile_receipt_record' },
+      { $ref: '#/$defs/james_relationship_state_receipt_record' },
+      { $ref: '#/$defs/relationship_presence_permissions_receipt_record' },
+    ]);
+    expect(recordDefs.base_receipt_record.required).toEqual(expect.arrayContaining([
+      'preview_normalized_sha256',
+      'destination_sha256',
+    ]));
+    expect(recordDefs.mira_self_profile_receipt_record.allOf[1].properties).toEqual(expect.objectContaining({
+      id: { const: 'mira_self_profile' },
+      destination_relative_path: { const: 'continuity/core/mira-self-profile.normalized.json' },
+      output_schema: { const: 'mira.normalized.self_profile.v1' },
+    }));
+    expect(recordDefs.james_relationship_state_receipt_record.allOf[1].properties).toEqual(expect.objectContaining({
+      id: { const: 'james_relationship_state' },
+      destination_relative_path: { const: 'continuity/core/james-relationship-state.normalized.json' },
+      output_schema: { const: 'mira.normalized.james_relationship_state.v1' },
+    }));
+    expect(recordDefs.relationship_presence_permissions_receipt_record.allOf[1].properties).toEqual(expect.objectContaining({
+      id: { const: 'relationship_presence_permissions' },
+      destination_relative_path: { const: 'permissions/core/relationship-presence-permissions.normalized.json' },
+      output_schema: { const: 'mira.normalized.relationship_presence_permissions.v1' },
+    }));
+  });
+
+  test('normalized receipt schema rejects hash-shaped records with arbitrary destination or schema', () => {
+    const schema = readJson(normalizedReceiptSchemaPath);
+    const defs = schema.$defs;
+    const validHash = `sha256:${'a'.repeat(64)}`;
+    const baseRecord = {
+      id: 'mira_self_profile',
+      source_path: 'workspace/knowledge/mira-self-profile.json',
+      source_sha256: validHash,
+      preview_normalized_sha256: validHash,
+      destination_relative_path: 'continuity/core/mira-self-profile.normalized.json',
+      destination_sha256: validHash,
+      output_schema: 'mira.normalized.self_profile.v1',
+      destination_created: true,
+    };
+
+    function matchesRecordDef(record, defName) {
+      const exact = defs[defName].allOf[1].properties;
+      return Object.entries(exact).every(([key, rule]) => record[key] === rule.const);
+    }
+
+    expect(matchesRecordDef(baseRecord, 'mira_self_profile_receipt_record')).toBe(true);
+    expect(matchesRecordDef({
+      ...baseRecord,
+      destination_relative_path: 'continuity/core/arbitrary-but-hash-shaped.normalized.json',
+    }, 'mira_self_profile_receipt_record')).toBe(false);
+    expect(matchesRecordDef({
+      ...baseRecord,
+      output_schema: 'mira.normalized.arbitrary.v1',
+    }, 'mira_self_profile_receipt_record')).toBe(false);
+    expect(matchesRecordDef({
+      ...baseRecord,
+      id: 'james_relationship_state',
+    }, 'mira_self_profile_receipt_record')).toBe(false);
+  });
 });

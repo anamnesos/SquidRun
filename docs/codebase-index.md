@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `a1df8bf`
+- Git HEAD: `720f2d3`
 - Total files listed: 1141
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -124,9 +124,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/imports/import-record.schema.json` | config | `clean/tracked` | 1471 |
 | `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json` | config | `clean/tracked` | 3484 |
 | `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.md` | doc | `clean/tracked` | 1865 |
-| `mira/imports/normalizers/normalized-core-apply-semantics-v0.md` | doc | `clean/tracked` | 2354 |
+| `mira/imports/normalizers/normalized-core-apply-semantics-v0.md` | doc | `clean/tracked` | 2637 |
 | `mira/imports/normalizers/normalized-core-approval-marker-schema-v0.json` | config | `clean/tracked` | 3234 |
-| `mira/imports/normalizers/normalized-core-receipt-schema-v0.json` | config | `clean/tracked` | 3982 |
+| `mira/imports/normalizers/normalized-core-receipt-schema-v0.json` | config | `clean/tracked` | 5949 |
 | `mira/imports/persistent-first-import-runbook-v0.md` | doc | `clean/tracked` | 2451 |
 | `mira/imports/README.md` | doc | `clean/tracked` | 375 |
 | `mira/imports/reports/batch-2a-normalized-core-dry-run-v1.json` | config | `clean/tracked` | 4896 |
@@ -515,7 +515,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-local-text-ui-surface.test.js` | test | `clean/tracked` | 82692 |
 | `ui/__tests__/mira-memory-curiosity.test.js` | test | `clean/tracked` | 3579 |
 | `ui/__tests__/mira-meta-posture-gate.test.js` | test | `clean/tracked` | 35686 |
-| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 14371 |
+| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 17557 |
 | `ui/__tests__/mira-north-star-acceptance.test.js` | test | `clean/tracked` | 7135 |
 | `ui/__tests__/mira-persona-loader-v0.test.js` | test | `clean/tracked` | 13766 |
 | `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | `clean/tracked` | 37529 |
