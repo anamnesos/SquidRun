@@ -64,6 +64,19 @@ export type NormalizedCoreSummary = {
   error: string | null;
 };
 
+export type BridgeCapabilitySummary = {
+  protocol: "mira.hm_send_adapter.v0";
+  cliAvailable: boolean;
+  cliPath: string;
+  cliRelativePath: "mira/bridge/send-pane-message.js";
+  allowedRoles: ("architect" | "builder" | "oracle")[];
+  liveSendManualOnly: true;
+  autoSend: false;
+  runtimeInvokesSendCli: false;
+  telegramRouteControl: false;
+  uiSurfaceControl: false;
+};
+
 export type HealthResponse = {
   service: "mira-runtime";
   status: RuntimeStatus;
@@ -101,5 +114,6 @@ export type SessionResponse = {
     importReceipts: ImportReceiptSummary;
     acceptanceContinuity: AcceptanceContinuitySummary;
     normalizedCore: NormalizedCoreSummary;
+    bridge: BridgeCapabilitySummary;
   };
 };

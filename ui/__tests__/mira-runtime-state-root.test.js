@@ -275,7 +275,19 @@ describe('Mira runtime state-root readiness', () => {
         runtimeSessionClaimAllowed: false,
         error: expect.stringContaining('approved receipt not found'),
       }),
+      bridge: expect.objectContaining({
+        protocol: 'mira.hm_send_adapter.v0',
+        cliAvailable: true,
+        cliRelativePath: 'mira/bridge/send-pane-message.js',
+        allowedRoles: ['architect', 'builder', 'oracle'],
+        liveSendManualOnly: true,
+        autoSend: false,
+        runtimeInvokesSendCli: false,
+        telegramRouteControl: false,
+        uiSurfaceControl: false,
+      }),
     }));
+    expect(session.session.bridge.cliPath.replace(/\\/g, '/')).toContain('/mira/bridge/send-pane-message.js');
   });
 
   test('session reports receipt counts without loading continuity files', () => {
@@ -483,6 +495,14 @@ describe('Mira runtime state-root readiness', () => {
         documentCount: 3,
         continuityLoaded: false,
         runtimeSessionClaimAllowed: false,
+      }),
+      bridge: expect.objectContaining({
+        cliAvailable: true,
+        allowedRoles: ['architect', 'builder', 'oracle'],
+        liveSendManualOnly: true,
+        autoSend: false,
+        runtimeInvokesSendCli: false,
+        telegramRouteControl: false,
       }),
     }));
   });

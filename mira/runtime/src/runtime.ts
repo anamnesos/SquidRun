@@ -5,6 +5,7 @@ import type {
   SessionResponse,
 } from "./contracts.js";
 import { loadAcceptanceContinuity } from "./acceptance-continuity.js";
+import { getBridgeCapabilityStatus } from "./bridge-status.js";
 import { getImportReceiptSummary } from "./import-status.js";
 import { loadNormalizedCore } from "./normalized-core.js";
 import { getStateRootReadiness } from "./state-root.js";
@@ -42,6 +43,11 @@ const capabilities: RuntimeCapability[] = [
     status: "blocked",
     notes: "Telegram route ownership is outside this runtime scaffold.",
   },
+  {
+    id: "team_bridge_manual_send",
+    status: "available",
+    notes: "Manual-only internal pane send CLI can be planned or invoked by an operator; runtime does not auto-send.",
+  },
 ];
 
 export function getHealth(startedAt: number): HealthResponse {
@@ -77,6 +83,7 @@ export function getSessionSkeleton(): SessionResponse {
   const importReceipts = getImportReceiptSummary(stateRoot);
   const acceptanceContinuity = loadAcceptanceContinuity(stateRoot);
   const normalizedCore = loadNormalizedCore(stateRoot);
+  const bridge = getBridgeCapabilityStatus();
 
   return {
     service: "mira-runtime",
@@ -92,6 +99,7 @@ export function getSessionSkeleton(): SessionResponse {
       importReceipts,
       acceptanceContinuity,
       normalizedCore,
+      bridge,
     },
   };
 }

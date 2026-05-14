@@ -27,6 +27,7 @@ export function getRuntimeStatus() {
       runtimeSessionClaimAllowed: session.normalizedCore.runtimeSessionClaimAllowed,
       error: session.normalizedCore.error,
     },
+    bridge: session.bridge,
     continuityLoaded: session.continuityLoaded,
     liveDataImported: session.liveDataImported,
   };
@@ -43,6 +44,10 @@ export function formatRuntimeStatus(status = getRuntimeStatus()): string {
     `acceptance_document_count=${status.acceptanceContinuity.documentCount}`,
     `normalized_core_loaded=${status.normalizedCore.loaded}`,
     `normalized_core_document_count=${status.normalizedCore.documentCount}`,
+    `bridge_cli_available=${status.bridge.cliAvailable}`,
+    `bridge_allowed_roles=${status.bridge.allowedRoles.join(",")}`,
+    `bridge_live_send_manual_only=${status.bridge.liveSendManualOnly}`,
+    `bridge_auto_send=${status.bridge.autoSend}`,
     `continuity_loaded=${status.continuityLoaded}`,
     `runtime_session_claim_allowed=${status.acceptanceContinuity.runtimeSessionClaimAllowed && status.normalizedCore.runtimeSessionClaimAllowed}`,
     status.stateRootError ? `state_root_error=${status.stateRootError}` : null,
