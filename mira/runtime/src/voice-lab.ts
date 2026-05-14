@@ -95,6 +95,17 @@ const nearMatchers: Record<string, RegExp[]> = {
     /\bwhy\s+did\s+you\s+say\s+that\b/i,
     /\bwhy\s+that\s+answer\b/i,
   ],
+  "diction-persona-range-why-short-v0": [
+    /\bwhy\s+(are|r)\s+(you|u)\s+so\s+(short|terse|brief)\b/i,
+    /\bwhy\s+are\s+your\s+answers\s+so\s+(short|terse|brief)\b/i,
+    /\byou\s+(are|re|'re)\s+too\s+(short|terse|brief)\b/i,
+  ],
+  "reasoning-diction-persona-range-v0": [
+    /\bcan\s+you\s+explain\s+your\s+reasoning\b/i,
+    /\bexplain\s+your\s+reasoning\b/i,
+    /\bcan\s+you\s+explain\s+why\b/i,
+    /\bwhy\s+that\s+choice\b/i,
+  ],
 };
 
 function normalizeText(value: string): string {

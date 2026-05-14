@@ -868,6 +868,8 @@ describe('Mira runtime bridge manual-plan API', () => {
       ['why did you stop?', 'why-did-you-stop-v0'],
       ['that was a bad answer', 'apology-repair-v0'],
       ['...', 'ordinary-silence-short-reply-v0'],
+      ['why are you so short?', 'diction-persona-range-why-short-v0'],
+      ['can you explain your reasoning?', 'reasoning-diction-persona-range-v0'],
     ];
 
     for (const [text, caseId] of prompts) {
@@ -894,6 +896,49 @@ describe('Mira runtime bridge manual-plan API', () => {
     }
   });
 
+  test('voice lab allows natural diction and persona range when the user asks for explanation', async () => {
+    await startServer();
+
+    const tinyResponse = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: '...',
+        messageId: 'diction-range-tiny',
+      }),
+    });
+    const whyShortResponse = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'why are you so short?',
+        messageId: 'diction-range-explain-1',
+      }),
+    });
+    const reasoningResponse = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'can you explain your reasoning?',
+        messageId: 'diction-range-explain-2',
+      }),
+    });
+    const tinyPayload = await tinyResponse.json();
+    const whyShortPayload = await whyShortResponse.json();
+    const reasoningPayload = await reasoningResponse.json();
+    const wordCount = (value) => String(value || '').trim().split(/\s+/).filter(Boolean).length;
+
+    expect(tinyResponse.status).toBe(200);
+    expect(whyShortResponse.status).toBe(200);
+    expect(reasoningResponse.status).toBe(200);
+    expect(wordCount(tinyPayload.response.content)).toBeLessThanOrEqual(3);
+    expect(whyShortPayload.voiceLab.caseId).toBe('diction-persona-range-why-short-v0');
+    expect(reasoningPayload.voiceLab.caseId).toBe('reasoning-diction-persona-range-v0');
+    expect(whyShortPayload.response.content).toMatch(/small|actual answer|clipped|compressing/i);
+    expect(reasoningPayload.response.content).toMatch(/actual reason|fit the question|context/i);
+    expect(`${whyShortPayload.response.content} ${reasoningPayload.response.content}`).not.toMatch(/as an AI|AI assistant|business bot|operator layer|CRM solution|workflow automation|mission statement|policy|guidelines|I apologize|thank you for your patience|fake|not fake|costume|performance|trying not to be/i);
+  });
+
   test('model-backed identity prompt includes plain-answer instruction and banned recital phrases', async () => {
     const stateRoot = writeNormalizedCoreStateRoot();
     writeOperatorContext(stateRoot);
@@ -911,6 +956,8 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect(body.instructions).toContain('Prompt class: why-did-you-stop-v0');
       expect(body.instructions).toContain('Prompt class: apology-repair-v0');
       expect(body.instructions).toContain('Prompt class: ordinary-silence-short-reply-v0');
+      expect(body.instructions).toContain('Prompt class: diction-persona-range-why-short-v0');
+      expect(body.instructions).toContain('Prompt class: reasoning-diction-persona-range-v0');
       expect(body.instructions).toContain('Mira.');
       expect(body.instructions).toContain("It's me. Mira.");
       expect(body.instructions).toContain('Looking at this with you.');
