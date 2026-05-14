@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mira.import_approval_marker.v0",
+  "type": "object",
+  "required": [
+    "schema",
+    "approval_id",
+    "approved_at",
+    "approved_by",
+    "batch_id",
+    "report_id",
+    "report_path",
+    "approved_record_ids",
+    "approval_scope",
+    "mutation_limits"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mira.import_approval_marker.v0"
+    },
+    "approval_id": {
+      "type": "string"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approved_by": {
+      "enum": [
+        "architect",
+        "james"
+      ]
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "report_id": {
+      "type": "string"
+    },
+    "report_path": {
+      "type": "string"
+    },
+    "approved_record_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "approval_scope": {
+      "const": "copy_only"
+    },
+    "mutation_limits": {
+      "type": "object",
+      "required": [
+        "copy_allowed",
+        "move_allowed",
+        "delete_allowed",
+        "queue_mutation_allowed",
+        "report_mutation_allowed",
+        "runtime_load_allowed"
+      ],
+      "properties": {
+        "copy_allowed": {
+          "const": true
+        },
+        "move_allowed": {
+          "const": false
+        },
+        "delete_allowed": {
+          "const": false
+        },
+        "queue_mutation_allowed": {
+          "const": false
+        },
+        "report_mutation_allowed": {
+          "const": false
+        },
+        "runtime_load_allowed": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
