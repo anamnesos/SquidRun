@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `720f2d3`
+- Git HEAD: `2dd2832`
 - Total files listed: 1141
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -124,7 +124,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/imports/import-record.schema.json` | config | `clean/tracked` | 1471 |
 | `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json` | config | `clean/tracked` | 3484 |
 | `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.md` | doc | `clean/tracked` | 1865 |
-| `mira/imports/normalizers/normalized-core-apply-semantics-v0.md` | doc | `clean/tracked` | 2637 |
+| `mira/imports/normalizers/normalized-core-apply-semantics-v0.md` | doc | `clean/tracked` | 2638 |
 | `mira/imports/normalizers/normalized-core-approval-marker-schema-v0.json` | config | `clean/tracked` | 3234 |
 | `mira/imports/normalizers/normalized-core-receipt-schema-v0.json` | config | `clean/tracked` | 5949 |
 | `mira/imports/persistent-first-import-runbook-v0.md` | doc | `clean/tracked` | 2451 |
@@ -151,7 +151,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/state/state-root-contract.json` | config | `clean/tracked` | 612 |
 | `mira/tools/execute-reviewed-import.js` | source | `clean/tracked` | 11952 |
 | `mira/tools/import-status.js` | source | `clean/tracked` | 2368 |
-| `mira/tools/normalize-core-dry-run.js` | source | `clean/tracked` | 9190 |
+| `mira/tools/normalize-core-dry-run.js` | source | `clean/tracked` | 17872 |
 | `mira/tools/plan-reviewed-imports.js` | source | `clean/tracked` | 3300 |
 | `mira/tools/resolve-state-root.js` | source | `clean/tracked` | 670 |
 | `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
@@ -515,7 +515,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-local-text-ui-surface.test.js` | test | `clean/tracked` | 82692 |
 | `ui/__tests__/mira-memory-curiosity.test.js` | test | `clean/tracked` | 3579 |
 | `ui/__tests__/mira-meta-posture-gate.test.js` | test | `clean/tracked` | 35686 |
-| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 17557 |
+| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 22024 |
 | `ui/__tests__/mira-north-star-acceptance.test.js` | test | `clean/tracked` | 7135 |
 | `ui/__tests__/mira-persona-loader-v0.test.js` | test | `clean/tracked` | 13766 |
 | `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | `clean/tracked` | 37529 |
