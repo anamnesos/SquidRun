@@ -3,9 +3,9 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
-import { getModelProviderStatus } from "./model-status.js";
+import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
-import { runRuntimeTurn } from "./turn.js";
+import { runRuntimeTurn, type RuntimeTurnInput } from "./turn.js";
 import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
@@ -106,6 +106,16 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
   }
 }
 
+function parseModelProvider(value: unknown): RuntimeTurnInput["modelProvider"] | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (["ollama", "ollama_chat", "local", "gemma", "openai", "openai_responses"].includes(normalized)) {
+    return normalized as RuntimeTurnInput["modelProvider"];
+  }
+  throw Object.assign(new Error(`Unsupported Mira model provider: ${normalized}.`), { code: "unsupported_model_provider" });
+}
+
 export async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
@@ -136,14 +146,7 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (request.method === "POST" && requestUrl.pathname === "/turn") {
     const startedAt = Date.now();
-    let turnInput: {
-      text: string;
-      sessionId?: string;
-      messageId?: string;
-      requestId?: string;
-      suggestTeamPlanFor?: string;
-      useModel?: boolean;
-    } | null = null;
+    let turnInput: RuntimeTurnInput | null = null;
     try {
       const body = await readJsonBody(request);
       turnInput = {
@@ -163,6 +166,13 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       }
       if (body.useModel === true || body.model === true || body.mode === "model") {
         Object.assign(turnInput, { useModel: true });
+      }
+      const modelProvider = parseModelProvider(body.modelProvider);
+      if (modelProvider) {
+        Object.assign(turnInput, { modelProvider });
+      }
+      if (typeof body.modelName === "string") {
+        Object.assign(turnInput, { modelName: body.modelName });
       }
       const turnResponse = await runRuntimeTurn(turnInput);
       Object.assign(turnResponse, {
@@ -267,6 +277,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/model/status") {
     sendJson(response, 200, await getModelProviderStatus());
+    return;
+  }
+
+  if (requestUrl.pathname === "/model/providers") {
+    sendJson(response, 200, await getModelProviderList());
     return;
   }
 

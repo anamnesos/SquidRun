@@ -321,6 +321,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="reviewSummary"');
     expect(indexHtml).toContain('id="modelSummary"');
     expect(indexHtml).toContain('id="personaSummary"');
+    expect(indexHtml).toContain('id="modelProviderSelect"');
+    expect(indexHtml).toContain('id="recentSummary"');
+    expect(indexHtml).toContain('id="workSummary"');
     expect(indexHtml).toContain('id="draftButton"');
     expect(indexHtml).toContain('id="draftList"');
     expect(indexHtml).toContain('id="taskList"');
@@ -332,6 +335,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appResponse.headers.get('content-type')).toContain('text/javascript');
     expect(appJs).toContain("fetch('/turn'");
     expect(appJs).toContain("fetch('/model/status'");
+    expect(appJs).toContain("fetch('/model/providers'");
+    expect(appJs).toContain('modelProviderSelect');
+    expect(appJs).toContain('modelProvider');
     expect(appJs).toContain("fetch('/work/drafts'");
     expect(appJs).toContain("fetch('/work/tasks'");
     expect(appJs).toContain("fetch('/conversation/recent");
@@ -358,7 +364,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(css).toContain('.draft-item');
     expect(css).toMatch(/body\s*\{[\s\S]*height:\s*100dvh[\s\S]*overflow:\s*hidden/);
     expect(css).toMatch(/\.shell\s*\{[\s\S]*height:\s*100dvh[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
-    expect(css).toMatch(/\.conversation\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
+    expect(css).toMatch(/\.conversation\s*\{[\s\S]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
+    expect(css).toContain('.memory-strip');
+    expect(css).toContain('.model-picker');
     expect(css).toMatch(/\.thread\s*\{[\s\S]*min-height:\s*0[\s\S]*overflow-y:\s*auto/);
     expect(css).toMatch(/textarea\s*\{[\s\S]*resize:\s*none[\s\S]*overflow-y:\s*auto/);
     expect(css).not.toMatch(/@media\s*\(max-width:\s*820px\)\s*\{[\s\S]*body\s*\{[\s\S]*overflow:\s*auto/);
@@ -657,6 +665,72 @@ describe('Mira runtime bridge manual-plan API', () => {
       installedModels: ['gemma4:31b'],
       nextLocalModelStep: null,
       runtimeBlocked: false,
+    }));
+  });
+
+  test('lists honest model choices without claiming subscription-only providers are wired', async () => {
+    const ollamaBaseUrl = await startOpenAiMock((request, response) => {
+      expect(request.method).toBe('GET');
+      expect(request.url).toBe('/api/tags');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        models: [
+          { name: 'gemma4:31b' },
+        ],
+      }));
+    });
+    await startServer({
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
+      MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
+      OPENAI_API_KEY: '',
+      MIRA_RUNTIME_OPENAI_API_KEY: '',
+    });
+
+    const response = await fetch(`${baseUrl}/model/providers`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.model_provider_list.v0',
+      selectedProvider: 'ollama_chat',
+      choices: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'ollama_gemma',
+          provider: 'ollama_chat',
+          model: 'gemma4:31b',
+          available: true,
+          selectable: true,
+          runtimeAdapterReady: true,
+        }),
+        expect.objectContaining({
+          id: 'openai_gpt',
+          provider: 'openai_responses',
+          available: false,
+          selectable: false,
+          reason: 'missing_openai_api_key',
+          runtimeAdapterReady: true,
+        }),
+        expect.objectContaining({
+          id: 'claude_subscription',
+          provider: 'unwired',
+          available: false,
+          selectable: false,
+          reason: 'subscription_known_runtime_adapter_not_wired',
+          subscriptionKnown: true,
+          runtimeAdapterReady: false,
+        }),
+        expect.objectContaining({
+          id: 'gemini_subscription',
+          provider: 'unwired',
+          available: false,
+          selectable: false,
+          reason: 'subscription_known_runtime_adapter_not_wired',
+          subscriptionKnown: true,
+          runtimeAdapterReady: false,
+        }),
+      ]),
     }));
   });
 
@@ -1070,7 +1144,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload.recentTurns).toEqual([
       expect.objectContaining({
         promptPreview: 'why is this answer so dumb?',
-        responsePreview: expect.stringContaining('I heard:'),
+        responsePreview: 'runtime recital instead of a real answer',
         model: null,
       }),
     ]);

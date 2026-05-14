@@ -3,12 +3,14 @@
 const state = {
   sessionId: `mira-ui-${Date.now()}`,
   turnCounter: 0,
+  selectedModel: null,
 };
 
 const elements = {
   form: document.getElementById('turnForm'),
   text: document.getElementById('turnText'),
   useModel: document.getElementById('useModel'),
+  modelProviderSelect: document.getElementById('modelProviderSelect'),
   draftButton: document.getElementById('draftButton'),
   sendButton: document.getElementById('sendButton'),
   thread: document.getElementById('thread'),
@@ -20,6 +22,8 @@ const elements = {
   operatorSummary: document.getElementById('operatorSummary'),
   coreSummary: document.getElementById('coreSummary'),
   personaSummary: document.getElementById('personaSummary'),
+  recentSummary: document.getElementById('recentSummary'),
+  workSummary: document.getElementById('workSummary'),
   lastTurn: document.getElementById('lastTurn'),
   modelSummary: document.getElementById('modelSummary'),
   reviewSummary: document.getElementById('reviewSummary'),
@@ -96,6 +100,27 @@ function updateRuntimeState(payload) {
   setText(elements.lastTurn, payload?.modelInvoked ? 'model-backed' : 'deterministic');
 }
 
+function updateModelChoices(payload) {
+  if (!payload || !Array.isArray(payload.choices)) return;
+  const options = payload.choices.map((choice) => {
+    const option = document.createElement('option');
+    option.value = choice.id;
+    option.disabled = choice.selectable !== true;
+    const status = choice.available ? 'ready' : choice.runtimeAdapterReady ? 'not ready' : 'not wired';
+    option.textContent = `${choice.label}${choice.model ? `: ${choice.model}` : ''} (${status})`;
+    option.dataset.provider = choice.provider;
+    option.dataset.model = choice.model || '';
+    return option;
+  });
+  elements.modelProviderSelect.replaceChildren(...options);
+  const selected = payload.choices.find((choice) => choice.provider === payload.selectedProvider && choice.selectable)
+    || payload.choices.find((choice) => choice.selectable);
+  if (selected) {
+    state.selectedModel = selected;
+    elements.modelProviderSelect.value = selected.id;
+  }
+}
+
 function updateModelSummary(payload) {
   modelStatus = payload || null;
   if (!payload) {
@@ -120,6 +145,7 @@ function updateReviewSummary(payload) {
 
 function updateDraftList(payload) {
   const drafts = Array.isArray(payload?.drafts) ? payload.drafts : [];
+  setText(elements.workSummary, `${drafts.length} drafts`);
   if (drafts.length === 0) {
     setText(elements.draftList, 'none yet');
     return;
@@ -157,6 +183,8 @@ function updateDraftList(payload) {
 
 function updateTaskList(payload) {
   const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+  const current = elements.workSummary.textContent || '';
+  setText(elements.workSummary, `${current}${current ? ' / ' : ''}${tasks.length} tasks`);
   if (tasks.length === 0) {
     setText(elements.taskList, 'none yet');
     return;
@@ -179,6 +207,7 @@ function updateTaskList(payload) {
 
 function updateRecentTurns(payload) {
   const records = Array.isArray(payload?.records) ? payload.records : [];
+  setText(elements.recentSummary, records.length === 0 ? 'no turns yet' : `${records.length} recent turns`);
   if (records.length === 0) {
     setText(elements.recentTurns, 'none yet');
     return;
@@ -211,6 +240,8 @@ async function sendTurn(text) {
       sessionId: state.sessionId,
       messageId,
       useModel,
+      modelProvider: state.selectedModel?.provider === 'unwired' ? null : state.selectedModel?.provider,
+      modelName: state.selectedModel?.model || null,
     }),
   });
   const payload = await response.json();
@@ -335,6 +366,11 @@ async function createTaskFromDraft(draft) {
 
 async function refreshModelStatus() {
   try {
+    const choicesResponse = await fetch('/model/providers');
+    const choicesPayload = await choicesResponse.json();
+    if (choicesResponse.ok && choicesPayload?.ok === true) {
+      updateModelChoices(choicesPayload);
+    }
     const response = await fetch('/model/status');
     const payload = await response.json();
     if (!response.ok || payload?.ok !== true) return;
@@ -396,6 +432,15 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshTasks();
     await refreshRecentTurns();
   }
+});
+
+elements.modelProviderSelect.addEventListener('change', () => {
+  const option = elements.modelProviderSelect.selectedOptions[0];
+  state.selectedModel = {
+    id: elements.modelProviderSelect.value,
+    provider: option?.dataset.provider || null,
+    model: option?.dataset.model || null,
+  };
 });
 
 elements.text.addEventListener('keydown', (event) => {

@@ -24,10 +24,31 @@
             </div>
           </div>
           <div class="top-actions">
+            <label class="model-picker">
+              <span>Model</span>
+              <select id="modelProviderSelect" aria-label="Model provider">
+                <option value="current">checking</option>
+              </select>
+            </label>
             <span class="model-pill" id="modelPill">model check</span>
-            <button class="quiet-icon" type="button" id="contextToggle" aria-expanded="false" aria-controls="contextPanel" title="Context">...</button>
+            <button class="quiet-icon" type="button" id="contextToggle" aria-expanded="true" aria-controls="contextPanel" title="Context">...</button>
           </div>
         </header>
+
+        <section class="memory-strip" aria-label="Mira context snapshot">
+          <div>
+            <span>Mira</span>
+            <strong id="personaSummary">loading</strong>
+          </div>
+          <div>
+            <span>Recent</span>
+            <strong id="recentSummary">no turns yet</strong>
+          </div>
+          <div>
+            <span>Work</span>
+            <strong id="workSummary">drafts and tasks ready</strong>
+          </div>
+        </section>
 
         <div class="thread" id="thread" aria-live="polite">
           <article class="message mira">
@@ -46,7 +67,7 @@
         </form>
       </section>
 
-      <aside class="context-panel" id="contextPanel" aria-label="Runtime context" hidden>
+      <aside class="context-panel" id="contextPanel" aria-label="Mira workbench">
         <div class="status-strip" id="statusStrip">
           <span class="chip">loading</span>
         </div>
@@ -58,10 +79,6 @@
           <div>
             <dt>Core</dt>
             <dd id="coreSummary">loading</dd>
-          </div>
-          <div>
-            <dt>Mira</dt>
-            <dd id="personaSummary">loading</dd>
           </div>
           <div>
             <dt>Last Turn</dt>

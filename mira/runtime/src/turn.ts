@@ -16,6 +16,8 @@ export type RuntimeTurnInput = {
   messageId?: string;
   suggestTeamPlanFor?: string;
   useModel?: boolean;
+  modelProvider?: "ollama" | "ollama_chat" | "local" | "gemma" | "openai" | "openai_responses";
+  modelName?: string;
 };
 
 export type RuntimeTurnResponse = {
@@ -187,12 +189,24 @@ function preview(value: string | null | undefined, maxLength = 180): string | nu
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
 }
 
+function summarizePriorResponse(value: string | null | undefined): string | null {
+  const normalized = preview(value, 220);
+  if (!normalized) return null;
+  if (/(I heard:|Runtime state:|Loaded normalized core summary:|Operator context:)/i.test(normalized)) {
+    return "runtime recital instead of a real answer";
+  }
+  if (/Last prompt was .*I answered:/i.test(normalized)) {
+    return "journal reflection that started quoting itself";
+  }
+  return normalized;
+}
+
 function loadRecentTurnMemory(limit = 5): RecentTurnMemory[] {
   return listRuntimeTurnJournal({ limit }).records.map((record) => ({
     createdAt: record.created_at,
     outcome: record.outcome,
     promptPreview: preview(record.prompt, 140) || "",
-    responsePreview: preview(record.response?.content, 220),
+    responsePreview: summarizePriorResponse(record.response?.content),
     errorCode: record.error?.code || null,
     model: record.model?.model || null,
     voiceLabCaseId: record.voice_lab?.caseId || null,
@@ -228,6 +242,11 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
       operatorContext,
       personaCore,
       recentTurns,
+      env: {
+        ...process.env,
+        ...(input.modelProvider ? { MIRA_RUNTIME_MODEL_PROVIDER: input.modelProvider } : {}),
+        ...(input.modelName ? { MIRA_RUNTIME_TURN_MODEL: input.modelName } : {}),
+      },
     });
     responseContent = modelResult.text;
     modelInvoked = true;
