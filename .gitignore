@@ -74,6 +74,7 @@ ui/session-state.json
 mira/.state-dev/
 mira/voice/review/*.jsonl
 mira/voice/review/conversation-audit-*.json
+mira/voice/review/oracle-*.json
 !mira/voice/review/.gitkeep
 
 # Instance working directories (removed S127, kept for safety)
