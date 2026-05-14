@@ -7,6 +7,7 @@ const path = require('path');
 
 const {
   evaluateTranscript,
+  researchAnchors,
   runAudit,
 } = require('../../mira/tools/audit-voice-conversation');
 
@@ -76,12 +77,37 @@ describe('Mira conversation voice audit', () => {
       'Oracle',
     ]));
     expect(report.criteria).toEqual(expect.arrayContaining([
+      'research-backed voice presence, repair, and turn-taking checks',
       'no repeated templates',
       'repair uses the correction directly',
       'business context stays context, not identity',
     ]));
+    expect(report.research_anchors.map((anchor) => anchor.id)).toEqual([
+      'sesame_voice_presence',
+      'user_initiated_repair',
+      'duplex_turn_taking',
+    ]);
     expect(report.evaluation.failures).toEqual([]);
     expect(report.turns.find((turn) => turn.correction)?.response.content).toMatch(/Pressure|surface/i);
+  });
+
+  test('voice audit keeps its human-conversation research anchors explicit', () => {
+    expect(researchAnchors).toHaveLength(3);
+    expect(researchAnchors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'sesame_voice_presence',
+        url: expect.stringContaining('sesame.com/research/crossing_the_uncanny_valley_of_voice'),
+      }),
+      expect.objectContaining({
+        id: 'user_initiated_repair',
+        url: expect.stringContaining('research.ibm.com/publications/understanding-is-a-two-way-street'),
+      }),
+      expect.objectContaining({
+        id: 'duplex_turn_taking',
+        url: expect.stringContaining('arxiv.org/abs/2205.15060'),
+      }),
+    ]));
+    expect(researchAnchors.map((anchor) => anchor.check).join(' ')).toMatch(/context|repair|turn/i);
   });
 
   test('records model-backed fields when transcript turns used the model path', async () => {

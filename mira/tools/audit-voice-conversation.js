@@ -28,6 +28,27 @@ const bannedPatterns = [
   { id: 'support_repair', pattern: /\bI apologize\b|\bthank you for your patience\b|\bvaluable feedback\b|\bmoving forward\b/i },
 ];
 
+const researchAnchors = [
+  {
+    id: 'sesame_voice_presence',
+    source: 'Sesame research',
+    url: 'https://www.sesame.com/research/crossing_the_uncanny_valley_of_voice',
+    check: 'context, emotional fit, conversational dynamics, and consistent personality',
+  },
+  {
+    id: 'user_initiated_repair',
+    source: 'IBM Research / PACM HCI',
+    url: 'https://research.ibm.com/publications/understanding-is-a-two-way-street-user-initiated-repair-on-agent-responses-and-hearing-in-conversational-interfaces',
+    check: 'user correction must be usable by the agent, not treated as generic feedback',
+  },
+  {
+    id: 'duplex_turn_taking',
+    source: 'Duplex Conversation, KDD 2022',
+    url: 'https://arxiv.org/abs/2205.15060',
+    check: 'short turns, backchannels, and latency-sensitive flow matter',
+  },
+];
+
 function parseArgs(argv = process.argv.slice(2)) {
 const parsed = {
     out: DEFAULT_OUT,
@@ -193,8 +214,10 @@ async function runAudit(options = {}) {
     ok: evaluation.ok,
     protocol: 'mira.voice_conversation_audit.v0',
     generated_at: new Date().toISOString(),
+    research_anchors: researchAnchors,
     criteria: [
       'flow-level multi-turn evaluation',
+      'research-backed voice presence, repair, and turn-taking checks',
       'no repeated templates',
       'no self-definition or product pitch',
       'no over-answering tiny turns',
@@ -238,6 +261,7 @@ module.exports = {
   bannedPatterns,
   evaluateTranscript,
   parseArgs,
+  researchAnchors,
   runAudit,
   scenario,
 };
