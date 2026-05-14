@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `79d02de`
-- Total files listed: 1131
+- Git HEAD: `08406f0`
+- Total files listed: 1132
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,7 +17,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 58
+- root: 59
 - scripts: 1
 - tools: 3
 - ui/__tests__: 453
@@ -30,7 +30,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Summary By Kind
 - asset: 20
 - config: 24
-- doc: 68
+- doc: 69
 - file: 1
 - script: 170
 - source: 394
@@ -39,7 +39,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1131
+- clean/tracked: 1132
 
 ## Files
 
@@ -130,6 +130,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/runtime/continuity-loader-contract-v0.json` | config | `clean/tracked` | 1012 |
 | `mira/runtime/continuity-loader-contract-v0.md` | doc | `clean/tracked` | 1896 |
 | `mira/runtime/package.json` | config | `clean/tracked` | 517 |
+| `mira/runtime/README.md` | doc | `clean/tracked` | 1909 |
 | `mira/runtime/src/acceptance-continuity.ts` | source | `clean/tracked` | 4112 |
 | `mira/runtime/src/contracts.ts` | source | `clean/tracked` | 1846 |
 | `mira/runtime/src/import-status.ts` | source | `clean/tracked` | 1355 |
