@@ -1124,6 +1124,112 @@ describe('Mira runtime bridge manual-plan API', () => {
     }));
   });
 
+  test('retries one blank Ollama chat response before failing the model turn', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    let calls = 0;
+    const ollamaBaseUrl = await startOpenAiMock((_request, response) => {
+      calls += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      if (calls === 1) {
+        response.end(JSON.stringify({
+          model: 'gemma4:31b',
+          created_at: '2026-05-14T08:10:00.000Z',
+          message: {
+            role: 'assistant',
+            content: '',
+          },
+          done: true,
+        }));
+        return;
+      }
+      response.end(JSON.stringify({
+        model: 'gemma4:31b',
+        created_at: '2026-05-14T08:10:01.000Z',
+        message: {
+          role: 'assistant',
+          content: 'Here.',
+        },
+        done: true,
+      }));
+    });
+    await startServer({
+      MIRA_STATE_ROOT: stateRoot,
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
+      MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
+      OPENAI_API_KEY: '',
+      MIRA_RUNTIME_OPENAI_API_KEY: '',
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: '...',
+        sessionId: 'app-session-373',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      modelInvoked: true,
+      response: {
+        role: 'mira',
+        content: 'Here.',
+      },
+    }));
+    expect(openAiRequests).toHaveLength(2);
+  });
+
+  test('reports blank Ollama chat response detail after the bounded retry is exhausted', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    const ollamaBaseUrl = await startOpenAiMock((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        model: 'gemma4:31b',
+        created_at: '2026-05-14T08:11:00.000Z',
+        message: {
+          role: 'assistant',
+          content: '',
+        },
+        done: true,
+        done_reason: 'stop',
+      }));
+    });
+    await startServer({
+      MIRA_STATE_ROOT: stateRoot,
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
+      MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
+      OPENAI_API_KEY: '',
+      MIRA_RUNTIME_OPENAI_API_KEY: '',
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'why did you stop?',
+        sessionId: 'app-session-373',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toEqual(expect.objectContaining({
+      code: 'empty_ollama_response',
+      message: expect.stringContaining('after retry'),
+    }));
+    expect(payload.error.message).toContain('message_content_length');
+    expect(openAiRequests).toHaveLength(2);
+  });
+
   test('can include a manual team plan from a runtime turn without executing it', async () => {
     await startServer();
 

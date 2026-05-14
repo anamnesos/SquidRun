@@ -295,6 +295,23 @@ function extractOllamaText(body: unknown): string {
   return extractResponseText(body);
 }
 
+function summarizeEmptyOllamaBody(body: unknown): string {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return typeof body;
+  const record = body as Record<string, unknown>;
+  const message = record.message && typeof record.message === "object" && !Array.isArray(record.message)
+    ? record.message as Record<string, unknown>
+    : null;
+  return JSON.stringify({
+    done: record.done ?? null,
+    done_reason: record.done_reason ?? null,
+    model: record.model ?? null,
+    created_at: record.created_at ?? null,
+    message_role: message?.role ?? null,
+    message_content_length: typeof message?.content === "string" ? message.content.length : null,
+    response_length: typeof record.response === "string" ? record.response.length : null,
+  });
+}
+
 async function invokeOllamaChat(input: {
   text: string;
   loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
@@ -302,53 +319,60 @@ async function invokeOllamaChat(input: {
   fetchImpl: typeof fetch;
   config: TurnModelConfig & { apiKey: string };
 }): Promise<TurnModelResult> {
-  const response = await input.fetchImpl(input.config.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: input.config.model,
-      stream: false,
-      messages: [
-        {
-          role: "system",
-          content: buildInstructions({
-            loadedCoreSummary: input.loadedCoreSummary,
-            operatorContext: input.operatorContext,
-          }),
-        },
-        {
-          role: "user",
-          content: input.text,
-        },
-      ],
-      options: {
-        num_predict: input.config.maxOutputTokens,
+  let emptyBodySummary = "";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const response = await input.fetchImpl(input.config.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-      keep_alive: "10m",
-    }),
-  });
-
-  if (!response.ok) {
-    throw Object.assign(new Error(`Ollama chat request failed with status ${response.status}.`), {
-      code: "ollama_chat_failed",
-      status: response.status,
+      body: JSON.stringify({
+        model: input.config.model,
+        stream: false,
+        messages: [
+          {
+            role: "system",
+            content: buildInstructions({
+              loadedCoreSummary: input.loadedCoreSummary,
+              operatorContext: input.operatorContext,
+            }),
+          },
+          {
+            role: "user",
+            content: input.text,
+          },
+        ],
+        options: {
+          num_predict: input.config.maxOutputTokens,
+        },
+        keep_alive: "10m",
+      }),
     });
+
+    if (!response.ok) {
+      throw Object.assign(new Error(`Ollama chat request failed with status ${response.status}.`), {
+        code: "ollama_chat_failed",
+        status: response.status,
+      });
+    }
+
+    const body = await response.json() as Record<string, unknown>;
+    const text = extractOllamaText(body);
+    if (text) {
+      return {
+        text,
+        provider: "ollama_chat",
+        model: input.config.model,
+        responseId: typeof body.created_at === "string" ? body.created_at : null,
+      };
+    }
+    emptyBodySummary = summarizeEmptyOllamaBody(body);
   }
 
-  const body = await response.json() as Record<string, unknown>;
-  const text = extractOllamaText(body);
-  if (!text) {
-    throw Object.assign(new Error("Ollama chat returned no output text."), { code: "empty_ollama_response" });
-  }
-
-  return {
-    text,
-    provider: "ollama_chat",
-    model: input.config.model,
-    responseId: typeof body.created_at === "string" ? body.created_at : null,
-  };
+  throw Object.assign(new Error(`Ollama chat returned no output text after retry. last_body=${emptyBodySummary}`), {
+    code: "empty_ollama_response",
+    retryable: true,
+  });
 }
 
 export async function invokeTurnModel(input: {
