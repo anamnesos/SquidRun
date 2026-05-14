@@ -24,6 +24,23 @@ export type ImportReceiptSummary = {
   error: string | null;
 };
 
+export type AcceptanceContinuityDocument = {
+  relativePath: string;
+  title: string | null;
+  bytes: number;
+};
+
+export type AcceptanceContinuitySummary = {
+  loaded: boolean;
+  scope: "acceptance_docs_only";
+  batchId: "acceptance-permission-contracts-v1";
+  documentCount: number;
+  documents: AcceptanceContinuityDocument[];
+  continuityLoaded: false;
+  runtimeSessionClaimAllowed: false;
+  error: string | null;
+};
+
 export type HealthResponse = {
   service: "mira-runtime";
   status: RuntimeStatus;
@@ -59,5 +76,6 @@ export type SessionResponse = {
     stateRootPath: string | null;
     stateRootError: string | null;
     importReceipts: ImportReceiptSummary;
+    acceptanceContinuity: AcceptanceContinuitySummary;
   };
 };

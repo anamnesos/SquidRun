@@ -37,6 +37,51 @@ describe('Mira runtime state-root readiness', () => {
     }));
   }
 
+  function writeApprovedAcceptanceStateRoot() {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-acceptance-loader-'));
+    const acceptanceDir = path.join(stateRoot, 'acceptance');
+    const receiptsDir = path.join(stateRoot, 'imports', 'receipts');
+    const continuityDir = path.join(stateRoot, 'continuity');
+    fs.mkdirSync(acceptanceDir, { recursive: true });
+    fs.mkdirSync(receiptsDir, { recursive: true });
+    fs.mkdirSync(continuityDir, { recursive: true });
+    fs.writeFileSync(path.join(continuityDir, 'not-loaded.json'), '{bad continuity json');
+
+    const records = [
+      {
+        id: 'presence_runtime_acceptance',
+        destination_relative_path: 'acceptance/mira-presence-runtime-acceptance-v0.md',
+        title: 'Mira Presence Runtime Acceptance v0',
+      },
+      {
+        id: 'north_star_acceptance',
+        destination_relative_path: 'acceptance/mira-north-star-acceptance.md',
+        title: 'Mira North Star Acceptance',
+      },
+      {
+        id: 'pc_embodiment_permission',
+        destination_relative_path: 'acceptance/mira-pc-embodiment-permission-v0.md',
+        title: 'Mira PC Embodiment Permission v0',
+      },
+    ];
+
+    for (const record of records) {
+      fs.writeFileSync(
+        path.join(stateRoot, record.destination_relative_path),
+        `# ${record.title}\n\nAcceptance fixture for ${record.id}.\n`,
+      );
+    }
+
+    fs.writeFileSync(path.join(receiptsDir, 'approved-first-batch.json'), JSON.stringify({
+      schema: 'mira.import_receipt.v0',
+      receipt_id: 'approved-first-batch',
+      batch_id: 'acceptance-permission-contracts-v1',
+      records,
+    }, null, 2));
+
+    return stateRoot;
+  }
+
   test('fails closed when MIRA_STATE_ROOT is missing', () => {
     const result = runRuntimeSnippet(`
       import { getStateRootReadiness } from ${JSON.stringify(compiledStateRootUrl)};
@@ -130,6 +175,14 @@ describe('Mira runtime state-root readiness', () => {
         continuityLoaded: false,
         error: null,
       }),
+      acceptanceContinuity: expect.objectContaining({
+        loaded: false,
+        scope: 'acceptance_docs_only',
+        documentCount: 0,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+        error: expect.stringContaining('approved receipt not found'),
+      }),
     }));
   });
 
@@ -166,7 +219,46 @@ describe('Mira runtime state-root readiness', () => {
         continuityLoaded: false,
         error: null,
       }),
+      acceptanceContinuity: expect.objectContaining({
+        loaded: false,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+      }),
     }));
+  });
+
+  test('session loads only receipt-approved acceptance docs without claiming full continuity', () => {
+    const stateRoot = writeApprovedAcceptanceStateRoot();
+
+    const session = runRuntimeSnippet(`
+      process.env.MIRA_STATE_ROOT = ${JSON.stringify(stateRoot)};
+      import { getSessionSkeleton } from ${JSON.stringify(compiledRuntimeUrl)};
+      console.log(JSON.stringify(getSessionSkeleton()));
+    `);
+
+    expect(session.session).toEqual(expect.objectContaining({
+      continuityLoaded: false,
+      liveDataImported: false,
+      acceptanceContinuity: expect.objectContaining({
+        loaded: true,
+        scope: 'acceptance_docs_only',
+        batchId: 'acceptance-permission-contracts-v1',
+        documentCount: 3,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+        error: null,
+      }),
+    }));
+    expect(session.session.acceptanceContinuity.documents.map((document) => document.relativePath)).toEqual([
+      'acceptance/mira-presence-runtime-acceptance-v0.md',
+      'acceptance/mira-north-star-acceptance.md',
+      'acceptance/mira-pc-embodiment-permission-v0.md',
+    ]);
+    expect(session.session.acceptanceContinuity.documents.map((document) => document.title)).toEqual([
+      'Mira Presence Runtime Acceptance v0',
+      'Mira North Star Acceptance',
+      'Mira PC Embodiment Permission v0',
+    ]);
   });
 
   test('session still reports no continuity when an empty state root has required buckets', () => {
@@ -194,6 +286,11 @@ describe('Mira runtime state-root readiness', () => {
         receiptCount: 0,
         recordCount: 0,
         continuityLoaded: false,
+      }),
+      acceptanceContinuity: expect.objectContaining({
+        loaded: false,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
       }),
     }));
   });
