@@ -304,7 +304,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appResponse.headers.get('content-type')).toContain('text/javascript');
     expect(appJs).toContain("fetch('/turn'");
     expect(appJs).toContain("fetch('/voice/correction'");
-    expect(appJs).toContain('sounded fake');
+    expect(appJs).toContain('wrong shape');
     expect(appJs).toContain('useModel');
     expect(cssResponse.status).toBe(200);
     expect(cssResponse.headers.get('content-type')).toContain('text/css');

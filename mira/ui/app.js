@@ -114,7 +114,7 @@ function attachCorrectionControl(article, payload, prompt) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'subtle-button';
-  button.textContent = 'sounded fake';
+  button.textContent = 'wrong shape';
   button.addEventListener('click', async () => {
     const better = window.prompt('Better phrasing?');
     if (!better || !better.trim()) return;
