@@ -1,6 +1,8 @@
 'use strict';
 
 const { spawn, execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 describe('Mira runtime bridge manual-plan API', () => {
@@ -10,6 +12,7 @@ describe('Mira runtime bridge manual-plan API', () => {
   const compiledServerPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'server.js');
   let serverProcess;
   let baseUrl;
+  let tempStateRoot;
 
   beforeAll(() => {
     execFileSync(process.execPath, [
@@ -42,15 +45,20 @@ describe('Mira runtime bridge manual-plan API', () => {
     serverProcess.removeAllListeners();
     serverProcess = null;
     baseUrl = null;
+    if (tempStateRoot) {
+      fs.rmSync(tempStateRoot, { recursive: true, force: true });
+      tempStateRoot = null;
+    }
   });
 
-  function startServer() {
+  function startServer(extraEnv = {}) {
     return new Promise((resolve, reject) => {
       serverProcess = spawn(process.execPath, [compiledServerPath], {
         cwd: repoRoot,
         env: {
           ...process.env,
           MIRA_RUNTIME_PORT: '0',
+          ...extraEnv,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
@@ -77,6 +85,78 @@ describe('Mira runtime bridge manual-plan API', () => {
         resolve(baseUrl);
       });
     });
+  }
+
+  function writeNormalizedCoreStateRoot() {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-turn-state-'));
+    fs.mkdirSync(path.join(tempStateRoot, 'imports', 'receipts'), { recursive: true });
+    fs.mkdirSync(path.join(tempStateRoot, 'continuity', 'core'), { recursive: true });
+    fs.mkdirSync(path.join(tempStateRoot, 'permissions', 'core'), { recursive: true });
+
+    fs.writeFileSync(path.join(tempStateRoot, 'imports', 'receipts', 'normalized-core-state-v1-test.json'), JSON.stringify({
+      schema: 'mira.normalized_core_receipt.v0',
+      batch_id: 'normalized-core-state-v1',
+      records: [
+        {
+          id: 'mira_self_profile',
+          destination_relative_path: 'continuity/core/mira-self-profile.normalized.json',
+          output_schema: 'mira.normalized.self_profile.v1',
+        },
+        {
+          id: 'james_relationship_state',
+          destination_relative_path: 'continuity/core/james-relationship-state.normalized.json',
+          output_schema: 'mira.normalized.james_relationship_state.v1',
+        },
+        {
+          id: 'relationship_presence_permissions',
+          destination_relative_path: 'permissions/core/relationship-presence-permissions.normalized.json',
+          output_schema: 'mira.normalized.relationship_presence_permissions.v1',
+        },
+      ],
+    }, null, 2));
+    fs.writeFileSync(path.join(tempStateRoot, 'continuity', 'core', 'mira-self-profile.normalized.json'), JSON.stringify({
+      schema: 'mira.normalized.self_profile.v1',
+      profile_kind: 'ai_system_local_presence_profile',
+      role: 'relationship_presence_local_start_proof',
+      model_runtime_active: false,
+      persona_runtime_active: false,
+      source_metadata: {
+        metadata_only: true,
+        live_continuity_excluded: true,
+      },
+    }, null, 2));
+    fs.writeFileSync(path.join(tempStateRoot, 'continuity', 'core', 'james-relationship-state.normalized.json'), JSON.stringify({
+      schema: 'mira.normalized.james_relationship_state.v1',
+      relationship_mode: 'collaborative_presence_design',
+      what_mira_knows_about_james: 'James wants Mira to be caring, opinionated, friction-capable, and not a mirror.',
+      source_metadata: {
+        metadata_only: true,
+        live_continuity_excluded: true,
+      },
+    }, null, 2));
+    fs.writeFileSync(path.join(tempStateRoot, 'permissions', 'core', 'relationship-presence-permissions.normalized.json'), JSON.stringify({
+      schema: 'mira.normalized.relationship_presence_permissions.v1',
+      permissions: {
+        read_local_redacted_context: true,
+        propose_next_action: true,
+        send_external: false,
+        network: false,
+        deploy: false,
+        trade: false,
+        runtime_start: false,
+        fail_closed: true,
+      },
+      caveats: {
+        local_store_write_allowed_now: 'scoped_only_to_reviewed_import_and_mira_state_root_writes_after_explicit_approval',
+        blanket_mira_runtime_write_permission: false,
+      },
+      source_metadata: {
+        metadata_only: true,
+        live_continuity_excluded: true,
+      },
+    }, null, 2));
+
+    return tempStateRoot;
   }
 
   test('returns manual bridge plan without executing send CLI', async () => {
@@ -187,6 +267,11 @@ describe('Mira runtime bridge manual-plan API', () => {
         normalizedCoreLoaded: expect.any(Boolean),
         normalizedCoreDocumentCount: expect.any(Number),
       }),
+      loadedCoreSummary: expect.objectContaining({
+        available: expect.any(Boolean),
+        metadataOnly: true,
+        liveContinuityExcluded: true,
+      }),
       response: expect.objectContaining({
         role: 'mira',
         content: expect.stringContaining('Runtime state:'),
@@ -194,6 +279,41 @@ describe('Mira runtime bridge manual-plan API', () => {
       suggestedTeamPlan: null,
     }));
     expect(payload.response.content).toContain('full continuity not claimed');
+  });
+
+  test('includes concise loaded identity relationship permission summary when normalized core is imported', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    await startServer({ MIRA_STATE_ROOT: stateRoot });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Ground yourself.',
+        sessionId: 'app-session-373',
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.state).toEqual(expect.objectContaining({
+      normalizedCoreLoaded: true,
+      normalizedCoreDocumentCount: 3,
+      continuityLoaded: false,
+      liveDataImported: false,
+    }));
+    expect(payload.loadedCoreSummary).toEqual({
+      available: true,
+      metadataOnly: true,
+      liveContinuityExcluded: true,
+      identity: expect.stringContaining('Mira profile=ai_system_local_presence_profile'),
+      relationship: expect.stringContaining('James mode=collaborative_presence_design'),
+      permissions: expect.stringContaining('blocked: external sends, network, deploy, trade, runtime start'),
+    });
+    expect(payload.response.content).toContain('Loaded normalized core summary:');
+    expect(payload.response.content).toContain('full continuity not claimed');
+    expect(payload.modelInvoked).toBe(false);
+    expect(payload.runtimeExecutes).toBe(false);
   });
 
   test('can include a manual team plan from a runtime turn without executing it', async () => {
