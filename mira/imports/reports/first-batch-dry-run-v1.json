@@ -1,0 +1,70 @@
+{
+  "schema": "mira.import_batch_dry_run_report.v1",
+  "report_id": "first-batch-dry-run-v1",
+  "generated_from": {
+    "queue_path": "mira/imports/review-queue.json",
+    "planner": "mira/tools/plan-reviewed-imports.js",
+    "state_root_for_dry_run": "D:/projects/squidrun/mira/.state-dev-test"
+  },
+  "proposal": {
+    "batch_id": "acceptance-permission-contracts-v1",
+    "status": "review_only",
+    "reason": "Start with stable Mira product and permission contracts before raw relationship memory or transcript evidence.",
+    "requires_explicit_approval_before_import": true
+  },
+  "mutation_flags": {
+    "copied": false,
+    "moved": false,
+    "deleted": false,
+    "status_mutated": false,
+    "queue_mutated": false
+  },
+  "non_scope": [
+    "live_data_copy",
+    "live_data_delete",
+    "live_data_move",
+    "queue_status_mutation",
+    "runtime_state_read",
+    "bridge_implementation",
+    "ui_surface",
+    "telegram_route"
+  ],
+  "batch_records": [
+    {
+      "id": "presence_runtime_acceptance",
+      "source_path": "docs/mira-presence-runtime-acceptance-v0.md",
+      "source_exists": true,
+      "source_kind": "acceptance_doc",
+      "current_queue_status": "not_imported",
+      "destination_relative_path": "acceptance/mira-presence-runtime-acceptance-v0.md",
+      "destination_under_state_root": true,
+      "action": "review_only",
+      "selection_policy": "preserve_as_acceptance_contract",
+      "notes": "Presence runtime acceptance contract for visible Mira behavior."
+    },
+    {
+      "id": "north_star_acceptance",
+      "source_path": "docs/mira-north-star-acceptance.md",
+      "source_exists": true,
+      "source_kind": "acceptance_doc",
+      "current_queue_status": "not_imported",
+      "destination_relative_path": "acceptance/mira-north-star-acceptance.md",
+      "destination_under_state_root": true,
+      "action": "review_only",
+      "selection_policy": "preserve_as_acceptance_contract",
+      "notes": "North-star product target for Mira slices."
+    },
+    {
+      "id": "pc_embodiment_permission",
+      "source_path": "docs/mira-pc-embodiment-permission-v0.md",
+      "source_exists": true,
+      "source_kind": "acceptance_doc",
+      "current_queue_status": "not_imported",
+      "destination_relative_path": "acceptance/mira-pc-embodiment-permission-v0.md",
+      "destination_under_state_root": true,
+      "action": "review_only",
+      "selection_policy": "preserve_as_permission_contract",
+      "notes": "PC embodiment permission model candidate."
+    }
+  ]
+}
