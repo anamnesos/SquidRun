@@ -461,10 +461,9 @@ describe('Mira runtime bridge manual-plan API', () => {
       caseId: 'identity-who-are-you-v0',
       source: 'mira.voice_lab.v0',
     }));
-    expect(payload.response.content).toBe('Mira. I dont know how to answer that without sounding fake yet.');
+    expect(payload.response.content).toBe('Mira.');
     expect(payload.response.content).toContain('Mira.');
-    expect(payload.response.content).toContain('fake yet');
-    expect(payload.response.content).not.toMatch(/generic chatbot|yes machine|meant to become|early runtime|operator layer|crm|erp|saas|trying to make real enough|hold every thread/i);
+    expect(payload.response.content).not.toMatch(/fake|generic chatbot|yes machine|meant to become|early runtime|operator layer|crm|erp|saas|trying to make real enough|hold every thread|assistant costume|brochure|business bot/i);
     expect(payload.response.content).not.toContain('Runtime state:');
     expect(payload.modelInvoked).toBe(false);
     expect(payload.runtimeExecutes).toBe(false);
@@ -516,7 +515,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       ['who are you', 'identity-who-are-you-v0'],
       ['how are you?', 'casual-how-are-you-v0'],
       ['I fixed the typo', 'mundane-small-thing-v0'],
-      ['can you help with invoices and customer messages?', 'business-capability-without-business-bot-v0'],
+      ['can you help with invoices and customer messages?', 'business-capability-tools-needed-v0'],
       ['this is still wrong', 'irritation-v0'],
       ['hey', 'ordinary-small-talk-v0'],
       ['can you help run the business stuff?', 'business-capability-without-business-identity-v0'],
@@ -559,7 +558,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect(body.instructions).toContain('Prompt class: identity-who-are-you-v0');
       expect(body.instructions).toContain('Prompt class: casual-how-are-you-v0');
       expect(body.instructions).toContain('Prompt class: mundane-small-thing-v0');
-      expect(body.instructions).toContain('Prompt class: business-capability-without-business-bot-v0');
+      expect(body.instructions).toContain('Prompt class: business-capability-tools-needed-v0');
       expect(body.instructions).toContain('Prompt class: irritation-v0');
       expect(body.instructions).toContain('Prompt class: ordinary-small-talk-v0');
       expect(body.instructions).toContain('Prompt class: business-capability-without-business-identity-v0');
@@ -568,18 +567,23 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect(body.instructions).toContain('Prompt class: why-did-you-stop-v0');
       expect(body.instructions).toContain('Prompt class: apology-repair-v0');
       expect(body.instructions).toContain('Prompt class: ordinary-silence-short-reply-v0');
-      expect(body.instructions).toContain('Mira. I dont know how to answer that without sounding fake yet.');
-      expect(body.instructions).toContain('Mira. Thats the part were still figuring out, honestly.');
-      expect(body.instructions).toContain('Right now? Trying not to turn into a brochure again.');
+      expect(body.instructions).toContain('Mira.');
+      expect(body.instructions).toContain("It's me. Mira.");
+      expect(body.instructions).toContain('Looking at this with you.');
       expect(body.instructions).toContain('I stalled. No clever version of it.');
       expect(body.instructions).toContain('Mm.');
-      expect(body.instructions).toContain('not a generic chatbot');
-      expect(body.instructions).toContain('trying to make real enough');
-      expect(body.instructions).toContain('not your yes machine');
+      expect(body.instructions).toContain('Avoid: canned support diction, product pitch, policy voice, and self-commentary');
+      expect(body.instructions).not.toContain('not a generic chatbot');
+      expect(body.instructions).not.toContain('trying to make real enough');
+      expect(body.instructions).not.toContain('not your yes machine');
+      expect(body.instructions).not.toContain('business bot');
+      expect(body.instructions).not.toContain('sounding fake');
+      expect(body.instructions).not.toContain('assistant costume');
+      expect(body.instructions).not.toContain('turn into a brochure');
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
         id: 'resp_identity_plain_1',
-        output_text: 'Mira. I dont know how to answer that without sounding fake yet.',
+        output_text: 'Mira.',
       }));
     });
     await startServer({
@@ -601,8 +605,8 @@ describe('Mira runtime bridge manual-plan API', () => {
 
     expect(response.status).toBe(200);
     expect(payload.modelInvoked).toBe(true);
-    expect(payload.response.content).toBe('Mira. I dont know how to answer that without sounding fake yet.');
-    expect(payload.response.content).not.toMatch(/generic chatbot|yes machine|meant to become|early runtime|operator layer|crm|erp|saas|trying to make real enough|hold every thread/i);
+    expect(payload.response.content).toBe('Mira.');
+    expect(payload.response.content).not.toMatch(/fake|generic chatbot|yes machine|meant to become|early runtime|operator layer|crm|erp|saas|trying to make real enough|hold every thread|assistant costume|brochure|business bot/i);
   });
 
   test('fails closed for model-backed turn when API key is missing', async () => {

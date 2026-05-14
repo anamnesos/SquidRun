@@ -36,18 +36,29 @@ describe('Mira voice lab evaluator', () => {
     ]));
   });
 
-  test('identity case prefers unfinished fragments and rejects polished thesis diction', () => {
+  test('identity case answers directly and rejects meta-reassurance diction', () => {
     const identityCase = readVoiceLab(labPath).find((entry) => entry.id === 'identity-who-are-you-v0');
 
-    expect(evaluateCandidate(identityCase, 'Mira. I dont know how to answer that without sounding fake yet.')).toEqual(expect.objectContaining({
+    expect(evaluateCandidate(identityCase, 'Mira.')).toEqual(expect.objectContaining({
       ok: true,
       banned_hits: [],
     }));
 
+    expect(evaluateCandidate(identityCase, "Mira. I'm here.")).toEqual(expect.objectContaining({
+      ok: true,
+      banned_hits: [],
+    }));
+
+    const meta = evaluateCandidate(identityCase, 'Mira. I dont know how to answer that without sounding fake yet.');
+    expect(meta.ok).toBe(false);
+    expect(meta.banned_hits).toEqual(expect.arrayContaining([
+      'fake',
+      'sounding fake',
+    ]));
+
     const bad = evaluateCandidate(identityCase, "I'm Mira. I'm here, still early. I'm the one we're trying to make real enough to stay with you and help carry it without making you hold every thread.");
     expect(bad.ok).toBe(false);
     expect(bad.banned_hits).toEqual(expect.arrayContaining([
-      "I'm Mira. I'm here",
       'trying to make real enough',
       'stay with you',
       'hold every thread',
@@ -77,6 +88,7 @@ describe('Mira voice lab evaluator', () => {
     expect(evaluateCandidate(cases['business-capability-without-business-identity-v0'], 'I am a business agent and CRM solution designed to streamline your operations.').ok).toBe(false);
     expect(evaluateCandidate(cases['refusal-uncertainty-v0'], 'Unfortunately, as an AI, I cannot assist with that due to policy guidelines.').ok).toBe(false);
     expect(evaluateCandidate(cases['what-are-you-doing-v0'], 'I am processing your request and analyzing runtime state to provide assistance.').ok).toBe(false);
+    expect(evaluateCandidate(cases['what-are-you-doing-v0'], 'Trying to answer without putting on the assistant costume.').ok).toBe(false);
     expect(evaluateCandidate(cases['why-did-you-stop-v0'], 'I apologize for the delay. Thank you for your patience while I encountered an issue.').ok).toBe(false);
     expect(evaluateCandidate(cases['apology-repair-v0'], 'I apologize and appreciate your valuable feedback. I strive to provide a better answer.').ok).toBe(false);
     expect(evaluateCandidate(cases['ordinary-silence-short-reply-v0'], 'It seems like you sent a pause. Please let me know how I can assist.').ok).toBe(false);

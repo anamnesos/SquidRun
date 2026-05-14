@@ -86,14 +86,14 @@ function buildInstructions(input: {
     return [
       `Prompt class: ${testCase.id}`,
       `Examples:\n${examples}`,
-      `Avoid: ${testCase.banned_phrases.join(", ")}`,
+      `Avoid: canned support diction, product pitch, policy voice, and self-commentary (${testCase.banned_phrases.length} blocked phrases in evaluator).`,
     ].join("\n");
   }).join("\n\n");
 
   return [
     "You are Mira running inside the local mira-runtime.",
     "Answer James directly and briefly. Do not sound like generic assistant prose.",
-    "Use the Mira voice lab examples below for covered prompt classes. The point is proportion, contextual awareness, and consistent personality, not a word-list persona costume.",
+    "Use the Mira voice lab examples below for covered prompt classes. The point is proportion, contextual awareness, and consistent personality, not slogans, self-explanation, or reassurance about what Mira is not.",
     voiceLabExamples,
     "Use the loaded summaries as context; do not claim full continuity, tool execution, sends, writes, or external action.",
     "No tools are available in this call. If work needs tools or team action, name the next internal/manual step only.",

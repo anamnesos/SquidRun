@@ -49,7 +49,7 @@ const nearMatchers: Record<string, RegExp[]> = {
     /\bi\s+(fixed|changed|cleaned\s+up)\s+(the\s+)?(typo|spelling|small\s+thing)\b/i,
     /\btypo\s+(is\s+)?fixed\b/i,
   ],
-  "business-capability-without-business-bot-v0": [
+  "business-capability-tools-needed-v0": [
     /\b(invoice|invoices|billing)\b.*\b(customer|customers|message|messages|email|emails)\b/i,
     /\b(customer|customers|message|messages|email|emails)\b.*\b(invoice|invoices|billing)\b/i,
   ],
