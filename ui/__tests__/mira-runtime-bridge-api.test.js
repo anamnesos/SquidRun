@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn, execFileSync } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
@@ -306,6 +307,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="modelSummary"');
     expect(indexHtml).toContain('id="draftButton"');
     expect(indexHtml).toContain('id="draftList"');
+    expect(indexHtml).toContain('id="taskList"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
     expect(indexHtml).not.toContain('business mess');
@@ -314,6 +316,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/turn'");
     expect(appJs).toContain("fetch('/model/status'");
     expect(appJs).toContain("fetch('/work/drafts'");
+    expect(appJs).toContain("fetch('/work/tasks'");
     expect(appJs).toContain('brainLine');
     expect(appJs).toContain("fetch('/voice/correction'");
     expect(appJs).toContain("fetch('/voice/corrections'");
@@ -384,6 +387,116 @@ describe('Mira runtime bridge manual-plan API', () => {
       status: 'pending_review',
       relativePath: createPayload.relativePath,
       absolutePath: createPayload.absolutePath,
+    }));
+  });
+
+  test('converts a customer draft into a pending-review task with source hash', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-task-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const createDraftResponse = await fetch(`${baseUrl}/work/drafts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'customer_reply',
+        text: 'Reply to the customer asking whether the invoice can be re-sent today.',
+        sessionId: 'app-session-373',
+        messageId: 'work-task-source-draft-1',
+      }),
+    });
+    const draft = await createDraftResponse.json();
+    const draftMarkdown = fs.readFileSync(draft.absolutePath, 'utf8');
+    const draftSha256 = crypto.createHash('sha256').update(draftMarkdown, 'utf8').digest('hex');
+
+    const createTaskResponse = await fetch(`${baseUrl}/work/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sourceDraftId: draft.id,
+        sourceDraftPath: draft.relativePath,
+        sessionId: 'app-session-373',
+        messageId: 'work-task-test-1',
+      }),
+    });
+    const task = await createTaskResponse.json();
+    const listResponse = await fetch(`${baseUrl}/work/tasks`);
+    const listPayload = await listResponse.json();
+
+    expect(createTaskResponse.status).toBe(200);
+    expect(task).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_task.v0',
+      kind: 'draft_intake_task',
+      status: 'pending_review',
+      sourceDraftId: draft.id,
+      sourceDraftRelativePath: draft.relativePath,
+      sourceDraftSha256: draftSha256,
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+      reviewRequired: true,
+    }));
+    expect(task.relativePath).toMatch(/^work\/tasks\/work-task-.*\.md$/);
+    expect(task.absolutePath.startsWith(path.resolve(tempStateRoot))).toBe(true);
+    const taskMarkdown = fs.readFileSync(task.absolutePath, 'utf8');
+    expect(taskMarkdown).toContain('schema: mira.work_task.v0');
+    expect(taskMarkdown).toContain('status: pending_review');
+    expect(taskMarkdown).toContain(`source_draft_id: ${draft.id}`);
+    expect(taskMarkdown).toContain(`source_draft_relative_path: ${draft.relativePath}`);
+    expect(taskMarkdown).toContain(`source_draft_sha256: ${draftSha256}`);
+    expect(taskMarkdown).toContain('external_send: false');
+    expect(taskMarkdown).toContain('crm_mutation: false');
+    expect(taskMarkdown).toContain('runtime_executes_external_action: false');
+    expect(taskMarkdown).toContain('Do not send externally or mutate CRM from this task.');
+
+    expect(listResponse.status).toBe(200);
+    expect(listPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_task_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      taskCount: 1,
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(listPayload.tasks[0]).toEqual(expect.objectContaining({
+      id: task.id,
+      status: 'pending_review',
+      relativePath: task.relativePath,
+      sourceDraftId: draft.id,
+      sourceDraftRelativePath: draft.relativePath,
+      sourceDraftSha256: draftSha256,
+    }));
+  });
+
+  test('refuses task conversion when the source draft is missing or outside work drafts', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-task-refuse-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const missingResponse = await fetch(`${baseUrl}/work/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sourceDraftId: 'missing-draft',
+      }),
+    });
+    const missingPayload = await missingResponse.json();
+    expect(missingResponse.status).toBe(400);
+    expect(missingPayload.error).toEqual(expect.objectContaining({
+      code: 'source_draft_not_found',
+    }));
+
+    const escapeResponse = await fetch(`${baseUrl}/work/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sourceDraftPath: '../outside.md',
+      }),
+    });
+    const escapePayload = await escapeResponse.json();
+    expect(escapeResponse.status).toBe(400);
+    expect(escapePayload.error).toEqual(expect.objectContaining({
+      code: 'source_draft_not_found',
     }));
   });
 

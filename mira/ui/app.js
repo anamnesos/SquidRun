@@ -23,6 +23,7 @@ const elements = {
   modelSummary: document.getElementById('modelSummary'),
   reviewSummary: document.getElementById('reviewSummary'),
   draftList: document.getElementById('draftList'),
+  taskList: document.getElementById('taskList'),
 };
 
 let modelStatus = null;
@@ -121,7 +122,46 @@ function updateDraftList(payload) {
     path.textContent = draft.relativePath || '';
     const preview = document.createElement('p');
     preview.textContent = draft.preview || '';
-    item.append(title, path, preview);
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'subtle-button';
+    action.textContent = 'task';
+    action.addEventListener('click', async () => {
+      action.disabled = true;
+      action.textContent = 'making';
+      try {
+        const task = await createTaskFromDraft(draft);
+        appendMessage('mira', `Task saved for review: ${task.relativePath}`);
+        await refreshTasks();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        action.disabled = false;
+        action.textContent = 'task';
+      }
+    });
+    item.append(title, path, preview, action);
+    return item;
+  }));
+}
+
+function updateTaskList(payload) {
+  const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+  if (tasks.length === 0) {
+    setText(elements.taskList, 'none yet');
+    return;
+  }
+  elements.taskList.replaceChildren(...tasks.slice(0, 5).map((task) => {
+    const item = document.createElement('article');
+    item.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = task.id || 'task';
+    const path = document.createElement('span');
+    path.textContent = task.relativePath || '';
+    const source = document.createElement('span');
+    source.textContent = task.sourceDraftRelativePath ? `from ${task.sourceDraftRelativePath}` : '';
+    const preview = document.createElement('p');
+    preview.textContent = task.preview || '';
+    item.append(title, path, source, preview);
     return item;
   }));
 }
@@ -178,6 +218,13 @@ async function refreshDrafts() {
   updateDraftList(payload);
 }
 
+async function refreshTasks() {
+  const response = await fetch('/work/tasks');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateTaskList(payload);
+}
+
 async function createDraft(text) {
   const response = await fetch('/work/drafts', {
     method: 'POST',
@@ -193,6 +240,25 @@ async function createDraft(text) {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) {
     throw new Error(payload?.error?.message || 'Draft creation failed.');
+  }
+  return payload;
+}
+
+async function createTaskFromDraft(draft) {
+  const response = await fetch('/work/tasks', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sourceDraftId: draft.id,
+      sourceDraftPath: draft.relativePath,
+      sessionId: state.sessionId,
+      messageId: `${state.sessionId}-task-${state.turnCounter++}`,
+      source: 'runtime-ui',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Task creation failed.');
   }
   return payload;
 }
@@ -242,6 +308,7 @@ async function prime() {
     updateRuntimeState(payload);
     await refreshCorrections();
     await refreshDrafts();
+    await refreshTasks();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
     setText(elements.lastTurn, error.message);
@@ -256,6 +323,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshModelStatus();
     await refreshCorrections();
     await refreshDrafts();
+    await refreshTasks();
   }
 });
 

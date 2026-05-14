@@ -8,6 +8,7 @@ import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } fr
 import { runRuntimeTurn } from "./turn.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
+import { createWorkTaskFromDraft, listWorkTasks } from "./work-task.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -194,6 +195,28 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/work/tasks") {
+    try {
+      const body = await readJsonBody(request);
+      const taskInput = {
+        sessionId: typeof body.sessionId === "string" ? body.sessionId : null,
+        messageId: typeof body.messageId === "string" ? body.messageId : null,
+        source: typeof body.source === "string" ? body.source : "runtime-ui",
+      };
+      if (typeof body.sourceDraftId === "string") {
+        Object.assign(taskInput, { sourceDraftId: body.sourceDraftId });
+      }
+      if (typeof body.sourceDraftPath === "string") {
+        Object.assign(taskInput, { sourceDraftPath: body.sourceDraftPath });
+      }
+      const task = createWorkTaskFromDraft(taskInput);
+      sendJson(response, 200, task);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -215,6 +238,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/work/drafts") {
     sendJson(response, 200, listWorkDrafts());
+    return;
+  }
+
+  if (requestUrl.pathname === "/work/tasks") {
+    sendJson(response, 200, listWorkTasks());
     return;
   }
 
