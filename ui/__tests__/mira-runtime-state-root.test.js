@@ -2,6 +2,8 @@
 
 const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 describe('Mira runtime state-root readiness', () => {
@@ -113,6 +115,30 @@ describe('Mira runtime state-root readiness', () => {
     `);
 
     expect(session.session).toEqual(expect.objectContaining({
+      source: 'none',
+      modelBehaviorLoaded: false,
+      liveDataImported: false,
+      continuityLoaded: false,
+      stateRootReady: true,
+      stateRootPath: path.resolve(stateRoot),
+      stateRootError: null,
+    }));
+  });
+
+  test('session still reports no continuity when an empty state root has required buckets', () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-empty-state-root-'));
+    for (const bucket of ['continuity', 'conversation-evidence', 'permissions', 'acceptance', 'imports']) {
+      fs.mkdirSync(path.join(stateRoot, bucket), { recursive: true });
+    }
+
+    const session = runRuntimeSnippet(`
+      process.env.MIRA_STATE_ROOT = ${JSON.stringify(stateRoot)};
+      import { getSessionSkeleton } from ${JSON.stringify(compiledRuntimeUrl)};
+      console.log(JSON.stringify(getSessionSkeleton()));
+    `);
+
+    expect(session.session).toEqual(expect.objectContaining({
+      id: null,
       source: 'none',
       modelBehaviorLoaded: false,
       liveDataImported: false,
