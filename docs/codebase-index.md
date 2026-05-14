@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `4b92999`
+- Git HEAD: `94fdbab`
 - Total files listed: 1136
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -121,11 +121,11 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/imports/import-receipt-schema-v0.json` | config | `clean/tracked` | 2737 |
 | `mira/imports/import-receipt-semantics-v0.md` | doc | `clean/tracked` | 1563 |
 | `mira/imports/import-record.schema.json` | config | `clean/tracked` | 1471 |
-| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json` | config | `clean/tracked` | 2247 |
-| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.md` | doc | `clean/tracked` | 1484 |
+| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json` | config | `clean/tracked` | 3450 |
+| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.md` | doc | `clean/tracked` | 1865 |
 | `mira/imports/persistent-first-import-runbook-v0.md` | doc | `clean/tracked` | 2451 |
 | `mira/imports/README.md` | doc | `clean/tracked` | 375 |
-| `mira/imports/reports/batch-2a-normalized-core-dry-run-v1.json` | config | `clean/tracked` | 3332 |
+| `mira/imports/reports/batch-2a-normalized-core-dry-run-v1.json` | config | `clean/tracked` | 4781 |
 | `mira/imports/reports/first-batch-dry-run-v1.json` | config | `clean/tracked` | 2524 |
 | `mira/imports/reports/README.md` | doc | `clean/tracked` | 340 |
 | `mira/imports/review-queue.json` | config | `clean/tracked` | 5874 |
@@ -510,7 +510,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-local-text-ui-surface.test.js` | test | `clean/tracked` | 82692 |
 | `ui/__tests__/mira-memory-curiosity.test.js` | test | `clean/tracked` | 3579 |
 | `ui/__tests__/mira-meta-posture-gate.test.js` | test | `clean/tracked` | 35686 |
-| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 4046 |
+| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 5856 |
 | `ui/__tests__/mira-north-star-acceptance.test.js` | test | `clean/tracked` | 7135 |
 | `ui/__tests__/mira-persona-loader-v0.test.js` | test | `clean/tracked` | 13766 |
 | `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | `clean/tracked` | 37529 |
