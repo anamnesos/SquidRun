@@ -177,6 +177,7 @@ describe('Mira normalized core import contract', () => {
 
     expect(selfProfile).not.toHaveProperty('growth_events');
     expect(relationship).not.toHaveProperty('growth_events');
+    expect(relationship).not.toHaveProperty('current_focus');
     expect(relationship).not.toHaveProperty('history');
     expect(relationship).not.toHaveProperty('history_summary');
     expect(selfProfile).not.toHaveProperty('session');
@@ -188,6 +189,20 @@ describe('Mira normalized core import contract', () => {
       stale_session: 'app-session-329',
       stale_window: 'main',
       stale_device: 'VIGIL',
+      metadata_only: true,
+      live_continuity_excluded: true,
+    }));
+  });
+
+  test('normalizer demotes stale relationship focus out of live continuity', () => {
+    const preview = buildNormalizedPreview();
+    const relationship = preview.previews.find((record) => record.id === 'james_relationship_state').normalized_preview;
+
+    expect(relationship).not.toHaveProperty('current_focus');
+    expect(relationship.source_focus_summary).toEqual(expect.objectContaining({
+      value: 'durable relationship context for human-range developing non-mirror presence',
+      generated_at: '2026-05-07T19:00:00.000Z',
+      updated_at: '2026-05-08T07:42:52.553Z',
       metadata_only: true,
       live_continuity_excluded: true,
     }));
