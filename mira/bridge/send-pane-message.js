@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
+const { spawnSync } = require('child_process');
 const { planPaneMessage } = require('./hm-send-adapter');
 
 function parseArgs(argv = []) {
@@ -80,20 +81,6 @@ function errorPayload(error, overrides = {}) {
 function run(argv = process.argv.slice(2), options = {}) {
   const args = parseArgs(argv);
 
-  if (args.send) {
-    return {
-      statusCode: 1,
-      payload: {
-        ok: false,
-        error: {
-          code: 'send_not_supported_v0',
-          message: 'Mira hm-send adapter v0 only supports --dry-run planning.',
-          retryable: false,
-        },
-      },
-    };
-  }
-
   const plan = planPaneMessage({
     targetRole: args.targetRole,
     content: args.content,
@@ -105,6 +92,41 @@ function run(argv = process.argv.slice(2), options = {}) {
   }, {
     cwd: options.cwd || process.cwd(),
   });
+
+  if (args.send) {
+    const execute = options.spawnSync || spawnSync;
+    const result = execute(plan.command.executable, plan.command.args, {
+      cwd: plan.command.cwd,
+      input: plan.command.stdin,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    const exitCode = Number.isInteger(result?.status) ? result.status : 1;
+    return {
+      statusCode: exitCode,
+      payload: {
+        ok: exitCode === 0,
+        dryRun: false,
+        protocol: plan.protocol,
+        message_id: plan.message_id,
+        session_id: plan.session_id,
+        delivery: {
+          status: exitCode === 0 ? 'hm_send_completed' : 'hm_send_failed',
+          target_role: plan.delivery.target_role,
+          target_pane_id: plan.delivery.target_pane_id,
+          channel: 'hm-send',
+          transport: 'ui/scripts/hm-send.js',
+          exit_code: exitCode,
+          signal: result?.signal || null,
+        },
+        envelope: plan.envelope,
+        command: plan.command,
+        stdout: result?.stdout || '',
+        stderr: result?.stderr || '',
+        error: result?.error ? String(result.error.message || result.error) : null,
+      },
+    };
+  }
 
   return {
     statusCode: 0,

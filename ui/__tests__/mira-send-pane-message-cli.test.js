@@ -4,6 +4,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { run } = require('../../mira/bridge/send-pane-message');
 
 describe('Mira send-pane-message CLI', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
@@ -120,25 +121,93 @@ describe('Mira send-pane-message CLI', () => {
     }));
   });
 
-  test('refuses live send mode in v0', () => {
-    const result = spawnSync(process.execPath, [
-      cliPath,
-      '--send',
-      '--target', 'builder',
-      '--content', '(MIRA #3): not live yet',
+  test('dry-run mode never spawns hm-send', () => {
+    const spawnMock = jest.fn();
+
+    const result = run([
+      '--target', 'architect',
+      '--content', '(MIRA #3): dry run stays local',
+      '--message-id', 'mira-cli-dry-run',
     ], {
       cwd: tempProject,
-      encoding: 'utf8',
+      spawnSync: spawnMock,
     });
 
-    expect(result.status).toBe(1);
-    expect(JSON.parse(result.stdout)).toEqual({
-      ok: false,
-      error: {
-        code: 'send_not_supported_v0',
-        message: 'Mira hm-send adapter v0 only supports --dry-run planning.',
-        retryable: false,
-      },
+    expect(result.statusCode).toBe(0);
+    expect(result.payload).toEqual(expect.objectContaining({
+      ok: true,
+      dryRun: true,
+      message_id: 'mira-cli-dry-run',
+    }));
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  test('live send mode spawns exactly hm-send for builder', () => {
+    const spawnMock = jest.fn(() => ({
+      status: 0,
+      stdout: 'Delivered to builder',
+      stderr: '',
+      signal: null,
+    }));
+
+    const result = run([
+      '--send',
+      '--target', 'builder',
+      '--content', '(MIRA #4): live internal pane send',
+      '--message-id', 'mira-cli-send-builder',
+    ], {
+      cwd: tempProject,
+      spawnSync: spawnMock,
     });
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock).toHaveBeenCalledWith(process.execPath, [
+      hmSendPath,
+      'builder',
+      '--stdin',
+      '--role',
+      'mira',
+      '--no-fallback',
+    ], {
+      cwd: tempProject,
+      input: '(MIRA #4): live internal pane send',
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      statusCode: 0,
+      payload: expect.objectContaining({
+        ok: true,
+        dryRun: false,
+        message_id: 'mira-cli-send-builder',
+        delivery: expect.objectContaining({
+          status: 'hm_send_completed',
+          target_role: 'builder',
+          target_pane_id: '2',
+          exit_code: 0,
+        }),
+        stdout: 'Delivered to builder',
+        stderr: '',
+      }),
+    }));
+  });
+
+  test.each([
+    'telegram',
+    'https://example.com/hook',
+    'mira',
+    '1',
+  ])('live send refuses %s before spawn', (targetRole) => {
+    const spawnMock = jest.fn();
+
+    expect(() => run([
+      '--send',
+      '--target', targetRole,
+      '--content', '(MIRA #5): must not spawn',
+    ], {
+      cwd: tempProject,
+      spawnSync: spawnMock,
+    })).toThrow(/only targets SquidRun panes/);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });
