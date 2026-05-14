@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mira.normalized_core_receipt.v0",
+  "type": "object",
+  "required": [
+    "schema",
+    "receipt_id",
+    "batch_id",
+    "report_id",
+    "approval_id",
+    "contract_id",
+    "tool",
+    "normalized_at",
+    "mutation_flags",
+    "caveats_preserved",
+    "records"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mira.normalized_core_receipt.v0"
+    },
+    "receipt_id": {
+      "type": "string"
+    },
+    "batch_id": {
+      "const": "normalized-core-state-v1"
+    },
+    "report_id": {
+      "const": "batch-2a-normalized-core-dry-run-v1"
+    },
+    "approval_id": {
+      "const": "batch-2a-normalized-core-approval-v1"
+    },
+    "contract_id": {
+      "const": "batch-2a-core-normalizer-contract-v0"
+    },
+    "tool": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "normalize-core-dry-run"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "normalized_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mutation_flags": {
+      "type": "object",
+      "required": [
+        "normalized",
+        "copied",
+        "moved",
+        "deleted",
+        "queue_mutated",
+        "report_mutated",
+        "approval_mutated",
+        "runtime_loaded",
+        "raw_imported"
+      ],
+      "properties": {
+        "normalized": {
+          "const": true
+        },
+        "copied": {
+          "const": false
+        },
+        "moved": {
+          "const": false
+        },
+        "deleted": {
+          "const": false
+        },
+        "queue_mutated": {
+          "const": false
+        },
+        "report_mutated": {
+          "const": false
+        },
+        "approval_mutated": {
+          "const": false
+        },
+        "runtime_loaded": {
+          "const": false
+        },
+        "raw_imported": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "caveats_preserved": {
+      "type": "object",
+      "required": [
+        "local_store_write_allowed_now_scoped",
+        "stale_session_window_device_metadata_only",
+        "current_focus_demoted_to_source_focus_summary",
+        "growth_events_excluded"
+      ],
+      "properties": {
+        "local_store_write_allowed_now_scoped": {
+          "const": true
+        },
+        "stale_session_window_device_metadata_only": {
+          "const": true
+        },
+        "current_focus_demoted_to_source_focus_summary": {
+          "const": true
+        },
+        "growth_events_excluded": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_path",
+          "source_sha256",
+          "destination_relative_path",
+          "destination_sha256",
+          "output_schema",
+          "destination_created"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "mira_self_profile",
+              "james_relationship_state",
+              "relationship_presence_permissions"
+            ]
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "destination_relative_path": {
+            "type": "string"
+          },
+          "destination_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "output_schema": {
+            "type": "string"
+          },
+          "destination_created": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

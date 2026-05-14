@@ -11,6 +11,8 @@ describe('Mira normalized core import contract', () => {
   const reportPath = path.join(repoRoot, 'mira', 'imports', 'reports', 'batch-2a-normalized-core-dry-run-v1.json');
   const approvalPath = path.join(repoRoot, 'mira', 'imports', 'approvals', 'batch-2a-normalized-core-approval-v1.json');
   const approvalSchemaPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'normalized-core-approval-marker-schema-v0.json');
+  const applySemanticsPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'normalized-core-apply-semantics-v0.md');
+  const normalizedReceiptSchemaPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'normalized-core-receipt-schema-v0.json');
   const semanticsPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'batch-2a-core-normalizer-contract-v0.md');
 
   function readJson(filePath) {
@@ -284,5 +286,40 @@ describe('Mira normalized core import contract', () => {
       runtime_load_allowed: false,
       raw_import_allowed: false,
     });
+  });
+
+  test('normalized apply semantics are design-only and block state writes in this commit', () => {
+    const semantics = fs.readFileSync(applySemanticsPath, 'utf8');
+
+    expect(semantics).toContain('Status: design contract only.');
+    expect(semantics).toContain('No normalized apply implementation');
+    expect(semantics).toContain('No state write.');
+    expect(semantics).toContain('No receipt write.');
+    expect(semantics).toContain('No runtime continuity load.');
+    expect(semantics).toContain('write only normalized JSON outputs, never raw source JSON');
+  });
+
+  test('normalized receipt schema preserves batch 2a caveats and mutation limits', () => {
+    const schema = readJson(normalizedReceiptSchemaPath);
+
+    expect(schema.$id).toBe('mira.normalized_core_receipt.v0');
+    expect(schema.properties.batch_id.const).toBe('normalized-core-state-v1');
+    expect(schema.properties.report_id.const).toBe('batch-2a-normalized-core-dry-run-v1');
+    expect(schema.properties.approval_id.const).toBe('batch-2a-normalized-core-approval-v1');
+    expect(schema.properties.mutation_flags.properties).toEqual(expect.objectContaining({
+      normalized: { const: true },
+      copied: { const: false },
+      queue_mutated: { const: false },
+      report_mutated: { const: false },
+      approval_mutated: { const: false },
+      runtime_loaded: { const: false },
+      raw_imported: { const: false },
+    }));
+    expect(schema.properties.caveats_preserved.properties).toEqual(expect.objectContaining({
+      local_store_write_allowed_now_scoped: { const: true },
+      stale_session_window_device_metadata_only: { const: true },
+      current_focus_demoted_to_source_focus_summary: { const: true },
+      growth_events_excluded: { const: true },
+    }));
   });
 });
