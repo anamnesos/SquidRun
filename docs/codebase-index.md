@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `4b8b3fd`
-- Total files listed: 1123
+- Git HEAD: `53c9014`
+- Total files listed: 1125
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,10 +17,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 52
+- root: 53
 - scripts: 1
 - tools: 3
-- ui/__tests__: 451
+- ui/__tests__: 452
 - ui/modules: 363
 - ui/other: 29
 - ui/scripts: 169
@@ -33,15 +33,13 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 67
 - file: 1
 - script: 170
-- source: 390
-- test: 452
+- source: 391
+- test: 453
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- ??: 1
-- clean/tracked: 1120
-- M: 2
+- clean/tracked: 1125
 
 ## Files
 
@@ -65,7 +63,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | --- | --- | --- | ---: |
 | `docs/agent-templates.md` | doc | `clean/tracked` | 1312 |
 | `docs/background-builder-agents-spec.md` | doc | `clean/tracked` | 10011 |
-| `docs/codebase-index.md` | doc | ` M` | - |
+| `docs/codebase-index.md` | doc | `clean/tracked` | - |
 | `docs/csm-1b-benchmark-prep.md` | doc | `clean/tracked` | 8073 |
 | `docs/device-to-device-diagram.svg` | doc | `clean/tracked` | 42933 |
 | `docs/diagrams-reference.md` | doc | `clean/tracked` | 16076 |
@@ -103,7 +101,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | Path | Kind | Status | Bytes |
 | --- | --- | --- | ---: |
 | `.env.example` | config | `clean/tracked` | 2728 |
-| `.gitignore` | config | ` M` | 3593 |
+| `.gitignore` | config | `clean/tracked` | 3593 |
 | `AGENTS.md` | doc | `clean/tracked` | 6311 |
 | `ARCHITECTURE.md` | doc | `clean/tracked` | 54768 |
 | `CLAUDE-AI.md` | doc | `clean/tracked` | 3856 |
@@ -123,7 +121,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/imports/import-receipt-schema-v0.json` | config | `clean/tracked` | 2737 |
 | `mira/imports/import-receipt-semantics-v0.md` | doc | `clean/tracked` | 1563 |
 | `mira/imports/import-record.schema.json` | config | `clean/tracked` | 1471 |
-| `mira/imports/persistent-first-import-runbook-v0.md` | doc | `??` | 2451 |
+| `mira/imports/persistent-first-import-runbook-v0.md` | doc | `clean/tracked` | 2451 |
 | `mira/imports/README.md` | doc | `clean/tracked` | 375 |
 | `mira/imports/reports/first-batch-dry-run-v1.json` | config | `clean/tracked` | 2524 |
 | `mira/imports/reports/README.md` | doc | `clean/tracked` | 340 |
@@ -139,6 +137,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/state/README.md` | doc | `clean/tracked` | 613 |
 | `mira/state/state-root-contract.json` | config | `clean/tracked` | 612 |
 | `mira/tools/execute-reviewed-import.js` | source | `clean/tracked` | 11952 |
+| `mira/tools/import-status.js` | source | `clean/tracked` | 2368 |
 | `mira/tools/plan-reviewed-imports.js` | source | `clean/tracked` | 3300 |
 | `mira/tools/resolve-state-root.js` | source | `clean/tracked` | 670 |
 | `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
@@ -492,6 +491,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-import-approval-marker-semantics.test.js` | test | `clean/tracked` | 2622 |
 | `ui/__tests__/mira-import-executor-semantics.test.js` | test | `clean/tracked` | 3232 |
 | `ui/__tests__/mira-import-receipt-semantics.test.js` | test | `clean/tracked` | 2491 |
+| `ui/__tests__/mira-import-status.test.js` | test | `clean/tracked` | 3773 |
 | `ui/__tests__/mira-lab-default-ui.test.js` | test | `clean/tracked` | 12201 |
 | `ui/__tests__/mira-lab-prompt-reply.test.js` | test | `clean/tracked` | 92147 |
 | `ui/__tests__/mira-lab-surface.test.js` | test | `clean/tracked` | 168001 |
@@ -1227,4 +1227,3 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | Path | Kind | Status | Bytes |
 | --- | --- | --- | ---: |
 | `workspace/knowledge/workflows.md` | doc | `clean/tracked` | 1966 |
-
