@@ -17,6 +17,29 @@ export type TurnModelResult = {
   responseId: string | null;
 };
 
+export type TurnModelStatus = {
+  provider: "openai_responses" | "ollama_chat";
+  model: string;
+  endpoint: string;
+  configured: boolean;
+  readyForModelTurns: boolean;
+  local: boolean;
+  apiKeyRequired: boolean;
+  apiKeyPresent: boolean;
+  toolsEnabled: false;
+  sendsEnabled: false;
+  telegramRouteControl: false;
+  uiSurfaceControl: false;
+  probe: {
+    attempted: boolean;
+    endpoint: string | null;
+    reachable: boolean | null;
+    modelAvailable: boolean | null;
+    models: string[];
+    error: string | null;
+  };
+};
+
 const defaultEndpoint = "https://api.openai.com/v1/responses";
 const defaultOllamaEndpoint = "http://127.0.0.1:11434/api/chat";
 const defaultModel = "gpt-5.5";
@@ -68,6 +91,137 @@ export function getTurnModelConfig(env: NodeJS.ProcessEnv = process.env): TurnMo
     apiKey,
     apiKeyPresent: Boolean(apiKey),
   };
+}
+
+function buildOllamaTagsEndpoint(chatEndpoint: string): string {
+  const url = new URL(chatEndpoint);
+  if (url.pathname.endsWith("/api/chat")) {
+    url.pathname = `${url.pathname.slice(0, -"/api/chat".length)}/api/tags`;
+  } else {
+    url.pathname = "/api/tags";
+  }
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+async function fetchWithTimeout(fetcher: typeof fetch, url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetcher(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function extractOllamaModelNames(body: unknown): string[] {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return [];
+  const models = (body as Record<string, unknown>).models;
+  if (!Array.isArray(models)) return [];
+  return models.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return "";
+    const record = item as Record<string, unknown>;
+    return trim(record.name || record.model);
+  }).filter(Boolean);
+}
+
+export async function getTurnModelStatus(input: {
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: typeof fetch;
+  probeLocal?: boolean;
+  probeTimeoutMs?: number;
+} = {}): Promise<TurnModelStatus> {
+  const config = getTurnModelConfig(input.env || process.env);
+  const baseStatus = {
+    provider: config.provider,
+    model: config.model,
+    endpoint: config.endpoint,
+    configured: config.provider === "ollama_chat" ? true : config.apiKeyPresent,
+    readyForModelTurns: config.provider === "ollama_chat" ? false : config.apiKeyPresent,
+    local: config.provider === "ollama_chat",
+    apiKeyRequired: config.provider === "openai_responses",
+    apiKeyPresent: config.apiKeyPresent,
+    toolsEnabled: false,
+    sendsEnabled: false,
+    telegramRouteControl: false,
+    uiSurfaceControl: false,
+    probe: {
+      attempted: false,
+      endpoint: null,
+      reachable: null,
+      modelAvailable: null,
+      models: [],
+      error: null,
+    },
+  } satisfies TurnModelStatus;
+
+  if (config.provider !== "ollama_chat" || input.probeLocal === false) {
+    return baseStatus;
+  }
+
+  const fetcher = input.fetchImpl || globalThis.fetch;
+  const probeEndpoint = buildOllamaTagsEndpoint(config.endpoint);
+  if (typeof fetcher !== "function") {
+    return {
+      ...baseStatus,
+      probe: {
+        ...baseStatus.probe,
+        attempted: true,
+        endpoint: probeEndpoint,
+        reachable: false,
+        modelAvailable: null,
+        error: "fetch_unavailable",
+      },
+    };
+  }
+
+  try {
+    const response = await fetchWithTimeout(fetcher, probeEndpoint, input.probeTimeoutMs || 900);
+    if (!response.ok) {
+      return {
+        ...baseStatus,
+        probe: {
+          ...baseStatus.probe,
+          attempted: true,
+          endpoint: probeEndpoint,
+          reachable: false,
+          modelAvailable: null,
+          error: `ollama_status_${response.status}`,
+        },
+      };
+    }
+    const models = extractOllamaModelNames(await response.json());
+    const modelAvailable = models.includes(config.model);
+    return {
+      ...baseStatus,
+      readyForModelTurns: modelAvailable,
+      probe: {
+        attempted: true,
+        endpoint: probeEndpoint,
+        reachable: true,
+        modelAvailable,
+        models,
+        error: modelAvailable ? null : "ollama_model_missing",
+      },
+    };
+  } catch (error) {
+    const name = error instanceof Error && error.name === "AbortError" ? "ollama_probe_timeout" : "ollama_unreachable";
+    return {
+      ...baseStatus,
+      probe: {
+        ...baseStatus.probe,
+        attempted: true,
+        endpoint: probeEndpoint,
+        reachable: false,
+        modelAvailable: null,
+        error: name,
+      },
+    };
+  }
 }
 
 function collectOutputText(value: unknown, acc: string[] = []): string[] {

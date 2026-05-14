@@ -63,6 +63,12 @@ h1 {
   font-size: 14px;
 }
 
+.brain-line {
+  margin: 5px 0 0;
+  color: var(--blue);
+  font-size: 12px;
+}
+
 .quiet-icon,
 .subtle-button {
   min-height: 32px;
@@ -211,7 +217,7 @@ button:disabled {
 
 dl {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 18px;
   margin: 18px 0 0;
 }

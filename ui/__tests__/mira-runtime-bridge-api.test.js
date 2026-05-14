@@ -301,13 +301,17 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('<h1>Mira</h1>');
     expect(indexHtml).toContain('id="turnForm"');
     expect(indexHtml).toContain('id="contextPanel"');
+    expect(indexHtml).toContain('id="brainLine"');
     expect(indexHtml).toContain('id="reviewSummary"');
+    expect(indexHtml).toContain('id="modelSummary"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
     expect(indexHtml).not.toContain('business mess');
     expect(appResponse.status).toBe(200);
     expect(appResponse.headers.get('content-type')).toContain('text/javascript');
     expect(appJs).toContain("fetch('/turn'");
+    expect(appJs).toContain("fetch('/model/status'");
+    expect(appJs).toContain('brainLine');
     expect(appJs).toContain("fetch('/voice/correction'");
     expect(appJs).toContain("fetch('/voice/corrections'");
     expect(appJs).toContain('wrong shape');
@@ -317,8 +321,129 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(cssResponse.headers.get('content-type')).toContain('text/css');
     expect(css).toContain('.conversation');
     expect(css).toContain('.context-panel');
+    expect(css).toContain('.brain-line');
     expect(css).toContain('.subtle-button');
     expect(css).not.toContain('.side');
+  });
+
+  test('reports missing Ollama provider without blocking the runtime', async () => {
+    await startServer({
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_BASE_URL: 'http://127.0.0.1:9',
+    });
+
+    const response = await fetch(`${baseUrl}/model/status`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.model_provider_status.v0',
+      selectedProvider: 'ollama_chat',
+      model: 'gemma4:e4b',
+      available: false,
+      reason: 'ollama_unreachable',
+      checkedEndpoint: 'http://127.0.0.1:9/api/tags',
+      installedModels: [],
+      runtimeBlocked: false,
+    }));
+    expect(payload.nextLocalModelStep).toContain('Install/start Ollama');
+    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:e4b');
+  });
+
+  test('reports local Gemma missing when Ollama is reachable without the selected model', async () => {
+    const ollamaBaseUrl = await startOpenAiMock((request, response) => {
+      expect(request.method).toBe('GET');
+      expect(request.url).toBe('/api/tags');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        models: [
+          { name: 'llama3.2:latest' },
+        ],
+      }));
+    });
+    await startServer({
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
+    });
+
+    const response = await fetch(`${baseUrl}/model/status`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      selectedProvider: 'ollama_chat',
+      model: 'gemma4:e4b',
+      available: false,
+      reason: 'ollama_model_missing',
+      checkedEndpoint: `${ollamaBaseUrl}/api/tags`,
+      installedModels: ['llama3.2:latest'],
+      runtimeBlocked: false,
+    }));
+    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:e4b');
+  });
+
+  test('reports local Gemma ready when Ollama has the selected model', async () => {
+    const ollamaBaseUrl = await startOpenAiMock((request, response) => {
+      expect(request.method).toBe('GET');
+      expect(request.url).toBe('/api/tags');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        models: [
+          { name: 'gemma4:e4b' },
+        ],
+      }));
+    });
+    await startServer({
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
+    });
+
+    const response = await fetch(`${baseUrl}/model/status`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      selectedProvider: 'ollama_chat',
+      model: 'gemma4:e4b',
+      available: true,
+      reason: 'ollama_ready',
+      checkedEndpoint: `${ollamaBaseUrl}/api/tags`,
+      installedModels: ['gemma4:e4b'],
+      nextLocalModelStep: null,
+      runtimeBlocked: false,
+    }));
+  });
+
+  test('reports OpenAI key status while still naming the local model next step', async () => {
+    await startServer({
+      MIRA_RUNTIME_MODEL_PROVIDER: '',
+      MIRA_RUNTIME_TURN_PROVIDER: '',
+      MIRA_OLLAMA_MODEL: '',
+      OLLAMA_MODEL: '',
+      OPENAI_API_KEY: '',
+      MIRA_RUNTIME_OPENAI_API_KEY: '',
+    });
+
+    const response = await fetch(`${baseUrl}/model/status`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.model_provider_status.v0',
+      selectedProvider: 'openai_responses',
+      available: false,
+      reason: 'missing_openai_api_key',
+      runtimeBlocked: false,
+    }));
+    expect(payload.nextLocalModelStep).toContain('install Ollama');
+    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:e4b');
   });
 
   test('captures voice correction candidates from runtime API without mutating live voice lab', async () => {

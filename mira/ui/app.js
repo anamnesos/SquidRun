@@ -14,11 +14,15 @@ const elements = {
   statusStrip: document.getElementById('statusStrip'),
   contextToggle: document.getElementById('contextToggle'),
   contextPanel: document.getElementById('contextPanel'),
+  brainLine: document.getElementById('brainLine'),
   operatorSummary: document.getElementById('operatorSummary'),
   coreSummary: document.getElementById('coreSummary'),
   lastTurn: document.getElementById('lastTurn'),
+  modelSummary: document.getElementById('modelSummary'),
   reviewSummary: document.getElementById('reviewSummary'),
 };
+
+let modelStatus = null;
 
 function setText(node, value) {
   node.textContent = value || '';
@@ -66,11 +70,28 @@ function updateRuntimeState(payload) {
   renderChips([
     { label: stateFlags.normalizedCoreLoaded ? 'core loaded' : 'core missing', kind: stateFlags.normalizedCoreLoaded ? 'good' : 'warn' },
     { label: payload?.operatorContext?.loaded ? 'operator loaded' : 'operator missing', kind: payload?.operatorContext?.loaded ? 'good' : 'warn' },
+    modelStatus ? {
+      label: modelStatus.available ? `${modelStatus.model} ready` : `${modelStatus.model} not ready`,
+      kind: modelStatus.available ? 'good' : 'warn',
+    } : { label: 'model unknown', kind: 'warn' },
     { label: model.requested ? (payload.modelInvoked ? `model ${model.model}` : 'model failed') : 'deterministic' },
   ]);
   setText(elements.operatorSummary, summarizeOperator(payload?.operatorContext));
   setText(elements.coreSummary, summarizeCore(payload));
   setText(elements.lastTurn, payload?.modelInvoked ? 'model-backed' : 'deterministic');
+}
+
+function updateModelSummary(payload) {
+  modelStatus = payload || null;
+  if (!payload) {
+    setText(elements.brainLine, 'model unknown');
+    setText(elements.modelSummary, 'unknown');
+    return;
+  }
+  const state = payload.available ? 'ready' : 'not ready';
+  const provider = payload.selectedProvider === 'ollama_chat' ? 'Gemma/Ollama' : 'OpenAI';
+  setText(elements.brainLine, `${provider}: ${payload.model} ${state}`);
+  setText(elements.modelSummary, `${payload.model} (${payload.selectedProvider}) is ${state}. ${payload.nextLocalModelStep || ''}`.trim());
 }
 
 function updateReviewSummary(payload) {
@@ -123,6 +144,17 @@ async function refreshCorrections() {
   updateReviewSummary(payload);
 }
 
+async function refreshModelStatus() {
+  try {
+    const response = await fetch('/model/status');
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true) return;
+    updateModelSummary(payload);
+  } catch {
+    updateModelSummary(null);
+  }
+}
+
 function attachCorrectionControl(article, payload, prompt) {
   const actions = document.createElement('div');
   actions.className = 'message-actions';
@@ -151,6 +183,7 @@ async function prime() {
   try {
     const useModel = elements.useModel.checked;
     elements.useModel.checked = false;
+    await refreshModelStatus();
     const payload = await sendTurn('status');
     elements.useModel.checked = useModel;
     updateRuntimeState(payload);
@@ -165,7 +198,10 @@ elements.contextToggle.addEventListener('click', async () => {
   const shouldOpen = elements.contextPanel.hidden;
   elements.contextPanel.hidden = !shouldOpen;
   elements.contextToggle.setAttribute('aria-expanded', String(shouldOpen));
-  if (shouldOpen) await refreshCorrections();
+  if (shouldOpen) {
+    await refreshModelStatus();
+    await refreshCorrections();
+  }
 });
 
 elements.form.addEventListener('submit', async (event) => {

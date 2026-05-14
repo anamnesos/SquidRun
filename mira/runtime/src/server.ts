@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
+import { getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 import { runRuntimeTurn } from "./turn.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
@@ -186,6 +187,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/voice/corrections") {
     sendJson(response, 200, listVoiceCorrections());
+    return;
+  }
+
+  if (requestUrl.pathname === "/model/status") {
+    sendJson(response, 200, await getModelProviderStatus());
     return;
   }
 
