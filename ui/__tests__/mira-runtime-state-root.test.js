@@ -12,6 +12,7 @@ describe('Mira runtime state-root readiness', () => {
   const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledStateRootPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'state-root.js');
   const compiledRuntimePath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'runtime.js');
+  const compiledStatusPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'status.js');
   const compiledStateRootUrl = pathToFileURL(compiledStateRootPath).href;
   const compiledRuntimeUrl = pathToFileURL(compiledRuntimePath).href;
 
@@ -259,6 +260,38 @@ describe('Mira runtime state-root readiness', () => {
       'Mira North Star Acceptance',
       'Mira PC Embodiment Permission v0',
     ]);
+  });
+
+  test('status command exposes acceptance continuity summary without claiming full continuity', () => {
+    const stateRoot = writeApprovedAcceptanceStateRoot();
+    const output = execFileSync(process.execPath, [
+      compiledStatusPath,
+      '--json',
+    ], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        MIRA_STATE_ROOT: stateRoot,
+      },
+      encoding: 'utf8',
+    });
+    const status = JSON.parse(output);
+
+    expect(status).toEqual(expect.objectContaining({
+      service: 'mira-runtime',
+      stateRootReady: true,
+      receiptCount: 1,
+      recordCount: 3,
+      continuityLoaded: false,
+      liveDataImported: false,
+      acceptanceContinuity: expect.objectContaining({
+        loaded: true,
+        documentCount: 3,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+        error: null,
+      }),
+    }));
   });
 
   test('session still reports no continuity when an empty state root has required buckets', () => {

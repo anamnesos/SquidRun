@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/server.ts",
     "start": "node dist/server.js",
+    "status": "node dist/status.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
