@@ -281,6 +281,29 @@ describe('Mira runtime bridge manual-plan API', () => {
     }));
   });
 
+  test('serves the minimal Mira web UI from the runtime', async () => {
+    await startServer();
+
+    const indexResponse = await fetch(`${baseUrl}/`);
+    const indexHtml = await indexResponse.text();
+    const appResponse = await fetch(`${baseUrl}/app.js`);
+    const appJs = await appResponse.text();
+    const cssResponse = await fetch(`${baseUrl}/styles.css`);
+    const css = await cssResponse.text();
+
+    expect(indexResponse.status).toBe(200);
+    expect(indexResponse.headers.get('content-type')).toContain('text/html');
+    expect(indexHtml).toContain('<h1>Mira</h1>');
+    expect(indexHtml).toContain('id="turnForm"');
+    expect(appResponse.status).toBe(200);
+    expect(appResponse.headers.get('content-type')).toContain('text/javascript');
+    expect(appJs).toContain("fetch('/turn'");
+    expect(appJs).toContain('useModel');
+    expect(cssResponse.status).toBe(200);
+    expect(cssResponse.headers.get('content-type')).toContain('text/css');
+    expect(css).toContain('.conversation');
+  });
+
   test('refuses external manual-plan targets without execution fields', async () => {
     await startServer();
 

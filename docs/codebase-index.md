@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `8eda4bc`
-- Total files listed: 1159
+- Git HEAD: `bc5ff2b`
+- Total files listed: 1162
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,7 +17,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 78
+- root: 81
 - scripts: 1
 - tools: 3
 - ui/__tests__: 461
@@ -28,20 +28,19 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - workspace/knowledge: 1
 
 ## Summary By Kind
-- asset: 20
+- asset: 22
 - config: 29
 - doc: 72
 - file: 1
 - script: 170
-- source: 405
+- source: 406
 - test: 462
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- ??: 1
-- clean/tracked: 1155
-- M: 3
+- clean/tracked: 1160
+- M: 2
 
 ## Files
 
@@ -149,14 +148,14 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/runtime/src/bridge-status.ts` | source | `clean/tracked` | 983 |
 | `mira/runtime/src/contracts.ts` | source | `clean/tracked` | 2981 |
 | `mira/runtime/src/import-status.ts` | source | `clean/tracked` | 1355 |
-| `mira/runtime/src/model-adapter.ts` | source | `??` | 5865 |
+| `mira/runtime/src/model-adapter.ts` | source | `clean/tracked` | 5865 |
 | `mira/runtime/src/normalized-core.ts` | source | `clean/tracked` | 5870 |
 | `mira/runtime/src/operator-context.ts` | source | `clean/tracked` | 3187 |
 | `mira/runtime/src/runtime.ts` | source | `clean/tracked` | 2878 |
-| `mira/runtime/src/server.ts` | source | ` M` | 6265 |
+| `mira/runtime/src/server.ts` | source | ` M` | 7584 |
 | `mira/runtime/src/state-root.ts` | source | `clean/tracked` | 2035 |
 | `mira/runtime/src/status.ts` | source | `clean/tracked` | 3080 |
-| `mira/runtime/src/turn.ts` | source | ` M` | 8351 |
+| `mira/runtime/src/turn.ts` | source | `clean/tracked` | 8351 |
 | `mira/runtime/tsconfig.json` | config | `clean/tracked` | 435 |
 | `mira/state/.gitignore` | config | `clean/tracked` | 52 |
 | `mira/state/README.md` | doc | `clean/tracked` | 613 |
@@ -168,6 +167,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/tools/plan-reviewed-imports.js` | source | `clean/tracked` | 3300 |
 | `mira/tools/resolve-state-root.js` | source | `clean/tracked` | 670 |
 | `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
+| `mira/ui/app.js` | source | `clean/tracked` | 4089 |
+| `mira/ui/index.html` | asset | `clean/tracked` | 1721 |
+| `mira/ui/styles.css` | asset | `clean/tracked` | 3303 |
 | `MODEL-SHIMS.md` | doc | `clean/tracked` | 913 |
 | `package-lock.json` | config | `clean/tracked` | 232 |
 | `package.json` | config | `clean/tracked` | 772 |
@@ -539,7 +541,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-product-foundation.test.js` | test | `clean/tracked` | 2780 |
 | `ui/__tests__/mira-read-pane-messages.test.js` | test | `clean/tracked` | 5844 |
 | `ui/__tests__/mira-reviewed-import-plan.test.js` | test | `clean/tracked` | 3657 |
-| `ui/__tests__/mira-runtime-bridge-api.test.js` | test | ` M` | 18410 |
+| `ui/__tests__/mira-runtime-bridge-api.test.js` | test | ` M` | 19420 |
 | `ui/__tests__/mira-runtime-bridge-request-plan.test.js` | test | `clean/tracked` | 4408 |
 | `ui/__tests__/mira-runtime-continuity-loader-contract.test.js` | test | `clean/tracked` | 2431 |
 | `ui/__tests__/mira-runtime-curiosity.test.js` | test | `clean/tracked` | 5594 |

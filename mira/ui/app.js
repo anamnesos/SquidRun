@@ -1,0 +1,124 @@
+'use strict';
+
+const state = {
+  sessionId: `mira-ui-${Date.now()}`,
+};
+
+const elements = {
+  form: document.getElementById('turnForm'),
+  text: document.getElementById('turnText'),
+  useModel: document.getElementById('useModel'),
+  sendButton: document.getElementById('sendButton'),
+  thread: document.getElementById('thread'),
+  statusStrip: document.getElementById('statusStrip'),
+  operatorSummary: document.getElementById('operatorSummary'),
+  coreSummary: document.getElementById('coreSummary'),
+  lastTurn: document.getElementById('lastTurn'),
+};
+
+function setText(node, value) {
+  node.textContent = value || '';
+}
+
+function renderChips(items) {
+  elements.statusStrip.replaceChildren(...items.map((item) => {
+    const chip = document.createElement('span');
+    chip.className = `chip ${item.kind || ''}`.trim();
+    chip.textContent = item.label;
+    return chip;
+  }));
+}
+
+function appendMessage(role, content, className = role) {
+  const article = document.createElement('article');
+  article.className = `message ${className}`;
+  const body = document.createElement('p');
+  body.textContent = content;
+  article.append(body);
+  elements.thread.append(article);
+  elements.thread.scrollTop = elements.thread.scrollHeight;
+}
+
+function summarizeOperator(context) {
+  if (!context || context.loaded !== true) return 'not loaded';
+  const lanes = Array.isArray(context.operatingLanes) ? context.operatingLanes.join(', ') : '';
+  return `${context.businessThesis || 'operator context loaded'} ${lanes ? `(${lanes})` : ''}`;
+}
+
+function summarizeCore(payload) {
+  const core = payload?.loadedCoreSummary;
+  if (!core || core.available !== true) return 'not loaded';
+  return [
+    core.identity,
+    core.relationship,
+    core.permissions,
+  ].filter(Boolean).join(' | ');
+}
+
+function updateRuntimeState(payload) {
+  const stateFlags = payload?.state || {};
+  const model = payload?.model || {};
+  renderChips([
+    { label: stateFlags.normalizedCoreLoaded ? 'core loaded' : 'core missing', kind: stateFlags.normalizedCoreLoaded ? 'good' : 'warn' },
+    { label: payload?.operatorContext?.loaded ? 'operator loaded' : 'operator missing', kind: payload?.operatorContext?.loaded ? 'good' : 'warn' },
+    { label: model.requested ? (payload.modelInvoked ? `model ${model.model}` : 'model failed') : 'deterministic' },
+  ]);
+  setText(elements.operatorSummary, summarizeOperator(payload?.operatorContext));
+  setText(elements.coreSummary, summarizeCore(payload));
+  setText(elements.lastTurn, payload?.modelInvoked ? 'model-backed' : 'deterministic');
+}
+
+async function sendTurn(text) {
+  const response = await fetch('/turn', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      sessionId: state.sessionId,
+      useModel: elements.useModel.checked,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    const message = payload?.error?.message || 'Mira runtime turn failed.';
+    throw new Error(message);
+  }
+  return payload;
+}
+
+async function prime() {
+  try {
+    const useModel = elements.useModel.checked;
+    elements.useModel.checked = false;
+    const payload = await sendTurn('status');
+    elements.useModel.checked = useModel;
+    updateRuntimeState(payload);
+  } catch (error) {
+    renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
+    setText(elements.lastTurn, error.message);
+  }
+}
+
+elements.form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const text = elements.text.value.trim();
+  if (!text) return;
+
+  appendMessage('user', text);
+  elements.text.value = '';
+  elements.sendButton.disabled = true;
+  elements.sendButton.textContent = 'Sending';
+  try {
+    const payload = await sendTurn(text);
+    updateRuntimeState(payload);
+    appendMessage('mira', payload.response.content);
+  } catch (error) {
+    appendMessage('mira', error.message, 'error');
+  } finally {
+    elements.sendButton.disabled = false;
+    elements.sendButton.textContent = 'Send';
+    elements.text.focus();
+  }
+});
+
+prime();

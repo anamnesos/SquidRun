@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,12 @@ import { runRuntimeTurn } from "./turn.js";
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
 const MAX_JSON_BODY_BYTES = 64 * 1024;
+const staticUiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "ui");
+const contentTypes: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+};
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
   const payload = JSON.stringify(body, null, 2);
@@ -18,6 +25,32 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown): 
     "Cache-Control": "no-store",
   });
   response.end(payload);
+}
+
+function sendStatic(response: ServerResponse, filePath: string): void {
+  const payload = fs.readFileSync(filePath);
+  response.writeHead(200, {
+    "Content-Type": contentTypes[path.extname(filePath)] || "application/octet-stream",
+    "Content-Length": payload.length,
+    "Cache-Control": "no-store",
+  });
+  response.end(payload);
+}
+
+function trySendStaticUi(requestUrl: URL, response: ServerResponse): boolean {
+  const pathname = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
+  const allowed = new Set(["/index.html", "/app.js", "/styles.css"]);
+  if (!allowed.has(pathname)) return false;
+
+  const filePath = path.resolve(staticUiRoot, pathname.slice(1));
+  const relative = path.relative(staticUiRoot, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(filePath)) {
+    sendJson(response, 404, { error: "not_found" });
+    return true;
+  }
+
+  sendStatic(response, filePath);
+  return true;
 }
 
 function errorPayload(error: unknown): { error: { code: string; message: string; retryable: false } } {
@@ -126,6 +159,10 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+
+  if (trySendStaticUi(requestUrl, response)) {
     return;
   }
 
