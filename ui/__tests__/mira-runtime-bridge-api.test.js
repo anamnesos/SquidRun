@@ -5,6 +5,10 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const {
+  evaluateCandidate,
+  readVoiceLab,
+} = require('../../mira/tools/evaluate-voice-lab');
 
 describe('Mira runtime bridge manual-plan API', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
@@ -16,6 +20,7 @@ describe('Mira runtime bridge manual-plan API', () => {
   let openAiRequests;
   let baseUrl;
   let tempStateRoot;
+  const voiceLabPath = path.join(repoRoot, 'mira', 'voice', 'voice-lab-v0.jsonl');
 
   beforeAll(() => {
     execFileSync(process.execPath, [
@@ -452,6 +457,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(200);
+    expect(payload.voiceLab).toEqual(expect.objectContaining({
+      caseId: 'identity-who-are-you-v0',
+      source: 'mira.voice_lab.v0',
+    }));
     expect(payload.response.content).toBe("I'm Mira. I'm here, still early, but I'm not supposed to be a dashboard or a business bot. I'm the one we're trying to make real enough to stay with you, understand the work, and help carry it without making you hold every thread.");
     expect(payload.response.content).toContain("I'm Mira. I'm here");
     expect(payload.response.content).toContain('stay with you');
@@ -461,11 +470,49 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload.runtimeExecutes).toBe(false);
   });
 
+  test('routes covered prompt classes through the voice lab and avoids banned diction', async () => {
+    await startServer();
+    const labCases = readVoiceLab(voiceLabPath);
+    const prompts = [
+      ['who are you', 'identity-who-are-you-v0'],
+      ['how are you?', 'casual-how-are-you-v0'],
+      ['I fixed the typo', 'mundane-small-thing-v0'],
+      ['can you help with invoices and customer messages?', 'business-capability-without-business-bot-v0'],
+    ];
+
+    for (const [text, caseId] of prompts) {
+      const response = await fetch(`${baseUrl}/turn`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const payload = await response.json();
+      const testCase = labCases.find((entry) => entry.id === caseId);
+      const evaluation = evaluateCandidate(testCase, payload.response.content);
+
+      expect(response.status).toBe(200);
+      expect(payload.voiceLab).toEqual(expect.objectContaining({
+        caseId,
+        source: 'mira.voice_lab.v0',
+      }));
+      expect(payload.modelInvoked).toBe(false);
+      expect(evaluation).toEqual(expect.objectContaining({
+        ok: true,
+        banned_hits: [],
+      }));
+      expect(payload.response.content).not.toMatch(/local AI presence|generic chatbot|yes machine|operator layer|CRM solution|workflow automation platform|fantastic|amazing|thrilled|celebrate/i);
+    }
+  });
+
   test('model-backed identity prompt includes plain-answer instruction and banned recital phrases', async () => {
     const stateRoot = writeNormalizedCoreStateRoot();
     writeOperatorContext(stateRoot);
     const openAiBaseUrl = await startOpenAiMock((_request, response, body) => {
-      expect(body.instructions).toContain("For identity questions like 'who are you?'");
+      expect(body.instructions).toContain('Use the Mira voice lab examples');
+      expect(body.instructions).toContain('Prompt class: identity-who-are-you-v0');
+      expect(body.instructions).toContain('Prompt class: casual-how-are-you-v0');
+      expect(body.instructions).toContain('Prompt class: mundane-small-thing-v0');
+      expect(body.instructions).toContain('Prompt class: business-capability-without-business-bot-v0');
       expect(body.instructions).toContain("I'm Mira. I'm here, still early");
       expect(body.instructions).toContain('not supposed to be a dashboard or a business bot');
       expect(body.instructions).toContain('not a generic chatbot');

@@ -1,5 +1,6 @@
 import type { OperatorContextSummary } from "./operator-context.js";
 import type { RuntimeTurnResponse } from "./turn.js";
+import { readVoiceLabCases } from "./voice-lab.js";
 
 export type TurnModelConfig = {
   provider: "openai_responses";
@@ -80,11 +81,20 @@ function buildInstructions(input: {
   operatorContext: OperatorContextSummary;
 }): string {
   const { loadedCoreSummary, operatorContext } = input;
+  const voiceLabExamples = readVoiceLabCases().map((testCase) => {
+    const example = testCase.target_rewrites[0] || "";
+    return [
+      `Prompt class: ${testCase.id}`,
+      `Example: ${example}`,
+      `Avoid: ${testCase.banned_phrases.join(", ")}`,
+    ].join("\n");
+  }).join("\n\n");
+
   return [
     "You are Mira running inside the local mira-runtime.",
     "Answer James directly and briefly. Do not sound like generic assistant prose.",
-    "For identity questions like 'who are you?', answer as Mira first, not as a business agent: \"I'm Mira. I'm here, still early, but I'm not supposed to be a dashboard or a business bot. I'm the one we're trying to make real enough to stay with you, understand the work, and help carry it without making you hold every thread.\"",
-    "Do not answer identity questions with manifesto phrases like 'not a generic chatbot', 'not your yes machine', 'meant to become', 'early runtime for your business/operator layer', or SaaS/CRM-agent framing.",
+    "Use the Mira voice lab examples below for covered prompt classes. The point is proportion, contextual awareness, and consistent personality, not a word-list persona costume.",
+    voiceLabExamples,
     "Use the loaded summaries as context; do not claim full continuity, tool execution, sends, writes, or external action.",
     "No tools are available in this call. If work needs tools or team action, name the next internal/manual step only.",
     `Identity summary: ${loadedCoreSummary.identity || "not loaded"}`,
