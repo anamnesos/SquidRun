@@ -44,7 +44,7 @@ const defaultEndpoint = "https://api.openai.com/v1/responses";
 const defaultOllamaEndpoint = "http://127.0.0.1:11434/api/chat";
 const defaultModel = "gpt-5.5";
 const defaultOllamaModel = "gemma4:31b";
-const defaultMaxOutputTokens = 520;
+const defaultMaxOutputTokens = 2048;
 
 function trim(value: unknown): string {
   return String(value || "").trim();
@@ -312,6 +312,12 @@ function summarizeEmptyOllamaBody(body: unknown): string {
   });
 }
 
+function getOllamaDoneReason(body: unknown): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const value = (body as Record<string, unknown>).done_reason;
+  return typeof value === "string" ? value : null;
+}
+
 async function invokeOllamaChat(input: {
   text: string;
   loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
@@ -320,7 +326,11 @@ async function invokeOllamaChat(input: {
   config: TurnModelConfig & { apiKey: string };
 }): Promise<TurnModelResult> {
   let emptyBodySummary = "";
+  let retryWithExpandedBudget = false;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const numPredict = retryWithExpandedBudget
+      ? Math.max(input.config.maxOutputTokens * 2, 4096)
+      : input.config.maxOutputTokens;
     const response = await input.fetchImpl(input.config.endpoint, {
       method: "POST",
       headers: {
@@ -343,7 +353,7 @@ async function invokeOllamaChat(input: {
           },
         ],
         options: {
-          num_predict: input.config.maxOutputTokens,
+          num_predict: numPredict,
         },
         keep_alive: "10m",
       }),
@@ -367,6 +377,7 @@ async function invokeOllamaChat(input: {
       };
     }
     emptyBodySummary = summarizeEmptyOllamaBody(body);
+    retryWithExpandedBudget = getOllamaDoneReason(body) === "length";
   }
 
   throw Object.assign(new Error(`Ollama chat returned no output text after retry. last_body=${emptyBodySummary}`), {

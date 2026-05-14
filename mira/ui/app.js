@@ -327,6 +327,16 @@ elements.contextToggle.addEventListener('click', async () => {
   }
 });
 
+elements.text.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  if (typeof elements.form.requestSubmit === 'function') {
+    elements.form.requestSubmit();
+    return;
+  }
+  elements.sendButton.click();
+});
+
 elements.draftButton.addEventListener('click', async () => {
   const text = elements.text.value.trim();
   if (!text) return;

@@ -19,8 +19,14 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
   overflow: hidden;
   background:
@@ -38,15 +44,19 @@ input {
 
 .shell {
   display: grid;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .conversation {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
-  min-height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -183,6 +193,7 @@ body[data-model-ready="false"] .model-pill {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-height: 0;
   overflow-y: auto;
   padding: clamp(22px, 4vw, 56px);
   scrollbar-color: var(--line-hot) transparent;
@@ -238,8 +249,9 @@ body[data-model-ready="false"] .model-pill {
 textarea {
   width: 100%;
   min-height: 78px;
-  max-height: 220px;
-  resize: vertical;
+  max-height: min(180px, 28vh);
+  resize: none;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -398,10 +410,6 @@ dd {
 }
 
 @media (max-width: 820px) {
-  body {
-    overflow: auto;
-  }
-
   .topbar {
     align-items: flex-start;
     min-height: 86px;
@@ -425,6 +433,11 @@ dd {
   .composer {
     grid-template-columns: 1fr;
     padding: 14px 16px 18px;
+  }
+
+  textarea {
+    min-height: 64px;
+    max-height: 124px;
   }
 
   .thread {

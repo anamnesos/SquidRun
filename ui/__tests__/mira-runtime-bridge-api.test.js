@@ -323,6 +323,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('wrong shape');
     expect(appJs).toContain('contextToggle');
     expect(appJs).toContain('useModel');
+    expect(appJs).toContain("event.key !== 'Enter'");
+    expect(appJs).toContain('event.shiftKey');
+    expect(appJs).toContain('event.isComposing');
+    expect(appJs).toContain('requestSubmit');
     expect(cssResponse.status).toBe(200);
     expect(cssResponse.headers.get('content-type')).toContain('text/css');
     expect(css).toContain('.conversation');
@@ -330,6 +334,12 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(css).toContain('.brain-line');
     expect(css).toContain('.subtle-button');
     expect(css).toContain('.draft-item');
+    expect(css).toMatch(/body\s*\{[\s\S]*height:\s*100dvh[\s\S]*overflow:\s*hidden/);
+    expect(css).toMatch(/\.shell\s*\{[\s\S]*height:\s*100dvh[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
+    expect(css).toMatch(/\.conversation\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
+    expect(css).toMatch(/\.thread\s*\{[\s\S]*min-height:\s*0[\s\S]*overflow-y:\s*auto/);
+    expect(css).toMatch(/textarea\s*\{[\s\S]*resize:\s*none[\s\S]*overflow-y:\s*auto/);
+    expect(css).not.toMatch(/@media\s*\(max-width:\s*820px\)\s*\{[\s\S]*body\s*\{[\s\S]*overflow:\s*auto/);
     expect(css).not.toContain('.side');
   });
 
@@ -1210,7 +1220,7 @@ describe('Mira runtime bridge manual-plan API', () => {
         stream: false,
         keep_alive: '10m',
         options: expect.objectContaining({
-          num_predict: 520,
+          num_predict: 2048,
         }),
       }));
       expect(body.messages).toHaveLength(2);
@@ -1288,10 +1298,11 @@ describe('Mira runtime bridge manual-plan API', () => {
     const stateRoot = writeNormalizedCoreStateRoot();
     writeOperatorContext(stateRoot);
     let calls = 0;
-    const ollamaBaseUrl = await startOpenAiMock((_request, response) => {
+    const ollamaBaseUrl = await startOpenAiMock((_request, response, body) => {
       calls += 1;
       response.writeHead(200, { 'content-type': 'application/json' });
       if (calls === 1) {
+        expect(body.options.num_predict).toBe(2048);
         response.end(JSON.stringify({
           model: 'gemma4:31b',
           created_at: '2026-05-14T08:10:00.000Z',
@@ -1303,6 +1314,7 @@ describe('Mira runtime bridge manual-plan API', () => {
         }));
         return;
       }
+      expect(body.options.num_predict).toBe(2048);
       response.end(JSON.stringify({
         model: 'gemma4:31b',
         created_at: '2026-05-14T08:10:01.000Z',
@@ -1342,6 +1354,65 @@ describe('Mira runtime bridge manual-plan API', () => {
         content: 'Here.',
       },
     }));
+    expect(openAiRequests).toHaveLength(2);
+  });
+
+  test('retries empty Ollama length stops with an expanded output budget', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    let calls = 0;
+    const ollamaBaseUrl = await startOpenAiMock((_request, response, body) => {
+      calls += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      if (calls === 1) {
+        expect(body.options.num_predict).toBe(64);
+        response.end(JSON.stringify({
+          model: 'gemma4:31b',
+          created_at: '2026-05-14T08:12:00.000Z',
+          message: {
+            role: 'assistant',
+            content: '',
+          },
+          done: true,
+          done_reason: 'length',
+        }));
+        return;
+      }
+      expect(body.options.num_predict).toBe(4096);
+      response.end(JSON.stringify({
+        model: 'gemma4:31b',
+        created_at: '2026-05-14T08:12:01.000Z',
+        message: {
+          role: 'assistant',
+          content: 'I hit the edge. Here is the actual answer.',
+        },
+        done: true,
+        done_reason: 'stop',
+      }));
+    });
+    await startServer({
+      MIRA_STATE_ROOT: stateRoot,
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
+      MIRA_RUNTIME_TURN_MAX_OUTPUT_TOKENS: '64',
+      MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
+      OPENAI_API_KEY: '',
+      MIRA_RUNTIME_OPENAI_API_KEY: '',
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'explain the plan',
+        sessionId: 'app-session-373',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.response.content).toBe('I hit the edge. Here is the actual answer.');
     expect(openAiRequests).toHaveLength(2);
   });
 
