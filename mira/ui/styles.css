@@ -123,6 +123,28 @@ h2 {
   margin: 0;
 }
 
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.subtle-button {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.subtle-button:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
 .message.user {
   align-self: flex-end;
   border-color: rgba(114, 214, 255, 0.5);

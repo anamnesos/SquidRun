@@ -38,6 +38,7 @@ function appendMessage(role, content, className = role) {
   article.append(body);
   elements.thread.append(article);
   elements.thread.scrollTop = elements.thread.scrollHeight;
+  return article;
 }
 
 function summarizeOperator(context) {
@@ -88,6 +89,48 @@ async function sendTurn(text) {
   return payload;
 }
 
+async function captureCorrection(payload, prompt, better) {
+  const response = await fetch('/voice/correction', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      soundedFake: payload.response.content,
+      better,
+      caseId: payload.voiceLab?.caseId || null,
+      source: 'runtime-ui',
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok || result?.ok !== true) {
+    throw new Error(result?.error?.message || 'Voice correction capture failed.');
+  }
+  return result;
+}
+
+function attachCorrectionControl(article, payload, prompt) {
+  const actions = document.createElement('div');
+  actions.className = 'message-actions';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'subtle-button';
+  button.textContent = 'sounded fake';
+  button.addEventListener('click', async () => {
+    const better = window.prompt('Better phrasing?');
+    if (!better || !better.trim()) return;
+    button.disabled = true;
+    try {
+      await captureCorrection(payload, prompt, better);
+      button.textContent = 'captured';
+    } catch (error) {
+      button.disabled = false;
+      appendMessage('mira', error.message, 'error');
+    }
+  });
+  actions.append(button);
+  article.append(actions);
+}
+
 async function prime() {
   try {
     const useModel = elements.useModel.checked;
@@ -113,7 +156,8 @@ elements.form.addEventListener('submit', async (event) => {
   try {
     const payload = await sendTurn(text);
     updateRuntimeState(payload);
-    appendMessage('mira', payload.response.content);
+    const article = appendMessage('mira', payload.response.content);
+    attachCorrectionControl(article, payload, text);
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {

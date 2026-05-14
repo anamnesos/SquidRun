@@ -303,10 +303,83 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appResponse.status).toBe(200);
     expect(appResponse.headers.get('content-type')).toContain('text/javascript');
     expect(appJs).toContain("fetch('/turn'");
+    expect(appJs).toContain("fetch('/voice/correction'");
+    expect(appJs).toContain('sounded fake');
     expect(appJs).toContain('useModel');
     expect(cssResponse.status).toBe(200);
     expect(cssResponse.headers.get('content-type')).toContain('text/css');
     expect(css).toContain('.conversation');
+    expect(css).toContain('.subtle-button');
+  });
+
+  test('captures voice correction candidates from runtime API without mutating live voice lab', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-voice-review-'));
+    const reviewPath = path.join(tempStateRoot, 'review', 'candidates.jsonl');
+    const beforeVoiceLab = fs.readFileSync(voiceLabPath, 'utf8');
+    await startServer({ MIRA_VOICE_REVIEW_PATH: reviewPath });
+
+    const response = await fetch(`${baseUrl}/voice/correction`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'who are you',
+        soundedFake: 'Mira. I am your local AI presence.',
+        better: 'Mira.',
+        caseId: 'identity-who-are-you-v0',
+        source: 'runtime-api-test',
+      }),
+    });
+    const payload = await response.json();
+    const records = fs.readFileSync(reviewPath, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.voice_review_capture.v0',
+      out_path: path.resolve(reviewPath),
+      live_voice_mutated: false,
+      record: expect.objectContaining({
+        schema: 'mira.voice_review_candidate.v0',
+        prompt: 'who are you',
+        sounded_fake: 'Mira. I am your local AI presence.',
+        better_phrasing: 'Mira.',
+        suggested_case_id: 'identity-who-are-you-v0',
+        review_status: 'pending_review',
+        live_voice_mutated: false,
+      }),
+    }));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toEqual(payload.record);
+    expect(fs.readFileSync(voiceLabPath, 'utf8')).toBe(beforeVoiceLab);
+  });
+
+  test('refuses incomplete voice correction captures', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-voice-review-'));
+    const reviewPath = path.join(tempStateRoot, 'review', 'candidates.jsonl');
+    await startServer({ MIRA_VOICE_REVIEW_PATH: reviewPath });
+
+    const response = await fetch(`${baseUrl}/voice/correction`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'who are you',
+        soundedFake: 'Mira. I am your local AI presence.',
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload).toEqual({
+      error: {
+        code: 'missing_better',
+        message: 'better is required.',
+        retryable: false,
+      },
+    });
+    expect(fs.existsSync(reviewPath)).toBe(false);
   });
 
   test('refuses external manual-plan targets without execution fields', async () => {

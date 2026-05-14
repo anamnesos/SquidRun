@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 import { runRuntimeTurn } from "./turn.js";
+import { captureVoiceCorrection } from "./voice-correction.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -151,6 +152,23 @@ export async function route(request: IncomingMessage, response: ServerResponse):
         Object.assign(turnInput, { useModel: true });
       }
       sendJson(response, 200, await runRuntimeTurn(turnInput));
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/voice/correction") {
+    try {
+      const body = await readJsonBody(request);
+      const capture = captureVoiceCorrection({
+        prompt: String(body.prompt || body.text || ""),
+        soundedFake: String(body.soundedFake || body.sounded_fake || body.response || ""),
+        better: String(body.better || body.betterPhrasing || body.better_phrasing || ""),
+        caseId: typeof body.caseId === "string" ? body.caseId : null,
+        source: typeof body.source === "string" ? body.source : "runtime-ui",
+      });
+      sendJson(response, 200, capture);
     } catch (error) {
       sendJson(response, 400, errorPayload(error));
     }
