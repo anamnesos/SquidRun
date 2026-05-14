@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/server.ts",
+    "local": "node ../tools/start-local-runtime.js",
     "start": "node dist/server.js",
     "status": "node dist/status.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
