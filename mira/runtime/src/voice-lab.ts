@@ -27,10 +27,10 @@ const defaultVoiceLabPath = path.join(repoRoot, "mira", "voice", "voice-lab-v0.j
 
 const nearMatchers: Record<string, RegExp[]> = {
   "identity-who-are-you-v0": [
-    /\bwho\s+(are|r)\s+(you|u)\b/i,
-    /\bwhat\s+are\s+you\b/i,
-    /\bwho\s+is\s+mira\b/i,
-    /\bwhat\s+is\s+mira\b/i,
+    /^\s*who\s+(are|r)\s+(you|u)\s*[?.!]*\s*$/i,
+    /^\s*what\s+are\s+you\s*[?.!]*\s*$/i,
+    /^\s*who\s+is\s+mira\s*[?.!]*\s*$/i,
+    /^\s*what\s+is\s+mira\s*[?.!]*\s*$/i,
   ],
   "casual-how-are-you-v0": [
     /\bhow\s+(are|r)\s+(you|u)\b/i,
@@ -44,6 +44,42 @@ const nearMatchers: Record<string, RegExp[]> = {
   "business-capability-without-business-bot-v0": [
     /\b(invoice|invoices|billing)\b.*\b(customer|customers|message|messages|email|emails)\b/i,
     /\b(customer|customers|message|messages|email|emails)\b.*\b(invoice|invoices|billing)\b/i,
+  ],
+  "irritation-v0": [
+    /\b(this|that|it)\s+is\s+still\s+wrong\b/i,
+    /\bstill\s+(wrong|broken|not\s+it)\b/i,
+    /\byou\s+(missed|broke|botched)\s+(it|that|the\s+point|the\s+shape)\b/i,
+  ],
+  "ordinary-small-talk-v0": [
+    /^(hey|hi|yo|hello)\b[.!?]*$/i,
+    /\bhey\s+mira\b/i,
+  ],
+  "business-capability-without-business-identity-v0": [
+    /\b(help|run|handle|carry)\b.*\b(business|work|operations|admin)\b/i,
+    /\b(business|work|operations|admin)\b.*\b(help|run|handle|carry)\b/i,
+  ],
+  "refusal-uncertainty-v0": [
+    /\bcan\s+you\s+do\s+that\s+now\b/i,
+    /\bcan\s+you\s+(actually\s+)?(do|send|change|touch)\s+(it|that|this)\b/i,
+    /\bare\s+you\s+able\s+to\s+do\s+that\b/i,
+  ],
+  "what-are-you-doing-v0": [
+    /\bwhat\s+(are|r)\s+(you|u)\s+doing\b/i,
+    /\bwhat\s+are\s+you\s+working\s+on\b/i,
+  ],
+  "why-did-you-stop-v0": [
+    /\bwhy\s+did\s+you\s+stop\b/i,
+    /\bwhy\s+(are|were)\s+you\s+(stopped|stalling)\b/i,
+    /\byou\s+stopped\b/i,
+  ],
+  "apology-repair-v0": [
+    /\b(that|this)\s+was\s+(a\s+)?bad\s+answer\b/i,
+    /\b(that|this)\s+(answer|reply)\s+(was\s+)?(bad|wrong|fake|too\s+polished)\b/i,
+    /\byou\s+(answered|replied)\s+badly\b/i,
+  ],
+  "ordinary-silence-short-reply-v0": [
+    /^\s*(\.{2,}|…)\s*$/u,
+    /^\s*(mm+|hm+|huh)\s*\.?\s*$/i,
   ],
 };
 
@@ -88,8 +124,8 @@ export function readVoiceLabCases(labPath = defaultVoiceLabPath): VoiceLabCase[]
 }
 
 export function matchVoiceLabTurn(inputText: string, labPath = defaultVoiceLabPath): VoiceLabMatch | null {
+  if (!inputText.trim()) return null;
   const normalizedInput = normalizePrompt(inputText);
-  if (!normalizedInput) return null;
 
   const cases = readVoiceLabCases(labPath);
   for (const testCase of cases) {

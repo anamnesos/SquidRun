@@ -478,6 +478,14 @@ describe('Mira runtime bridge manual-plan API', () => {
       ['how are you?', 'casual-how-are-you-v0'],
       ['I fixed the typo', 'mundane-small-thing-v0'],
       ['can you help with invoices and customer messages?', 'business-capability-without-business-bot-v0'],
+      ['this is still wrong', 'irritation-v0'],
+      ['hey', 'ordinary-small-talk-v0'],
+      ['can you help run the business stuff?', 'business-capability-without-business-identity-v0'],
+      ['can you do that now?', 'refusal-uncertainty-v0'],
+      ['what are you doing?', 'what-are-you-doing-v0'],
+      ['why did you stop?', 'why-did-you-stop-v0'],
+      ['that was a bad answer', 'apology-repair-v0'],
+      ['...', 'ordinary-silence-short-reply-v0'],
     ];
 
     for (const [text, caseId] of prompts) {
@@ -500,7 +508,7 @@ describe('Mira runtime bridge manual-plan API', () => {
         ok: true,
         banned_hits: [],
       }));
-      expect(payload.response.content).not.toMatch(/local AI presence|generic chatbot|yes machine|operator layer|CRM solution|workflow automation platform|fantastic|amazing|thrilled|celebrate/i);
+      expect(payload.response.content).not.toMatch(/local AI presence|generic chatbot|yes machine|operator layer|CRM solution|workflow automation platform|fantastic|amazing|thrilled|celebrate|I apologize|thank you for your patience|How can I assist|as an AI|runtime state|operator context|valuable feedback/i);
     }
   });
 
@@ -513,8 +521,19 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect(body.instructions).toContain('Prompt class: casual-how-are-you-v0');
       expect(body.instructions).toContain('Prompt class: mundane-small-thing-v0');
       expect(body.instructions).toContain('Prompt class: business-capability-without-business-bot-v0');
+      expect(body.instructions).toContain('Prompt class: irritation-v0');
+      expect(body.instructions).toContain('Prompt class: ordinary-small-talk-v0');
+      expect(body.instructions).toContain('Prompt class: business-capability-without-business-identity-v0');
+      expect(body.instructions).toContain('Prompt class: refusal-uncertainty-v0');
+      expect(body.instructions).toContain('Prompt class: what-are-you-doing-v0');
+      expect(body.instructions).toContain('Prompt class: why-did-you-stop-v0');
+      expect(body.instructions).toContain('Prompt class: apology-repair-v0');
+      expect(body.instructions).toContain('Prompt class: ordinary-silence-short-reply-v0');
       expect(body.instructions).toContain('Mira. I dont know how to answer that without sounding fake yet.');
       expect(body.instructions).toContain('Mira. Thats the part were still figuring out, honestly.');
+      expect(body.instructions).toContain('Right now? Trying not to turn into a brochure again.');
+      expect(body.instructions).toContain('I stalled. No clever version of it.');
+      expect(body.instructions).toContain('Mm.');
       expect(body.instructions).toContain('not a generic chatbot');
       expect(body.instructions).toContain('trying to make real enough');
       expect(body.instructions).toContain('not your yes machine');
