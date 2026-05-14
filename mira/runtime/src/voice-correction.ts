@@ -5,10 +5,11 @@ import path from "node:path";
 export type VoiceCorrectionInput = {
   prompt: string;
   soundedFake: string;
-  better: string;
+  better?: string | null;
   caseId?: string | null;
   source?: string;
   outPath?: string;
+  turnMetadata?: Record<string, unknown> | null;
 };
 
 export type VoiceCorrectionCapture = {
@@ -22,8 +23,9 @@ export type VoiceCorrectionCapture = {
     source: string;
     prompt: string;
     sounded_fake: string;
-    better_phrasing: string;
+    better_phrasing: string | null;
     suggested_case_id: string | null;
+    turn_metadata: Record<string, unknown> | null;
     review_status: "pending_review";
     live_voice_mutated: false;
   };
@@ -54,8 +56,11 @@ export function captureVoiceCorrection(input: VoiceCorrectionInput, now = new Da
     source: normalizeText(input.source) || "runtime-ui",
     prompt: requireText(input.prompt, "prompt"),
     sounded_fake: requireText(input.soundedFake, "sounded_fake"),
-    better_phrasing: requireText(input.better, "better"),
+    better_phrasing: normalizeText(input.better) || null,
     suggested_case_id: input.caseId ? normalizeText(input.caseId) : null,
+    turn_metadata: input.turnMetadata && typeof input.turnMetadata === "object" && !Array.isArray(input.turnMetadata)
+      ? input.turnMetadata
+      : null,
     review_status: "pending_review",
     live_voice_mutated: false,
   };

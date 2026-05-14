@@ -24,6 +24,7 @@ const elements = {
   reviewSummary: document.getElementById('reviewSummary'),
   draftList: document.getElementById('draftList'),
   taskList: document.getElementById('taskList'),
+  recentTurns: document.getElementById('recentTurns'),
 };
 
 let modelStatus = null;
@@ -166,15 +167,40 @@ function updateTaskList(payload) {
   }));
 }
 
+function updateRecentTurns(payload) {
+  const records = Array.isArray(payload?.records) ? payload.records : [];
+  if (records.length === 0) {
+    setText(elements.recentTurns, 'none yet');
+    return;
+  }
+  elements.recentTurns.replaceChildren(...records.slice(0, 6).map((record) => {
+    const item = document.createElement('article');
+    item.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = record.outcome === 'error' ? 'error turn' : 'turn';
+    const meta = document.createElement('span');
+    const model = record.model?.model || (record.model_invoked ? 'model' : 'deterministic');
+    meta.textContent = `${record.created_at || ''} ${model}`.trim();
+    const prompt = document.createElement('p');
+    prompt.textContent = record.prompt || '';
+    const reply = document.createElement('p');
+    reply.textContent = record.response?.content || record.error?.message || '';
+    item.append(title, meta, prompt, reply);
+    return item;
+  }));
+}
+
 async function sendTurn(text) {
+  const messageId = `${state.sessionId}-turn-${state.turnCounter++}`;
+  const useModel = elements.useModel.checked;
   const response = await fetch('/turn', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       text,
       sessionId: state.sessionId,
-      messageId: `${state.sessionId}-turn-${state.turnCounter++}`,
-      useModel: elements.useModel.checked,
+      messageId,
+      useModel,
     }),
   });
   const payload = await response.json();
@@ -182,10 +208,34 @@ async function sendTurn(text) {
     const message = payload?.error?.message || 'Mira runtime turn failed.';
     throw new Error(message);
   }
+  payload.clientTurn = {
+    messageId,
+    useModel,
+  };
   return payload;
 }
 
-async function captureCorrection(payload, prompt, better) {
+function buildTurnMetadata(payload) {
+  return {
+    protocol: 'mira.turn_quality_capture_metadata.v0',
+    sessionId: payload?.input?.sessionId || state.sessionId,
+    messageId: payload?.clientTurn?.messageId || null,
+    input: {
+      text: payload?.input?.text || '',
+    },
+    model: payload?.model || null,
+    modelInvoked: payload?.modelInvoked === true,
+    voiceLab: payload?.voiceLab || null,
+    state: payload?.state || null,
+    operatorContext: payload?.operatorContext ? {
+      loaded: payload.operatorContext.loaded === true,
+      schema: payload.operatorContext.schema || null,
+      relativePath: payload.operatorContext.relativePath || null,
+    } : null,
+  };
+}
+
+async function captureCorrection(payload, prompt, better = '') {
   const response = await fetch('/voice/correction', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -195,6 +245,7 @@ async function captureCorrection(payload, prompt, better) {
       better,
       caseId: payload.voiceLab?.caseId || null,
       source: 'runtime-ui',
+      turnMetadata: buildTurnMetadata(payload),
     }),
   });
   const result = await response.json();
@@ -223,6 +274,13 @@ async function refreshTasks() {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) return;
   updateTaskList(payload);
+}
+
+async function refreshRecentTurns() {
+  const response = await fetch('/conversation/recent?limit=6');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateRecentTurns(payload);
 }
 
 async function createDraft(text) {
@@ -282,13 +340,12 @@ function attachCorrectionControl(article, payload, prompt) {
   button.className = 'subtle-button';
   button.textContent = 'wrong shape';
   button.addEventListener('click', async () => {
-    const better = window.prompt('Better phrasing?');
-    if (!better || !better.trim()) return;
     button.disabled = true;
     try {
-      await captureCorrection(payload, prompt, better);
+      await captureCorrection(payload, prompt);
       button.textContent = 'captured';
       await refreshCorrections();
+      await refreshRecentTurns();
     } catch (error) {
       button.disabled = false;
       appendMessage('mira', error.message, 'error');
@@ -309,6 +366,7 @@ async function prime() {
     await refreshCorrections();
     await refreshDrafts();
     await refreshTasks();
+    await refreshRecentTurns();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
     setText(elements.lastTurn, error.message);
@@ -324,6 +382,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshCorrections();
     await refreshDrafts();
     await refreshTasks();
+    await refreshRecentTurns();
   }
 });
 
@@ -370,8 +429,10 @@ elements.form.addEventListener('submit', async (event) => {
     updateRuntimeState(payload);
     const article = appendMessage('mira', payload.response.content);
     attachCorrectionControl(article, payload, text);
+    await refreshRecentTurns();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
+    await refreshRecentTurns();
   } finally {
     elements.sendButton.disabled = false;
     elements.sendButton.textContent = 'Send';

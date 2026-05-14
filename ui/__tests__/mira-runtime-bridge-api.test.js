@@ -308,6 +308,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="draftButton"');
     expect(indexHtml).toContain('id="draftList"');
     expect(indexHtml).toContain('id="taskList"');
+    expect(indexHtml).toContain('id="recentTurns"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
     expect(indexHtml).not.toContain('business mess');
@@ -317,10 +318,13 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/model/status'");
     expect(appJs).toContain("fetch('/work/drafts'");
     expect(appJs).toContain("fetch('/work/tasks'");
+    expect(appJs).toContain("fetch('/conversation/recent");
     expect(appJs).toContain('brainLine');
     expect(appJs).toContain("fetch('/voice/correction'");
     expect(appJs).toContain("fetch('/voice/corrections'");
     expect(appJs).toContain('wrong shape');
+    expect(appJs).toContain('turnMetadata');
+    expect(appJs).toContain('mira.turn_quality_capture_metadata.v0');
     expect(appJs).toContain('contextToggle');
     expect(appJs).toContain('useModel');
     expect(appJs).toContain("event.key !== 'Enter'");
@@ -679,6 +683,21 @@ describe('Mira runtime bridge manual-plan API', () => {
         better: 'Mira.',
         caseId: 'identity-who-are-you-v0',
         source: 'runtime-api-test',
+        turnMetadata: {
+          protocol: 'mira.turn_quality_capture_metadata.v0',
+          sessionId: 'app-session-373',
+          messageId: 'turn-quality-test-1',
+          modelInvoked: true,
+          model: {
+            requested: true,
+            provider: 'ollama_chat',
+            model: 'gemma4:31b',
+            responseId: '2026-05-14T16:40:00.000Z',
+          },
+          voiceLab: {
+            caseId: 'identity-who-are-you-v0',
+          },
+        },
       }),
     });
     const payload = await response.json();
@@ -699,6 +718,19 @@ describe('Mira runtime bridge manual-plan API', () => {
         sounded_fake: 'Mira. I am your local AI presence.',
         better_phrasing: 'Mira.',
         suggested_case_id: 'identity-who-are-you-v0',
+        turn_metadata: expect.objectContaining({
+          protocol: 'mira.turn_quality_capture_metadata.v0',
+          sessionId: 'app-session-373',
+          messageId: 'turn-quality-test-1',
+          modelInvoked: true,
+          model: expect.objectContaining({
+            provider: 'ollama_chat',
+            model: 'gemma4:31b',
+          }),
+          voiceLab: expect.objectContaining({
+            caseId: 'identity-who-are-you-v0',
+          }),
+        }),
         review_status: 'pending_review',
         live_voice_mutated: false,
       }),
@@ -721,6 +753,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       sounded_fake: 'Mira. I am your local AI presence.',
       better_phrasing: 'Mira.',
       suggested_case_id: 'identity-who-are-you-v0',
+      turn_metadata: null,
       review_status: 'pending_review',
       live_voice_mutated: false,
     })}\n`, 'utf8');
@@ -750,7 +783,53 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(fs.readFileSync(reviewPath, 'utf8')).toBe(before);
   });
 
-  test('refuses incomplete voice correction captures', async () => {
+  test('captures voice correction evidence without requiring a better phrasing', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-voice-review-'));
+    const reviewPath = path.join(tempStateRoot, 'review', 'candidates.jsonl');
+    await startServer({ MIRA_VOICE_REVIEW_PATH: reviewPath });
+
+    const response = await fetch(`${baseUrl}/voice/correction`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'why is this answer so dumb?',
+        soundedFake: 'I am Mira, your helpful AI assistant.',
+        turnMetadata: {
+          protocol: 'mira.turn_quality_capture_metadata.v0',
+          modelInvoked: true,
+          model: {
+            provider: 'ollama_chat',
+            model: 'gemma4:31b',
+          },
+        },
+      }),
+    });
+    const payload = await response.json();
+    const records = fs.readFileSync(reviewPath, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+    expect(response.status).toBe(200);
+    expect(payload.record).toEqual(expect.objectContaining({
+      prompt: 'why is this answer so dumb?',
+      sounded_fake: 'I am Mira, your helpful AI assistant.',
+      better_phrasing: null,
+      turn_metadata: expect.objectContaining({
+        protocol: 'mira.turn_quality_capture_metadata.v0',
+        modelInvoked: true,
+        model: expect.objectContaining({
+          provider: 'ollama_chat',
+          model: 'gemma4:31b',
+        }),
+      }),
+      review_status: 'pending_review',
+      live_voice_mutated: false,
+    }));
+    expect(records).toHaveLength(1);
+  });
+
+  test('refuses voice correction capture without prompt or reply evidence', async () => {
     tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-voice-review-'));
     const reviewPath = path.join(tempStateRoot, 'review', 'candidates.jsonl');
     await startServer({ MIRA_VOICE_REVIEW_PATH: reviewPath });
@@ -760,19 +839,14 @@ describe('Mira runtime bridge manual-plan API', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         prompt: 'who are you',
-        soundedFake: 'Mira. I am your local AI presence.',
       }),
     });
     const payload = await response.json();
 
     expect(response.status).toBe(400);
-    expect(payload).toEqual({
-      error: {
-        code: 'missing_better',
-        message: 'better is required.',
-        retryable: false,
-      },
-    });
+    expect(payload.error).toEqual(expect.objectContaining({
+      code: 'missing_sounded_fake',
+    }));
     expect(fs.existsSync(reviewPath)).toBe(false);
   });
 
@@ -1459,6 +1533,110 @@ describe('Mira runtime bridge manual-plan API', () => {
     }));
     expect(payload.error.message).toContain('message_content_length');
     expect(openAiRequests).toHaveLength(2);
+  });
+
+  test('journals successful runtime turns under Mira state root and lists them read-only', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-turn-journal-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const turnResponse = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'who are you',
+        sessionId: 'app-session-373',
+        messageId: 'turn-journal-test-1',
+        requestId: 'req-turn-journal-test-1',
+      }),
+    });
+    const turnPayload = await turnResponse.json();
+    const listResponse = await fetch(`${baseUrl}/conversation/recent?limit=5`);
+    const listPayload = await listResponse.json();
+    const cliOutput = execFileSync(process.execPath, [
+      path.join(repoRoot, 'mira', 'tools', 'read-runtime-turns.js'),
+      '--json',
+      '--limit',
+      '1',
+      '--state-root',
+      tempStateRoot,
+    ], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    const cliPayload = JSON.parse(cliOutput);
+
+    expect(turnResponse.status).toBe(200);
+    expect(turnPayload.journal).toEqual(expect.objectContaining({
+      ok: true,
+      written: true,
+      record: expect.objectContaining({
+        schema: 'mira.runtime_turn_journal.v0',
+        outcome: 'ok',
+        prompt: 'who are you',
+        session_id: 'app-session-373',
+        message_id: 'turn-journal-test-1',
+        request_id: 'req-turn-journal-test-1',
+        external_send: false,
+        tools_executed: false,
+      }),
+    }));
+    expect(listResponse.status).toBe(200);
+    expect(listPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.runtime_turn_journal_list.v0',
+      count: 1,
+      external_send: false,
+      tools_executed: false,
+    }));
+    expect(listPayload.records[0]).toEqual(expect.objectContaining({
+      prompt: 'who are you',
+      response: {
+        role: 'mira',
+        content: turnPayload.response.content,
+      },
+      voice_lab: expect.objectContaining({
+        caseId: 'identity-who-are-you-v0',
+      }),
+    }));
+    expect(cliPayload.records).toHaveLength(1);
+    expect(cliPayload.records[0].message_id).toBe('turn-journal-test-1');
+  });
+
+  test('journals failed runtime turns with error detail for later quality audit', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-turn-journal-error-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const turnResponse = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: '',
+        sessionId: 'app-session-373',
+        messageId: 'turn-journal-error-test-1',
+      }),
+    });
+    const turnPayload = await turnResponse.json();
+    const listResponse = await fetch(`${baseUrl}/conversation/recent?limit=1`);
+    const listPayload = await listResponse.json();
+
+    expect(turnResponse.status).toBe(400);
+    expect(turnPayload.error).toEqual(expect.objectContaining({
+      code: 'empty_turn_text',
+    }));
+    expect(listResponse.status).toBe(200);
+    expect(listPayload.records).toHaveLength(1);
+    expect(listPayload.records[0]).toEqual(expect.objectContaining({
+      outcome: 'error',
+      prompt: '',
+      session_id: 'app-session-373',
+      message_id: 'turn-journal-error-test-1',
+      response: null,
+      error: expect.objectContaining({
+        code: 'empty_turn_text',
+      }),
+      external_send: false,
+      tools_executed: false,
+    }));
   });
 
   test('can include a manual team plan from a runtime turn without executing it', async () => {

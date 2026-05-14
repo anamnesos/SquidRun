@@ -6,6 +6,7 @@ import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 import { runRuntimeTurn } from "./turn.js";
+import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
 import { createWorkTaskFromDraft, listWorkTasks } from "./work-task.js";
@@ -134,9 +135,18 @@ export async function route(request: IncomingMessage, response: ServerResponse):
   }
 
   if (request.method === "POST" && requestUrl.pathname === "/turn") {
+    const startedAt = Date.now();
+    let turnInput: {
+      text: string;
+      sessionId?: string;
+      messageId?: string;
+      requestId?: string;
+      suggestTeamPlanFor?: string;
+      useModel?: boolean;
+    } | null = null;
     try {
       const body = await readJsonBody(request);
-      const turnInput = {
+      turnInput = {
         text: String(body.text || body.message || ""),
       };
       if (typeof body.sessionId === "string") {
@@ -154,8 +164,23 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       if (body.useModel === true || body.model === true || body.mode === "model") {
         Object.assign(turnInput, { useModel: true });
       }
-      sendJson(response, 200, await runRuntimeTurn(turnInput));
+      const turnResponse = await runRuntimeTurn(turnInput);
+      Object.assign(turnResponse, {
+        journal: appendRuntimeTurnJournal({
+          turnInput,
+          startedAt,
+          response: turnResponse,
+        }),
+      });
+      sendJson(response, 200, turnResponse);
     } catch (error) {
+      if (turnInput) {
+        appendRuntimeTurnJournal({
+          turnInput,
+          startedAt,
+          error,
+        });
+      }
       sendJson(response, 400, errorPayload(error));
     }
     return;
@@ -170,6 +195,9 @@ export async function route(request: IncomingMessage, response: ServerResponse):
         better: String(body.better || body.betterPhrasing || body.better_phrasing || ""),
         caseId: typeof body.caseId === "string" ? body.caseId : null,
         source: typeof body.source === "string" ? body.source : "runtime-ui",
+        turnMetadata: body.turnMetadata && typeof body.turnMetadata === "object" && !Array.isArray(body.turnMetadata)
+          ? body.turnMetadata as Record<string, unknown>
+          : null,
       });
       sendJson(response, 200, capture);
     } catch (error) {
@@ -228,6 +256,12 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/voice/corrections") {
     sendJson(response, 200, listVoiceCorrections());
+    return;
+  }
+
+  if (requestUrl.pathname === "/conversation/recent") {
+    const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "20", 10);
+    sendJson(response, 200, listRuntimeTurnJournal({ limit }));
     return;
   }
 
