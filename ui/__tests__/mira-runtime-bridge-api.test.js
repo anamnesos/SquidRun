@@ -159,6 +159,37 @@ describe('Mira runtime bridge manual-plan API', () => {
     return tempStateRoot;
   }
 
+  function writeOperatorContext(stateRoot) {
+    const operatorDir = path.join(stateRoot, 'context', 'operator');
+    fs.mkdirSync(operatorDir, { recursive: true });
+    fs.writeFileSync(path.join(operatorDir, 'operator-context.normalized.json'), JSON.stringify({
+      schema: 'mira.normalized.operator_context.v1',
+      business_thesis: 'Mira is James operating extension for CRM, ERP, admin, customer communication, tax, documents, computer-use, and business workflows.',
+      operating_lanes: [
+        'CRM',
+        'ERP',
+        'admin',
+        'customer communication',
+        'tax',
+        'documents',
+        'computer-use',
+        'business workflows',
+      ],
+      known_product_lanes: ['TrustQuote'],
+      explicit_non_claims: [
+        'TrustQuote is not proof of the business legal name',
+        'do not invent James business name',
+      ],
+      source_metadata: {
+        source_path: 'workspace/knowledge/user-context.md',
+        metadata_only: true,
+        live_continuity_excluded: true,
+        raw_content_included: false,
+        normalized_summary_only: true,
+      },
+    }, null, 2));
+  }
+
   test('returns manual bridge plan without executing send CLI', async () => {
     await startServer();
 
@@ -272,6 +303,11 @@ describe('Mira runtime bridge manual-plan API', () => {
         metadataOnly: true,
         liveContinuityExcluded: true,
       }),
+      operatorContext: expect.objectContaining({
+        loaded: false,
+        metadataOnly: true,
+        liveContinuityExcluded: true,
+      }),
       response: expect.objectContaining({
         role: 'mira',
         content: expect.stringContaining('Runtime state:'),
@@ -283,6 +319,7 @@ describe('Mira runtime bridge manual-plan API', () => {
 
   test('includes concise loaded identity relationship permission summary when normalized core is imported', async () => {
     const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
     await startServer({ MIRA_STATE_ROOT: stateRoot });
 
     const response = await fetch(`${baseUrl}/turn`, {
@@ -310,7 +347,18 @@ describe('Mira runtime bridge manual-plan API', () => {
       relationship: expect.stringContaining('James mode=collaborative_presence_design'),
       permissions: expect.stringContaining('blocked: external sends, network, deploy, trade, runtime start'),
     });
+    expect(payload.operatorContext).toEqual(expect.objectContaining({
+      loaded: true,
+      metadataOnly: true,
+      liveContinuityExcluded: true,
+      businessThesis: expect.stringContaining('operating extension'),
+      operatingLanes: expect.arrayContaining(['CRM', 'ERP', 'admin', 'customer communication', 'tax', 'documents']),
+      knownProductLanes: ['TrustQuote'],
+      explicitNonClaims: expect.arrayContaining(['do not invent James business name']),
+    }));
     expect(payload.response.content).toContain('Loaded normalized core summary:');
+    expect(payload.response.content).toContain('Operator context:');
+    expect(payload.response.content).toContain('CRM, ERP, admin');
     expect(payload.response.content).toContain('full continuity not claimed');
     expect(payload.modelInvoked).toBe(false);
     expect(payload.runtimeExecutes).toBe(false);

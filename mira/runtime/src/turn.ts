@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { planManualBridgeRequest, type ManualBridgeRequestPlan } from "./bridge-request-plan.js";
+import { loadOperatorContext, type OperatorContextSummary } from "./operator-context.js";
 import { getSessionSkeleton } from "./runtime.js";
+import { getStateRootReadiness } from "./state-root.js";
 
 export type RuntimeTurnInput = {
   text?: string;
@@ -39,6 +41,7 @@ export type RuntimeTurnResponse = {
     relationship: string | null;
     permissions: string | null;
   };
+  operatorContext: OperatorContextSummary;
   response: {
     role: "mira";
     content: string;
@@ -112,6 +115,7 @@ function buildContent(
   inputText: string,
   session = getSessionSkeleton().session,
   loadedCoreSummary = buildLoadedCoreSummary(session),
+  operatorContext = loadOperatorContext(getStateRootReadiness()),
 ): string {
   const stateParts = [
     session.acceptanceContinuity.loaded
@@ -133,8 +137,11 @@ function buildContent(
   const coreLine = coreParts.length > 0
     ? `\nLoaded normalized core summary: ${coreParts.join(" | ")}.`
     : "";
+  const operatorLine = operatorContext.loaded
+    ? `\nOperator context: ${operatorContext.businessThesis || "business thesis loaded"} Lanes: ${operatorContext.operatingLanes.join(", ")}.`
+    : "";
 
-  return `I heard: ${inputText}\nRuntime state: ${stateParts.join("; ")}.${coreLine}`;
+  return `I heard: ${inputText}\nRuntime state: ${stateParts.join("; ")}.${coreLine}${operatorLine}`;
 }
 
 export function runRuntimeTurn(input: RuntimeTurnInput = {}): RuntimeTurnResponse {
@@ -148,7 +155,8 @@ export function runRuntimeTurn(input: RuntimeTurnInput = {}): RuntimeTurnRespons
     ? input.sessionId.trim()
     : null;
   const loadedCoreSummary = buildLoadedCoreSummary(session);
-  const responseContent = buildContent(text, session, loadedCoreSummary);
+  const operatorContext = loadOperatorContext(getStateRootReadiness());
+  const responseContent = buildContent(text, session, loadedCoreSummary, operatorContext);
   let suggestedTeamPlan: ManualBridgeRequestPlan | null = null;
   if (input.suggestTeamPlanFor) {
     const planInput = {
@@ -186,6 +194,7 @@ export function runRuntimeTurn(input: RuntimeTurnInput = {}): RuntimeTurnRespons
       normalizedCoreDocumentCount: session.normalizedCore.documentCount,
     },
     loadedCoreSummary,
+    operatorContext,
     response: {
       role: "mira",
       content: responseContent,
