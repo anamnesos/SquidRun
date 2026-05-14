@@ -1,0 +1,31 @@
+{
+  "schema": "mira.runtime_continuity_loader_contract.v0",
+  "status": "design_only",
+  "allowed_scope": "acceptance_docs_only",
+  "approved_batch_id": "acceptance-permission-contracts-v1",
+  "allowed_relative_paths": [
+    "acceptance/mira-presence-runtime-acceptance-v0.md",
+    "acceptance/mira-north-star-acceptance.md",
+    "acceptance/mira-pc-embodiment-permission-v0.md"
+  ],
+  "required_receipts_dir": "imports/receipts",
+  "required_receipt_schema": "mira.import_receipt.v0",
+  "runtime_session_claim_allowed": false,
+  "continuity_loaded_claim_allowed": false,
+  "mutation_limits": {
+    "queue_mutation_allowed": false,
+    "report_mutation_allowed": false,
+    "receipt_mutation_allowed": false,
+    "state_write_allowed": false,
+    "squidrun_memory_read_allowed": false,
+    "transcript_read_allowed": false
+  },
+  "non_scope": [
+    "second_import_batch",
+    "runtime_session_continuity_claim",
+    "model_behavior_migration",
+    "bridge_behavior",
+    "telegram_route",
+    "ui_surface"
+  ]
+}
