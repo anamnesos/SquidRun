@@ -338,6 +338,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/model/providers'");
     expect(appJs).toContain('modelProviderSelect');
     expect(appJs).toContain('modelProvider');
+    expect(appJs).toContain('syncWorkbenchForViewport');
+    expect(appJs).toContain("window.matchMedia('(max-width: 820px)')");
     expect(appJs).toContain("fetch('/work/drafts'");
     expect(appJs).toContain("fetch('/work/tasks'");
     expect(appJs).toContain("fetch('/conversation/recent");

@@ -34,6 +34,20 @@ const elements = {
 
 let modelStatus = null;
 
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 820px)').matches;
+}
+
+function syncWorkbenchForViewport() {
+  if (!isMobileViewport()) {
+    elements.contextPanel.hidden = false;
+    elements.contextToggle.setAttribute('aria-expanded', 'true');
+    return;
+  }
+  elements.contextPanel.hidden = true;
+  elements.contextToggle.setAttribute('aria-expanded', 'false');
+}
+
 function setText(node, value) {
   node.textContent = value || '';
 }
@@ -497,4 +511,6 @@ elements.form.addEventListener('submit', async (event) => {
   }
 });
 
+window.addEventListener('resize', syncWorkbenchForViewport);
+syncWorkbenchForViewport();
 prime();
