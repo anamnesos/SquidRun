@@ -8,10 +8,11 @@ describe('Mira import executor semantics contract', () => {
   const contractPath = path.join(repoRoot, 'mira', 'imports', 'import-executor-semantics-v0.md');
   const reportPath = path.join(repoRoot, 'mira', 'imports', 'reports', 'first-batch-dry-run-v1.json');
 
-  test('keeps v0 contract-only and dry-run first', () => {
+  test('keeps v0 dry-run only with apply/import execution unsupported', () => {
     const contract = fs.readFileSync(contractPath, 'utf8');
 
-    expect(contract).toContain('Status: contract only. No executor code exists in this milestone.');
+    expect(contract).toContain('Status: dry-run executor exists at `mira/tools/execute-reviewed-import.js`.');
+    expect(contract).toContain('Apply/import execution is still not supported.');
     expect(contract).toContain('V0 is dry-run first.');
     expect(contract).toContain('`--apply` is not available');
     expect(contract).toContain('Default execution must emit a plan only');

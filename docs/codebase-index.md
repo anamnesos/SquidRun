@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `054d411`
+- Git HEAD: `6b83e17`
 - Total files listed: 1114
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -39,8 +39,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1113
-- M: 1
+- clean/tracked: 1111
+- M: 3
 
 ## Files
 
@@ -115,7 +115,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `LICENSE` | file | `clean/tracked` | 1078 |
 | `mira/bridge/squidrun-adapter-protocol-v0.md` | doc | `clean/tracked` | 6791 |
 | `mira/import-disposition-manifest.json` | config | `clean/tracked` | 5395 |
-| `mira/imports/import-executor-semantics-v0.md` | doc | `clean/tracked` | 2591 |
+| `mira/imports/import-executor-semantics-v0.md` | doc | ` M` | 2610 |
 | `mira/imports/import-record.schema.json` | config | `clean/tracked` | 1471 |
 | `mira/imports/README.md` | doc | `clean/tracked` | 375 |
 | `mira/imports/reports/first-batch-dry-run-v1.json` | config | `clean/tracked` | 2524 |
@@ -481,7 +481,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-execute-reviewed-import.test.js` | test | `clean/tracked` | 4770 |
 | `ui/__tests__/mira-extraction-main-ui.test.js` | test | `clean/tracked` | 1423 |
 | `ui/__tests__/mira-first-batch-dry-run-report.test.js` | test | `clean/tracked` | 2204 |
-| `ui/__tests__/mira-import-executor-semantics.test.js` | test | `clean/tracked` | 2771 |
+| `ui/__tests__/mira-import-executor-semantics.test.js` | test | ` M` | 2884 |
 | `ui/__tests__/mira-lab-default-ui.test.js` | test | `clean/tracked` | 12201 |
 | `ui/__tests__/mira-lab-prompt-reply.test.js` | test | `clean/tracked` | 92147 |
 | `ui/__tests__/mira-lab-surface.test.js` | test | `clean/tracked` | 168001 |

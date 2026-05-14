@@ -1,6 +1,7 @@
 # Mira Import Executor Semantics v0
 
-Status: contract only. No executor code exists in this milestone.
+Status: dry-run executor exists at `mira/tools/execute-reviewed-import.js`.
+Apply/import execution is still not supported.
 
 This contract defines how a future reviewed import executor must behave before
 any Mira continuity, acceptance, permission, or conversation evidence is copied
@@ -8,7 +9,7 @@ into `MIRA_STATE_ROOT`.
 
 ## Command Shape
 
-Future executor name:
+Executor name:
 
 ```text
 node mira/tools/execute-reviewed-import.js --report mira/imports/reports/first-batch-dry-run-v1.json
@@ -75,8 +76,8 @@ with these minimum rules:
 
 ## Non-Scope
 
-- No executor implementation in this milestone.
 - No import execution.
+- No apply mode.
 - No queue status mutation.
 - No relationship memory or transcript batch approval.
 - No runtime auto-load of imported continuity.
