@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `0c35fe8`
+- Git HEAD: `6b451b4`
 - Total files listed: 1120
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -141,7 +141,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
 | `MODEL-SHIMS.md` | doc | `clean/tracked` | 913 |
 | `package-lock.json` | config | `clean/tracked` | 232 |
-| `package.json` | config | `clean/tracked` | 792 |
+| `package.json` | config | `clean/tracked` | 772 |
 | `PRODUCT-GUIDE.md` | doc | `clean/tracked` | 741 |
 | `README.md` | doc | `clean/tracked` | 18148 |
 | `relay/package-lock.json` | config | `clean/tracked` | 843 |
