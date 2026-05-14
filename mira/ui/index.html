@@ -11,32 +11,32 @@
       <section class="conversation" aria-label="Mira conversation">
         <header class="topbar">
           <div>
-            <p class="kicker">Mira Runtime</p>
             <h1>Mira</h1>
+            <p class="presence-line">Here.</p>
           </div>
-          <div class="status-strip" id="statusStrip">
-            <span class="chip">loading</span>
-          </div>
+          <button class="quiet-icon" type="button" id="contextToggle" aria-expanded="false" aria-controls="contextPanel">Context</button>
         </header>
 
         <div class="thread" id="thread" aria-live="polite">
           <article class="message mira">
-            <p>I'm here. Give me the business mess in plain English.</p>
+            <p>Mira.</p>
           </article>
         </div>
 
         <form class="composer" id="turnForm">
+          <textarea id="turnText" rows="3" placeholder="Say it plainly..." autocomplete="off"></textarea>
           <label class="model-toggle">
             <input type="checkbox" id="useModel" checked>
             <span>model</span>
           </label>
-          <textarea id="turnText" rows="3" placeholder="Type to Mira..." autocomplete="off"></textarea>
           <button type="submit" id="sendButton">Send</button>
         </form>
       </section>
 
-      <aside class="side" aria-label="Runtime context">
-        <h2>Context</h2>
+      <aside class="context-panel" id="contextPanel" aria-label="Runtime context" hidden>
+        <div class="status-strip" id="statusStrip">
+          <span class="chip">loading</span>
+        </div>
         <dl>
           <div>
             <dt>Operator</dt>
@@ -49,6 +49,10 @@
           <div>
             <dt>Last Turn</dt>
             <dd id="lastTurn">none</dd>
+          </div>
+          <div>
+            <dt>Review</dt>
+            <dd id="reviewSummary">none pending</dd>
           </div>
         </dl>
       </aside>

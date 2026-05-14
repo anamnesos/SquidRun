@@ -3,7 +3,7 @@ import type { RuntimeTurnResponse } from "./turn.js";
 import { readVoiceLabCases } from "./voice-lab.js";
 
 export type TurnModelConfig = {
-  provider: "openai_responses";
+  provider: "openai_responses" | "ollama_chat";
   endpoint: string;
   model: string;
   maxOutputTokens: number;
@@ -12,13 +12,15 @@ export type TurnModelConfig = {
 
 export type TurnModelResult = {
   text: string;
-  provider: "openai_responses";
+  provider: "openai_responses" | "ollama_chat";
   model: string;
   responseId: string | null;
 };
 
 const defaultEndpoint = "https://api.openai.com/v1/responses";
+const defaultOllamaEndpoint = "http://127.0.0.1:11434/api/chat";
 const defaultModel = "gpt-5.5";
+const defaultOllamaModel = "gemma4:e4b";
 const defaultMaxOutputTokens = 520;
 
 function trim(value: unknown): string {
@@ -31,14 +33,35 @@ function positiveInt(value: unknown, fallback: number): number {
 }
 
 export function getTurnModelConfig(env: NodeJS.ProcessEnv = process.env): TurnModelConfig & { apiKey: string } {
+  const requestedProvider = trim(env.MIRA_RUNTIME_MODEL_PROVIDER || env.MIRA_RUNTIME_TURN_PROVIDER).toLowerCase();
+  const provider = ["ollama", "ollama_chat", "local", "gemma"].includes(requestedProvider)
+    || Boolean(trim(env.MIRA_OLLAMA_MODEL || env.OLLAMA_MODEL))
+    ? "ollama_chat"
+    : "openai_responses";
+  const maxOutputTokens = positiveInt(env.MIRA_RUNTIME_TURN_MAX_OUTPUT_TOKENS, defaultMaxOutputTokens);
+
+  if (provider === "ollama_chat") {
+    const baseUrl = trim(env.MIRA_OLLAMA_BASE_URL || env.OLLAMA_BASE_URL).replace(/\/+$/, "");
+    const endpoint = trim(env.MIRA_OLLAMA_CHAT_URL || env.OLLAMA_CHAT_URL)
+      || (baseUrl ? `${baseUrl}/api/chat` : defaultOllamaEndpoint);
+    const model = trim(env.MIRA_RUNTIME_TURN_MODEL || env.MIRA_OLLAMA_MODEL || env.OLLAMA_MODEL) || defaultOllamaModel;
+    return {
+      provider,
+      endpoint,
+      model,
+      maxOutputTokens,
+      apiKey: "",
+      apiKeyPresent: false,
+    };
+  }
+
   const apiKey = trim(env.MIRA_RUNTIME_OPENAI_API_KEY || env.OPENAI_API_KEY);
   const baseUrl = trim(env.MIRA_OPENAI_BASE_URL).replace(/\/+$/, "");
   const endpoint = trim(env.MIRA_OPENAI_RESPONSES_URL) || (baseUrl ? `${baseUrl}/v1/responses` : defaultEndpoint);
   const model = trim(env.MIRA_RUNTIME_TURN_MODEL || env.SQUIDRUN_MIRA_TEXT_MODEL || env.OPENAI_MIRA_TEXT_MODEL) || defaultModel;
-  const maxOutputTokens = positiveInt(env.MIRA_RUNTIME_TURN_MAX_OUTPUT_TOKENS, defaultMaxOutputTokens);
 
   return {
-    provider: "openai_responses",
+    provider,
     endpoint,
     model,
     maxOutputTokens,
@@ -106,6 +129,74 @@ function buildInstructions(input: {
   ].join("\n");
 }
 
+function extractOllamaText(body: unknown): string {
+  if (!body || typeof body !== "object") return "";
+  const record = body as Record<string, unknown>;
+  const message = record.message;
+  if (message && typeof message === "object" && !Array.isArray(message)) {
+    const content = (message as Record<string, unknown>).content;
+    if (typeof content === "string" && content.trim()) return content.trim();
+  }
+  if (typeof record.response === "string" && record.response.trim()) return record.response.trim();
+  return extractResponseText(body);
+}
+
+async function invokeOllamaChat(input: {
+  text: string;
+  loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
+  operatorContext: OperatorContextSummary;
+  fetchImpl: typeof fetch;
+  config: TurnModelConfig & { apiKey: string };
+}): Promise<TurnModelResult> {
+  const response = await input.fetchImpl(input.config.endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: input.config.model,
+      stream: false,
+      messages: [
+        {
+          role: "system",
+          content: buildInstructions({
+            loadedCoreSummary: input.loadedCoreSummary,
+            operatorContext: input.operatorContext,
+          }),
+        },
+        {
+          role: "user",
+          content: input.text,
+        },
+      ],
+      options: {
+        num_predict: input.config.maxOutputTokens,
+      },
+      keep_alive: "10m",
+    }),
+  });
+
+  if (!response.ok) {
+    throw Object.assign(new Error(`Ollama chat request failed with status ${response.status}.`), {
+      code: "ollama_chat_failed",
+      status: response.status,
+    });
+  }
+
+  const body = await response.json() as Record<string, unknown>;
+  const text = extractOllamaText(body);
+  if (!text) {
+    throw Object.assign(new Error("Ollama chat returned no output text."), { code: "empty_ollama_response" });
+  }
+
+  return {
+    text,
+    provider: "ollama_chat",
+    model: input.config.model,
+    responseId: typeof body.created_at === "string" ? body.created_at : null,
+  };
+}
+
 export async function invokeTurnModel(input: {
   text: string;
   loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
@@ -114,7 +205,7 @@ export async function invokeTurnModel(input: {
   fetchImpl?: typeof fetch;
 }): Promise<TurnModelResult> {
   const config = getTurnModelConfig(input.env || process.env);
-  if (!config.apiKeyPresent) {
+  if (config.provider === "openai_responses" && !config.apiKeyPresent) {
     throw Object.assign(new Error("OPENAI_API_KEY is required for model-backed Mira turns."), {
       code: "missing_openai_api_key",
     });
@@ -123,6 +214,16 @@ export async function invokeTurnModel(input: {
   const fetcher = input.fetchImpl || globalThis.fetch;
   if (typeof fetcher !== "function") {
     throw Object.assign(new Error("fetch is unavailable for model-backed Mira turns."), { code: "fetch_unavailable" });
+  }
+
+  if (config.provider === "ollama_chat") {
+    return invokeOllamaChat({
+      text: input.text,
+      loadedCoreSummary: input.loadedCoreSummary,
+      operatorContext: input.operatorContext,
+      fetchImpl: fetcher,
+      config,
+    });
   }
 
   const response = await fetcher(config.endpoint, {

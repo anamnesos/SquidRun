@@ -300,16 +300,25 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexResponse.headers.get('content-type')).toContain('text/html');
     expect(indexHtml).toContain('<h1>Mira</h1>');
     expect(indexHtml).toContain('id="turnForm"');
+    expect(indexHtml).toContain('id="contextPanel"');
+    expect(indexHtml).toContain('id="reviewSummary"');
+    expect(indexHtml).toContain('Mira.</p>');
+    expect(indexHtml).not.toContain('Mira Runtime');
+    expect(indexHtml).not.toContain('business mess');
     expect(appResponse.status).toBe(200);
     expect(appResponse.headers.get('content-type')).toContain('text/javascript');
     expect(appJs).toContain("fetch('/turn'");
     expect(appJs).toContain("fetch('/voice/correction'");
+    expect(appJs).toContain("fetch('/voice/corrections'");
     expect(appJs).toContain('wrong shape');
+    expect(appJs).toContain('contextToggle');
     expect(appJs).toContain('useModel');
     expect(cssResponse.status).toBe(200);
     expect(cssResponse.headers.get('content-type')).toContain('text/css');
     expect(css).toContain('.conversation');
+    expect(css).toContain('.context-panel');
     expect(css).toContain('.subtle-button');
+    expect(css).not.toContain('.side');
   });
 
   test('captures voice correction candidates from runtime API without mutating live voice lab', async () => {
@@ -805,10 +814,93 @@ describe('Mira runtime bridge manual-plan API', () => {
       },
     }));
     expect(openAiRequests).toHaveLength(1);
+      expect(openAiRequests[0]).toEqual(expect.objectContaining({
+        method: 'POST',
+        url: '/v1/responses',
+        authorization: 'Bearer sk-test-fake-key-do-not-use',
+      }));
+    });
+
+  test('can use local Ollama/Gemma chat for model-backed turns without tools or sends', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    const ollamaBaseUrl = await startOpenAiMock((_request, response, body) => {
+      expect(body).toEqual(expect.objectContaining({
+        model: 'gemma4:e4b',
+        stream: false,
+        keep_alive: '10m',
+        options: expect.objectContaining({
+          num_predict: 520,
+        }),
+      }));
+      expect(body.messages).toHaveLength(2);
+      expect(body.messages[0]).toEqual(expect.objectContaining({
+        role: 'system',
+        content: expect.stringContaining('Use the Mira voice lab examples'),
+      }));
+      expect(body.messages[0].content).toContain('Prompt class: identity-who-are-you-v0');
+      expect(body.messages[0].content).not.toContain('business bot');
+      expect(body.messages[1]).toEqual({
+        role: 'user',
+        content: 'who are you',
+      });
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        model: 'gemma4:e4b',
+        created_at: '2026-05-14T07:58:00.000Z',
+        message: {
+          role: 'assistant',
+          content: 'Mira.',
+        },
+        done: true,
+      }));
+    });
+    await startServer({
+      MIRA_STATE_ROOT: stateRoot,
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
+      OPENAI_API_KEY: '',
+      MIRA_RUNTIME_OPENAI_API_KEY: '',
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'who are you',
+        sessionId: 'app-session-373',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      modelInvoked: true,
+      runtimeExecutes: false,
+      telegramRouteControl: false,
+      uiSurfaceControl: false,
+      model: {
+        requested: true,
+        provider: 'ollama_chat',
+        model: 'gemma4:e4b',
+        responseId: '2026-05-14T07:58:00.000Z',
+        toolsEnabled: false,
+        sendsEnabled: false,
+        store: false,
+      },
+      response: {
+        role: 'mira',
+        content: 'Mira.',
+      },
+    }));
+    expect(openAiRequests).toHaveLength(1);
     expect(openAiRequests[0]).toEqual(expect.objectContaining({
       method: 'POST',
-      url: '/v1/responses',
-      authorization: 'Bearer sk-test-fake-key-do-not-use',
+      url: '/api/chat',
+      authorization: undefined,
     }));
   });
 

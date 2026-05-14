@@ -12,9 +12,12 @@ const elements = {
   sendButton: document.getElementById('sendButton'),
   thread: document.getElementById('thread'),
   statusStrip: document.getElementById('statusStrip'),
+  contextToggle: document.getElementById('contextToggle'),
+  contextPanel: document.getElementById('contextPanel'),
   operatorSummary: document.getElementById('operatorSummary'),
   coreSummary: document.getElementById('coreSummary'),
   lastTurn: document.getElementById('lastTurn'),
+  reviewSummary: document.getElementById('reviewSummary'),
 };
 
 function setText(node, value) {
@@ -70,6 +73,11 @@ function updateRuntimeState(payload) {
   setText(elements.lastTurn, payload?.modelInvoked ? 'model-backed' : 'deterministic');
 }
 
+function updateReviewSummary(payload) {
+  const count = Number(payload?.pending_count || 0);
+  setText(elements.reviewSummary, count === 1 ? '1 pending correction' : `${count} pending corrections`);
+}
+
 async function sendTurn(text) {
   const response = await fetch('/turn', {
     method: 'POST',
@@ -108,6 +116,13 @@ async function captureCorrection(payload, prompt, better) {
   return result;
 }
 
+async function refreshCorrections() {
+  const response = await fetch('/voice/corrections');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateReviewSummary(payload);
+}
+
 function attachCorrectionControl(article, payload, prompt) {
   const actions = document.createElement('div');
   actions.className = 'message-actions';
@@ -122,6 +137,7 @@ function attachCorrectionControl(article, payload, prompt) {
     try {
       await captureCorrection(payload, prompt, better);
       button.textContent = 'captured';
+      await refreshCorrections();
     } catch (error) {
       button.disabled = false;
       appendMessage('mira', error.message, 'error');
@@ -138,11 +154,19 @@ async function prime() {
     const payload = await sendTurn('status');
     elements.useModel.checked = useModel;
     updateRuntimeState(payload);
+    await refreshCorrections();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
     setText(elements.lastTurn, error.message);
   }
 }
+
+elements.contextToggle.addEventListener('click', async () => {
+  const shouldOpen = elements.contextPanel.hidden;
+  elements.contextPanel.hidden = !shouldOpen;
+  elements.contextToggle.setAttribute('aria-expanded', String(shouldOpen));
+  if (shouldOpen) await refreshCorrections();
+});
 
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();

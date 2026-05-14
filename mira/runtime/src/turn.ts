@@ -25,7 +25,7 @@ export type RuntimeTurnResponse = {
   uiSurfaceControl: false;
   model: {
     requested: boolean;
-    provider: "openai_responses" | null;
+    provider: "openai_responses" | "ollama_chat" | null;
     model: string | null;
     responseId: string | null;
     toolsEnabled: false;
@@ -173,7 +173,7 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
   const voiceLab = matchVoiceLabTurn(text, { seed: voiceSeed });
   let responseContent = voiceLab?.content || buildContent(text, session, loadedCoreSummary, operatorContext);
   let modelInvoked = false;
-  let modelProvider: "openai_responses" | null = null;
+  let modelProvider: "openai_responses" | "ollama_chat" | null = null;
   let modelName: string | null = null;
   let modelResponseId: string | null = null;
   if (input.useModel === true) {
