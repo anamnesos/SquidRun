@@ -15,6 +15,15 @@ export type StateRootReadiness = {
   importsLoaded: false;
 };
 
+export type ImportReceiptSummary = {
+  receiptsDir: string | null;
+  receiptCount: number;
+  recordCount: number;
+  receiptsRead: boolean;
+  continuityLoaded: false;
+  error: string | null;
+};
+
 export type HealthResponse = {
   service: "mira-runtime";
   status: RuntimeStatus;
@@ -49,5 +58,6 @@ export type SessionResponse = {
     stateRootReady: boolean;
     stateRootPath: string | null;
     stateRootError: string | null;
+    importReceipts: ImportReceiptSummary;
   };
 };

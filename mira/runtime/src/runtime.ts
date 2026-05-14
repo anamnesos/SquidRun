@@ -4,6 +4,7 @@ import type {
   RuntimeCapability,
   SessionResponse,
 } from "./contracts.js";
+import { getImportReceiptSummary } from "./import-status.js";
 import { getStateRootReadiness } from "./state-root.js";
 
 const version = "0.1.0";
@@ -71,6 +72,7 @@ export function getCapabilities(): CapabilitiesResponse {
 
 export function getSessionSkeleton(): SessionResponse {
   const stateRoot = getStateRootReadiness();
+  const importReceipts = getImportReceiptSummary(stateRoot);
 
   return {
     service: "mira-runtime",
@@ -83,6 +85,7 @@ export function getSessionSkeleton(): SessionResponse {
       stateRootReady: stateRoot.ready,
       stateRootPath: stateRoot.path,
       stateRootError: stateRoot.error,
+      importReceipts,
     },
   };
 }

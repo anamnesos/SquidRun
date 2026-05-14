@@ -122,6 +122,50 @@ describe('Mira runtime state-root readiness', () => {
       stateRootReady: true,
       stateRootPath: path.resolve(stateRoot),
       stateRootError: null,
+      importReceipts: expect.objectContaining({
+        receiptsDir: path.join(path.resolve(stateRoot), 'imports', 'receipts'),
+        receiptCount: 0,
+        recordCount: 0,
+        receiptsRead: true,
+        continuityLoaded: false,
+        error: null,
+      }),
+    }));
+  });
+
+  test('session reports receipt counts without loading continuity files', () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-receipts-'));
+    const receiptsDir = path.join(stateRoot, 'imports', 'receipts');
+    const continuityDir = path.join(stateRoot, 'continuity');
+    fs.mkdirSync(receiptsDir, { recursive: true });
+    fs.mkdirSync(continuityDir, { recursive: true });
+    fs.writeFileSync(path.join(continuityDir, 'should-not-load.json'), '{not valid json');
+    fs.writeFileSync(path.join(receiptsDir, 'receipt-a.json'), JSON.stringify({
+      receipt_id: 'receipt-a',
+      records: [{ id: 'one' }, { id: 'two' }],
+    }));
+    fs.writeFileSync(path.join(receiptsDir, 'receipt-b.json'), JSON.stringify({
+      receipt_id: 'receipt-b',
+      records: [{ id: 'three' }],
+    }));
+
+    const session = runRuntimeSnippet(`
+      process.env.MIRA_STATE_ROOT = ${JSON.stringify(stateRoot)};
+      import { getSessionSkeleton } from ${JSON.stringify(compiledRuntimeUrl)};
+      console.log(JSON.stringify(getSessionSkeleton()));
+    `);
+
+    expect(session.session).toEqual(expect.objectContaining({
+      continuityLoaded: false,
+      liveDataImported: false,
+      importReceipts: expect.objectContaining({
+        receiptsDir,
+        receiptCount: 2,
+        recordCount: 3,
+        receiptsRead: true,
+        continuityLoaded: false,
+        error: null,
+      }),
     }));
   });
 
@@ -146,6 +190,11 @@ describe('Mira runtime state-root readiness', () => {
       stateRootReady: true,
       stateRootPath: path.resolve(stateRoot),
       stateRootError: null,
+      importReceipts: expect.objectContaining({
+        receiptCount: 0,
+        recordCount: 0,
+        continuityLoaded: false,
+      }),
     }));
   });
 });
