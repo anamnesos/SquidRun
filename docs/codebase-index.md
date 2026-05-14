@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `554ef30`
-- Total files listed: 1142
+- Git HEAD: `e338ede`
+- Total files listed: 1144
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,10 +17,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 68
+- root: 69
 - scripts: 1
 - tools: 3
-- ui/__tests__: 454
+- ui/__tests__: 455
 - ui/modules: 363
 - ui/other: 29
 - ui/scripts: 169
@@ -33,14 +33,13 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 71
 - file: 1
 - script: 170
-- source: 396
-- test: 455
+- source: 397
+- test: 456
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1140
-- M: 2
+- clean/tracked: 1144
 
 ## Files
 
@@ -113,6 +112,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `GEMINI.md` | doc | `clean/tracked` | 675 |
 | `jest.config.js` | source | `clean/tracked` | 221 |
 | `LICENSE` | file | `clean/tracked` | 1078 |
+| `mira/bridge/hm-send-adapter.js` | source | `clean/tracked` | 4997 |
 | `mira/bridge/squidrun-adapter-protocol-v0.md` | doc | `clean/tracked` | 6791 |
 | `mira/import-disposition-manifest.json` | config | `clean/tracked` | 5395 |
 | `mira/imports/approvals/batch-2a-normalized-core-approval-v1.json` | config | `clean/tracked` | 1195 |
@@ -142,7 +142,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/runtime/src/acceptance-continuity.ts` | source | `clean/tracked` | 4112 |
 | `mira/runtime/src/contracts.ts` | source | `clean/tracked` | 2569 |
 | `mira/runtime/src/import-status.ts` | source | `clean/tracked` | 1355 |
-| `mira/runtime/src/normalized-core.ts` | source | ` M` | 5870 |
+| `mira/runtime/src/normalized-core.ts` | source | `clean/tracked` | 5870 |
 | `mira/runtime/src/runtime.ts` | source | `clean/tracked` | 2566 |
 | `mira/runtime/src/server.ts` | source | `clean/tracked` | 1701 |
 | `mira/runtime/src/state-root.ts` | source | `clean/tracked` | 2035 |
@@ -504,6 +504,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-extraction-main-ui.test.js` | test | `clean/tracked` | 1423 |
 | `ui/__tests__/mira-first-batch-approval-marker.test.js` | test | `clean/tracked` | 3101 |
 | `ui/__tests__/mira-first-batch-dry-run-report.test.js` | test | `clean/tracked` | 2204 |
+| `ui/__tests__/mira-hm-send-adapter.test.js` | test | `clean/tracked` | 4440 |
 | `ui/__tests__/mira-import-approval-marker-semantics.test.js` | test | `clean/tracked` | 2622 |
 | `ui/__tests__/mira-import-executor-semantics.test.js` | test | `clean/tracked` | 3232 |
 | `ui/__tests__/mira-import-receipt-semantics.test.js` | test | `clean/tracked` | 2491 |
@@ -526,7 +527,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-reviewed-import-plan.test.js` | test | `clean/tracked` | 3657 |
 | `ui/__tests__/mira-runtime-continuity-loader-contract.test.js` | test | `clean/tracked` | 2431 |
 | `ui/__tests__/mira-runtime-curiosity.test.js` | test | `clean/tracked` | 5594 |
-| `ui/__tests__/mira-runtime-state-root.test.js` | test | ` M` | 18995 |
+| `ui/__tests__/mira-runtime-state-root.test.js` | test | `clean/tracked` | 18995 |
 | `ui/__tests__/mira-source-action-substrate.test.js` | test | `clean/tracked` | 6719 |
 | `ui/__tests__/mira-state-import-tooling.test.js` | test | `clean/tracked` | 2140 |
 | `ui/__tests__/mira-tab-language-gate.test.js` | test | `clean/tracked` | 6322 |
