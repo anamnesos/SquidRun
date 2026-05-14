@@ -84,10 +84,16 @@ const nearMatchers: Record<string, RegExp[]> = {
     /\b(that|this)\s+was\s+(a\s+)?bad\s+answer\b/i,
     /\b(that|this)\s+(answer|reply)\s+(was\s+)?(bad|wrong|fake|too\s+polished)\b/i,
     /\byou\s+(answered|replied)\s+badly\b/i,
+    /\banswer\s+the\s+pressure\b/i,
   ],
   "ordinary-silence-short-reply-v0": [
     /^\s*(\.{2,}|…)\s*$/u,
     /^\s*(mm+|hm+|huh)\s*\.?\s*$/i,
+  ],
+  "why-answer-that-way-v0": [
+    /\bwhy\s+did\s+you\s+answer\s+that\s+way\b/i,
+    /\bwhy\s+did\s+you\s+say\s+that\b/i,
+    /\bwhy\s+that\s+answer\b/i,
   ],
 };
 
@@ -143,8 +149,17 @@ function seedNumber(seed: string): number {
   return hash >>> 0;
 }
 
-function chooseCandidate(candidates: string[], seed: string | null): { content: string; index: number } | null {
+function chooseCandidate(candidates: string[], seed: string | null, inputText = ""): { content: string; index: number } | null {
   if (candidates.length === 0) return null;
+  if (/\bpressure\b/i.test(inputText) && /\bsurface\b/i.test(inputText)) {
+    const correctionIndex = candidates.findIndex((candidate) => (
+      /\bpressure\b/i.test(candidate) && /\bsurface\b/i.test(candidate)
+    ));
+    if (correctionIndex >= 0) {
+      const content = candidates[correctionIndex];
+      if (content) return { content, index: correctionIndex };
+    }
+  }
   const index = seed ? seedNumber(seed) % candidates.length : 0;
   const content = candidates[index] || candidates[0];
   if (!content) return null;
@@ -164,7 +179,7 @@ export function matchVoiceLabTurn(inputText: string, options: VoiceLabMatchOptio
     if (!exact && !near) continue;
 
     const passingCandidates = testCase.target_rewrites.filter((candidate) => candidatePasses(testCase, candidate));
-    const selected = chooseCandidate(passingCandidates, seed);
+    const selected = chooseCandidate(passingCandidates, seed, inputText);
     if (!selected) continue;
 
     return {
