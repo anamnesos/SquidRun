@@ -9,6 +9,8 @@ describe('Mira normalized core import contract', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const contractPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'batch-2a-core-normalizer-contract-v0.json');
   const reportPath = path.join(repoRoot, 'mira', 'imports', 'reports', 'batch-2a-normalized-core-dry-run-v1.json');
+  const approvalPath = path.join(repoRoot, 'mira', 'imports', 'approvals', 'batch-2a-normalized-core-approval-v1.json');
+  const approvalSchemaPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'normalized-core-approval-marker-schema-v0.json');
   const semanticsPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'batch-2a-core-normalizer-contract-v0.md');
 
   function readJson(filePath) {
@@ -46,6 +48,7 @@ describe('Mira normalized core import contract', () => {
     expect(report.proposal).toEqual(expect.objectContaining({
       batch_id: 'normalized-core-state-v1',
       status: 'dry_run_shape_only',
+      approval_marker_path: 'mira/imports/approvals/batch-2a-normalized-core-approval-v1.json',
       requires_explicit_approval_before_normalizer_execution: true,
       requires_explicit_approval_before_import_apply: true,
     }));
@@ -239,5 +242,47 @@ describe('Mira normalized core import contract', () => {
     expect(preview.previews).toHaveLength(3);
     expect(preview.state_written).toBe(false);
     expect(fs.readdirSync(stateRoot)).toEqual([]);
+  });
+
+  test('approval marker authorizes only normalized preview and apply design for batch 2a', () => {
+    const approval = readJson(approvalPath);
+    const approvalSchema = readJson(approvalSchemaPath);
+    const report = readJson(reportPath);
+    const contract = readJson(contractPath);
+
+    expect(approvalSchema.$id).toBe('mira.normalized_core_approval_marker.v0');
+    expect(approval).toEqual(expect.objectContaining({
+      schema: 'mira.normalized_core_approval_marker.v0',
+      approval_id: 'batch-2a-normalized-core-approval-v1',
+      approved_by: 'architect',
+      batch_id: report.proposal.batch_id,
+      report_id: report.report_id,
+      report_path: 'mira/imports/reports/batch-2a-normalized-core-dry-run-v1.json',
+      contract_path: 'mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json',
+      approval_scope: 'normalized_preview_and_apply_design_only',
+    }));
+    expect(approval.approved_record_ids).toEqual(contract.approved_record_ids);
+    expect(approval.approved_record_ids).toEqual(report.batch_records.map((record) => record.id));
+  });
+
+  test('approval marker preserves Oracle caveats and blocks state mutation', () => {
+    const approval = readJson(approvalPath);
+
+    expect(approval.caveats_preserved).toEqual({
+      local_store_write_allowed_now_scoped: true,
+      stale_session_window_device_metadata_only: true,
+      current_focus_demoted_to_source_focus_summary: true,
+      growth_events_excluded: true,
+    });
+    expect(approval.mutation_limits).toEqual({
+      normalizer_execution_allowed: true,
+      apply_design_allowed: true,
+      state_write_allowed: false,
+      receipt_write_allowed: false,
+      queue_mutation_allowed: false,
+      report_mutation_allowed: false,
+      runtime_load_allowed: false,
+      raw_import_allowed: false,
+    });
   });
 });

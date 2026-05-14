@@ -10,6 +10,7 @@
     "batch_id": "normalized-core-state-v1",
     "status": "dry_run_shape_only",
     "reason": "Import identity and relationship core as normalized Mira-owned state, not raw copied SquidRun seed files.",
+    "approval_marker_path": "mira/imports/approvals/batch-2a-normalized-core-approval-v1.json",
     "requires_explicit_approval_before_normalizer_execution": true,
     "requires_explicit_approval_before_import_apply": true
   },

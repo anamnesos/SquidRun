@@ -1,0 +1,32 @@
+{
+  "schema": "mira.normalized_core_approval_marker.v0",
+  "approval_id": "batch-2a-normalized-core-approval-v1",
+  "approved_at": "2026-05-14T04:50:00.000Z",
+  "approved_by": "architect",
+  "batch_id": "normalized-core-state-v1",
+  "report_id": "batch-2a-normalized-core-dry-run-v1",
+  "report_path": "mira/imports/reports/batch-2a-normalized-core-dry-run-v1.json",
+  "contract_path": "mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json",
+  "approved_record_ids": [
+    "mira_self_profile",
+    "james_relationship_state",
+    "relationship_presence_permissions"
+  ],
+  "approval_scope": "normalized_preview_and_apply_design_only",
+  "caveats_preserved": {
+    "local_store_write_allowed_now_scoped": true,
+    "stale_session_window_device_metadata_only": true,
+    "current_focus_demoted_to_source_focus_summary": true,
+    "growth_events_excluded": true
+  },
+  "mutation_limits": {
+    "normalizer_execution_allowed": true,
+    "apply_design_allowed": true,
+    "state_write_allowed": false,
+    "receipt_write_allowed": false,
+    "queue_mutation_allowed": false,
+    "report_mutation_allowed": false,
+    "runtime_load_allowed": false,
+    "raw_import_allowed": false
+  }
+}
