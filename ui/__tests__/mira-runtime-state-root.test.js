@@ -83,7 +83,7 @@ describe('Mira runtime state-root readiness', () => {
     return stateRoot;
   }
 
-  function writeNormalizedCoreStateRoot() {
+  function writeNormalizedCoreStateRoot(options = {}) {
     const stateRoot = writeApprovedAcceptanceStateRoot();
     const receiptsDir = path.join(stateRoot, 'imports', 'receipts');
     const coreDir = path.join(stateRoot, 'continuity', 'core');
@@ -145,11 +145,18 @@ describe('Mira runtime state-root readiness', () => {
       );
     }
 
+    const receiptRecords = options.duplicateReceiptIds
+      ? normalizedRecords.map((record) => ({
+        ...record,
+        id: 'mira_self_profile',
+      }))
+      : normalizedRecords;
+
     fs.writeFileSync(path.join(receiptsDir, 'normalized-core.json'), JSON.stringify({
       schema: 'mira.normalized_core_receipt.v0',
       receipt_id: 'normalized-core',
       batch_id: 'normalized-core-state-v1',
-      records: normalizedRecords.map((record) => ({
+      records: receiptRecords.map((record) => ({
         id: record.id,
         destination_relative_path: record.destination_relative_path,
         output_schema: record.output_schema,
@@ -426,6 +433,28 @@ describe('Mira runtime state-root readiness', () => {
     expect(session.session.normalizedCore.documents.find((document) => document.id === 'relationship_presence_permissions')).toEqual(expect.objectContaining({
       localStoreWriteScoped: true,
       blanketRuntimeWritePermission: false,
+    }));
+  });
+
+  test('session refuses normalized core receipts with duplicate record ids', () => {
+    const stateRoot = writeNormalizedCoreStateRoot({ duplicateReceiptIds: true });
+
+    const session = runRuntimeSnippet(`
+      process.env.MIRA_STATE_ROOT = ${JSON.stringify(stateRoot)};
+      import { getSessionSkeleton } from ${JSON.stringify(compiledRuntimeUrl)};
+      console.log(JSON.stringify(getSessionSkeleton()));
+    `);
+
+    expect(session.session).toEqual(expect.objectContaining({
+      continuityLoaded: false,
+      liveDataImported: false,
+      normalizedCore: expect.objectContaining({
+        loaded: false,
+        documentCount: 0,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+        error: expect.stringContaining('approved receipt not found'),
+      }),
     }));
   });
 

@@ -93,6 +93,9 @@ function findApprovedReceipt(receiptsDir: string): NormalizedReceipt | null {
     const records = Array.isArray(receipt.records) ? receipt.records as ReceiptRecord[] : [];
     if (records.length !== allowedRecords.length) continue;
 
+    const recordIds = new Set(records.map((record) => String(record.id || "")));
+    if (recordIds.size !== allowedRecords.length) continue;
+
     const allMatch = records.every((record) => {
       if (!isAllowedRecordId(record.id)) return false;
       const expectedRecord = expected.get(record.id);
