@@ -20,6 +20,14 @@ export type VoiceLabMatch = {
   content: string;
   source: "mira.voice_lab.v0";
   match: "exact" | "near";
+  variantIndex: number;
+  variantCount: number;
+  selectionSeed: string | null;
+};
+
+export type VoiceLabMatchOptions = {
+  labPath?: string;
+  seed?: string | null;
 };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -123,8 +131,30 @@ export function readVoiceLabCases(labPath = defaultVoiceLabPath): VoiceLabCase[]
     .map((line) => JSON.parse(line) as VoiceLabCase);
 }
 
-export function matchVoiceLabTurn(inputText: string, labPath = defaultVoiceLabPath): VoiceLabMatch | null {
+function seedNumber(seed: string): number {
+  const trailingNumber = seed.match(/(\d+)\s*$/)?.[1];
+  if (trailingNumber) return Number.parseInt(trailingNumber, 10);
+
+  let hash = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function chooseCandidate(candidates: string[], seed: string | null): { content: string; index: number } | null {
+  if (candidates.length === 0) return null;
+  const index = seed ? seedNumber(seed) % candidates.length : 0;
+  const content = candidates[index] || candidates[0];
+  if (!content) return null;
+  return { content, index };
+}
+
+export function matchVoiceLabTurn(inputText: string, options: VoiceLabMatchOptions | string = {}): VoiceLabMatch | null {
   if (!inputText.trim()) return null;
+  const labPath = typeof options === "string" ? options : options.labPath || defaultVoiceLabPath;
+  const seed = typeof options === "string" ? null : options.seed?.trim() || null;
   const normalizedInput = normalizePrompt(inputText);
 
   const cases = readVoiceLabCases(labPath);
@@ -133,16 +163,20 @@ export function matchVoiceLabTurn(inputText: string, labPath = defaultVoiceLabPa
     const near = nearMatchers[testCase.id]?.some((matcher) => matcher.test(inputText)) === true;
     if (!exact && !near) continue;
 
-    const content = testCase.target_rewrites.find((candidate) => candidatePasses(testCase, candidate));
-    if (!content) continue;
+    const passingCandidates = testCase.target_rewrites.filter((candidate) => candidatePasses(testCase, candidate));
+    const selected = chooseCandidate(passingCandidates, seed);
+    if (!selected) continue;
 
     return {
       ok: true,
       caseId: testCase.id,
       prompt: testCase.prompt,
-      content,
+      content: selected.content,
       source: "mira.voice_lab.v0",
       match: exact ? "exact" : "near",
+      variantIndex: selected.index,
+      variantCount: passingCandidates.length,
+      selectionSeed: seed,
     };
   }
 

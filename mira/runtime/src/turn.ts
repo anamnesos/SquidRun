@@ -169,7 +169,8 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     : null;
   const loadedCoreSummary = buildLoadedCoreSummary(session);
   const operatorContext = loadOperatorContext(getStateRootReadiness());
-  const voiceLab = matchVoiceLabTurn(text);
+  const voiceSeed = input.messageId || input.requestId || null;
+  const voiceLab = matchVoiceLabTurn(text, { seed: voiceSeed });
   let responseContent = voiceLab?.content || buildContent(text, session, loadedCoreSummary, operatorContext);
   let modelInvoked = false;
   let modelProvider: "openai_responses" | null = null;

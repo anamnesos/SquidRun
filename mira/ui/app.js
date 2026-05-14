@@ -2,6 +2,7 @@
 
 const state = {
   sessionId: `mira-ui-${Date.now()}`,
+  turnCounter: 0,
 };
 
 const elements = {
@@ -75,6 +76,7 @@ async function sendTurn(text) {
     body: JSON.stringify({
       text,
       sessionId: state.sessionId,
+      messageId: `${state.sessionId}-turn-${state.turnCounter++}`,
       useModel: elements.useModel.checked,
     }),
   });

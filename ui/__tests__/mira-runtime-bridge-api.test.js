@@ -470,6 +470,45 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload.runtimeExecutes).toBe(false);
   });
 
+  test('voice lab can choose different rewrites when the turn has a message id', async () => {
+    await startServer();
+
+    const first = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'what are you doing?',
+        messageId: 'voice-test-0',
+      }),
+    });
+    const second = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'what are you doing?',
+        messageId: 'voice-test-1',
+      }),
+    });
+    const firstPayload = await first.json();
+    const secondPayload = await second.json();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(firstPayload.voiceLab).toEqual(expect.objectContaining({
+      caseId: 'what-are-you-doing-v0',
+      variantIndex: 0,
+      variantCount: expect.any(Number),
+      selectionSeed: 'voice-test-0',
+    }));
+    expect(secondPayload.voiceLab).toEqual(expect.objectContaining({
+      caseId: 'what-are-you-doing-v0',
+      variantIndex: 1,
+      variantCount: expect.any(Number),
+      selectionSeed: 'voice-test-1',
+    }));
+    expect(firstPayload.response.content).not.toBe(secondPayload.response.content);
+  });
+
   test('routes covered prompt classes through the voice lab and avoids banned diction', async () => {
     await startServer();
     const labCases = readVoiceLab(voiceLabPath);
