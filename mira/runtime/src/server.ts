@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
+import { runRuntimeTurn } from "./turn.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -89,6 +90,31 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       }
       const plan = planManualBridgeRequest(planInput);
       sendJson(response, 200, plan);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/turn") {
+    try {
+      const body = await readJsonBody(request);
+      const turnInput = {
+        text: String(body.text || body.message || ""),
+      };
+      if (typeof body.sessionId === "string") {
+        Object.assign(turnInput, { sessionId: body.sessionId });
+      }
+      if (typeof body.messageId === "string") {
+        Object.assign(turnInput, { messageId: body.messageId });
+      }
+      if (typeof body.requestId === "string") {
+        Object.assign(turnInput, { requestId: body.requestId });
+      }
+      if (typeof body.suggestTeamPlanFor === "string") {
+        Object.assign(turnInput, { suggestTeamPlanFor: body.suggestTeamPlanFor });
+      }
+      sendJson(response, 200, runRuntimeTurn(turnInput));
     } catch (error) {
       sendJson(response, 400, errorPayload(error));
     }

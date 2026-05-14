@@ -153,4 +153,83 @@ describe('Mira runtime bridge manual-plan API', () => {
     });
     expect(payload.command).toBeUndefined();
   });
+
+  test('returns a basic runtime turn with state snapshot and no execution', async () => {
+    await startServer();
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'What do you know right now?',
+        sessionId: 'app-session-373',
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.runtime_turn.v0',
+      runtimeExecutes: false,
+      modelInvoked: false,
+      telegramRouteControl: false,
+      uiSurfaceControl: false,
+      input: {
+        text: 'What do you know right now?',
+        sessionId: 'app-session-373',
+      },
+      state: expect.objectContaining({
+        continuityLoaded: false,
+        liveDataImported: false,
+        acceptanceContinuityLoaded: expect.any(Boolean),
+        acceptanceDocumentCount: expect.any(Number),
+        normalizedCoreLoaded: expect.any(Boolean),
+        normalizedCoreDocumentCount: expect.any(Number),
+      }),
+      response: expect.objectContaining({
+        role: 'mira',
+        content: expect.stringContaining('Runtime state:'),
+      }),
+      suggestedTeamPlan: null,
+    }));
+    expect(payload.response.content).toContain('full continuity not claimed');
+  });
+
+  test('can include a manual team plan from a runtime turn without executing it', async () => {
+    await startServer();
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Ask Builder for a bridge check.',
+        sessionId: 'app-session-373',
+        suggestTeamPlanFor: 'builder',
+        messageId: 'mira-turn-plan-1',
+        requestId: 'req-mira-turn-plan-1',
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.suggestedTeamPlan).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.runtime_bridge_request_plan.v0',
+      manualExecutionRequired: true,
+      runtimeExecutes: false,
+      target: {
+        role: 'builder',
+        paneId: '2',
+      },
+      envelope: expect.objectContaining({
+        request_id: 'req-mira-turn-plan-1',
+        message_id: 'mira-turn-plan-1',
+        session_id: 'app-session-373',
+        body: {
+          content: payload.response.content,
+        },
+      }),
+    }));
+  });
 });
