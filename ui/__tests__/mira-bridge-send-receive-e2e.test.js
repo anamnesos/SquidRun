@@ -136,4 +136,71 @@ console.log(JSON.stringify({
       }),
     }));
   });
+
+  test('Builder can reply to Mira through real hm-send and Mira can read it', () => {
+    const realHmSendPath = path.join(repoRoot, 'ui', 'scripts', 'hm-send.js');
+    const realHmCommsPath = path.join(repoRoot, 'ui', 'scripts', 'hm-comms.js');
+    fs.writeFileSync(path.join(tempProject, '.squidrun', 'link.json'), JSON.stringify({
+      squidrun_root: tempProject,
+      workspace: tempProject,
+      session_id: 'app-session-373',
+      comms: {
+        hm_send: realHmSendPath,
+        hm_comms: realHmCommsPath,
+      },
+    }, null, 2));
+
+    const replyOutput = execFileSync(process.execPath, [
+      realHmSendPath,
+      'mira',
+      '(BUILDER #1): reply visible to Mira',
+      '--role', 'builder',
+      '--timeout', '80',
+      '--retries', '0',
+      '--no-fallback',
+    ], {
+      cwd: tempProject,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+        SQUIDRUN_ROLE: 'builder',
+        SQUIDRUN_PANE_ID: '',
+      },
+    });
+
+    expect(replyOutput).toContain('Recorded to mira inbox');
+
+    const readOutput = execFileSync(process.execPath, [
+      readCliPath,
+      '--read',
+      '--from', 'builder',
+      '--session-id', 'app-session-373',
+      '--last', '5',
+    ], {
+      cwd: tempProject,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SQUIDRUN_PROJECT_ROOT: tempProject,
+      },
+    });
+    const readPayload = JSON.parse(readOutput);
+
+    expect(readPayload).toEqual(expect.objectContaining({
+      ok: true,
+      dryRun: false,
+      manualReadOnly: true,
+      mutatesState: false,
+      result: expect.objectContaining({
+        count: 1,
+        rows: [expect.objectContaining({
+          sessionId: 'app-session-373',
+          sender: 'builder',
+          target: 'mira',
+          rawBody: '(BUILDER #1): reply visible to Mira',
+        })],
+      }),
+    }));
+  });
 });

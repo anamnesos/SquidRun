@@ -133,6 +133,7 @@ const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
+const INTERNAL_INBOX_TARGETS = new Set(['mira']);
 const args = process.argv.slice(2);
 const listDevicesMode = args.includes('--list-devices');
 const DEFAULT_ROLE_BY_PANE = Object.freeze({
@@ -147,7 +148,7 @@ if (!listDevicesMode && args.length < 2) {
   console.log('   or: node hm-send.js <target> --stdin [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js telegram --photo <image-path> [caption] [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js --list-devices [--timeout <ms>] [--role <role>]');
-  console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), user/telegram, or @<device>-arch');
+  console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), internal inbox (mira), user/telegram, or @<device>-arch');
   console.log('  message: text to send');
   console.log('  --photo: send a Telegram photo (telegram/user target only); message is used as caption');
   console.log('  --file: read full message body from a UTF-8 text file');
@@ -1208,6 +1209,10 @@ function normalizeRole(targetInput) {
     return targetValue;
   }
 
+  if (INTERNAL_INBOX_TARGETS.has(targetValue)) {
+    return targetValue;
+  }
+
   if (LEGACY_ROLE_ALIASES[targetValue]) {
     return LEGACY_ROLE_ALIASES[targetValue];
   }
@@ -1266,6 +1271,11 @@ function enforceBackgroundBuilderTargetRouting(senderRole, targetInput) {
 function isSpecialTarget(targetInput) {
   const normalized = String(targetInput || '').trim().toLowerCase();
   return SPECIAL_USER_TARGETS.has(normalized);
+}
+
+function isMiraInboxTarget(targetInput) {
+  const normalized = String(targetInput || '').trim().toLowerCase();
+  return normalized === 'mira';
 }
 
 function isExplicitTelegramTarget(targetInput) {
@@ -2039,6 +2049,7 @@ async function main() {
   const targetRole = normalizeRole(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
+  const miraInboxMode = isMiraInboxTarget(targetRole);
   const guardResult = runOutputGuards({ messageId, targetRole });
   if (guardResult?.ok !== true) {
     closeCommsJournalStores();
@@ -2072,16 +2083,16 @@ async function main() {
     sessionId: envelope.session_id || null,
     senderRole: envelope.sender?.role || (role || 'cli'),
     targetRole: envelope.target?.role || targetRole,
-    channel: 'ws',
+    channel: miraInboxMode ? 'mira-inbox' : 'ws',
     direction: 'outbound',
     sentAtMs: envelope.timestamp_ms,
     rawBody: envelope.content,
-    status: 'recorded',
+    status: miraInboxMode ? 'mira_inbox_recorded' : 'recorded',
     attempt: 1,
     metadata: {
       source: 'hm-send',
       maxAttempts: retries + 1,
-      routeKind: bridgeMode ? 'bridge' : 'local',
+      routeKind: miraInboxMode ? 'mira-inbox' : (bridgeMode ? 'bridge' : 'local'),
       bridgeTarget: bridgeMode ? bridgeTarget.toDevice : null,
       bridgeEnabled: bridgeMode ? isCrossDeviceEnabled(process.env) : null,
       ...envelopeMetadata,
@@ -2090,6 +2101,12 @@ async function main() {
 
   if (preSendJournal?.ok !== true) {
     console.warn(`Comms journal pre-send record unavailable: ${preSendJournal?.reason || 'unknown'}`);
+  }
+
+  if (miraInboxMode) {
+    console.log(`Recorded to mira inbox: ${previewMessage(message)} (message_id: ${envelope.message_id})`);
+    closeCommsJournalStores();
+    process.exit(0);
   }
 
   let sendResult = null;

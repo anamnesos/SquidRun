@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `28b51ed`
+- Git HEAD: `a7fd2f1`
 - Total files listed: 1153
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -39,8 +39,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- ??: 3
-- clean/tracked: 1150
+- clean/tracked: 1151
+- M: 2
 
 ## Files
 
@@ -114,7 +114,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `jest.config.js` | source | `clean/tracked` | 221 |
 | `LICENSE` | file | `clean/tracked` | 1078 |
 | `mira/bridge/hm-send-adapter.js` | source | `clean/tracked` | 4997 |
-| `mira/bridge/read-pane-messages.js` | source | `??` | 6473 |
+| `mira/bridge/read-pane-messages.js` | source | `clean/tracked` | 6473 |
 | `mira/bridge/README.md` | doc | `clean/tracked` | 1944 |
 | `mira/bridge/send-pane-message.js` | source | `clean/tracked` | 3807 |
 | `mira/bridge/squidrun-adapter-protocol-v0.md` | doc | `clean/tracked` | 6791 |
@@ -422,7 +422,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-architect-route-v0.test.js` | test | `clean/tracked` | 25344 |
 | `ui/__tests__/mira-automation-scheduler-curiosity.test.js` | test | `clean/tracked` | 4598 |
 | `ui/__tests__/mira-bridge-protocol.test.js` | test | `clean/tracked` | 2623 |
-| `ui/__tests__/mira-bridge-send-receive-e2e.test.js` | test | `??` | 4088 |
+| `ui/__tests__/mira-bridge-send-receive-e2e.test.js` | test | ` M` | 5978 |
 | `ui/__tests__/mira-browser-history-curiosity.test.js` | test | `clean/tracked` | 5118 |
 | `ui/__tests__/mira-calendar-message-curiosity.test.js` | test | `clean/tracked` | 5480 |
 | `ui/__tests__/mira-coordinator-snapshot.test.js` | test | `clean/tracked` | 10881 |
@@ -531,7 +531,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | `clean/tracked` | 37529 |
 | `ui/__tests__/mira-presence-runtime-state-v0.test.js` | test | `clean/tracked` | 21290 |
 | `ui/__tests__/mira-product-foundation.test.js` | test | `clean/tracked` | 2780 |
-| `ui/__tests__/mira-read-pane-messages.test.js` | test | `??` | 5844 |
+| `ui/__tests__/mira-read-pane-messages.test.js` | test | `clean/tracked` | 5844 |
 | `ui/__tests__/mira-reviewed-import-plan.test.js` | test | `clean/tracked` | 3657 |
 | `ui/__tests__/mira-runtime-bridge-request-plan.test.js` | test | `clean/tracked` | 4408 |
 | `ui/__tests__/mira-runtime-continuity-loader-contract.test.js` | test | `clean/tracked` | 2431 |
@@ -1204,7 +1204,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-send-context-leak-guard.js` | script | `clean/tracked` | 6115 |
 | `ui/scripts/hm-send-coworker-output-lint.js` | script | `clean/tracked` | 10575 |
 | `ui/scripts/hm-send-permission-guard.js` | script | `clean/tracked` | 6348 |
-| `ui/scripts/hm-send.js` | script | `clean/tracked` | 77850 |
+| `ui/scripts/hm-send.js` | script | ` M` | 78458 |
 | `ui/scripts/hm-session-summary.js` | script | `clean/tracked` | 13877 |
 | `ui/scripts/hm-smoke-runner.js` | script | `clean/tracked` | 97515 |
 | `ui/scripts/hm-sms.js` | script | `clean/tracked` | 10818 |
