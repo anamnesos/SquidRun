@@ -1,8 +1,9 @@
 # Normalized Core Apply Semantics v0
 
-Status: design contract only. No normalized apply implementation, state write,
-receipt write, queue mutation, report mutation, runtime load, Telegram, bridge,
-or UI change exists in this commit.
+Status: normalized apply implementation exists in
+`mira/tools/normalize-core-dry-run.js`. Persistent/dev-state apply execution,
+queue mutation, report mutation, runtime load, Telegram, bridge, and UI remain
+gated.
 
 ## Scope
 
@@ -33,7 +34,7 @@ The apply lane must fail before writing anything unless all of these are true:
 
 ## Write Rules
 
-If later implemented, apply must:
+The apply lane must:
 
 - write only normalized JSON outputs, never raw source JSON;
 - create destination files with exclusive-create/no-overwrite behavior;
@@ -66,9 +67,7 @@ attached to the wrong destination or schema.
 
 ## Non-Scope
 
-- No implementation in this commit.
-- No state write.
-- No receipt write.
+- No persistent/dev-state apply execution without explicit approval.
 - No queue/report/approval mutation.
 - No runtime continuity load.
 - No raw import.

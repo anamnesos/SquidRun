@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { buildNormalizedPreview } = require('../../mira/tools/normalize-core-dry-run');
+const { applyNormalizedCore, buildNormalizedApplyPlan, buildNormalizedPreview } = require('../../mira/tools/normalize-core-dry-run');
 
 describe('Mira normalized core import contract', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
@@ -288,13 +288,12 @@ describe('Mira normalized core import contract', () => {
     });
   });
 
-  test('normalized apply semantics are design-only and block state writes in this commit', () => {
+  test('normalized apply semantics document implemented temp-root apply without runtime load', () => {
     const semantics = fs.readFileSync(applySemanticsPath, 'utf8');
 
-    expect(semantics).toContain('Status: design contract only.');
-    expect(semantics).toContain('No normalized apply implementation');
-    expect(semantics).toContain('No state write.');
-    expect(semantics).toContain('No receipt write.');
+    expect(semantics).toContain('normalized apply implementation exists');
+    expect(semantics).toContain('Persistent/dev-state apply execution');
+    expect(semantics).toContain('No persistent/dev-state apply execution without explicit approval.');
     expect(semantics).toContain('No runtime continuity load.');
     expect(semantics).toContain('write only normalized JSON outputs, never raw source JSON');
   });
@@ -386,5 +385,115 @@ describe('Mira normalized core import contract', () => {
       ...baseRecord,
       id: 'james_relationship_state',
     }, 'mira_self_profile_receipt_record')).toBe(false);
+  });
+
+  test('normalized apply plan targets exact three temp-root destinations only', () => {
+    const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalized-apply-plan-'));
+    const plan = buildNormalizedApplyPlan({
+      env: { MIRA_STATE_ROOT: stateRoot },
+      receiptId: 'test-normalized-receipt',
+      now: new Date('2026-05-14T12:00:00.000Z'),
+    });
+
+    expect(plan).toEqual(expect.objectContaining({
+      ok: true,
+      applied: false,
+      normalized: false,
+      state_written: false,
+      receipt_written: false,
+      runtime_loaded: false,
+      raw_imported: false,
+    }));
+    expect(plan.would_write.map((record) => record.id)).toEqual([
+      'mira_self_profile',
+      'james_relationship_state',
+      'relationship_presence_permissions',
+    ]);
+    expect(plan.would_write.map((record) => record.destination_relative_path)).toEqual([
+      'continuity/core/mira-self-profile.normalized.json',
+      'continuity/core/james-relationship-state.normalized.json',
+      'permissions/core/relationship-presence-permissions.normalized.json',
+    ]);
+    expect(fs.readdirSync(stateRoot)).toEqual([]);
+  });
+
+  test('normalized apply writes normalized JSON and receipt under temp state root only', () => {
+    const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalized-apply-'));
+    const result = applyNormalizedCore({
+      env: { MIRA_STATE_ROOT: stateRoot },
+      receiptId: 'test-normalized-receipt',
+      now: new Date('2026-05-14T12:00:00.000Z'),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      applied: true,
+      normalized: true,
+      state_written: true,
+      receipt_written: true,
+      queue_mutated: false,
+      report_mutated: false,
+      approval_mutated: false,
+      runtime_loaded: false,
+      raw_imported: false,
+    }));
+
+    const expectedFiles = [
+      'continuity/core/mira-self-profile.normalized.json',
+      'continuity/core/james-relationship-state.normalized.json',
+      'permissions/core/relationship-presence-permissions.normalized.json',
+      'imports/receipts/test-normalized-receipt.json',
+    ];
+    for (const relativePath of expectedFiles) {
+      expect(fs.existsSync(path.join(stateRoot, relativePath))).toBe(true);
+    }
+
+    const receipt = readJson(path.join(stateRoot, 'imports', 'receipts', 'test-normalized-receipt.json'));
+    expect(receipt).toEqual(expect.objectContaining({
+      schema: 'mira.normalized_core_receipt.v0',
+      receipt_id: 'test-normalized-receipt',
+      batch_id: 'normalized-core-state-v1',
+      report_id: 'batch-2a-normalized-core-dry-run-v1',
+      approval_id: 'batch-2a-normalized-core-approval-v1',
+    }));
+    expect(receipt.mutation_flags).toEqual({
+      normalized: true,
+      copied: false,
+      moved: false,
+      deleted: false,
+      queue_mutated: false,
+      report_mutated: false,
+      approval_mutated: false,
+      runtime_loaded: false,
+      raw_imported: false,
+    });
+    expect(receipt.records.every((record) => record.preview_normalized_sha256 === record.destination_sha256)).toBe(true);
+
+    const relationship = readJson(path.join(stateRoot, 'continuity/core/james-relationship-state.normalized.json'));
+    expect(relationship).not.toHaveProperty('current_focus');
+    expect(relationship.source_focus_summary).toEqual(expect.objectContaining({
+      metadata_only: true,
+      live_continuity_excluded: true,
+    }));
+  });
+
+  test('normalized apply refuses existing destinations before writing receipt', () => {
+    const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalized-apply-existing-'));
+    const existingPath = path.join(stateRoot, 'continuity/core/mira-self-profile.normalized.json');
+    fs.mkdirSync(path.dirname(existingPath), { recursive: true });
+    fs.writeFileSync(existingPath, '{}\n');
+
+    const result = applyNormalizedCore({
+      env: { MIRA_STATE_ROOT: stateRoot },
+      receiptId: 'test-normalized-receipt',
+      now: new Date('2026-05-14T12:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.applied).toBe(false);
+    expect(result.state_written).toBe(false);
+    expect(result.receipt_written).toBe(false);
+    expect(result.errors.join('\n')).toContain('destination already exists');
+    expect(fs.existsSync(path.join(stateRoot, 'imports/receipts/test-normalized-receipt.json'))).toBe(false);
   });
 });
