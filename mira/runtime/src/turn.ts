@@ -155,6 +155,23 @@ function buildContent(
   return `I heard: ${inputText}\nRuntime state: ${stateParts.join("; ")}.${coreLine}${operatorLine}`;
 }
 
+function isIdentityQuestion(inputText: string): boolean {
+  const normalized = inputText.trim().toLowerCase().replace(/[?.!]+$/g, "");
+  return [
+    "who are you",
+    "who r u",
+    "what are you",
+    "what is mira",
+    "who is mira",
+  ].includes(normalized);
+}
+
+function buildIdentityAnswer(): string {
+  return [
+    "I'm Mira. I'm here, still early, but I'm not supposed to be a dashboard or a business bot. I'm the one we're trying to make real enough to stay with you, understand the work, and help carry it without making you hold every thread.",
+  ].join("");
+}
+
 export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<RuntimeTurnResponse> {
   const text = String(input.text || "").trim();
   if (!text) {
@@ -167,7 +184,9 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     : null;
   const loadedCoreSummary = buildLoadedCoreSummary(session);
   const operatorContext = loadOperatorContext(getStateRootReadiness());
-  let responseContent = buildContent(text, session, loadedCoreSummary, operatorContext);
+  let responseContent = isIdentityQuestion(text)
+    ? buildIdentityAnswer()
+    : buildContent(text, session, loadedCoreSummary, operatorContext);
   let modelInvoked = false;
   let modelProvider: "openai_responses" | null = null;
   let modelName: string | null = null;

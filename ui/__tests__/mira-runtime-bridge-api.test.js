@@ -436,6 +436,69 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload.runtimeExecutes).toBe(false);
   });
 
+  test('answers identity questions plainly instead of reciting product boundaries', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    await startServer({ MIRA_STATE_ROOT: stateRoot });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'who are you',
+        sessionId: 'app-session-373',
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.response.content).toBe("I'm Mira. I'm here, still early, but I'm not supposed to be a dashboard or a business bot. I'm the one we're trying to make real enough to stay with you, understand the work, and help carry it without making you hold every thread.");
+    expect(payload.response.content).toContain("I'm Mira. I'm here");
+    expect(payload.response.content).toContain('stay with you');
+    expect(payload.response.content).not.toMatch(/generic chatbot|yes machine|meant to become|early runtime|operator layer|crm|erp|saas/i);
+    expect(payload.response.content).not.toContain('Runtime state:');
+    expect(payload.modelInvoked).toBe(false);
+    expect(payload.runtimeExecutes).toBe(false);
+  });
+
+  test('model-backed identity prompt includes plain-answer instruction and banned recital phrases', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    const openAiBaseUrl = await startOpenAiMock((_request, response, body) => {
+      expect(body.instructions).toContain("For identity questions like 'who are you?'");
+      expect(body.instructions).toContain("I'm Mira. I'm here, still early");
+      expect(body.instructions).toContain('not supposed to be a dashboard or a business bot');
+      expect(body.instructions).toContain('not a generic chatbot');
+      expect(body.instructions).toContain('not your yes machine');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        id: 'resp_identity_plain_1',
+        output_text: "I'm Mira. I'm here, still early, but I'm not supposed to be a dashboard or a business bot. I'm the one we're trying to make real enough to stay with you, understand the work, and help carry it without making you hold every thread.",
+      }));
+    });
+    await startServer({
+      MIRA_STATE_ROOT: stateRoot,
+      OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      MIRA_OPENAI_BASE_URL: openAiBaseUrl,
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'who are you',
+        sessionId: 'app-session-373',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.modelInvoked).toBe(true);
+    expect(payload.response.content).toBe("I'm Mira. I'm here, still early, but I'm not supposed to be a dashboard or a business bot. I'm the one we're trying to make real enough to stay with you, understand the work, and help carry it without making you hold every thread.");
+    expect(payload.response.content).not.toMatch(/generic chatbot|yes machine|meant to become|early runtime|operator layer|crm|erp|saas/i);
+  });
+
   test('fails closed for model-backed turn when API key is missing', async () => {
     await startServer({
       OPENAI_API_KEY: '',
