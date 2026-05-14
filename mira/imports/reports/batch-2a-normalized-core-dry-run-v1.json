@@ -1,0 +1,89 @@
+{
+  "schema": "mira.normalized_core_dry_run_report.v1",
+  "report_id": "batch-2a-normalized-core-dry-run-v1",
+  "contract_path": "mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json",
+  "generated_from": {
+    "queue_path": "mira/imports/review-queue.json",
+    "source_of_truth": "Oracle #17"
+  },
+  "proposal": {
+    "batch_id": "normalized-core-state-v1",
+    "status": "dry_run_shape_only",
+    "reason": "Import identity and relationship core as normalized Mira-owned state, not raw copied SquidRun seed files.",
+    "requires_explicit_approval_before_normalizer_execution": true,
+    "requires_explicit_approval_before_import_apply": true
+  },
+  "mutation_flags": {
+    "normalized": false,
+    "copied": false,
+    "moved": false,
+    "deleted": false,
+    "status_mutated": false,
+    "queue_mutated": false,
+    "receipt_written": false,
+    "runtime_loaded": false
+  },
+  "non_scope": [
+    "raw_import",
+    "apply_execution",
+    "receipt_write",
+    "queue_status_mutation",
+    "runtime_state_load",
+    "growth_events",
+    "transcript_evidence",
+    "bridge_implementation",
+    "ui_surface",
+    "telegram_route"
+  ],
+  "batch_records": [
+    {
+      "id": "mira_self_profile",
+      "source_path": "workspace/knowledge/mira-self-profile.json",
+      "source_exists": true,
+      "source_schema": "squidrun.mira.self_profile.v0",
+      "source_kind": "profile_state",
+      "current_queue_status": "not_imported",
+      "normalization": "current_identity_boundary_fields_only",
+      "destination_relative_path": "continuity/core/mira-self-profile.normalized.json",
+      "output_schema": "mira.normalized.self_profile.v1",
+      "action": "dry_run_shape_only",
+      "raw_copy_allowed": false
+    },
+    {
+      "id": "james_relationship_state",
+      "source_path": "workspace/knowledge/james-relationship-state.json",
+      "source_exists": true,
+      "source_schema": "squidrun.james_relationship_state.v0",
+      "source_kind": "relationship_state",
+      "current_queue_status": "not_imported",
+      "normalization": "current_relationship_fields_only",
+      "destination_relative_path": "continuity/core/james-relationship-state.normalized.json",
+      "output_schema": "mira.normalized.james_relationship_state.v1",
+      "action": "dry_run_shape_only",
+      "raw_copy_allowed": false
+    },
+    {
+      "id": "relationship_presence_permissions",
+      "source_path": "workspace/knowledge/relationship-presence-permissions.json",
+      "source_exists": true,
+      "source_schema": "squidrun.relationship_presence_permissions.v0",
+      "source_kind": "permission_state",
+      "current_queue_status": "not_imported",
+      "normalization": "machine_checkable_permissions_only",
+      "destination_relative_path": "permissions/core/relationship-presence-permissions.normalized.json",
+      "output_schema": "mira.normalized.relationship_presence_permissions.v1",
+      "action": "dry_run_shape_only",
+      "raw_copy_allowed": false
+    }
+  ],
+  "excluded_records": [
+    {
+      "id": "relationship_growth_history",
+      "reason": "growth/events excluded from batch 2a; split as batch 2b only after explicit approval"
+    },
+    {
+      "id": "relationship_growth_audit",
+      "reason": "growth/events excluded from batch 2a; split as batch 2b only after explicit approval"
+    }
+  ]
+}
