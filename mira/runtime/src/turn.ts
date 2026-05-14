@@ -3,8 +3,10 @@ import path from "node:path";
 import { planManualBridgeRequest, type ManualBridgeRequestPlan } from "./bridge-request-plan.js";
 import { invokeTurnModel } from "./model-adapter.js";
 import { loadOperatorContext, type OperatorContextSummary } from "./operator-context.js";
+import { loadPersonaCore, type PersonaCore } from "./persona-core.js";
 import { getSessionSkeleton } from "./runtime.js";
 import { getStateRootReadiness } from "./state-root.js";
+import { listRuntimeTurnJournal } from "./turn-journal.js";
 import { matchVoiceLabTurn, type VoiceLabMatch } from "./voice-lab.js";
 
 export type RuntimeTurnInput = {
@@ -54,12 +56,24 @@ export type RuntimeTurnResponse = {
     permissions: string | null;
   };
   operatorContext: OperatorContextSummary;
+  personaCore: PersonaCore;
+  recentTurns: RecentTurnMemory[];
   response: {
     role: "mira";
     content: string;
   };
   voiceLab: VoiceLabMatch | null;
   suggestedTeamPlan: ManualBridgeRequestPlan | null;
+};
+
+export type RecentTurnMemory = {
+  createdAt: string;
+  outcome: "ok" | "error";
+  promptPreview: string;
+  responsePreview: string | null;
+  errorCode: string | null;
+  model: string | null;
+  voiceLabCaseId: string | null;
 };
 
 function readJsonIfInside(stateRootPath: string | null, relativePath: string): Record<string, unknown> | null {
@@ -129,32 +143,60 @@ function buildContent(
   session = getSessionSkeleton().session,
   loadedCoreSummary = buildLoadedCoreSummary(session),
   operatorContext = loadOperatorContext(getStateRootReadiness()),
+  personaCore = loadPersonaCore(getStateRootReadiness()),
+  recentTurns: RecentTurnMemory[] = [],
 ): string {
-  const stateParts = [
-    session.acceptanceContinuity.loaded
-      ? `acceptance docs loaded=${session.acceptanceContinuity.documentCount}`
-      : "acceptance docs not loaded",
-    session.normalizedCore.loaded
-      ? `normalized core loaded=${session.normalizedCore.documentCount}`
-      : "normalized core not loaded",
-    "full continuity not claimed",
-  ];
-  const coreParts = loadedCoreSummary.available
-    ? [
-      loadedCoreSummary.identity,
-      loadedCoreSummary.relationship,
-      loadedCoreSummary.permissions,
-    ].filter(Boolean)
-    : [];
+  const lowerText = inputText.toLowerCase();
+  const hasStarterContext = session.acceptanceContinuity.loaded || session.normalizedCore.loaded || loadedCoreSummary.available;
+  const hasWorkContext = operatorContext.loaded && operatorContext.operatingLanes.length > 0;
+  const asksContext = /\b(know|context|memory|remember|loaded|right now|ground|status)\b/.test(lowerText);
+  const asksRecentQuality = /\b(bad|dumb|wrong|recent|last answer|journal|quality|why.*answer)\b/.test(lowerText);
 
-  const coreLine = coreParts.length > 0
-    ? `\nLoaded normalized core summary: ${coreParts.join(" | ")}.`
-    : "";
-  const operatorLine = operatorContext.loaded
-    ? `\nOperator context: ${operatorContext.businessThesis || "business thesis loaded"} Lanes: ${operatorContext.operatingLanes.join(", ")}.`
-    : "";
+  if (asksRecentQuality && recentTurns.length > 0) {
+    const last = recentTurns[0] as RecentTurnMemory;
+    const recitalPattern = /(I heard:|Runtime state:|Loaded normalized core summary:|Operator context:)/i;
+    const lastResult = last.outcome === "error"
+      ? `It errored with ${last.errorCode || "an unknown error"}`
+      : recitalPattern.test(last.responsePreview || "")
+        ? "I answered with a runtime-style recital instead of speaking plainly"
+        : `I answered: ${last.responsePreview || "nothing useful"}`;
+    return `${personaCore.name}. I can see the recent turn journal now. Last prompt was "${last.promptPreview}". ${lastResult}. That's better than guessing from vibes.`;
+  }
 
-  return `I heard: ${inputText}\nRuntime state: ${stateParts.join("; ")}.${coreLine}${operatorLine}`;
+  if (asksContext) {
+    if (hasStarterContext && hasWorkContext) {
+      return `${personaCore.name}. I have the starter notes about us, the permissions, the recent turn journal, and the work areas you want help carrying. I don't have full lived memory yet.`;
+    }
+    if (hasStarterContext) {
+      return `${personaCore.name}. I have the starter notes about us and the permissions. I don't have full lived memory yet.`;
+    }
+    return `${personaCore.name}. Not much yet. I have the live thread, but not real memory loaded behind it.`;
+  }
+
+  if (hasStarterContext) {
+    const posture = personaCore.relationshipPosture ? " I know the posture James wants: caring, direct, friction-capable, not a mirror." : "";
+    return `${personaCore.name}. I'm here.${posture} I have context in reach; I'll use it instead of dumping machinery at you.`;
+  }
+
+  return `${personaCore.name}. I'm here. Say it a little more directly and I'll work with it.`;
+}
+
+function preview(value: string | null | undefined, maxLength = 180): string | null {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
+}
+
+function loadRecentTurnMemory(limit = 5): RecentTurnMemory[] {
+  return listRuntimeTurnJournal({ limit }).records.map((record) => ({
+    createdAt: record.created_at,
+    outcome: record.outcome,
+    promptPreview: preview(record.prompt, 140) || "",
+    responsePreview: preview(record.response?.content, 220),
+    errorCode: record.error?.code || null,
+    model: record.model?.model || null,
+    voiceLabCaseId: record.voice_lab?.caseId || null,
+  }));
 }
 
 export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<RuntimeTurnResponse> {
@@ -168,10 +210,13 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     ? input.sessionId.trim()
     : null;
   const loadedCoreSummary = buildLoadedCoreSummary(session);
-  const operatorContext = loadOperatorContext(getStateRootReadiness());
+  const stateRoot = getStateRootReadiness();
+  const operatorContext = loadOperatorContext(stateRoot);
+  const personaCore = loadPersonaCore(stateRoot);
+  const recentTurns = loadRecentTurnMemory();
   const voiceSeed = input.messageId || input.requestId || null;
   const voiceLab = matchVoiceLabTurn(text, { seed: voiceSeed });
-  let responseContent = voiceLab?.content || buildContent(text, session, loadedCoreSummary, operatorContext);
+  let responseContent = voiceLab?.content || buildContent(text, session, loadedCoreSummary, operatorContext, personaCore, recentTurns);
   let modelInvoked = false;
   let modelProvider: "openai_responses" | "ollama_chat" | null = null;
   let modelName: string | null = null;
@@ -181,6 +226,8 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
       text,
       loadedCoreSummary,
       operatorContext,
+      personaCore,
+      recentTurns,
     });
     responseContent = modelResult.text;
     modelInvoked = true;
@@ -235,6 +282,8 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     },
     loadedCoreSummary,
     operatorContext,
+    personaCore,
+    recentTurns,
     response: {
       role: "mira",
       content: responseContent,

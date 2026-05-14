@@ -19,6 +19,7 @@ const elements = {
   modelPill: document.getElementById('modelPill'),
   operatorSummary: document.getElementById('operatorSummary'),
   coreSummary: document.getElementById('coreSummary'),
+  personaSummary: document.getElementById('personaSummary'),
   lastTurn: document.getElementById('lastTurn'),
   modelSummary: document.getElementById('modelSummary'),
   reviewSummary: document.getElementById('reviewSummary'),
@@ -69,6 +70,14 @@ function summarizeCore(payload) {
   ].filter(Boolean).join(' | ');
 }
 
+function summarizePersona(payload) {
+  const persona = payload?.personaCore;
+  if (!persona || persona.loaded !== true) return 'starter persona not loaded';
+  const traits = Array.isArray(persona.traits) ? persona.traits.slice(0, 5).join(', ') : '';
+  const style = Array.isArray(persona.style) ? persona.style.slice(0, 3).join(', ') : '';
+  return `${persona.name || 'Mira'}: ${traits}${style ? ` | ${style}` : ''}`;
+}
+
 function updateRuntimeState(payload) {
   const stateFlags = payload?.state || {};
   const model = payload?.model || {};
@@ -83,6 +92,7 @@ function updateRuntimeState(payload) {
   ]);
   setText(elements.operatorSummary, summarizeOperator(payload?.operatorContext));
   setText(elements.coreSummary, summarizeCore(payload));
+  setText(elements.personaSummary, summarizePersona(payload));
   setText(elements.lastTurn, payload?.modelInvoked ? 'model-backed' : 'deterministic');
 }
 
@@ -226,6 +236,8 @@ function buildTurnMetadata(payload) {
     model: payload?.model || null,
     modelInvoked: payload?.modelInvoked === true,
     voiceLab: payload?.voiceLab || null,
+    personaCore: payload?.personaCore || null,
+    recentTurns: Array.isArray(payload?.recentTurns) ? payload.recentTurns.slice(0, 3) : [],
     state: payload?.state || null,
     operatorContext: payload?.operatorContext ? {
       loaded: payload.operatorContext.loaded === true,

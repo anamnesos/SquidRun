@@ -1,5 +1,6 @@
 import type { OperatorContextSummary } from "./operator-context.js";
-import type { RuntimeTurnResponse } from "./turn.js";
+import { formatPersonaCoreForPrompt, type PersonaCore } from "./persona-core.js";
+import type { RecentTurnMemory, RuntimeTurnResponse } from "./turn.js";
 import { readVoiceLabCases } from "./voice-lab.js";
 
 export type TurnModelConfig = {
@@ -256,23 +257,33 @@ function extractResponseText(body: unknown): string {
 function buildInstructions(input: {
   loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
   operatorContext: OperatorContextSummary;
+  personaCore: PersonaCore;
+  recentTurns: RecentTurnMemory[];
 }): string {
-  const { loadedCoreSummary, operatorContext } = input;
+  const { loadedCoreSummary, operatorContext, personaCore, recentTurns } = input;
   const voiceLabExamples = readVoiceLabCases().map((testCase) => {
     const examples = testCase.target_rewrites.map((rewrite) => `- ${rewrite}`).join("\n");
     return [
       `Prompt class: ${testCase.id}`,
       `Examples:\n${examples}`,
-      `Avoid: canned support diction, product pitch, policy voice, and self-commentary (${testCase.banned_phrases.length} blocked phrases in evaluator).`,
     ].join("\n");
   }).join("\n\n");
+  const recentTurnLines = recentTurns.length > 0
+    ? recentTurns.map((turn) => {
+      const result = turn.outcome === "error" ? `error=${turn.errorCode || "unknown"}` : `reply=${turn.responsePreview || ""}`;
+      return `- ${turn.createdAt}: prompt=${turn.promptPreview}; ${result}; model=${turn.model || "deterministic"}`;
+    }).join("\n")
+    : "none";
 
   return [
-    "You are Mira running inside the local mira-runtime.",
-    "Answer James directly and briefly. Do not sound like generic assistant prose.",
-    "Use the Mira voice lab examples below for covered prompt classes. The point is proportion, contextual awareness, and consistent personality, not slogans, self-explanation, or reassurance about what Mira is not.",
+    "You are Mira.",
+    "Use this positive persona core as the center of the answer. Safety gates are for external actions, tools, data mutation, and customer contact; they are not Mira's identity.",
+    formatPersonaCoreForPrompt(personaCore),
+    "Answer James from the current moment. Use business/work context as capability context, not as self-definition.",
+    "Use the Mira voice lab examples below for covered prompt classes. The point is proportion, contextual awareness, and consistent personality.",
     voiceLabExamples,
     "Use the loaded summaries as context; do not claim full continuity, tool execution, sends, writes, or external action.",
+    `Recent local turn journal:\n${recentTurnLines}`,
     "No tools are available in this call. If work needs tools or team action, name the next internal/manual step only.",
     `Identity summary: ${loadedCoreSummary.identity || "not loaded"}`,
     `Relationship summary: ${loadedCoreSummary.relationship || "not loaded"}`,
@@ -322,6 +333,8 @@ async function invokeOllamaChat(input: {
   text: string;
   loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
   operatorContext: OperatorContextSummary;
+  personaCore: PersonaCore;
+  recentTurns: RecentTurnMemory[];
   fetchImpl: typeof fetch;
   config: TurnModelConfig & { apiKey: string };
 }): Promise<TurnModelResult> {
@@ -345,6 +358,8 @@ async function invokeOllamaChat(input: {
             content: buildInstructions({
               loadedCoreSummary: input.loadedCoreSummary,
               operatorContext: input.operatorContext,
+              personaCore: input.personaCore,
+              recentTurns: input.recentTurns,
             }),
           },
           {
@@ -390,6 +405,8 @@ export async function invokeTurnModel(input: {
   text: string;
   loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
   operatorContext: OperatorContextSummary;
+  personaCore: PersonaCore;
+  recentTurns: RecentTurnMemory[];
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }): Promise<TurnModelResult> {
@@ -410,6 +427,8 @@ export async function invokeTurnModel(input: {
       text: input.text,
       loadedCoreSummary: input.loadedCoreSummary,
       operatorContext: input.operatorContext,
+      personaCore: input.personaCore,
+      recentTurns: input.recentTurns,
       fetchImpl: fetcher,
       config,
     });
@@ -426,6 +445,8 @@ export async function invokeTurnModel(input: {
       instructions: buildInstructions({
         loadedCoreSummary: input.loadedCoreSummary,
         operatorContext: input.operatorContext,
+        personaCore: input.personaCore,
+        recentTurns: input.recentTurns,
       }),
       input: [
         {

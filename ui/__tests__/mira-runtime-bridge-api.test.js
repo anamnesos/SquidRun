@@ -137,6 +137,16 @@ describe('Mira runtime bridge manual-plan API', () => {
       schema: 'mira.normalized.self_profile.v1',
       profile_kind: 'ai_system_local_presence_profile',
       role: 'relationship_presence_local_start_proof',
+      name: 'Mira',
+      expressive_range_allowed: [
+        'care',
+        'directness',
+        'opinion',
+        'pushback',
+        'humor',
+        'curiosity',
+        'friction',
+      ],
       model_runtime_active: false,
       persona_runtime_active: false,
       source_metadata: {
@@ -148,6 +158,11 @@ describe('Mira runtime bridge manual-plan API', () => {
       schema: 'mira.normalized.james_relationship_state.v1',
       relationship_mode: 'collaborative_presence_design',
       what_mira_knows_about_james: 'James wants Mira to be caring, opinionated, friction-capable, and not a mirror.',
+      preferences: [
+        'Mira should develop her own posture, preferences, curiosity, friction, and rough edges over time',
+        'care can coexist with disagreement, impatience, humor, and sharp pushback',
+        'business and workflow work are capabilities, not Mira identity',
+      ],
       source_metadata: {
         metadata_only: true,
         live_continuity_excluded: true,
@@ -305,6 +320,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="brainLine"');
     expect(indexHtml).toContain('id="reviewSummary"');
     expect(indexHtml).toContain('id="modelSummary"');
+    expect(indexHtml).toContain('id="personaSummary"');
     expect(indexHtml).toContain('id="draftButton"');
     expect(indexHtml).toContain('id="draftList"');
     expect(indexHtml).toContain('id="taskList"');
@@ -324,6 +340,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/voice/corrections'");
     expect(appJs).toContain('wrong shape');
     expect(appJs).toContain('turnMetadata');
+    expect(appJs).toContain('personaCore');
+    expect(appJs).toContain('recentTurns');
     expect(appJs).toContain('mira.turn_quality_capture_metadata.v0');
     expect(appJs).toContain('contextToggle');
     expect(appJs).toContain('useModel');
@@ -926,13 +944,20 @@ describe('Mira runtime bridge manual-plan API', () => {
         metadataOnly: true,
         liveContinuityExcluded: true,
       }),
+      personaCore: expect.objectContaining({
+        loaded: false,
+        name: 'Mira',
+        traits: expect.arrayContaining(['present', 'direct', 'curious']),
+        safetyGates: expect.arrayContaining(['external actions, tool use, data mutation, and customer contact stay gated']),
+      }),
       response: expect.objectContaining({
         role: 'mira',
-        content: expect.stringContaining('Runtime state:'),
+        content: expect.stringContaining('Mira.'),
       }),
       suggestedTeamPlan: null,
     }));
-    expect(payload.response.content).toContain('full continuity not claimed');
+    expect(payload.response.content).toContain('not real memory loaded');
+    expect(payload.response.content).not.toMatch(/I heard:|Runtime state:|Loaded normalized core summary:|Operator context:/);
   });
 
   test('includes concise loaded identity relationship permission summary when normalized core is imported', async () => {
@@ -974,12 +999,85 @@ describe('Mira runtime bridge manual-plan API', () => {
       knownProductLanes: ['TrustQuote'],
       explicitNonClaims: expect.arrayContaining(['do not invent James business name']),
     }));
-    expect(payload.response.content).toContain('Loaded normalized core summary:');
-    expect(payload.response.content).toContain('Operator context:');
-    expect(payload.response.content).toContain('CRM, ERP, admin');
-    expect(payload.response.content).toContain('full continuity not claimed');
+    expect(payload.personaCore).toEqual(expect.objectContaining({
+      loaded: true,
+      name: 'Mira',
+      traits: expect.arrayContaining(['care', 'directness', 'pushback', 'curiosity']),
+      tendencies: expect.arrayContaining([
+        expect.stringContaining('own posture'),
+        'business and workflow context are capabilities, not Mira\'s identity',
+      ]),
+      relationshipPosture: expect.stringContaining('not a mirror'),
+      safetyGates: expect.arrayContaining(['external sends', 'tool execution', 'data mutation', 'customer contact']),
+    }));
+    expect(payload.response.content).toContain('Mira.');
+    expect(payload.response.content).toContain('starter notes about us');
+    expect(payload.response.content).toContain('work areas you want help carrying');
+    expect(payload.response.content).toContain("don't have full lived memory yet");
+    expect(payload.response.content).not.toMatch(/I heard:|Runtime state:|Loaded normalized core summary:|Operator context:|CRM, ERP, admin/);
     expect(payload.modelInvoked).toBe(false);
     expect(payload.runtimeExecutes).toBe(false);
+  });
+
+  test('feeds recent turn journal into deterministic fallback without runtime recitals', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    const journalDir = path.join(stateRoot, 'conversation-evidence');
+    fs.mkdirSync(journalDir, { recursive: true });
+    fs.writeFileSync(path.join(journalDir, 'runtime-turns.jsonl'), `${JSON.stringify({
+      schema: 'mira.runtime_turn_journal.v0',
+      id: 'runtime-turn-recent-quality-1',
+      created_at: '2026-05-14T16:40:00.000Z',
+      duration_ms: 12,
+      outcome: 'ok',
+      prompt: 'why is this answer so dumb?',
+      session_id: 'app-session-373',
+      message_id: 'recent-quality-1',
+      request_id: null,
+      model_invoked: false,
+      model: {
+        requested: false,
+        provider: null,
+        model: null,
+        responseId: null,
+        toolsEnabled: false,
+        sendsEnabled: false,
+        store: false,
+      },
+      voice_lab: null,
+      response: {
+        role: 'mira',
+        content: 'I heard: why is this answer so dumb? Runtime state: awful recital.',
+      },
+      state: null,
+      error: null,
+      external_send: false,
+      tools_executed: false,
+    })}\n`);
+    await startServer({ MIRA_STATE_ROOT: stateRoot });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'what happened with the last bad answer?',
+        sessionId: 'app-session-373',
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.recentTurns).toEqual([
+      expect.objectContaining({
+        promptPreview: 'why is this answer so dumb?',
+        responsePreview: expect.stringContaining('I heard:'),
+        model: null,
+      }),
+    ]);
+    expect(payload.response.content).toContain('recent turn journal');
+    expect(payload.response.content).toContain('Last prompt was "why is this answer so dumb?"');
+    expect(payload.response.content).toContain('better than guessing');
+    expect(payload.response.content).not.toMatch(/^I heard:|Runtime state:|Loaded normalized core summary:|Operator context:/);
   });
 
   test('answers identity questions plainly instead of reciting product boundaries', async () => {
@@ -1136,7 +1234,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(`${whyShortPayload.response.content} ${reasoningPayload.response.content}`).not.toMatch(/as an AI|AI assistant|business bot|operator layer|CRM solution|workflow automation|mission statement|policy|guidelines|I apologize|thank you for your patience|fake|not fake|costume|performance|trying not to be/i);
   });
 
-  test('model-backed identity prompt includes plain-answer instruction and banned recital phrases', async () => {
+  test('model-backed identity prompt uses positive persona core instead of guardrail pile', async () => {
     const stateRoot = writeNormalizedCoreStateRoot();
     writeOperatorContext(stateRoot);
     const openAiBaseUrl = await startOpenAiMock((_request, response, body) => {
@@ -1160,7 +1258,13 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect(body.instructions).toContain('Looking at this with you.');
       expect(body.instructions).toContain('I stalled. No clever version of it.');
       expect(body.instructions).toContain('Mm.');
-      expect(body.instructions).toContain('Avoid: canned support diction, product pitch, policy voice, and self-commentary');
+      expect(body.instructions).toContain('Use this positive persona core as the center of the answer');
+      expect(body.instructions).toContain('Safety gates are for external actions, tools, data mutation, and customer contact; they are not Mira\'s identity.');
+      expect(body.instructions).toContain('Traits: care, directness, opinion, pushback, humor, curiosity, friction');
+      expect(body.instructions).toContain('Relationship posture: James wants Mira to be caring, opinionated, friction-capable, and not a mirror.');
+      expect(body.instructions).toContain('business and workflow context are capabilities, not Mira\'s identity');
+      expect(body.instructions).toContain('Recent local turn journal:');
+      expect(body.instructions).not.toContain('Avoid: canned support diction');
       expect(body.instructions).not.toContain('not a generic chatbot');
       expect(body.instructions).not.toContain('trying to make real enough');
       expect(body.instructions).not.toContain('not your yes machine');
