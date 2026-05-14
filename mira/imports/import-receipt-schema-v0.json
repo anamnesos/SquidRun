@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mira.import_receipt.v0",
+  "type": "object",
+  "required": [
+    "schema",
+    "receipt_id",
+    "batch_id",
+    "report_id",
+    "tool",
+    "copied_at",
+    "mutation_flags",
+    "queue_status_before",
+    "records"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mira.import_receipt.v0"
+    },
+    "receipt_id": {
+      "type": "string"
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "report_id": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "execute-reviewed-import"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "copied_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mutation_flags": {
+      "type": "object",
+      "required": [
+        "copied",
+        "moved",
+        "deleted",
+        "queue_mutated",
+        "report_mutated",
+        "status_mutated"
+      ],
+      "properties": {
+        "copied": {
+          "const": true
+        },
+        "moved": {
+          "const": false
+        },
+        "deleted": {
+          "const": false
+        },
+        "queue_mutated": {
+          "const": false
+        },
+        "report_mutated": {
+          "const": false
+        },
+        "status_mutated": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "queue_status_before": {
+      "type": "object",
+      "additionalProperties": {
+        "const": "not_imported"
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_path",
+          "source_sha256",
+          "destination_relative_path",
+          "destination_sha256",
+          "destination_created",
+          "queue_status_before"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "destination_relative_path": {
+            "type": "string"
+          },
+          "destination_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "destination_created": {
+            "const": true
+          },
+          "queue_status_before": {
+            "const": "not_imported"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
