@@ -329,6 +329,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="draftButton"');
     expect(indexHtml).toContain('id="draftList"');
     expect(indexHtml).toContain('id="taskList"');
+    expect(indexHtml).toContain('id="reviewPanel"');
     expect(indexHtml).toContain('id="recentTurns"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
@@ -348,6 +349,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('requestPreview');
     expect(appJs).toContain('taskPreview');
     expect(appJs).toContain('sourceDraftToken');
+    expect(appJs).toContain("fetch('/work/task-review'");
+    expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/recent");
     expect(appJs).toContain('brainLine');
     expect(appJs).toContain("fetch('/voice/correction'");
@@ -372,6 +375,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(css).toContain('.brain-line');
     expect(css).toContain('.subtle-button');
     expect(css).toContain('.draft-item');
+    expect(css).toContain('.review-panel-body');
+    expect(css).toContain('.review-actions');
     expect(css).toMatch(/body\s*\{[\s\S]*height:\s*100dvh[\s\S]*overflow:\s*hidden/);
     expect(css).toMatch(/\.shell\s*\{[\s\S]*height:\s*100dvh[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
     expect(css).toMatch(/\.conversation\s*\{[\s\S]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
@@ -533,11 +538,14 @@ describe('Mira runtime bridge manual-plan API', () => {
       protocol: 'mira.work_task_list.v0',
       stateRootPath: null,
       taskCount: 1,
+      pendingCount: 1,
+      reviewedCount: 0,
       externalSend: false,
       crmMutation: false,
       runtimeExecutesExternalAction: false,
     }));
     expect(listPayload.tasks[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^task-/),
       status: 'pending_review',
       displayTitle: 'Review task',
       sourceDraftLinked: true,
@@ -553,6 +561,69 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(listPayload.tasks[0].preview).not.toContain('source_draft_id');
     expect(listPayload.tasks[0].preview).not.toContain('source_draft_relative_path');
     expect(listPayload.tasks[0].preview).not.toContain('source_draft_sha256');
+
+    const detailResponse = await fetch(`${baseUrl}/work/task-review?taskToken=${encodeURIComponent(listPayload.tasks[0].actionToken)}`);
+    const detailPayload = await detailResponse.json();
+    expect(detailResponse.status).toBe(200);
+    expect(detailPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_task_review_detail.v0',
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(detailPayload.task).toEqual(expect.objectContaining({
+      actionToken: listPayload.tasks[0].actionToken,
+      status: 'pending_review',
+      taskPreview: 'Reply to the customer asking whether the invoice can be re-sent today.',
+    }));
+    expect(detailPayload.linkedDraft).toEqual(expect.objectContaining({
+      displayTitle: 'Linked draft',
+      requestPreview: 'Reply to the customer asking whether the invoice can be re-sent today.',
+      editableDraft: expect.stringContaining('Thanks for reaching out.'),
+    }));
+    expect(JSON.stringify(detailPayload)).not.toContain('source_draft_sha256');
+
+    const reviewResponse = await fetch(`${baseUrl}/work/task-review`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskToken: listPayload.tasks[0].actionToken,
+        decision: 'edit',
+        editedDraftText: 'Thanks, I can resend the invoice after I verify the attachment and amount.',
+        note: 'cleaned before manual send',
+      }),
+    });
+    const reviewPayload = await reviewResponse.json();
+    expect(reviewResponse.status).toBe(200);
+    expect(reviewPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_task_review_write.v0',
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(reviewPayload.review).toEqual(expect.objectContaining({
+      protocol: 'mira.work_task_review.v0',
+      taskToken: listPayload.tasks[0].actionToken,
+      decision: 'edit',
+      status: 'edited',
+      editedDraftText: 'Thanks, I can resend the invoice after I verify the attachment and amount.',
+    }));
+    expect(fs.existsSync(reviewPayload.absolutePath)).toBe(true);
+
+    const reviewedListResponse = await fetch(`${baseUrl}/work/tasks`);
+    const reviewedListPayload = await reviewedListResponse.json();
+    expect(reviewedListPayload).toEqual(expect.objectContaining({
+      taskCount: 1,
+      pendingCount: 0,
+      reviewedCount: 1,
+    }));
+    expect(reviewedListPayload.tasks[0]).toEqual(expect.objectContaining({
+      actionToken: listPayload.tasks[0].actionToken,
+      status: 'edited',
+      reviewedAt: expect.any(String),
+    }));
   });
 
   test('refuses task conversion when the source draft is missing or outside work drafts', async () => {

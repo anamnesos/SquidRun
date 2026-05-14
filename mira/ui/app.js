@@ -4,6 +4,10 @@ const state = {
   sessionId: `mira-ui-${Date.now()}`,
   turnCounter: 0,
   selectedModel: null,
+  selectedTaskToken: null,
+  workDraftCount: 0,
+  workPendingCount: 0,
+  workReviewedCount: 0,
 };
 
 const elements = {
@@ -29,6 +33,7 @@ const elements = {
   reviewSummary: document.getElementById('reviewSummary'),
   draftList: document.getElementById('draftList'),
   taskList: document.getElementById('taskList'),
+  reviewPanel: document.getElementById('reviewPanel'),
   recentTurns: document.getElementById('recentTurns'),
 };
 
@@ -188,9 +193,14 @@ function appendPreviewLine(container, label, value) {
   container.append(paragraph);
 }
 
+function renderWorkSummary() {
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed`);
+}
+
 function updateDraftList(payload) {
   const drafts = Array.isArray(payload?.drafts) ? payload.drafts : [];
-  setText(elements.workSummary, `${drafts.length} drafts`);
+  state.workDraftCount = drafts.length;
+  renderWorkSummary();
   if (drafts.length === 0) {
     setText(elements.draftList, 'none yet');
     return;
@@ -229,10 +239,14 @@ function updateDraftList(payload) {
 
 function updateTaskList(payload) {
   const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
-  const current = elements.workSummary.textContent || '';
-  setText(elements.workSummary, `${current}${current ? ' / ' : ''}${tasks.length} tasks`);
+  const pending = Number(payload?.pendingCount || 0);
+  const reviewed = Number(payload?.reviewedCount || 0);
+  state.workPendingCount = pending;
+  state.workReviewedCount = reviewed;
+  renderWorkSummary();
   if (tasks.length === 0) {
     setText(elements.taskList, 'none yet');
+    renderReviewPanel(null);
     return;
   }
   elements.taskList.replaceChildren(...tasks.slice(0, 5).map((task) => {
@@ -241,12 +255,89 @@ function updateTaskList(payload) {
     const title = document.createElement('strong');
     title.textContent = cleanPreviewText(task.displayTitle) || 'Review task';
     const source = document.createElement('span');
-    source.textContent = task.sourceDraftLinked ? 'source draft linked' : 'source draft missing';
+    source.textContent = `${String(task.status || 'pending_review').replace(/_/g, ' ')} · ${task.sourceDraftLinked ? 'draft linked' : 'draft missing'}`;
     item.append(title, source);
     appendPreviewLine(item, 'Task', task.taskPreview || task.preview);
     appendPreviewLine(item, 'Checklist', task.checklistPreview);
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'subtle-button';
+    action.textContent = state.selectedTaskToken === task.actionToken ? 'open' : 'review';
+    action.addEventListener('click', async () => {
+      state.selectedTaskToken = task.actionToken;
+      action.disabled = true;
+      action.textContent = 'opening';
+      try {
+        const detail = await fetchTaskReview(task.actionToken);
+        renderReviewPanel(detail);
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+      } finally {
+        action.disabled = false;
+        action.textContent = 'open';
+      }
+    });
+    item.append(action);
     return item;
   }));
+}
+
+function renderReviewPanel(detail) {
+  if (!detail || detail.ok !== true) {
+    setText(elements.reviewPanel, 'choose a task');
+    return;
+  }
+  elements.reviewPanel.replaceChildren();
+  const task = detail.task || {};
+  const linkedDraft = detail.linkedDraft || {};
+  const heading = document.createElement('strong');
+  heading.textContent = `${cleanPreviewText(task.displayTitle) || 'Review task'} · ${String(task.status || 'pending_review').replace(/_/g, ' ')}`;
+  const request = document.createElement('p');
+  request.textContent = `Request: ${cleanPreviewText(linkedDraft.requestPreview || task.taskPreview || task.preview)}`;
+  const label = document.createElement('label');
+  label.className = 'review-editor-label';
+  label.textContent = 'Draft';
+  const textarea = document.createElement('textarea');
+  textarea.className = 'review-editor';
+  textarea.rows = 8;
+  textarea.value = linkedDraft.editableDraft || linkedDraft.draftPreview || '';
+  const note = document.createElement('input');
+  note.className = 'review-note';
+  note.placeholder = 'note for review record';
+  const actions = document.createElement('div');
+  actions.className = 'review-actions';
+  const buttons = [
+    ['approve', 'Approve'],
+    ['edit', 'Save edit'],
+    ['reject', 'Reject'],
+  ].map(([decision, text]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = decision === 'reject' ? 'subtle-button danger-button' : 'subtle-button';
+    button.textContent = text;
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const result = await submitTaskReview({
+          taskToken: task.actionToken,
+          decision,
+          editedDraftText: textarea.value,
+          note: note.value,
+        });
+        appendMessage('mira', `Review saved: ${result.review.status}.`);
+        const refreshed = await fetchTaskReview(task.actionToken);
+        renderReviewPanel(refreshed);
+        await refreshTasks();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+    return button;
+  });
+  actions.append(...buttons);
+  elements.reviewPanel.append(heading, request, label, textarea, note, actions);
 }
 
 function updateRecentTurns(payload) {
@@ -361,6 +452,13 @@ async function refreshTasks() {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) return;
   updateTaskList(payload);
+  if (state.selectedTaskToken) {
+    try {
+      renderReviewPanel(await fetchTaskReview(state.selectedTaskToken));
+    } catch {
+      state.selectedTaskToken = null;
+    }
+  }
 }
 
 async function refreshRecentTurns() {
@@ -403,6 +501,33 @@ async function createTaskFromDraft(draft) {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) {
     throw new Error(payload?.error?.message || 'Task creation failed.');
+  }
+  return payload;
+}
+
+async function fetchTaskReview(taskToken) {
+  const response = await fetch(`/work/task-review?taskToken=${encodeURIComponent(taskToken || '')}`);
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Task review load failed.');
+  }
+  return payload;
+}
+
+async function submitTaskReview(input) {
+  const response = await fetch('/work/task-review', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      taskToken: input.taskToken,
+      decision: input.decision,
+      editedDraftText: input.editedDraftText,
+      note: input.note,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Task review save failed.');
   }
   return payload;
 }

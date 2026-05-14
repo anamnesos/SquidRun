@@ -9,7 +9,7 @@ import { runRuntimeTurn, type RuntimeTurnInput } from "./turn.js";
 import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
-import { createWorkTaskFromDraft, listWorkTasks } from "./work-task.js";
+import { createWorkTaskFromDraft, createWorkTaskReview, getWorkTaskReviewDetail, listWorkTasks } from "./work-task.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -263,6 +263,28 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/work/task-review") {
+    try {
+      const body = await readJsonBody(request);
+      const reviewInput = {
+        decision: body.decision,
+        editedDraftText: typeof body.editedDraftText === "string" ? body.editedDraftText : null,
+        note: typeof body.note === "string" ? body.note : null,
+      };
+      if (typeof body.taskToken === "string") {
+        Object.assign(reviewInput, { taskToken: body.taskToken });
+      }
+      if (typeof body.taskId === "string") {
+        Object.assign(reviewInput, { taskId: body.taskId });
+      }
+      const review = createWorkTaskReview(reviewInput);
+      sendJson(response, 200, review);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -300,6 +322,20 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/work/tasks") {
     sendJson(response, 200, listWorkTasks(process.env, { includeInternal: includeInternalFields(requestUrl) }));
+    return;
+  }
+
+  if (requestUrl.pathname === "/work/task-review") {
+    try {
+      const detailInput = {};
+      const taskToken = requestUrl.searchParams.get("taskToken");
+      const taskId = requestUrl.searchParams.get("taskId");
+      if (taskToken) Object.assign(detailInput, { taskToken });
+      if (taskId) Object.assign(detailInput, { taskId });
+      sendJson(response, 200, getWorkTaskReviewDetail(detailInput));
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
     return;
   }
 

@@ -13,12 +13,15 @@ export type WorkTaskInput = {
   source?: string | null;
 };
 
+export type WorkTaskStatus = "pending_review" | "approved" | "rejected" | "edited";
+export type WorkTaskReviewDecision = "approve" | "reject" | "edit";
+
 export type WorkTaskResult = {
   ok: true;
   protocol: "mira.work_task.v0";
   id: string;
   kind: "draft_intake_task";
-  status: "pending_review";
+  status: WorkTaskStatus;
   stateRootPath: string;
   relativePath: string;
   absolutePath: string;
@@ -40,9 +43,13 @@ export type WorkTaskListResult = {
   protocol: "mira.work_task_list.v0";
   stateRootPath: string | null;
   taskCount: number;
+  pendingCount: number;
+  reviewedCount: number;
   tasks: Array<{
-    status: "pending_review";
+    actionToken: string;
+    status: WorkTaskStatus;
     createdAt: string | null;
+    reviewedAt: string | null;
     preview: string;
     displayTitle: string;
     taskPreview: string;
@@ -56,6 +63,58 @@ export type WorkTaskListResult = {
     sourceDraftRelativePath?: string | null;
     sourceDraftSha256?: string | null;
   }>;
+  externalSend: false;
+  crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkTaskReviewDetailResult = {
+  ok: true;
+  protocol: "mira.work_task_review_detail.v0";
+  task: {
+    actionToken: string;
+    status: WorkTaskStatus;
+    createdAt: string | null;
+    reviewedAt: string | null;
+    displayTitle: string;
+    taskPreview: string;
+    checklistPreview: string;
+    preview: string;
+  };
+  linkedDraft: {
+    displayTitle: string;
+    requestPreview: string;
+    draftPreview: string;
+    editableDraft: string;
+  } | null;
+  review: WorkTaskReviewRecord | null;
+  externalSend: false;
+  crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkTaskReviewRecord = {
+  protocol: "mira.work_task_review.v0";
+  reviewId: string;
+  taskId: string;
+  taskToken: string;
+  decision: WorkTaskReviewDecision;
+  status: WorkTaskStatus;
+  reviewedAt: string;
+  note: string | null;
+  editedDraftText: string | null;
+  externalSend: false;
+  crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkTaskReviewResult = {
+  ok: true;
+  protocol: "mira.work_task_review_write.v0";
+  stateRootPath: string;
+  relativePath: string;
+  absolutePath: string;
+  review: WorkTaskReviewRecord;
   externalSend: false;
   crmMutation: false;
   runtimeExecutesExternalAction: false;
@@ -86,6 +145,10 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48) || "task";
+}
+
+export function buildWorkTaskActionToken(id: string): string {
+  return `task-${crypto.createHash("sha256").update(`mira.work_task.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
 function extractSection(markdown: string, heading: string): string {
@@ -148,6 +211,59 @@ function getDraftsDir(rootPath: string): string {
   return path.resolve(rootPath, "work", "drafts");
 }
 
+function getReviewsDir(rootPath: string): string {
+  return path.resolve(rootPath, "work", "reviews");
+}
+
+function statusFromDecision(decision: WorkTaskReviewDecision): WorkTaskStatus {
+  if (decision === "approve") return "approved";
+  if (decision === "reject") return "rejected";
+  return "edited";
+}
+
+function normalizeDecision(value: unknown): WorkTaskReviewDecision {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "approve" || normalized === "approved") return "approve";
+  if (normalized === "reject" || normalized === "rejected") return "reject";
+  if (normalized === "edit" || normalized === "edited") return "edit";
+  throw Object.assign(new Error("Review decision must be approve, reject, or edit."), { code: "invalid_review_decision" });
+}
+
+function parseReviewRecord(value: string): WorkTaskReviewRecord | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<WorkTaskReviewRecord>;
+    if (parsed.protocol !== "mira.work_task_review.v0" || typeof parsed.taskId !== "string") return null;
+    if (!["approve", "reject", "edit"].includes(String(parsed.decision))) return null;
+    if (!["approved", "rejected", "edited"].includes(String(parsed.status))) return null;
+    return parsed as WorkTaskReviewRecord;
+  } catch {
+    return null;
+  }
+}
+
+function listReviewRecords(rootPath: string): WorkTaskReviewRecord[] {
+  const reviewsDir = getReviewsDir(rootPath);
+  if (!isInside(rootPath, reviewsDir) || !fs.existsSync(reviewsDir)) return [];
+  return fs.readdirSync(reviewsDir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(reviewsDir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseReviewRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is WorkTaskReviewRecord => Boolean(record))
+    .sort((left, right) => String(right.reviewedAt || "").localeCompare(String(left.reviewedAt || "")));
+}
+
+function latestReviewByTask(rootPath: string): Map<string, WorkTaskReviewRecord> {
+  const records = listReviewRecords(rootPath);
+  const map = new Map<string, WorkTaskReviewRecord>();
+  for (const record of records) {
+    if (!map.has(record.taskId)) map.set(record.taskId, record);
+  }
+  return map;
+}
+
 function resolveDraft(input: WorkTaskInput, rootPath: string): {
   id: string;
   relativePath: string;
@@ -196,6 +312,70 @@ function resolveDraft(input: WorkTaskInput, rootPath: string): {
     absolutePath,
     markdown,
     sha256: crypto.createHash("sha256").update(markdown, "utf8").digest("hex"),
+  };
+}
+
+function resolveTask(input: { taskToken?: string; taskId?: string }, rootPath: string): {
+  id: string;
+  relativePath: string;
+  absolutePath: string;
+  markdown: string;
+  meta: Record<string, string>;
+} {
+  const tasksDir = getTasksDir(rootPath);
+  const taskToken = String(input.taskToken || "").trim();
+  const taskId = String(input.taskId || "").trim();
+  if (!taskToken && !taskId) {
+    throw Object.assign(new Error("taskToken or taskId is required."), { code: "missing_work_task" });
+  }
+  if (!fs.existsSync(tasksDir)) {
+    throw Object.assign(new Error("No work tasks exist in Mira state root."), { code: "work_task_not_found" });
+  }
+  const absolutePath = fs.readdirSync(tasksDir)
+    .filter((fileName) => fileName.endsWith(".md"))
+    .map((fileName) => path.resolve(tasksDir, fileName))
+    .find((candidatePath) => {
+      if (!isInside(rootPath, candidatePath)) return false;
+      const markdown = fs.readFileSync(candidatePath, "utf8");
+      const id = parseFrontMatter(markdown).id || path.basename(candidatePath, ".md");
+      return taskId ? id === taskId : buildWorkTaskActionToken(id) === taskToken;
+    });
+  if (!absolutePath || !isInside(rootPath, absolutePath) || !isInside(tasksDir, absolutePath)) {
+    throw Object.assign(new Error("Work task was not found inside Mira state root."), { code: "work_task_not_found" });
+  }
+  const markdown = fs.readFileSync(absolutePath, "utf8");
+  const meta = parseFrontMatter(markdown);
+  if (meta.schema !== "mira.work_task.v0") {
+    throw Object.assign(new Error("Source file is not a Mira work task."), { code: "invalid_work_task" });
+  }
+  return {
+    id: meta.id || path.basename(absolutePath, ".md"),
+    relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+    absolutePath,
+    markdown,
+    meta,
+  };
+}
+
+function resolveLinkedDraftFromTask(task: { meta: Record<string, string> }, rootPath: string): {
+  requestPreview: string;
+  draftPreview: string;
+  editableDraft: string;
+} | null {
+  const relativePath = String(task.meta.source_draft_relative_path || "").trim();
+  const expectedSha = String(task.meta.source_draft_sha256 || "").trim();
+  if (!relativePath) return null;
+  const draftsDir = getDraftsDir(rootPath);
+  const absolutePath = path.resolve(rootPath, relativePath);
+  if (!isInside(rootPath, absolutePath) || !isInside(draftsDir, absolutePath) || !fs.existsSync(absolutePath)) return null;
+  const markdown = fs.readFileSync(absolutePath, "utf8");
+  if (expectedSha && crypto.createHash("sha256").update(markdown, "utf8").digest("hex") !== expectedSha) return null;
+  const requestPreview = previewSection(extractSection(markdown, "Request"), 1200);
+  const draftPreview = previewSection(extractSection(markdown, "Draft"), 3000);
+  return {
+    requestPreview,
+    draftPreview,
+    editableDraft: extractSection(markdown, "Draft") || draftPreview,
   };
 }
 
@@ -323,6 +503,8 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env, options: { i
       protocol: "mira.work_task_list.v0",
       stateRootPath: options.includeInternal ? stateRoot.path : null,
       taskCount: 0,
+      pendingCount: 0,
+      reviewedCount: 0,
       tasks: [],
       externalSend: false,
       crmMutation: false,
@@ -338,6 +520,8 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env, options: { i
       protocol: "mira.work_task_list.v0",
       stateRootPath: options.includeInternal ? rootPath : null,
       taskCount: 0,
+      pendingCount: 0,
+      reviewedCount: 0,
       tasks: [],
       externalSend: false,
       crmMutation: false,
@@ -345,6 +529,7 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env, options: { i
     };
   }
 
+  const reviewMap = latestReviewByTask(rootPath);
   const tasks = fs.readdirSync(tasksDir)
     .filter((fileName) => fileName.endsWith(".md"))
     .map((fileName) => {
@@ -353,9 +538,13 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env, options: { i
       const markdown = fs.readFileSync(absolutePath, "utf8");
       const meta = parseFrontMatter(markdown);
       const display = buildTaskDisplay(markdown);
+      const id = meta.id || path.basename(fileName, ".md");
+      const review = reviewMap.get(id) || null;
       const item = {
-        status: "pending_review" as const,
+        actionToken: buildWorkTaskActionToken(id),
+        status: review?.status || "pending_review" as WorkTaskStatus,
         createdAt: meta.created_at || null,
+        reviewedAt: review?.reviewedAt || null,
         preview: display.preview,
         displayTitle: display.displayTitle,
         taskPreview: display.taskPreview,
@@ -365,7 +554,7 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env, options: { i
       if (!options.includeInternal) return item;
       return {
         ...item,
-        id: meta.id || path.basename(fileName, ".md"),
+        id,
         kind: "draft_intake_task" as const,
         relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
         absolutePath,
@@ -376,13 +565,118 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env, options: { i
     })
     .filter((task): task is NonNullable<typeof task> => Boolean(task))
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+  const pendingCount = tasks.filter((task) => task.status === "pending_review").length;
 
   return {
     ok: true,
     protocol: "mira.work_task_list.v0",
     stateRootPath: options.includeInternal ? rootPath : null,
     taskCount: tasks.length,
+    pendingCount,
+    reviewedCount: tasks.length - pendingCount,
     tasks,
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function getWorkTaskReviewDetail(input: { taskToken?: string; taskId?: string }, env: NodeJS.ProcessEnv = process.env): WorkTaskReviewDetailResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before work tasks can be read."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const task = resolveTask(input, rootPath);
+  const display = buildTaskDisplay(task.markdown);
+  const review = latestReviewByTask(rootPath).get(task.id) || null;
+  const linkedDraft = resolveLinkedDraftFromTask(task, rootPath);
+  return {
+    ok: true,
+    protocol: "mira.work_task_review_detail.v0",
+    task: {
+      actionToken: buildWorkTaskActionToken(task.id),
+      status: review?.status || "pending_review",
+      createdAt: task.meta.created_at || null,
+      reviewedAt: review?.reviewedAt || null,
+      displayTitle: display.displayTitle,
+      taskPreview: display.taskPreview,
+      checklistPreview: display.checklistPreview,
+      preview: display.preview,
+    },
+    linkedDraft: linkedDraft ? {
+      displayTitle: "Linked draft",
+      requestPreview: linkedDraft.requestPreview,
+      draftPreview: linkedDraft.draftPreview,
+      editableDraft: linkedDraft.editableDraft,
+    } : null,
+    review,
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function createWorkTaskReview(input: {
+  taskToken?: string;
+  taskId?: string;
+  decision?: unknown;
+  editedDraftText?: string | null;
+  note?: string | null;
+}, env: NodeJS.ProcessEnv = process.env): WorkTaskReviewResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before work review can be written."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const task = resolveTask(input, rootPath);
+  const decision = normalizeDecision(input.decision);
+  const editedDraftText = typeof input.editedDraftText === "string" ? input.editedDraftText.trim() : "";
+  if (decision === "edit" && !editedDraftText) {
+    throw Object.assign(new Error("Edited draft text is required for edit decisions."), { code: "empty_review_edit" });
+  }
+  const reviewsDir = getReviewsDir(rootPath);
+  if (!isInside(rootPath, reviewsDir)) {
+    throw Object.assign(new Error("Work review destination escaped Mira state root."), { code: "unsafe_work_review_path" });
+  }
+  const reviewedAt = new Date().toISOString();
+  const reviewId = `work-review-${reviewedAt.replace(/[:.]/g, "-")}-${crypto.randomUUID()}`;
+  const absolutePath = path.resolve(reviewsDir, `${reviewId}-${slugify(task.id)}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Work review file escaped Mira state root."), { code: "unsafe_work_review_path" });
+  }
+  const record: WorkTaskReviewRecord = {
+    protocol: "mira.work_task_review.v0",
+    reviewId,
+    taskId: task.id,
+    taskToken: buildWorkTaskActionToken(task.id),
+    decision,
+    status: statusFromDecision(decision),
+    reviewedAt,
+    note: typeof input.note === "string" && input.note.trim() ? input.note.trim() : null,
+    editedDraftText: editedDraftText || null,
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+  fs.mkdirSync(reviewsDir, { recursive: true });
+  const handle = fs.openSync(absolutePath, "wx");
+  try {
+    fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  } finally {
+    fs.closeSync(handle);
+  }
+  return {
+    ok: true,
+    protocol: "mira.work_task_review_write.v0",
+    stateRootPath: rootPath,
+    relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+    absolutePath,
+    review: record,
     externalSend: false,
     crmMutation: false,
     runtimeExecutesExternalAction: false,
