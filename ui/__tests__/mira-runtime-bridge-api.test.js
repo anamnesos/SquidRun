@@ -304,6 +304,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="brainLine"');
     expect(indexHtml).toContain('id="reviewSummary"');
     expect(indexHtml).toContain('id="modelSummary"');
+    expect(indexHtml).toContain('id="draftButton"');
+    expect(indexHtml).toContain('id="draftList"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
     expect(indexHtml).not.toContain('business mess');
@@ -311,6 +313,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appResponse.headers.get('content-type')).toContain('text/javascript');
     expect(appJs).toContain("fetch('/turn'");
     expect(appJs).toContain("fetch('/model/status'");
+    expect(appJs).toContain("fetch('/work/drafts'");
     expect(appJs).toContain('brainLine');
     expect(appJs).toContain("fetch('/voice/correction'");
     expect(appJs).toContain("fetch('/voice/corrections'");
@@ -323,7 +326,99 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(css).toContain('.context-panel');
     expect(css).toContain('.brain-line');
     expect(css).toContain('.subtle-button');
+    expect(css).toContain('.draft-item');
     expect(css).not.toContain('.side');
+  });
+
+  test('creates and lists pending-review customer work drafts without external send', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-draft-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const createResponse = await fetch(`${baseUrl}/work/drafts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'customer_reply',
+        text: 'Reply to the customer asking whether the invoice can be re-sent today.',
+        sessionId: 'app-session-373',
+        messageId: 'work-draft-test-1',
+      }),
+    });
+    const createPayload = await createResponse.json();
+    const listResponse = await fetch(`${baseUrl}/work/drafts`);
+    const listPayload = await listResponse.json();
+
+    expect(createResponse.status).toBe(200);
+    expect(createPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_draft.v0',
+      kind: 'customer_reply',
+      status: 'pending_review',
+      stateRootPath: path.resolve(tempStateRoot),
+      externalSend: false,
+      runtimeExecutesExternalAction: false,
+      reviewRequired: true,
+    }));
+    expect(createPayload.relativePath).toMatch(/^work\/drafts\/work-draft-.*\.md$/);
+    expect(createPayload.absolutePath.startsWith(path.resolve(tempStateRoot))).toBe(true);
+    expect(fs.existsSync(createPayload.absolutePath)).toBe(true);
+    const writtenDraft = fs.readFileSync(createPayload.absolutePath, 'utf8');
+    expect(writtenDraft).toContain('schema: mira.work_draft.v0');
+    expect(writtenDraft).toContain('status: pending_review');
+    expect(writtenDraft).toContain('external_send: false');
+    expect(writtenDraft).toContain('runtime_executes_external_action: false');
+    expect(writtenDraft).toContain('Reply to the customer asking whether the invoice can be re-sent today.');
+
+    expect(listResponse.status).toBe(200);
+    expect(listPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_draft_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      draftCount: 1,
+      externalSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(listPayload.drafts[0]).toEqual(expect.objectContaining({
+      id: createPayload.id,
+      kind: 'customer_reply',
+      status: 'pending_review',
+      relativePath: createPayload.relativePath,
+      absolutePath: createPayload.absolutePath,
+    }));
+  });
+
+  test('refuses work drafts when Mira state root is unavailable or kind is unsupported', async () => {
+    await startServer({
+      MIRA_STATE_ROOT: '',
+    });
+
+    const missingRootResponse = await fetch(`${baseUrl}/work/drafts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'customer_reply',
+        text: 'Draft a reply.',
+      }),
+    });
+    const missingRootPayload = await missingRootResponse.json();
+    expect(missingRootResponse.status).toBe(400);
+    expect(missingRootPayload.error).toEqual(expect.objectContaining({
+      code: 'state_root_not_ready',
+    }));
+
+    const unsupportedResponse = await fetch(`${baseUrl}/work/drafts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'crm_update',
+        text: 'Update the CRM.',
+      }),
+    });
+    const unsupportedPayload = await unsupportedResponse.json();
+    expect(unsupportedResponse.status).toBe(400);
+    expect(unsupportedPayload.error).toEqual(expect.objectContaining({
+      code: 'unsupported_work_draft_kind',
+    }));
   });
 
   test('reports missing Ollama provider without blocking the runtime', async () => {

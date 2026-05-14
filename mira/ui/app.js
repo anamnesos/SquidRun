@@ -9,6 +9,7 @@ const elements = {
   form: document.getElementById('turnForm'),
   text: document.getElementById('turnText'),
   useModel: document.getElementById('useModel'),
+  draftButton: document.getElementById('draftButton'),
   sendButton: document.getElementById('sendButton'),
   thread: document.getElementById('thread'),
   statusStrip: document.getElementById('statusStrip'),
@@ -21,6 +22,7 @@ const elements = {
   lastTurn: document.getElementById('lastTurn'),
   modelSummary: document.getElementById('modelSummary'),
   reviewSummary: document.getElementById('reviewSummary'),
+  draftList: document.getElementById('draftList'),
 };
 
 let modelStatus = null;
@@ -104,6 +106,26 @@ function updateReviewSummary(payload) {
   setText(elements.reviewSummary, count === 1 ? '1 pending correction' : `${count} pending corrections`);
 }
 
+function updateDraftList(payload) {
+  const drafts = Array.isArray(payload?.drafts) ? payload.drafts : [];
+  if (drafts.length === 0) {
+    setText(elements.draftList, 'none yet');
+    return;
+  }
+  elements.draftList.replaceChildren(...drafts.slice(0, 5).map((draft) => {
+    const item = document.createElement('article');
+    item.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = draft.id || 'draft';
+    const path = document.createElement('span');
+    path.textContent = draft.relativePath || '';
+    const preview = document.createElement('p');
+    preview.textContent = draft.preview || '';
+    item.append(title, path, preview);
+    return item;
+  }));
+}
+
 async function sendTurn(text) {
   const response = await fetch('/turn', {
     method: 'POST',
@@ -147,6 +169,32 @@ async function refreshCorrections() {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) return;
   updateReviewSummary(payload);
+}
+
+async function refreshDrafts() {
+  const response = await fetch('/work/drafts');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateDraftList(payload);
+}
+
+async function createDraft(text) {
+  const response = await fetch('/work/drafts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      kind: 'customer_reply',
+      sessionId: state.sessionId,
+      messageId: `${state.sessionId}-draft-${state.turnCounter++}`,
+      source: 'runtime-ui',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Draft creation failed.');
+  }
+  return payload;
 }
 
 async function refreshModelStatus() {
@@ -193,6 +241,7 @@ async function prime() {
     elements.useModel.checked = useModel;
     updateRuntimeState(payload);
     await refreshCorrections();
+    await refreshDrafts();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
     setText(elements.lastTurn, error.message);
@@ -206,6 +255,26 @@ elements.contextToggle.addEventListener('click', async () => {
   if (shouldOpen) {
     await refreshModelStatus();
     await refreshCorrections();
+    await refreshDrafts();
+  }
+});
+
+elements.draftButton.addEventListener('click', async () => {
+  const text = elements.text.value.trim();
+  if (!text) return;
+
+  elements.draftButton.disabled = true;
+  elements.draftButton.textContent = 'Drafting';
+  try {
+    const payload = await createDraft(text);
+    appendMessage('mira', `Draft saved for review: ${payload.relativePath}`);
+    await refreshDrafts();
+  } catch (error) {
+    appendMessage('mira', error.message, 'error');
+  } finally {
+    elements.draftButton.disabled = false;
+    elements.draftButton.textContent = 'Draft';
+    elements.text.focus();
   }
 });
 

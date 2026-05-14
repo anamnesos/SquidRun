@@ -7,6 +7,7 @@ import { getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 import { runRuntimeTurn } from "./turn.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
+import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -176,6 +177,23 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/work/drafts") {
+    try {
+      const body = await readJsonBody(request);
+      const draft = createWorkDraft({
+        text: String(body.text || body.request || body.prompt || ""),
+        kind: typeof body.kind === "string" ? body.kind : "customer_reply",
+        sessionId: typeof body.sessionId === "string" ? body.sessionId : null,
+        messageId: typeof body.messageId === "string" ? body.messageId : null,
+        source: typeof body.source === "string" ? body.source : "runtime-ui",
+      });
+      sendJson(response, 200, draft);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -192,6 +210,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/model/status") {
     sendJson(response, 200, await getModelProviderStatus());
+    return;
+  }
+
+  if (requestUrl.pathname === "/work/drafts") {
+    sendJson(response, 200, listWorkDrafts());
     return;
   }
 

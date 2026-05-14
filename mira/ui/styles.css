@@ -226,7 +226,7 @@ body[data-model-ready="false"] .model-pill {
 
 .composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 11px;
   align-items: end;
   padding: 18px clamp(18px, 4vw, 56px) 24px;
@@ -271,7 +271,8 @@ textarea:focus {
   accent-color: var(--green);
 }
 
-button[type="submit"] {
+button[type="submit"],
+.draft-button {
   min-height: 44px;
   border: 0;
   border-radius: 8px;
@@ -280,6 +281,12 @@ button[type="submit"] {
   padding: 0 18px;
   font-weight: 720;
   cursor: pointer;
+}
+
+.draft-button {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
 }
 
 button:disabled {
@@ -348,6 +355,45 @@ dd {
   margin: 6px 0 0;
   line-height: 1.4;
   font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.drafts-panel {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.drafts-panel h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.draft-list {
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.draft-item {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.draft-item strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.draft-item span,
+.draft-item p {
+  margin: 0;
   overflow-wrap: anywhere;
 }
 

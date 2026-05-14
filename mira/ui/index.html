@@ -41,6 +41,7 @@
             <input type="checkbox" id="useModel" checked>
             <span>model</span>
           </label>
+          <button type="button" class="draft-button" id="draftButton">Draft</button>
           <button type="submit" id="sendButton">Send</button>
         </form>
       </section>
@@ -71,6 +72,10 @@
             <dd id="reviewSummary">none pending</dd>
           </div>
         </dl>
+        <section class="drafts-panel" aria-label="Pending work drafts">
+          <h2>Drafts</h2>
+          <div id="draftList" class="draft-list">none yet</div>
+        </section>
       </aside>
     </main>
 
