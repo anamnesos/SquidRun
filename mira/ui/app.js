@@ -73,19 +73,17 @@ function appendMessage(role, content, className = role) {
 }
 
 function summarizeOperator(context) {
-  if (!context || context.loaded !== true) return 'not loaded';
-  const lanes = Array.isArray(context.operatingLanes) ? context.operatingLanes.join(', ') : '';
-  return `${context.businessThesis || 'operator context loaded'} ${lanes ? `(${lanes})` : ''}`;
+  if (!context || context.loaded !== true) return 'Work context not loaded yet.';
+  const lanes = Array.isArray(context.operatingLanes) ? context.operatingLanes.slice(0, 5).join(', ') : '';
+  return lanes ? `Work she can reason about: ${lanes}.` : 'Work context loaded.';
 }
 
 function summarizeCore(payload) {
   const core = payload?.loadedCoreSummary;
-  if (!core || core.available !== true) return 'not loaded';
-  return [
-    core.identity,
-    core.relationship,
-    core.permissions,
-  ].filter(Boolean).join(' | ');
+  if (!core || core.available !== true) return 'Starter identity not loaded.';
+  const persona = payload?.personaCore;
+  const traits = Array.isArray(persona?.traits) ? persona.traits.slice(0, 4).join(', ') : 'present, direct';
+  return `Starter identity loaded: ${traits}. External actions stay gated.`;
 }
 
 function summarizePersona(payload) {
@@ -149,7 +147,7 @@ function updateModelSummary(payload) {
   document.body.dataset.modelReady = payload.available ? 'true' : 'false';
   setText(elements.brainLine, `${provider}: ${payload.model} ${state}`);
   setText(elements.modelPill, payload.available ? payload.model : 'model not ready');
-  setText(elements.modelSummary, `${payload.model} (${payload.selectedProvider}) is ${state}. ${payload.nextLocalModelStep || ''}`.trim());
+  setText(elements.modelSummary, `${provider} ${state}: ${payload.model}. ${payload.nextLocalModelStep || ''}`.trim());
 }
 
 function updateReviewSummary(payload) {
@@ -233,7 +231,7 @@ function updateRecentTurns(payload) {
     title.textContent = record.outcome === 'error' ? 'error turn' : 'turn';
     const meta = document.createElement('span');
     const model = record.model?.model || (record.model_invoked ? 'model' : 'deterministic');
-    meta.textContent = `${record.created_at || ''} ${model}`.trim();
+    meta.textContent = `${model} · ${record.outcome || 'ok'}`;
     const prompt = document.createElement('p');
     prompt.textContent = record.prompt || '';
     const reply = document.createElement('p');

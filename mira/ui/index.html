@@ -68,31 +68,22 @@
       </section>
 
       <aside class="context-panel" id="contextPanel" aria-label="Mira workbench">
-        <div class="status-strip" id="statusStrip">
-          <span class="chip">loading</span>
-        </div>
-        <dl>
-          <div>
-            <dt>Operator</dt>
-            <dd id="operatorSummary">loading</dd>
+        <header class="workbench-head">
+          <p>Workbench</p>
+          <div class="status-strip" id="statusStrip">
+            <span class="chip">loading</span>
           </div>
-          <div>
-            <dt>Core</dt>
-            <dd id="coreSummary">loading</dd>
-          </div>
-          <div>
-            <dt>Last Turn</dt>
-            <dd id="lastTurn">none</dd>
-          </div>
-          <div>
-            <dt>Model</dt>
-            <dd id="modelSummary">checking</dd>
-          </div>
-          <div>
-            <dt>Review</dt>
-            <dd id="reviewSummary">none pending</dd>
-          </div>
-        </dl>
+        </header>
+        <section class="workbench-section" aria-label="Mira state">
+          <h2>Mira</h2>
+          <p id="operatorSummary">loading</p>
+          <p id="coreSummary">loading</p>
+        </section>
+        <section class="workbench-section" aria-label="Model and review state">
+          <h2>Run</h2>
+          <p id="modelSummary">checking</p>
+          <p><span id="lastTurn">none</span> · <span id="reviewSummary">none pending</span></p>
+        </section>
         <section class="drafts-panel" aria-label="Pending work drafts">
           <h2>Drafts</h2>
           <div id="draftList" class="draft-list">none yet</div>

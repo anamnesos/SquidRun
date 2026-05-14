@@ -362,12 +362,27 @@ button:disabled {
   min-height: 0;
   overflow: auto;
   border-left: 1px solid var(--line);
-  background: rgba(16, 18, 15, 0.98);
-  padding: 18px;
+  background: #10120f;
+  padding: 0;
 }
 
 .context-panel[hidden] {
   display: none;
+}
+
+.workbench-head {
+  display: grid;
+  gap: 12px;
+  padding: 22px 22px 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(21, 23, 19, 0.86);
+}
+
+.workbench-head p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 720;
 }
 
 .status-strip {
@@ -399,36 +414,38 @@ button:disabled {
   color: var(--red);
 }
 
-dl {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 18px;
-  margin: 18px 0 0;
+.workbench-section,
+.drafts-panel {
+  border-top: 1px solid var(--line);
+  padding: 18px 22px;
 }
 
-dt {
+.workbench-head + .workbench-section {
+  border-top: 0;
+}
+
+.workbench-section h2,
+.drafts-panel h2 {
+  margin: 0 0 11px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 720;
+}
+
+.workbench-section p {
+  margin: 0;
   color: var(--muted);
-  font-size: 11px;
-  text-transform: uppercase;
-}
-
-dd {
-  margin: 6px 0 0;
-  line-height: 1.4;
   font-size: 13px;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.drafts-panel {
-  margin-top: 20px;
-  border-top: 1px solid var(--line);
-  padding-top: 16px;
+.workbench-section p + p {
+  margin-top: 8px;
 }
 
-.drafts-panel h2 {
-  margin: 0 0 10px;
-  font-size: 13px;
-  font-weight: 700;
+.drafts-panel {
+  margin: 0;
 }
 
 .draft-list {

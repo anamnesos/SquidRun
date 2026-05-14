@@ -324,6 +324,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="modelProviderSelect"');
     expect(indexHtml).toContain('id="recentSummary"');
     expect(indexHtml).toContain('id="workSummary"');
+    expect(indexHtml).toContain('class="workbench-head"');
+    expect(indexHtml).toContain('class="workbench-section"');
     expect(indexHtml).toContain('id="draftButton"');
     expect(indexHtml).toContain('id="draftList"');
     expect(indexHtml).toContain('id="taskList"');
@@ -352,6 +354,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('recentTurns');
     expect(appJs).toContain('mira.turn_quality_capture_metadata.v0');
     expect(appJs).toContain('contextToggle');
+    expect(appJs).toContain('syncWorkbenchForViewport');
+    expect(appJs).toContain("window.matchMedia('(max-width: 820px)')");
     expect(appJs).toContain('useModel');
     expect(appJs).toContain("event.key !== 'Enter'");
     expect(appJs).toContain('event.shiftKey');
@@ -369,6 +373,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(css).toMatch(/\.conversation\s*\{[\s\S]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto[\s\S]*min-height:\s*0[\s\S]*overflow:\s*hidden/);
     expect(css).toContain('.memory-strip');
     expect(css).toContain('.model-picker');
+    expect(css).toContain('.workbench-head');
+    expect(css).toContain('.workbench-section');
     expect(css).toMatch(/\.thread\s*\{[\s\S]*min-height:\s*0[\s\S]*overflow-y:\s*auto/);
     expect(css).toMatch(/textarea\s*\{[\s\S]*resize:\s*none[\s\S]*overflow-y:\s*auto/);
     expect(css).not.toMatch(/@media\s*\(max-width:\s*820px\)\s*\{[\s\S]*body\s*\{[\s\S]*overflow:\s*auto/);
@@ -1340,6 +1346,10 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect(body.instructions).toContain('Relationship posture: James wants Mira to be caring, opinionated, friction-capable, and not a mirror.');
       expect(body.instructions).toContain('business and workflow context are capabilities, not Mira\'s identity');
       expect(body.instructions).toContain('Recent local turn journal:');
+      expect(body.instructions).toContain('Answer James from the current thread.');
+      expect(body.instructions).toMatch(/Presence clock: server_now_iso=.*server_local_date=\d{4}-\d{2}-\d{2}; server_local_time=\d{2}:\d{2}; utc_offset=[+-]\d{2}:\d{2}/);
+      expect(body.instructions).toContain('Do not use relative time words like tonight, tomorrow, morning, later, or yesterday unless the prompt or this clock gives enough evidence');
+      expect(body.instructions).not.toContain('Answer James from the current moment');
       expect(body.instructions).not.toContain('Avoid: canned support diction');
       expect(body.instructions).not.toContain('not a generic chatbot');
       expect(body.instructions).not.toContain('trying to make real enough');
@@ -1483,6 +1493,8 @@ describe('Mira runtime bridge manual-plan API', () => {
         content: expect.stringContaining('Use the Mira voice lab examples'),
       }));
       expect(body.messages[0].content).toContain('Prompt class: identity-who-are-you-v0');
+      expect(body.messages[0].content).toContain('Presence clock: server_now_iso=');
+      expect(body.messages[0].content).toContain('Do not use relative time words like tonight, tomorrow, morning, later, or yesterday');
       expect(body.messages[0].content).not.toContain('business bot');
       expect(body.messages[1]).toEqual({
         role: 'user',

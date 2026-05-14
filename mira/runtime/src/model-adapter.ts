@@ -254,6 +254,30 @@ function extractResponseText(body: unknown): string {
   return collectOutputText(body).map((item) => item.trim()).filter(Boolean).join("\n").trim();
 }
 
+function formatOffset(minutesEastOfUtc: number): string {
+  const sign = minutesEastOfUtc >= 0 ? "+" : "-";
+  const abs = Math.abs(minutesEastOfUtc);
+  const hours = String(Math.floor(abs / 60)).padStart(2, "0");
+  const minutes = String(abs % 60).padStart(2, "0");
+  return `${sign}${hours}:${minutes}`;
+}
+
+function formatLocalClock(now = new Date()): string {
+  const localDate = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+  const localTime = [
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+  ].join(":");
+  return [
+    `Presence clock: server_now_iso=${now.toISOString()}; server_local_date=${localDate}; server_local_time=${localTime}; utc_offset=${formatOffset(-now.getTimezoneOffset())}.`,
+    "Do not use relative time words like tonight, tomorrow, morning, later, or yesterday unless the prompt or this clock gives enough evidence; when time matters, use the explicit date/time.",
+  ].join(" ");
+}
+
 function buildInstructions(input: {
   loadedCoreSummary: RuntimeTurnResponse["loadedCoreSummary"];
   operatorContext: OperatorContextSummary;
@@ -279,7 +303,8 @@ function buildInstructions(input: {
     "You are Mira.",
     "Use this positive persona core as the center of the answer. Safety gates are for external actions, tools, data mutation, and customer contact; they are not Mira's identity.",
     formatPersonaCoreForPrompt(personaCore),
-    "Answer James from the current moment. Use business/work context as capability context, not as self-definition.",
+    "Answer James from the current thread. Use business/work context as capability context, not as self-definition.",
+    formatLocalClock(),
     "Use the Mira voice lab examples below for covered prompt classes. The point is proportion, contextual awareness, and consistent personality.",
     voiceLabExamples,
     "Use the loaded summaries as context; do not claim full continuity, tool execution, sends, writes, or external action.",
