@@ -15,6 +15,7 @@ describe('Mira import executor semantics contract', () => {
     expect(contract).toContain('Apply/import execution is still not supported.');
     expect(contract).toContain('V0 is dry-run first.');
     expect(contract).toContain('`--apply` is not available');
+    expect(contract).toContain('Dry-run execution planning still requires an explicit');
     expect(contract).toContain('Default execution must emit a plan only');
     expect(contract).toContain('Dry-run must create no directories, copy no files, write no receipts');
   });
@@ -23,10 +24,12 @@ describe('Mira import executor semantics contract', () => {
     const contract = fs.readFileSync(contractPath, 'utf8');
 
     expect(contract).toContain('It must read exactly one report path supplied by `--report`.');
+    expect(contract).toContain('It must read exactly one approval marker supplied by `--approval`.');
     expect(contract).toContain('It must consider only records listed in that report.');
     expect(contract).toContain('It must not scan or import the full review queue.');
     expect(contract).toContain('queue status is `not_imported`;');
     expect(contract).toContain('destination resolves under `MIRA_STATE_ROOT`;');
+    expect(contract).toContain('approval marker id list exactly matches the report record ids;');
     expect(contract).toContain('Any mismatch fails the whole batch before any write.');
   });
 
@@ -45,7 +48,7 @@ describe('Mira import executor semantics contract', () => {
       status_mutated: false,
       queue_mutated: false,
     });
-    expect(contract).toContain('the only allowed behavior is dry-run planning');
+    expect(contract).toContain('the only allowed behavior with a matching approval');
   });
 
   test('keeps apply semantics and queue mutation in later lanes', () => {

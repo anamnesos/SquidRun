@@ -11,6 +11,7 @@ const defaultQueuePath = path.join(repoRoot, 'mira', 'imports', 'review-queue.js
 function parseArgs(argv) {
   const args = {
     report: null,
+    approval: null,
     json: false,
     apply: false,
   };
@@ -19,6 +20,9 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === '--report') {
       args.report = argv[index + 1] || null;
+      index += 1;
+    } else if (arg === '--approval') {
+      args.approval = argv[index + 1] || null;
       index += 1;
     } else if (arg === '--json') {
       args.json = true;
@@ -45,9 +49,63 @@ function loadQueueById(queuePath = defaultQueuePath) {
   return records;
 }
 
+function validateApprovalMarker(approval, report, reportPath) {
+  const errors = [];
+  const reportRecordIds = (report.batch_records || []).map((record) => record.id);
+  const approvedRecordIds = approval.approved_record_ids || [];
+  const mutationLimits = approval.mutation_limits || {};
+
+  if (approval.schema !== 'mira.import_approval_marker.v0') {
+    errors.push('approval schema must be mira.import_approval_marker.v0');
+  }
+
+  if (approval.report_id !== report.report_id) {
+    errors.push('approval report_id must match report');
+  }
+
+  if (approval.batch_id !== report.proposal?.batch_id) {
+    errors.push('approval batch_id must match report batch');
+  }
+
+  if (path.normalize(approval.report_path || '') !== path.normalize(reportPath || '')) {
+    errors.push('approval report_path must match --report path');
+  }
+
+  if (approval.approval_scope !== 'copy_only') {
+    errors.push('approval_scope must be copy_only');
+  }
+
+  if (approvedRecordIds.length !== reportRecordIds.length) {
+    errors.push('approval record count must match report batch');
+  }
+
+  for (const id of reportRecordIds) {
+    if (!approvedRecordIds.includes(id)) {
+      errors.push(`approval missing record id: ${id}`);
+    }
+  }
+
+  const requiredLimits = {
+    copy_allowed: true,
+    move_allowed: false,
+    delete_allowed: false,
+    queue_mutation_allowed: false,
+    report_mutation_allowed: false,
+    runtime_load_allowed: false,
+  };
+  for (const [key, expected] of Object.entries(requiredLimits)) {
+    if (mutationLimits[key] !== expected) {
+      errors.push(`approval mutation limit ${key} must be ${expected}`);
+    }
+  }
+
+  return errors;
+}
+
 function buildDryRunExecutionPlan(options = {}) {
   const env = options.env || process.env;
   const reportPath = options.reportPath;
+  const approvalPath = options.approvalPath;
   const queuePath = options.queuePath || defaultQueuePath;
   const errors = [];
 
@@ -81,6 +139,21 @@ function buildDryRunExecutionPlan(options = {}) {
     };
   }
 
+  if (!approvalPath) {
+    return {
+      ok: false,
+      error: 'missing_approval',
+      applied: false,
+      copied: false,
+      moved: false,
+      deleted: false,
+      queue_mutated: false,
+      status_mutated: false,
+      would_copy: [],
+      errors: ['--approval is required before an import execution plan can be emitted.'],
+    };
+  }
+
   const rootResult = resolveStateRoot(env);
   if (!rootResult.ok) {
     return {
@@ -98,7 +171,9 @@ function buildDryRunExecutionPlan(options = {}) {
   }
 
   const resolvedReportPath = path.resolve(repoRoot, reportPath);
+  const resolvedApprovalPath = path.resolve(repoRoot, approvalPath);
   const report = readJson(resolvedReportPath);
+  const approval = readJson(resolvedApprovalPath);
   const queueById = loadQueueById(queuePath);
   const flags = report.mutation_flags || {};
 
@@ -119,6 +194,8 @@ function buildDryRunExecutionPlan(options = {}) {
       errors.push(`report mutation flag must be false: ${name}`);
     }
   }
+
+  errors.push(...validateApprovalMarker(approval, report, reportPath));
 
   const wouldCopy = [];
   for (const record of report.batch_records || []) {
@@ -198,6 +275,7 @@ if (require.main === module) {
   const args = parseArgs(process.argv.slice(2));
   const plan = buildDryRunExecutionPlan({
     reportPath: args.report,
+    approvalPath: args.approval,
     apply: args.apply,
   });
 
@@ -216,4 +294,5 @@ module.exports = {
   buildDryRunExecutionPlan,
   formatExecutionPlan,
   parseArgs,
+  validateApprovalMarker,
 };

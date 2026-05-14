@@ -16,13 +16,15 @@ node mira/tools/execute-reviewed-import.js --report mira/imports/reports/first-b
 ```
 
 V0 is dry-run first. `--apply` is not available until a later explicitly
-approved lane adds it.
+approved lane adds it. Dry-run execution planning still requires an explicit
+`--approval` marker so unapproved reports are mechanically blocked.
 
 ## Batch Gate
 
 The executor must be report-gated:
 
 - It must read exactly one report path supplied by `--report`.
+- It must read exactly one approval marker supplied by `--approval`.
 - It must consider only records listed in that report.
 - It must not scan or import the full review queue.
 - It must not infer approval from memory, recall, runtime health, or file
@@ -30,7 +32,8 @@ The executor must be report-gated:
 - It must require explicit batch approval before any apply mode can exist.
 
 For the current report, `requires_explicit_approval_before_import=true` and
-`status=review_only`, so the only allowed behavior is dry-run planning.
+`status=review_only`, so the only allowed behavior with a matching approval
+marker is dry-run planning.
 
 ## Required Verification
 
@@ -45,6 +48,9 @@ Before any future write, every record in the report must be checked against
 - destination resolves under `MIRA_STATE_ROOT`;
 - destination does not already exist;
 - report mutation flags are all false.
+- approval marker id list exactly matches the report record ids;
+- approval marker mutation limits allow copy only and deny move, delete, queue
+  mutation, report mutation, and runtime loading.
 
 Any mismatch fails the whole batch before any write.
 
