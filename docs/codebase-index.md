@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `915dca3`
+- Git HEAD: `3b11355`
 - Total files listed: 1176
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -40,8 +40,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1173
-- M: 3
+- clean/tracked: 1175
+- M: 1
 
 ## Files
 
@@ -65,7 +65,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | --- | --- | --- | ---: |
 | `docs/agent-templates.md` | doc | `clean/tracked` | 1312 |
 | `docs/background-builder-agents-spec.md` | doc | `clean/tracked` | 10011 |
-| `docs/codebase-index.md` | doc | `clean/tracked` | - |
+| `docs/codebase-index.md` | doc | ` M` | - |
 | `docs/csm-1b-benchmark-prep.md` | doc | `clean/tracked` | 8073 |
 | `docs/device-to-device-diagram.svg` | doc | `clean/tracked` | 42933 |
 | `docs/diagrams-reference.md` | doc | `clean/tracked` | 16076 |
@@ -164,7 +164,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/state/.gitignore` | config | `clean/tracked` | 52 |
 | `mira/state/README.md` | doc | `clean/tracked` | 613 |
 | `mira/state/state-root-contract.json` | config | `clean/tracked` | 612 |
-| `mira/tools/audit-voice-conversation.js` | source | `clean/tracked` | 7403 |
+| `mira/tools/audit-voice-conversation.js` | source | `clean/tracked` | 8349 |
 | `mira/tools/capture-voice-correction.js` | source | `clean/tracked` | 3332 |
 | `mira/tools/evaluate-voice-lab.js` | source | `clean/tracked` | 5456 |
 | `mira/tools/execute-reviewed-import.js` | source | `clean/tracked` | 11952 |
@@ -176,9 +176,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/tools/resolve-state-root.js` | source | `clean/tracked` | 670 |
 | `mira/tools/start-local-runtime.js` | source | `clean/tracked` | 9974 |
 | `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
-| `mira/ui/app.js` | source | ` M` | 8124 |
-| `mira/ui/index.html` | asset | ` M` | 2492 |
-| `mira/ui/styles.css` | asset | ` M` | 6760 |
+| `mira/ui/app.js` | source | `clean/tracked` | 8124 |
+| `mira/ui/index.html` | asset | `clean/tracked` | 2492 |
+| `mira/ui/styles.css` | asset | `clean/tracked` | 6760 |
 | `mira/voice/review/.gitkeep` | config | `clean/tracked` | 1 |
 | `mira/voice/voice-lab-v0.jsonl` | jsonl | `clean/tracked` | 12890 |
 | `MODEL-SHIMS.md` | doc | `clean/tracked` | 913 |
@@ -563,7 +563,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-state-import-tooling.test.js` | test | `clean/tracked` | 2140 |
 | `ui/__tests__/mira-tab-language-gate.test.js` | test | `clean/tracked` | 6322 |
 | `ui/__tests__/mira-visual-asset-curiosity.test.js` | test | `clean/tracked` | 5327 |
-| `ui/__tests__/mira-voice-conversation-audit.test.js` | test | `clean/tracked` | 5385 |
+| `ui/__tests__/mira-voice-conversation-audit.test.js` | test | `clean/tracked` | 6458 |
 | `ui/__tests__/mira-voice-correction-capture.test.js` | test | `clean/tracked` | 4934 |
 | `ui/__tests__/mira-voice-lab.test.js` | test | `clean/tracked` | 4349 |
 | `ui/__tests__/mira-web-research-curiosity.test.js` | test | `clean/tracked` | 2662 |
