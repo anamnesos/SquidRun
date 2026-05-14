@@ -356,6 +356,48 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(fs.readFileSync(voiceLabPath, 'utf8')).toBe(beforeVoiceLab);
   });
 
+  test('lists voice correction candidates from runtime API without mutating them', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-voice-review-'));
+    const reviewPath = path.join(tempStateRoot, 'review', 'candidates.jsonl');
+    fs.mkdirSync(path.dirname(reviewPath), { recursive: true });
+    fs.writeFileSync(reviewPath, `${JSON.stringify({
+      schema: 'mira.voice_review_candidate.v0',
+      id: 'voice-review-test-1',
+      created_at: '2026-05-14T00:00:00.000Z',
+      source: 'test',
+      prompt: 'who are you',
+      sounded_fake: 'Mira. I am your local AI presence.',
+      better_phrasing: 'Mira.',
+      suggested_case_id: 'identity-who-are-you-v0',
+      review_status: 'pending_review',
+      live_voice_mutated: false,
+    })}\n`, 'utf8');
+    const before = fs.readFileSync(reviewPath, 'utf8');
+    await startServer({ MIRA_VOICE_REVIEW_PATH: reviewPath });
+
+    const response = await fetch(`${baseUrl}/voice/corrections`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual({
+      ok: true,
+      protocol: 'mira.voice_review_list.v0',
+      path: path.resolve(reviewPath),
+      count: 1,
+      pending_count: 1,
+      live_voice_mutated: false,
+      records: [
+        expect.objectContaining({
+          id: 'voice-review-test-1',
+          better_phrasing: 'Mira.',
+          review_status: 'pending_review',
+          live_voice_mutated: false,
+        }),
+      ],
+    });
+    expect(fs.readFileSync(reviewPath, 'utf8')).toBe(before);
+  });
+
   test('refuses incomplete voice correction captures', async () => {
     tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-voice-review-'));
     const reviewPath = path.join(tempStateRoot, 'review', 'candidates.jsonl');

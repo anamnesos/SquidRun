@@ -8,6 +8,7 @@ const path = require('path');
 describe('Mira voice correction capture', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const captureScript = path.join(repoRoot, 'mira', 'tools', 'capture-voice-correction.js');
+  const listScript = path.join(repoRoot, 'mira', 'tools', 'list-voice-corrections.js');
   let tempDir;
 
   beforeEach(() => {
@@ -115,5 +116,46 @@ describe('Mira voice correction capture', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('better is required');
     expect(fs.existsSync(outPath)).toBe(false);
+  });
+
+  test('lists pending correction candidates without changing files', () => {
+    const outPath = path.join(tempDir, 'candidates.jsonl');
+    for (const better of ['Mira.', 'Still here.']) {
+      execFileSync(process.execPath, [
+        captureScript,
+        '--prompt',
+        'who are you',
+        '--sounded-fake',
+        'Mira. I am your local AI presence.',
+        '--better',
+        better,
+        '--out',
+        outPath,
+      ], {
+        cwd: repoRoot,
+      });
+    }
+    const before = fs.readFileSync(outPath, 'utf8');
+    const output = execFileSync(process.execPath, [
+      listScript,
+      '--path',
+      outPath,
+      '--pending-only',
+    ], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    const payload = JSON.parse(output);
+
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.voice_review_list.v0',
+      path: path.resolve(outPath),
+      count: 2,
+      pending_count: 2,
+      live_voice_mutated: false,
+    }));
+    expect(payload.records.map((record) => record.better_phrasing)).toEqual(['Mira.', 'Still here.']);
+    expect(fs.readFileSync(outPath, 'utf8')).toBe(before);
   });
 });

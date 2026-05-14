@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 import { runRuntimeTurn } from "./turn.js";
-import { captureVoiceCorrection } from "./voice-correction.js";
+import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -181,6 +181,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
   }
 
   if (trySendStaticUi(requestUrl, response)) {
+    return;
+  }
+
+  if (requestUrl.pathname === "/voice/corrections") {
+    sendJson(response, 200, listVoiceCorrections());
     return;
   }
 

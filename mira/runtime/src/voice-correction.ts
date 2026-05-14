@@ -71,3 +71,46 @@ export function captureVoiceCorrection(input: VoiceCorrectionInput, now = new Da
     live_voice_mutated: false,
   };
 }
+
+export function getVoiceCorrectionReviewPath(inputPath?: string | null): string {
+  return path.resolve(inputPath || process.env.MIRA_VOICE_REVIEW_PATH || defaultOutPath);
+}
+
+export function listVoiceCorrections(inputPath?: string | null): {
+  ok: true;
+  protocol: "mira.voice_review_list.v0";
+  path: string;
+  count: number;
+  pending_count: number;
+  live_voice_mutated: false;
+  records: VoiceCorrectionCapture["record"][];
+} {
+  const resolvedPath = getVoiceCorrectionReviewPath(inputPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: true,
+      protocol: "mira.voice_review_list.v0",
+      path: resolvedPath,
+      count: 0,
+      pending_count: 0,
+      live_voice_mutated: false,
+      records: [],
+    };
+  }
+
+  const records = fs.readFileSync(resolvedPath, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as VoiceCorrectionCapture["record"]);
+
+  return {
+    ok: true,
+    protocol: "mira.voice_review_list.v0",
+    path: resolvedPath,
+    count: records.length,
+    pending_count: records.filter((record) => record.review_status === "pending_review").length,
+    live_voice_mutated: false,
+    records,
+  };
+}
