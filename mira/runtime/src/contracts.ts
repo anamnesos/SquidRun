@@ -41,6 +41,29 @@ export type AcceptanceContinuitySummary = {
   error: string | null;
 };
 
+export type NormalizedCoreDocument = {
+  id: "mira_self_profile" | "james_relationship_state" | "relationship_presence_permissions";
+  relativePath: string;
+  schema: string;
+  bytes: number;
+  metadataOnly: boolean;
+  liveContinuityExcluded: boolean;
+  sourceFocusSummaryMetadataOnly: boolean | null;
+  localStoreWriteScoped: boolean | null;
+  blanketRuntimeWritePermission: boolean;
+};
+
+export type NormalizedCoreSummary = {
+  loaded: boolean;
+  scope: "normalized_core_state_only";
+  batchId: "normalized-core-state-v1";
+  documentCount: number;
+  documents: NormalizedCoreDocument[];
+  continuityLoaded: false;
+  runtimeSessionClaimAllowed: false;
+  error: string | null;
+};
+
 export type HealthResponse = {
   service: "mira-runtime";
   status: RuntimeStatus;
@@ -77,5 +100,6 @@ export type SessionResponse = {
     stateRootError: string | null;
     importReceipts: ImportReceiptSummary;
     acceptanceContinuity: AcceptanceContinuitySummary;
+    normalizedCore: NormalizedCoreSummary;
   };
 };

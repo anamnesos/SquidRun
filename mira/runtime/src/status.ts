@@ -19,6 +19,14 @@ export function getRuntimeStatus() {
       runtimeSessionClaimAllowed: session.acceptanceContinuity.runtimeSessionClaimAllowed,
       error: session.acceptanceContinuity.error,
     },
+    normalizedCore: {
+      loaded: session.normalizedCore.loaded,
+      documentCount: session.normalizedCore.documentCount,
+      documents: session.normalizedCore.documents,
+      continuityLoaded: session.normalizedCore.continuityLoaded,
+      runtimeSessionClaimAllowed: session.normalizedCore.runtimeSessionClaimAllowed,
+      error: session.normalizedCore.error,
+    },
     continuityLoaded: session.continuityLoaded,
     liveDataImported: session.liveDataImported,
   };
@@ -33,10 +41,13 @@ export function formatRuntimeStatus(status = getRuntimeStatus()): string {
     `record_count=${status.recordCount}`,
     `acceptance_continuity_loaded=${status.acceptanceContinuity.loaded}`,
     `acceptance_document_count=${status.acceptanceContinuity.documentCount}`,
+    `normalized_core_loaded=${status.normalizedCore.loaded}`,
+    `normalized_core_document_count=${status.normalizedCore.documentCount}`,
     `continuity_loaded=${status.continuityLoaded}`,
-    `runtime_session_claim_allowed=${status.acceptanceContinuity.runtimeSessionClaimAllowed}`,
+    `runtime_session_claim_allowed=${status.acceptanceContinuity.runtimeSessionClaimAllowed && status.normalizedCore.runtimeSessionClaimAllowed}`,
     status.stateRootError ? `state_root_error=${status.stateRootError}` : null,
     status.acceptanceContinuity.error ? `acceptance_error=${status.acceptanceContinuity.error}` : null,
+    status.normalizedCore.error ? `normalized_core_error=${status.normalizedCore.error}` : null,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 

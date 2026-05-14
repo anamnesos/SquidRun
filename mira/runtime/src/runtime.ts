@@ -6,6 +6,7 @@ import type {
 } from "./contracts.js";
 import { loadAcceptanceContinuity } from "./acceptance-continuity.js";
 import { getImportReceiptSummary } from "./import-status.js";
+import { loadNormalizedCore } from "./normalized-core.js";
 import { getStateRootReadiness } from "./state-root.js";
 
 const version = "0.1.0";
@@ -75,6 +76,7 @@ export function getSessionSkeleton(): SessionResponse {
   const stateRoot = getStateRootReadiness();
   const importReceipts = getImportReceiptSummary(stateRoot);
   const acceptanceContinuity = loadAcceptanceContinuity(stateRoot);
+  const normalizedCore = loadNormalizedCore(stateRoot);
 
   return {
     service: "mira-runtime",
@@ -89,6 +91,7 @@ export function getSessionSkeleton(): SessionResponse {
       stateRootError: stateRoot.error,
       importReceipts,
       acceptanceContinuity,
+      normalizedCore,
     },
   };
 }

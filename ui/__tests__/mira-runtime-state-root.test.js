@@ -83,6 +83,82 @@ describe('Mira runtime state-root readiness', () => {
     return stateRoot;
   }
 
+  function writeNormalizedCoreStateRoot() {
+    const stateRoot = writeApprovedAcceptanceStateRoot();
+    const receiptsDir = path.join(stateRoot, 'imports', 'receipts');
+    const coreDir = path.join(stateRoot, 'continuity', 'core');
+    const permissionsDir = path.join(stateRoot, 'permissions', 'core');
+    fs.mkdirSync(coreDir, { recursive: true });
+    fs.mkdirSync(permissionsDir, { recursive: true });
+
+    const normalizedRecords = [
+      {
+        id: 'mira_self_profile',
+        destination_relative_path: 'continuity/core/mira-self-profile.normalized.json',
+        output_schema: 'mira.normalized.self_profile.v1',
+        payload: {
+          schema: 'mira.normalized.self_profile.v1',
+          source_metadata: {
+            metadata_only: true,
+            live_continuity_excluded: true,
+          },
+        },
+      },
+      {
+        id: 'james_relationship_state',
+        destination_relative_path: 'continuity/core/james-relationship-state.normalized.json',
+        output_schema: 'mira.normalized.james_relationship_state.v1',
+        payload: {
+          schema: 'mira.normalized.james_relationship_state.v1',
+          source_metadata: {
+            metadata_only: true,
+            live_continuity_excluded: true,
+          },
+          source_focus_summary: {
+            metadata_only: true,
+            live_continuity_excluded: true,
+          },
+        },
+      },
+      {
+        id: 'relationship_presence_permissions',
+        destination_relative_path: 'permissions/core/relationship-presence-permissions.normalized.json',
+        output_schema: 'mira.normalized.relationship_presence_permissions.v1',
+        payload: {
+          schema: 'mira.normalized.relationship_presence_permissions.v1',
+          source_metadata: {
+            metadata_only: true,
+            live_continuity_excluded: true,
+          },
+          caveats: {
+            local_store_write_allowed_now: 'scoped_only_to_reviewed_import_and_mira_state_root_writes_after_explicit_approval',
+            blanket_mira_runtime_write_permission: false,
+          },
+        },
+      },
+    ];
+
+    for (const record of normalizedRecords) {
+      fs.writeFileSync(
+        path.join(stateRoot, record.destination_relative_path),
+        `${JSON.stringify(record.payload, null, 2)}\n`,
+      );
+    }
+
+    fs.writeFileSync(path.join(receiptsDir, 'normalized-core.json'), JSON.stringify({
+      schema: 'mira.normalized_core_receipt.v0',
+      receipt_id: 'normalized-core',
+      batch_id: 'normalized-core-state-v1',
+      records: normalizedRecords.map((record) => ({
+        id: record.id,
+        destination_relative_path: record.destination_relative_path,
+        output_schema: record.output_schema,
+      })),
+    }, null, 2));
+
+    return stateRoot;
+  }
+
   test('fails closed when MIRA_STATE_ROOT is missing', () => {
     const result = runRuntimeSnippet(`
       import { getStateRootReadiness } from ${JSON.stringify(compiledStateRootUrl)};
@@ -184,6 +260,14 @@ describe('Mira runtime state-root readiness', () => {
         runtimeSessionClaimAllowed: false,
         error: expect.stringContaining('approved receipt not found'),
       }),
+      normalizedCore: expect.objectContaining({
+        loaded: false,
+        scope: 'normalized_core_state_only',
+        documentCount: 0,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+        error: expect.stringContaining('approved receipt not found'),
+      }),
     }));
   });
 
@@ -225,6 +309,11 @@ describe('Mira runtime state-root readiness', () => {
         continuityLoaded: false,
         runtimeSessionClaimAllowed: false,
       }),
+      normalizedCore: expect.objectContaining({
+        loaded: false,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+      }),
     }));
   });
 
@@ -248,6 +337,11 @@ describe('Mira runtime state-root readiness', () => {
         continuityLoaded: false,
         runtimeSessionClaimAllowed: false,
         error: null,
+      }),
+      normalizedCore: expect.objectContaining({
+        loaded: false,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
       }),
     }));
     expect(session.session.acceptanceContinuity.documents.map((document) => document.relativePath)).toEqual([
@@ -291,6 +385,76 @@ describe('Mira runtime state-root readiness', () => {
         runtimeSessionClaimAllowed: false,
         error: null,
       }),
+      normalizedCore: expect.objectContaining({
+        loaded: false,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+      }),
+    }));
+  });
+
+  test('session exposes normalized core status without claiming full continuity', () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+
+    const session = runRuntimeSnippet(`
+      process.env.MIRA_STATE_ROOT = ${JSON.stringify(stateRoot)};
+      import { getSessionSkeleton } from ${JSON.stringify(compiledRuntimeUrl)};
+      console.log(JSON.stringify(getSessionSkeleton()));
+    `);
+
+    expect(session.session).toEqual(expect.objectContaining({
+      continuityLoaded: false,
+      liveDataImported: false,
+      normalizedCore: expect.objectContaining({
+        loaded: true,
+        scope: 'normalized_core_state_only',
+        batchId: 'normalized-core-state-v1',
+        documentCount: 3,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+        error: null,
+      }),
+    }));
+    expect(session.session.normalizedCore.documents.map((document) => document.id)).toEqual([
+      'mira_self_profile',
+      'james_relationship_state',
+      'relationship_presence_permissions',
+    ]);
+    expect(session.session.normalizedCore.documents.every((document) => document.metadataOnly)).toBe(true);
+    expect(session.session.normalizedCore.documents.every((document) => document.liveContinuityExcluded)).toBe(true);
+    expect(session.session.normalizedCore.documents.find((document) => document.id === 'james_relationship_state').sourceFocusSummaryMetadataOnly).toBe(true);
+    expect(session.session.normalizedCore.documents.find((document) => document.id === 'relationship_presence_permissions')).toEqual(expect.objectContaining({
+      localStoreWriteScoped: true,
+      blanketRuntimeWritePermission: false,
+    }));
+  });
+
+  test('status command exposes normalized core counts without claiming full continuity', () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    const output = execFileSync(process.execPath, [
+      compiledStatusPath,
+      '--json',
+    ], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        MIRA_STATE_ROOT: stateRoot,
+      },
+      encoding: 'utf8',
+    });
+    const status = JSON.parse(output);
+
+    expect(status).toEqual(expect.objectContaining({
+      receiptCount: 2,
+      recordCount: 6,
+      continuityLoaded: false,
+      liveDataImported: false,
+      normalizedCore: expect.objectContaining({
+        loaded: true,
+        documentCount: 3,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+      }),
     }));
   });
 
@@ -321,6 +485,11 @@ describe('Mira runtime state-root readiness', () => {
         continuityLoaded: false,
       }),
       acceptanceContinuity: expect.objectContaining({
+        loaded: false,
+        continuityLoaded: false,
+        runtimeSessionClaimAllowed: false,
+      }),
+      normalizedCore: expect.objectContaining({
         loaded: false,
         continuityLoaded: false,
         runtimeSessionClaimAllowed: false,
