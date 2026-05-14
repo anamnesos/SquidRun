@@ -38,6 +38,12 @@ Those records may become a later batch 2b only after explicit approval.
 - Keep current identity, relationship, boundary, and permission fields only.
 - Preserve provenance as structured references, not as a claim that runtime
   continuity is loaded.
+- Treat stale SquidRun `session`, `window`, and `device` fields as source
+  metadata only; exclude them from live Mira continuity.
+- `local_store_write_allowed_now=true` in the permissions source is scoped only
+  to reviewed import and Mira state-root writes after explicit approval. It is
+  not blanket Mira runtime write permission and not autonomous runtime write
+  permission.
 - Exclude growth event streams and transcript evidence.
 - Do not copy raw source JSON wholesale.
 - Do not mutate review queue status or import reports.

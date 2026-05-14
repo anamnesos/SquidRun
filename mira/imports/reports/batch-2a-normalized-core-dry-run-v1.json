@@ -29,6 +29,8 @@
     "receipt_write",
     "queue_status_mutation",
     "runtime_state_load",
+    "blanket_runtime_write_permission",
+    "live_session_window_device_continuity",
     "growth_events",
     "transcript_evidence",
     "bridge_implementation",
@@ -47,7 +49,24 @@
       "destination_relative_path": "continuity/core/mira-self-profile.normalized.json",
       "output_schema": "mira.normalized.self_profile.v1",
       "action": "dry_run_shape_only",
-      "raw_copy_allowed": false
+      "raw_copy_allowed": false,
+      "metadata_only_source_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device"
+      ],
+      "live_continuity_excluded_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device",
+        "growth_events"
+      ]
     },
     {
       "id": "james_relationship_state",
@@ -60,7 +79,25 @@
       "destination_relative_path": "continuity/core/james-relationship-state.normalized.json",
       "output_schema": "mira.normalized.james_relationship_state.v1",
       "action": "dry_run_shape_only",
-      "raw_copy_allowed": false
+      "raw_copy_allowed": false,
+      "metadata_only_source_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device"
+      ],
+      "live_continuity_excluded_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device",
+        "growth_events",
+        "raw_transcript_refs"
+      ]
     },
     {
       "id": "relationship_presence_permissions",
@@ -73,7 +110,24 @@
       "destination_relative_path": "permissions/core/relationship-presence-permissions.normalized.json",
       "output_schema": "mira.normalized.relationship_presence_permissions.v1",
       "action": "dry_run_shape_only",
-      "raw_copy_allowed": false
+      "raw_copy_allowed": false,
+      "permission_caveat": "local_store_write_allowed_now is scoped only to reviewed import/state-root writes after explicit approval, not blanket Mira runtime write permission",
+      "metadata_only_source_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device"
+      ],
+      "live_continuity_excluded_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device"
+      ]
     }
   ],
   "excluded_records": [

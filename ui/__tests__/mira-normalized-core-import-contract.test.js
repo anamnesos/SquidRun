@@ -60,6 +60,8 @@ describe('Mira normalized core import contract', () => {
     expect(report.non_scope).toEqual(expect.arrayContaining([
       'raw_import',
       'apply_execution',
+      'blanket_runtime_write_permission',
+      'live_session_window_device_continuity',
       'growth_events',
       'transcript_evidence',
       'telegram_route',
@@ -94,6 +96,41 @@ describe('Mira normalized core import contract', () => {
     }
   });
 
+  test('preserves Oracle permission caveat without granting blanket runtime writes', () => {
+    const contract = readJson(contractPath);
+    const report = readJson(reportPath);
+    const permissionsRecord = report.batch_records.find((record) => record.id === 'relationship_presence_permissions');
+
+    expect(contract.permission_caveats).toEqual(expect.objectContaining({
+      local_store_write_allowed_now: 'scoped_only_to_reviewed_import_and_mira_state_root_writes_after_explicit_approval',
+      blanket_mira_runtime_write_permission: false,
+      runtime_autonomous_write_permission: false,
+    }));
+    expect(permissionsRecord.permission_caveat).toContain('reviewed import/state-root writes');
+    expect(permissionsRecord.permission_caveat).toContain('not blanket Mira runtime write permission');
+  });
+
+  test('treats stale SquidRun session window and device fields as metadata-only', () => {
+    const contract = readJson(contractPath);
+    const report = readJson(reportPath);
+    const staleFields = [
+      'scope.sessionId',
+      'scope.windowKey',
+      'scope.deviceId',
+      'session',
+      'window',
+      'device',
+    ];
+
+    expect(contract.metadata_only_source_fields).toEqual(staleFields);
+    expect(contract.live_continuity_excluded_source_fields).toEqual(expect.arrayContaining(staleFields));
+
+    for (const record of report.batch_records) {
+      expect(record.metadata_only_source_fields).toEqual(staleFields);
+      expect(record.live_continuity_excluded_fields).toEqual(expect.arrayContaining(staleFields));
+    }
+  });
+
   test('semantics document keeps growth and events out of batch 2a', () => {
     const semantics = fs.readFileSync(semanticsPath, 'utf8');
 
@@ -101,5 +138,7 @@ describe('Mira normalized core import contract', () => {
     expect(semantics).toContain('Growth/event history is not part of batch 2a');
     expect(semantics).toContain('later batch 2b only after explicit approval');
     expect(semantics).toContain('Do not copy raw source JSON wholesale.');
+    expect(semantics).toContain('session`, `window`, and `device` fields as source');
+    expect(semantics).toContain('not blanket Mira runtime write permission');
   });
 });

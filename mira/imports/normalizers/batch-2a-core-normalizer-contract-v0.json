@@ -14,6 +14,29 @@
     "relationship_growth_history",
     "relationship_growth_audit"
   ],
+  "metadata_only_source_fields": [
+    "scope.sessionId",
+    "scope.windowKey",
+    "scope.deviceId",
+    "session",
+    "window",
+    "device"
+  ],
+  "live_continuity_excluded_source_fields": [
+    "scope.sessionId",
+    "scope.windowKey",
+    "scope.deviceId",
+    "session",
+    "window",
+    "device",
+    "growth_events",
+    "raw_transcript_refs"
+  ],
+  "permission_caveats": {
+    "local_store_write_allowed_now": "scoped_only_to_reviewed_import_and_mira_state_root_writes_after_explicit_approval",
+    "blanket_mira_runtime_write_permission": false,
+    "runtime_autonomous_write_permission": false
+  },
   "outputs": [
     {
       "id": "mira_self_profile",
@@ -23,6 +46,12 @@
       "output_schema": "mira.normalized.self_profile.v1",
       "field_policy": "current_identity_boundary_fields_only",
       "excluded_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device",
         "growth_events"
       ]
     },
@@ -34,6 +63,12 @@
       "output_schema": "mira.normalized.james_relationship_state.v1",
       "field_policy": "current_relationship_fields_only",
       "excluded_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device",
         "growth_events",
         "raw_transcript_refs"
       ]
@@ -45,7 +80,15 @@
       "destination_relative_path": "permissions/core/relationship-presence-permissions.normalized.json",
       "output_schema": "mira.normalized.relationship_presence_permissions.v1",
       "field_policy": "machine_checkable_permissions_only",
-      "excluded_fields": []
+      "permission_caveat": "local_store_write_allowed_now is scoped only to reviewed import/state-root writes after explicit approval, not blanket Mira runtime write permission",
+      "excluded_fields": [
+        "scope.sessionId",
+        "scope.windowKey",
+        "scope.deviceId",
+        "session",
+        "window",
+        "device"
+      ]
     }
   ],
   "mutation_limits": {
