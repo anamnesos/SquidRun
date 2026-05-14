@@ -7,6 +7,7 @@ const path = require('path');
 
 const {
   evaluateTranscript,
+  runAudit,
 } = require('../../mira/tools/audit-voice-conversation');
 
 describe('Mira conversation voice audit', () => {
@@ -34,6 +35,19 @@ describe('Mira conversation voice audit', () => {
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
+
+  function responseForPrompt(prompt) {
+    if (/pressure/i.test(prompt)) return 'Pressure, not surface.';
+    if (/who are you/i.test(prompt)) return 'Mira.';
+    if (/what are you doing/i.test(prompt)) return 'Looking here.';
+    if (/why did you answer/i.test(prompt)) return 'Wrong shape first.';
+    if (/this is still wrong/i.test(prompt)) return 'Yeah. I hear it.';
+    if (/invoices|customer messages/i.test(prompt)) return 'Yes. Needs routes.';
+    if (/business stuff/i.test(prompt)) return 'Yes. Context, not identity.';
+    if (/why did you stop/i.test(prompt)) return 'I stalled.';
+    if (prompt.trim() === '...') return 'Here.';
+    return 'Here.';
+  }
 
   test('runs a multi-turn transcript audit and persists the report', () => {
     const outPath = path.join(tempDir, 'conversation-audit.json');
@@ -68,6 +82,37 @@ describe('Mira conversation voice audit', () => {
     ]));
     expect(report.evaluation.failures).toEqual([]);
     expect(report.turns.find((turn) => turn.correction)?.response.content).toMatch(/Pressure|surface/i);
+  });
+
+  test('records model-backed fields when transcript turns used the model path', async () => {
+    const outPath = path.join(tempDir, 'conversation-audit-model.json');
+    const generated = await runAudit({
+      out: outPath,
+      useModel: true,
+      runRuntimeTurn: async (input) => ({
+        response: {
+          content: responseForPrompt(input.text),
+        },
+        voiceLab: null,
+        modelInvoked: input.useModel === true,
+        model: {
+          provider: 'openai_responses',
+          model: 'mock-model',
+        },
+      }),
+    });
+    const report = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+
+    expect(generated.evaluation.failures).toEqual([]);
+    expect(report).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.voice_conversation_audit.v0',
+    }));
+    expect(report.evaluation.failures).toEqual([]);
+    expect(JSON.parse(fs.readFileSync(outPath, 'utf8')).protocol).toBe('mira.voice_conversation_audit.v0');
+    expect(report.criteria).toContain('model-backed conversation path');
+    expect(report.turns.every((turn) => turn.response.modelInvoked === true)).toBe(true);
+    expect(report.turns.every((turn) => turn.response.provider === null || turn.response.provider === 'openai_responses')).toBe(true);
   });
 
   test('flags repeated templates, meta prose, product pitch, and repair misses across a transcript', () => {

@@ -29,9 +29,10 @@ const bannedPatterns = [
 ];
 
 function parseArgs(argv = process.argv.slice(2)) {
-  const parsed = {
+const parsed = {
     out: DEFAULT_OUT,
     runtimeTurn: DEFAULT_RUNTIME_TURN,
+    useModel: false,
     json: false,
   };
 
@@ -50,6 +51,10 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (token === '--json') {
       parsed.json = true;
+      continue;
+    }
+    if (token === '--model') {
+      parsed.useModel = true;
       continue;
     }
     throw Object.assign(new Error(`Unknown or incomplete argument: ${token}`), { code: 'invalid_argument' });
@@ -155,7 +160,8 @@ function evaluateTranscript(turns) {
 async function runAudit(options = {}) {
   const runtimeTurnPath = path.resolve(options.runtimeTurn || DEFAULT_RUNTIME_TURN);
   const outPath = path.resolve(options.out || DEFAULT_OUT);
-  const { runRuntimeTurn } = await import(`file:///${runtimeTurnPath.replace(/\\/g, '/')}`);
+  const runRuntimeTurn = options.runRuntimeTurn
+    || (await import(`file:///${runtimeTurnPath.replace(/\\/g, '/')}`)).runRuntimeTurn;
   const turns = [];
 
   for (let index = 0; index < scenario.length; index += 1) {
@@ -165,7 +171,7 @@ async function runAudit(options = {}) {
       text,
       sessionId: 'voice-audit-session',
       messageId: `voice-audit-${index}`,
-      useModel: false,
+      useModel: options.useModel === true,
     });
     turns.push({
       index,
@@ -176,6 +182,8 @@ async function runAudit(options = {}) {
         content: response.response.content,
         voiceLab: response.voiceLab,
         modelInvoked: response.modelInvoked,
+        provider: response.model?.provider || null,
+        model: response.model?.model || null,
       },
     });
   }
@@ -192,6 +200,7 @@ async function runAudit(options = {}) {
       'no over-answering tiny turns',
       'repair uses the correction directly',
       'business context stays context, not identity',
+      options.useModel === true ? 'model-backed conversation path' : 'deterministic conversation path',
     ],
     turns,
     evaluation,
