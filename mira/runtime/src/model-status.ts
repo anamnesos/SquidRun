@@ -66,7 +66,7 @@ export async function getModelProviderStatus(input: {
     reason: status.apiKeyPresent ? "openai_key_present" : "missing_openai_api_key",
     checkedEndpoint: null,
     installedModels: [],
-    nextLocalModelStep: "For local/offline model use: install Ollama, run ollama pull gemma4:e4b, then set MIRA_RUNTIME_MODEL_PROVIDER=ollama.",
+    nextLocalModelStep: "For local/offline model use: install Ollama, run ollama pull gemma4:31b, then set MIRA_RUNTIME_MODEL_PROVIDER=ollama.",
     runtimeBlocked: false,
   };
 }

@@ -43,7 +43,7 @@ export type TurnModelStatus = {
 const defaultEndpoint = "https://api.openai.com/v1/responses";
 const defaultOllamaEndpoint = "http://127.0.0.1:11434/api/chat";
 const defaultModel = "gpt-5.5";
-const defaultOllamaModel = "gemma4:e4b";
+const defaultOllamaModel = "gemma4:31b";
 const defaultMaxOutputTokens = 520;
 
 function trim(value: unknown): string {

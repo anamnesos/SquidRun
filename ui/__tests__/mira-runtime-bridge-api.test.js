@@ -329,7 +329,7 @@ describe('Mira runtime bridge manual-plan API', () => {
   test('reports missing Ollama provider without blocking the runtime', async () => {
     await startServer({
       MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
-      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
       MIRA_OLLAMA_BASE_URL: 'http://127.0.0.1:9',
     });
 
@@ -341,7 +341,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       ok: true,
       protocol: 'mira.model_provider_status.v0',
       selectedProvider: 'ollama_chat',
-      model: 'gemma4:e4b',
+      model: 'gemma4:31b',
       available: false,
       reason: 'ollama_unreachable',
       checkedEndpoint: 'http://127.0.0.1:9/api/tags',
@@ -349,7 +349,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       runtimeBlocked: false,
     }));
     expect(payload.nextLocalModelStep).toContain('Install/start Ollama');
-    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:e4b');
+    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:31b');
   });
 
   test('reports local Gemma missing when Ollama is reachable without the selected model', async () => {
@@ -365,7 +365,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     });
     await startServer({
       MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
-      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
       MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
     });
 
@@ -376,14 +376,14 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload).toEqual(expect.objectContaining({
       ok: true,
       selectedProvider: 'ollama_chat',
-      model: 'gemma4:e4b',
+      model: 'gemma4:31b',
       available: false,
       reason: 'ollama_model_missing',
       checkedEndpoint: `${ollamaBaseUrl}/api/tags`,
       installedModels: ['llama3.2:latest'],
       runtimeBlocked: false,
     }));
-    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:e4b');
+    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:31b');
   });
 
   test('reports local Gemma ready when Ollama has the selected model', async () => {
@@ -393,13 +393,13 @@ describe('Mira runtime bridge manual-plan API', () => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
         models: [
-          { name: 'gemma4:e4b' },
+          { name: 'gemma4:31b' },
         ],
       }));
     });
     await startServer({
       MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
-      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
       MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
     });
 
@@ -410,11 +410,11 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload).toEqual(expect.objectContaining({
       ok: true,
       selectedProvider: 'ollama_chat',
-      model: 'gemma4:e4b',
+      model: 'gemma4:31b',
       available: true,
       reason: 'ollama_ready',
       checkedEndpoint: `${ollamaBaseUrl}/api/tags`,
-      installedModels: ['gemma4:e4b'],
+      installedModels: ['gemma4:31b'],
       nextLocalModelStep: null,
       runtimeBlocked: false,
     }));
@@ -443,7 +443,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       runtimeBlocked: false,
     }));
     expect(payload.nextLocalModelStep).toContain('install Ollama');
-    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:e4b');
+    expect(payload.nextLocalModelStep).toContain('ollama pull gemma4:31b');
   });
 
   test('captures voice correction candidates from runtime API without mutating live voice lab', async () => {
@@ -951,7 +951,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     writeOperatorContext(stateRoot);
     const ollamaBaseUrl = await startOpenAiMock((_request, response, body) => {
       expect(body).toEqual(expect.objectContaining({
-        model: 'gemma4:e4b',
+        model: 'gemma4:31b',
         stream: false,
         keep_alive: '10m',
         options: expect.objectContaining({
@@ -971,7 +971,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       });
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
-        model: 'gemma4:e4b',
+        model: 'gemma4:31b',
         created_at: '2026-05-14T07:58:00.000Z',
         message: {
           role: 'assistant',
@@ -983,7 +983,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     await startServer({
       MIRA_STATE_ROOT: stateRoot,
       MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
-      MIRA_OLLAMA_MODEL: 'gemma4:e4b',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
       MIRA_OLLAMA_BASE_URL: ollamaBaseUrl,
       OPENAI_API_KEY: '',
       MIRA_RUNTIME_OPENAI_API_KEY: '',
@@ -1010,7 +1010,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       model: {
         requested: true,
         provider: 'ollama_chat',
-        model: 'gemma4:e4b',
+        model: 'gemma4:31b',
         responseId: '2026-05-14T07:58:00.000Z',
         toolsEnabled: false,
         sendsEnabled: false,
