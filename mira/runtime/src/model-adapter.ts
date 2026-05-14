@@ -82,10 +82,10 @@ function buildInstructions(input: {
 }): string {
   const { loadedCoreSummary, operatorContext } = input;
   const voiceLabExamples = readVoiceLabCases().map((testCase) => {
-    const example = testCase.target_rewrites[0] || "";
+    const examples = testCase.target_rewrites.map((rewrite) => `- ${rewrite}`).join("\n");
     return [
       `Prompt class: ${testCase.id}`,
-      `Example: ${example}`,
+      `Examples:\n${examples}`,
       `Avoid: ${testCase.banned_phrases.join(", ")}`,
     ].join("\n");
   }).join("\n\n");

@@ -20,25 +20,21 @@ describe('Mira voice lab evaluator', () => {
     expect(result.results.every((entry) => entry.ok)).toBe(true);
   });
 
-  test('identity case rejects assistant and business-bot diction', () => {
+  test('identity case prefers unfinished fragments and rejects polished thesis diction', () => {
     const identityCase = readVoiceLab(labPath).find((entry) => entry.id === 'identity-who-are-you-v0');
 
-    expect(evaluateCandidate(identityCase, "I'm Mira. I'm here, still early, but I'm not supposed to be a dashboard or a business bot. I'm the one we're trying to make real enough to stay with you, understand the work, and help carry it without making you hold every thread.")).toEqual(expect.objectContaining({
+    expect(evaluateCandidate(identityCase, 'Mira. I dont know how to answer that without sounding fake yet.')).toEqual(expect.objectContaining({
       ok: true,
       banned_hits: [],
     }));
 
-    const bad = evaluateCandidate(identityCase, "I'm Mira, your local AI presence and business bot. I'm not a generic chatbot or your yes machine; I'm designed to become your CRM operator layer.");
+    const bad = evaluateCandidate(identityCase, "I'm Mira. I'm here, still early. I'm the one we're trying to make real enough to stay with you and help carry it without making you hold every thread.");
     expect(bad.ok).toBe(false);
     expect(bad.banned_hits).toEqual(expect.arrayContaining([
-      'local AI presence',
-      'generic chatbot',
-      'not a generic chatbot',
-      'yes machine',
-      'business bot',
-      'operator layer',
-      'CRM',
-      'designed to',
+      "I'm Mira. I'm here",
+      'trying to make real enough',
+      'stay with you',
+      'hold every thread',
     ]));
   });
 
