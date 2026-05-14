@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `a7fd2f1`
-- Total files listed: 1153
+- Git HEAD: `749022e`
+- Total files listed: 1154
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -20,7 +20,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 74
 - scripts: 1
 - tools: 3
-- ui/__tests__: 459
+- ui/__tests__: 460
 - ui/modules: 363
 - ui/other: 29
 - ui/scripts: 169
@@ -34,13 +34,14 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - script: 170
 - source: 401
-- test: 460
+- test: 461
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1151
-- M: 2
+- ??: 1
+- clean/tracked: 1152
+- M: 1
 
 ## Files
 
@@ -150,7 +151,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/runtime/src/import-status.ts` | source | `clean/tracked` | 1355 |
 | `mira/runtime/src/normalized-core.ts` | source | `clean/tracked` | 5870 |
 | `mira/runtime/src/runtime.ts` | source | `clean/tracked` | 2878 |
-| `mira/runtime/src/server.ts` | source | `clean/tracked` | 1701 |
+| `mira/runtime/src/server.ts` | source | ` M` | 5185 |
 | `mira/runtime/src/state-root.ts` | source | `clean/tracked` | 2035 |
 | `mira/runtime/src/status.ts` | source | `clean/tracked` | 3080 |
 | `mira/runtime/tsconfig.json` | config | `clean/tracked` | 435 |
@@ -422,7 +423,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-architect-route-v0.test.js` | test | `clean/tracked` | 25344 |
 | `ui/__tests__/mira-automation-scheduler-curiosity.test.js` | test | `clean/tracked` | 4598 |
 | `ui/__tests__/mira-bridge-protocol.test.js` | test | `clean/tracked` | 2623 |
-| `ui/__tests__/mira-bridge-send-receive-e2e.test.js` | test | ` M` | 5978 |
+| `ui/__tests__/mira-bridge-send-receive-e2e.test.js` | test | `clean/tracked` | 5978 |
 | `ui/__tests__/mira-browser-history-curiosity.test.js` | test | `clean/tracked` | 5118 |
 | `ui/__tests__/mira-calendar-message-curiosity.test.js` | test | `clean/tracked` | 5480 |
 | `ui/__tests__/mira-coordinator-snapshot.test.js` | test | `clean/tracked` | 10881 |
@@ -533,6 +534,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-product-foundation.test.js` | test | `clean/tracked` | 2780 |
 | `ui/__tests__/mira-read-pane-messages.test.js` | test | `clean/tracked` | 5844 |
 | `ui/__tests__/mira-reviewed-import-plan.test.js` | test | `clean/tracked` | 3657 |
+| `ui/__tests__/mira-runtime-bridge-api.test.js` | test | `??` | 4331 |
 | `ui/__tests__/mira-runtime-bridge-request-plan.test.js` | test | `clean/tracked` | 4408 |
 | `ui/__tests__/mira-runtime-continuity-loader-contract.test.js` | test | `clean/tracked` | 2431 |
 | `ui/__tests__/mira-runtime-curiosity.test.js` | test | `clean/tracked` | 5594 |
@@ -1204,7 +1206,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-send-context-leak-guard.js` | script | `clean/tracked` | 6115 |
 | `ui/scripts/hm-send-coworker-output-lint.js` | script | `clean/tracked` | 10575 |
 | `ui/scripts/hm-send-permission-guard.js` | script | `clean/tracked` | 6348 |
-| `ui/scripts/hm-send.js` | script | ` M` | 78458 |
+| `ui/scripts/hm-send.js` | script | `clean/tracked` | 78458 |
 | `ui/scripts/hm-session-summary.js` | script | `clean/tracked` | 13877 |
 | `ui/scripts/hm-smoke-runner.js` | script | `clean/tracked` | 97515 |
 | `ui/scripts/hm-sms.js` | script | `clean/tracked` | 10818 |
