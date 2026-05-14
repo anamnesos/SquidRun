@@ -1,0 +1,23 @@
+{
+  "schema": "mira.import_approval_marker.v0",
+  "approval_id": "first-batch-approval-v1",
+  "approved_at": "2026-05-14T09:35:00.000Z",
+  "approved_by": "architect",
+  "batch_id": "acceptance-permission-contracts-v1",
+  "report_id": "first-batch-dry-run-v1",
+  "report_path": "mira/imports/reports/first-batch-dry-run-v1.json",
+  "approved_record_ids": [
+    "presence_runtime_acceptance",
+    "north_star_acceptance",
+    "pc_embodiment_permission"
+  ],
+  "approval_scope": "copy_only",
+  "mutation_limits": {
+    "copy_allowed": true,
+    "move_allowed": false,
+    "delete_allowed": false,
+    "queue_mutation_allowed": false,
+    "report_mutation_allowed": false,
+    "runtime_load_allowed": false
+  }
+}
