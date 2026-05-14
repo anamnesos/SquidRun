@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `24a35e6`
-- Total files listed: 1112
+- Git HEAD: `054d411`
+- Total files listed: 1114
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -17,10 +17,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - benchmarks: 2
 - docs: 34
-- root: 45
+- root: 46
 - scripts: 1
 - tools: 3
-- ui/__tests__: 447
+- ui/__tests__: 448
 - ui/modules: 363
 - ui/other: 29
 - ui/scripts: 169
@@ -33,13 +33,13 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 64
 - file: 1
 - script: 170
-- source: 389
-- test: 448
+- source: 390
+- test: 449
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1111
+- clean/tracked: 1113
 - M: 1
 
 ## Files
@@ -131,6 +131,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/state/.gitignore` | config | `clean/tracked` | 52 |
 | `mira/state/README.md` | doc | `clean/tracked` | 613 |
 | `mira/state/state-root-contract.json` | config | `clean/tracked` | 612 |
+| `mira/tools/execute-reviewed-import.js` | source | `clean/tracked` | 5949 |
 | `mira/tools/plan-reviewed-imports.js` | source | `clean/tracked` | 3300 |
 | `mira/tools/resolve-state-root.js` | source | `clean/tracked` | 670 |
 | `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
@@ -477,6 +478,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-core-typed-restart-continuity-context-v0.test.js` | test | `clean/tracked` | 8844 |
 | `ui/__tests__/mira-email-curiosity.test.js` | test | `clean/tracked` | 6012 |
 | `ui/__tests__/mira-environment-curiosity.test.js` | test | `clean/tracked` | 9520 |
+| `ui/__tests__/mira-execute-reviewed-import.test.js` | test | `clean/tracked` | 4770 |
 | `ui/__tests__/mira-extraction-main-ui.test.js` | test | `clean/tracked` | 1423 |
 | `ui/__tests__/mira-first-batch-dry-run-report.test.js` | test | `clean/tracked` | 2204 |
 | `ui/__tests__/mira-import-executor-semantics.test.js` | test | `clean/tracked` | 2771 |
