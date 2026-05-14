@@ -2,6 +2,7 @@
 
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 
@@ -11,6 +12,8 @@ describe('Mira runtime bridge manual-plan API', () => {
   const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledServerPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'server.js');
   let serverProcess;
+  let openAiMockServer;
+  let openAiRequests;
   let baseUrl;
   let tempStateRoot;
 
@@ -48,6 +51,16 @@ describe('Mira runtime bridge manual-plan API', () => {
     if (tempStateRoot) {
       fs.rmSync(tempStateRoot, { recursive: true, force: true });
       tempStateRoot = null;
+    }
+    if (openAiMockServer) {
+      await new Promise((resolve, reject) => {
+        openAiMockServer.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      openAiMockServer = null;
+      openAiRequests = null;
     }
   });
 
@@ -190,6 +203,33 @@ describe('Mira runtime bridge manual-plan API', () => {
     }, null, 2));
   }
 
+  function startOpenAiMock(handler) {
+    openAiRequests = [];
+    return new Promise((resolve, reject) => {
+      openAiMockServer = http.createServer((request, response) => {
+        let rawBody = '';
+        request.on('data', (chunk) => {
+          rawBody += chunk.toString();
+        });
+        request.on('end', () => {
+          const parsedBody = rawBody ? JSON.parse(rawBody) : null;
+          openAiRequests.push({
+            method: request.method,
+            url: request.url,
+            authorization: request.headers.authorization,
+            body: parsedBody,
+          });
+          handler(request, response, parsedBody);
+        });
+      });
+      openAiMockServer.once('error', reject);
+      openAiMockServer.listen(0, '127.0.0.1', () => {
+        const address = openAiMockServer.address();
+        resolve(`http://127.0.0.1:${address.port}`);
+      });
+    });
+  }
+
   test('returns manual bridge plan without executing send CLI', async () => {
     await startServer();
 
@@ -286,6 +326,15 @@ describe('Mira runtime bridge manual-plan API', () => {
       modelInvoked: false,
       telegramRouteControl: false,
       uiSurfaceControl: false,
+      model: {
+        requested: false,
+        provider: null,
+        model: null,
+        responseId: null,
+        toolsEnabled: false,
+        sendsEnabled: false,
+        store: false,
+      },
       input: {
         text: 'What do you know right now?',
         sessionId: 'app-session-373',
@@ -362,6 +411,94 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload.response.content).toContain('full continuity not claimed');
     expect(payload.modelInvoked).toBe(false);
     expect(payload.runtimeExecutes).toBe(false);
+  });
+
+  test('fails closed for model-backed turn when API key is missing', async () => {
+    await startServer({
+      OPENAI_API_KEY: '',
+      MIRA_RUNTIME_OPENAI_API_KEY: '',
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Use the model.',
+        sessionId: 'app-session-373',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload).toEqual({
+      error: {
+        code: 'missing_openai_api_key',
+        message: expect.stringContaining('OPENAI_API_KEY is required'),
+        retryable: false,
+      },
+    });
+  });
+
+  test('uses OpenAI Responses for model-backed turn with summaries and no tools or sends', async () => {
+    const stateRoot = writeNormalizedCoreStateRoot();
+    writeOperatorContext(stateRoot);
+    const openAiBaseUrl = await startOpenAiMock((_request, response, body) => {
+      expect(body.tools).toEqual([]);
+      expect(body.store).toBe(false);
+      expect(body.instructions).toContain('Identity summary:');
+      expect(body.instructions).toContain('Operator thesis:');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        id: 'resp_runtime_turn_1',
+        output_text: 'No fluff: CRM/admin/customer comms are the work surface. I can plan the next internal handoff, not send it myself.',
+      }));
+    });
+    await startServer({
+      MIRA_STATE_ROOT: stateRoot,
+      OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      MIRA_OPENAI_BASE_URL: openAiBaseUrl,
+      MIRA_RUNTIME_TURN_MODEL: 'gpt-5.5',
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'What should Mira focus on?',
+        sessionId: 'app-session-373',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: true,
+      modelInvoked: true,
+      runtimeExecutes: false,
+      telegramRouteControl: false,
+      uiSurfaceControl: false,
+      model: {
+        requested: true,
+        provider: 'openai_responses',
+        model: 'gpt-5.5',
+        responseId: 'resp_runtime_turn_1',
+        toolsEnabled: false,
+        sendsEnabled: false,
+        store: false,
+      },
+      response: {
+        role: 'mira',
+        content: 'No fluff: CRM/admin/customer comms are the work surface. I can plan the next internal handoff, not send it myself.',
+      },
+    }));
+    expect(openAiRequests).toHaveLength(1);
+    expect(openAiRequests[0]).toEqual(expect.objectContaining({
+      method: 'POST',
+      url: '/v1/responses',
+      authorization: 'Bearer sk-test-fake-key-do-not-use',
+    }));
   });
 
   test('can include a manual team plan from a runtime turn without executing it', async () => {

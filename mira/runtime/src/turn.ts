@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { planManualBridgeRequest, type ManualBridgeRequestPlan } from "./bridge-request-plan.js";
+import { invokeTurnModel } from "./model-adapter.js";
 import { loadOperatorContext, type OperatorContextSummary } from "./operator-context.js";
 import { getSessionSkeleton } from "./runtime.js";
 import { getStateRootReadiness } from "./state-root.js";
@@ -11,15 +12,25 @@ export type RuntimeTurnInput = {
   requestId?: string;
   messageId?: string;
   suggestTeamPlanFor?: string;
+  useModel?: boolean;
 };
 
 export type RuntimeTurnResponse = {
   ok: true;
   protocol: "mira.runtime_turn.v0";
   runtimeExecutes: false;
-  modelInvoked: false;
+  modelInvoked: boolean;
   telegramRouteControl: false;
   uiSurfaceControl: false;
+  model: {
+    requested: boolean;
+    provider: "openai_responses" | null;
+    model: string | null;
+    responseId: string | null;
+    toolsEnabled: false;
+    sendsEnabled: false;
+    store: false;
+  };
   input: {
     text: string;
     sessionId: string | null;
@@ -144,7 +155,7 @@ function buildContent(
   return `I heard: ${inputText}\nRuntime state: ${stateParts.join("; ")}.${coreLine}${operatorLine}`;
 }
 
-export function runRuntimeTurn(input: RuntimeTurnInput = {}): RuntimeTurnResponse {
+export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<RuntimeTurnResponse> {
   const text = String(input.text || "").trim();
   if (!text) {
     throw Object.assign(new Error("Runtime turn text cannot be empty."), { code: "empty_turn_text" });
@@ -156,7 +167,23 @@ export function runRuntimeTurn(input: RuntimeTurnInput = {}): RuntimeTurnRespons
     : null;
   const loadedCoreSummary = buildLoadedCoreSummary(session);
   const operatorContext = loadOperatorContext(getStateRootReadiness());
-  const responseContent = buildContent(text, session, loadedCoreSummary, operatorContext);
+  let responseContent = buildContent(text, session, loadedCoreSummary, operatorContext);
+  let modelInvoked = false;
+  let modelProvider: "openai_responses" | null = null;
+  let modelName: string | null = null;
+  let modelResponseId: string | null = null;
+  if (input.useModel === true) {
+    const modelResult = await invokeTurnModel({
+      text,
+      loadedCoreSummary,
+      operatorContext,
+    });
+    responseContent = modelResult.text;
+    modelInvoked = true;
+    modelProvider = modelResult.provider;
+    modelName = modelResult.model;
+    modelResponseId = modelResult.responseId;
+  }
   let suggestedTeamPlan: ManualBridgeRequestPlan | null = null;
   if (input.suggestTeamPlanFor) {
     const planInput = {
@@ -177,9 +204,18 @@ export function runRuntimeTurn(input: RuntimeTurnInput = {}): RuntimeTurnRespons
     ok: true,
     protocol: "mira.runtime_turn.v0",
     runtimeExecutes: false,
-    modelInvoked: false,
+    modelInvoked,
     telegramRouteControl: false,
     uiSurfaceControl: false,
+    model: {
+      requested: input.useModel === true,
+      provider: modelProvider,
+      model: modelName,
+      responseId: modelResponseId,
+      toolsEnabled: false,
+      sendsEnabled: false,
+      store: false,
+    },
     input: {
       text,
       sessionId,

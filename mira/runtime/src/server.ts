@@ -114,7 +114,10 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       if (typeof body.suggestTeamPlanFor === "string") {
         Object.assign(turnInput, { suggestTeamPlanFor: body.suggestTeamPlanFor });
       }
-      sendJson(response, 200, runRuntimeTurn(turnInput));
+      if (body.useModel === true || body.model === true || body.mode === "model") {
+        Object.assign(turnInput, { useModel: true });
+      }
+      sendJson(response, 200, await runRuntimeTurn(turnInput));
     } catch (error) {
       sendJson(response, 400, errorPayload(error));
     }
