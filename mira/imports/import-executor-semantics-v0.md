@@ -1,7 +1,8 @@
 # Mira Import Executor Semantics v0
 
-Status: dry-run executor exists at `mira/tools/execute-reviewed-import.js`.
-Apply/import execution is still not supported.
+Status: executor exists at `mira/tools/execute-reviewed-import.js`.
+Apply/import execution is supported only for an explicitly approved marker and
+must write a receipt.
 
 This contract defines how a future reviewed import executor must behave before
 any Mira continuity, acceptance, permission, or conversation evidence is copied
@@ -15,9 +16,8 @@ Executor name:
 node mira/tools/execute-reviewed-import.js --report mira/imports/reports/first-batch-dry-run-v1.json
 ```
 
-V0 is dry-run first. `--apply` is not available until a later explicitly
-approved lane adds it. Dry-run execution planning still requires an explicit
-`--approval` marker so unapproved reports are mechanically blocked.
+V0 is dry-run first. `--apply` is available only when a matching explicit
+`--approval` marker is supplied, and it must remain copy-only.
 
 ## Batch Gate
 
@@ -69,10 +69,9 @@ Default execution must emit a plan only:
 Dry-run must create no directories, copy no files, write no receipts, and mutate
 no report or queue status.
 
-## Future Apply Behavior
+## Apply Behavior
 
-Apply mode is non-scope for this contract. A later approved lane may add it only
-with these minimum rules:
+Apply mode must follow these minimum rules:
 
 - copy selected files with exclusive-create/no-overwrite semantics;
 - fail the entire batch before writing if any destination exists;
@@ -82,8 +81,6 @@ with these minimum rules:
 
 ## Non-Scope
 
-- No import execution.
-- No apply mode.
 - No queue status mutation.
 - No relationship memory or transcript batch approval.
 - No runtime auto-load of imported continuity.

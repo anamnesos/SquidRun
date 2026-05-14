@@ -1,12 +1,14 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const { resolveStateRoot } = require('./resolve-state-root');
 const { relativeDestinationInsideRoot } = require('./plan-reviewed-imports');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const defaultQueuePath = path.join(repoRoot, 'mira', 'imports', 'review-queue.json');
+const toolVersion = '0.1.0';
 
 function parseArgs(argv) {
   const args = {
@@ -102,27 +104,18 @@ function validateApprovalMarker(approval, report, reportPath) {
   return errors;
 }
 
-function buildDryRunExecutionPlan(options = {}) {
+function sha256File(filePath) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(filePath));
+  return `sha256:${hash.digest('hex')}`;
+}
+
+function buildExecutionPlan(options = {}) {
   const env = options.env || process.env;
   const reportPath = options.reportPath;
   const approvalPath = options.approvalPath;
   const queuePath = options.queuePath || defaultQueuePath;
   const errors = [];
-
-  if (options.apply) {
-    return {
-      ok: false,
-      error: 'apply_not_supported_v0',
-      applied: false,
-      copied: false,
-      moved: false,
-      deleted: false,
-      queue_mutated: false,
-      status_mutated: false,
-      would_copy: [],
-      errors: ['--apply is not supported by the v0 dry-run executor.'],
-    };
-  }
 
   if (!reportPath) {
     return {
@@ -247,6 +240,7 @@ function buildDryRunExecutionPlan(options = {}) {
     report_id: report.report_id || null,
     batch_id: report.proposal?.batch_id || null,
     state_root: rootResult.path,
+    approval_id: approval.approval_id || null,
     applied: false,
     copied: false,
     moved: false,
@@ -258,9 +252,129 @@ function buildDryRunExecutionPlan(options = {}) {
   };
 }
 
+function buildDryRunExecutionPlan(options = {}) {
+  return buildExecutionPlan({ ...options, apply: false });
+}
+
+function buildReceiptId(batchId, date = new Date()) {
+  const stamp = date.toISOString().replace(/[-:.]/g, '').replace('T', '-').replace('Z', 'Z');
+  return `${batchId}-${stamp}`;
+}
+
+function applyReviewedImport(options = {}) {
+  const plan = buildExecutionPlan(options);
+  if (!plan.ok) {
+    return {
+      ...plan,
+      applied: false,
+      copied: false,
+      receipt_path: null,
+      receipt: null,
+    };
+  }
+
+  const copiedRecords = [];
+  const queueStatusBefore = {};
+  const receiptId = options.receiptId || buildReceiptId(plan.batch_id);
+  const receiptsDir = path.join(plan.state_root, 'imports', 'receipts');
+  const receiptPath = path.join(receiptsDir, `${receiptId}.json`);
+
+  if (fs.existsSync(receiptPath)) {
+    return {
+      ...plan,
+      ok: false,
+      applied: false,
+      copied: false,
+      receipt_path: receiptPath,
+      receipt: null,
+      errors: [`receipt already exists: ${receiptPath}`],
+    };
+  }
+
+  try {
+    for (const record of plan.would_copy) {
+      fs.mkdirSync(path.dirname(record.destination_absolute_path), { recursive: true });
+      fs.copyFileSync(record.source_absolute_path, record.destination_absolute_path, fs.constants.COPYFILE_EXCL);
+      const sourceHash = sha256File(record.source_absolute_path);
+      const destinationHash = sha256File(record.destination_absolute_path);
+
+      if (sourceHash !== destinationHash) {
+        throw new Error(`${record.id}: destination hash does not match source hash`);
+      }
+
+      queueStatusBefore[record.id] = 'not_imported';
+      copiedRecords.push({
+        id: record.id,
+        source_path: record.source_path,
+        source_sha256: sourceHash,
+        destination_relative_path: record.destination_relative_path,
+        destination_sha256: destinationHash,
+        destination_created: true,
+        queue_status_before: 'not_imported',
+      });
+    }
+
+    const receipt = {
+      schema: 'mira.import_receipt.v0',
+      receipt_id: receiptId,
+      batch_id: plan.batch_id,
+      report_id: plan.report_id,
+      tool: {
+        name: 'execute-reviewed-import',
+        version: toolVersion,
+      },
+      copied_at: (options.now || new Date()).toISOString(),
+      mutation_flags: {
+        copied: true,
+        moved: false,
+        deleted: false,
+        queue_mutated: false,
+        report_mutated: false,
+        status_mutated: false,
+      },
+      queue_status_before: queueStatusBefore,
+      records: copiedRecords,
+    };
+
+    fs.mkdirSync(receiptsDir, { recursive: true });
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx' });
+
+    return {
+      ...plan,
+      applied: true,
+      copied: true,
+      moved: false,
+      deleted: false,
+      queue_mutated: false,
+      status_mutated: false,
+      receipt_path: receiptPath,
+      receipt,
+    };
+  } catch (error) {
+    return {
+      ...plan,
+      ok: false,
+      applied: false,
+      copied: copiedRecords.length > 0,
+      receipt_path: receiptPath,
+      receipt: null,
+      errors: [error.message],
+    };
+  }
+}
+
 function formatExecutionPlan(plan) {
   if (!plan.ok) {
-    return `Mira reviewed import dry-run failed:\n${plan.errors.join('\n')}`;
+    return `Mira reviewed import ${plan.applied ? 'apply' : 'dry-run'} failed:\n${plan.errors.join('\n')}`;
+  }
+
+  if (plan.applied) {
+    return [
+      `Mira reviewed import apply (${plan.receipt?.records?.length || 0} records)`,
+      `batch_id=${plan.batch_id}`,
+      `receipt=${plan.receipt_path}`,
+      'applied=true copied=true moved=false deleted=false queue_mutated=false status_mutated=false',
+    ].join('\n');
   }
 
   return [
@@ -273,10 +387,12 @@ function formatExecutionPlan(plan) {
 
 if (require.main === module) {
   const args = parseArgs(process.argv.slice(2));
-  const plan = buildDryRunExecutionPlan({
+  const plan = args.apply ? applyReviewedImport({
     reportPath: args.report,
     approvalPath: args.approval,
-    apply: args.apply,
+  }) : buildDryRunExecutionPlan({
+    reportPath: args.report,
+    approvalPath: args.approval,
   });
 
   if (args.json) {
@@ -291,8 +407,12 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyReviewedImport,
+  buildExecutionPlan,
   buildDryRunExecutionPlan,
+  buildReceiptId,
   formatExecutionPlan,
   parseArgs,
+  sha256File,
   validateApprovalMarker,
 };

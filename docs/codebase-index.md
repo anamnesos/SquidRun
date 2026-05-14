@@ -7,7 +7,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `a927e86`
+- Git HEAD: `1417da4`
 - Total files listed: 1122
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
@@ -118,7 +118,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/imports/approvals/first-batch-approval-v1.json` | config | `clean/tracked` | 709 |
 | `mira/imports/import-approval-marker-schema-v0.json` | config | `clean/tracked` | 1751 |
 | `mira/imports/import-approval-marker-semantics-v0.md` | doc | `clean/tracked` | 1563 |
-| `mira/imports/import-executor-semantics-v0.md` | doc | `clean/tracked` | 3027 |
+| `mira/imports/import-executor-semantics-v0.md` | doc | `clean/tracked` | 2882 |
 | `mira/imports/import-receipt-schema-v0.json` | config | `clean/tracked` | 2737 |
 | `mira/imports/import-receipt-semantics-v0.md` | doc | `clean/tracked` | 1489 |
 | `mira/imports/import-record.schema.json` | config | `clean/tracked` | 1471 |
@@ -136,7 +136,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/state/.gitignore` | config | `clean/tracked` | 52 |
 | `mira/state/README.md` | doc | `clean/tracked` | 613 |
 | `mira/state/state-root-contract.json` | config | `clean/tracked` | 612 |
-| `mira/tools/execute-reviewed-import.js` | source | `clean/tracked` | 8362 |
+| `mira/tools/execute-reviewed-import.js` | source | `clean/tracked` | 11952 |
 | `mira/tools/plan-reviewed-imports.js` | source | `clean/tracked` | 3300 |
 | `mira/tools/resolve-state-root.js` | source | `clean/tracked` | 670 |
 | `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
@@ -483,12 +483,12 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-core-typed-restart-continuity-context-v0.test.js` | test | `clean/tracked` | 8844 |
 | `ui/__tests__/mira-email-curiosity.test.js` | test | `clean/tracked` | 6012 |
 | `ui/__tests__/mira-environment-curiosity.test.js` | test | `clean/tracked` | 9520 |
-| `ui/__tests__/mira-execute-reviewed-import.test.js` | test | `clean/tracked` | 7616 |
+| `ui/__tests__/mira-execute-reviewed-import.test.js` | test | `clean/tracked` | 11215 |
 | `ui/__tests__/mira-extraction-main-ui.test.js` | test | `clean/tracked` | 1423 |
 | `ui/__tests__/mira-first-batch-approval-marker.test.js` | test | `clean/tracked` | 3101 |
 | `ui/__tests__/mira-first-batch-dry-run-report.test.js` | test | `clean/tracked` | 2204 |
 | `ui/__tests__/mira-import-approval-marker-semantics.test.js` | test | `clean/tracked` | 2622 |
-| `ui/__tests__/mira-import-executor-semantics.test.js` | test | `clean/tracked` | 3178 |
+| `ui/__tests__/mira-import-executor-semantics.test.js` | test | `clean/tracked` | 3232 |
 | `ui/__tests__/mira-import-receipt-semantics.test.js` | test | `clean/tracked` | 2416 |
 | `ui/__tests__/mira-lab-default-ui.test.js` | test | `clean/tracked` | 12201 |
 | `ui/__tests__/mira-lab-prompt-reply.test.js` | test | `clean/tracked` | 92147 |

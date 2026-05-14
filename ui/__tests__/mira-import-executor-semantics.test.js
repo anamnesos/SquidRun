@@ -8,14 +8,14 @@ describe('Mira import executor semantics contract', () => {
   const contractPath = path.join(repoRoot, 'mira', 'imports', 'import-executor-semantics-v0.md');
   const reportPath = path.join(repoRoot, 'mira', 'imports', 'reports', 'first-batch-dry-run-v1.json');
 
-  test('keeps v0 dry-run only with apply/import execution unsupported', () => {
+  test('keeps v0 apply gated by explicit approval and receipt writing', () => {
     const contract = fs.readFileSync(contractPath, 'utf8');
 
-    expect(contract).toContain('Status: dry-run executor exists at `mira/tools/execute-reviewed-import.js`.');
-    expect(contract).toContain('Apply/import execution is still not supported.');
+    expect(contract).toContain('Status: executor exists at `mira/tools/execute-reviewed-import.js`.');
+    expect(contract).toContain('Apply/import execution is supported only for an explicitly approved marker');
     expect(contract).toContain('V0 is dry-run first.');
-    expect(contract).toContain('`--apply` is not available');
-    expect(contract).toContain('Dry-run execution planning still requires an explicit');
+    expect(contract).toContain('`--apply` is available only when a matching explicit');
+    expect(contract).toContain('`--approval` marker is supplied, and it must remain copy-only.');
     expect(contract).toContain('Default execution must emit a plan only');
     expect(contract).toContain('Dry-run must create no directories, copy no files, write no receipts');
   });
@@ -51,10 +51,10 @@ describe('Mira import executor semantics contract', () => {
     expect(contract).toContain('the only allowed behavior with a matching approval');
   });
 
-  test('keeps apply semantics and queue mutation in later lanes', () => {
+  test('keeps queue mutation and runtime loading out of apply', () => {
     const contract = fs.readFileSync(contractPath, 'utf8');
 
-    expect(contract).toContain('Apply mode is non-scope for this contract.');
+    expect(contract).toContain('Apply mode must follow these minimum rules:');
     expect(contract).toContain('copy selected files with exclusive-create/no-overwrite semantics');
     expect(contract).toContain('keep queue status mutation as a separate reviewed lane');
     expect(contract).toContain('do not cause runtime to auto-load imported continuity');

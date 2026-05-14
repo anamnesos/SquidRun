@@ -6,8 +6,10 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const {
+  applyReviewedImport,
   buildDryRunExecutionPlan,
   parseArgs,
+  sha256File,
 } = require('../../mira/tools/execute-reviewed-import');
 
 describe('Mira reviewed import dry-run executor', () => {
@@ -44,7 +46,7 @@ describe('Mira reviewed import dry-run executor', () => {
     return markerPath;
   }
 
-  test('requires an explicit report and refuses apply in v0', () => {
+  test('requires an explicit report and approval before apply', () => {
     expect(parseArgs(['--report', reportPath, '--approval', 'approval.json', '--json'])).toEqual({
       report: reportPath,
       approval: 'approval.json',
@@ -56,13 +58,13 @@ describe('Mira reviewed import dry-run executor', () => {
       error: 'missing_report',
       applied: false,
     }));
-    expect(buildDryRunExecutionPlan({
+    expect(applyReviewedImport({
       reportPath,
       apply: true,
       env: { MIRA_STATE_ROOT: path.join(repoRoot, 'mira', '.state-dev-test') },
     })).toEqual(expect.objectContaining({
       ok: false,
-      error: 'apply_not_supported_v0',
+      error: 'missing_approval',
       applied: false,
       copied: false,
       queue_mutated: false,
@@ -206,5 +208,85 @@ describe('Mira reviewed import dry-run executor', () => {
     expect(plan.applied).toBe(false);
     expect(plan.would_copy).toHaveLength(3);
     expect(fs.readdirSync(stateRoot)).toEqual([]);
+  });
+
+  test('apply copies approved files with hashes and receipt in a temp state root', () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-executor-apply-'));
+    const approvalPath = writeApprovalMarker(fs.mkdtempSync(path.join(os.tmpdir(), 'mira-executor-apply-approval-')));
+    const queuePath = path.join(repoRoot, 'mira', 'imports', 'review-queue.json');
+    const reportFullPath = path.join(repoRoot, reportPath);
+    const queueBefore = fs.readFileSync(queuePath, 'utf8');
+    const reportBefore = fs.readFileSync(reportFullPath, 'utf8');
+    const result = applyReviewedImport({
+      reportPath,
+      approvalPath,
+      env: { MIRA_STATE_ROOT: stateRoot },
+      receiptId: 'test-receipt',
+      now: new Date('2026-05-14T10:00:00.000Z'),
+    });
+    const receiptPath = path.join(stateRoot, 'imports', 'receipts', 'test-receipt.json');
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      applied: true,
+      copied: true,
+      moved: false,
+      deleted: false,
+      queue_mutated: false,
+      status_mutated: false,
+      receipt_path: receiptPath,
+    }));
+    expect(fs.existsSync(receiptPath)).toBe(true);
+    expect(result.receipt).toEqual(expect.objectContaining({
+      schema: 'mira.import_receipt.v0',
+      receipt_id: 'test-receipt',
+      batch_id: 'acceptance-permission-contracts-v1',
+      report_id: 'first-batch-dry-run-v1',
+      copied_at: '2026-05-14T10:00:00.000Z',
+    }));
+    expect(result.receipt.mutation_flags).toEqual({
+      copied: true,
+      moved: false,
+      deleted: false,
+      queue_mutated: false,
+      report_mutated: false,
+      status_mutated: false,
+    });
+    expect(result.receipt.records).toHaveLength(3);
+    for (const record of result.receipt.records) {
+      const destination = path.join(stateRoot, record.destination_relative_path);
+      expect(fs.existsSync(destination)).toBe(true);
+      expect(record.destination_created).toBe(true);
+      expect(record.queue_status_before).toBe('not_imported');
+      expect(record.source_sha256).toBe(sha256File(path.join(repoRoot, record.source_path)));
+      expect(record.destination_sha256).toBe(sha256File(destination));
+      expect(record.destination_sha256).toBe(record.source_sha256);
+    }
+    expect(fs.readFileSync(queuePath, 'utf8')).toBe(queueBefore);
+    expect(fs.readFileSync(reportFullPath, 'utf8')).toBe(reportBefore);
+  });
+
+  test('apply fails before write when any destination exists', () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-executor-apply-existing-'));
+    const approvalPath = writeApprovalMarker(fs.mkdtempSync(path.join(os.tmpdir(), 'mira-executor-apply-existing-approval-')));
+    const existingDestination = path.join(stateRoot, 'acceptance', 'mira-presence-runtime-acceptance-v0.md');
+    fs.mkdirSync(path.dirname(existingDestination), { recursive: true });
+    fs.writeFileSync(existingDestination, 'existing');
+
+    const result = applyReviewedImport({
+      reportPath,
+      approvalPath,
+      env: { MIRA_STATE_ROOT: stateRoot },
+      receiptId: 'should-not-exist',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.applied).toBe(false);
+    expect(result.receipt).toBeNull();
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('destination already exists'),
+    ]));
+    expect(fs.existsSync(path.join(stateRoot, 'imports', 'receipts', 'should-not-exist.json'))).toBe(false);
+    expect(fs.existsSync(path.join(stateRoot, 'acceptance', 'mira-north-star-acceptance.md'))).toBe(false);
   });
 });
