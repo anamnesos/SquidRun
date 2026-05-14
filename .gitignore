@@ -71,6 +71,7 @@ ui/settings.json
 session-state.json
 ui/session-state.json
 *.tmp
+mira/.state-dev/
 
 # Instance working directories (removed S127, kept for safety)
 workspace/instances/
