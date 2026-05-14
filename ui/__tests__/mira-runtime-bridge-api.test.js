@@ -412,6 +412,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     }));
     expect(createPayload.relativePath).toMatch(/^work\/drafts\/work-draft-.*\.md$/);
     expect(createPayload.absolutePath.startsWith(path.resolve(tempStateRoot))).toBe(true);
+    expect(createPayload.preview).toContain('Request: Reply to the customer asking whether the invoice can be re-sent today.');
+    expect(createPayload.preview).toContain('Draft: Thanks for reaching out.');
+    expect(createPayload.preview).not.toContain('schema: mira.work_draft.v0');
+    expect(createPayload.preview).not.toContain('---');
     expect(fs.existsSync(createPayload.absolutePath)).toBe(true);
     const writtenDraft = fs.readFileSync(createPayload.absolutePath, 'utf8');
     expect(writtenDraft).toContain('schema: mira.work_draft.v0');
@@ -435,7 +439,9 @@ describe('Mira runtime bridge manual-plan API', () => {
       status: 'pending_review',
       relativePath: createPayload.relativePath,
       absolutePath: createPayload.absolutePath,
+      preview: expect.stringContaining('Request: Reply to the customer asking whether the invoice can be re-sent today.'),
     }));
+    expect(listPayload.drafts[0].preview).not.toContain('schema: mira.work_draft.v0');
   });
 
   test('converts a customer draft into a pending-review task with source hash', async () => {
@@ -486,6 +492,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     }));
     expect(task.relativePath).toMatch(/^work\/tasks\/work-task-.*\.md$/);
     expect(task.absolutePath.startsWith(path.resolve(tempStateRoot))).toBe(true);
+    expect(task.preview).toContain('Task: Reply to the customer asking whether the invoice can be re-sent today.');
+    expect(task.preview).toContain('Checklist:');
+    expect(task.preview).not.toContain('schema: mira.work_task.v0');
+    expect(task.preview).not.toContain('source_draft_sha256');
     const taskMarkdown = fs.readFileSync(task.absolutePath, 'utf8');
     expect(taskMarkdown).toContain('schema: mira.work_task.v0');
     expect(taskMarkdown).toContain('status: pending_review');
@@ -514,7 +524,9 @@ describe('Mira runtime bridge manual-plan API', () => {
       sourceDraftId: draft.id,
       sourceDraftRelativePath: draft.relativePath,
       sourceDraftSha256: draftSha256,
+      preview: expect.stringContaining('Task: Reply to the customer asking whether the invoice can be re-sent today.'),
     }));
+    expect(listPayload.tasks[0].preview).not.toContain('schema: mira.work_task.v0');
   });
 
   test('refuses task conversion when the source draft is missing or outside work drafts', async () => {

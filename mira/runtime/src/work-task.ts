@@ -84,6 +84,21 @@ function extractSection(markdown: string, heading: string): string {
   return markdown.match(pattern)?.[1]?.trim() || "";
 }
 
+function previewSection(value: string, maxLength = 260): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
+}
+
+function buildTaskPreview(markdown: string): string {
+  const task = previewSection(extractSection(markdown, "Task"));
+  const checklist = previewSection(extractSection(markdown, "Checklist"));
+  return [
+    task ? `Task: ${task}` : null,
+    checklist ? `Checklist: ${checklist}` : null,
+  ].filter(Boolean).join("\n");
+}
+
 function getTasksDir(rootPath: string): string {
   return path.resolve(rootPath, "work", "tasks");
 }
@@ -249,7 +264,7 @@ export function createWorkTaskFromDraft(input: WorkTaskInput = {}, env: NodeJS.P
     crmMutation: false,
     runtimeExecutesExternalAction: false,
     reviewRequired: true,
-    preview: markdown,
+    preview: buildTaskPreview(markdown),
   };
 }
 
@@ -300,7 +315,7 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env): WorkTaskLis
         sourceDraftRelativePath: meta.source_draft_relative_path || null,
         sourceDraftSha256: meta.source_draft_sha256 || null,
         createdAt: meta.created_at || null,
-        preview: markdown.slice(0, 800),
+        preview: buildTaskPreview(markdown),
       };
     })
     .filter((task): task is NonNullable<typeof task> => Boolean(task))

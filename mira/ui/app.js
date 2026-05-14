@@ -155,6 +155,13 @@ function updateReviewSummary(payload) {
   setText(elements.reviewSummary, count === 1 ? '1 pending correction' : `${count} pending corrections`);
 }
 
+function formatReviewStamp(value) {
+  if (!value) return 'pending review';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'pending review';
+  return `pending review · ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 function updateDraftList(payload) {
   const drafts = Array.isArray(payload?.drafts) ? payload.drafts : [];
   setText(elements.workSummary, `${drafts.length} drafts`);
@@ -165,10 +172,11 @@ function updateDraftList(payload) {
   elements.draftList.replaceChildren(...drafts.slice(0, 5).map((draft) => {
     const item = document.createElement('article');
     item.className = 'draft-item';
+    item.title = draft.relativePath || draft.id || '';
     const title = document.createElement('strong');
-    title.textContent = draft.id || 'draft';
-    const path = document.createElement('span');
-    path.textContent = draft.relativePath || '';
+    title.textContent = 'Customer reply draft';
+    const meta = document.createElement('span');
+    meta.textContent = formatReviewStamp(draft.createdAt);
     const preview = document.createElement('p');
     preview.textContent = draft.preview || '';
     const action = document.createElement('button');
@@ -180,7 +188,7 @@ function updateDraftList(payload) {
       action.textContent = 'making';
       try {
         const task = await createTaskFromDraft(draft);
-        appendMessage('mira', `Task saved for review: ${task.relativePath}`);
+        appendMessage('mira', 'Task saved for review.');
         await refreshTasks();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
@@ -188,7 +196,7 @@ function updateDraftList(payload) {
         action.textContent = 'task';
       }
     });
-    item.append(title, path, preview, action);
+    item.append(title, meta, preview, action);
     return item;
   }));
 }
@@ -204,15 +212,14 @@ function updateTaskList(payload) {
   elements.taskList.replaceChildren(...tasks.slice(0, 5).map((task) => {
     const item = document.createElement('article');
     item.className = 'draft-item';
+    item.title = task.relativePath || task.id || '';
     const title = document.createElement('strong');
-    title.textContent = task.id || 'task';
-    const path = document.createElement('span');
-    path.textContent = task.relativePath || '';
+    title.textContent = 'Review task';
     const source = document.createElement('span');
-    source.textContent = task.sourceDraftRelativePath ? `from ${task.sourceDraftRelativePath}` : '';
+    source.textContent = task.sourceDraftId ? 'source draft linked' : 'source draft missing';
     const preview = document.createElement('p');
     preview.textContent = task.preview || '';
-    item.append(title, path, source, preview);
+    item.append(title, source, preview);
     return item;
   }));
 }
@@ -473,7 +480,7 @@ elements.draftButton.addEventListener('click', async () => {
   elements.draftButton.textContent = 'Drafting';
   try {
     const payload = await createDraft(text);
-    appendMessage('mira', `Draft saved for review: ${payload.relativePath}`);
+    appendMessage('mira', 'Draft saved for review.');
     await refreshDrafts();
   } catch (error) {
     appendMessage('mira', error.message, 'error');

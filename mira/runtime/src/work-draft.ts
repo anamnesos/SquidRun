@@ -115,6 +115,26 @@ function parseFrontMatter(markdown: string): Record<string, string> {
     }, {});
 }
 
+function extractSection(markdown: string, heading: string): string {
+  const pattern = new RegExp(`^## ${heading}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n## |$)`, "m");
+  return markdown.match(pattern)?.[1]?.trim() || "";
+}
+
+function previewSection(value: string, maxLength = 260): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
+}
+
+function buildDraftPreview(markdown: string): string {
+  const request = previewSection(extractSection(markdown, "Request"));
+  const draft = previewSection(extractSection(markdown, "Draft"));
+  return [
+    request ? `Request: ${request}` : null,
+    draft ? `Draft: ${draft}` : null,
+  ].filter(Boolean).join("\n");
+}
+
 function getDraftsDir(rootPath: string): string {
   return path.resolve(rootPath, "work", "drafts");
 }
@@ -180,7 +200,7 @@ export function createWorkDraft(input: WorkDraftInput = {}, env: NodeJS.ProcessE
     externalSend: false,
     runtimeExecutesExternalAction: false,
     reviewRequired: true,
-    preview: markdown,
+    preview: buildDraftPreview(markdown),
   };
 }
 
@@ -226,7 +246,7 @@ export function listWorkDrafts(env: NodeJS.ProcessEnv = process.env): WorkDraftL
         relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
         absolutePath,
         createdAt: meta.created_at || null,
-        preview: markdown.slice(0, 800),
+        preview: buildDraftPreview(markdown),
       };
     })
     .filter((draft): draft is NonNullable<typeof draft> => Boolean(draft))
