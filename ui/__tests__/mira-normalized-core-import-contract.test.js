@@ -2,6 +2,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
+const { buildNormalizedPreview } = require('../../mira/tools/normalize-core-dry-run');
 
 describe('Mira normalized core import contract', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
@@ -140,5 +142,87 @@ describe('Mira normalized core import contract', () => {
     expect(semantics).toContain('Do not copy raw source JSON wholesale.');
     expect(semantics).toContain('session`, `window`, and `device` fields as source');
     expect(semantics).toContain('not blanket Mira runtime write permission');
+  });
+
+  test('normalizer dry-run emits normalized previews without state writes or runtime load', () => {
+    const preview = buildNormalizedPreview();
+
+    expect(preview).toEqual(expect.objectContaining({
+      ok: true,
+      schema: 'mira.normalized_core_dry_run_execution.v1',
+      batch_id: 'normalized-core-state-v1',
+      normalized: false,
+      copied: false,
+      state_written: false,
+      receipt_written: false,
+      runtime_loaded: false,
+      raw_imported: false,
+    }));
+    expect(preview.previews.map((record) => record.id)).toEqual([
+      'mira_self_profile',
+      'james_relationship_state',
+      'relationship_presence_permissions',
+    ]);
+    expect(preview.excluded_records.map((record) => record.id)).toEqual([
+      'relationship_growth_history',
+      'relationship_growth_audit',
+    ]);
+  });
+
+  test('normalizer preview excludes growth events and stale live continuity fields', () => {
+    const preview = buildNormalizedPreview();
+    const selfProfile = preview.previews.find((record) => record.id === 'mira_self_profile').normalized_preview;
+    const relationship = preview.previews.find((record) => record.id === 'james_relationship_state').normalized_preview;
+    const permissions = preview.previews.find((record) => record.id === 'relationship_presence_permissions').normalized_preview;
+
+    expect(selfProfile).not.toHaveProperty('growth_events');
+    expect(relationship).not.toHaveProperty('growth_events');
+    expect(relationship).not.toHaveProperty('history');
+    expect(relationship).not.toHaveProperty('history_summary');
+    expect(selfProfile).not.toHaveProperty('session');
+    expect(selfProfile).not.toHaveProperty('window');
+    expect(selfProfile).not.toHaveProperty('device');
+    expect(relationship).not.toHaveProperty('session');
+    expect(permissions).not.toHaveProperty('session');
+    expect(selfProfile.source_metadata).toEqual(expect.objectContaining({
+      stale_session: 'app-session-329',
+      stale_window: 'main',
+      stale_device: 'VIGIL',
+      metadata_only: true,
+      live_continuity_excluded: true,
+    }));
+  });
+
+  test('normalizer preview preserves permission caveat for local store writes', () => {
+    const preview = buildNormalizedPreview();
+    const permissions = preview.previews.find((record) => record.id === 'relationship_presence_permissions').normalized_preview;
+
+    expect(permissions.permissions.local_store_write_allowed_now).toBe(true);
+    expect(permissions.caveats).toEqual(expect.objectContaining({
+      local_store_write_allowed_now: 'scoped_only_to_reviewed_import_and_mira_state_root_writes_after_explicit_approval',
+      blanket_mira_runtime_write_permission: false,
+      runtime_autonomous_write_permission: false,
+    }));
+  });
+
+  test('normalizer cli emits JSON dry-run report without writing state root', () => {
+    const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalizer-no-write-'));
+    const output = execFileSync(process.execPath, [
+      path.join(repoRoot, 'mira', 'tools', 'normalize-core-dry-run.js'),
+      '--json',
+    ], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        MIRA_STATE_ROOT: stateRoot,
+      },
+      encoding: 'utf8',
+    });
+    const preview = JSON.parse(output);
+
+    expect(preview.ok).toBe(true);
+    expect(preview.previews).toHaveLength(3);
+    expect(preview.state_written).toBe(false);
+    expect(fs.readdirSync(stateRoot)).toEqual([]);
   });
 });

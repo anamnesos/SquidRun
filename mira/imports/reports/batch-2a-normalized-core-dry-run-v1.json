@@ -95,6 +95,7 @@
         "session",
         "window",
         "device",
+        "history",
         "growth_events",
         "raw_transcript_refs"
       ]
