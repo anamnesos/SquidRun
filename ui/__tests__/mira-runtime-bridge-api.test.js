@@ -344,6 +344,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("window.matchMedia('(max-width: 820px)')");
     expect(appJs).toContain("fetch('/work/drafts'");
     expect(appJs).toContain("fetch('/work/tasks'");
+    expect(appJs).toContain('cleanPreviewText');
+    expect(appJs).toContain('requestPreview');
+    expect(appJs).toContain('taskPreview');
+    expect(appJs).toContain('sourceDraftToken');
     expect(appJs).toContain("fetch('/conversation/recent");
     expect(appJs).toContain('brainLine');
     expect(appJs).toContain("fetch('/voice/correction'");
@@ -414,7 +418,12 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(createPayload.absolutePath.startsWith(path.resolve(tempStateRoot))).toBe(true);
     expect(createPayload.preview).toContain('Request: Reply to the customer asking whether the invoice can be re-sent today.');
     expect(createPayload.preview).toContain('Draft: Thanks for reaching out.');
+    expect(createPayload.displayTitle).toBe('Customer reply');
+    expect(createPayload.requestPreview).toBe('Reply to the customer asking whether the invoice can be re-sent today.');
+    expect(createPayload.draftPreview).toContain('Thanks for reaching out.');
     expect(createPayload.preview).not.toContain('schema: mira.work_draft.v0');
+    expect(createPayload.preview).not.toContain('session_id');
+    expect(createPayload.preview).not.toContain('external_send');
     expect(createPayload.preview).not.toContain('---');
     expect(fs.existsSync(createPayload.absolutePath)).toBe(true);
     const writtenDraft = fs.readFileSync(createPayload.absolutePath, 'utf8');
@@ -428,20 +437,25 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(listPayload).toEqual(expect.objectContaining({
       ok: true,
       protocol: 'mira.work_draft_list.v0',
-      stateRootPath: path.resolve(tempStateRoot),
+      stateRootPath: null,
       draftCount: 1,
       externalSend: false,
       runtimeExecutesExternalAction: false,
     }));
     expect(listPayload.drafts[0]).toEqual(expect.objectContaining({
-      id: createPayload.id,
-      kind: 'customer_reply',
+      actionToken: expect.stringMatching(/^draft-/),
       status: 'pending_review',
-      relativePath: createPayload.relativePath,
-      absolutePath: createPayload.absolutePath,
+      displayTitle: 'Customer reply',
+      requestPreview: 'Reply to the customer asking whether the invoice can be re-sent today.',
       preview: expect.stringContaining('Request: Reply to the customer asking whether the invoice can be re-sent today.'),
     }));
+    expect(listPayload.drafts[0]).not.toHaveProperty('id');
+    expect(listPayload.drafts[0]).not.toHaveProperty('relativePath');
+    expect(listPayload.drafts[0]).not.toHaveProperty('absolutePath');
     expect(listPayload.drafts[0].preview).not.toContain('schema: mira.work_draft.v0');
+    expect(listPayload.drafts[0].preview).not.toContain('session_id');
+    expect(listPayload.drafts[0].preview).not.toContain('external_send');
+    expect(listPayload.drafts[0].preview).not.toContain('Customer Reply Draft');
   });
 
   test('converts a customer draft into a pending-review task with source hash', async () => {
@@ -461,13 +475,14 @@ describe('Mira runtime bridge manual-plan API', () => {
     const draft = await createDraftResponse.json();
     const draftMarkdown = fs.readFileSync(draft.absolutePath, 'utf8');
     const draftSha256 = crypto.createHash('sha256').update(draftMarkdown, 'utf8').digest('hex');
+    const draftListResponse = await fetch(`${baseUrl}/work/drafts`);
+    const draftList = await draftListResponse.json();
 
     const createTaskResponse = await fetch(`${baseUrl}/work/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        sourceDraftId: draft.id,
-        sourceDraftPath: draft.relativePath,
+        sourceDraftToken: draftList.drafts[0].actionToken,
         sessionId: 'app-session-373',
         messageId: 'work-task-test-1',
       }),
@@ -494,7 +509,12 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(task.absolutePath.startsWith(path.resolve(tempStateRoot))).toBe(true);
     expect(task.preview).toContain('Task: Reply to the customer asking whether the invoice can be re-sent today.');
     expect(task.preview).toContain('Checklist:');
+    expect(task.displayTitle).toBe('Review task');
+    expect(task.taskPreview).toBe('Reply to the customer asking whether the invoice can be re-sent today.');
+    expect(task.checklistPreview).toContain('Read the linked draft.');
     expect(task.preview).not.toContain('schema: mira.work_task.v0');
+    expect(task.preview).not.toContain('source_draft_id');
+    expect(task.preview).not.toContain('source_draft_relative_path');
     expect(task.preview).not.toContain('source_draft_sha256');
     const taskMarkdown = fs.readFileSync(task.absolutePath, 'utf8');
     expect(taskMarkdown).toContain('schema: mira.work_task.v0');
@@ -511,22 +531,28 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(listPayload).toEqual(expect.objectContaining({
       ok: true,
       protocol: 'mira.work_task_list.v0',
-      stateRootPath: path.resolve(tempStateRoot),
+      stateRootPath: null,
       taskCount: 1,
       externalSend: false,
       crmMutation: false,
       runtimeExecutesExternalAction: false,
     }));
     expect(listPayload.tasks[0]).toEqual(expect.objectContaining({
-      id: task.id,
       status: 'pending_review',
-      relativePath: task.relativePath,
-      sourceDraftId: draft.id,
-      sourceDraftRelativePath: draft.relativePath,
-      sourceDraftSha256: draftSha256,
+      displayTitle: 'Review task',
+      sourceDraftLinked: true,
+      taskPreview: 'Reply to the customer asking whether the invoice can be re-sent today.',
       preview: expect.stringContaining('Task: Reply to the customer asking whether the invoice can be re-sent today.'),
     }));
+    expect(listPayload.tasks[0]).not.toHaveProperty('id');
+    expect(listPayload.tasks[0]).not.toHaveProperty('relativePath');
+    expect(listPayload.tasks[0]).not.toHaveProperty('sourceDraftId');
+    expect(listPayload.tasks[0]).not.toHaveProperty('sourceDraftRelativePath');
+    expect(listPayload.tasks[0]).not.toHaveProperty('sourceDraftSha256');
     expect(listPayload.tasks[0].preview).not.toContain('schema: mira.work_task.v0');
+    expect(listPayload.tasks[0].preview).not.toContain('source_draft_id');
+    expect(listPayload.tasks[0].preview).not.toContain('source_draft_relative_path');
+    expect(listPayload.tasks[0].preview).not.toContain('source_draft_sha256');
   });
 
   test('refuses task conversion when the source draft is missing or outside work drafts', async () => {

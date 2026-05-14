@@ -2,10 +2,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getStateRootReadiness } from "./state-root.js";
+import { buildWorkDraftActionToken } from "./work-draft.js";
 
 export type WorkTaskInput = {
   sourceDraftId?: string;
   sourceDraftPath?: string;
+  sourceDraftToken?: string;
   sessionId?: string | null;
   messageId?: string | null;
   source?: string | null;
@@ -28,6 +30,9 @@ export type WorkTaskResult = {
   runtimeExecutesExternalAction: false;
   reviewRequired: true;
   preview: string;
+  displayTitle: string;
+  taskPreview: string;
+  checklistPreview: string;
 };
 
 export type WorkTaskListResult = {
@@ -36,16 +41,20 @@ export type WorkTaskListResult = {
   stateRootPath: string | null;
   taskCount: number;
   tasks: Array<{
-    id: string;
-    kind: "draft_intake_task";
     status: "pending_review";
-    relativePath: string;
-    absolutePath: string;
-    sourceDraftId: string | null;
-    sourceDraftRelativePath: string | null;
-    sourceDraftSha256: string | null;
     createdAt: string | null;
     preview: string;
+    displayTitle: string;
+    taskPreview: string;
+    checklistPreview: string;
+    sourceDraftLinked: boolean;
+    id?: string;
+    kind?: "draft_intake_task";
+    relativePath?: string;
+    absolutePath?: string;
+    sourceDraftId?: string | null;
+    sourceDraftRelativePath?: string | null;
+    sourceDraftSha256?: string | null;
   }>;
   externalSend: false;
   crmMutation: false;
@@ -90,13 +99,45 @@ function previewSection(value: string, maxLength = 260): string {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
 }
 
-function buildTaskPreview(markdown: string): string {
+function stripFrontMatter(markdown: string): string {
+  if (!markdown.startsWith("---\n")) return markdown;
+  const end = markdown.indexOf("\n---", 4);
+  return end < 0 ? markdown : markdown.slice(end + 4);
+}
+
+function stripMarkdownJunk(value: string): string {
+  const frontMatterKey = /^(schema|id|kind|status|created_at|source|session_id|message_id|source_draft_id|source_draft_relative_path|source_draft_sha256|external_send|crm_mutation|runtime_executes_external_action|review_required):\s*/i;
+  return value
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (trimmed === "---") return false;
+      if (frontMatterKey.test(trimmed)) return false;
+      if (/^-\s*(id|path|sha256):\s*/i.test(trimmed)) return false;
+      if (/^#{1,6}\s+/.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
+function buildTaskDisplay(markdown: string): { displayTitle: string; taskPreview: string; checklistPreview: string; preview: string } {
   const task = previewSection(extractSection(markdown, "Task"));
   const checklist = previewSection(extractSection(markdown, "Checklist"));
-  return [
-    task ? `Task: ${task}` : null,
-    checklist ? `Checklist: ${checklist}` : null,
+  const fallback = previewSection(stripMarkdownJunk(stripFrontMatter(markdown)));
+  const taskPreview = task || fallback;
+  const checklistPreview = checklist;
+  const preview = [
+    taskPreview ? `Task: ${taskPreview}` : null,
+    checklistPreview ? `Checklist: ${checklistPreview}` : null,
   ].filter(Boolean).join("\n");
+  return {
+    displayTitle: "Review task",
+    taskPreview,
+    checklistPreview,
+    preview,
+  };
 }
 
 function getTasksDir(rootPath: string): string {
@@ -121,8 +162,9 @@ function resolveDraft(input: WorkTaskInput, rootPath: string): {
     absolutePath = path.resolve(rootPath, requestedPath);
   } else {
     const sourceDraftId = String(input.sourceDraftId || "").trim();
-    if (!sourceDraftId) {
-      throw Object.assign(new Error("sourceDraftId or sourceDraftPath is required."), { code: "missing_source_draft" });
+    const sourceDraftToken = String(input.sourceDraftToken || "").trim();
+    if (!sourceDraftId && !sourceDraftToken) {
+      throw Object.assign(new Error("sourceDraftId, sourceDraftToken, or sourceDraftPath is required."), { code: "missing_source_draft" });
     }
     if (!fs.existsSync(draftsDir)) {
       throw Object.assign(new Error("No work drafts exist in Mira state root."), { code: "source_draft_not_found" });
@@ -133,7 +175,8 @@ function resolveDraft(input: WorkTaskInput, rootPath: string): {
       .find((candidatePath) => {
         if (!isInside(rootPath, candidatePath)) return false;
         const markdown = fs.readFileSync(candidatePath, "utf8");
-        return parseFrontMatter(markdown).id === sourceDraftId;
+        const id = parseFrontMatter(markdown).id || path.basename(candidatePath, ".md");
+        return sourceDraftId ? id === sourceDraftId : buildWorkDraftActionToken(id) === sourceDraftToken;
       });
     absolutePath = found || null;
   }
@@ -248,6 +291,7 @@ export function createWorkTaskFromDraft(input: WorkTaskInput = {}, env: NodeJS.P
     fs.closeSync(handle);
   }
 
+  const display = buildTaskDisplay(markdown);
   return {
     ok: true,
     protocol: "mira.work_task.v0",
@@ -264,17 +308,20 @@ export function createWorkTaskFromDraft(input: WorkTaskInput = {}, env: NodeJS.P
     crmMutation: false,
     runtimeExecutesExternalAction: false,
     reviewRequired: true,
-    preview: buildTaskPreview(markdown),
+    preview: display.preview,
+    displayTitle: display.displayTitle,
+    taskPreview: display.taskPreview,
+    checklistPreview: display.checklistPreview,
   };
 }
 
-export function listWorkTasks(env: NodeJS.ProcessEnv = process.env): WorkTaskListResult {
+export function listWorkTasks(env: NodeJS.ProcessEnv = process.env, options: { includeInternal?: boolean } = {}): WorkTaskListResult {
   const stateRoot = getStateRootReadiness(env);
   if (!stateRoot.ready || !stateRoot.path) {
     return {
       ok: true,
       protocol: "mira.work_task_list.v0",
-      stateRootPath: stateRoot.path,
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
       taskCount: 0,
       tasks: [],
       externalSend: false,
@@ -289,7 +336,7 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env): WorkTaskLis
     return {
       ok: true,
       protocol: "mira.work_task_list.v0",
-      stateRootPath: rootPath,
+      stateRootPath: options.includeInternal ? rootPath : null,
       taskCount: 0,
       tasks: [],
       externalSend: false,
@@ -305,17 +352,26 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env): WorkTaskLis
       if (!isInside(rootPath, absolutePath)) return null;
       const markdown = fs.readFileSync(absolutePath, "utf8");
       const meta = parseFrontMatter(markdown);
+      const display = buildTaskDisplay(markdown);
+      const item = {
+        status: "pending_review" as const,
+        createdAt: meta.created_at || null,
+        preview: display.preview,
+        displayTitle: display.displayTitle,
+        taskPreview: display.taskPreview,
+        checklistPreview: display.checklistPreview,
+        sourceDraftLinked: Boolean(meta.source_draft_id),
+      };
+      if (!options.includeInternal) return item;
       return {
+        ...item,
         id: meta.id || path.basename(fileName, ".md"),
         kind: "draft_intake_task" as const,
-        status: "pending_review" as const,
         relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
         absolutePath,
         sourceDraftId: meta.source_draft_id || null,
         sourceDraftRelativePath: meta.source_draft_relative_path || null,
         sourceDraftSha256: meta.source_draft_sha256 || null,
-        createdAt: meta.created_at || null,
-        preview: buildTaskPreview(markdown),
       };
     })
     .filter((task): task is NonNullable<typeof task> => Boolean(task))
@@ -324,7 +380,7 @@ export function listWorkTasks(env: NodeJS.ProcessEnv = process.env): WorkTaskLis
   return {
     ok: true,
     protocol: "mira.work_task_list.v0",
-    stateRootPath: rootPath,
+    stateRootPath: options.includeInternal ? rootPath : null,
     taskCount: tasks.length,
     tasks,
     externalSend: false,

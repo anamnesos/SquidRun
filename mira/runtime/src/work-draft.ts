@@ -24,6 +24,9 @@ export type WorkDraftResult = {
   runtimeExecutesExternalAction: false;
   reviewRequired: true;
   preview: string;
+  displayTitle: string;
+  requestPreview: string;
+  draftPreview: string;
 };
 
 export type WorkDraftListResult = {
@@ -32,13 +35,17 @@ export type WorkDraftListResult = {
   stateRootPath: string | null;
   draftCount: number;
   drafts: Array<{
-    id: string;
-    kind: "customer_reply";
+    actionToken: string;
     status: "pending_review";
-    relativePath: string;
-    absolutePath: string;
     createdAt: string | null;
     preview: string;
+    displayTitle: string;
+    requestPreview: string;
+    draftPreview: string;
+    id?: string;
+    kind?: "customer_reply";
+    relativePath?: string;
+    absolutePath?: string;
   }>;
   externalSend: false;
   runtimeExecutesExternalAction: false;
@@ -126,13 +133,48 @@ function previewSection(value: string, maxLength = 260): string {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
 }
 
-function buildDraftPreview(markdown: string): string {
+export function buildWorkDraftActionToken(id: string): string {
+  return `draft-${crypto.createHash("sha256").update(`mira.work_draft.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
+function stripFrontMatter(markdown: string): string {
+  if (!markdown.startsWith("---\n")) return markdown;
+  const end = markdown.indexOf("\n---", 4);
+  return end < 0 ? markdown : markdown.slice(end + 4);
+}
+
+function stripMarkdownJunk(value: string): string {
+  const frontMatterKey = /^(schema|id|kind|status|created_at|source|session_id|message_id|external_send|runtime_executes_external_action|review_required):\s*/i;
+  return value
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (trimmed === "---") return false;
+      if (frontMatterKey.test(trimmed)) return false;
+      if (/^#{1,6}\s+/.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
+function buildDraftDisplay(markdown: string): { displayTitle: string; requestPreview: string; draftPreview: string; preview: string } {
   const request = previewSection(extractSection(markdown, "Request"));
   const draft = previewSection(extractSection(markdown, "Draft"));
-  return [
-    request ? `Request: ${request}` : null,
-    draft ? `Draft: ${draft}` : null,
+  const fallback = previewSection(stripMarkdownJunk(stripFrontMatter(markdown)));
+  const requestPreview = request || fallback;
+  const draftPreview = draft;
+  const preview = [
+    requestPreview ? `Request: ${requestPreview}` : null,
+    draftPreview ? `Draft: ${draftPreview}` : null,
   ].filter(Boolean).join("\n");
+  return {
+    displayTitle: "Customer reply",
+    requestPreview,
+    draftPreview,
+    preview,
+  };
 }
 
 function getDraftsDir(rootPath: string): string {
@@ -188,6 +230,7 @@ export function createWorkDraft(input: WorkDraftInput = {}, env: NodeJS.ProcessE
     fs.closeSync(handle);
   }
 
+  const display = buildDraftDisplay(markdown);
   return {
     ok: true,
     protocol: "mira.work_draft.v0",
@@ -200,17 +243,20 @@ export function createWorkDraft(input: WorkDraftInput = {}, env: NodeJS.ProcessE
     externalSend: false,
     runtimeExecutesExternalAction: false,
     reviewRequired: true,
-    preview: buildDraftPreview(markdown),
+    preview: display.preview,
+    displayTitle: display.displayTitle,
+    requestPreview: display.requestPreview,
+    draftPreview: display.draftPreview,
   };
 }
 
-export function listWorkDrafts(env: NodeJS.ProcessEnv = process.env): WorkDraftListResult {
+export function listWorkDrafts(env: NodeJS.ProcessEnv = process.env, options: { includeInternal?: boolean } = {}): WorkDraftListResult {
   const stateRoot = getStateRootReadiness(env);
   if (!stateRoot.ready || !stateRoot.path) {
     return {
       ok: true,
       protocol: "mira.work_draft_list.v0",
-      stateRootPath: stateRoot.path,
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
       draftCount: 0,
       drafts: [],
       externalSend: false,
@@ -224,7 +270,7 @@ export function listWorkDrafts(env: NodeJS.ProcessEnv = process.env): WorkDraftL
     return {
       ok: true,
       protocol: "mira.work_draft_list.v0",
-      stateRootPath: rootPath,
+      stateRootPath: options.includeInternal ? rootPath : null,
       draftCount: 0,
       drafts: [],
       externalSend: false,
@@ -239,14 +285,24 @@ export function listWorkDrafts(env: NodeJS.ProcessEnv = process.env): WorkDraftL
       if (!isInside(rootPath, absolutePath)) return null;
       const markdown = fs.readFileSync(absolutePath, "utf8");
       const meta = parseFrontMatter(markdown);
-      return {
-        id: meta.id || path.basename(fileName, ".md"),
-        kind: "customer_reply" as const,
+      const display = buildDraftDisplay(markdown);
+      const id = meta.id || path.basename(fileName, ".md");
+      const item = {
+        actionToken: buildWorkDraftActionToken(id),
         status: "pending_review" as const,
+        createdAt: meta.created_at || null,
+        preview: display.preview,
+        displayTitle: display.displayTitle,
+        requestPreview: display.requestPreview,
+        draftPreview: display.draftPreview,
+      };
+      if (!options.includeInternal) return item;
+      return {
+        ...item,
+        id,
+        kind: "customer_reply" as const,
         relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
         absolutePath,
-        createdAt: meta.created_at || null,
-        preview: buildDraftPreview(markdown),
       };
     })
     .filter((draft): draft is NonNullable<typeof draft> => Boolean(draft))
@@ -255,7 +311,7 @@ export function listWorkDrafts(env: NodeJS.ProcessEnv = process.env): WorkDraftL
   return {
     ok: true,
     protocol: "mira.work_draft_list.v0",
-    stateRootPath: rootPath,
+    stateRootPath: options.includeInternal ? rootPath : null,
     draftCount: drafts.length,
     drafts,
     externalSend: false,

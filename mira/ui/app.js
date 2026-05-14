@@ -162,6 +162,32 @@ function formatReviewStamp(value) {
   return `pending review · ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
+function cleanPreviewText(value) {
+  const frontMatterKey = /^(schema|id|kind|status|created_at|source|session_id|message_id|source_draft_id|source_draft_relative_path|source_draft_sha256|external_send|crm_mutation|runtime_executes_external_action|review_required):\s*/i;
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      if (line === '---') return false;
+      if (/^#{1,6}\s+/.test(line)) return false;
+      if (frontMatterKey.test(line)) return false;
+      if (/^-\s*(id|path|sha256):\s*/i.test(line)) return false;
+      return true;
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function appendPreviewLine(container, label, value) {
+  const cleaned = cleanPreviewText(value);
+  if (!cleaned) return;
+  const paragraph = document.createElement('p');
+  paragraph.textContent = label ? `${label}: ${cleaned}` : cleaned;
+  container.append(paragraph);
+}
+
 function updateDraftList(payload) {
   const drafts = Array.isArray(payload?.drafts) ? payload.drafts : [];
   setText(elements.workSummary, `${drafts.length} drafts`);
@@ -172,13 +198,13 @@ function updateDraftList(payload) {
   elements.draftList.replaceChildren(...drafts.slice(0, 5).map((draft) => {
     const item = document.createElement('article');
     item.className = 'draft-item';
-    item.title = draft.relativePath || draft.id || '';
     const title = document.createElement('strong');
-    title.textContent = 'Customer reply draft';
+    title.textContent = cleanPreviewText(draft.displayTitle) || 'Customer reply';
     const meta = document.createElement('span');
     meta.textContent = formatReviewStamp(draft.createdAt);
-    const preview = document.createElement('p');
-    preview.textContent = draft.preview || '';
+    item.append(title, meta);
+    appendPreviewLine(item, 'Request', draft.requestPreview || draft.preview);
+    appendPreviewLine(item, 'Draft', draft.draftPreview);
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'subtle-button';
@@ -196,7 +222,7 @@ function updateDraftList(payload) {
         action.textContent = 'task';
       }
     });
-    item.append(title, meta, preview, action);
+    item.append(action);
     return item;
   }));
 }
@@ -212,14 +238,13 @@ function updateTaskList(payload) {
   elements.taskList.replaceChildren(...tasks.slice(0, 5).map((task) => {
     const item = document.createElement('article');
     item.className = 'draft-item';
-    item.title = task.relativePath || task.id || '';
     const title = document.createElement('strong');
-    title.textContent = 'Review task';
+    title.textContent = cleanPreviewText(task.displayTitle) || 'Review task';
     const source = document.createElement('span');
-    source.textContent = task.sourceDraftId ? 'source draft linked' : 'source draft missing';
-    const preview = document.createElement('p');
-    preview.textContent = task.preview || '';
-    item.append(title, source, preview);
+    source.textContent = task.sourceDraftLinked ? 'source draft linked' : 'source draft missing';
+    item.append(title, source);
+    appendPreviewLine(item, 'Task', task.taskPreview || task.preview);
+    appendPreviewLine(item, 'Checklist', task.checklistPreview);
     return item;
   }));
 }
@@ -369,8 +394,7 @@ async function createTaskFromDraft(draft) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      sourceDraftId: draft.id,
-      sourceDraftPath: draft.relativePath,
+      sourceDraftToken: draft.actionToken,
       sessionId: state.sessionId,
       messageId: `${state.sessionId}-task-${state.turnCounter++}`,
       source: 'runtime-ui',

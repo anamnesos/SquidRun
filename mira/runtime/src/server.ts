@@ -69,6 +69,11 @@ function errorPayload(error: unknown): { error: { code: string; message: string;
   };
 }
 
+function includeInternalFields(requestUrl: URL): boolean {
+  const value = requestUrl.searchParams.get("includeInternal") || requestUrl.searchParams.get("internal") || "";
+  return ["1", "true", "yes"].includes(value.toLowerCase());
+}
+
 function readRequestBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -247,6 +252,9 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       if (typeof body.sourceDraftPath === "string") {
         Object.assign(taskInput, { sourceDraftPath: body.sourceDraftPath });
       }
+      if (typeof body.sourceDraftToken === "string") {
+        Object.assign(taskInput, { sourceDraftToken: body.sourceDraftToken });
+      }
       const task = createWorkTaskFromDraft(taskInput);
       sendJson(response, 200, task);
     } catch (error) {
@@ -286,12 +294,12 @@ export async function route(request: IncomingMessage, response: ServerResponse):
   }
 
   if (requestUrl.pathname === "/work/drafts") {
-    sendJson(response, 200, listWorkDrafts());
+    sendJson(response, 200, listWorkDrafts(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 
   if (requestUrl.pathname === "/work/tasks") {
-    sendJson(response, 200, listWorkTasks());
+    sendJson(response, 200, listWorkTasks(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 
