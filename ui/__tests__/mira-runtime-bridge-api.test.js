@@ -351,14 +351,16 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('sourceDraftToken');
     expect(appJs).toContain("fetch('/work/task-review'");
     expect(appJs).toContain('submitTaskReview');
-    expect(appJs).toContain("fetch('/conversation/recent");
+    expect(appJs).toContain("fetch('/conversation/memory'");
+    expect(appJs).toContain('formatRecentMemoryForDisplay');
+    expect(appJs).toContain('Answer quality has been the pressure point');
     expect(appJs).toContain('brainLine');
     expect(appJs).toContain("fetch('/voice/correction'");
     expect(appJs).toContain("fetch('/voice/corrections'");
     expect(appJs).toContain('wrong shape');
     expect(appJs).toContain('turnMetadata');
     expect(appJs).toContain('personaCore');
-    expect(appJs).toContain('recentTurns');
+    expect(appJs).toContain('recentMemory');
     expect(appJs).toContain('mira.turn_quality_capture_metadata.v0');
     expect(appJs).toContain('contextToggle');
     expect(appJs).toContain('syncWorkbenchForViewport');
@@ -1202,9 +1204,8 @@ describe('Mira runtime bridge manual-plan API', () => {
       safetyGates: expect.arrayContaining(['external sends', 'tool execution', 'data mutation', 'customer contact']),
     }));
     expect(payload.response.content).toContain('Mira.');
-    expect(payload.response.content).toContain('starter notes about us');
-    expect(payload.response.content).toContain('work areas you want help carrying');
-    expect(payload.response.content).toContain("don't have full lived memory yet");
+    expect(payload.response.content).toContain('work areas are loaded');
+    expect(payload.response.content).toContain('recent thread points are in reach');
     expect(payload.response.content).not.toMatch(/I heard:|Runtime state:|Loaded normalized core summary:|Operator context:|CRM, ERP, admin/);
     expect(payload.modelInvoked).toBe(false);
     expect(payload.runtimeExecutes).toBe(false);
@@ -1265,10 +1266,16 @@ describe('Mira runtime bridge manual-plan API', () => {
         model: null,
       }),
     ]);
-    expect(payload.response.content).toContain('recent turn journal');
-    expect(payload.response.content).toContain('Last prompt was "why is this answer so dumb?"');
-    expect(payload.response.content).toContain('better than guessing');
-    expect(payload.response.content).not.toMatch(/^I heard:|Runtime state:|Loaded normalized core summary:|Operator context:/);
+    expect(payload.recentMemory).toEqual(expect.objectContaining({
+      loaded: true,
+      summary: expect.stringContaining('answer quality'),
+      qualityNotes: expect.arrayContaining(['avoid runtime recitals in visible replies']),
+    }));
+    expect(payload.recentMemory.sourceRecordCount).toBeGreaterThanOrEqual(1);
+    expect(payload.response.content).toContain('thread turning on answer quality');
+    expect(payload.response.content).toContain('less quoting');
+    expect(payload.response.content).toContain('more actual use of what just happened');
+    expect(payload.response.content).not.toMatch(/recent turn journal|Last prompt was|I answered:|better than guessing|distilled thread summary|narrating the machinery|^I heard:|Runtime state:|Loaded normalized core summary:|Operator context:/);
   });
 
   test('answers identity questions plainly instead of reciting product boundaries', async () => {
@@ -1454,7 +1461,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect(body.instructions).toContain('Traits: care, directness, opinion, pushback, humor, curiosity, friction');
       expect(body.instructions).toContain('Relationship posture: James wants Mira to be caring, opinionated, friction-capable, and not a mirror.');
       expect(body.instructions).toContain('business and workflow context are capabilities, not Mira\'s identity');
-      expect(body.instructions).toContain('Recent local turn journal:');
+      expect(body.instructions).toContain('Recent conversation memory summary:');
       expect(body.instructions).toContain('Answer James from the current thread.');
       expect(body.instructions).toMatch(/Presence clock: server_now_iso=.*server_local_date=\d{4}-\d{2}-\d{2}; server_local_time=\d{2}:\d{2}; utc_offset=[+-]\d{2}:\d{2}/);
       expect(body.instructions).toContain('Do not use relative time words like tonight, tomorrow, morning, later, or yesterday unless the prompt or this clock gives enough evidence');

@@ -6,6 +6,11 @@ import { loadOperatorContext, type OperatorContextSummary } from "./operator-con
 import { loadPersonaCore, type PersonaCore } from "./persona-core.js";
 import { getSessionSkeleton } from "./runtime.js";
 import { getStateRootReadiness } from "./state-root.js";
+import {
+  readRuntimeTurnMemorySummary,
+  refreshRuntimeTurnMemorySummary,
+  type RuntimeTurnMemorySummary,
+} from "./turn-memory.js";
 import { listRuntimeTurnJournal } from "./turn-journal.js";
 import { matchVoiceLabTurn, type VoiceLabMatch } from "./voice-lab.js";
 
@@ -60,6 +65,14 @@ export type RuntimeTurnResponse = {
   operatorContext: OperatorContextSummary;
   personaCore: PersonaCore;
   recentTurns: RecentTurnMemory[];
+  recentMemory: {
+    loaded: boolean;
+    summary: string | null;
+    topics: string[];
+    openLoops: string[];
+    qualityNotes: string[];
+    sourceRecordCount: number;
+  };
   response: {
     role: "mira";
     content: string;
@@ -147,37 +160,40 @@ function buildContent(
   operatorContext = loadOperatorContext(getStateRootReadiness()),
   personaCore = loadPersonaCore(getStateRootReadiness()),
   recentTurns: RecentTurnMemory[] = [],
+  recentMemory: RuntimeTurnMemorySummary | null = null,
 ): string {
   const lowerText = inputText.toLowerCase();
   const hasStarterContext = session.acceptanceContinuity.loaded || session.normalizedCore.loaded || loadedCoreSummary.available;
   const hasWorkContext = operatorContext.loaded && operatorContext.operatingLanes.length > 0;
   const asksContext = /\b(know|context|memory|remember|loaded|right now|ground|status)\b/.test(lowerText);
-  const asksRecentQuality = /\b(bad|dumb|wrong|recent|last answer|journal|quality|why.*answer)\b/.test(lowerText);
+  const asksRecentQuality = /\b(bad|dumb|wrong|recent|last answer|remember|memory|quality|why.*answer)\b/.test(lowerText);
 
-  if (asksRecentQuality && recentTurns.length > 0) {
-    const last = recentTurns[0] as RecentTurnMemory;
-    const recitalPattern = /(I heard:|Runtime state:|Loaded normalized core summary:|Operator context:)/i;
-    const lastResult = last.outcome === "error"
-      ? `It errored with ${last.errorCode || "an unknown error"}`
-      : recitalPattern.test(last.responsePreview || "")
-        ? "I answered with a runtime-style recital instead of speaking plainly"
-        : `I answered: ${last.responsePreview || "nothing useful"}`;
-    return `${personaCore.name}. I can see the recent turn journal now. Last prompt was "${last.promptPreview}". ${lastResult}. That's better than guessing from vibes.`;
+  if (asksRecentQuality && recentMemory?.summary) {
+    const topics = recentMemory.topics;
+    if (topics.includes("answer quality") || recentMemory.quality_notes.length > 0) {
+      return `${personaCore.name}. I remember the thread turning on answer quality. You wanted less quoting, less status-talk, and more actual use of what just happened.`;
+    }
+    if (topics.includes("customer reply drafting") || topics.includes("local task review")) {
+      return `${personaCore.name}. I remember we were working through local draft and review work. I should keep that grounded and not turn it into a status dump.`;
+    }
+    return `${personaCore.name}. I remember the recent thread. I should use it directly here, not repeat it back as notes.`;
   }
 
   if (asksContext) {
     if (hasStarterContext && hasWorkContext) {
-      return `${personaCore.name}. I have the starter notes about us, the permissions, the recent turn journal, and the work areas you want help carrying. I don't have full lived memory yet.`;
+      const memoryLine = recentMemory?.summary ? ` ${recentMemory.summary}` : "";
+      return `${personaCore.name}. The work areas are loaded, and the recent thread points are in reach.${memoryLine}`;
     }
     if (hasStarterContext) {
-      return `${personaCore.name}. I have the starter notes about us and the permissions. I don't have full lived memory yet.`;
+      return `${personaCore.name}. The starter notes are loaded. I can use the recent thread without dumping it back at you.`;
     }
     return `${personaCore.name}. Not much yet. I have the live thread, but not real memory loaded behind it.`;
   }
 
   if (hasStarterContext) {
     const posture = personaCore.relationshipPosture ? " I know the posture James wants: caring, direct, friction-capable, not a mirror." : "";
-    return `${personaCore.name}. I'm here.${posture} I have context in reach; I'll use it instead of dumping machinery at you.`;
+    const memoryHint = recentMemory?.open_loops[0] ? ` ${recentMemory.open_loops[0]}.` : "";
+    return `${personaCore.name}. I'm here.${posture}${memoryHint}`;
   }
 
   return `${personaCore.name}. I'm here. Say it a little more directly and I'll work with it.`;
@@ -213,6 +229,31 @@ function loadRecentTurnMemory(limit = 5): RecentTurnMemory[] {
   }));
 }
 
+function toRecentMemoryResponse(summary: RuntimeTurnMemorySummary | null): RuntimeTurnResponse["recentMemory"] {
+  return {
+    loaded: Boolean(summary),
+    summary: summary?.summary || null,
+    topics: summary?.topics || [],
+    openLoops: summary?.open_loops || [],
+    qualityNotes: summary?.quality_notes || [],
+    sourceRecordCount: summary?.source_record_count || 0,
+  };
+}
+
+function memoryContextLine(summary: RuntimeTurnMemorySummary | null): string {
+  if (!summary || summary.source_record_count <= 0) return "";
+  if (summary.topics.includes("answer quality") || summary.quality_notes.length > 0) {
+    return " You have been pressing on answer quality, so I should be direct and use the last few turns instead of describing them.";
+  }
+  if (summary.topics.includes("customer reply drafting") || summary.topics.includes("local task review")) {
+    return " The recent work is local draft and review handling, with external sending still off the table.";
+  }
+  if (summary.last_user_intent) {
+    return ` Recently, you ${summary.last_user_intent.replace(/\.$/, "")}.`;
+  }
+  return "";
+}
+
 export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<RuntimeTurnResponse> {
   const text = String(input.text || "").trim();
   if (!text) {
@@ -228,9 +269,14 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
   const operatorContext = loadOperatorContext(stateRoot);
   const personaCore = loadPersonaCore(stateRoot);
   const recentTurns = loadRecentTurnMemory();
+  const existingRecentMemory = readRuntimeTurnMemorySummary();
+  const recentMemorySummary = existingRecentMemory.summary || refreshRuntimeTurnMemorySummary().summary;
   const voiceSeed = input.messageId || input.requestId || null;
   const voiceLab = matchVoiceLabTurn(text, { seed: voiceSeed });
-  let responseContent = voiceLab?.content || buildContent(text, session, loadedCoreSummary, operatorContext, personaCore, recentTurns);
+  const memoryPrompt = /\b(bad|dumb|wrong|recent|last answer|remember|memory|quality|why.*answer)\b/i.test(text);
+  let responseContent = memoryPrompt && recentMemorySummary
+    ? buildContent(text, session, loadedCoreSummary, operatorContext, personaCore, recentTurns, recentMemorySummary)
+    : voiceLab?.content || buildContent(text, session, loadedCoreSummary, operatorContext, personaCore, recentTurns, recentMemorySummary);
   let modelInvoked = false;
   let modelProvider: "openai_responses" | "ollama_chat" | null = null;
   let modelName: string | null = null;
@@ -242,6 +288,7 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
       operatorContext,
       personaCore,
       recentTurns,
+      recentMemory: recentMemorySummary,
       env: {
         ...process.env,
         ...(input.modelProvider ? { MIRA_RUNTIME_MODEL_PROVIDER: input.modelProvider } : {}),
@@ -303,9 +350,10 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     operatorContext,
     personaCore,
     recentTurns,
+    recentMemory: toRecentMemoryResponse(recentMemorySummary),
     response: {
       role: "mira",
-      content: responseContent,
+      content: `${responseContent}${input.useModel === true ? "" : memoryContextLine(recentMemorySummary)}`.trim(),
     },
     voiceLab,
     suggestedTeamPlan,

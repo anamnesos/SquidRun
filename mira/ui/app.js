@@ -341,27 +341,54 @@ function renderReviewPanel(detail) {
 }
 
 function updateRecentTurns(payload) {
-  const records = Array.isArray(payload?.records) ? payload.records : [];
-  setText(elements.recentSummary, records.length === 0 ? 'no turns yet' : `${records.length} recent turns`);
-  if (records.length === 0) {
-    setText(elements.recentTurns, 'none yet');
+  const memory = payload?.summary || payload?.recentMemory || null;
+  const summary = formatRecentMemoryForDisplay(memory);
+  const topics = Array.isArray(memory?.topics) ? memory.topics.slice(0, 4) : [];
+
+  setText(elements.recentSummary, summary || 'nothing useful carried yet');
+  if (!summary) {
+    setText(elements.recentTurns, 'nothing useful carried yet');
     return;
   }
-  elements.recentTurns.replaceChildren(...records.slice(0, 6).map((record) => {
-    const item = document.createElement('article');
-    item.className = 'draft-item';
-    const title = document.createElement('strong');
-    title.textContent = record.outcome === 'error' ? 'error turn' : 'turn';
-    const meta = document.createElement('span');
-    const model = record.model?.model || (record.model_invoked ? 'model' : 'deterministic');
-    meta.textContent = `${model} · ${record.outcome || 'ok'}`;
-    const prompt = document.createElement('p');
-    prompt.textContent = record.prompt || '';
-    const reply = document.createElement('p');
-    reply.textContent = record.response?.content || record.error?.message || '';
-    item.append(title, meta, prompt, reply);
-    return item;
-  }));
+  const item = document.createElement('article');
+  item.className = 'draft-item';
+  const title = document.createElement('strong');
+  title.textContent = 'Carrying';
+  const body = document.createElement('p');
+  body.textContent = summary;
+  item.append(title, body);
+  if (topics.length > 0) {
+    const topicLine = document.createElement('span');
+    topicLine.textContent = `threads: ${topics.join(', ')}`;
+    item.append(topicLine);
+  }
+  elements.recentTurns.replaceChildren(item);
+}
+
+function formatRecentMemoryForDisplay(memory) {
+  if (!memory || typeof memory !== 'object') return '';
+  const topics = Array.isArray(memory.topics) ? memory.topics : [];
+  const qualityNotes = Array.isArray(memory.quality_notes) ? memory.quality_notes : [];
+  const summary = cleanPreviewText(memory.summary || '');
+  if (topics.includes('answer quality') || qualityNotes.length > 0) {
+    return 'Answer quality has been the pressure point; use what just happened instead of quoting old replies.';
+  }
+  if (topics.includes('customer reply drafting')) {
+    return 'Customer reply drafting is in motion; keep it local and reviewable until a human sends it.';
+  }
+  if (topics.includes('local task review')) {
+    return 'A local review task is in motion; keep the linked draft and decision together.';
+  }
+  return summary
+    .replace(/Most recent thread:\s*/i, '')
+    .replace(/Recurring areas:\s*/i, '')
+    .replace(/Tone\/quality:\s*/i, '')
+    .replace(/Open loop:\s*/i, '')
+    .replace(/Needs:\s*/i, '')
+    .replace(/distilled thread summary/gi, 'recent thread')
+    .replace(/dumping raw prior replies/gi, 'quoting old replies')
+    .replace(/narrating the machinery/gi, 'explaining itself')
+    .trim();
 }
 
 async function sendTurn(text) {
@@ -403,7 +430,7 @@ function buildTurnMetadata(payload) {
     modelInvoked: payload?.modelInvoked === true,
     voiceLab: payload?.voiceLab || null,
     personaCore: payload?.personaCore || null,
-    recentTurns: Array.isArray(payload?.recentTurns) ? payload.recentTurns.slice(0, 3) : [],
+    recentMemory: payload?.recentMemory || null,
     state: payload?.state || null,
     operatorContext: payload?.operatorContext ? {
       loaded: payload.operatorContext.loaded === true,
@@ -462,7 +489,7 @@ async function refreshTasks() {
 }
 
 async function refreshRecentTurns() {
-  const response = await fetch('/conversation/recent?limit=6');
+  const response = await fetch('/conversation/memory');
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) return;
   updateRecentTurns(payload);

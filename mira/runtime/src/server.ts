@@ -6,6 +6,7 @@ import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 import { runRuntimeTurn, type RuntimeTurnInput } from "./turn.js";
+import { readRuntimeTurnMemorySummary, refreshRuntimeTurnMemorySummary } from "./turn-memory.js";
 import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
@@ -180,21 +181,34 @@ export async function route(request: IncomingMessage, response: ServerResponse):
         Object.assign(turnInput, { modelName: body.modelName });
       }
       const turnResponse = await runRuntimeTurn(turnInput);
+      const journal = appendRuntimeTurnJournal({
+        turnInput,
+        startedAt,
+        response: turnResponse,
+      });
+      const recentMemory = journal.written
+        ? refreshRuntimeTurnMemorySummary()
+        : readRuntimeTurnMemorySummary();
       Object.assign(turnResponse, {
-        journal: appendRuntimeTurnJournal({
-          turnInput,
-          startedAt,
-          response: turnResponse,
-        }),
+        journal,
+        recentMemory: {
+          loaded: recentMemory.loaded,
+          summary: recentMemory.summary?.summary || null,
+          topics: recentMemory.summary?.topics || [],
+          openLoops: recentMemory.summary?.open_loops || [],
+          qualityNotes: recentMemory.summary?.quality_notes || [],
+          sourceRecordCount: recentMemory.summary?.source_record_count || 0,
+        },
       });
       sendJson(response, 200, turnResponse);
     } catch (error) {
       if (turnInput) {
-        appendRuntimeTurnJournal({
+        const journal = appendRuntimeTurnJournal({
           turnInput,
           startedAt,
           error,
         });
+        if (journal.written) refreshRuntimeTurnMemorySummary();
       }
       sendJson(response, 400, errorPayload(error));
     }
@@ -302,6 +316,12 @@ export async function route(request: IncomingMessage, response: ServerResponse):
   if (requestUrl.pathname === "/conversation/recent") {
     const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "20", 10);
     sendJson(response, 200, listRuntimeTurnJournal({ limit }));
+    return;
+  }
+
+  if (requestUrl.pathname === "/conversation/memory") {
+    const memory = readRuntimeTurnMemorySummary();
+    sendJson(response, 200, memory.loaded ? memory : refreshRuntimeTurnMemorySummary());
     return;
   }
 

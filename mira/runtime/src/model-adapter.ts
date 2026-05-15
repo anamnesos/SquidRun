@@ -1,5 +1,6 @@
 import type { OperatorContextSummary } from "./operator-context.js";
 import { formatPersonaCoreForPrompt, type PersonaCore } from "./persona-core.js";
+import type { RuntimeTurnMemorySummary } from "./turn-memory.js";
 import type { RecentTurnMemory, RuntimeTurnResponse } from "./turn.js";
 import { readVoiceLabCases } from "./voice-lab.js";
 
@@ -283,8 +284,9 @@ function buildInstructions(input: {
   operatorContext: OperatorContextSummary;
   personaCore: PersonaCore;
   recentTurns: RecentTurnMemory[];
+  recentMemory: RuntimeTurnMemorySummary | null;
 }): string {
-  const { loadedCoreSummary, operatorContext, personaCore, recentTurns } = input;
+  const { loadedCoreSummary, operatorContext, personaCore, recentMemory } = input;
   const voiceLabExamples = readVoiceLabCases().map((testCase) => {
     const examples = testCase.target_rewrites.map((rewrite) => `- ${rewrite}`).join("\n");
     return [
@@ -292,11 +294,13 @@ function buildInstructions(input: {
       `Examples:\n${examples}`,
     ].join("\n");
   }).join("\n\n");
-  const recentTurnLines = recentTurns.length > 0
-    ? recentTurns.map((turn) => {
-      const result = turn.outcome === "error" ? `error=${turn.errorCode || "unknown"}` : `reply=${turn.responsePreview || ""}`;
-      return `- ${turn.createdAt}: prompt=${turn.promptPreview}; ${result}; model=${turn.model || "deterministic"}`;
-    }).join("\n")
+  const recentMemoryLines = recentMemory
+    ? [
+      `Summary: ${recentMemory.summary}`,
+      recentMemory.topics.length > 0 ? `Topics: ${recentMemory.topics.join(", ")}` : null,
+      recentMemory.open_loops.length > 0 ? `Open loops: ${recentMemory.open_loops.join("; ")}` : null,
+      recentMemory.quality_notes.length > 0 ? `Quality notes: ${recentMemory.quality_notes.join("; ")}` : null,
+    ].filter(Boolean).join("\n")
     : "none";
 
   return [
@@ -308,7 +312,8 @@ function buildInstructions(input: {
     "Use the Mira voice lab examples below for covered prompt classes. The point is proportion, contextual awareness, and consistent personality.",
     voiceLabExamples,
     "Use the loaded summaries as context; do not claim full continuity, tool execution, sends, writes, or external action.",
-    `Recent local turn journal:\n${recentTurnLines}`,
+    `Recent conversation memory summary:\n${recentMemoryLines}`,
+    "Use the recent memory summary quietly. Do not tell James you have a journal, do not quote raw prior turns, and do not recite memory machinery.",
     "No tools are available in this call. If work needs tools or team action, name the next internal/manual step only.",
     `Identity summary: ${loadedCoreSummary.identity || "not loaded"}`,
     `Relationship summary: ${loadedCoreSummary.relationship || "not loaded"}`,
@@ -360,6 +365,7 @@ async function invokeOllamaChat(input: {
   operatorContext: OperatorContextSummary;
   personaCore: PersonaCore;
   recentTurns: RecentTurnMemory[];
+  recentMemory?: RuntimeTurnMemorySummary | null;
   fetchImpl: typeof fetch;
   config: TurnModelConfig & { apiKey: string };
 }): Promise<TurnModelResult> {
@@ -385,6 +391,7 @@ async function invokeOllamaChat(input: {
               operatorContext: input.operatorContext,
               personaCore: input.personaCore,
               recentTurns: input.recentTurns,
+              recentMemory: input.recentMemory ?? null,
             }),
           },
           {
@@ -432,6 +439,7 @@ export async function invokeTurnModel(input: {
   operatorContext: OperatorContextSummary;
   personaCore: PersonaCore;
   recentTurns: RecentTurnMemory[];
+  recentMemory?: RuntimeTurnMemorySummary | null;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }): Promise<TurnModelResult> {
@@ -454,6 +462,7 @@ export async function invokeTurnModel(input: {
       operatorContext: input.operatorContext,
       personaCore: input.personaCore,
       recentTurns: input.recentTurns,
+      recentMemory: input.recentMemory ?? null,
       fetchImpl: fetcher,
       config,
     });
@@ -472,6 +481,7 @@ export async function invokeTurnModel(input: {
         operatorContext: input.operatorContext,
         personaCore: input.personaCore,
         recentTurns: input.recentTurns,
+        recentMemory: input.recentMemory ?? null,
       }),
       input: [
         {
