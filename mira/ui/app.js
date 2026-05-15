@@ -564,12 +564,13 @@ function updateSendCheckList(payload) {
     const card = document.createElement('article');
     card.className = 'draft-item';
     const title = document.createElement('strong');
-    title.textContent = cleanPreviewText(check.displayTitle) || 'Pre-send check';
+    title.textContent = cleanPreviewText(check.displayTitle) || (check.status === 'ready_for_manual_send' ? 'Looks ready to send manually' : 'Fix before sending');
     const meta = document.createElement('span');
-    const status = String(check.status || 'needs_fix').replace(/_/g, ' ');
+    const status = check.status === 'ready_for_manual_send' ? 'Looks ready to send manually' : 'Fix before sending';
     meta.textContent = `${status} · still not sent · ${String(check.channel || 'channel')} · ${formatReadyStamp(check.createdAt)}`;
     card.append(title, meta);
     appendPreviewLine(card, 'Recipient', check.recipient);
+    appendPreviewLine(card, 'Original request', check.originalRequest);
     appendPreviewLine(card, 'Notes', Array.isArray(check.notes) ? check.notes.join(' ') : '');
     if (Array.isArray(check.checklist) && check.checklist.length > 0) {
       appendPreviewLine(card, 'Checklist', check.checklist.map((item) => `${item.ok ? 'ok' : 'fix'}: ${item.label}`).join('; '));
@@ -882,6 +883,7 @@ async function createSendCheck(input) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       confirmationToken: input.confirmationToken,
+      refresh: true,
     }),
   });
   const payload = await response.json();

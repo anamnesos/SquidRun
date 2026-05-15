@@ -614,7 +614,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       body: JSON.stringify({
         taskToken: listPayload.tasks[0].actionToken,
         decision: 'edit',
-        editedDraftText: 'Thanks, I can resend the invoice after I verify the attachment and amount.',
+        editedDraftText: 'Yes, I can resend the invoice on May 15, 2026 after I verify the attachment and amount.',
         note: 'cleaned before manual send',
       }),
     });
@@ -633,7 +633,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       reviewToken: expect.stringMatching(/^review-/),
       decision: 'edit',
       status: 'edited',
-      editedDraftText: 'Thanks, I can resend the invoice after I verify the attachment and amount.',
+      editedDraftText: 'Yes, I can resend the invoice on May 15, 2026 after I verify the attachment and amount.',
     }));
     expect(fs.existsSync(reviewPayload.absolutePath)).toBe(true);
 
@@ -660,7 +660,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       taskToken: listPayload.tasks[0].actionToken,
       reviewToken: reviewPayload.review.reviewToken,
       reviewDecision: 'edit',
-      finalReplyText: 'Thanks, I can resend the invoice after I verify the attachment and amount.',
+      finalReplyText: 'Yes, I can resend the invoice on May 15, 2026 after I verify the attachment and amount.',
       externalSend: false,
       crmMutation: false,
       runtimeExecutesExternalAction: false,
@@ -879,7 +879,8 @@ describe('Mira runtime bridge manual-plan API', () => {
       recipient: 'ap@example.test',
       channel: 'email',
       finalReplyText: readyPayload.ready.finalReplyText,
-      displayTitle: 'Pre-send check',
+      originalRequest: 'Reply to the customer asking whether the invoice can be re-sent today.',
+      displayTitle: 'Looks ready to send manually',
       notSent: true,
       externalSend: false,
       crmMutation: false,
@@ -887,11 +888,16 @@ describe('Mira runtime bridge manual-plan API', () => {
       runtimeExecutesExternalAction: false,
     }));
     expect(checkPayload.check.checklist).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: 'recipient present', ok: true }),
-      expect.objectContaining({ label: 'channel present', ok: true }),
-      expect.objectContaining({ label: 'final text present', ok: true }),
-      expect.objectContaining({ label: 'no obvious risky wording', ok: true }),
+      expect.objectContaining({ label: 'recipient and channel are filled in', ok: true }),
+      expect.objectContaining({ label: 'reply appears to answer the original request', ok: true }),
+      expect.objectContaining({ label: 'reply text is present', ok: true }),
+      expect.objectContaining({ label: 'no missing facts called out', ok: true }),
+      expect.objectContaining({ label: 'no vague promise without a concrete next step', ok: true }),
+      expect.objectContaining({ label: 'no ambiguous date or time wording', ok: true }),
+      expect.objectContaining({ label: 'does not claim anything was already sent', ok: true }),
+      expect.objectContaining({ label: 'no risky customer wording', ok: true }),
     ]));
+    expect(checkPayload.check.notes.join(' ')).toContain('Looks ready to send manually');
     expect(checkPayload.check.notes.join(' ')).toContain('Still not sent');
     expect(JSON.stringify(checkPayload.check)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"|sentAt|delivery|external_adapter/);
 
@@ -1115,7 +1121,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       confirmText: 'manual review only',
       recipient: 'ap@example.test',
       channel: 'email',
-      finalReplyText: 'We guarantee this tax advice and need an urgent transfer.',
+      finalReplyText: 'We already sent it and will look into this soon. Maybe we guarantee this tax advice and need an urgent transfer.',
       displayTitle: 'Manual confirmation',
       notSent: true,
       externalSend: false,
@@ -1134,6 +1140,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(response.status).toBe(200);
     expect(payload.check).toEqual(expect.objectContaining({
       status: 'needs_fix',
+      displayTitle: 'Fix before sending',
       notSent: true,
       externalSend: false,
       crmMutation: false,
@@ -1141,9 +1148,14 @@ describe('Mira runtime bridge manual-plan API', () => {
       runtimeExecutesExternalAction: false,
     }));
     expect(payload.check.checklist).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: 'no obvious risky wording', ok: false }),
+      expect.objectContaining({ label: 'reply appears to answer the original request', ok: false }),
+      expect.objectContaining({ label: 'no vague promise without a concrete next step', ok: false }),
+      expect.objectContaining({ label: 'no ambiguous date or time wording', ok: false }),
+      expect.objectContaining({ label: 'does not claim anything was already sent', ok: false }),
+      expect.objectContaining({ label: 'no risky customer wording', ok: false }),
     ]));
-    expect(payload.check.notes.join(' ')).toContain('should be reviewed before manual send');
+    expect(payload.check.notes.join(' ')).toContain('Fix before sending');
+    expect(payload.check.notes.join(' ')).toContain('risky wording');
   });
 
   test('refuses task conversion when the source draft is missing or outside work drafts', async () => {

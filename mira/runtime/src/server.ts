@@ -373,6 +373,7 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       const body = await readJsonBody(request);
       const check = createWorkSendCheck({
         confirmationToken: typeof body.confirmationToken === "string" ? body.confirmationToken : "",
+        refresh: body.refresh === true,
       });
       sendJson(response, 200, check);
     } catch (error) {

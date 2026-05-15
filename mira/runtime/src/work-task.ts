@@ -242,6 +242,7 @@ export type WorkSendCheck = {
   recipient: string;
   channel: string;
   finalReplyText: string;
+  originalRequest: string | null;
   checklist: Array<{ label: string; ok: boolean }>;
   notes: string[];
   displayTitle: string;
@@ -298,6 +299,7 @@ type StoredWorkSendPacket = {
   channel: string;
   finalReplyText: string;
   displayTitle: string;
+  originalRequest?: string | null;
   notSent: true;
   externalSend: false;
   crmMutation: false;
@@ -613,6 +615,7 @@ function parseSendCheckRecord(value: string): StoredWorkSendCheck | null {
       recipient: String(parsed.recipient || ""),
       channel: String(parsed.channel || ""),
       finalReplyText: parsed.finalReplyText,
+      originalRequest: typeof parsed.originalRequest === "string" && parsed.originalRequest.trim() ? parsed.originalRequest : null,
       checklist: parsed.checklist.map((item) => ({
         label: String((item as { label?: unknown }).label || ""),
         ok: (item as { ok?: unknown }).ok === true,
@@ -694,6 +697,7 @@ function toPublicSendCheck(record: StoredWorkSendCheck): WorkSendCheck {
     recipient: record.recipient,
     channel: record.channel,
     finalReplyText: record.finalReplyText,
+    originalRequest: record.originalRequest || null,
     checklist: record.checklist,
     notes: record.notes,
     displayTitle: record.displayTitle,
@@ -850,25 +854,86 @@ function resolveSendConfirmationRecord(input: { confirmationToken?: string }, ro
   return record;
 }
 
-function evaluateSendReadiness(confirmation: StoredWorkSendConfirmation): Pick<WorkSendCheck, "status" | "checklist" | "notes"> {
+function findOriginalRequestForConfirmation(confirmation: StoredWorkSendConfirmation, rootPath: string): string | null {
+  const packet = listSendPacketRecords(rootPath).find((record) => buildWorkSendPacketActionToken(record.id) === confirmation.packetToken);
+  if (!packet) return null;
+  const ready = listReadyPackageRecords(rootPath).find((record) => buildWorkReadyActionToken(record.id) === packet.readyToken);
+  if (!ready?.taskToken) return null;
+  try {
+    const task = resolveTask({ taskToken: ready.taskToken }, rootPath);
+    const linkedDraft = resolveLinkedDraftFromTask(task, rootPath);
+    return linkedDraft?.requestPreview || buildTaskDisplay(task.markdown).taskPreview || null;
+  } catch {
+    return null;
+  }
+}
+
+function meaningfulWords(value: string): string[] {
+  const stopWords = new Set([
+    "a", "an", "and", "are", "as", "at", "be", "can", "could", "for", "from", "i", "if", "in", "is", "it", "me", "my", "of", "on", "or", "our", "please", "reply", "saying", "that", "the", "their", "this", "to", "we", "whether", "will", "with", "you", "your",
+  ]);
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\bre[\s-]*sent\b/g, "resend")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((word) => {
+      if (word === "sent" || word === "resend" || word === "sending") return "send";
+      return word;
+    })
+    .filter((word) => word.length > 2 && !stopWords.has(word));
+}
+
+function replyLooksRelevantToRequest(reply: string, request: string | null): boolean {
+  if (!request) return false;
+  const requestWords = new Set(meaningfulWords(request));
+  if (requestWords.size === 0) return false;
+  const replyWords = new Set(meaningfulWords(reply));
+  let overlap = 0;
+  for (const word of requestWords) {
+    if (replyWords.has(word)) overlap += 1;
+  }
+  return overlap >= Math.min(2, requestWords.size);
+}
+
+function evaluateSendReadiness(confirmation: StoredWorkSendConfirmation, rootPath: string): Pick<WorkSendCheck, "status" | "checklist" | "notes" | "originalRequest"> {
+  const finalText = confirmation.finalReplyText.trim();
+  const originalRequest = findOriginalRequestForConfirmation(confirmation, rootPath);
   const riskyPattern = /\b(guarantee|guaranteed|wire money|password|social security|ssn|credit card|legal advice|tax advice|urgent transfer)\b/i;
+  const vaguePromisePattern = /\b(i'?ll|we'?ll|will)\s+(handle|take care of|look into|get back to you|follow up|circle back)\b/i;
+  const missingFactPattern = /\b(tbd|to be determined|unknown|not sure|maybe|probably|i think|some time|soon|later)\b/i;
+  const dateAmbiguityPattern = /\b(today|tomorrow|yesterday|next week|this week|later|soon|asap|end of day|eod)\b/i;
+  const sentClaimPattern = /\b(i|we)\s+(sent|have sent|already sent|attached|included)\b/i;
   const checklist = [
-    { label: "recipient present", ok: Boolean(confirmation.recipient.trim()) },
-    { label: "channel present", ok: Boolean(confirmation.channel.trim()) },
-    { label: "final text present", ok: Boolean(confirmation.finalReplyText.trim()) },
-    { label: "no obvious risky wording", ok: !riskyPattern.test(confirmation.finalReplyText) },
+    { label: "recipient and channel are filled in", ok: Boolean(confirmation.recipient.trim()) && Boolean(confirmation.channel.trim()) },
+    { label: "reply appears to answer the original request", ok: replyLooksRelevantToRequest(finalText, originalRequest) },
+    { label: "reply text is present", ok: Boolean(finalText) },
+    { label: "no missing facts called out", ok: !missingFactPattern.test(finalText) },
+    { label: "no vague promise without a concrete next step", ok: !vaguePromisePattern.test(finalText) },
+    { label: "no ambiguous date or time wording", ok: !dateAmbiguityPattern.test(finalText) },
+    { label: "does not claim anything was already sent", ok: !sentClaimPattern.test(finalText) },
+    { label: "no risky customer wording", ok: !riskyPattern.test(finalText) },
   ];
   const notes = checklist
     .filter((item) => !item.ok)
     .map((item) => {
-      if (item.label === "no obvious risky wording") return "Final text contains wording that should be reviewed before manual send.";
-      return `${item.label} failed.`;
+      if (item.label === "reply appears to answer the original request") return originalRequest
+        ? "Fix before sending: the reply may not clearly answer the original request."
+        : "Fix before sending: the original request could not be traced from this packet.";
+      if (item.label === "no missing facts called out") return "Fix before sending: the reply still sounds unsure or has missing facts.";
+      if (item.label === "no vague promise without a concrete next step") return "Fix before sending: replace vague follow-up language with a concrete next step.";
+      if (item.label === "no ambiguous date or time wording") return "Fix before sending: replace relative time words with a specific date or remove them.";
+      if (item.label === "does not claim anything was already sent") return "Fix before sending: the reply claims something was sent or attached; verify before using it.";
+      if (item.label === "no risky customer wording") return "Fix before sending: the reply contains risky wording that needs human review.";
+      if (item.label === "recipient and channel are filled in") return "Fix before sending: add the recipient and channel.";
+      return `Fix before sending: ${item.label}.`;
     });
   if (notes.length === 0) {
-    notes.push("Local readiness check passed. Still not sent; James must manually send it.");
+    notes.push("Looks ready to send manually. Still not sent; James sends it himself.");
   }
   return {
     status: checklist.every((item) => item.ok) ? "ready_for_manual_send" : "needs_fix",
+    originalRequest,
     checklist,
     notes,
   };
@@ -1704,6 +1769,7 @@ export function getWorkSendConfirmation(input: { confirmationToken?: string }, e
 
 export function createWorkSendCheck(input: {
   confirmationToken?: string;
+  refresh?: boolean;
 }, env: NodeJS.ProcessEnv = process.env): WorkSendCheckResult {
   const stateRoot = getStateRootReadiness(env);
   if (!stateRoot.ready || !stateRoot.path) {
@@ -1715,7 +1781,7 @@ export function createWorkSendCheck(input: {
   const confirmation = resolveSendConfirmationRecord(input, rootPath);
   const confirmationToken = buildWorkSendConfirmationActionToken(confirmation.id);
   const existingCheck = listSendCheckRecords(rootPath).find((record) => record.confirmationToken === confirmationToken);
-  if (existingCheck) {
+  if (existingCheck && input.refresh !== true) {
     return {
       ok: true,
       protocol: "mira.work_send_check.v0",
@@ -1727,7 +1793,7 @@ export function createWorkSendCheck(input: {
     };
   }
 
-  const evaluation = evaluateSendReadiness(confirmation);
+  const evaluation = evaluateSendReadiness(confirmation, rootPath);
   const checksDir = getSendChecksDir(rootPath);
   if (!isInside(rootPath, checksDir)) {
     throw Object.assign(new Error("Send check destination escaped Mira state root."), { code: "unsafe_work_send_check_path" });
@@ -1748,9 +1814,10 @@ export function createWorkSendCheck(input: {
     recipient: confirmation.recipient,
     channel: confirmation.channel,
     finalReplyText: confirmation.finalReplyText,
+    originalRequest: evaluation.originalRequest,
     checklist: evaluation.checklist,
     notes: evaluation.notes,
-    displayTitle: "Pre-send check",
+    displayTitle: evaluation.status === "ready_for_manual_send" ? "Looks ready to send manually" : "Fix before sending",
     notSent: true,
     externalSend: false,
     crmMutation: false,
