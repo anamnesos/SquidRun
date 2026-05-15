@@ -336,6 +336,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('Send prep');
     expect(indexHtml).toContain('id="sendConfirmationList"');
     expect(indexHtml).toContain('Confirmations');
+    expect(indexHtml).toContain('id="sendCheckList"');
+    expect(indexHtml).toContain('Pre-send checks');
     expect(indexHtml).toContain('id="recentTurns"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
@@ -359,12 +361,16 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/work/ready'");
     expect(appJs).toContain("fetch('/work/send-packets'");
     expect(appJs).toContain("fetch('/work/send-confirmations'");
+    expect(appJs).toContain("fetch('/work/send-checks'");
     expect(appJs).toContain('Copy text');
     expect(appJs).toContain('Prepare send packet');
     expect(appJs).toContain('Confirm manually');
     expect(appJs).toContain('confirmed manually');
+    expect(appJs).toContain('Run pre-send check');
+    expect(appJs).toContain('still not sent');
     expect(appJs).toContain('not sent');
     expect(appJs).toContain('workSendConfirmationCount');
+    expect(appJs).toContain('workSendCheckCount');
     expect(appJs).toContain('readyCount');
     expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/memory'");
@@ -848,6 +854,78 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(confirmationGetResponse.status).toBe(200);
     expect(confirmationGetPayload.confirmation).toEqual(confirmationPayload.confirmation);
 
+    const createCheckResponse = await fetch(`${baseUrl}/work/send-checks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        confirmationToken: confirmationPayload.confirmation.token,
+      }),
+    });
+    const checkPayload = await createCheckResponse.json();
+    expect(createCheckResponse.status).toBe(200);
+    expect(checkPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_check.v0',
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(checkPayload.check).toEqual(expect.objectContaining({
+      token: expect.stringMatching(/^check-/),
+      status: 'ready_for_manual_send',
+      confirmationToken: confirmationPayload.confirmation.token,
+      packetToken: packetPayload.packet.token,
+      recipient: 'ap@example.test',
+      channel: 'email',
+      finalReplyText: readyPayload.ready.finalReplyText,
+      displayTitle: 'Pre-send check',
+      notSent: true,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(checkPayload.check.checklist).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'recipient present', ok: true }),
+      expect.objectContaining({ label: 'channel present', ok: true }),
+      expect.objectContaining({ label: 'final text present', ok: true }),
+      expect.objectContaining({ label: 'no obvious risky wording', ok: true }),
+    ]));
+    expect(checkPayload.check.notes.join(' ')).toContain('Still not sent');
+    expect(JSON.stringify(checkPayload.check)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"|sentAt|delivery|external_adapter/);
+
+    const duplicateCheckResponse = await fetch(`${baseUrl}/work/send-checks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        confirmationToken: confirmationPayload.confirmation.token,
+      }),
+    });
+    const duplicateCheckPayload = await duplicateCheckResponse.json();
+    expect(duplicateCheckResponse.status).toBe(200);
+    expect(duplicateCheckPayload.check).toEqual(checkPayload.check);
+
+    const checkListResponse = await fetch(`${baseUrl}/work/send-checks`);
+    const checkListPayload = await checkListResponse.json();
+    expect(checkListResponse.status).toBe(200);
+    expect(checkListPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_check_list.v0',
+      checkCount: 1,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(checkListPayload.checks[0]).toEqual(checkPayload.check);
+    expect(JSON.stringify(checkListPayload)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"|sentAt|delivery|external_adapter/);
+
+    const checkGetResponse = await fetch(`${baseUrl}/work/send-checks?checkToken=${encodeURIComponent(checkPayload.check.token)}`);
+    const checkGetPayload = await checkGetResponse.json();
+    expect(checkGetResponse.status).toBe(200);
+    expect(checkGetPayload.check).toEqual(checkPayload.check);
+
     const reviewedListResponse = await fetch(`${baseUrl}/work/tasks`);
     const reviewedListPayload = await reviewedListResponse.json();
     expect(reviewedListPayload).toEqual(expect.objectContaining({
@@ -987,6 +1065,85 @@ describe('Mira runtime bridge manual-plan API', () => {
       telegramSend: false,
       runtimeExecutesExternalAction: false,
     }));
+  });
+
+  test('refuses pre-send checks without a manual confirmation and performs no external send', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-send-check-refuse-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const missingConfirmationResponse = await fetch(`${baseUrl}/work/send-checks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        confirmationToken: 'confirm-missing',
+      }),
+    });
+    const missingConfirmationPayload = await missingConfirmationResponse.json();
+    expect(missingConfirmationResponse.status).toBe(400);
+    expect(missingConfirmationPayload.error).toEqual(expect.objectContaining({
+      code: 'send_confirmation_not_found',
+    }));
+
+    const listResponse = await fetch(`${baseUrl}/work/send-checks`);
+    const listPayload = await listResponse.json();
+    expect(listResponse.status).toBe(200);
+    expect(listPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_check_list.v0',
+      checkCount: 0,
+      checks: [],
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+  });
+
+  test('marks risky pre-send wording as needs_fix while staying local-only', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-send-check-risk-'));
+    const confirmationsDir = path.join(tempStateRoot, 'work', 'send-confirmations');
+    fs.mkdirSync(confirmationsDir, { recursive: true });
+    const confirmationId = 'manual-confirm-risky';
+    const confirmationToken = `confirm-${crypto.createHash('sha256').update(`mira.work_send_confirmation.v0:${confirmationId}`).digest('base64url').slice(0, 18)}`;
+    fs.writeFileSync(path.join(confirmationsDir, `${confirmationId}.json`), `${JSON.stringify({
+      protocol: 'mira.work_send_confirmation.v0',
+      id: confirmationId,
+      status: 'confirmed_for_manual_send',
+      createdAt: new Date().toISOString(),
+      packetToken: 'send-risky',
+      confirmedBy: 'James',
+      confirmText: 'manual review only',
+      recipient: 'ap@example.test',
+      channel: 'email',
+      finalReplyText: 'We guarantee this tax advice and need an urgent transfer.',
+      displayTitle: 'Manual confirmation',
+      notSent: true,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }, null, 2)}\n`, 'utf8');
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const response = await fetch(`${baseUrl}/work/send-checks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmationToken }),
+    });
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.check).toEqual(expect.objectContaining({
+      status: 'needs_fix',
+      notSent: true,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(payload.check.checklist).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'no obvious risky wording', ok: false }),
+    ]));
+    expect(payload.check.notes.join(' ')).toContain('should be reviewed before manual send');
   });
 
   test('refuses task conversion when the source draft is missing or outside work drafts', async () => {

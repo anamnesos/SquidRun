@@ -12,15 +12,18 @@ import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
 import {
   createWorkSendConfirmation,
+  createWorkSendCheck,
   createWorkSendPacket,
   createWorkReadyPackage,
   createWorkTaskFromDraft,
   createWorkTaskReview,
   getWorkSendConfirmation,
+  getWorkSendCheck,
   getWorkSendPacket,
   getWorkReadyPackage,
   getWorkTaskReviewDetail,
   listWorkSendConfirmations,
+  listWorkSendChecks,
   listWorkSendPackets,
   listWorkReadyPackages,
   listWorkTasks,
@@ -365,6 +368,19 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/work/send-checks") {
+    try {
+      const body = await readJsonBody(request);
+      const check = createWorkSendCheck({
+        confirmationToken: typeof body.confirmationToken === "string" ? body.confirmationToken : "",
+      });
+      sendJson(response, 200, check);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -464,6 +480,20 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       return;
     }
     sendJson(response, 200, listWorkSendConfirmations());
+    return;
+  }
+
+  if (requestUrl.pathname === "/work/send-checks") {
+    const checkToken = requestUrl.searchParams.get("checkToken");
+    if (checkToken) {
+      try {
+        sendJson(response, 200, getWorkSendCheck({ checkToken }));
+      } catch (error) {
+        sendJson(response, 400, errorPayload(error));
+      }
+      return;
+    }
+    sendJson(response, 200, listWorkSendChecks());
     return;
   }
 

@@ -231,6 +231,48 @@ export type WorkSendConfirmationListResult = {
   runtimeExecutesExternalAction: false;
 };
 
+export type WorkSendCheckStatus = "ready_for_manual_send" | "needs_fix";
+
+export type WorkSendCheck = {
+  token: string;
+  status: WorkSendCheckStatus;
+  createdAt: string;
+  confirmationToken: string;
+  packetToken: string;
+  recipient: string;
+  channel: string;
+  finalReplyText: string;
+  checklist: Array<{ label: string; ok: boolean }>;
+  notes: string[];
+  displayTitle: string;
+  notSent: true;
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkSendCheckResult = {
+  ok: true;
+  protocol: "mira.work_send_check.v0";
+  check: WorkSendCheck;
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkSendCheckListResult = {
+  ok: true;
+  protocol: "mira.work_send_check_list.v0";
+  checkCount: number;
+  checks: WorkSendCheck[];
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
 type StoredWorkReadyPackage = {
   protocol: "mira.work_ready_package.v0";
   id: string;
@@ -280,6 +322,11 @@ type StoredWorkSendConfirmation = {
   crmMutation: false;
   telegramSend: false;
   runtimeExecutesExternalAction: false;
+};
+
+type StoredWorkSendCheck = Omit<WorkSendCheck, "token"> & {
+  protocol: "mira.work_send_check.v0";
+  id: string;
 };
 
 function isInside(rootPath: string, candidatePath: string): boolean {
@@ -389,6 +436,10 @@ function getSendConfirmationsDir(rootPath: string): string {
   return path.resolve(rootPath, "work", "send-confirmations");
 }
 
+function getSendChecksDir(rootPath: string): string {
+  return path.resolve(rootPath, "work", "send-checks");
+}
+
 function statusFromDecision(decision: WorkTaskReviewDecision): WorkTaskStatus {
   if (decision === "approve") return "approved";
   if (decision === "reject") return "rejected";
@@ -429,6 +480,10 @@ function buildWorkSendPacketActionToken(id: string): string {
 
 function buildWorkSendConfirmationActionToken(id: string): string {
   return `confirm-${crypto.createHash("sha256").update(`mira.work_send_confirmation.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
+function buildWorkSendCheckActionToken(id: string): string {
+  return `check-${crypto.createHash("sha256").update(`mira.work_send_check.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
 function listReviewRecords(rootPath: string): WorkTaskReviewRecord[] {
@@ -537,6 +592,44 @@ function parseSendConfirmationRecord(value: string): StoredWorkSendConfirmation 
   }
 }
 
+function parseSendCheckRecord(value: string): StoredWorkSendCheck | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<StoredWorkSendCheck>;
+    if (parsed.protocol !== "mira.work_send_check.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "ready_for_manual_send" && parsed.status !== "needs_fix") return null;
+    if (typeof parsed.confirmationToken !== "string" || !parsed.confirmationToken) return null;
+    if (typeof parsed.packetToken !== "string" || !parsed.packetToken) return null;
+    if (typeof parsed.finalReplyText !== "string" || !parsed.finalReplyText.trim()) return null;
+    if (!Array.isArray(parsed.checklist) || !Array.isArray(parsed.notes)) return null;
+    if (parsed.notSent !== true) return null;
+    if (parsed.externalSend !== false || parsed.crmMutation !== false || parsed.telegramSend !== false || parsed.runtimeExecutesExternalAction !== false) return null;
+    return {
+      protocol: "mira.work_send_check.v0",
+      id: parsed.id,
+      status: parsed.status,
+      createdAt: String(parsed.createdAt || ""),
+      confirmationToken: parsed.confirmationToken,
+      packetToken: parsed.packetToken,
+      recipient: String(parsed.recipient || ""),
+      channel: String(parsed.channel || ""),
+      finalReplyText: parsed.finalReplyText,
+      checklist: parsed.checklist.map((item) => ({
+        label: String((item as { label?: unknown }).label || ""),
+        ok: (item as { ok?: unknown }).ok === true,
+      })).filter((item) => item.label),
+      notes: parsed.notes.map((note) => String(note || "")).filter(Boolean),
+      displayTitle: String(parsed.displayTitle || "Pre-send check"),
+      notSent: true,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function toPublicReadyPackage(record: StoredWorkReadyPackage): WorkReadyPackage {
   return {
     token: buildWorkReadyActionToken(record.id),
@@ -591,6 +684,27 @@ function toPublicSendConfirmation(record: StoredWorkSendConfirmation): WorkSendC
   };
 }
 
+function toPublicSendCheck(record: StoredWorkSendCheck): WorkSendCheck {
+  return {
+    token: buildWorkSendCheckActionToken(record.id),
+    status: record.status,
+    createdAt: record.createdAt,
+    confirmationToken: record.confirmationToken,
+    packetToken: record.packetToken,
+    recipient: record.recipient,
+    channel: record.channel,
+    finalReplyText: record.finalReplyText,
+    checklist: record.checklist,
+    notes: record.notes,
+    displayTitle: record.displayTitle,
+    notSent: true,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
 function listReadyPackageRecords(rootPath: string): StoredWorkReadyPackage[] {
   const readyDir = getReadyDir(rootPath);
   if (!isInside(rootPath, readyDir) || !fs.existsSync(readyDir)) return [];
@@ -633,6 +747,20 @@ function listSendConfirmationRecords(rootPath: string): StoredWorkSendConfirmati
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 }
 
+function listSendCheckRecords(rootPath: string): StoredWorkSendCheck[] {
+  const checksDir = getSendChecksDir(rootPath);
+  if (!isInside(rootPath, checksDir) || !fs.existsSync(checksDir)) return [];
+  return fs.readdirSync(checksDir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(checksDir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseSendCheckRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is StoredWorkSendCheck => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
 function dedupeReadyPackageRecords(records: StoredWorkReadyPackage[]): StoredWorkReadyPackage[] {
   const seen = new Set<string>();
   const deduped: StoredWorkReadyPackage[] = [];
@@ -662,6 +790,17 @@ function dedupeSendConfirmationRecords(records: StoredWorkSendConfirmation[]): S
   for (const record of records) {
     if (seen.has(record.packetToken)) continue;
     seen.add(record.packetToken);
+    deduped.push(record);
+  }
+  return deduped;
+}
+
+function dedupeSendCheckRecords(records: StoredWorkSendCheck[]): StoredWorkSendCheck[] {
+  const seen = new Set<string>();
+  const deduped: StoredWorkSendCheck[] = [];
+  for (const record of records) {
+    if (seen.has(record.confirmationToken)) continue;
+    seen.add(record.confirmationToken);
     deduped.push(record);
   }
   return deduped;
@@ -697,6 +836,42 @@ function resolveSendPacketRecord(input: { packetToken?: string }, rootPath: stri
     throw Object.assign(new Error("Send packet was not found."), { code: "send_packet_not_found" });
   }
   return record;
+}
+
+function resolveSendConfirmationRecord(input: { confirmationToken?: string }, rootPath: string): StoredWorkSendConfirmation {
+  const confirmationToken = String(input.confirmationToken || "").trim();
+  if (!confirmationToken) {
+    throw Object.assign(new Error("confirmationToken is required."), { code: "missing_send_confirmation" });
+  }
+  const record = listSendConfirmationRecords(rootPath).find((candidate) => buildWorkSendConfirmationActionToken(candidate.id) === confirmationToken);
+  if (!record) {
+    throw Object.assign(new Error("Send confirmation was not found."), { code: "send_confirmation_not_found" });
+  }
+  return record;
+}
+
+function evaluateSendReadiness(confirmation: StoredWorkSendConfirmation): Pick<WorkSendCheck, "status" | "checklist" | "notes"> {
+  const riskyPattern = /\b(guarantee|guaranteed|wire money|password|social security|ssn|credit card|legal advice|tax advice|urgent transfer)\b/i;
+  const checklist = [
+    { label: "recipient present", ok: Boolean(confirmation.recipient.trim()) },
+    { label: "channel present", ok: Boolean(confirmation.channel.trim()) },
+    { label: "final text present", ok: Boolean(confirmation.finalReplyText.trim()) },
+    { label: "no obvious risky wording", ok: !riskyPattern.test(confirmation.finalReplyText) },
+  ];
+  const notes = checklist
+    .filter((item) => !item.ok)
+    .map((item) => {
+      if (item.label === "no obvious risky wording") return "Final text contains wording that should be reviewed before manual send.";
+      return `${item.label} failed.`;
+    });
+  if (notes.length === 0) {
+    notes.push("Local readiness check passed. Still not sent; James must manually send it.");
+  }
+  return {
+    status: checklist.every((item) => item.ok) ? "ready_for_manual_send" : "needs_fix",
+    checklist,
+    notes,
+  };
 }
 
 function resolveReview(input: { taskToken?: string; taskId?: string; reviewToken?: string }, rootPath: string): WorkTaskReviewRecord {
@@ -1514,19 +1689,142 @@ export function getWorkSendConfirmation(input: { confirmationToken?: string }, e
       code: "state_root_not_ready",
     });
   }
-  const confirmationToken = String(input.confirmationToken || "").trim();
-  if (!confirmationToken) {
-    throw Object.assign(new Error("confirmationToken is required."), { code: "missing_send_confirmation" });
-  }
   const rootPath = path.resolve(stateRoot.path);
-  const record = listSendConfirmationRecords(rootPath).find((candidate) => buildWorkSendConfirmationActionToken(candidate.id) === confirmationToken);
-  if (!record) {
-    throw Object.assign(new Error("Send confirmation was not found."), { code: "send_confirmation_not_found" });
-  }
+  const record = resolveSendConfirmationRecord(input, rootPath);
   return {
     ok: true,
     protocol: "mira.work_send_confirmation.v0",
     confirmation: toPublicSendConfirmation(record),
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function createWorkSendCheck(input: {
+  confirmationToken?: string;
+}, env: NodeJS.ProcessEnv = process.env): WorkSendCheckResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before send checks can be written."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const confirmation = resolveSendConfirmationRecord(input, rootPath);
+  const confirmationToken = buildWorkSendConfirmationActionToken(confirmation.id);
+  const existingCheck = listSendCheckRecords(rootPath).find((record) => record.confirmationToken === confirmationToken);
+  if (existingCheck) {
+    return {
+      ok: true,
+      protocol: "mira.work_send_check.v0",
+      check: toPublicSendCheck(existingCheck),
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    };
+  }
+
+  const evaluation = evaluateSendReadiness(confirmation);
+  const checksDir = getSendChecksDir(rootPath);
+  if (!isInside(rootPath, checksDir)) {
+    throw Object.assign(new Error("Send check destination escaped Mira state root."), { code: "unsafe_work_send_check_path" });
+  }
+  const createdAt = new Date().toISOString();
+  const id = `work-send-check-${createdAt.replace(/[:.]/g, "-")}-${crypto.randomUUID()}`;
+  const absolutePath = path.resolve(checksDir, `${id}-${slugify(confirmation.packetToken)}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Send check file escaped Mira state root."), { code: "unsafe_work_send_check_path" });
+  }
+  const record: StoredWorkSendCheck = {
+    protocol: "mira.work_send_check.v0",
+    id,
+    status: evaluation.status,
+    createdAt,
+    confirmationToken,
+    packetToken: confirmation.packetToken,
+    recipient: confirmation.recipient,
+    channel: confirmation.channel,
+    finalReplyText: confirmation.finalReplyText,
+    checklist: evaluation.checklist,
+    notes: evaluation.notes,
+    displayTitle: "Pre-send check",
+    notSent: true,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+
+  fs.mkdirSync(checksDir, { recursive: true });
+  const handle = fs.openSync(absolutePath, "wx");
+  try {
+    fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  } finally {
+    fs.closeSync(handle);
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.work_send_check.v0",
+    check: toPublicSendCheck(record),
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function listWorkSendChecks(env: NodeJS.ProcessEnv = process.env): WorkSendCheckListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.work_send_check_list.v0",
+      checkCount: 0,
+      checks: [],
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    };
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const checks = dedupeSendCheckRecords(listSendCheckRecords(rootPath)).map(toPublicSendCheck);
+  return {
+    ok: true,
+    protocol: "mira.work_send_check_list.v0",
+    checkCount: checks.length,
+    checks,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function getWorkSendCheck(input: { checkToken?: string }, env: NodeJS.ProcessEnv = process.env): WorkSendCheckResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before send checks can be read."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const checkToken = String(input.checkToken || "").trim();
+  if (!checkToken) {
+    throw Object.assign(new Error("checkToken is required."), { code: "missing_send_check" });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const record = listSendCheckRecords(rootPath).find((candidate) => buildWorkSendCheckActionToken(candidate.id) === checkToken);
+  if (!record) {
+    throw Object.assign(new Error("Send check was not found."), { code: "send_check_not_found" });
+  }
+  return {
+    ok: true,
+    protocol: "mira.work_send_check.v0",
+    check: toPublicSendCheck(record),
     externalSend: false,
     crmMutation: false,
     telegramSend: false,

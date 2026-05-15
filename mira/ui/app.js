@@ -11,6 +11,7 @@ const state = {
   workReadyCount: 0,
   workSendPacketCount: 0,
   workSendConfirmationCount: 0,
+  workSendCheckCount: 0,
 };
 
 const elements = {
@@ -40,6 +41,7 @@ const elements = {
   readyList: document.getElementById('readyList'),
   sendPacketList: document.getElementById('sendPacketList'),
   sendConfirmationList: document.getElementById('sendConfirmationList'),
+  sendCheckList: document.getElementById('sendCheckList'),
   recentTurns: document.getElementById('recentTurns'),
 };
 
@@ -207,7 +209,7 @@ function appendPreviewLine(container, label, value) {
 }
 
 function renderWorkSummary() {
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked`);
 }
 
 function updateDraftList(payload) {
@@ -530,6 +532,49 @@ function updateSendConfirmationList(payload) {
     appendPreviewLine(card, 'Recipient', confirmation.recipient);
     appendPreviewLine(card, 'Confirmation', confirmation.confirmText);
     appendPreviewLine(card, 'Reply', confirmation.finalReplyText);
+    const check = document.createElement('button');
+    check.type = 'button';
+    check.className = 'subtle-button';
+    check.textContent = 'Run pre-send check';
+    check.addEventListener('click', async () => {
+      check.disabled = true;
+      try {
+        await createSendCheck({ confirmationToken: confirmation.token });
+        check.textContent = 'Checked';
+        await refreshSendChecks();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        check.disabled = false;
+      }
+    });
+    card.append(check);
+    return card;
+  }));
+}
+
+function updateSendCheckList(payload) {
+  const checks = Array.isArray(payload?.checks) ? payload.checks : [];
+  state.workSendCheckCount = Number(payload?.checkCount || checks.length || 0);
+  renderWorkSummary();
+  if (checks.length === 0) {
+    setText(elements.sendCheckList, 'none yet');
+    return;
+  }
+  elements.sendCheckList.replaceChildren(...checks.slice(0, 5).map((check) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = cleanPreviewText(check.displayTitle) || 'Pre-send check';
+    const meta = document.createElement('span');
+    const status = String(check.status || 'needs_fix').replace(/_/g, ' ');
+    meta.textContent = `${status} · still not sent · ${String(check.channel || 'channel')} · ${formatReadyStamp(check.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Recipient', check.recipient);
+    appendPreviewLine(card, 'Notes', Array.isArray(check.notes) ? check.notes.join(' ') : '');
+    if (Array.isArray(check.checklist) && check.checklist.length > 0) {
+      appendPreviewLine(card, 'Checklist', check.checklist.map((item) => `${item.ok ? 'ok' : 'fix'}: ${item.label}`).join('; '));
+    }
+    appendPreviewLine(card, 'Reply', check.finalReplyText);
     return card;
   }));
 }
@@ -703,6 +748,13 @@ async function refreshSendConfirmations() {
   updateSendConfirmationList(payload);
 }
 
+async function refreshSendChecks() {
+  const response = await fetch('/work/send-checks');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateSendCheckList(payload);
+}
+
 async function refreshRecentTurns() {
   const response = await fetch('/conversation/memory');
   const payload = await response.json();
@@ -824,6 +876,21 @@ async function createSendConfirmation(input) {
   return payload;
 }
 
+async function createSendCheck(input) {
+  const response = await fetch('/work/send-checks', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      confirmationToken: input.confirmationToken,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Pre-send check failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -893,6 +960,7 @@ async function prime() {
     await refreshReadyPackages();
     await refreshSendPackets();
     await refreshSendConfirmations();
+    await refreshSendChecks();
     await refreshRecentTurns();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -912,6 +980,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshReadyPackages();
     await refreshSendPackets();
     await refreshSendConfirmations();
+    await refreshSendChecks();
     await refreshRecentTurns();
   }
 });
