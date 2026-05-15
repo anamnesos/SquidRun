@@ -12,6 +12,7 @@ const state = {
   workSendPacketCount: 0,
   workSendConfirmationCount: 0,
   workSendCheckCount: 0,
+  autonomyQueueCount: 0,
 };
 
 const elements = {
@@ -42,6 +43,8 @@ const elements = {
   sendPacketList: document.getElementById('sendPacketList'),
   sendConfirmationList: document.getElementById('sendConfirmationList'),
   sendCheckList: document.getElementById('sendCheckList'),
+  autonomyTickButton: document.getElementById('autonomyTickButton'),
+  autonomyList: document.getElementById('autonomyList'),
   recentTurns: document.getElementById('recentTurns'),
 };
 
@@ -209,7 +212,7 @@ function appendPreviewLine(container, label, value) {
 }
 
 function renderWorkSummary() {
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.autonomyQueueCount} next moves`);
 }
 
 function updateDraftList(payload) {
@@ -580,6 +583,43 @@ function updateSendCheckList(payload) {
   }));
 }
 
+function updateAutonomyList(payload) {
+  const queue = Array.isArray(payload?.queue) ? payload.queue : [];
+  state.autonomyQueueCount = Number(payload?.queueCount || queue.length || 0);
+  renderWorkSummary();
+
+  const cards = [];
+  if (payload?.brief?.available) {
+    const brief = document.createElement('article');
+    brief.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = cleanPreviewText(payload.brief.title) || 'Autonomy brief';
+    brief.append(title);
+    (payload.brief.lines || []).slice(0, 4).forEach((line) => appendPreviewLine(brief, null, line));
+    cards.push(brief);
+  }
+
+  queue.slice(0, 5).forEach((item) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = cleanPreviewText(item.title) || 'Next move';
+    const meta = document.createElement('span');
+    meta.textContent = `${String(item.status || 'pending')} · local only · ${formatReadyStamp(item.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Why', item.reason);
+    appendPreviewLine(card, 'Next', item.nextMove);
+    appendPreviewLine(card, 'Permission', item.permissionUsed);
+    cards.push(card);
+  });
+
+  if (cards.length === 0) {
+    setText(elements.autonomyList, 'no next moves yet');
+    return;
+  }
+  elements.autonomyList.replaceChildren(...cards);
+}
+
 function updateRecentTurns(payload) {
   const memory = payload?.summary || payload?.recentMemory || null;
   const summary = formatRecentMemoryForDisplay(memory);
@@ -754,6 +794,26 @@ async function refreshSendChecks() {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) return;
   updateSendCheckList(payload);
+}
+
+async function refreshAutonomy() {
+  const response = await fetch('/autonomy/status');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateAutonomyList(payload);
+}
+
+async function runAutonomyTick() {
+  const response = await fetch('/autonomy/tick', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Autonomy tick failed.');
+  }
+  return payload;
 }
 
 async function refreshRecentTurns() {
@@ -963,6 +1023,7 @@ async function prime() {
     await refreshSendPackets();
     await refreshSendConfirmations();
     await refreshSendChecks();
+    await refreshAutonomy();
     await refreshRecentTurns();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -983,6 +1044,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshSendPackets();
     await refreshSendConfirmations();
     await refreshSendChecks();
+    await refreshAutonomy();
     await refreshRecentTurns();
   }
 });
@@ -1022,6 +1084,21 @@ elements.draftButton.addEventListener('click', async () => {
     elements.draftButton.disabled = false;
     elements.draftButton.textContent = 'Draft';
     elements.text.focus();
+  }
+});
+
+elements.autonomyTickButton.addEventListener('click', async () => {
+  elements.autonomyTickButton.disabled = true;
+  elements.autonomyTickButton.textContent = 'Running';
+  try {
+    const payload = await runAutonomyTick();
+    updateAutonomyList(payload);
+    appendMessage('mira', `Added ${payload.createdCount || 0} local next moves. Nothing external was sent.`);
+  } catch (error) {
+    appendMessage('mira', error.message, 'error');
+  } finally {
+    elements.autonomyTickButton.disabled = false;
+    elements.autonomyTickButton.textContent = 'Run local tick';
   }
 });
 

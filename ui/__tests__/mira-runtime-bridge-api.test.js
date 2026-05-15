@@ -338,6 +338,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('Confirmations');
     expect(indexHtml).toContain('id="sendCheckList"');
     expect(indexHtml).toContain('Pre-send checks');
+    expect(indexHtml).toContain('id="autonomyTickButton"');
+    expect(indexHtml).toContain('id="autonomyList"');
+    expect(indexHtml).toContain('Autonomy');
     expect(indexHtml).toContain('id="recentTurns"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
@@ -362,6 +365,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/work/send-packets'");
     expect(appJs).toContain("fetch('/work/send-confirmations'");
     expect(appJs).toContain("fetch('/work/send-checks'");
+    expect(appJs).toContain("fetch('/autonomy/status'");
+    expect(appJs).toContain("fetch('/autonomy/tick'");
+    expect(appJs).toContain('Run local tick');
     expect(appJs).toContain('Copy text');
     expect(appJs).toContain('Prepare send packet');
     expect(appJs).toContain('Confirm manually');
@@ -371,6 +377,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('not sent');
     expect(appJs).toContain('workSendConfirmationCount');
     expect(appJs).toContain('workSendCheckCount');
+    expect(appJs).toContain('autonomyQueueCount');
     expect(appJs).toContain('readyCount');
     expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/memory'");
@@ -412,6 +419,80 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(css).toMatch(/textarea\s*\{[\s\S]*resize:\s*none[\s\S]*overflow-y:\s*auto/);
     expect(css).not.toMatch(/@media\s*\(max-width:\s*820px\)\s*\{[\s\S]*body\s*\{[\s\S]*overflow:\s*auto/);
     expect(css).not.toContain('.side');
+  });
+
+  test('runs a local autonomy tick with standing permissions and no external action', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-autonomy-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const emptyStatusResponse = await fetch(`${baseUrl}/autonomy/status`);
+    const emptyStatus = await emptyStatusResponse.json();
+    const tickResponse = await fetch(`${baseUrl}/autonomy/tick`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const tickPayload = await tickResponse.json();
+    const duplicateResponse = await fetch(`${baseUrl}/autonomy/tick`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const duplicatePayload = await duplicateResponse.json();
+    const statusResponse = await fetch(`${baseUrl}/autonomy/status`);
+    const statusPayload = await statusResponse.json();
+
+    expect(emptyStatusResponse.status).toBe(200);
+    expect(emptyStatus).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.autonomy_status.v0',
+      queueCount: 0,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(tickResponse.status).toBe(200);
+    expect(tickPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.autonomy_tick.v0',
+      createdCount: 3,
+      reusedCount: 0,
+      briefWritten: true,
+      queueCount: 3,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(tickPayload.policy.localLoopAllowed).toBe(true);
+    expect(tickPayload.policy.externalActionsAllowed).toBe(false);
+    expect(tickPayload.policy.approvalRequiredFor).toEqual(expect.arrayContaining([
+      'customer send',
+      'money movement',
+      'legal/tax filing',
+      'delete or move live data',
+    ]));
+    expect(tickPayload.queue.map((item) => item.title)).toEqual(expect.arrayContaining([
+      'Use recent memory instead of waiting',
+      'Follow through on local work queue',
+      'Watch agent motion',
+    ]));
+    expect(tickPayload.queue.every((item) => item.needsJames === false)).toBe(true);
+    expect(tickPayload.queue.every((item) => item.nextMove && item.permissionUsed)).toBe(true);
+    expect(tickPayload.brief.available).toBe(true);
+    expect(tickPayload.brief.lines.join(' ')).toContain('Approval is still required');
+    expect(fs.existsSync(path.join(tempStateRoot, 'autonomy', 'standing-permissions.json'))).toBe(true);
+    expect(fs.readdirSync(path.join(tempStateRoot, 'autonomy', 'queue')).filter((file) => file.endsWith('.json'))).toHaveLength(3);
+    expect(fs.readdirSync(path.join(tempStateRoot, 'autonomy', 'briefs')).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+
+    expect(duplicateResponse.status).toBe(200);
+    expect(duplicatePayload.createdCount).toBe(0);
+    expect(duplicatePayload.reusedCount).toBe(3);
+    expect(duplicatePayload.queueCount).toBe(3);
+    expect(statusResponse.status).toBe(200);
+    expect(statusPayload.queueCount).toBe(3);
+    expect(statusPayload.brief.available).toBe(true);
   });
 
   test('creates and lists pending-review customer work drafts without external send', async () => {

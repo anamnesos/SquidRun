@@ -2,6 +2,7 @@ import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getAutonomyStatus, runAutonomyTick } from "./autonomy.js";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
@@ -382,6 +383,15 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/autonomy/tick") {
+    try {
+      sendJson(response, 200, runAutonomyTick());
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -495,6 +505,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       return;
     }
     sendJson(response, 200, listWorkSendChecks());
+    return;
+  }
+
+  if (requestUrl.pathname === "/autonomy/status") {
+    sendJson(response, 200, getAutonomyStatus());
     return;
   }
 
