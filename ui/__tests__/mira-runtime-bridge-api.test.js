@@ -334,6 +334,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('Ready');
     expect(indexHtml).toContain('id="sendPacketList"');
     expect(indexHtml).toContain('Send prep');
+    expect(indexHtml).toContain('id="sendConfirmationList"');
+    expect(indexHtml).toContain('Confirmations');
     expect(indexHtml).toContain('id="recentTurns"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
@@ -356,9 +358,13 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/work/task-review'");
     expect(appJs).toContain("fetch('/work/ready'");
     expect(appJs).toContain("fetch('/work/send-packets'");
+    expect(appJs).toContain("fetch('/work/send-confirmations'");
     expect(appJs).toContain('Copy text');
     expect(appJs).toContain('Prepare send packet');
+    expect(appJs).toContain('Confirm manually');
+    expect(appJs).toContain('confirmed manually');
     expect(appJs).toContain('not sent');
+    expect(appJs).toContain('workSendConfirmationCount');
     expect(appJs).toContain('readyCount');
     expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/memory'");
@@ -757,6 +763,91 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(packetGetResponse.status).toBe(200);
     expect(packetGetPayload.packet).toEqual(packetPayload.packet);
 
+    const missingConfirmationTextResponse = await fetch(`${baseUrl}/work/send-confirmations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        packetToken: packetPayload.packet.token,
+        confirmText: '',
+      }),
+    });
+    const missingConfirmationTextPayload = await missingConfirmationTextResponse.json();
+    expect(missingConfirmationTextResponse.status).toBe(400);
+    expect(missingConfirmationTextPayload.error).toEqual(expect.objectContaining({
+      code: 'missing_send_packet_field',
+    }));
+
+    const createConfirmationResponse = await fetch(`${baseUrl}/work/send-confirmations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        packetToken: packetPayload.packet.token,
+        confirmText: 'James confirmed this for manual send review.',
+        confirmedBy: 'James',
+        status: 'ready_for_external_adapter',
+      }),
+    });
+    const confirmationPayload = await createConfirmationResponse.json();
+    expect(createConfirmationResponse.status).toBe(200);
+    expect(confirmationPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_confirmation.v0',
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(confirmationPayload.confirmation).toEqual(expect.objectContaining({
+      token: expect.stringMatching(/^confirm-/),
+      status: 'confirmed_for_manual_send',
+      packetToken: packetPayload.packet.token,
+      confirmedBy: 'James',
+      confirmText: 'James confirmed this for manual send review.',
+      recipient: 'ap@example.test',
+      channel: 'email',
+      finalReplyText: readyPayload.ready.finalReplyText,
+      displayTitle: 'Manual confirmation',
+      notSent: true,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(JSON.stringify(confirmationPayload.confirmation)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"|sentAt|delivery|ready_for_external_adapter/);
+
+    const duplicateConfirmationResponse = await fetch(`${baseUrl}/work/send-confirmations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        packetToken: packetPayload.packet.token,
+        confirmText: 'Different note should not create a duplicate.',
+        confirmedBy: 'Someone Else',
+      }),
+    });
+    const duplicateConfirmationPayload = await duplicateConfirmationResponse.json();
+    expect(duplicateConfirmationResponse.status).toBe(200);
+    expect(duplicateConfirmationPayload.confirmation).toEqual(confirmationPayload.confirmation);
+
+    const confirmationListResponse = await fetch(`${baseUrl}/work/send-confirmations`);
+    const confirmationListPayload = await confirmationListResponse.json();
+    expect(confirmationListResponse.status).toBe(200);
+    expect(confirmationListPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_confirmation_list.v0',
+      confirmationCount: 1,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(confirmationListPayload.confirmations[0]).toEqual(confirmationPayload.confirmation);
+    expect(JSON.stringify(confirmationListPayload)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"|sentAt|delivery|ready_for_external_adapter/);
+
+    const confirmationGetResponse = await fetch(`${baseUrl}/work/send-confirmations?confirmationToken=${encodeURIComponent(confirmationPayload.confirmation.token)}`);
+    const confirmationGetPayload = await confirmationGetResponse.json();
+    expect(confirmationGetResponse.status).toBe(200);
+    expect(confirmationGetPayload.confirmation).toEqual(confirmationPayload.confirmation);
+
     const reviewedListResponse = await fetch(`${baseUrl}/work/tasks`);
     const reviewedListPayload = await reviewedListResponse.json();
     expect(reviewedListPayload).toEqual(expect.objectContaining({
@@ -863,6 +954,39 @@ describe('Mira runtime bridge manual-plan API', () => {
     const missingFieldPayload = await missingFieldResponse.json();
     expect(missingFieldResponse.status).toBe(400);
     expect(missingFieldPayload.error.code).toMatch(/missing_ready_package|missing_send_packet_field/);
+  });
+
+  test('refuses manual send confirmations without a send packet and performs no external send', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-send-confirm-refuse-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const missingPacketResponse = await fetch(`${baseUrl}/work/send-confirmations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        packetToken: 'send-missing',
+        confirmText: 'I confirm this only for manual sending.',
+      }),
+    });
+    const missingPacketPayload = await missingPacketResponse.json();
+    expect(missingPacketResponse.status).toBe(400);
+    expect(missingPacketPayload.error).toEqual(expect.objectContaining({
+      code: 'send_packet_not_found',
+    }));
+
+    const listResponse = await fetch(`${baseUrl}/work/send-confirmations`);
+    const listPayload = await listResponse.json();
+    expect(listResponse.status).toBe(200);
+    expect(listPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_confirmation_list.v0',
+      confirmationCount: 0,
+      confirmations: [],
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
   });
 
   test('refuses task conversion when the source draft is missing or outside work drafts', async () => {

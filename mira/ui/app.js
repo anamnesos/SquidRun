@@ -10,6 +10,7 @@ const state = {
   workReviewedCount: 0,
   workReadyCount: 0,
   workSendPacketCount: 0,
+  workSendConfirmationCount: 0,
 };
 
 const elements = {
@@ -38,6 +39,7 @@ const elements = {
   reviewPanel: document.getElementById('reviewPanel'),
   readyList: document.getElementById('readyList'),
   sendPacketList: document.getElementById('sendPacketList'),
+  sendConfirmationList: document.getElementById('sendConfirmationList'),
   recentTurns: document.getElementById('recentTurns'),
 };
 
@@ -205,7 +207,7 @@ function appendPreviewLine(container, label, value) {
 }
 
 function renderWorkSummary() {
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed`);
 }
 
 function updateDraftList(payload) {
@@ -467,6 +469,27 @@ function updateSendPacketList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Recipient', packet.recipient);
     appendPreviewLine(card, 'Reply', packet.finalReplyText);
+    const confirmText = document.createElement('input');
+    confirmText.className = 'review-note';
+    confirmText.placeholder = 'type confirmation note';
+    const confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'subtle-button';
+    confirm.textContent = 'Confirm manually';
+    confirm.addEventListener('click', async () => {
+      confirm.disabled = true;
+      try {
+        await createSendConfirmation({
+          packetToken: packet.token,
+          confirmText: confirmText.value || 'Confirmed for manual send review.',
+        });
+        confirm.textContent = 'Confirmed';
+        await refreshSendConfirmations();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        confirm.disabled = false;
+      }
+    });
     const copyRecipient = document.createElement('button');
     copyRecipient.type = 'button';
     copyRecipient.className = 'subtle-button';
@@ -483,7 +506,30 @@ function updateSendPacketList(payload) {
       await copyTextToClipboard(packet.finalReplyText || '');
       copyReply.textContent = 'Copied';
     });
-    card.append(copyRecipient, copyReply);
+    card.append(confirmText, confirm, copyRecipient, copyReply);
+    return card;
+  }));
+}
+
+function updateSendConfirmationList(payload) {
+  const confirmations = Array.isArray(payload?.confirmations) ? payload.confirmations : [];
+  state.workSendConfirmationCount = Number(payload?.confirmationCount || confirmations.length || 0);
+  renderWorkSummary();
+  if (confirmations.length === 0) {
+    setText(elements.sendConfirmationList, 'none yet');
+    return;
+  }
+  elements.sendConfirmationList.replaceChildren(...confirmations.slice(0, 5).map((confirmation) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = cleanPreviewText(confirmation.displayTitle) || 'Manual confirmation';
+    const meta = document.createElement('span');
+    meta.textContent = `confirmed manually · not sent · ${String(confirmation.channel || 'channel')} · ${formatReadyStamp(confirmation.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Recipient', confirmation.recipient);
+    appendPreviewLine(card, 'Confirmation', confirmation.confirmText);
+    appendPreviewLine(card, 'Reply', confirmation.finalReplyText);
     return card;
   }));
 }
@@ -650,6 +696,13 @@ async function refreshSendPackets() {
   updateSendPacketList(payload);
 }
 
+async function refreshSendConfirmations() {
+  const response = await fetch('/work/send-confirmations');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateSendConfirmationList(payload);
+}
+
 async function refreshRecentTurns() {
   const response = await fetch('/conversation/memory');
   const payload = await response.json();
@@ -754,6 +807,23 @@ async function createSendPacket(input) {
   return payload;
 }
 
+async function createSendConfirmation(input) {
+  const response = await fetch('/work/send-confirmations', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      packetToken: input.packetToken,
+      confirmText: input.confirmText,
+      confirmedBy: 'James',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Manual confirmation failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -822,6 +892,7 @@ async function prime() {
     await refreshTasks();
     await refreshReadyPackages();
     await refreshSendPackets();
+    await refreshSendConfirmations();
     await refreshRecentTurns();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -840,6 +911,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshTasks();
     await refreshReadyPackages();
     await refreshSendPackets();
+    await refreshSendConfirmations();
     await refreshRecentTurns();
   }
 });

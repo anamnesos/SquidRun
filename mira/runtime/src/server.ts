@@ -11,13 +11,16 @@ import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
 import {
+  createWorkSendConfirmation,
   createWorkSendPacket,
   createWorkReadyPackage,
   createWorkTaskFromDraft,
   createWorkTaskReview,
+  getWorkSendConfirmation,
   getWorkSendPacket,
   getWorkReadyPackage,
   getWorkTaskReviewDetail,
+  listWorkSendConfirmations,
   listWorkSendPackets,
   listWorkReadyPackages,
   listWorkTasks,
@@ -346,6 +349,22 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/work/send-confirmations") {
+    try {
+      const body = await readJsonBody(request);
+      const confirmation = createWorkSendConfirmation({
+        packetToken: typeof body.packetToken === "string" ? body.packetToken : "",
+        confirmText: body.confirmText,
+        confirmedBy: body.confirmedBy,
+        status: body.status,
+      });
+      sendJson(response, 200, confirmation);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -431,6 +450,20 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       return;
     }
     sendJson(response, 200, listWorkSendPackets());
+    return;
+  }
+
+  if (requestUrl.pathname === "/work/send-confirmations") {
+    const confirmationToken = requestUrl.searchParams.get("confirmationToken");
+    if (confirmationToken) {
+      try {
+        sendJson(response, 200, getWorkSendConfirmation({ confirmationToken }));
+      } catch (error) {
+        sendJson(response, 400, errorPayload(error));
+      }
+      return;
+    }
+    sendJson(response, 200, listWorkSendConfirmations());
     return;
   }
 
