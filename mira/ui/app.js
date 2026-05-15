@@ -14,6 +14,7 @@ const state = {
   workSendCheckCount: 0,
   autonomyQueueCount: 0,
   autonomyFollowThroughCount: 0,
+  autonomyLoopLabel: 'waiting',
 };
 
 const elements = {
@@ -185,6 +186,13 @@ function formatReadyStamp(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'ready';
   return `ready · ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+function formatLoopStamp(value) {
+  if (!value) return 'waiting';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'waiting';
+  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 function cleanPreviewText(value) {
@@ -588,11 +596,24 @@ function updateSendCheckList(payload) {
 function updateAutonomyList(payload) {
   const queue = Array.isArray(payload?.queue) ? payload.queue : [];
   const followThrough = Array.isArray(payload?.followThrough) ? payload.followThrough : [];
+  const loop = payload?.loop && typeof payload.loop === 'object' ? payload.loop : null;
   state.autonomyQueueCount = Number(payload?.queueCount || queue.length || 0);
   state.autonomyFollowThroughCount = Number(payload?.followThroughCount || followThrough.length || 0);
+  state.autonomyLoopLabel = loop?.status === 'ran' ? 'loop ran' : 'waiting';
   renderWorkSummary();
 
   const cards = [];
+  if (loop && loop.status === 'ran') {
+    const loopCard = document.createElement('article');
+    loopCard.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = 'Loop';
+    const meta = document.createElement('span');
+    meta.textContent = `ran ${formatLoopStamp(loop.lastRunAt)} · next ${formatLoopStamp(loop.nextRunAt)}`;
+    loopCard.append(title, meta);
+    appendPreviewLine(loopCard, 'Made', `${Number(loop.tickCreatedCount || 0)} queue items, ${Number(loop.followCreatedCount || 0)} follow-through steps`);
+    cards.push(loopCard);
+  }
   if (payload?.brief?.available) {
     const brief = document.createElement('article');
     brief.className = 'draft-item';
@@ -629,7 +650,7 @@ function updateAutonomyList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Why', item.reason);
     appendPreviewLine(card, 'Next', item.nextMove);
-    appendPreviewLine(card, 'Permission', item.permissionUsed);
+    appendPreviewLine(card, 'Mode', item.permissionUsed);
     cards.push(card);
   });
 

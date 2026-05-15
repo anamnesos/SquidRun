@@ -44,6 +44,7 @@ export type AutonomyStatus = {
   protocol: "mira.autonomy_status.v0";
   stateRootReady: boolean;
   policy: AutonomyPolicy;
+  loop: AutonomyLoopStatus;
   queueCount: number;
   queue: AutonomyQueueItem[];
   followThroughCount: number;
@@ -87,6 +88,42 @@ export type AutonomyFollowThroughResult = Omit<AutonomyStatus, "protocol"> & {
   protocol: "mira.autonomy_follow_through.v0";
   createdCount: number;
   reusedCount: number;
+};
+
+export type AutonomyLoopStatus = {
+  protocol: "mira.autonomy_loop_status.v0";
+  enabled: boolean;
+  status: "not_started" | "ran" | "error";
+  source: "timer" | "manual" | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastError: {
+    code: string;
+    message: string;
+  } | null;
+  tickCreatedCount: number;
+  tickReusedCount: number;
+  followCreatedCount: number;
+  followReusedCount: number;
+  queueCount: number;
+  followThroughCount: number;
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type AutonomyLoopRunResult = Omit<AutonomyStatus, "protocol"> & {
+  protocol: "mira.autonomy_loop_run.v0";
+  tick: {
+    createdCount: number;
+    reusedCount: number;
+    briefWritten: boolean;
+  };
+  followThroughRun: {
+    createdCount: number;
+    reusedCount: number;
+  };
 };
 
 type StoredAutonomyQueueItem = Omit<AutonomyQueueItem, "token"> & {
@@ -161,6 +198,10 @@ function followThroughDir(rootPath: string): string {
 
 function policyPath(rootPath: string): string {
   return path.resolve(autonomyRoot(rootPath), "standing-permissions.json");
+}
+
+function loopStatusPath(rootPath: string): string {
+  return path.resolve(autonomyRoot(rootPath), "loop-status.json");
 }
 
 function todayKey(now = new Date()): string {
@@ -250,6 +291,78 @@ function readFollowThrough(rootPath: string): AutonomyFollowThroughItem[] {
     .map(publicFollowThroughItem);
 }
 
+function defaultLoopStatus(): AutonomyLoopStatus {
+  return {
+    protocol: "mira.autonomy_loop_status.v0",
+    enabled: false,
+    status: "not_started",
+    source: null,
+    lastRunAt: null,
+    nextRunAt: null,
+    lastError: null,
+    tickCreatedCount: 0,
+    tickReusedCount: 0,
+    followCreatedCount: 0,
+    followReusedCount: 0,
+    queueCount: 0,
+    followThroughCount: 0,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+function parseLoopStatus(value: string): AutonomyLoopStatus | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<AutonomyLoopStatus>;
+    if (parsed.protocol !== "mira.autonomy_loop_status.v0") return null;
+    if (parsed.status !== "not_started" && parsed.status !== "ran" && parsed.status !== "error") return null;
+    if (parsed.externalSend !== false || parsed.crmMutation !== false || parsed.telegramSend !== false || parsed.runtimeExecutesExternalAction !== false) return null;
+    return {
+      ...defaultLoopStatus(),
+      ...parsed,
+      protocol: "mira.autonomy_loop_status.v0",
+      enabled: parsed.enabled === true,
+      source: parsed.source === "timer" || parsed.source === "manual" ? parsed.source : null,
+      lastRunAt: typeof parsed.lastRunAt === "string" ? parsed.lastRunAt : null,
+      nextRunAt: typeof parsed.nextRunAt === "string" ? parsed.nextRunAt : null,
+      lastError: parsed.lastError && typeof parsed.lastError === "object" ? {
+        code: String(parsed.lastError.code || "autonomy_loop_error"),
+        message: String(parsed.lastError.message || "Autonomy loop error."),
+      } : null,
+      tickCreatedCount: Number(parsed.tickCreatedCount || 0),
+      tickReusedCount: Number(parsed.tickReusedCount || 0),
+      followCreatedCount: Number(parsed.followCreatedCount || 0),
+      followReusedCount: Number(parsed.followReusedCount || 0),
+      queueCount: Number(parsed.queueCount || 0),
+      followThroughCount: Number(parsed.followThroughCount || 0),
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readLoopStatus(rootPath: string): AutonomyLoopStatus {
+  const filePath = loopStatusPath(rootPath);
+  if (!isInside(rootPath, filePath) || !fs.existsSync(filePath)) return defaultLoopStatus();
+  return parseLoopStatus(fs.readFileSync(filePath, "utf8")) || defaultLoopStatus();
+}
+
+function writeLoopStatus(rootPath: string, status: AutonomyLoopStatus): AutonomyLoopStatus {
+  const filePath = loopStatusPath(rootPath);
+  if (!isInside(rootPath, filePath)) {
+    throw Object.assign(new Error("Autonomy loop status escaped Mira state root."), { code: "unsafe_autonomy_path" });
+  }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(status, null, 2)}\n`, "utf8");
+  return status;
+}
+
 function writePolicyIfMissing(rootPath: string): boolean {
   const filePath = policyPath(rootPath);
   if (!isInside(rootPath, filePath) || fs.existsSync(filePath)) return false;
@@ -293,8 +406,8 @@ function buildBriefLines(env: NodeJS.ProcessEnv): string[] {
   return [
     `Recent thread: ${summary}`,
     `Work state: ${work.drafts} drafts, ${pendingLabel}, ${work.ready} ready, ${work.notSent} not sent, ${work.confirmed} confirmed, ${work.checked} checked.`,
-    "Standing local permissions are active for local state reads/writes, queue creation, and brief creation.",
-    "Approval is still required for customer sends, money/legal actions, deletes, deploys, trades, and external system changes.",
+    "Mira can keep local notes, queues, drafts, checks, and follow-through moving in this runtime.",
+    "Outside messages and live business changes are not part of this loop.",
   ];
 }
 
@@ -528,11 +641,13 @@ export function getAutonomyStatus(env: NodeJS.ProcessEnv = process.env): Autonom
   const queue = rootPath ? readQueue(rootPath) : [];
   const followThrough = rootPath ? readFollowThrough(rootPath) : [];
   const brief = rootPath ? readLatestBrief(rootPath) : { available: false, title: "No autonomy brief yet", lines: [] };
+  const loop = rootPath ? readLoopStatus(rootPath) : defaultLoopStatus();
   return {
     ok: true,
     protocol: "mira.autonomy_status.v0",
     stateRootReady: Boolean(rootPath),
     policy: defaultAutonomyPolicy(),
+    loop,
     queueCount: queue.length,
     queue,
     followThroughCount: followThrough.length,
@@ -542,6 +657,58 @@ export function getAutonomyStatus(env: NodeJS.ProcessEnv = process.env): Autonom
     crmMutation: false,
     telegramSend: false,
     runtimeExecutesExternalAction: false,
+  };
+}
+
+export function runAutonomyLoopOnce(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { source?: "timer" | "manual"; nextRunAt?: string | null; now?: Date } = {},
+): AutonomyLoopRunResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before the autonomy loop can run."), {
+      code: "state_root_not_ready",
+    });
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  const now = options.now || new Date();
+  const tick = runAutonomyTick(env);
+  const followThroughRun = runAutonomyFollowThrough(env);
+  const loop = writeLoopStatus(rootPath, {
+    protocol: "mira.autonomy_loop_status.v0",
+    enabled: true,
+    status: "ran",
+    source: options.source || "manual",
+    lastRunAt: now.toISOString(),
+    nextRunAt: options.nextRunAt || null,
+    lastError: null,
+    tickCreatedCount: tick.createdCount,
+    tickReusedCount: tick.reusedCount,
+    followCreatedCount: followThroughRun.createdCount,
+    followReusedCount: followThroughRun.reusedCount,
+    queueCount: followThroughRun.queueCount,
+    followThroughCount: followThroughRun.followThroughCount,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  });
+  const status = getAutonomyStatus(env);
+
+  return {
+    ...status,
+    loop,
+    protocol: "mira.autonomy_loop_run.v0",
+    tick: {
+      createdCount: tick.createdCount,
+      reusedCount: tick.reusedCount,
+      briefWritten: tick.briefWritten,
+    },
+    followThroughRun: {
+      createdCount: followThroughRun.createdCount,
+      reusedCount: followThroughRun.reusedCount,
+    },
   };
 }
 

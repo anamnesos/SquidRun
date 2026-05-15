@@ -2,7 +2,7 @@ import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyTick } from "./autonomy.js";
+import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyLoopOnce, runAutonomyTick } from "./autonomy.js";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
@@ -33,6 +33,8 @@ import {
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
 const MAX_JSON_BODY_BYTES = 64 * 1024;
+const DEFAULT_AUTONOMY_LOOP_INTERVAL_MS = 10 * 60 * 1000;
+const DEFAULT_AUTONOMY_LOOP_STARTUP_DELAY_MS = 2000;
 const staticUiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "ui");
 const contentTypes: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -138,6 +140,45 @@ function parseModelProvider(value: unknown): RuntimeTurnInput["modelProvider"] |
     return normalized as RuntimeTurnInput["modelProvider"];
   }
   throw Object.assign(new Error(`Unsupported Mira model provider: ${normalized}.`), { code: "unsupported_model_provider" });
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function autonomyLoopDisabled(env: NodeJS.ProcessEnv): boolean {
+  return ["0", "false", "off", "disabled"].includes(String(env.MIRA_AUTONOMY_LOOP || "").trim().toLowerCase());
+}
+
+export function startAutonomyBackgroundLoop(env: NodeJS.ProcessEnv = process.env): (() => void) | null {
+  if (autonomyLoopDisabled(env)) return null;
+
+  const intervalMs = parsePositiveInteger(env.MIRA_AUTONOMY_LOOP_INTERVAL_MS, DEFAULT_AUTONOMY_LOOP_INTERVAL_MS);
+  const startupDelayMs = parsePositiveInteger(env.MIRA_AUTONOMY_LOOP_STARTUP_DELAY_MS, DEFAULT_AUTONOMY_LOOP_STARTUP_DELAY_MS);
+  let stopped = false;
+  const run = (): void => {
+    if (stopped) return;
+    const nextRunAt = new Date(Date.now() + intervalMs).toISOString();
+    try {
+      runAutonomyLoopOnce(env, { source: "timer", nextRunAt });
+    } catch (error) {
+      const maybeError = error as { message?: unknown };
+      console.warn(`mira autonomy loop skipped: ${String(maybeError?.message || error)}`);
+    }
+  };
+
+  const startupTimer = setTimeout(run, startupDelayMs);
+  const intervalTimer = setInterval(run, intervalMs);
+  startupTimer.unref?.();
+  intervalTimer.unref?.();
+
+  return () => {
+    stopped = true;
+    clearTimeout(startupTimer);
+    clearInterval(intervalTimer);
+  };
 }
 
 export async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -401,6 +442,15 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/autonomy/loop/run") {
+    try {
+      sendJson(response, 200, runAutonomyLoopOnce(process.env, { source: "manual" }));
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -559,6 +609,10 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   const server = createMiraRuntimeServer();
+  const stopAutonomyLoop = startAutonomyBackgroundLoop();
+  server.on("close", () => {
+    stopAutonomyLoop?.();
+  });
   server.listen(port, "127.0.0.1", () => {
     const address = server.address();
     const boundPort = typeof address === "object" && address ? address.port : port;

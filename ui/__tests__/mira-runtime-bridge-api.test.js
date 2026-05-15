@@ -77,6 +77,7 @@ describe('Mira runtime bridge manual-plan API', () => {
         env: {
           ...process.env,
           MIRA_RUNTIME_PORT: '0',
+          MIRA_AUTONOMY_LOOP: 'off',
           ...extraEnv,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -104,6 +105,16 @@ describe('Mira runtime bridge manual-plan API', () => {
         resolve(baseUrl);
       });
     });
+  }
+
+  async function waitForAutonomyLoopStatus() {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const response = await fetch(`${baseUrl}/autonomy/status`);
+      const payload = await response.json();
+      if (payload.loop?.status === 'ran') return payload;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error('autonomy loop did not run');
   }
 
   function writeNormalizedCoreStateRoot() {
@@ -382,6 +393,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('workSendCheckCount');
     expect(appJs).toContain('autonomyQueueCount');
     expect(appJs).toContain('autonomyFollowThroughCount');
+    expect(appJs).toContain('autonomyLoopLabel');
+    expect(appJs).toContain('Loop');
     expect(appJs).toContain('readyCount');
     expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/memory'");
@@ -464,6 +477,10 @@ describe('Mira runtime bridge manual-plan API', () => {
       protocol: 'mira.autonomy_status.v0',
       queueCount: 0,
       followThroughCount: 0,
+      loop: expect.objectContaining({
+        status: 'not_started',
+        lastRunAt: null,
+      }),
       externalSend: false,
       crmMutation: false,
       telegramSend: false,
@@ -499,7 +516,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(tickPayload.queue.every((item) => item.needsJames === false)).toBe(true);
     expect(tickPayload.queue.every((item) => item.nextMove && item.permissionUsed)).toBe(true);
     expect(tickPayload.brief.available).toBe(true);
-    expect(tickPayload.brief.lines.join(' ')).toContain('Approval is still required');
+    expect(tickPayload.brief.lines.join(' ')).toContain('Mira can keep local notes');
     expect(fs.existsSync(path.join(tempStateRoot, 'autonomy', 'standing-permissions.json'))).toBe(true);
     expect(fs.readdirSync(path.join(tempStateRoot, 'autonomy', 'queue')).filter((file) => file.endsWith('.json'))).toHaveLength(3);
     expect(fs.readdirSync(path.join(tempStateRoot, 'autonomy', 'briefs')).filter((file) => file.endsWith('.json'))).toHaveLength(1);
@@ -538,6 +555,89 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(statusPayload.queueCount).toBe(3);
     expect(statusPayload.followThroughCount).toBe(3);
     expect(statusPayload.brief.available).toBe(true);
+  });
+
+  test('runs the autonomy loop on demand and on the runtime timer', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-autonomy-loop-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const runResponse = await fetch(`${baseUrl}/autonomy/loop/run`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const runPayload = await runResponse.json();
+    const duplicateRunResponse = await fetch(`${baseUrl}/autonomy/loop/run`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const duplicateRunPayload = await duplicateRunResponse.json();
+    const statusResponse = await fetch(`${baseUrl}/autonomy/status`);
+    const statusPayload = await statusResponse.json();
+
+    expect(runResponse.status).toBe(200);
+    expect(runPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.autonomy_loop_run.v0',
+      queueCount: 3,
+      followThroughCount: 3,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(runPayload.tick).toEqual(expect.objectContaining({
+      createdCount: 3,
+      reusedCount: 0,
+      briefWritten: true,
+    }));
+    expect(runPayload.followThroughRun).toEqual(expect.objectContaining({
+      createdCount: 3,
+      reusedCount: 0,
+    }));
+    expect(runPayload.loop).toEqual(expect.objectContaining({
+      protocol: 'mira.autonomy_loop_status.v0',
+      enabled: true,
+      status: 'ran',
+      source: 'manual',
+      tickCreatedCount: 3,
+      followCreatedCount: 3,
+      queueCount: 3,
+      followThroughCount: 3,
+    }));
+    expect(typeof runPayload.loop.lastRunAt).toBe('string');
+    expect(fs.existsSync(path.join(tempStateRoot, 'autonomy', 'loop-status.json'))).toBe(true);
+    expect(duplicateRunResponse.status).toBe(200);
+    expect(duplicateRunPayload.tick.reusedCount).toBe(3);
+    expect(duplicateRunPayload.followThroughRun.reusedCount).toBe(3);
+    expect(statusResponse.status).toBe(200);
+    expect(statusPayload.loop.status).toBe('ran');
+    expect(statusPayload.loop.source).toBe('manual');
+
+    await new Promise((resolve) => {
+      serverProcess.once('close', resolve);
+      serverProcess.kill();
+    });
+    serverProcess = null;
+    fs.rmSync(tempStateRoot, { recursive: true, force: true });
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-autonomy-loop-timer-'));
+    await startServer({
+      MIRA_STATE_ROOT: tempStateRoot,
+      MIRA_AUTONOMY_LOOP: 'on',
+      MIRA_AUTONOMY_LOOP_STARTUP_DELAY_MS: '10',
+      MIRA_AUTONOMY_LOOP_INTERVAL_MS: '60000',
+    });
+    const timerStatus = await waitForAutonomyLoopStatus();
+    expect(timerStatus.queueCount).toBe(3);
+    expect(timerStatus.followThroughCount).toBe(3);
+    expect(timerStatus.loop).toEqual(expect.objectContaining({
+      status: 'ran',
+      source: 'timer',
+      queueCount: 3,
+      followThroughCount: 3,
+    }));
+    expect(typeof timerStatus.loop.nextRunAt).toBe('string');
   });
 
   test('creates and lists pending-review customer work drafts without external send', async () => {
