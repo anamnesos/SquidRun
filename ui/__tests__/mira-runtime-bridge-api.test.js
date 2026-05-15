@@ -1275,6 +1275,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(payload.response.content).toContain('thread turning on answer quality');
     expect(payload.response.content).toContain('less quoting');
     expect(payload.response.content).toContain('more actual use of what just happened');
+    expect(payload.response.content).not.toContain('You have been pressing on answer quality');
     expect(payload.response.content).not.toMatch(/recent turn journal|Last prompt was|I answered:|better than guessing|distilled thread summary|narrating the machinery|^I heard:|Runtime state:|Loaded normalized core summary:|Operator context:/);
   });
 

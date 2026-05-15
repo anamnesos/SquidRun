@@ -353,7 +353,7 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     recentMemory: toRecentMemoryResponse(recentMemorySummary),
     response: {
       role: "mira",
-      content: `${responseContent}${input.useModel === true ? "" : memoryContextLine(recentMemorySummary)}`.trim(),
+      content: `${responseContent}${input.useModel === true || memoryPrompt ? "" : memoryContextLine(recentMemorySummary)}`.trim(),
     },
     voiceLab,
     suggestedTeamPlan,
