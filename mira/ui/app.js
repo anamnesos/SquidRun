@@ -13,6 +13,7 @@ const state = {
   workSendConfirmationCount: 0,
   workSendCheckCount: 0,
   autonomyQueueCount: 0,
+  autonomyFollowThroughCount: 0,
 };
 
 const elements = {
@@ -44,6 +45,7 @@ const elements = {
   sendConfirmationList: document.getElementById('sendConfirmationList'),
   sendCheckList: document.getElementById('sendCheckList'),
   autonomyTickButton: document.getElementById('autonomyTickButton'),
+  autonomyFollowButton: document.getElementById('autonomyFollowButton'),
   autonomyList: document.getElementById('autonomyList'),
   recentTurns: document.getElementById('recentTurns'),
 };
@@ -212,7 +214,7 @@ function appendPreviewLine(container, label, value) {
 }
 
 function renderWorkSummary() {
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.autonomyQueueCount} next moves`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed`);
 }
 
 function updateDraftList(payload) {
@@ -585,7 +587,9 @@ function updateSendCheckList(payload) {
 
 function updateAutonomyList(payload) {
   const queue = Array.isArray(payload?.queue) ? payload.queue : [];
+  const followThrough = Array.isArray(payload?.followThrough) ? payload.followThrough : [];
   state.autonomyQueueCount = Number(payload?.queueCount || queue.length || 0);
+  state.autonomyFollowThroughCount = Number(payload?.followThroughCount || followThrough.length || 0);
   renderWorkSummary();
 
   const cards = [];
@@ -598,6 +602,22 @@ function updateAutonomyList(payload) {
     (payload.brief.lines || []).slice(0, 4).forEach((line) => appendPreviewLine(brief, null, line));
     cards.push(brief);
   }
+
+  followThrough.slice(0, 5).forEach((item) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = cleanPreviewText(item.resultTitle) || 'Follow-through';
+    const meta = document.createElement('span');
+    meta.textContent = `${String(item.status || 'local step').replace(/_/g, ' ')} · local only · ${formatReadyStamp(item.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Did', item.result);
+    appendPreviewLine(card, 'Next', item.nextVisibleStep);
+    if (Array.isArray(item.evidence)) {
+      appendPreviewLine(card, 'Evidence', item.evidence.join(' '));
+    }
+    cards.push(card);
+  });
 
   queue.slice(0, 5).forEach((item) => {
     const card = document.createElement('article');
@@ -812,6 +832,19 @@ async function runAutonomyTick() {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) {
     throw new Error(payload?.error?.message || 'Autonomy tick failed.');
+  }
+  return payload;
+}
+
+async function runAutonomyFollowThrough() {
+  const response = await fetch('/autonomy/follow-through', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Autonomy follow-through failed.');
   }
   return payload;
 }
@@ -1099,6 +1132,21 @@ elements.autonomyTickButton.addEventListener('click', async () => {
   } finally {
     elements.autonomyTickButton.disabled = false;
     elements.autonomyTickButton.textContent = 'Run local tick';
+  }
+});
+
+elements.autonomyFollowButton.addEventListener('click', async () => {
+  elements.autonomyFollowButton.disabled = true;
+  elements.autonomyFollowButton.textContent = 'Working';
+  try {
+    const payload = await runAutonomyFollowThrough();
+    updateAutonomyList(payload);
+    appendMessage('mira', `Prepared ${payload.createdCount || 0} local follow-through steps.`);
+  } catch (error) {
+    appendMessage('mira', error.message, 'error');
+  } finally {
+    elements.autonomyFollowButton.disabled = false;
+    elements.autonomyFollowButton.textContent = 'Follow through';
   }
 });
 

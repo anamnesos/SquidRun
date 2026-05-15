@@ -2,7 +2,7 @@ import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAutonomyStatus, runAutonomyTick } from "./autonomy.js";
+import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyTick } from "./autonomy.js";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
@@ -386,6 +386,15 @@ export async function route(request: IncomingMessage, response: ServerResponse):
   if (request.method === "POST" && requestUrl.pathname === "/autonomy/tick") {
     try {
       sendJson(response, 200, runAutonomyTick());
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/autonomy/follow-through") {
+    try {
+      sendJson(response, 200, runAutonomyFollowThrough());
     } catch (error) {
       sendJson(response, 400, errorPayload(error));
     }

@@ -46,6 +46,8 @@ export type AutonomyStatus = {
   policy: AutonomyPolicy;
   queueCount: number;
   queue: AutonomyQueueItem[];
+  followThroughCount: number;
+  followThrough: AutonomyFollowThroughItem[];
   brief: {
     available: boolean;
     title: string;
@@ -64,9 +66,38 @@ export type AutonomyTickResult = Omit<AutonomyStatus, "protocol"> & {
   briefWritten: boolean;
 };
 
+export type AutonomyFollowThroughItem = {
+  token: string;
+  status: "local_step_prepared";
+  createdAt: string;
+  queueToken: string;
+  queueTitle: string;
+  resultTitle: string;
+  result: string;
+  nextVisibleStep: string;
+  evidence: string[];
+  localOnly: true;
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type AutonomyFollowThroughResult = Omit<AutonomyStatus, "protocol"> & {
+  protocol: "mira.autonomy_follow_through.v0";
+  createdCount: number;
+  reusedCount: number;
+};
+
 type StoredAutonomyQueueItem = Omit<AutonomyQueueItem, "token"> & {
   protocol: "mira.autonomy_queue_item.v0";
   id: string;
+};
+
+type StoredAutonomyFollowThroughItem = Omit<AutonomyFollowThroughItem, "token" | "queueToken"> & {
+  protocol: "mira.autonomy_follow_through_item.v0";
+  id: string;
+  queueItemId: string;
 };
 
 const blockedActions = [
@@ -124,6 +155,10 @@ function briefDir(rootPath: string): string {
   return path.resolve(autonomyRoot(rootPath), "briefs");
 }
 
+function followThroughDir(rootPath: string): string {
+  return path.resolve(autonomyRoot(rootPath), "follow-through");
+}
+
 function policyPath(rootPath: string): string {
   return path.resolve(autonomyRoot(rootPath), "standing-permissions.json");
 }
@@ -134,6 +169,10 @@ function todayKey(now = new Date()): string {
 
 function actionToken(id: string): string {
   return `auto-${crypto.createHash("sha256").update(`mira.autonomy_queue_item.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
+function followThroughToken(id: string): string {
+  return `follow-${crypto.createHash("sha256").update(`mira.autonomy_follow_through_item.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
 function publicQueueItem(record: StoredAutonomyQueueItem): AutonomyQueueItem {
@@ -156,7 +195,7 @@ function parseQueueItem(value: string): StoredAutonomyQueueItem | null {
   }
 }
 
-function readQueue(rootPath: string): AutonomyQueueItem[] {
+function readStoredQueue(rootPath: string): StoredAutonomyQueueItem[] {
   const dir = queueDir(rootPath);
   if (!isInside(rootPath, dir) || !fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
@@ -167,8 +206,48 @@ function readQueue(rootPath: string): AutonomyQueueItem[] {
       return parseQueueItem(fs.readFileSync(absolutePath, "utf8"));
     })
     .filter((record): record is StoredAutonomyQueueItem => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function readQueue(rootPath: string): AutonomyQueueItem[] {
+  return readStoredQueue(rootPath).map(publicQueueItem);
+}
+
+function publicFollowThroughItem(record: StoredAutonomyFollowThroughItem): AutonomyFollowThroughItem {
+  const { id: _id, protocol: _protocol, queueItemId, ...rest } = record;
+  return {
+    ...rest,
+    token: followThroughToken(record.id),
+    queueToken: actionToken(queueItemId),
+  };
+}
+
+function parseFollowThroughItem(value: string): StoredAutonomyFollowThroughItem | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<StoredAutonomyFollowThroughItem>;
+    if (parsed.protocol !== "mira.autonomy_follow_through_item.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "local_step_prepared") return null;
+    if (parsed.localOnly !== true) return null;
+    if (parsed.externalSend !== false || parsed.crmMutation !== false || parsed.telegramSend !== false || parsed.runtimeExecutesExternalAction !== false) return null;
+    return parsed as StoredAutonomyFollowThroughItem;
+  } catch {
+    return null;
+  }
+}
+
+function readFollowThrough(rootPath: string): AutonomyFollowThroughItem[] {
+  const dir = followThroughDir(rootPath);
+  if (!isInside(rootPath, dir) || !fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(dir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseFollowThroughItem(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is StoredAutonomyFollowThroughItem => Boolean(record))
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
-    .map(publicQueueItem);
+    .map(publicFollowThroughItem);
 }
 
 function writePolicyIfMissing(rootPath: string): boolean {
@@ -346,10 +425,108 @@ function createQueueItems(rootPath: string, env: NodeJS.ProcessEnv, now = new Da
   return { created, reused };
 }
 
+function followThroughForQueueItem(queueItem: StoredAutonomyQueueItem, env: NodeJS.ProcessEnv, now = new Date()): StoredAutonomyFollowThroughItem {
+  const work = workSnapshot(env);
+  const memory = readRuntimeTurnMemorySummary({ env });
+  const memoryLine = memory.loaded && memory.summary?.summary
+    ? memory.summary.summary.replace(/^Most recent thread:\s*/i, "")
+    : "No useful recent thread summary yet.";
+  const id = `follow-through-${crypto.createHash("sha256").update(queueItem.key).digest("hex").slice(0, 16)}`;
+
+  let resultTitle = "Prepare the next local move";
+  let result = queueItem.nextMove;
+  let nextVisibleStep = "Open the Autonomy panel and choose the next local item to advance.";
+  let evidence = [
+    `Queue: ${queueItem.title}`,
+    `Reason: ${queueItem.reason}`,
+  ];
+
+  if (queueItem.key.includes("recent-memory-next-move")) {
+    resultTitle = "Carry the thread into the next answer";
+    result = "Use the recent thread as live context, then answer the next user prompt from that context instead of re-quoting old messages or narrating the system.";
+    nextVisibleStep = "Ask Mira one normal question in the chat and check whether she uses the recent thread naturally.";
+    evidence = [
+      `Recent thread: ${memoryLine}`,
+      "Known product pressure: answer quality and useful follow-through matter more than status narration.",
+    ];
+  } else if (queueItem.key.includes("work-queue-follow-through")) {
+    resultTitle = "Advance the local work queue";
+    result = work.pendingTasks > 0
+      ? "A pending review task exists. Open it, decide approve/edit/reject, then produce the next local artifact."
+      : work.ready > 0
+        ? "A ready item exists. Prepare the next local check or packet without sending it."
+        : "No active local work is waiting. Create one useful local draft or plan from the current thread.";
+    nextVisibleStep = work.pendingTasks > 0
+      ? "Open the Review panel and handle the pending task."
+      : work.ready > 0
+        ? "Open Ready/Send prep and run the next local check."
+        : "Use the chat or Draft button to create the next local work item.";
+    evidence = [
+      `Work counts: ${work.drafts} drafts, ${work.pendingTasks} pending, ${work.ready} ready, ${work.notSent} not sent, ${work.confirmed} confirmed, ${work.checked} checked.`,
+    ];
+  } else if (queueItem.key.includes("agent-motion-watch")) {
+    resultTitle = "Keep the Windows team from parking";
+    result = "If a lane goes quiet after a green patch, prepare a short internal nudge with the product gap, the next file/API/UI proof needed, and no ceremony.";
+    nextVisibleStep = "Use this when Windows agents go quiet: send one exact nudge to the relevant pane, then keep moving.";
+    evidence = [
+      "Repeated failure mode: treating a green patch as a stopping point.",
+      "Better loop: next product gap, next proof, then action.",
+    ];
+  }
+
+  return {
+    protocol: "mira.autonomy_follow_through_item.v0",
+    id,
+    status: "local_step_prepared",
+    createdAt: now.toISOString(),
+    queueItemId: queueItem.id,
+    queueTitle: queueItem.title,
+    resultTitle,
+    result,
+    nextVisibleStep,
+    evidence,
+    localOnly: true,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+function createFollowThroughItems(rootPath: string, env: NodeJS.ProcessEnv): { created: number; reused: number } {
+  const dir = followThroughDir(rootPath);
+  if (!isInside(rootPath, dir)) {
+    throw Object.assign(new Error("Autonomy follow-through destination escaped Mira state root."), { code: "unsafe_autonomy_path" });
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  let created = 0;
+  let reused = 0;
+  for (const queueItem of readStoredQueue(rootPath)) {
+    const record = followThroughForQueueItem(queueItem, env);
+    const filePath = path.resolve(dir, `${record.id}.json`);
+    if (!isInside(rootPath, filePath)) {
+      throw Object.assign(new Error("Autonomy follow-through file escaped Mira state root."), { code: "unsafe_autonomy_path" });
+    }
+    if (fs.existsSync(filePath)) {
+      reused += 1;
+      continue;
+    }
+    const handle = fs.openSync(filePath, "wx");
+    try {
+      fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+    } finally {
+      fs.closeSync(handle);
+    }
+    created += 1;
+  }
+  return { created, reused };
+}
+
 export function getAutonomyStatus(env: NodeJS.ProcessEnv = process.env): AutonomyStatus {
   const stateRoot = getStateRootReadiness(env);
   const rootPath = stateRoot.ready && stateRoot.path ? path.resolve(stateRoot.path) : null;
   const queue = rootPath ? readQueue(rootPath) : [];
+  const followThrough = rootPath ? readFollowThrough(rootPath) : [];
   const brief = rootPath ? readLatestBrief(rootPath) : { available: false, title: "No autonomy brief yet", lines: [] };
   return {
     ok: true,
@@ -358,11 +535,35 @@ export function getAutonomyStatus(env: NodeJS.ProcessEnv = process.env): Autonom
     policy: defaultAutonomyPolicy(),
     queueCount: queue.length,
     queue,
+    followThroughCount: followThrough.length,
+    followThrough,
     brief,
     externalSend: false,
     crmMutation: false,
     telegramSend: false,
     runtimeExecutesExternalAction: false,
+  };
+}
+
+export function runAutonomyFollowThrough(env: NodeJS.ProcessEnv = process.env): AutonomyFollowThroughResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before autonomy follow-through can run."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const queue = readStoredQueue(rootPath);
+  if (queue.length < 1) {
+    runAutonomyTick(env);
+  }
+  const { created, reused } = createFollowThroughItems(rootPath, env);
+  const status = getAutonomyStatus(env);
+  return {
+    ...status,
+    protocol: "mira.autonomy_follow_through.v0",
+    createdCount: created,
+    reusedCount: reused,
   };
 }
 

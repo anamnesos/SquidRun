@@ -339,6 +339,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="sendCheckList"');
     expect(indexHtml).toContain('Pre-send checks');
     expect(indexHtml).toContain('id="autonomyTickButton"');
+    expect(indexHtml).toContain('id="autonomyFollowButton"');
     expect(indexHtml).toContain('id="autonomyList"');
     expect(indexHtml).toContain('Autonomy');
     expect(indexHtml).toContain('id="recentTurns"');
@@ -367,7 +368,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/work/send-checks'");
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
+    expect(appJs).toContain("fetch('/autonomy/follow-through'");
     expect(appJs).toContain('Run local tick');
+    expect(appJs).toContain('Follow through');
     expect(appJs).toContain('Copy text');
     expect(appJs).toContain('Prepare send packet');
     expect(appJs).toContain('Confirm manually');
@@ -378,6 +381,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('workSendConfirmationCount');
     expect(appJs).toContain('workSendCheckCount');
     expect(appJs).toContain('autonomyQueueCount');
+    expect(appJs).toContain('autonomyFollowThroughCount');
     expect(appJs).toContain('readyCount');
     expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/memory'");
@@ -421,7 +425,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(css).not.toContain('.side');
   });
 
-  test('runs a local autonomy tick with standing permissions and no external action', async () => {
+  test('runs local autonomy tick and follow-through with no external action', async () => {
     tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-autonomy-'));
     await startServer({ MIRA_STATE_ROOT: tempStateRoot });
 
@@ -439,6 +443,18 @@ describe('Mira runtime bridge manual-plan API', () => {
       body: '{}',
     });
     const duplicatePayload = await duplicateResponse.json();
+    const followResponse = await fetch(`${baseUrl}/autonomy/follow-through`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const followPayload = await followResponse.json();
+    const duplicateFollowResponse = await fetch(`${baseUrl}/autonomy/follow-through`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const duplicateFollowPayload = await duplicateFollowResponse.json();
     const statusResponse = await fetch(`${baseUrl}/autonomy/status`);
     const statusPayload = await statusResponse.json();
 
@@ -447,6 +463,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       ok: true,
       protocol: 'mira.autonomy_status.v0',
       queueCount: 0,
+      followThroughCount: 0,
       externalSend: false,
       crmMutation: false,
       telegramSend: false,
@@ -460,6 +477,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       reusedCount: 0,
       briefWritten: true,
       queueCount: 3,
+      followThroughCount: 0,
       externalSend: false,
       crmMutation: false,
       telegramSend: false,
@@ -490,8 +508,35 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(duplicatePayload.createdCount).toBe(0);
     expect(duplicatePayload.reusedCount).toBe(3);
     expect(duplicatePayload.queueCount).toBe(3);
+    expect(followResponse.status).toBe(200);
+    expect(followPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.autonomy_follow_through.v0',
+      createdCount: 3,
+      reusedCount: 0,
+      queueCount: 3,
+      followThroughCount: 3,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(followPayload.followThrough.map((item) => item.resultTitle)).toEqual(expect.arrayContaining([
+      'Carry the thread into the next answer',
+      'Advance the local work queue',
+      'Keep the Windows team from parking',
+    ]));
+    expect(followPayload.followThrough.every((item) => item.status === 'local_step_prepared')).toBe(true);
+    expect(followPayload.followThrough.every((item) => item.localOnly === true)).toBe(true);
+    expect(followPayload.followThrough.every((item) => item.nextVisibleStep && item.evidence.length > 0)).toBe(true);
+    expect(fs.readdirSync(path.join(tempStateRoot, 'autonomy', 'follow-through')).filter((file) => file.endsWith('.json'))).toHaveLength(3);
+    expect(duplicateFollowResponse.status).toBe(200);
+    expect(duplicateFollowPayload.createdCount).toBe(0);
+    expect(duplicateFollowPayload.reusedCount).toBe(3);
+    expect(duplicateFollowPayload.followThroughCount).toBe(3);
     expect(statusResponse.status).toBe(200);
     expect(statusPayload.queueCount).toBe(3);
+    expect(statusPayload.followThroughCount).toBe(3);
     expect(statusPayload.brief.available).toBe(true);
   });
 
