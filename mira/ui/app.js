@@ -9,6 +9,7 @@ const state = {
   workPendingCount: 0,
   workReviewedCount: 0,
   workReadyCount: 0,
+  workSendPacketCount: 0,
 };
 
 const elements = {
@@ -36,6 +37,7 @@ const elements = {
   taskList: document.getElementById('taskList'),
   reviewPanel: document.getElementById('reviewPanel'),
   readyList: document.getElementById('readyList'),
+  sendPacketList: document.getElementById('sendPacketList'),
   recentTurns: document.getElementById('recentTurns'),
 };
 
@@ -203,7 +205,7 @@ function appendPreviewLine(container, label, value) {
 }
 
 function renderWorkSummary() {
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent`);
 }
 
 function updateDraftList(payload) {
@@ -399,6 +401,41 @@ function updateReadyList(payload) {
     meta.textContent = `${String(item.status || 'ready_to_send').replace(/_/g, ' ')} · ${formatReadyStamp(item.createdAt)}`;
     card.append(title, meta);
     appendPreviewLine(card, 'Reply', item.finalReplyText);
+    const recipient = document.createElement('input');
+    recipient.className = 'review-note';
+    recipient.placeholder = 'recipient';
+    const channel = document.createElement('select');
+    channel.className = 'review-note';
+    [
+      ['email', 'Email'],
+      ['sms', 'SMS'],
+      ['manual', 'Manual'],
+      ['other', 'Other'],
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      channel.append(option);
+    });
+    const prepare = document.createElement('button');
+    prepare.type = 'button';
+    prepare.className = 'subtle-button';
+    prepare.textContent = 'Prepare send packet';
+    prepare.addEventListener('click', async () => {
+      prepare.disabled = true;
+      try {
+        await createSendPacket({
+          readyToken: item.token,
+          recipient: recipient.value,
+          channel: channel.value,
+        });
+        prepare.textContent = 'Prepared';
+        await refreshSendPackets();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        prepare.disabled = false;
+      }
+    });
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.className = 'subtle-button';
@@ -407,7 +444,46 @@ function updateReadyList(payload) {
       await copyTextToClipboard(item.finalReplyText || '');
       copy.textContent = 'Copied';
     });
-    card.append(copy);
+    card.append(recipient, channel, prepare, copy);
+    return card;
+  }));
+}
+
+function updateSendPacketList(payload) {
+  const packets = Array.isArray(payload?.packets) ? payload.packets : [];
+  state.workSendPacketCount = Number(payload?.packetCount || packets.length || 0);
+  renderWorkSummary();
+  if (packets.length === 0) {
+    setText(elements.sendPacketList, 'none yet');
+    return;
+  }
+  elements.sendPacketList.replaceChildren(...packets.slice(0, 5).map((packet) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = cleanPreviewText(packet.displayTitle) || 'Send packet';
+    const meta = document.createElement('span');
+    meta.textContent = `not sent · ${String(packet.channel || 'channel')} · ${formatReadyStamp(packet.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Recipient', packet.recipient);
+    appendPreviewLine(card, 'Reply', packet.finalReplyText);
+    const copyRecipient = document.createElement('button');
+    copyRecipient.type = 'button';
+    copyRecipient.className = 'subtle-button';
+    copyRecipient.textContent = 'Copy recipient';
+    copyRecipient.addEventListener('click', async () => {
+      await copyTextToClipboard(packet.recipient || '');
+      copyRecipient.textContent = 'Copied';
+    });
+    const copyReply = document.createElement('button');
+    copyReply.type = 'button';
+    copyReply.className = 'subtle-button';
+    copyReply.textContent = 'Copy text';
+    copyReply.addEventListener('click', async () => {
+      await copyTextToClipboard(packet.finalReplyText || '');
+      copyReply.textContent = 'Copied';
+    });
+    card.append(copyRecipient, copyReply);
     return card;
   }));
 }
@@ -567,6 +643,13 @@ async function refreshReadyPackages() {
   updateReadyList(payload);
 }
 
+async function refreshSendPackets() {
+  const response = await fetch('/work/send-packets');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateSendPacketList(payload);
+}
+
 async function refreshRecentTurns() {
   const response = await fetch('/conversation/memory');
   const payload = await response.json();
@@ -654,6 +737,23 @@ async function createReadyPackage(input) {
   return payload;
 }
 
+async function createSendPacket(input) {
+  const response = await fetch('/work/send-packets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      readyToken: input.readyToken,
+      recipient: input.recipient,
+      channel: input.channel,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Send packet creation failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -721,6 +821,7 @@ async function prime() {
     await refreshDrafts();
     await refreshTasks();
     await refreshReadyPackages();
+    await refreshSendPackets();
     await refreshRecentTurns();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -738,6 +839,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshDrafts();
     await refreshTasks();
     await refreshReadyPackages();
+    await refreshSendPackets();
     await refreshRecentTurns();
   }
 });

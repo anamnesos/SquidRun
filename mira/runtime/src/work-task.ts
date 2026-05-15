@@ -155,6 +155,43 @@ export type WorkReadyPackageListResult = {
   runtimeExecutesExternalAction: false;
 };
 
+export type WorkSendPacket = {
+  token: string;
+  status: "needs_final_send_confirmation";
+  createdAt: string;
+  readyToken: string;
+  recipient: string;
+  channel: string;
+  finalReplyText: string;
+  displayTitle: string;
+  notSent: true;
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkSendPacketResult = {
+  ok: true;
+  protocol: "mira.work_send_packet.v0";
+  packet: WorkSendPacket;
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkSendPacketListResult = {
+  ok: true;
+  protocol: "mira.work_send_packet_list.v0";
+  packetCount: number;
+  packets: WorkSendPacket[];
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
+  runtimeExecutesExternalAction: false;
+};
+
 type StoredWorkReadyPackage = {
   protocol: "mira.work_ready_package.v0";
   id: string;
@@ -167,6 +204,23 @@ type StoredWorkReadyPackage = {
   displayTitle: string;
   externalSend: false;
   crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+type StoredWorkSendPacket = {
+  protocol: "mira.work_send_packet.v0";
+  id: string;
+  status: "needs_final_send_confirmation";
+  createdAt: string;
+  readyToken: string;
+  recipient: string;
+  channel: string;
+  finalReplyText: string;
+  displayTitle: string;
+  notSent: true;
+  externalSend: false;
+  crmMutation: false;
+  telegramSend: false;
   runtimeExecutesExternalAction: false;
 };
 
@@ -269,6 +323,10 @@ function getReadyDir(rootPath: string): string {
   return path.resolve(rootPath, "work", "ready");
 }
 
+function getSendPacketsDir(rootPath: string): string {
+  return path.resolve(rootPath, "work", "send-packets");
+}
+
 function statusFromDecision(decision: WorkTaskReviewDecision): WorkTaskStatus {
   if (decision === "approve") return "approved";
   if (decision === "reject") return "rejected";
@@ -301,6 +359,10 @@ function buildWorkReviewActionToken(reviewId: string): string {
 
 function buildWorkReadyActionToken(id: string): string {
   return `ready-${crypto.createHash("sha256").update(`mira.work_ready_package.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
+function buildWorkSendPacketActionToken(id: string): string {
+  return `send-${crypto.createHash("sha256").update(`mira.work_send_packet.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
 function listReviewRecords(rootPath: string): WorkTaskReviewRecord[] {
@@ -347,6 +409,36 @@ function parseReadyPackageRecord(value: string): StoredWorkReadyPackage | null {
   }
 }
 
+function parseSendPacketRecord(value: string): StoredWorkSendPacket | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<StoredWorkSendPacket>;
+    if (parsed.protocol !== "mira.work_send_packet.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "needs_final_send_confirmation") return null;
+    if (typeof parsed.readyToken !== "string" || !parsed.readyToken) return null;
+    if (typeof parsed.finalReplyText !== "string" || !parsed.finalReplyText.trim()) return null;
+    if (parsed.notSent !== true) return null;
+    if (parsed.externalSend !== false || parsed.crmMutation !== false || parsed.telegramSend !== false || parsed.runtimeExecutesExternalAction !== false) return null;
+    return {
+      protocol: "mira.work_send_packet.v0",
+      id: parsed.id,
+      status: "needs_final_send_confirmation",
+      createdAt: String(parsed.createdAt || ""),
+      readyToken: parsed.readyToken,
+      recipient: String(parsed.recipient || ""),
+      channel: String(parsed.channel || ""),
+      finalReplyText: parsed.finalReplyText,
+      displayTitle: String(parsed.displayTitle || "Send packet"),
+      notSent: true,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function toPublicReadyPackage(record: StoredWorkReadyPackage): WorkReadyPackage {
   return {
     token: buildWorkReadyActionToken(record.id),
@@ -359,6 +451,24 @@ function toPublicReadyPackage(record: StoredWorkReadyPackage): WorkReadyPackage 
     displayTitle: record.displayTitle,
     externalSend: false,
     crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+function toPublicSendPacket(record: StoredWorkSendPacket): WorkSendPacket {
+  return {
+    token: buildWorkSendPacketActionToken(record.id),
+    status: "needs_final_send_confirmation",
+    createdAt: record.createdAt,
+    readyToken: record.readyToken,
+    recipient: record.recipient,
+    channel: record.channel,
+    finalReplyText: record.finalReplyText,
+    displayTitle: record.displayTitle,
+    notSent: true,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
     runtimeExecutesExternalAction: false,
   };
 }
@@ -377,6 +487,20 @@ function listReadyPackageRecords(rootPath: string): StoredWorkReadyPackage[] {
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 }
 
+function listSendPacketRecords(rootPath: string): StoredWorkSendPacket[] {
+  const packetsDir = getSendPacketsDir(rootPath);
+  if (!isInside(rootPath, packetsDir) || !fs.existsSync(packetsDir)) return [];
+  return fs.readdirSync(packetsDir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(packetsDir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseSendPacketRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is StoredWorkSendPacket => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
 function dedupeReadyPackageRecords(records: StoredWorkReadyPackage[]): StoredWorkReadyPackage[] {
   const seen = new Set<string>();
   const deduped: StoredWorkReadyPackage[] = [];
@@ -387,6 +511,37 @@ function dedupeReadyPackageRecords(records: StoredWorkReadyPackage[]): StoredWor
     deduped.push(record);
   }
   return deduped;
+}
+
+function dedupeSendPacketRecords(records: StoredWorkSendPacket[]): StoredWorkSendPacket[] {
+  const seen = new Set<string>();
+  const deduped: StoredWorkSendPacket[] = [];
+  for (const record of records) {
+    if (seen.has(record.readyToken)) continue;
+    seen.add(record.readyToken);
+    deduped.push(record);
+  }
+  return deduped;
+}
+
+function normalizePacketField(value: unknown, label: string): string {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    throw Object.assign(new Error(`${label} is required for a send packet.`), { code: "missing_send_packet_field" });
+  }
+  return normalized.slice(0, 180);
+}
+
+function resolveReadyPackageRecord(input: { readyToken?: string }, rootPath: string): StoredWorkReadyPackage {
+  const readyToken = String(input.readyToken || "").trim();
+  if (!readyToken) {
+    throw Object.assign(new Error("readyToken is required."), { code: "missing_ready_package" });
+  }
+  const record = listReadyPackageRecords(rootPath).find((candidate) => buildWorkReadyActionToken(candidate.id) === readyToken);
+  if (!record) {
+    throw Object.assign(new Error("Ready package was not found."), { code: "ready_package_not_found" });
+  }
+  return record;
 }
 
 function resolveReview(input: { taskToken?: string; taskId?: string; reviewToken?: string }, rootPath: string): WorkTaskReviewRecord {
@@ -956,21 +1111,143 @@ export function getWorkReadyPackage(input: { readyToken?: string }, env: NodeJS.
       code: "state_root_not_ready",
     });
   }
-  const readyToken = String(input.readyToken || "").trim();
-  if (!readyToken) {
-    throw Object.assign(new Error("readyToken is required."), { code: "missing_ready_package" });
-  }
   const rootPath = path.resolve(stateRoot.path);
-  const record = listReadyPackageRecords(rootPath).find((candidate) => buildWorkReadyActionToken(candidate.id) === readyToken);
-  if (!record) {
-    throw Object.assign(new Error("Ready package was not found."), { code: "ready_package_not_found" });
-  }
+  const record = resolveReadyPackageRecord(input, rootPath);
   return {
     ok: true,
     protocol: "mira.work_ready_package.v0",
     ready: toPublicReadyPackage(record),
     externalSend: false,
     crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function createWorkSendPacket(input: {
+  readyToken?: string;
+  recipient?: unknown;
+  channel?: unknown;
+}, env: NodeJS.ProcessEnv = process.env): WorkSendPacketResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before send packets can be written."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const ready = resolveReadyPackageRecord(input, rootPath);
+  const readyToken = buildWorkReadyActionToken(ready.id);
+  const existingPacket = listSendPacketRecords(rootPath).find((record) => record.readyToken === readyToken);
+  if (existingPacket) {
+    return {
+      ok: true,
+      protocol: "mira.work_send_packet.v0",
+      packet: toPublicSendPacket(existingPacket),
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    };
+  }
+
+  const packetsDir = getSendPacketsDir(rootPath);
+  if (!isInside(rootPath, packetsDir)) {
+    throw Object.assign(new Error("Send packet destination escaped Mira state root."), { code: "unsafe_work_send_packet_path" });
+  }
+  const createdAt = new Date().toISOString();
+  const id = `work-send-${createdAt.replace(/[:.]/g, "-")}-${crypto.randomUUID()}`;
+  const absolutePath = path.resolve(packetsDir, `${id}-${slugify(ready.id)}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Send packet file escaped Mira state root."), { code: "unsafe_work_send_packet_path" });
+  }
+
+  const record: StoredWorkSendPacket = {
+    protocol: "mira.work_send_packet.v0",
+    id,
+    status: "needs_final_send_confirmation",
+    createdAt,
+    readyToken,
+    recipient: normalizePacketField(input.recipient, "recipient"),
+    channel: normalizePacketField(input.channel, "channel"),
+    finalReplyText: ready.finalReplyText,
+    displayTitle: "Send packet",
+    notSent: true,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+
+  fs.mkdirSync(packetsDir, { recursive: true });
+  const handle = fs.openSync(absolutePath, "wx");
+  try {
+    fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  } finally {
+    fs.closeSync(handle);
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.work_send_packet.v0",
+    packet: toPublicSendPacket(record),
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function listWorkSendPackets(env: NodeJS.ProcessEnv = process.env): WorkSendPacketListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.work_send_packet_list.v0",
+      packetCount: 0,
+      packets: [],
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    };
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const packets = dedupeSendPacketRecords(listSendPacketRecords(rootPath)).map(toPublicSendPacket);
+  return {
+    ok: true,
+    protocol: "mira.work_send_packet_list.v0",
+    packetCount: packets.length,
+    packets,
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function getWorkSendPacket(input: { packetToken?: string }, env: NodeJS.ProcessEnv = process.env): WorkSendPacketResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before send packets can be read."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const packetToken = String(input.packetToken || "").trim();
+  if (!packetToken) {
+    throw Object.assign(new Error("packetToken is required."), { code: "missing_send_packet" });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const record = listSendPacketRecords(rootPath).find((candidate) => buildWorkSendPacketActionToken(candidate.id) === packetToken);
+  if (!record) {
+    throw Object.assign(new Error("Send packet was not found."), { code: "send_packet_not_found" });
+  }
+  return {
+    ok: true,
+    protocol: "mira.work_send_packet.v0",
+    packet: toPublicSendPacket(record),
+    externalSend: false,
+    crmMutation: false,
+    telegramSend: false,
     runtimeExecutesExternalAction: false,
   };
 }

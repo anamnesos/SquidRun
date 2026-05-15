@@ -332,6 +332,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="reviewPanel"');
     expect(indexHtml).toContain('id="readyList"');
     expect(indexHtml).toContain('Ready');
+    expect(indexHtml).toContain('id="sendPacketList"');
+    expect(indexHtml).toContain('Send prep');
     expect(indexHtml).toContain('id="recentTurns"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
@@ -353,7 +355,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('sourceDraftToken');
     expect(appJs).toContain("fetch('/work/task-review'");
     expect(appJs).toContain("fetch('/work/ready'");
+    expect(appJs).toContain("fetch('/work/send-packets'");
     expect(appJs).toContain('Copy text');
+    expect(appJs).toContain('Prepare send packet');
+    expect(appJs).toContain('not sent');
     expect(appJs).toContain('readyCount');
     expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/memory'");
@@ -685,6 +690,73 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(readyGetResponse.status).toBe(200);
     expect(readyGetPayload.ready).toEqual(readyPayload.ready);
 
+    const createPacketResponse = await fetch(`${baseUrl}/work/send-packets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        readyToken: readyPayload.ready.token,
+        recipient: 'ap@example.test',
+        channel: 'email',
+      }),
+    });
+    const packetPayload = await createPacketResponse.json();
+    expect(createPacketResponse.status).toBe(200);
+    expect(packetPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_packet.v0',
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(packetPayload.packet).toEqual(expect.objectContaining({
+      token: expect.stringMatching(/^send-/),
+      status: 'needs_final_send_confirmation',
+      readyToken: readyPayload.ready.token,
+      recipient: 'ap@example.test',
+      channel: 'email',
+      finalReplyText: readyPayload.ready.finalReplyText,
+      notSent: true,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(JSON.stringify(packetPayload.packet)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"|sentAt|delivery/);
+
+    const duplicatePacketResponse = await fetch(`${baseUrl}/work/send-packets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        readyToken: readyPayload.ready.token,
+        recipient: 'different@example.test',
+        channel: 'sms',
+      }),
+    });
+    const duplicatePacketPayload = await duplicatePacketResponse.json();
+    expect(duplicatePacketResponse.status).toBe(200);
+    expect(duplicatePacketPayload.packet).toEqual(packetPayload.packet);
+
+    const packetListResponse = await fetch(`${baseUrl}/work/send-packets`);
+    const packetListPayload = await packetListResponse.json();
+    expect(packetListResponse.status).toBe(200);
+    expect(packetListPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_send_packet_list.v0',
+      packetCount: 1,
+      externalSend: false,
+      crmMutation: false,
+      telegramSend: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(packetListPayload.packets[0]).toEqual(packetPayload.packet);
+    expect(JSON.stringify(packetListPayload)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"|sentAt|delivery/);
+
+    const packetGetResponse = await fetch(`${baseUrl}/work/send-packets?packetToken=${encodeURIComponent(packetPayload.packet.token)}`);
+    const packetGetPayload = await packetGetResponse.json();
+    expect(packetGetResponse.status).toBe(200);
+    expect(packetGetPayload.packet).toEqual(packetPayload.packet);
+
     const reviewedListResponse = await fetch(`${baseUrl}/work/tasks`);
     const reviewedListPayload = await reviewedListResponse.json();
     expect(reviewedListPayload).toEqual(expect.objectContaining({
@@ -758,6 +830,39 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(rejectedReadyPayload.error).toEqual(expect.objectContaining({
       code: 'review_not_ready_to_send',
     }));
+  });
+
+  test('refuses send packets without a ready package or recipient/channel fields', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-send-refuse-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const missingReadyResponse = await fetch(`${baseUrl}/work/send-packets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        readyToken: 'ready-missing',
+        recipient: 'ap@example.test',
+        channel: 'email',
+      }),
+    });
+    const missingReadyPayload = await missingReadyResponse.json();
+    expect(missingReadyResponse.status).toBe(400);
+    expect(missingReadyPayload.error).toEqual(expect.objectContaining({
+      code: 'ready_package_not_found',
+    }));
+
+    const missingFieldResponse = await fetch(`${baseUrl}/work/send-packets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        readyToken: '',
+        recipient: '',
+        channel: '',
+      }),
+    });
+    const missingFieldPayload = await missingFieldResponse.json();
+    expect(missingFieldResponse.status).toBe(400);
+    expect(missingFieldPayload.error.code).toMatch(/missing_ready_package|missing_send_packet_field/);
   });
 
   test('refuses task conversion when the source draft is missing or outside work drafts', async () => {
