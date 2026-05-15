@@ -88,6 +88,7 @@ export type WorkTaskReviewDetailResult = {
     editableDraft: string;
   } | null;
   review: WorkTaskReviewRecord | null;
+  ready: WorkReadyPackageResult | null;
   externalSend: false;
   crmMutation: false;
   runtimeExecutesExternalAction: false;
@@ -96,6 +97,7 @@ export type WorkTaskReviewDetailResult = {
 export type WorkTaskReviewRecord = {
   protocol: "mira.work_task_review.v0";
   reviewId: string;
+  reviewToken: string;
   taskId: string;
   taskToken: string;
   decision: WorkTaskReviewDecision;
@@ -115,6 +117,54 @@ export type WorkTaskReviewResult = {
   relativePath: string;
   absolutePath: string;
   review: WorkTaskReviewRecord;
+  externalSend: false;
+  crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkReadyPackage = {
+  token: string;
+  status: "ready_to_send";
+  createdAt: string;
+  taskToken: string;
+  reviewToken: string;
+  reviewDecision: Extract<WorkTaskReviewDecision, "approve" | "edit">;
+  finalReplyText: string;
+  displayTitle: string;
+  externalSend: false;
+  crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkReadyPackageResult = {
+  ok: true;
+  protocol: "mira.work_ready_package.v0";
+  ready: WorkReadyPackage;
+  externalSend: false;
+  crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+export type WorkReadyPackageListResult = {
+  ok: true;
+  protocol: "mira.work_ready_package_list.v0";
+  readyCount: number;
+  ready: WorkReadyPackage[];
+  externalSend: false;
+  crmMutation: false;
+  runtimeExecutesExternalAction: false;
+};
+
+type StoredWorkReadyPackage = {
+  protocol: "mira.work_ready_package.v0";
+  id: string;
+  status: "ready_to_send";
+  createdAt: string;
+  taskToken: string;
+  reviewToken: string;
+  reviewDecision: Extract<WorkTaskReviewDecision, "approve" | "edit">;
+  finalReplyText: string;
+  displayTitle: string;
   externalSend: false;
   crmMutation: false;
   runtimeExecutesExternalAction: false;
@@ -215,6 +265,10 @@ function getReviewsDir(rootPath: string): string {
   return path.resolve(rootPath, "work", "reviews");
 }
 
+function getReadyDir(rootPath: string): string {
+  return path.resolve(rootPath, "work", "ready");
+}
+
 function statusFromDecision(decision: WorkTaskReviewDecision): WorkTaskStatus {
   if (decision === "approve") return "approved";
   if (decision === "reject") return "rejected";
@@ -241,6 +295,14 @@ function parseReviewRecord(value: string): WorkTaskReviewRecord | null {
   }
 }
 
+function buildWorkReviewActionToken(reviewId: string): string {
+  return `review-${crypto.createHash("sha256").update(`mira.work_task_review.v0:${reviewId}`).digest("base64url").slice(0, 18)}`;
+}
+
+function buildWorkReadyActionToken(id: string): string {
+  return `ready-${crypto.createHash("sha256").update(`mira.work_ready_package.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
 function listReviewRecords(rootPath: string): WorkTaskReviewRecord[] {
   const reviewsDir = getReviewsDir(rootPath);
   if (!isInside(rootPath, reviewsDir) || !fs.existsSync(reviewsDir)) return [];
@@ -253,6 +315,93 @@ function listReviewRecords(rootPath: string): WorkTaskReviewRecord[] {
     })
     .filter((record): record is WorkTaskReviewRecord => Boolean(record))
     .sort((left, right) => String(right.reviewedAt || "").localeCompare(String(left.reviewedAt || "")));
+}
+
+function parseReadyPackageRecord(value: string): StoredWorkReadyPackage | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<WorkReadyPackage & {
+      protocol: string;
+      id: string;
+      status: string;
+    }>;
+    if (parsed.protocol !== "mira.work_ready_package.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "ready_to_send") return null;
+    if (typeof parsed.finalReplyText !== "string" || !parsed.finalReplyText.trim()) return null;
+    if (parsed.externalSend !== false || parsed.crmMutation !== false || parsed.runtimeExecutesExternalAction !== false) return null;
+    return {
+      id: parsed.id,
+      protocol: "mira.work_ready_package.v0",
+      status: "ready_to_send",
+      createdAt: String(parsed.createdAt || ""),
+      taskToken: String(parsed.taskToken || ""),
+    reviewToken: String(parsed.reviewToken || ""),
+      reviewDecision: parsed.reviewDecision === "edit" ? "edit" : "approve",
+      finalReplyText: parsed.finalReplyText,
+      displayTitle: String(parsed.displayTitle || "Ready reply"),
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function toPublicReadyPackage(record: StoredWorkReadyPackage): WorkReadyPackage {
+  return {
+    token: buildWorkReadyActionToken(record.id),
+    status: "ready_to_send",
+    createdAt: record.createdAt,
+    taskToken: record.taskToken,
+    reviewToken: record.reviewToken,
+    reviewDecision: record.reviewDecision,
+    finalReplyText: record.finalReplyText,
+    displayTitle: record.displayTitle,
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+function listReadyPackageRecords(rootPath: string): StoredWorkReadyPackage[] {
+  const readyDir = getReadyDir(rootPath);
+  if (!isInside(rootPath, readyDir) || !fs.existsSync(readyDir)) return [];
+  return fs.readdirSync(readyDir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(readyDir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseReadyPackageRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is StoredWorkReadyPackage => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function dedupeReadyPackageRecords(records: StoredWorkReadyPackage[]): StoredWorkReadyPackage[] {
+  const seen = new Set<string>();
+  const deduped: StoredWorkReadyPackage[] = [];
+  for (const record of records) {
+    const key = record.reviewToken || `${record.taskToken}:${record.reviewDecision}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(record);
+  }
+  return deduped;
+}
+
+function resolveReview(input: { taskToken?: string; taskId?: string; reviewToken?: string }, rootPath: string): WorkTaskReviewRecord {
+  const reviewToken = String(input.reviewToken || "").trim();
+  const task = input.taskToken || input.taskId ? resolveTask(input, rootPath) : null;
+  const records = listReviewRecords(rootPath);
+  const record = records.find((candidate) => {
+    if (reviewToken && buildWorkReviewActionToken(candidate.reviewId) !== reviewToken) return false;
+    if (task && candidate.taskId !== task.id) return false;
+    return true;
+  });
+  if (!record) {
+    throw Object.assign(new Error("Reviewed work task was not found."), { code: "work_review_not_found" });
+  }
+  return record;
 }
 
 function latestReviewByTask(rootPath: string): Map<string, WorkTaskReviewRecord> {
@@ -593,6 +742,8 @@ export function getWorkTaskReviewDetail(input: { taskToken?: string; taskId?: st
   const display = buildTaskDisplay(task.markdown);
   const review = latestReviewByTask(rootPath).get(task.id) || null;
   const linkedDraft = resolveLinkedDraftFromTask(task, rootPath);
+  const taskToken = buildWorkTaskActionToken(task.id);
+  const readyRecord = listReadyPackageRecords(rootPath).find((record) => record.taskToken === taskToken) || null;
   return {
     ok: true,
     protocol: "mira.work_task_review_detail.v0",
@@ -613,6 +764,14 @@ export function getWorkTaskReviewDetail(input: { taskToken?: string; taskId?: st
       editableDraft: linkedDraft.editableDraft,
     } : null,
     review,
+    ready: readyRecord ? {
+      ok: true,
+      protocol: "mira.work_ready_package.v0",
+      ready: toPublicReadyPackage(readyRecord),
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    } : null,
     externalSend: false,
     crmMutation: false,
     runtimeExecutesExternalAction: false,
@@ -652,6 +811,7 @@ export function createWorkTaskReview(input: {
   const record: WorkTaskReviewRecord = {
     protocol: "mira.work_task_review.v0",
     reviewId,
+    reviewToken: buildWorkReviewActionToken(reviewId),
     taskId: task.id,
     taskToken: buildWorkTaskActionToken(task.id),
     decision,
@@ -677,6 +837,138 @@ export function createWorkTaskReview(input: {
     relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
     absolutePath,
     review: record,
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function createWorkReadyPackage(input: {
+  taskToken?: string;
+  taskId?: string;
+  reviewToken?: string;
+}, env: NodeJS.ProcessEnv = process.env): WorkReadyPackageResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before ready packages can be written."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const review = resolveReview(input, rootPath);
+  if (review.status !== "approved" && review.status !== "edited") {
+    throw Object.assign(new Error("Only approved or edited reviews can become ready packages."), {
+      code: "review_not_ready_to_send",
+    });
+  }
+  const task = resolveTask({ taskId: review.taskId }, rootPath);
+  const linkedDraft = resolveLinkedDraftFromTask(task, rootPath);
+  const finalReplyText = review.editedDraftText || linkedDraft?.editableDraft || "";
+  if (!finalReplyText.trim()) {
+    throw Object.assign(new Error("Ready package final reply text cannot be empty."), { code: "empty_ready_reply" });
+  }
+  const reviewToken = buildWorkReviewActionToken(review.reviewId);
+  const existingReady = listReadyPackageRecords(rootPath).find((record) => record.reviewToken === reviewToken);
+  if (existingReady) {
+    return {
+      ok: true,
+      protocol: "mira.work_ready_package.v0",
+      ready: toPublicReadyPackage(existingReady),
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    };
+  }
+
+  const readyDir = getReadyDir(rootPath);
+  if (!isInside(rootPath, readyDir)) {
+    throw Object.assign(new Error("Ready package destination escaped Mira state root."), { code: "unsafe_work_ready_path" });
+  }
+  const createdAt = new Date().toISOString();
+  const id = `work-ready-${createdAt.replace(/[:.]/g, "-")}-${crypto.randomUUID()}`;
+  const absolutePath = path.resolve(readyDir, `${id}-${slugify(review.taskId)}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Ready package file escaped Mira state root."), { code: "unsafe_work_ready_path" });
+  }
+  const record: StoredWorkReadyPackage = {
+    protocol: "mira.work_ready_package.v0",
+    id,
+    status: "ready_to_send",
+    createdAt,
+    taskToken: buildWorkTaskActionToken(review.taskId),
+    reviewToken,
+    reviewDecision: review.decision === "edit" ? "edit" : "approve",
+    finalReplyText: finalReplyText.trim(),
+    displayTitle: "Ready reply",
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+
+  fs.mkdirSync(readyDir, { recursive: true });
+  const handle = fs.openSync(absolutePath, "wx");
+  try {
+    fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  } finally {
+    fs.closeSync(handle);
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.work_ready_package.v0",
+    ready: toPublicReadyPackage(record),
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function listWorkReadyPackages(env: NodeJS.ProcessEnv = process.env): WorkReadyPackageListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.work_ready_package_list.v0",
+      readyCount: 0,
+      ready: [],
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    };
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const ready = dedupeReadyPackageRecords(listReadyPackageRecords(rootPath)).map(toPublicReadyPackage);
+  return {
+    ok: true,
+    protocol: "mira.work_ready_package_list.v0",
+    readyCount: ready.length,
+    ready,
+    externalSend: false,
+    crmMutation: false,
+    runtimeExecutesExternalAction: false,
+  };
+}
+
+export function getWorkReadyPackage(input: { readyToken?: string }, env: NodeJS.ProcessEnv = process.env): WorkReadyPackageResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before ready packages can be read."), {
+      code: "state_root_not_ready",
+    });
+  }
+  const readyToken = String(input.readyToken || "").trim();
+  if (!readyToken) {
+    throw Object.assign(new Error("readyToken is required."), { code: "missing_ready_package" });
+  }
+  const rootPath = path.resolve(stateRoot.path);
+  const record = listReadyPackageRecords(rootPath).find((candidate) => buildWorkReadyActionToken(candidate.id) === readyToken);
+  if (!record) {
+    throw Object.assign(new Error("Ready package was not found."), { code: "ready_package_not_found" });
+  }
+  return {
+    ok: true,
+    protocol: "mira.work_ready_package.v0",
+    ready: toPublicReadyPackage(record),
     externalSend: false,
     crmMutation: false,
     runtimeExecutesExternalAction: false,

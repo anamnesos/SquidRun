@@ -330,6 +330,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="draftList"');
     expect(indexHtml).toContain('id="taskList"');
     expect(indexHtml).toContain('id="reviewPanel"');
+    expect(indexHtml).toContain('id="readyList"');
+    expect(indexHtml).toContain('Ready');
     expect(indexHtml).toContain('id="recentTurns"');
     expect(indexHtml).toContain('Mira.</p>');
     expect(indexHtml).not.toContain('Mira Runtime');
@@ -350,6 +352,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain('taskPreview');
     expect(appJs).toContain('sourceDraftToken');
     expect(appJs).toContain("fetch('/work/task-review'");
+    expect(appJs).toContain("fetch('/work/ready'");
+    expect(appJs).toContain('Copy text');
+    expect(appJs).toContain('readyCount');
     expect(appJs).toContain('submitTaskReview');
     expect(appJs).toContain("fetch('/conversation/memory'");
     expect(appJs).toContain('formatRecentMemoryForDisplay');
@@ -608,11 +613,77 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(reviewPayload.review).toEqual(expect.objectContaining({
       protocol: 'mira.work_task_review.v0',
       taskToken: listPayload.tasks[0].actionToken,
+      reviewToken: expect.stringMatching(/^review-/),
       decision: 'edit',
       status: 'edited',
       editedDraftText: 'Thanks, I can resend the invoice after I verify the attachment and amount.',
     }));
     expect(fs.existsSync(reviewPayload.absolutePath)).toBe(true);
+
+    const createReadyResponse = await fetch(`${baseUrl}/work/ready`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskToken: listPayload.tasks[0].actionToken,
+        reviewToken: reviewPayload.review.reviewToken,
+      }),
+    });
+    const readyPayload = await createReadyResponse.json();
+    expect(createReadyResponse.status).toBe(200);
+    expect(readyPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_ready_package.v0',
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(readyPayload.ready).toEqual(expect.objectContaining({
+      token: expect.stringMatching(/^ready-/),
+      status: 'ready_to_send',
+      taskToken: listPayload.tasks[0].actionToken,
+      reviewToken: reviewPayload.review.reviewToken,
+      reviewDecision: 'edit',
+      finalReplyText: 'Thanks, I can resend the invoice after I verify the attachment and amount.',
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(JSON.stringify(readyPayload.ready)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"/);
+
+    const duplicateReadyResponse = await fetch(`${baseUrl}/work/ready`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskToken: listPayload.tasks[0].actionToken,
+        reviewToken: reviewPayload.review.reviewToken,
+      }),
+    });
+    const duplicateReadyPayload = await duplicateReadyResponse.json();
+    expect(duplicateReadyResponse.status).toBe(200);
+    expect(duplicateReadyPayload.ready).toEqual(readyPayload.ready);
+
+    const readyListResponse = await fetch(`${baseUrl}/work/ready`);
+    const readyListPayload = await readyListResponse.json();
+    expect(readyListResponse.status).toBe(200);
+    expect(readyListPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.work_ready_package_list.v0',
+      readyCount: 1,
+      externalSend: false,
+      crmMutation: false,
+      runtimeExecutesExternalAction: false,
+    }));
+    expect(readyListPayload.ready[0]).toEqual(expect.objectContaining({
+      token: readyPayload.ready.token,
+      finalReplyText: readyPayload.ready.finalReplyText,
+      status: 'ready_to_send',
+    }));
+    expect(JSON.stringify(readyListPayload)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"/);
+
+    const readyGetResponse = await fetch(`${baseUrl}/work/ready?readyToken=${encodeURIComponent(readyPayload.ready.token)}`);
+    const readyGetPayload = await readyGetResponse.json();
+    expect(readyGetResponse.status).toBe(200);
+    expect(readyGetPayload.ready).toEqual(readyPayload.ready);
 
     const reviewedListResponse = await fetch(`${baseUrl}/work/tasks`);
     const reviewedListPayload = await reviewedListResponse.json();
@@ -625,6 +696,67 @@ describe('Mira runtime bridge manual-plan API', () => {
       actionToken: listPayload.tasks[0].actionToken,
       status: 'edited',
       reviewedAt: expect.any(String),
+    }));
+
+    const reviewedDetailResponse = await fetch(`${baseUrl}/work/task-review?taskToken=${encodeURIComponent(listPayload.tasks[0].actionToken)}`);
+    const reviewedDetailPayload = await reviewedDetailResponse.json();
+    expect(reviewedDetailResponse.status).toBe(200);
+    expect(reviewedDetailPayload.ready.ready).toEqual(readyPayload.ready);
+    expect(JSON.stringify(reviewedDetailPayload.ready)).not.toMatch(/absolutePath|relativePath|sourceDraft|sha256|schema:|---|frontmatter|id"/);
+  });
+
+  test('refuses ready packages for pending or rejected reviews', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-work-ready-refuse-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const createDraftResponse = await fetch(`${baseUrl}/work/drafts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'customer_reply',
+        text: 'Reply to the customer saying the appointment time needs confirmation.',
+      }),
+    });
+    const draft = await createDraftResponse.json();
+    const createTaskResponse = await fetch(`${baseUrl}/work/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sourceDraftToken: draft.actionToken || undefined, sourceDraftId: draft.id }),
+    });
+    const task = await createTaskResponse.json();
+    const pendingReadyResponse = await fetch(`${baseUrl}/work/ready`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskToken: task.id ? undefined : null, taskId: task.id }),
+    });
+    const pendingReadyPayload = await pendingReadyResponse.json();
+    expect(pendingReadyResponse.status).toBe(400);
+    expect(pendingReadyPayload.error).toEqual(expect.objectContaining({
+      code: 'work_review_not_found',
+    }));
+
+    const rejectResponse = await fetch(`${baseUrl}/work/task-review`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskId: task.id,
+        decision: 'reject',
+        note: 'not ready',
+      }),
+    });
+    const rejectPayload = await rejectResponse.json();
+    const rejectedReadyResponse = await fetch(`${baseUrl}/work/ready`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskId: task.id,
+        reviewToken: rejectPayload.review.reviewToken,
+      }),
+    });
+    const rejectedReadyPayload = await rejectedReadyResponse.json();
+    expect(rejectedReadyResponse.status).toBe(400);
+    expect(rejectedReadyPayload.error).toEqual(expect.objectContaining({
+      code: 'review_not_ready_to_send',
     }));
   });
 

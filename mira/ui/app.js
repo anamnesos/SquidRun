@@ -8,6 +8,7 @@ const state = {
   workDraftCount: 0,
   workPendingCount: 0,
   workReviewedCount: 0,
+  workReadyCount: 0,
 };
 
 const elements = {
@@ -34,6 +35,7 @@ const elements = {
   draftList: document.getElementById('draftList'),
   taskList: document.getElementById('taskList'),
   reviewPanel: document.getElementById('reviewPanel'),
+  readyList: document.getElementById('readyList'),
   recentTurns: document.getElementById('recentTurns'),
 };
 
@@ -167,6 +169,13 @@ function formatReviewStamp(value) {
   return `pending review · ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
+function formatReadyStamp(value) {
+  if (!value) return 'ready';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'ready';
+  return `ready · ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 function cleanPreviewText(value) {
   const frontMatterKey = /^(schema|id|kind|status|created_at|source|session_id|message_id|source_draft_id|source_draft_relative_path|source_draft_sha256|external_send|crm_mutation|runtime_executes_external_action|review_required):\s*/i;
   return String(value || '')
@@ -194,7 +203,7 @@ function appendPreviewLine(container, label, value) {
 }
 
 function renderWorkSummary() {
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready`);
 }
 
 function updateDraftList(payload) {
@@ -325,6 +334,14 @@ function renderReviewPanel(detail) {
           note: note.value,
         });
         appendMessage('mira', `Review saved: ${result.review.status}.`);
+        if (result.review.status === 'approved' || result.review.status === 'edited') {
+          await createReadyPackage({
+            taskToken: task.actionToken,
+            reviewToken: result.review.reviewToken,
+          });
+          appendMessage('mira', 'Ready reply saved locally.');
+          await refreshReadyPackages();
+        }
         const refreshed = await fetchTaskReview(task.actionToken);
         renderReviewPanel(refreshed);
         await refreshTasks();
@@ -338,6 +355,61 @@ function renderReviewPanel(detail) {
   });
   actions.append(...buttons);
   elements.reviewPanel.append(heading, request, label, textarea, note, actions);
+  if (detail.ready?.ready) {
+    renderReadyPackageInline(detail.ready.ready);
+  }
+}
+
+function renderReadyPackageInline(ready) {
+  const readyBlock = document.createElement('div');
+  readyBlock.className = 'ready-inline';
+  const label = document.createElement('strong');
+  label.textContent = 'Ready reply';
+  const reply = document.createElement('textarea');
+  reply.className = 'review-editor';
+  reply.rows = 6;
+  reply.readOnly = true;
+  reply.value = ready.finalReplyText || '';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'subtle-button';
+  copy.textContent = 'Copy text';
+  copy.addEventListener('click', async () => {
+    await copyTextToClipboard(ready.finalReplyText || '');
+    copy.textContent = 'Copied';
+  });
+  readyBlock.append(label, reply, copy);
+  elements.reviewPanel.append(readyBlock);
+}
+
+function updateReadyList(payload) {
+  const ready = Array.isArray(payload?.ready) ? payload.ready : [];
+  state.workReadyCount = Number(payload?.readyCount || ready.length || 0);
+  renderWorkSummary();
+  if (ready.length === 0) {
+    setText(elements.readyList, 'none yet');
+    return;
+  }
+  elements.readyList.replaceChildren(...ready.slice(0, 5).map((item) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item';
+    const title = document.createElement('strong');
+    title.textContent = cleanPreviewText(item.displayTitle) || 'Ready reply';
+    const meta = document.createElement('span');
+    meta.textContent = `${String(item.status || 'ready_to_send').replace(/_/g, ' ')} · ${formatReadyStamp(item.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Reply', item.finalReplyText);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'subtle-button';
+    copy.textContent = 'Copy text';
+    copy.addEventListener('click', async () => {
+      await copyTextToClipboard(item.finalReplyText || '');
+      copy.textContent = 'Copied';
+    });
+    card.append(copy);
+    return card;
+  }));
 }
 
 function updateRecentTurns(payload) {
@@ -488,6 +560,13 @@ async function refreshTasks() {
   }
 }
 
+async function refreshReadyPackages() {
+  const response = await fetch('/work/ready');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateReadyList(payload);
+}
+
 async function refreshRecentTurns() {
   const response = await fetch('/conversation/memory');
   const payload = await response.json();
@@ -559,6 +638,38 @@ async function submitTaskReview(input) {
   return payload;
 }
 
+async function createReadyPackage(input) {
+  const response = await fetch('/work/ready', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      taskToken: input.taskToken,
+      reviewToken: input.reviewToken,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Ready package creation failed.');
+  }
+  return payload;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'readonly');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
 async function refreshModelStatus() {
   try {
     const choicesResponse = await fetch('/model/providers');
@@ -609,6 +720,7 @@ async function prime() {
     await refreshCorrections();
     await refreshDrafts();
     await refreshTasks();
+    await refreshReadyPackages();
     await refreshRecentTurns();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -625,6 +737,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshCorrections();
     await refreshDrafts();
     await refreshTasks();
+    await refreshReadyPackages();
     await refreshRecentTurns();
   }
 });

@@ -10,7 +10,15 @@ import { readRuntimeTurnMemorySummary, refreshRuntimeTurnMemorySummary } from ".
 import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
 import { createWorkDraft, listWorkDrafts } from "./work-draft.js";
-import { createWorkTaskFromDraft, createWorkTaskReview, getWorkTaskReviewDetail, listWorkTasks } from "./work-task.js";
+import {
+  createWorkReadyPackage,
+  createWorkTaskFromDraft,
+  createWorkTaskReview,
+  getWorkReadyPackage,
+  getWorkTaskReviewDetail,
+  listWorkReadyPackages,
+  listWorkTasks,
+} from "./work-task.js";
 
 const startedAt = Date.now();
 const port = Number.parseInt(process.env.MIRA_RUNTIME_PORT ?? "47373", 10);
@@ -299,6 +307,27 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/work/ready") {
+    try {
+      const body = await readJsonBody(request);
+      const readyInput = {};
+      if (typeof body.taskToken === "string") {
+        Object.assign(readyInput, { taskToken: body.taskToken });
+      }
+      if (typeof body.taskId === "string") {
+        Object.assign(readyInput, { taskId: body.taskId });
+      }
+      if (typeof body.reviewToken === "string") {
+        Object.assign(readyInput, { reviewToken: body.reviewToken });
+      }
+      const ready = createWorkReadyPackage(readyInput);
+      sendJson(response, 200, ready);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -356,6 +385,20 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     } catch (error) {
       sendJson(response, 400, errorPayload(error));
     }
+    return;
+  }
+
+  if (requestUrl.pathname === "/work/ready") {
+    const readyToken = requestUrl.searchParams.get("readyToken");
+    if (readyToken) {
+      try {
+        sendJson(response, 200, getWorkReadyPackage({ readyToken }));
+      } catch (error) {
+        sendJson(response, 400, errorPayload(error));
+      }
+      return;
+    }
+    sendJson(response, 200, listWorkReadyPackages());
     return;
   }
 
