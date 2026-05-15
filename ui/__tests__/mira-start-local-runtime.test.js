@@ -6,7 +6,9 @@ const {
   buildRuntimeEnv,
   buildServerKillScript,
   defaultModel,
+  defaultOllamaModel,
   defaultPort,
+  defaultProvider,
   defaultStateRoot,
   parseArgs,
   parseOllamaModels,
@@ -16,35 +18,61 @@ const {
 describe('Mira local runtime starter', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
 
-  test('defaults to Gemma 31B on the Mira dev state root', () => {
+  test('defaults to GPT/OpenAI on the Mira dev state root', () => {
     const args = parseArgs([]);
 
     expect(args).toEqual(expect.objectContaining({
       port: defaultPort,
-      model: 'gemma4:31b',
+      provider: 'openai',
+      model: 'gpt-5.5',
       stateRoot: defaultStateRoot,
       pull: false,
     }));
-    expect(defaultModel).toBe('gemma4:31b');
+    expect(defaultProvider).toBe('openai');
+    expect(defaultModel).toBe('gpt-5.5');
+    expect(defaultOllamaModel).toBe('gemma4:31b');
   });
 
-  test('builds the runtime env that prevents stale OpenAI/default server confusion', () => {
+  test('builds the default runtime env for OpenAI and clears Ollama model selectors', () => {
     const args = parseArgs([]);
     const env = buildRuntimeEnv(args, {
       OPENAI_API_KEY: 'sk-test',
+      OLLAMA_MODEL: 'gemma4:31b',
     });
 
     expect(env).toEqual(expect.objectContaining({
       MIRA_STATE_ROOT: path.join(repoRoot, 'mira', '.state-dev'),
-      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
-      MIRA_OLLAMA_MODEL: 'gemma4:31b',
+      MIRA_RUNTIME_MODEL_PROVIDER: 'openai',
+      MIRA_RUNTIME_TURN_MODEL: 'gpt-5.5',
+      MIRA_OLLAMA_MODEL: '',
+      OLLAMA_MODEL: '',
       MIRA_RUNTIME_PORT: '47373',
+      OPENAI_API_KEY: 'sk-test',
+    }));
+  });
+
+  test('can still build an explicit Ollama/Gemma runtime env', () => {
+    const args = parseArgs(['--provider', 'ollama']);
+    const env = buildRuntimeEnv(args, {
+      OPENAI_API_KEY: 'sk-test',
+    });
+
+    expect(args).toEqual(expect.objectContaining({
+      provider: 'ollama',
+      model: 'gemma4:31b',
+    }));
+    expect(env).toEqual(expect.objectContaining({
+      MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
+      MIRA_RUNTIME_TURN_MODEL: 'gemma4:31b',
+      MIRA_OLLAMA_MODEL: 'gemma4:31b',
       OPENAI_API_KEY: 'sk-test',
     }));
   });
 
   test('accepts explicit model, port, state root, and pull options', () => {
     const args = parseArgs([
+      '--provider',
+      'ollama',
       '--model',
       'gemma4:26b',
       '--port',
@@ -59,6 +87,7 @@ describe('Mira local runtime starter', () => {
     ]);
 
     expect(args).toEqual(expect.objectContaining({
+      provider: 'ollama',
       model: 'gemma4:26b',
       port: 47444,
       stateRoot: 'D:\\mira-state',

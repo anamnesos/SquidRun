@@ -8,7 +8,9 @@ const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const defaultPort = 47373;
-const defaultModel = 'gemma4:31b';
+const defaultProvider = 'openai';
+const defaultModel = 'gpt-5.5';
+const defaultOllamaModel = 'gemma4:31b';
 const defaultStateRoot = path.join(repoRoot, 'mira', '.state-dev');
 const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
 const serverPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'server.js');
@@ -23,7 +25,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     noKill: false,
     noStart: false,
     port: defaultPort,
-    model: defaultModel,
+    provider: defaultProvider,
+    model: null,
     stateRoot: defaultStateRoot,
   };
 
@@ -60,6 +63,18 @@ function parseArgs(argv = process.argv.slice(2)) {
       index += 1;
       continue;
     }
+    if (token === '--provider' && next) {
+      const normalized = String(next || '').trim().toLowerCase();
+      if (['openai', 'openai_responses', 'gpt'].includes(normalized)) {
+        args.provider = 'openai';
+      } else if (['ollama', 'ollama_chat', 'local', 'gemma'].includes(normalized)) {
+        args.provider = 'ollama';
+      } else {
+        throw Object.assign(new Error(`Unsupported provider: ${next}`), { code: 'unsupported_provider' });
+      }
+      index += 1;
+      continue;
+    }
     if (token === '--state-root' && next) {
       args.stateRoot = next;
       index += 1;
@@ -70,6 +85,9 @@ function parseArgs(argv = process.argv.slice(2)) {
 
   if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
     throw Object.assign(new Error('--port must be a valid TCP port.'), { code: 'invalid_port' });
+  }
+  if (!args.model) {
+    args.model = args.provider === 'ollama' ? defaultOllamaModel : defaultModel;
   }
   if (!args.model.trim()) {
     throw Object.assign(new Error('--model is required.'), { code: 'missing_model' });
@@ -95,13 +113,21 @@ function resolveOllamaExecutable(env = process.env) {
 }
 
 function buildRuntimeEnv(args, env = process.env) {
-  return {
+  const provider = args.provider === 'ollama' ? 'ollama' : 'openai';
+  const runtimeEnv = {
     ...env,
     MIRA_STATE_ROOT: path.resolve(args.stateRoot),
-    MIRA_RUNTIME_MODEL_PROVIDER: 'ollama',
-    MIRA_OLLAMA_MODEL: args.model,
+    MIRA_RUNTIME_MODEL_PROVIDER: provider,
+    MIRA_RUNTIME_TURN_MODEL: args.model,
     MIRA_RUNTIME_PORT: String(args.port),
   };
+  if (provider === 'ollama') {
+    runtimeEnv.MIRA_OLLAMA_MODEL = args.model;
+  } else {
+    runtimeEnv.MIRA_OLLAMA_MODEL = '';
+    runtimeEnv.OLLAMA_MODEL = '';
+  }
+  return runtimeEnv;
 }
 
 function runtimeLogPath(name) {
@@ -253,18 +279,22 @@ async function startLocalRuntime(argv = process.argv.slice(2), env = process.env
   const steps = [];
   const runtimeEnv = buildRuntimeEnv(args, env);
 
-  const ollama = await ensureOllama(args, ollamaExecutable);
-  steps.push({
-    id: 'ollama',
-    modelAvailable: ollama.modelAvailable,
-    servePid: ollama.servePid,
-  });
-  if (!ollama.modelAvailable) {
-    throw Object.assign(new Error(`${args.model} is not pulled. Run this command again with --pull.`), {
-      code: 'ollama_model_missing',
-      model: args.model,
-      installedModels: ollama.models,
+  if (args.provider === 'ollama') {
+    const ollama = await ensureOllama(args, ollamaExecutable);
+    steps.push({
+      id: 'ollama',
+      modelAvailable: ollama.modelAvailable,
+      servePid: ollama.servePid,
     });
+    if (!ollama.modelAvailable) {
+      throw Object.assign(new Error(`${args.model} is not pulled. Run this command again with --pull.`), {
+        code: 'ollama_model_missing',
+        model: args.model,
+        installedModels: ollama.models,
+      });
+    }
+  } else {
+    steps.push({ id: 'provider', provider: 'openai' });
   }
 
   if (!args.noBuild) {
@@ -293,6 +323,7 @@ async function startLocalRuntime(argv = process.argv.slice(2), env = process.env
     ok: true,
     protocol: 'mira.local_runtime_start.v0',
     url: `http://127.0.0.1:${args.port}/`,
+    provider: args.provider,
     model: args.model,
     stateRoot: runtimeEnv.MIRA_STATE_ROOT,
     runtimePid,
@@ -304,6 +335,7 @@ async function startLocalRuntime(argv = process.argv.slice(2), env = process.env
 function format(result) {
   return [
     `Mira local runtime: ${result.url}`,
+    `provider=${result.provider}`,
     `model=${result.model}`,
     `state_root=${result.stateRoot}`,
     `model_ready=${result.modelStatus.available}`,
@@ -343,7 +375,9 @@ module.exports = {
   buildRuntimeEnv,
   buildServerKillScript,
   defaultModel,
+  defaultOllamaModel,
   defaultPort,
+  defaultProvider,
   defaultStateRoot,
   format,
   parseArgs,
