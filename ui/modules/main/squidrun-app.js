@@ -185,6 +185,14 @@ const TELEGRAM_REPLY_DEDUPE_WINDOW_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_DEDUPE_WINDOW_MS || '45000', 10) || 45_000
 );
+const TELEGRAM_STRAY_NEGATION_WINDOW_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_STRAY_NEGATION_WINDOW_MS || String(2 * 60 * 1000), 10) || (2 * 60 * 1000)
+);
+const TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS = Math.max(
+  TELEGRAM_REPLY_DEDUPE_WINDOW_MS,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS || String(10 * 60 * 1000), 10) || (10 * 60 * 1000)
+);
 const MIRA_TELEGRAM_FIRST_CONTACT_TEXT = 'Mira speaking here now.';
 const MIRA_TELEGRAM_FRUSTRATION_INPUT_PATTERN =
   /\b(fuck|wtf|ugh+|worthless|waste[sd]? (?:my )?time|tired of you|go fix yourself|wrong model|chat\s*gpt|back to the same|same chatgpt|same chat gpt|fuck off)\b/i;
@@ -706,6 +714,7 @@ class SquidRunApp {
       chatId: null,
     };
     this.telegramReplyDedupe = new Map();
+    this.telegramStrayCorrectionReplies = new Map();
     this.autonomousSmoke = {
       inFlight: false,
       queuedRun: null,
@@ -7873,6 +7882,11 @@ class SquidRunApp {
     if (!route?.ok || windowKey !== 'main' || profile !== 'main') {
       return this.telegramInboundContext;
     }
+    const previousContext = this.telegramInboundContext || {};
+    const previousChatId = normalizeChatId(previousContext.chatId);
+    const sameChatContext = Boolean(previousContext.lastInboundAtMs)
+      && (!chatId || !previousChatId || previousChatId === chatId);
+    const body = toNonEmptyString(metadata?.body || metadata?.text || metadata?.rawBody);
     this.telegramInboundContext = {
       lastInboundAtMs: Date.now(),
       sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
@@ -7880,6 +7894,9 @@ class SquidRunApp {
       windowKey: 'main',
       profile: 'main',
       sessionScopeId: toNonEmptyString(metadata?.sessionScopeId) || this.getWindowSessionScopeId('main'),
+      lastInboundBody: body || null,
+      previousInboundBody: sameChatContext ? (toNonEmptyString(previousContext.lastInboundBody) || null) : null,
+      previousInboundAtMs: sameChatContext ? Number(previousContext.lastInboundAtMs || 0) : 0,
     };
     this.persistTelegramReplyContext(this.telegramInboundContext);
     return this.telegramInboundContext;
@@ -8224,6 +8241,163 @@ class SquidRunApp {
     return { ok: true, key };
   }
 
+  normalizeTelegramCoalesceText(value = '') {
+    return toNonEmptyString(value)
+      .toLowerCase()
+      .replace(/[’']/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  isShortTelegramStrayText(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text || text.startsWith('/') || text.includes('?') || text.includes('\n')) return false;
+    if (text.length > 64) return false;
+    const words = text.match(/[a-z0-9]+/g) || [];
+    if (!words.length || words.length > 6) return false;
+    if (/https?:\/\/|www\.|@/.test(text)) return false;
+    return !/\b(urgent|emergency|compromised|unauthorized|password|credential|token|payment|charge|wire|bank|trade|buy|sell|order|position|capital|deploy|delete|shutdown|restart|stop|call|help)\b/.test(text);
+  }
+
+  isTelegramStrayNegation(latestText = '', previousText = '') {
+    const latest = this.normalizeTelegramCoalesceText(latestText);
+    const previous = this.normalizeTelegramCoalesceText(previousText);
+    if (!latest || !previous) return false;
+    const negates = /\b(wtf|what the fuck|ignore|stray|accident|accidental|accidentally|mistake|wrong|didnt mean|did not mean|dont know why|do not know why|idk why|not sure why|not an instruction|not a request|not a task|no action|wasnt me|was not me)\b/.test(latest);
+    const requestsResult = this.telegramStrayNegationRequestsVisibleResult(latest);
+    const flagsRisk = this.telegramReplyHasActionableRisk(latest);
+    if (!negates && !requestsResult && !flagsRisk) return false;
+    return latest.includes(previous)
+      || /\b(that|this|it|message|text|name|word|thing)\b/.test(latest)
+      || requestsResult
+      || flagsRisk;
+  }
+
+  telegramStrayNegationRequestsVisibleResult(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text) return false;
+    return /\b(can|could|would) you (check|look|investigate|tell|find|figure|debug|report)\b/.test(text)
+      || /\bplease (check|look|investigate|tell|find|figure|debug|report)\b/.test(text)
+      || /\bi need you to (check|look|investigate|tell|find|figure|debug|report)\b/.test(text)
+      || /\b(find out|figure out|look into|check) (what happened|why|what caused|what sent|why it sent|why did it send)\b/.test(text)
+      || /\bwhy did (it|that|this|telegram|the phone|my phone|squidrun) (send|say|route|happen)\b/.test(text)
+      || /\bwhat caused (that|this|it|the send|the message|the telegram|telegram to send)\b/.test(text)
+      || /\b(tell me|let me know|report back|send me|keep me posted)\b/.test(text);
+  }
+
+  telegramReplyHasActionableRisk(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text) return false;
+    return /\b(urgent|emergency|compromised|unauthorized|security|password|credential|token|payment|charge|wire|bank|trade|buy|sell|order|position|capital|production|outage|data loss|requires action|need you to|you need to|must act|act now|right now)\b/.test(text);
+  }
+
+  isTelegramStrayCorrectionReplyCandidate(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text || this.telegramReplyHasActionableRisk(text)) return false;
+    if (/^(got it|ok|okay|copy|understood|heard|yep|yeah)\b/.test(text) && text.length <= 180) {
+      return true;
+    }
+    return /\b(stray|accidental|accidentally|not an instruction|not a request|not a task|taking no action|no action|ghost action|inbound route|wrong-window|wrong window|stale replay|fresh real telegram|telegram text|telegram input|phone input|voice weirdness|upstream of squidrun)\b/.test(text);
+  }
+
+  isTelegramStrayClarificationReplyCandidate(value = '', previousStrayText = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    const previous = this.normalizeTelegramCoalesceText(previousStrayText);
+    if (!text || !previous || this.telegramReplyHasActionableRisk(text)) return false;
+    if (!text.includes(previous)) return false;
+    return /\b(send|give|tell)\b.*\b(action|context|instruction|task|request|what|who|why)\b/.test(text)
+      || /\b(what should i do|what do you want|need the action|need context|need an action|need a task)\b/.test(text);
+  }
+
+  getTelegramShortStrayNegationContext({ chatId = null } = {}, nowMs = Date.now()) {
+    const context = this.telegramInboundContext || {};
+    const latestBody = toNonEmptyString(context.lastInboundBody);
+    const previousBody = toNonEmptyString(context.previousInboundBody);
+    const lastInboundAtMs = Number(context.lastInboundAtMs || 0);
+    const previousInboundAtMs = Number(context.previousInboundAtMs || 0);
+    if (!latestBody || !previousBody || !lastInboundAtMs || !previousInboundAtMs) return null;
+    if ((lastInboundAtMs - previousInboundAtMs) < 0) return null;
+    if ((lastInboundAtMs - previousInboundAtMs) > TELEGRAM_STRAY_NEGATION_WINDOW_MS) return null;
+    if ((nowMs - lastInboundAtMs) > TELEGRAM_REPLY_WINDOW_MS) return null;
+    if (!this.isShortTelegramStrayText(previousBody)) return null;
+    if (!this.isTelegramStrayNegation(latestBody, previousBody)) return null;
+
+    const contextChatId = normalizeChatId(context.chatId);
+    const replyChatId = normalizeChatId(chatId);
+    if (contextChatId && replyChatId && contextChatId !== replyChatId) return null;
+
+    const key = createHash('sha256')
+      .update(JSON.stringify({
+        chatId: replyChatId || contextChatId || 'default',
+        previous: this.normalizeTelegramCoalesceText(previousBody),
+        latest: this.normalizeTelegramCoalesceText(latestBody),
+      }))
+      .digest('hex');
+    return {
+      key,
+      chatId: replyChatId || contextChatId || null,
+      previousBody,
+      latestBody,
+      previousInboundAtMs,
+      lastInboundAtMs,
+    };
+  }
+
+  getTelegramStrayClarificationSuppression({ message, chatId = null } = {}, nowMs = Date.now()) {
+    const context = this.getTelegramShortStrayNegationContext({ chatId }, nowMs);
+    if (!context?.key) return { suppress: false, key: null, context: null };
+    if (!this.isTelegramStrayClarificationReplyCandidate(message, context.previousBody)) {
+      return { suppress: false, key: context.key, context };
+    }
+    return { suppress: true, key: context.key, context };
+  }
+
+  getTelegramStrayCorrectionCoalesceContext({ message, chatId = null } = {}, nowMs = Date.now()) {
+    if (!this.isTelegramStrayCorrectionReplyCandidate(message)) return null;
+    const context = this.getTelegramShortStrayNegationContext({ chatId }, nowMs);
+    if (!context) return null;
+    if (
+      this.telegramStrayNegationRequestsVisibleResult(context.latestBody)
+      || this.telegramReplyHasActionableRisk(context.latestBody)
+    ) {
+      return null;
+    }
+    return context;
+  }
+
+  pruneTelegramStrayCorrectionReplies(nowMs = Date.now()) {
+    for (const [key, entry] of this.telegramStrayCorrectionReplies.entries()) {
+      if (!entry || (nowMs - Number(entry.atMs || 0)) > TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS) {
+        this.telegramStrayCorrectionReplies.delete(key);
+      }
+    }
+  }
+
+  hasSentTelegramStrayCorrectionReply({ message, chatId = null } = {}, nowMs = Date.now()) {
+    const context = this.getTelegramStrayCorrectionCoalesceContext({ message, chatId }, nowMs);
+    if (!context?.key) return { duplicate: false, key: null, context: null };
+    this.pruneTelegramStrayCorrectionReplies(nowMs);
+    const previous = this.telegramStrayCorrectionReplies.get(context.key);
+    if (previous && (nowMs - Number(previous.atMs || 0)) <= TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS) {
+      return { duplicate: true, key: context.key, context, previous };
+    }
+    return { duplicate: false, key: context.key, context };
+  }
+
+  markTelegramStrayCorrectionReplySent({ coalesceContext = null, message = null, messageId = null } = {}, nowMs = Date.now()) {
+    const key = toNonEmptyString(coalesceContext?.key);
+    if (!key) return { ok: false, key: null };
+    this.pruneTelegramStrayCorrectionReplies(nowMs);
+    this.telegramStrayCorrectionReplies.set(key, {
+      atMs: nowMs,
+      chatId: normalizeChatId(coalesceContext.chatId) || null,
+      messageId: toNonEmptyString(messageId) || null,
+      message: toNonEmptyString(message) || null,
+      status: 'sent',
+    });
+    return { ok: true, key };
+  }
+
   async buildTelegramMiraLiveReply(body, options = {}) {
     const prompt = toNonEmptyString(body);
     if (!prompt) {
@@ -8436,6 +8610,42 @@ class SquidRunApp {
           sessionScopeId: routeSessionScopeId,
         };
       }
+      const staleStrayClarification = this.getTelegramStrayClarificationSuppression({
+        message,
+        chatId: replyChatId,
+      });
+      if (staleStrayClarification.suppress) {
+        return {
+          handled: true,
+          ok: true,
+          accepted: true,
+          queued: false,
+          verified: true,
+          status: 'telegram_stray_clarification_suppressed',
+          chatId: replyChatId || null,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          sessionScopeId: routeSessionScopeId,
+        };
+      }
+      const strayCorrectionCoalesce = this.hasSentTelegramStrayCorrectionReply({
+        message,
+        chatId: replyChatId,
+      });
+      if (strayCorrectionCoalesce.duplicate) {
+        return {
+          handled: true,
+          ok: true,
+          accepted: true,
+          queued: false,
+          verified: true,
+          status: 'telegram_stray_correction_coalesced',
+          chatId: replyChatId || null,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          sessionScopeId: routeSessionScopeId,
+        };
+      }
       const result = await sendRoutedTelegramMessage(message, process.env, {
         messageId,
         senderRole: fromRole,
@@ -8462,12 +8672,18 @@ class SquidRunApp {
           error: result?.error || 'unknown_error',
         };
       }
+      const sentMessageId = result.messageId || messageId;
       this.markTelegramReplySent({
         message,
         chatId: replyChatId,
         target: normalizedTarget,
         fromRole,
-        messageId: result.messageId || messageId,
+        messageId: sentMessageId,
+      });
+      this.markTelegramStrayCorrectionReplySent({
+        coalesceContext: strayCorrectionCoalesce.context,
+        message,
+        messageId: sentMessageId,
       });
 
       return {
@@ -8477,7 +8693,7 @@ class SquidRunApp {
         queued: true,
         verified: true,
         status: 'telegram_delivered',
-        messageId: result.messageId || null,
+        messageId: sentMessageId || null,
         chatId: result.chatId || null,
         windowKey: routeWindowKey,
         profile: routeProfile,
@@ -9773,6 +9989,7 @@ class SquidRunApp {
             windowKey: inboundWindowKey,
             profile: inboundRoute.profile || 'main',
             sessionScopeId: inboundSessionScopeId,
+            body,
           });
         }
         const updateId = Number.isFinite(Number(metadata?.updateId))
