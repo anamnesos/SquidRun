@@ -1428,6 +1428,198 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.no_mutation_performed).toBe(true);
   });
 
+  test('curiosity burst records already_routed instead of redispatching unchanged memory-broker no-op routes', async () => {
+    projectRoot = tempProject();
+    const memoryBrokerCuriosityReader = () => ({
+      ok: true,
+      decision: 'memory_broker_recalled_read_only',
+      query: 'Mira current lane source/action substrate continuity',
+      result_count: 1,
+      sources: [{ source: 'cognitive_memory', sourceKind: 'vector_cognitive', ok: true, itemCount: 1 }],
+      results: [{
+        rank: 1,
+        sourceKind: 'vector_cognitive',
+        id: 'node-3d62696f-3aaa-4c90-9236-39e7e251bfff',
+        title: 'Current route memory context',
+        excerpt: 'Use ranked recall before choosing the next internal route.',
+      }],
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    const first = await runMiraCuriosityBurst({
+      source: 'memory_broker',
+      routeInteresting: true,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:00:00.000Z',
+      memoryBrokerCuriosityReader,
+      sendAgentMessage,
+    });
+    const second = await runMiraCuriosityBurst({
+      source: 'memory_broker',
+      routeInteresting: true,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:15:00.000Z',
+      memoryBrokerCuriosityReader,
+      sendAgentMessage,
+    });
+
+    expect(first.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      target_role: 'builder',
+      source: 'memory_broker',
+      adapter_id: 'unified_memory_broker_curiosity',
+      top_result_id: 'node-3d62696f-3aaa-4c90-9236-39e7e251bfff',
+      apply_now: false,
+    }));
+    expect(first.dispatch).toEqual(expect.objectContaining({
+      status: 'sent',
+      target: 'builder',
+    }));
+    expect(second.route_output).toEqual(expect.objectContaining({
+      decision: 'already_routed',
+      original_decision: 'route_selected',
+      target_role: 'builder',
+      source: 'memory_broker',
+      adapter_id: 'unified_memory_broker_curiosity',
+      already_routed: true,
+      route_message_hash: first.route_output.route_message_hash,
+    }));
+    expect(second.route_output.suppression).toEqual(expect.objectContaining({
+      reason: 'already_routed',
+      route_message_hash: first.route_output.route_message_hash,
+      previous_route: expect.objectContaining({
+        burst_id: first.burst_id,
+        target_role: 'builder',
+        source: 'memory_broker',
+        adapter_id: 'unified_memory_broker_curiosity',
+      }),
+    }));
+    expect(second.dispatch).toEqual(expect.objectContaining({
+      status: 'not_sent',
+      target: 'builder',
+      reason: 'already_routed',
+    }));
+    expect(second.route_message).toContain('apply_now=false');
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+
+    const bursts = readJsonl(curiosityBurstsPath(projectRoot));
+    expect(bursts).toHaveLength(2);
+    expect(bursts[1].route_output.decision).toBe('already_routed');
+  });
+
+  test('curiosity burst does not let an unsent memory-broker no-op suppress the first real dispatch', async () => {
+    projectRoot = tempProject();
+    const memoryBrokerCuriosityReader = () => ({
+      ok: true,
+      decision: 'memory_broker_recalled_read_only',
+      query: 'Mira current lane source/action substrate continuity',
+      result_count: 1,
+      sources: [{ source: 'cognitive_memory', sourceKind: 'vector_cognitive', ok: true, itemCount: 1 }],
+      results: [{
+        rank: 1,
+        sourceKind: 'vector_cognitive',
+        id: 'node-3d62696f-3aaa-4c90-9236-39e7e251bfff',
+        title: 'Current route memory context',
+        excerpt: 'Use ranked recall before choosing the next internal route.',
+      }],
+    });
+
+    const unsent = await runMiraCuriosityBurst({
+      source: 'memory_broker',
+      routeInteresting: true,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:20:00.000Z',
+      memoryBrokerCuriosityReader,
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+    const firstRealDispatch = await runMiraCuriosityBurst({
+      source: 'memory_broker',
+      routeInteresting: true,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:25:00.000Z',
+      memoryBrokerCuriosityReader,
+      sendAgentMessage,
+    });
+
+    expect(unsent.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      route_message_hash: firstRealDispatch.route_output.route_message_hash,
+    }));
+    expect(unsent.dispatch).toEqual(expect.objectContaining({
+      status: 'queued_not_sent',
+    }));
+    expect(firstRealDispatch.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      source: 'memory_broker',
+      adapter_id: 'unified_memory_broker_curiosity',
+      apply_now: false,
+    }));
+    expect(firstRealDispatch.dispatch).toEqual(expect.objectContaining({
+      status: 'sent',
+      target: 'builder',
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+
+    const bursts = readJsonl(curiosityBurstsPath(projectRoot));
+    expect(bursts).toHaveLength(2);
+    expect(bursts[0].dispatch.status).toBe('queued_not_sent');
+    expect(bursts[1].dispatch.status).toBe('sent');
+  });
+
+  test('curiosity burst does not suppress explicit apply_now true routes', async () => {
+    projectRoot = tempProject();
+    const memoryBrokerCuriosityReader = () => ({
+      ok: true,
+      decision: 'memory_broker_recalled_read_only',
+      query: 'Mira current lane source/action substrate continuity',
+      result_count: 1,
+      sources: [{ source: 'cognitive_memory', sourceKind: 'vector_cognitive', ok: true, itemCount: 1 }],
+      results: [{
+        rank: 1,
+        sourceKind: 'vector_cognitive',
+        id: 'node-3d62696f-3aaa-4c90-9236-39e7e251bfff',
+        title: 'Current route memory context',
+        excerpt: 'Use ranked recall before choosing the next internal route.',
+      }],
+    });
+    const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
+
+    await runMiraCuriosityBurst({
+      source: 'memory_broker',
+      routeInteresting: true,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:30:00.000Z',
+      memoryBrokerCuriosityReader,
+      sendAgentMessage,
+    });
+    const second = await runMiraCuriosityBurst({
+      source: 'memory_broker',
+      routeInteresting: true,
+      apply_now: true,
+    }, {
+      projectRoot,
+      generatedAt: '2026-05-12T13:45:00.000Z',
+      memoryBrokerCuriosityReader,
+      sendAgentMessage,
+    });
+
+    expect(second.route_output).toEqual(expect.objectContaining({
+      decision: 'route_selected',
+      apply_now: true,
+    }));
+    expect(second.route_message).toContain('apply_now=true');
+    expect(second.dispatch).toEqual(expect.objectContaining({
+      status: 'sent',
+      target: 'builder',
+    }));
+    expect(sendAgentMessage).toHaveBeenCalledTimes(2);
+  });
+
   test('curiosity burst does not route empty work-continuation items', async () => {
     projectRoot = tempProject();
     appendJsonl(activeInitiativeOutcomesPath(projectRoot), {

@@ -3270,6 +3270,35 @@ function curiosityBurstSemanticKeyForItem(item = {}) {
   });
 }
 
+function normalizedCuriosityRouteText(value, max = 320) {
+  return oneLine(value, max).toLowerCase();
+}
+
+function curiosityBurstTopResultIdForItem(item = {}) {
+  const source = trimText(item.source);
+  if (source === 'memory_broker') {
+    const top = item.memory_broker_top_result || {};
+    return trimText(top.id || top.ref || top.title || top.sourceKind || top.source) || null;
+  }
+  if (source === 'memory') {
+    const top = item.memory_top_result || {};
+    return trimText(top.nodeId || top.node_id || top.title || top.heading) || null;
+  }
+  return null;
+}
+
+function curiosityBurstRouteDedupeKey(route = {}) {
+  const payload = {
+    target_role: trimText(route.target_role),
+    source: trimText(route.source),
+    adapter_id: trimText(route.adapter_id),
+    top_result_id: trimText(route.top_result_id),
+    suggested_question: normalizedCuriosityRouteText(route.suggested_question),
+    possible_action: normalizedCuriosityRouteText(route.possible_action),
+  };
+  return stableHash(payload);
+}
+
 function workContinuationHasActionableSignal(item = {}) {
   return Boolean(
     numberSignal(item.work_due_count) > 0
@@ -3340,17 +3369,29 @@ function curiosityBurstRouteForItems(items = [], options = {}) {
   }
   const selected = candidates[0].item;
   const targetRole = normalizeDirectRouteTarget(selected.route_hint || selected.routeHint) || 'architect';
+  const topResultId = curiosityBurstTopResultIdForItem(selected);
+  const routeBase = {
+    target_role: targetRole,
+    source: selected.source,
+    adapter_id: selected.adapter_id,
+    top_result_id: topResultId,
+    suggested_question: selected.suggested_question,
+    possible_action: selected.possible_action,
+  };
   return {
     decision: 'route_selected',
     target_role: targetRole,
     source: selected.source,
     adapter_id: selected.adapter_id,
+    top_result_id: topResultId,
     status: selected.status,
     suggested_question: selected.suggested_question,
     possible_action: selected.possible_action,
     reason: selected.source === 'automation_scheduler'
       ? 'scheduled curiosity is the next useful way to make bursts recur without James hand-running them'
       : 'burst selected the strongest internal follow-up from bounded read-only scout results',
+    route_dedupe_key: curiosityBurstRouteDedupeKey(routeBase),
+    apply_now: options.applyNow === true || options.apply_now === true,
     suppressed_candidate_count: suppressedCandidates.length,
     internal_only: true,
     applied: false,
@@ -3369,15 +3410,117 @@ function buildCuriosityBurstRouteMessage(burst) {
     `action=${route.possible_action}`,
     `reason=${route.reason}`,
     `burst_log=${burst.burst_log_path}`,
-    'apply_now=false',
+    `apply_now=${route.apply_now === true ? 'true' : 'false'}`,
     'external_send_performed=false',
   ].join('\n');
+}
+
+function curiosityBurstRouteMessageHash(message) {
+  const text = trimText(message);
+  return text ? stableHash(text) : null;
+}
+
+function curiosityBurstRouteDedupeCooldownMs(payload = {}, options = {}) {
+  return Math.max(0, Math.min(
+    7 * 24 * 60 * 60 * 1000,
+    Number(
+      payload.routeDedupeCooldownMs
+      || payload.route_dedupe_cooldown_ms
+      || options.routeDedupeCooldownMs
+      || options.route_dedupe_cooldown_ms
+      || 24 * 60 * 60 * 1000
+    ) || 0
+  ));
+}
+
+function curiosityBurstRouteDedupEnabled(payload = {}, options = {}) {
+  return payload.force !== true
+    && options.force !== true
+    && payload.dedupe !== false
+    && options.dedupe !== false
+    && curiosityBurstRouteDedupeCooldownMs(payload, options) > 0;
+}
+
+function curiosityBurstNoopRouteEligible(route = {}) {
+  return route
+    && route.decision === 'route_selected'
+    && route.apply_now !== true
+    && trimText(route.source) === 'memory_broker'
+    && trimText(route.adapter_id) === 'unified_memory_broker_curiosity'
+    && AGENT_ROLES.includes(trimText(route.target_role));
+}
+
+function loggedCuriosityBurstRouteHash(row = {}) {
+  return trimText(row.route_message_hash || row.route_output?.route_message_hash)
+    || curiosityBurstRouteMessageHash(row.route_message);
+}
+
+function recentMatchingCuriosityBurstNoopRoute(logPath, route, generatedAt, routeMessageHash, cooldownMs) {
+  if (!logPath || !routeMessageHash) return null;
+  const nowMs = parseTimestampMs(generatedAt) ?? Date.now();
+  const rows = readJsonl(logPath).slice(-500).reverse();
+  for (const row of rows) {
+    if (!row || row.schema !== MIRA_CURIOSITY_BURST_SCHEMA) continue;
+    const rowRoute = row.route_output || {};
+    if (trimText(rowRoute.decision) !== 'route_selected') continue;
+    if (rowRoute.apply_now === true || /(?:^|\n)apply_now=true(?:\n|$)/i.test(trimText(row.route_message))) continue;
+    const rowMs = parseTimestampMs(row.generated_at);
+    if (rowMs === null || nowMs - rowMs > cooldownMs) continue;
+    if (trimText(rowRoute.target_role) !== trimText(route.target_role)) continue;
+    if (trimText(rowRoute.source) !== trimText(route.source)) continue;
+    if (trimText(rowRoute.adapter_id) !== trimText(route.adapter_id)) continue;
+    const dispatchStatus = trimText(row.dispatch?.status);
+    if (dispatchStatus !== 'sent') continue;
+    const rowDedupeKey = trimText(rowRoute.route_dedupe_key);
+    const routeDedupeKey = trimText(route.route_dedupe_key);
+    if (rowDedupeKey && routeDedupeKey && rowDedupeKey !== routeDedupeKey) continue;
+    if (loggedCuriosityBurstRouteHash(row) !== routeMessageHash) continue;
+    return {
+      burst_id: row.burst_id || null,
+      generated_at: row.generated_at || null,
+      target_role: rowRoute.target_role || null,
+      source: rowRoute.source || null,
+      adapter_id: rowRoute.adapter_id || null,
+      top_result_id: rowRoute.top_result_id || null,
+      route_message_hash: routeMessageHash,
+      route_dedupe_key: route.route_dedupe_key || null,
+      dispatch_status: dispatchStatus || null,
+    };
+  }
+  return null;
+}
+
+function curiosityBurstAlreadyRoutedSuppression(burst = {}, payload = {}, options = {}) {
+  const route = burst.route_output || {};
+  if (!curiosityBurstNoopRouteEligible(route)) return null;
+  if (!curiosityBurstRouteDedupEnabled(payload, options)) return null;
+  const routeMessageHash = curiosityBurstRouteMessageHash(burst.route_message);
+  const cooldownMs = curiosityBurstRouteDedupeCooldownMs(payload, options);
+  const previousRoute = recentMatchingCuriosityBurstNoopRoute(
+    burst.burst_log_path,
+    route,
+    burst.generated_at,
+    routeMessageHash,
+    cooldownMs,
+  );
+  if (!previousRoute) return null;
+  return {
+    reason: 'already_routed',
+    route_message_hash: routeMessageHash,
+    route_dedupe_key: route.route_dedupe_key || null,
+    duplicate_cooldown_ms: cooldownMs,
+    previous_route: previousRoute,
+  };
 }
 
 async function runMiraCuriosityBurst(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
   const projectRoot = projectRootFromOptions(options, payload);
   const sources = normalizeCuriosityBurstSources(payload, options);
+  const applyNow = payload.apply_now === true
+    || payload.applyNow === true
+    || options.apply_now === true
+    || options.applyNow === true;
   const curiosityLogPath = curiosityItemsPath(projectRoot);
   const burstLogPath = curiosityBurstsPath(projectRoot);
   const context = {
@@ -3477,8 +3620,9 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     unavailable_count: items.filter((item) => item.status === 'unavailable_in_this_runtime').length,
     scout_runs: scoutRuns,
     items,
-    route_output: curiosityBurstRouteForItems(items, { projectRoot, generatedAt }),
+    route_output: curiosityBurstRouteForItems(items, { projectRoot, generatedAt, applyNow }),
     route_message: null,
+    route_message_hash: null,
     dispatch: {
       status: 'queued_not_sent',
       reason: 'dispatch_disabled',
@@ -3500,8 +3644,36 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     },
   };
   burst.route_message = buildCuriosityBurstRouteMessage(burst);
+  burst.route_message_hash = curiosityBurstRouteMessageHash(burst.route_message);
+  if (burst.route_output?.decision === 'route_selected') {
+    burst.route_output = {
+      ...burst.route_output,
+      route_message_hash: burst.route_message_hash,
+    };
+  }
   const routeInteresting = payload.routeInteresting || options.routeInteresting;
   const dispatchWanted = routeInteresting && payload.dispatch !== false && options.dispatch !== false;
+  const alreadyRouted = dispatchWanted
+    ? curiosityBurstAlreadyRoutedSuppression(burst, payload, options)
+    : null;
+  if (alreadyRouted) {
+    burst.route_output = {
+      ...burst.route_output,
+      decision: 'already_routed',
+      original_decision: 'route_selected',
+      reason: 'unchanged_apply_now_false_memory_broker_route_already_routed',
+      already_routed: true,
+      suppression: alreadyRouted,
+      route_message_hash: alreadyRouted.route_message_hash,
+    };
+    burst.dispatch = {
+      status: 'not_sent',
+      target: burst.route_output.target_role,
+      internal_only: true,
+      reason: 'already_routed',
+      suppression: alreadyRouted,
+    };
+  }
   if (
     dispatchWanted
     && burst.route_output?.decision === 'route_selected'
