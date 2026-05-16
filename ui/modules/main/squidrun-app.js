@@ -5656,6 +5656,38 @@ class SquidRunApp {
       };
     }
 
+    const lastFailureReason = (toNonEmptyString(item.lastFailureReason) || '').toLowerCase();
+    const matchesCurrentSession = Boolean(
+      itemSessionScopeId
+      && expectedSessionScopeId
+      && itemSessionScopeId === expectedSessionScopeId
+    );
+    const appearsCurrentWithoutSession = Boolean(
+      !itemSessionScopeId
+      && Number.isFinite(appStartedAtMs)
+      && Number.isFinite(itemTimestampMs)
+      && itemTimestampMs >= appStartedAtMs - TELEGRAM_PENDING_REPLAY_GRACE_MS
+    );
+    if (
+      (matchesCurrentSession || appearsCurrentWithoutSession)
+      && (
+        lastFailureReason === 'accepted.unverified'
+        || lastFailureReason === 'accepted.daemon_pty_unverified'
+        || lastFailureReason === 'routed_unverified_timeout'
+        || lastFailureReason === 'routed_unverified'
+      )
+    ) {
+      return {
+        drop: true,
+        resolved: true,
+        reason: 'accepted_unverified_telegram_delivery_resolved',
+        lastFailureReason,
+        windowKey,
+        itemSessionScopeId,
+        expectedSessionScopeId,
+      };
+    }
+
     return { drop: false };
   }
 
@@ -5998,11 +6030,19 @@ class SquidRunApp {
     const run = async () => {
       const items = this.readPendingPaneDeliveries();
       if (!items.length) {
-        return { ok: true, deliveredCount: 0, remainingCount: 0, reason };
+        return {
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 0,
+          remainingCount: 0,
+          reason,
+        };
       }
 
       let deliveredCount = 0;
       let droppedCount = 0;
+      let resolvedCount = 0;
       const remaining = [];
       const MAX_PENDING_DELIVERY_RETRIES = 5;
       for (const item of items) {
@@ -6012,11 +6052,16 @@ class SquidRunApp {
         }
         const dropDecision = this.shouldDropPendingPaneDeliveryForReplay(item);
         if (dropDecision.drop) {
-          droppedCount += 1;
+          if (dropDecision.resolved) {
+            resolvedCount += 1;
+          } else {
+            droppedCount += 1;
+          }
           this.recordPendingPaneDeliveryDrop(item, dropDecision);
-          log.warn(
+          const logMethod = dropDecision.resolved ? 'info' : 'warn';
+          log[logMethod](
             'PendingPaneDelivery',
-            `Dropping stale pending Telegram delivery ${item.queueKey || item.messageId || 'unknown'} (${dropDecision.reason || 'stale_pending_delivery'})`
+            `${dropDecision.resolved ? 'Resolved' : 'Dropping stale'} pending Telegram delivery ${item.queueKey || item.messageId || 'unknown'} (${dropDecision.reason || 'stale_pending_delivery'})`
           );
           continue;
         }
@@ -6053,10 +6098,14 @@ class SquidRunApp {
       if (droppedCount > 0) {
         log.warn('PendingPaneDelivery', `Dropped ${droppedCount} stale queued delivery(s) (${reason})`);
       }
+      if (resolvedCount > 0) {
+        log.info('PendingPaneDelivery', `Resolved ${resolvedCount} accepted/unverified Telegram delivery state(s) without replay (${reason})`);
+      }
       return {
         ok: true,
         deliveredCount,
         droppedCount,
+        resolvedCount,
         remainingCount: remaining.length,
         reason,
       };
@@ -9832,16 +9881,18 @@ class SquidRunApp {
     if (toNonEmptyString(recallContext.windowKey) && !toNonEmptyString(meta.windowKey)) {
       meta.windowKey = toNonEmptyString(recallContext.windowKey);
     }
+    const channel = toNonEmptyString(recallContext.channel) || 'user';
+    const isTelegramInbound = channel.toLowerCase() === 'telegram';
     const result = await this.deliverPaneMessageReliably({
       paneId: String(recallContext.paneId || '1'),
       message: messageWithRecall,
       fromRole: null,
       traceContext: recallContext.traceContext || null,
       meta: Object.keys(meta).length > 0 ? meta : null,
-      queueOnAcceptedUnverified: true,
+      queueOnAcceptedUnverified: !isTelegramInbound,
       queueOnHardFailure: true,
       messageId: recallContext.messageId || null,
-      channel: recallContext.channel || 'user',
+      channel,
       sender: recallContext.sender || 'user',
       logLabel,
     });

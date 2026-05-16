@@ -4952,7 +4952,7 @@ describe('SquidRunApp', () => {
       expect(createWindowSpy).not.toHaveBeenCalled();
     });
 
-    it('queues inbound human delivery for replay when pane delivery stays unverified', async () => {
+    it('does not queue accepted-unverified Telegram inbound for replay', async () => {
       const triggers = require('../modules/triggers');
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-'));
       const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
@@ -4961,7 +4961,44 @@ describe('SquidRunApp', () => {
         accepted: true,
         queued: true,
         verified: false,
-        status: 'accepted.unverified',
+        status: 'routed_unverified_timeout',
+      });
+
+      try {
+        const result = await app.deliverHumanMessageWithRecall(
+          '[Telegram from scoped]: hello',
+          {
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'scoped',
+            messageId: 'telegram-in-123',
+          },
+          'Telegram'
+        );
+
+        expect(result).toEqual(expect.objectContaining({
+          accepted: true,
+          queued: true,
+          verified: false,
+          status: 'routed_unverified_timeout',
+        }));
+        expect(result.pendingQueued).not.toBe(true);
+        expect(fs.existsSync(queuePath)).toBe(false);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('queues Telegram inbound delivery for replay on hard pane delivery failure', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-hard-failure-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'window_unavailable',
       });
 
       try {
@@ -4978,6 +5015,7 @@ describe('SquidRunApp', () => {
 
         expect(result).toEqual(expect.objectContaining({
           pendingQueued: true,
+          pendingFailureReason: 'window_unavailable',
         }));
         const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
         expect(persisted.items).toEqual([
@@ -4986,6 +5024,7 @@ describe('SquidRunApp', () => {
             paneId: '1',
             channel: 'telegram',
             sender: 'scoped',
+            lastFailureReason: 'window_unavailable',
           }),
         ]);
       } finally {
@@ -5007,10 +5046,10 @@ describe('SquidRunApp', () => {
       });
       jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
       triggers.sendDirectMessage.mockResolvedValueOnce({
-        accepted: true,
-        queued: true,
+        accepted: false,
+        queued: false,
         verified: false,
-        status: 'accepted.unverified',
+        status: 'window_unavailable',
       });
 
       try {
@@ -5027,7 +5066,7 @@ describe('SquidRunApp', () => {
 
         expect(result).toEqual(expect.objectContaining({
           pendingQueued: false,
-          pendingFailureReason: 'accepted.unverified',
+          pendingFailureReason: 'window_unavailable',
         }));
       } finally {
         mkdirSpy.mockRestore();
@@ -5143,6 +5182,60 @@ describe('SquidRunApp', () => {
           deliveredCount: 1,
           remainingCount: 0,
         }));
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves accepted-unverified Telegram pending state without replaying it', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-resolved-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-147';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-123',
+            paneId: '1',
+            message: '[Telegram from scoped]: hello',
+            messageId: 'telegram-in-123',
+            channel: 'telegram',
+            sender: 'scoped',
+            createdAt: '2026-05-16T07:26:50.776Z',
+            lastFailureReason: 'routed_unverified_timeout',
+            attemptCount: 1,
+            meta: {
+              updateId: 123,
+              windowKey: 'main',
+              sessionScopeId: 'app-session-147',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-resolve' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'telegram-in-123' }),
+          expect.objectContaining({
+            reason: 'accepted_unverified_telegram_delivery_resolved',
+            resolved: true,
+            lastFailureReason: 'routed_unverified_timeout',
+          })
+        );
         const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
         expect(persisted.items).toEqual([]);
       } finally {
