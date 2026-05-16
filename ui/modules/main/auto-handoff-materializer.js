@@ -708,6 +708,46 @@ function formatPriorContextAge(currentSessionId, priorSessionId, latestTsMs = 0,
   return 'unknown';
 }
 
+function formatRestartContinuitySummary(currentLane = {}) {
+  const continuity = currentLane?.continuity && typeof currentLane.continuity === 'object'
+    ? currentLane.continuity
+    : {};
+  const lines = [
+    '',
+    '## Restart Continuity Summary',
+    '- source: deterministic current-session handoff data',
+    '- rule: treat these as restart context, not live blockers unless current evidence says so.',
+    `- active_lane: ${toOptionalString(currentLane?.activeLane?.objective, '-') || '-'}`,
+    `- next_action: ${toOptionalString(continuity.next_action, '-') || '-'}`,
+    '- recent_completed_fixes:',
+  ];
+
+  const completed = Array.isArray(continuity.recent_completed_fixes)
+    ? continuity.recent_completed_fixes
+    : [];
+  if (completed.length === 0) {
+    lines.push('  - -');
+  } else {
+    for (const item of completed) {
+      const source = toOptionalString(item?.source_ref, null) || toOptionalString(item?.message_id, 'unknown');
+      lines.push(`  - ${normalizeInline(item?.summary || '-', 260)} (${source || 'unknown'})`);
+    }
+  }
+
+  lines.push('- stale_or_backlog_markers:');
+  const staleMarkers = Array.isArray(continuity.stale_backlog_markers)
+    ? continuity.stale_backlog_markers
+    : [];
+  if (staleMarkers.length === 0) {
+    lines.push('  - -');
+  } else {
+    for (const marker of staleMarkers) {
+      lines.push(`  - ${normalizeInline(marker, 260)}`);
+    }
+  }
+  return lines;
+}
+
 function buildSessionHandoffMarkdown(rows, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const sessionId = toOptionalString(options.sessionId, '-') || '-';
@@ -812,6 +852,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     '```json',
     JSON.stringify(currentLane, null, 2),
     '```',
+    ...formatRestartContinuitySummary(currentLane),
   ];
 
   const priorContextRows = sortByEventTsAsc(

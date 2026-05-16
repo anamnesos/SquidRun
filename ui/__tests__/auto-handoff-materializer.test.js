@@ -432,6 +432,142 @@ describe('auto-handoff-materializer', () => {
     expect(currentLane.activeLane.objective).toBe('restart gate for committed Mira/startup package d414bfa');
   });
 
+  test('restart-continuity objective materializes current lane with completed-fix and stale-backlog context', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const restartLaneBody = '(ARCH #84): New lane from James: go ahead on restart continuity, think it through while doing it. Builder-owned implementation after orientation. Plain-language objective: after restart, James should not have to re-explain what we were doing; startup/session handoff should surface recent completed fixes, active lane, next action, and stale/backlog markers without treating old prose as live blockers. Hold edits until Oracle gives read-only seam orientation.';
+
+    expect(extractCurrentLaneDirective(restartLaneBody)).toEqual(expect.objectContaining({
+      kind: 'james_plain_language_objective',
+      objective: 'after restart, James should not have to re-explain what we were doing; startup/session handoff should surface recent completed fixes, active lane, next action, and stale/backlog markers without treating old prose as live blockers.',
+    }));
+
+    const rows = [
+      {
+        messageId: 'm-finished-user-summary',
+        sessionId: 'app-session-374',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        rawBody: 'No, nothing new is running right now. Earlier we finished two fixes: stopping duplicate Telegram replies after accidental short messages, and clearing the false pending delivery state.',
+        brokeredAtMs: 1000,
+      },
+      {
+        messageId: 'm-delivery-closed',
+        sessionId: 'app-session-374',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: '(ARCH #82): Delivery-state truth lane closed. Good restraint on the no-replay guard.',
+        brokeredAtMs: 1200,
+      },
+      {
+        messageId: 'm-old-uncertain',
+        sessionId: 'app-session-374',
+        senderRole: 'oracle',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        rawBody: '(ORACLE #12): Historical delivery uncertainty row.',
+        brokeredAtMs: 1300,
+      },
+      {
+        messageId: 'm-recorded-backlog',
+        sessionId: 'app-session-374',
+        senderRole: 'mira',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'recorded',
+        rawBody: '(MIRA CURIOSITY BURST): unchanged no-op candidate.',
+        brokeredAtMs: 1400,
+      },
+      {
+        messageId: 'm-restart-lane',
+        sessionId: 'app-session-374',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: restartLaneBody,
+        brokeredAtMs: 2000,
+      },
+      {
+        messageId: 'm-oracle-orientation',
+        sessionId: 'app-session-374',
+        senderRole: 'oracle',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: '(ORACLE #37): Final read-only orientation for restart continuity. This is review criteria only: closed/review/read-only language should not outrank the actual lane.',
+        brokeredAtMs: 2200,
+      },
+      {
+        messageId: 'm-review-criteria',
+        sessionId: 'app-session-374',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: '(ARCH #88): Oracle #37 final orientation accepted as review criteria. Builder, continue bounded patch in current dirty scope only.',
+        brokeredAtMs: 2400,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-374',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeLane: expect.objectContaining({
+        kind: 'james_plain_language_objective',
+        objective: expect.stringContaining('James should not have to re-explain'),
+        sourceMessageId: 'm-restart-lane',
+        sourceRef: 'architect#84',
+      }),
+      continuity: expect.objectContaining({
+        next_action: expect.stringContaining('Continue active lane'),
+        recent_completed_fixes: expect.arrayContaining([
+          expect.objectContaining({
+            summary: expect.stringContaining('finished two fixes'),
+          }),
+        ]),
+        stale_backlog_markers: expect.arrayContaining([
+          expect.stringContaining('delivery-uncertain comms row'),
+          expect.stringContaining('recorded outbound row'),
+        ]),
+      }),
+    }));
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.status).toBe('active');
+    expect(currentLane.activeLane.sourceMessageId).toBe('m-restart-lane');
+    expect(currentLane.activeLane.objective).not.toMatch(/read-only|review criteria|closed/i);
+    expect(handoff).toContain('## Restart Continuity Summary');
+    expect(handoff).toContain('treat these as restart context, not live blockers');
+    expect(handoff).toContain('finished two fixes');
+    expect(handoff).toContain('delivery-uncertain comms row');
+    expect(currentLane.activeLane.objective).not.toContain('Hold edits until Oracle');
+  });
+
   test('natural current-lane Mira priority supersedes stale unclosed startup task', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const defaultCurrentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');

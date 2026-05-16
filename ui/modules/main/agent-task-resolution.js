@@ -6,6 +6,7 @@ const AGENT_ROLE_ALIASES = new Map([
 ]);
 
 const AGENT_REF_PATTERN = /\b(ARCHITECT|ARCH|BUILDER|ORACLE)\s+#(\d+)\b/gi;
+const COMPLETION_CONTINUITY_PATTERN = /\b(?:finished|committed|commit landed|lane closed|closed|verified locally|runtime cleanup verified|worktree clean|final git status|tests? (?:passed|green)|patch complete|task complete|resolvedCount|queue (?:is )?clean)\b/i;
 
 function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
@@ -242,12 +243,39 @@ function withLiveRiskPriority(directive, rawBody) {
   };
 }
 
+function trimContinuitySummary(value, limit = 220) {
+  const text = normalizeLaneObjective(value);
+  if (!text) return '';
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
+}
+
+function extractPlainLanguageObjective(rawBody) {
+  const stripped = stripAgentPrefix(normalizeLaneObjective(redactQuotedDirectiveText(rawBody)));
+  if (!/\bnew\s+lane\s+from\s+james\b/i.test(stripped)) return '';
+  const match = stripped.match(/\bplain[-\s]+language\s+objective\s*:\s*([\s\S]+)$/i);
+  if (!match) return '';
+  const cleaned = String(match[1] || '')
+    .replace(/\b(?:hold\s+edits|do\s+not\s+touch|oracle\s+is\s+still|acceptance)\b[\s\S]*$/i, '')
+    .trim();
+  return firstObjectiveSentence(cleaned);
+}
+
 function extractNaturalCurrentLaneDirective(rawBody) {
   if (isReportLikeDirectiveBody(rawBody)) return null;
   const stripped = stripAgentPrefix(normalizeLaneObjective(redactQuotedDirectiveText(rawBody)));
   if (!stripped) return null;
   if (/^(?:ack|findings?|validation|review\s+finding|root\s+cause)\b/i.test(stripped)) {
     return null;
+  }
+
+  const plainLanguageObjective = extractPlainLanguageObjective(rawBody);
+  if (plainLanguageObjective) {
+    return {
+      kind: 'james_plain_language_objective',
+      objective: plainLanguageObjective,
+      priority: 128,
+    };
   }
 
   let match = stripped.match(/^(?:new\s+)?user[-\s]facing\s+priority\s*:\s*(.+)$/i)
@@ -393,6 +421,83 @@ function extractCurrentLaneDirective(rawBody) {
   return withLiveRiskPriority(bestDirective, body);
 }
 
+function completionSourceRef(row = {}) {
+  const ref = parseLeadingAgentRef(row?.rawBody || '');
+  return ref ? `${ref.role}#${ref.seq}` : null;
+}
+
+function extractCompletionContinuityItem(row = {}) {
+  const body = toOptionalString(row?.rawBody, '');
+  if (!body) return null;
+  const stripped = stripAgentPrefix(normalizeLaneObjective(body));
+  if (!stripped || isReportLikeDirectiveBody(stripped)) return null;
+  if (!COMPLETION_CONTINUITY_PATTERN.test(stripped)) {
+    return null;
+  }
+  const sentences = stripped.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [stripped];
+  const completionSentence = sentences
+    .map((sentence) => sentence.trim())
+    .find((sentence) => COMPLETION_CONTINUITY_PATTERN.test(sentence))
+    || firstObjectiveSentence(stripped)
+    || stripped;
+  return {
+    at_ms: toEventTsMs(row) || null,
+    message_id: toOptionalString(row?.messageId, null),
+    source_ref: completionSourceRef(row),
+    summary: trimContinuitySummary(completionSentence),
+  };
+}
+
+function buildRestartContinuitySummary(rows = [], activeLane = null) {
+  const orderedRows = Array.isArray(rows) ? rows : [];
+  const activeStartedAtMs = Number(activeLane?.sourceTimestampMs);
+  const completionCutoffMs = Number.isFinite(activeStartedAtMs) && activeStartedAtMs > 0
+    ? activeStartedAtMs
+    : Number.POSITIVE_INFINITY;
+  const completed = [];
+  let deliveryUncertainCount = 0;
+  let recordedOutboundCount = 0;
+
+  for (const row of orderedRows) {
+    const rowTsMs = toEventTsMs(row);
+    const statusText = [
+      row?.status,
+      row?.ackStatus,
+      row?.errorCode,
+    ].map((value) => toOptionalString(value, '')?.toLowerCase() || '').join(' ');
+    if (/\b(?:routed_unverified_timeout|accepted\.unverified|routed_unverified)\b/i.test(statusText)) {
+      deliveryUncertainCount += 1;
+    }
+    if (
+      String(row?.direction || '').toLowerCase() === 'outbound'
+      && String(row?.status || '').toLowerCase() === 'recorded'
+    ) {
+      recordedOutboundCount += 1;
+    }
+    if (Number.isFinite(rowTsMs) && rowTsMs > completionCutoffMs) continue;
+    const completion = extractCompletionContinuityItem(row);
+    if (completion) completed.push(completion);
+  }
+
+  const staleBacklogMarkers = [];
+  if (deliveryUncertainCount > 0) {
+    staleBacklogMarkers.push(`${deliveryUncertainCount} delivery-uncertain comms row(s) are restart context, not live blockers without current evidence.`);
+  }
+  if (recordedOutboundCount > 0) {
+    staleBacklogMarkers.push(`${recordedOutboundCount} recorded outbound row(s) are backlog markers, not automatic retry work.`);
+  }
+
+  return {
+    next_action: activeLane?.objective
+      ? `Continue active lane: ${trimContinuitySummary(activeLane.objective, 260)}`
+      : null,
+    recent_completed_fixes: completed
+      .slice(Math.max(0, completed.length - 4))
+      .reverse(),
+    stale_backlog_markers: staleBacklogMarkers.slice(0, 4),
+  };
+}
+
 function buildLaneId(sessionId, row, ref) {
   const sessionPart = toOptionalString(sessionId, 'session') || 'session';
   const refPart = ref ? `${ref.role}-${ref.seq}` : 'unsequenced';
@@ -451,6 +556,7 @@ function deriveCurrentLaneSnapshot(rows = [], options = {}) {
     activeLaneCount: active ? 1 : 0,
     candidateCount: candidates.length,
     resolvedOrSupersededCount: resolved.length,
+    continuity: buildRestartContinuitySummary(orderedRows, active),
   };
 }
 
