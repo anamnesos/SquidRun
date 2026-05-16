@@ -4043,6 +4043,7 @@ describe('SquidRunApp', () => {
           chatId: '5613428850',
           windowKey: 'main',
           profile: 'main',
+          lastInboundBody: 'main hello',
         }));
       } finally {
         if (previousFlag === undefined) {
@@ -4153,6 +4154,245 @@ describe('SquidRunApp', () => {
         content: 'Retryable reply.',
         fromRole: 'mira',
         messageId: 'telegram-retry-2',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('coalesces stale clarify and verdict replies after a short stray Telegram negation', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'james',
+        lastInboundAtMs: nowMs,
+        chatId: '5613428850',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'wtf idk why it said Blake Keller',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I got "Blake Keller." Send me the action or context for that name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-clarify',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_clarification_suppressed',
+        queued: false,
+      }));
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction. I will check the inbound route so it does not become a ghost action.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-contain',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text, not a stale replay or wrong-window route. Looks upstream of SquidRun, so I am treating it as stray and taking no action on the name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-verdict',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_correction_coalesced',
+        queued: false,
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Got it.');
+    });
+
+    it('does not coalesce urgent Telegram replies after a short stray negation', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'james',
+        lastInboundAtMs: nowMs,
+        chatId: '5613428850',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'wtf idk why it said Blake Keller',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I got "Blake Keller." Send me the action or context for that name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-request-clarify',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_clarification_suppressed',
+        queued: false,
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-urgent-state',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Urgent: the Telegram route shows a security issue and you need to act now.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-urgent',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not coalesce replies when James explicitly asks for the stray-route result', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'james',
+        lastInboundAtMs: nowMs,
+        chatId: '5613428850',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'wtf idk why it said Blake Keller, can you check and tell me?',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-request-state',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-request-result',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not coalesce when James asks what happened without can-you-check phrasing', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'james',
+        lastInboundAtMs: nowMs,
+        chatId: '5613428850',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'I need you to check what happened.',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I got "Blake Keller." Send me the action or context for that name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-what-happened-clarify',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_clarification_suppressed',
+        queued: false,
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-what-happened-state',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-what-happened-result',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not coalesce a neutral result when the latest stray correction flags risk', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'james',
+        lastInboundAtMs: nowMs,
+        chatId: '5613428850',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'Is this a security issue?',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-risk-state',
+        chatId: '5613428850',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-risk-result',
         chatId: '5613428850',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
