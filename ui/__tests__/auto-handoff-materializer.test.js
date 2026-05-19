@@ -77,6 +77,10 @@ describe('auto-handoff-materializer', () => {
       tag: 'TASK',
       detail: 'Add tests',
     });
+    expect(_internals.extractTag('(ARCH #8): TASK \u2014 Open memory consistency drift lane')).toEqual({
+      tag: 'TASK',
+      detail: 'Open memory consistency drift lane',
+    });
 
     expect(_internals.extractTag('We discussed DECISION: but this is inline prose')).toBeNull();
     expect(_internals.extractTag('prefix DECISION: not anchored')).toBeNull();
@@ -383,6 +387,7 @@ describe('auto-handoff-materializer', () => {
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
     const currentSessionTaskBody = '(ARCHITECT #22): CURRENT-SESSION TASK: restart gate for committed Mira/startup package d414bfa';
     const currentLaneBody = '(ARCHITECT #23): CURRENT LANE: verify restart continuity';
+    const dashTaskBody = '(ARCH #24): TASK \u2014 Open memory consistency drift lane';
 
     expect(extractCurrentLaneDirective(currentSessionTaskBody)).toEqual(expect.objectContaining({
       kind: 'current_session_task',
@@ -391,6 +396,10 @@ describe('auto-handoff-materializer', () => {
     expect(extractCurrentLaneDirective(currentLaneBody)).toEqual(expect.objectContaining({
       kind: 'current_lane',
       objective: 'verify restart continuity',
+    }));
+    expect(extractCurrentLaneDirective(dashTaskBody)).toEqual(expect.objectContaining({
+      kind: 'task',
+      objective: 'Open memory consistency drift lane',
     }));
 
     const rows = [
@@ -430,6 +439,53 @@ describe('auto-handoff-materializer', () => {
 
     const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
     expect(currentLane.activeLane.objective).toBe('restart gate for committed Mira/startup package d414bfa');
+  });
+
+  test('dash-separated task materializes as current lane', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const dashTaskBody = '(ARCH #8): TASK \u2014 Open memory consistency drift lane';
+
+    const rows = [
+      {
+        messageId: 'm-dash-task',
+        sessionId: 'app-session-375',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: dashTaskBody,
+        brokeredAtMs: 1000,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-375',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 2000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeLane: expect.objectContaining({
+        kind: 'task',
+        objective: 'Open memory consistency drift lane',
+        sourceMessageId: 'm-dash-task',
+        sourceRef: 'architect#8',
+      }),
+    }));
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.activeLane.objective).toBe('Open memory consistency drift lane');
+    expect(handoff).toContain('- current_lane_status: active');
+    expect(handoff).toContain('- tagged_rows: 1');
   });
 
   test('restart-continuity objective materializes current lane with completed-fix and stale-backlog context', async () => {

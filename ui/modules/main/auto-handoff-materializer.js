@@ -41,7 +41,8 @@ const DIGEST_TAGS = new Set(['DECISION', 'FINDING']);
 const DIGEST_SESSION_LIMIT = 10;
 const CROSS_SESSION_AGE_LIMIT = DIGEST_SESSION_LIMIT;
 const DIGEST_HIGHLIGHT_LIMIT = 4;
-const TAG_PATTERN = /^(DECISION|TASK|FINDING|BLOCKER)\s*:\s*(.+)$/i;
+const TAG_SEPARATOR_PATTERN = String.raw`\s*(?::|[\u2014\u2013-])\s*`;
+const TAG_PATTERN = new RegExp(`^(DECISION|TASK|FINDING|BLOCKER)${TAG_SEPARATOR_PATTERN}(.+)$`, 'i');
 const KNOWN_TAG_PREFIX_PATTERNS = [
   /^\[[^\]]+\]\s*/,
   /^\([^)]+#\d+\)\s*:\s*/i,
