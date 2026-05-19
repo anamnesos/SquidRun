@@ -7,6 +7,11 @@ const AGENT_ROLE_ALIASES = new Map([
 
 const AGENT_REF_PATTERN = /\b(ARCHITECT|ARCH|BUILDER|ORACLE)\s+#(\d+)\b/gi;
 const COMPLETION_CONTINUITY_PATTERN = /\b(?:finished|committed|commit landed|lane closed|closed|verified locally|runtime cleanup verified|worktree clean|final git status|tests? (?:passed|green)|patch complete|task complete|resolvedCount|queue (?:is )?clean)\b/i;
+const DIRECTIVE_SEPARATOR_PATTERN = String.raw`\s*(?::|[\u2014\u2013-])\s*`;
+const CURRENT_SESSION_TASK_PATTERN = new RegExp(`^(?:[-*]\\s*)?CURRENT[-\\s]+SESSION\\s+TASK${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
+const CURRENT_LANE_PATTERN = new RegExp(`^(?:[-*]\\s*)?(?:CURRENT\\s+(?:LANE|PRIORITY|FOCUS)|ACTIVE\\s+LANE|FOCUS)${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
+const TASK_PATTERN = new RegExp(`^(?:[-*]\\s*)?TASK${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
+const OBJECTIVE_PATTERN = new RegExp(`^(?:[-*]\\s*)?OBJECTIVE${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 
 function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
@@ -351,7 +356,7 @@ function extractCurrentLaneDirective(rawBody) {
     }
     if (insideReportSection) continue;
 
-    let match = stripped.match(/^(?:[-*]\s*)?CURRENT[-\s]+SESSION\s+TASK\s*:\s*(.+)$/i);
+    let match = stripped.match(CURRENT_SESSION_TASK_PATTERN);
     if (match) {
       const objective = normalizeLaneObjective(match[1]);
       if (objective) {
@@ -363,7 +368,7 @@ function extractCurrentLaneDirective(rawBody) {
       }
     }
 
-    match = stripped.match(/^(?:[-*]\s*)?(?:CURRENT\s+(?:LANE|PRIORITY|FOCUS)|ACTIVE\s+LANE|FOCUS)\s*:\s*(.+)$/i);
+    match = stripped.match(CURRENT_LANE_PATTERN);
     if (match) {
       const objective = normalizeLaneObjective(match[1]);
       if (objective) {
@@ -375,7 +380,7 @@ function extractCurrentLaneDirective(rawBody) {
       }
     }
 
-    match = stripped.match(/^(?:[-*]\s*)?TASK\s*:\s*(.+)$/i);
+    match = stripped.match(TASK_PATTERN);
     if (match) {
       const objective = normalizeLaneObjective(match[1]);
       if (objective) {
@@ -387,7 +392,7 @@ function extractCurrentLaneDirective(rawBody) {
       }
     }
 
-    match = stripped.match(/^(?:[-*]\s*)?OBJECTIVE\s*:\s*(.+)$/i);
+    match = stripped.match(OBJECTIVE_PATTERN);
     if (match) {
       const objective = normalizeLaneObjective(match[1]);
       if (objective) {
