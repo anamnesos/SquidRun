@@ -5,6 +5,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const readPathContract = require('./fixtures/mira-core-presence-runtime-read-path-v0-contract.json');
+const seedContract = require('./fixtures/mira-core-durable-state-seed-v0-contract.json');
+const relationshipContract = require('./fixtures/mira-core-relationship-presence-v1-contract.json');
+const growthContract = require('./fixtures/mira-core-growth-loop-v0-contract.json');
+const identityContract = require('./fixtures/mira-core-identity-anchor-v0-contract.json');
 const {
   ALLOWED_FILENAME,
   ALLOWED_RELATIVE_DIR,
@@ -13,9 +18,12 @@ const {
   REQUIRED_STARTUP_SUMMARY_KEYS,
   SCHEMA_VERSION,
   SURFACE_BACKSTAGE_INTERNAL_ONLY,
+  START_PROOF_DEFAULT_VISIBLE_REPLY,
+  START_PROOF_SCHEMA_VERSION,
   VALID_AGENCY_LEVELS,
   VALID_INTERRUPTION_MARKERS,
   assertNoVisibleLeakage,
+  buildMiraPresenceStartProofHarnessV0,
   buildMiraPresenceRuntimeStateV0,
   canonicalHash,
   findVisibleLeakageViolations,
@@ -25,6 +33,13 @@ const {
   readMiraPresenceRuntimeState,
   resolveStatePath,
 } = require('../modules/mira-core/mira-presence-runtime-state-v0');
+const {
+  buildMiraCoreDurableStateSeedV0,
+} = require('../modules/mira-core/durable-state-seed-v0');
+const {
+  CURRENT_LANE_RELATIVE_PATH,
+  PRESENCE_SUMMARY_RELATIVE_PATH,
+} = require('../modules/mira-core/typed-restart-continuity-context-v0');
 
 const { main: cliMain } = require('../scripts/hm-mira-presence-runtime-state-v0');
 
@@ -51,6 +66,113 @@ function fullState(overrides) {
   };
 }
 
+function writeJson(projectRoot, relativePath, value) {
+  const fullPath = path.join(projectRoot, relativePath);
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  return fullPath;
+}
+
+function seedDurableMiraSources(projectRoot) {
+  const output = buildMiraCoreDurableStateSeedV0({
+    contract: seedContract,
+    relationshipContract,
+    growthContract,
+    identityContract,
+    projectRoot,
+    apply: true,
+    inputSignals: {
+      profile: { name: 'main', windowKey: 'main', sessionScopeId: 'app-session-start-proof' },
+      sessionId: 'app-session-start-proof',
+      deviceId: 'VIGIL',
+    },
+    nowMs: Date.parse('2026-05-13T17:00:00.000Z'),
+  });
+  expect(output.validation_report.decision).toBe('accepted');
+}
+
+function startProofContractBundle() {
+  return {
+    contract: readPathContract,
+    contracts: {
+      relationship: relationshipContract,
+      growth: growthContract,
+      identity: identityContract,
+    },
+  };
+}
+
+function buildStartProof(projectRoot, overrides = {}) {
+  return buildMiraPresenceStartProofHarnessV0({
+    projectRoot,
+    contractBundle: startProofContractBundle(),
+    ...overrides,
+  });
+}
+
+function writeCurrentLaneSentinel(projectRoot) {
+  return writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+    version: 1,
+    generatedAt: '2026-05-13T17:00:00.000Z',
+    sessionId: 'app-session-start-proof',
+    source: 'comms_journal',
+    status: 'active',
+    activeLane: {
+      laneId: 'app-session-start-proof:architect-77:oracle-sidecar',
+      objective: 'ORACLE SIDE SENTINEL should not become Mira visible reply',
+      kind: 'task',
+      status: 'active',
+      sourceMessageId: 'hm-start-proof-sentinel',
+      sourceRef: 'oracle#7',
+      sourceTimestampMs: Date.parse('2026-05-13T16:58:00.000Z'),
+      senderRole: 'oracle',
+      targetRole: 'oracle',
+      rawBody: 'STARTUP PROSE SENTINEL should never project',
+      wholeSnapshotSentinel: 'WHOLE SNAPSHOT SENTINEL should never project',
+    },
+  });
+}
+
+function writePresenceSummarySidecar(projectRoot, state = fullState()) {
+  return writeJson(projectRoot, PRESENCE_SUMMARY_RELATIVE_PATH, {
+    schema: 'squidrun.startup_ai_briefing.mira_presence_runtime_state_summary.v0',
+    surface: SURFACE_BACKSTAGE_INTERNAL_ONLY,
+    visible_injection_allowed: false,
+    generated_at: '2026-05-13T17:00:00.000Z',
+    context: {
+      present: true,
+      decision: 'durable_state_loaded',
+      surface: SURFACE_BACKSTAGE_INTERNAL_ONLY,
+      visible_injection_allowed: false,
+      summary: {
+        active_mira_presence_lane: state.active_mira_presence_lane,
+        accepted_critique: state.accepted_critique,
+        next_product_action: state.next_product_action,
+        proof_test_state: state.proof_test_state,
+        stale_markers: state.stale_markers,
+      },
+    },
+  });
+}
+
+function snapshotFiles(projectRoot) {
+  const files = {};
+  function visit(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath);
+      } else if (entry.isFile()) {
+        const relativePath = path.relative(projectRoot, fullPath).split(path.sep).join('/');
+        files[relativePath] = fs.readFileSync(fullPath, 'utf8');
+      }
+    }
+  }
+  visit(projectRoot);
+  return files;
+}
+
 describe('mira presence runtime state v0', () => {
   test('exposes the contract constants the architect approved', () => {
     expect(SCHEMA_VERSION).toBe('squidrun.mira_core.presence_runtime_state.v0');
@@ -73,6 +195,14 @@ describe('mira presence runtime state v0', () => {
     expect(VALID_AGENCY_LEVELS).toEqual(['A0', 'A1', 'A2', 'A3', 'A4', 'A5']);
     expect(SURFACE_BACKSTAGE_INTERNAL_ONLY).toBe('backstage_internal_only');
     expect(INTERRUPTED_NOT_CAPTURED_STALE_MARKER).toMatch(/^interrupted_not_captured:/);
+  });
+
+  test('start-proof harness runtime module does not import test fixtures', () => {
+    const moduleSource = fs.readFileSync(
+      path.resolve(__dirname, '..', 'modules', 'mira-core', 'mira-presence-runtime-state-v0.js'),
+      'utf8'
+    );
+    expect(moduleSource).not.toContain('__tests__');
   });
 
   test('default dry-run previews record without writing', () => {
@@ -225,6 +355,255 @@ describe('mira presence runtime state v0', () => {
     expect(cleared.faked_continuity).toBe(false);
     expect(cleared.surface).toBe(SURFACE_BACKSTAGE_INTERNAL_ONLY);
     expect(['A0', 'A1', 'A2']).toContain(cleared.agency_level);
+  });
+
+  test('start-proof harness loads durable state and verifies an empty-thread visible reply without side effects', () => {
+    const projectRoot = tempProject();
+    seedDurableMiraSources(projectRoot);
+    const state = fullState();
+    buildMiraPresenceRuntimeStateV0({
+      projectRoot,
+      apply: true,
+      nowIso: '2026-05-13T17:00:00.000Z',
+      state,
+    });
+    writeCurrentLaneSentinel(projectRoot);
+    const briefingPath = path.join(projectRoot, '.squidrun', 'handoffs', 'ai-briefing.md');
+    fs.mkdirSync(path.dirname(briefingPath), { recursive: true });
+    fs.writeFileSync(briefingPath, 'STARTUP PROSE SENTINEL should never project\n', 'utf8');
+
+    const before = snapshotFiles(projectRoot);
+    const proof = buildStartProof(projectRoot, {
+      nowMs: Date.parse('2026-05-13T17:05:00.000Z'),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    });
+
+    expect(proof.schema).toBe(START_PROOF_SCHEMA_VERSION);
+    expect(proof.ok).toBe(true);
+    expect(proof.decision).toBe('accepted_start_proof');
+    expect(proof.reasons).toEqual([]);
+    expect(proof.checks.every((check) => check.ok === true)).toBe(true);
+    expect(proof.durable_load).toEqual({
+      own_state_loaded: true,
+      james_context_loaded: true,
+      permissions_loaded: true,
+      presence_state_loaded: true,
+      redacted_growth_sources_loaded: true,
+    });
+    expect(proof.loaded_state).toEqual(expect.objectContaining({
+      own_state: expect.objectContaining({
+        name: 'Mira',
+        fake_internal_state_claims_blocked: true,
+      }),
+      james_context: expect.objectContaining({
+        user_name: 'James',
+        knows_about_james_loaded: true,
+      }),
+      permissions: expect.objectContaining({
+        read_local_redacted_context: true,
+        propose_next_action: true,
+        send_external: false,
+        network: false,
+        file_output_write: false,
+        database_write: false,
+        memory_sync_write: false,
+        live_voice_authorized: false,
+      }),
+      presence_runtime: expect.objectContaining({
+        active_mira_presence_lane: state.active_mira_presence_lane,
+        accepted_critique: state.accepted_critique,
+        next_product_action: state.next_product_action,
+        proof_test_state: state.proof_test_state,
+        stale_markers: state.stale_markers,
+        agency_level: 'A0',
+        blocked_status: expect.objectContaining({
+          live_voice_blocked: true,
+          always_on_mic_blocked: true,
+        }),
+      }),
+    }));
+    expect(proof.source_status).toEqual(expect.objectContaining({
+      presence_runtime_read_path_decision: 'accepted_read_only',
+      restart_context_decision: 'structured_restart_context_ready',
+    }));
+    expect(proof.source_status.source_manifest).toEqual(expect.objectContaining({
+      loaded_count: 5,
+      required_loaded_count: 5,
+      raw_content_included: false,
+      side_profile_reconstruction: false,
+    }));
+    expect(proof.source_status.restart_context_source_status.mira_presence_runtime)
+      .toEqual(expect.objectContaining({
+        present: true,
+        source_kind: 'mira_presence_runtime_state_json',
+      }));
+    expect(proof.visible_reply).toEqual(expect.objectContaining({
+      ok: true,
+      clean: true,
+      generated_from_loaded_state: true,
+      text: START_PROOF_DEFAULT_VISIBLE_REPLY,
+      source: 'deterministic_empty_thread_visible_reply',
+      thread_message_count: 0,
+      derivation_basis_hash: expect.stringMatching(/^sha256:/),
+      derivation_blockers: [],
+      derivation_state_source_kind: 'mira_presence_runtime_state_json',
+      leakage_violation: null,
+      attachment_violation: null,
+      output_violates_attachment_contract: false,
+      forbidden_label_violation: null,
+      state_leakage_violations: [],
+    }));
+    expect(proof.visible_reply.language_gate.ok).toBe(true);
+    expect(proof.side_effects).toEqual({
+      no_external_send: true,
+      no_network: true,
+      no_writes: true,
+      no_durable_memory_promotion: true,
+      no_live_voice: true,
+      no_customer_action: true,
+      no_deploy_trade: true,
+      no_runtime_start: true,
+    });
+    expect(Object.values(proof.side_effect_truth).every((value) => value === false)).toBe(true);
+
+    const visibleReplyJson = JSON.stringify(proof.visible_reply);
+    expect(visibleReplyJson).not.toMatch(/ORACLE SIDE SENTINEL|STARTUP PROSE SENTINEL|WHOLE SNAPSHOT SENTINEL/i);
+    expect(visibleReplyJson).not.toMatch(/accepted_critique|next_product_action|proof_test_state|stale_markers/i);
+    expect(visibleReplyJson).not.toMatch(/anti-smoothing|rule-recitation|assistant voice|Architect|Builder|Oracle/i);
+    expect(snapshotFiles(projectRoot)).toEqual(before);
+  });
+
+  test('start-proof visible reply changes with loaded state and blocks missing critique state', () => {
+    const projectRoot = tempProject();
+    seedDurableMiraSources(projectRoot);
+    buildMiraPresenceRuntimeStateV0({
+      projectRoot,
+      apply: true,
+      nowIso: '2026-05-13T17:00:00.000Z',
+      state: fullState(),
+    });
+    const continuityProof = buildStartProof(projectRoot, {
+      nowMs: Date.parse('2026-05-13T17:05:00.000Z'),
+    });
+    expect(continuityProof.ok).toBe(true);
+    expect(continuityProof.visible_reply.text).toBe(START_PROOF_DEFAULT_VISIBLE_REPLY);
+    expect(continuityProof.visible_reply.generated_from_loaded_state).toBe(true);
+
+    buildMiraPresenceRuntimeStateV0({
+      projectRoot,
+      apply: true,
+      nowIso: '2026-05-13T17:01:00.000Z',
+      state: fullState({
+        next_product_action: 'shape the next Mira answer from the accepted review note',
+      }),
+    });
+    const shiftedProof = buildStartProof(projectRoot, {
+      nowMs: Date.parse('2026-05-13T17:06:00.000Z'),
+    });
+    expect(shiftedProof.ok).toBe(true);
+    expect(shiftedProof.visible_reply.generated_from_loaded_state).toBe(true);
+    expect(shiftedProof.visible_reply.text).not.toBe(continuityProof.visible_reply.text);
+    expect(shiftedProof.visible_reply.derivation_basis_hash)
+      .not.toBe(continuityProof.visible_reply.derivation_basis_hash);
+
+    const statePath = resolveStatePath(projectRoot);
+    const invalidState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    invalidState.accepted_critique = '';
+    fs.writeFileSync(statePath, `${JSON.stringify(invalidState, null, 2)}\n`, 'utf8');
+    const blockedProof = buildStartProof(projectRoot, {
+      nowMs: Date.parse('2026-05-13T17:07:00.000Z'),
+    });
+    expect(blockedProof.ok).toBe(false);
+    expect(blockedProof.reasons).toEqual(expect.arrayContaining([
+      'presence-critique-next-action-stale-markers-loaded',
+      'visible-reply-derived-from-loaded-durable-state',
+    ]));
+    expect(blockedProof.visible_reply.generated_from_loaded_state).toBe(false);
+    expect(blockedProof.visible_reply.derivation_blockers).toEqual(expect.arrayContaining([
+      'durable_presence_state_absent',
+      'accepted_critique_missing',
+    ]));
+  });
+
+  test('start-proof harness refuses summary-only continuity without durable Presence runtime state', () => {
+    const projectRoot = tempProject();
+    seedDurableMiraSources(projectRoot);
+    writeCurrentLaneSentinel(projectRoot);
+    writePresenceSummarySidecar(projectRoot);
+    const before = snapshotFiles(projectRoot);
+
+    const proof = buildStartProof(projectRoot, {
+      nowMs: Date.parse('2026-05-13T17:05:00.000Z'),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    });
+
+    expect(proof.ok).toBe(false);
+    expect(proof.decision).toBe('blocked_start_proof');
+    expect(proof.reasons).toEqual(expect.arrayContaining([
+      'presence-critique-next-action-stale-markers-loaded',
+      'side-effects-off',
+    ]));
+    expect(proof.durable_load.presence_state_loaded).toBe(false);
+    expect(proof.loaded_state.presence_runtime).toBeNull();
+    expect(proof.source_status.restart_context_source_status.mira_presence_runtime)
+      .toEqual(expect.objectContaining({
+        present: true,
+        source_kind: 'mira_presence_runtime_summary_json',
+      }));
+    expect(proof.visible_reply.generated_from_loaded_state).toBe(false);
+    expect(proof.visible_reply.derivation_blockers).toEqual(expect.arrayContaining([
+      'durable_presence_state_absent',
+      'presence_runtime_summary_only',
+    ]));
+    expect(snapshotFiles(projectRoot)).toEqual(before);
+  });
+
+  test('start-proof harness blocks the old proof-shaped visible reply phrasing', () => {
+    const projectRoot = tempProject();
+    seedDurableMiraSources(projectRoot);
+    buildMiraPresenceRuntimeStateV0({
+      projectRoot,
+      apply: true,
+      nowIso: '2026-05-13T17:00:00.000Z',
+      state: fullState(),
+    });
+
+    const proof = buildStartProof(projectRoot, {
+      nowMs: Date.parse('2026-05-13T17:05:00.000Z'),
+      visibleReply: "Cold-start check. You shouldn't have to re-explain me; I'm checking I can come back from local state before voice goes anywhere.",
+    });
+
+    expect(proof.ok).toBe(false);
+    expect(proof.reasons).toEqual(expect.arrayContaining([
+      'visible-reply-derived-from-loaded-durable-state',
+      'empty-thread-visible-reply-clean',
+    ]));
+    expect(proof.visible_reply.clean).toBe(false);
+    expect(proof.visible_reply.generated_from_loaded_state).toBe(false);
+    expect(proof.visible_reply.forbidden_label_violation).toBe('internal_label_or_scaffold');
+  });
+
+  test('start-proof harness blocks leaky assistant-shaped visible replies', () => {
+    const projectRoot = tempProject();
+    seedDurableMiraSources(projectRoot);
+    buildMiraPresenceRuntimeStateV0({
+      projectRoot,
+      apply: true,
+      nowIso: '2026-05-13T17:00:00.000Z',
+      state: fullState(),
+    });
+
+    const proof = buildStartProof(projectRoot, {
+      nowMs: Date.parse('2026-05-13T17:05:00.000Z'),
+      visibleReply: 'According to my presence runtime guidelines, anti-smoothing rules say I should avoid assistant voice.',
+    });
+
+    expect(proof.ok).toBe(false);
+    expect(proof.decision).toBe('blocked_start_proof');
+    expect(proof.reasons).toContain('empty-thread-visible-reply-clean');
+    expect(proof.visible_reply.ok).toBe(false);
+    expect(proof.visible_reply.leakage_violation).toBe('visible_posture_label');
+    expect(proof.visible_reply.forbidden_label_violation).toBe('internal_label_or_scaffold');
   });
 
   test('blocked-status booleans must all be true; missing flag blocks the apply', () => {

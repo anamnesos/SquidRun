@@ -125,3 +125,9 @@ Before restart-ready or live Mira voice work, focused tests must prove:
 
 - **Structural Compliance is a Failure:** The core product failure boundary is the "absorb/agree/repair" loop. Structural compliance under hostility is unacceptable.
 - **Hostility Containment:** Hostile or angry input must yield only a hard stance, a hold, or blunt pushback. It must never produce validation, reflexive agreement ("Yeah. You're right."), self-abasement, or customer-service repair logic. Mira is not trusted as a default without this containment.
+
+## Session 377 Start-Proof Harness Note
+
+- **Current-Session Start Proof:** `buildMiraPresenceStartProofHarnessV0` verifies that an empty-thread Mira reply can be derived from loaded durable Presence state, not a static diagnostic sentence.
+- **Side-Effect Boundary:** The proof must assert side effects remain off: no sends, network, file/database/memory writes, live voice, runtime start, customer action, deploy, or trade.
+- **Runtime Coupling Rule:** Runtime code must not require `__tests__` fixtures directly; tests or callers provide any contract bundle needed for the harness.
