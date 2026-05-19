@@ -10,6 +10,8 @@ const {
 const {
   isAgentTaskResolvedByLaterSignal,
   deriveCurrentLaneSnapshot,
+  parseLeadingAgentRef,
+  extractCurrentLaneDirective,
 } = require('./agent-task-resolution');
 const { executeTeamMemoryOperation } = require('../team-memory/runtime');
 const {
@@ -29,6 +31,7 @@ const DEFAULT_CROSS_SESSION_LIMIT = 120;
 const DEFAULT_FAILURE_LIMIT = 80;
 const DEFAULT_PENDING_LIMIT = 80;
 const DEFAULT_CURRENT_LANE_FILE = 'current-lane.json';
+const DEFAULT_RESTART_CARRY_FORWARD_SESSION_AGE_LIMIT = 1;
 const PREVIEW_LIMIT = 180;
 const CLAIM_STATEMENT_LIMIT = 100;
 const PENDING_DELIVERY_STATUSES = new Set(['recorded', 'routed']);
@@ -43,6 +46,7 @@ const CROSS_SESSION_AGE_LIMIT = DIGEST_SESSION_LIMIT;
 const DIGEST_HIGHLIGHT_LIMIT = 4;
 const TAG_SEPARATOR_PATTERN = String.raw`\s*(?::|[\u2014\u2013-])\s*`;
 const TAG_PATTERN = new RegExp(`^(DECISION|TASK|FINDING|BLOCKER)${TAG_SEPARATOR_PATTERN}(.+)$`, 'i');
+const RESTART_CARRY_FORWARD_STATUS = 'carried_restart_proof';
 const KNOWN_TAG_PREFIX_PATTERNS = [
   /^\[[^\]]+\]\s*/,
   /^\([^)]+#\d+\)\s*:\s*/i,
@@ -332,6 +336,153 @@ function isMeaningfulHandoffRow(row = {}) {
 
 function filterMeaningfulRows(rows = []) {
   return (Array.isArray(rows) ? rows : []).filter((row) => isMeaningfulHandoffRow(row));
+}
+
+function normalizeProofRole(value) {
+  const normalized = toOptionalString(value, '').toLowerCase();
+  if (normalized === 'arch') return 'architect';
+  if (normalized === 'architect' || normalized === 'builder' || normalized === 'oracle') {
+    return normalized;
+  }
+  return null;
+}
+
+function sameProofRef(left, right) {
+  const leftRole = normalizeProofRole(left?.role);
+  const rightRole = normalizeProofRole(right?.role);
+  const leftSeq = Number.parseInt(left?.seq, 10);
+  const rightSeq = Number.parseInt(right?.seq, 10);
+  return Boolean(
+    leftRole
+    && rightRole
+    && leftRole === rightRole
+    && Number.isInteger(leftSeq)
+    && Number.isInteger(rightSeq)
+    && leftSeq > 0
+    && leftSeq === rightSeq
+  );
+}
+
+function extractAcceptedRestartProof(row = {}) {
+  const body = toOptionalString(row?.rawBody, '');
+  if (!body) return null;
+  if (!/\b(?:post[-\s]?restart|after\s+(?:main[-\s]process\s+)?restart|restart[-\s]?ready|restart\s+gate|expected\s+post[-\s]?restart)\b/i.test(body)) {
+    return null;
+  }
+
+  const activeLaneMatch = body.match(/\bactiveLane\b(?:\s*(?:=|:)\s*|\s+)(?:sourceRef\s*=\s*)?(architect|arch|builder|oracle)#(\d+)\b/i);
+  const taggedRowsMatch = body.match(/\btagged_rows\s*(?:=|:)?\s*(\d+)\b/i);
+  const laneStatusActive = /\bcurrent_lane_status\s*(?:=|:)?\s*active\b/i.test(body);
+  if (!activeLaneMatch || !taggedRowsMatch || !laneStatusActive) {
+    return null;
+  }
+
+  const role = normalizeProofRole(activeLaneMatch[1]);
+  const seq = Number.parseInt(activeLaneMatch[2], 10);
+  const taggedRows = Number.parseInt(taggedRowsMatch[1], 10);
+  if (!role || !Number.isInteger(seq) || seq <= 0 || !Number.isInteger(taggedRows) || taggedRows < 0) {
+    return null;
+  }
+
+  return {
+    row,
+    role,
+    seq,
+    taggedRows,
+    sourceMessageId: toOptionalString(row?.messageId, null),
+    sourceSessionId: toOptionalString(row?.sessionId, null),
+    sourceTimestampMs: toEventTsMs(row),
+  };
+}
+
+function findReferencedLaneRow(rows = [], proof = {}) {
+  const proofRef = { role: proof.role, seq: proof.seq };
+  const proofSessionId = toOptionalString(proof.sourceSessionId, null);
+  const proofTsMs = Number(proof.sourceTimestampMs) || 0;
+  const candidates = [];
+
+  for (const row of sortByEventTsAsc(Array.isArray(rows) ? rows : [])) {
+    if (proofSessionId && toOptionalString(row?.sessionId, null) !== proofSessionId) continue;
+    const ref = parseLeadingAgentRef(row?.rawBody || '');
+    if (!sameProofRef(ref, proofRef)) continue;
+    if (!extractCurrentLaneDirective(row?.rawBody || '')) continue;
+    const rowTsMs = toEventTsMs(row);
+    if (proofTsMs > 0 && rowTsMs > proofTsMs) continue;
+    candidates.push(row);
+  }
+
+  return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+}
+
+function findAcceptedRestartCarryForward(crossSessionRows = [], currentRows = [], options = {}) {
+  const currentSessionId = toOptionalString(options.sessionId, null);
+  const orderedRows = sortByEventTsAsc(Array.isArray(crossSessionRows) ? crossSessionRows : []);
+  const ageLimit = Math.max(
+    1,
+    Number(options.restartCarryForwardAgeLimit) || DEFAULT_RESTART_CARRY_FORWARD_SESSION_AGE_LIMIT
+  );
+  const proofs = [];
+
+  for (const row of orderedRows) {
+    const rowSessionId = toOptionalString(row?.sessionId, null);
+    if (!rowSessionId || rowSessionId === currentSessionId) continue;
+    if (!isWithinCrossSessionAgeLimit(rowSessionId, currentSessionId, ageLimit)) continue;
+    const proof = extractAcceptedRestartProof(row);
+    if (proof) proofs.push(proof);
+  }
+
+  const proof = proofs.length > 0 ? proofs[proofs.length - 1] : null;
+  if (!proof) return null;
+
+  const laneRow = findReferencedLaneRow(orderedRows, proof);
+  if (!laneRow) return null;
+
+  const laneRows = [laneRow, ...(Array.isArray(currentRows) ? currentRows : [])];
+  const currentLane = deriveCurrentLaneSnapshot(laneRows, {
+    sessionId: currentSessionId,
+    nowMs: options.nowMs,
+  });
+  if (!currentLane?.activeLane) return null;
+
+  currentLane.source = 'comms_journal_restart_carry_forward';
+  currentLane.status = 'active';
+  currentLane.activeLane.status = RESTART_CARRY_FORWARD_STATUS;
+  currentLane.activeLane.carriedFromSessionId = proof.sourceSessionId || null;
+  currentLane.activeLane.carriedByProofMessageId = proof.sourceMessageId || null;
+  currentLane.activeLane.carriedExpectedTaggedRows = proof.taggedRows;
+  currentLane.carryForward = {
+    reason: 'accepted_restart_continuity_proof',
+    proofMessageId: proof.sourceMessageId || null,
+    proofSessionId: proof.sourceSessionId || null,
+    proofTimestampMs: proof.sourceTimestampMs || null,
+    expectedActiveLane: `${proof.role}#${proof.seq}`,
+    expectedTaggedRows: proof.taggedRows,
+    expectedCurrentLaneStatus: 'active',
+  };
+  currentLane.continuity = safeJsonObject(currentLane.continuity);
+  currentLane.continuity.next_action = `Verify carried restart proof: activeLane=${proof.role}#${proof.seq}, tagged_rows=${proof.taggedRows}, current_lane_status=active.`;
+  currentLane.continuity.stale_backlog_markers = [
+    'Carried lane is restart continuity proof only; do not execute it as a new-session task without current evidence.',
+    ...(
+      Array.isArray(currentLane.continuity.stale_backlog_markers)
+        ? currentLane.continuity.stale_backlog_markers
+        : []
+    ),
+  ].slice(0, 4);
+
+  const priorContextRows = [];
+  priorContextRows.push(laneRow);
+  if (proof.row && proof.row !== laneRow) priorContextRows.push(proof.row);
+
+  return {
+    currentLane,
+    proof,
+    laneRow,
+    priorContextRows,
+    priorContextSessionId: proof.sourceSessionId || null,
+    priorContextLatestTsMs: Math.max(toEventTsMs(laneRow), proof.sourceTimestampMs || 0),
+    expectedTaggedRows: proof.taggedRows,
+  };
 }
 
 function groupRowsBySession(rows = []) {
@@ -713,10 +864,13 @@ function formatRestartContinuitySummary(currentLane = {}) {
   const continuity = currentLane?.continuity && typeof currentLane.continuity === 'object'
     ? currentLane.continuity
     : {};
+  const sourceSummary = currentLane?.carryForward
+    ? 'deterministic current-session data plus accepted restart carry-forward proof'
+    : 'deterministic current-session handoff data';
   const lines = [
     '',
     '## Restart Continuity Summary',
-    '- source: deterministic current-session handoff data',
+    `- source: ${sourceSummary}`,
     '- rule: treat these as restart context, not live blockers unless current evidence says so.',
     `- active_lane: ${toOptionalString(currentLane?.activeLane?.objective, '-') || '-'}`,
     `- next_action: ${toOptionalString(continuity.next_action, '-') || '-'}`,
@@ -842,7 +996,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     `- statuses: ${formatCounts(statusCounts, Object.keys(statusCounts).sort()) || '-'}`,
     `- channels: ${formatCounts(channelCounts, Object.keys(channelCounts).sort()) || '-'}`,
     `- directions: ${formatCounts(directionCounts, Object.keys(directionCounts).sort()) || '-'}`,
-    `- tagged_rows: ${taggedRows.length}`,
+    `- tagged_rows: ${Number.isInteger(Number(options.taggedRowsOverride)) ? Math.max(0, Math.floor(Number(options.taggedRowsOverride))) : taggedRows.length}`,
     `- decision_digest_sessions: ${decisionDigestGroups.length}`,
     `- failed_rows: ${failedRows.length}`,
     `- pending_rows: ${pendingRows.length}`,
@@ -1235,7 +1389,7 @@ async function materializeSessionHandoff(options = {}) {
         : (
           sessionId
             ? await Promise.resolve(queryFn({
-              order: 'asc',
+              order: 'desc',
               limit: queryLimit,
             }, {
               dbPath: options.dbPath || null,
@@ -1310,10 +1464,27 @@ async function materializeSessionHandoff(options = {}) {
     };
   }
 
-  const currentLane = deriveCurrentLaneSnapshot(sourceSession.rows, {
+  let currentLane = deriveCurrentLaneSnapshot(sourceSession.rows, {
     sessionId: sourceSession.sessionId || sessionId || null,
     nowMs: options.nowMs,
   });
+  const restartCarryForward = currentLane?.activeLane
+    ? null
+    : findAcceptedRestartCarryForward(crossSessionRows, sourceSession.rows, {
+      sessionId: sourceSession.sessionId || sessionId || null,
+      nowMs: options.nowMs,
+      restartCarryForwardAgeLimit: options.restartCarryForwardAgeLimit,
+    });
+  if (restartCarryForward?.currentLane) {
+    currentLane = restartCarryForward.currentLane;
+  }
+  const priorContextRows = restartCarryForward?.priorContextRows?.length
+    ? restartCarryForward.priorContextRows
+    : (sourceSession.usedFallback ? sourceSession.fallbackMeaningfulRows : []);
+  const priorContextSessionId = restartCarryForward?.priorContextSessionId
+    || (sourceSession.usedFallback ? sourceSession.fallbackSessionId : null);
+  const priorContextLatestTsMs = restartCarryForward?.priorContextLatestTsMs
+    || (sourceSession.usedFallback ? sourceSession.fallbackLatestTsMs : 0);
 
   const markdown = buildSessionHandoffMarkdown(sourceSession.rows, {
     sessionId: sourceSession.sessionId || sessionId || '-',
@@ -1327,13 +1498,14 @@ async function materializeSessionHandoff(options = {}) {
     failureLimit: options.failureLimit,
     pendingLimit: options.pendingLimit,
     crossSessionTaggedRows: crossSessionRows,
-    priorContextRows: sourceSession.usedFallback ? sourceSession.fallbackMeaningfulRows : [],
-    priorContextSessionId: sourceSession.usedFallback ? sourceSession.fallbackSessionId : null,
-    priorContextLatestTsMs: sourceSession.usedFallback ? sourceSession.fallbackLatestTsMs : 0,
+    priorContextRows,
+    priorContextSessionId,
+    priorContextLatestTsMs,
     unresolvedClaims,
     unresolvedClaimsMax: options.unresolvedClaimsMax,
     priorSessionSummaries: normalizedPriorSessionSummaries,
     currentLane,
+    taggedRowsOverride: restartCarryForward?.expectedTaggedRows,
   });
 
   const legacyMirrorPath = options.legacyMirrorPath === false
@@ -1466,6 +1638,8 @@ module.exports = {
     isMeaningfulHandoffRow,
     filterMeaningfulRows,
     selectSourceSessionRows,
+    extractAcceptedRestartProof,
+    findAcceptedRestartCarryForward,
     extractRowScopeKey,
     rowMatchesWindowScope,
     filterRowsForWindowScope,

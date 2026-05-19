@@ -488,6 +488,226 @@ describe('auto-handoff-materializer', () => {
     expect(handoff).toContain('- tagged_rows: 1');
   });
 
+  test('empty-for-lane startup chatter carries only accepted pre-restart proof from recent tail', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const queryCalls = [];
+    const startupRows = [
+      {
+        messageId: 'm-startup-checkin',
+        sessionId: 'app-session-376',
+        senderRole: 'architect',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #1): Mira/Architect online. Startup briefing received; holding restart gate context.',
+        brokeredAtMs: 6000,
+      },
+      {
+        messageId: 'm-builder-hold',
+        sessionId: 'app-session-376',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(BUILDER #1): Builder online. Startup read complete; standing by for current-session delegation.',
+        brokeredAtMs: 6100,
+      },
+    ];
+    const oldArbitraryTask = {
+      messageId: 'm-old-arbitrary-task',
+      sessionId: 'app-session-100',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: '(ARCH #2): TASK: Old arbitrary work that must not be resurrected.',
+      brokeredAtMs: 1000,
+    };
+    const acceptedLane = {
+      messageId: 'm-accepted-lane',
+      sessionId: 'app-session-375',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCH #8): TASK \u2014 Open memory consistency drift lane.',
+      brokeredAtMs: 2000,
+    };
+    const acceptedProof = {
+      messageId: 'm-accepted-proof',
+      sessionId: 'app-session-375',
+      senderRole: 'architect',
+      targetRole: 'user',
+      channel: 'telegram',
+      direction: 'outbound',
+      status: 'acked',
+      rawBody: 'Restart gate is clear. After restart, current-lane should show activeLane=architect#8 and session.md should show tagged_rows=2 / current_lane_status=active.',
+      brokeredAtMs: 3000,
+    };
+
+    const result = await materializeSessionHandoff({
+      sessionId: 'app-session-376',
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      nowMs: 7000,
+      queryCommsJournal: (filters = {}) => {
+        queryCalls.push(filters);
+        if (filters.sessionId === 'app-session-376') return startupRows;
+        if (filters.order === 'desc') return [acceptedProof, acceptedLane, oldArbitraryTask];
+        return [oldArbitraryTask];
+      },
+      queryClaims: () => ({ ok: true, claims: [] }),
+      skipSessionHistory: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(queryCalls[1]).toEqual(expect.objectContaining({
+      order: 'desc',
+      limit: expect.any(Number),
+    }));
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      source: 'comms_journal_restart_carry_forward',
+      carryForward: expect.objectContaining({
+        expectedActiveLane: 'architect#8',
+        expectedTaggedRows: 2,
+      }),
+      activeLane: expect.objectContaining({
+        sourceRef: 'architect#8',
+        sourceMessageId: 'm-accepted-lane',
+        status: 'carried_restart_proof',
+        carriedByProofMessageId: 'm-accepted-proof',
+      }),
+    }));
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(handoff).toContain('- tagged_rows: 2');
+    expect(handoff).toContain('- current_lane_status: active');
+    expect(handoff).toContain('accepted restart carry-forward proof');
+    expect(handoff).toContain('Carried lane is restart continuity proof only');
+    expect(handoff).not.toContain('Old arbitrary work that must not be resurrected');
+  });
+
+  test('current-session genuine task overrides accepted restart carry-forward proof', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const currentTask = {
+      messageId: 'm-current-task',
+      sessionId: 'app-session-376',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: '(ARCHITECT #4): TASK: Fix the restart continuity materialization failure.',
+      brokeredAtMs: 5000,
+    };
+    const acceptedLane = {
+      messageId: 'm-accepted-lane',
+      sessionId: 'app-session-375',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCH #8): TASK \u2014 Open memory consistency drift lane.',
+      brokeredAtMs: 2000,
+    };
+    const acceptedProof = {
+      messageId: 'm-accepted-proof',
+      sessionId: 'app-session-375',
+      senderRole: 'architect',
+      targetRole: 'user',
+      channel: 'telegram',
+      direction: 'outbound',
+      status: 'acked',
+      rawBody: 'After restart, expected acceptance is activeLane architect#8/tagged_rows=2/current_lane_status=active.',
+      brokeredAtMs: 3000,
+    };
+
+    const result = await materializeSessionHandoff({
+      rows: [currentTask],
+      crossSessionRows: [acceptedLane, acceptedProof],
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-376',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 6000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      source: 'comms_journal',
+      activeLane: expect.objectContaining({
+        sourceRef: 'architect#4',
+        sourceMessageId: 'm-current-task',
+        objective: 'Fix the restart continuity materialization failure.',
+      }),
+    }));
+    expect(result.currentLane.carryForward).toBeUndefined();
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(handoff).toContain('- tagged_rows: 1');
+    expect(handoff).toContain('- current_lane_status: active');
+    expect(handoff).not.toContain('accepted restart carry-forward proof');
+  });
+
+  test('prior arbitrary task without accepted restart proof stays prior context only', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const startupRow = {
+      messageId: 'm-startup',
+      sessionId: 'app-session-376',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: '(BUILDER #1): Online and holding.',
+      brokeredAtMs: 5000,
+    };
+    const oldTask = {
+      messageId: 'm-old-task',
+      sessionId: 'app-session-375',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: '(ARCH #8): TASK \u2014 Old task without restart acceptance.',
+      brokeredAtMs: 2000,
+    };
+
+    const result = await materializeSessionHandoff({
+      rows: [startupRow],
+      crossSessionRows: [oldTask],
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-376',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 6000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'none',
+      activeLane: null,
+    }));
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(handoff).toContain('- current_lane_status: none');
+    expect(handoff).not.toContain('carried_restart_proof');
+  });
+
   test('restart-continuity objective materializes current lane with completed-fix and stale-backlog context', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
