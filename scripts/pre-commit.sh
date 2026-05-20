@@ -231,10 +231,32 @@ fi
 echo ""
 
 # =============================================================================
-# Gate 7: Build Doc Hygiene Lint (staged docs only)
+# Gate 7: Mira System Map Guard (staged Mira-owned paths)
 # =============================================================================
 
-echo "Gate 7: Build doc hygiene lint..."
+echo "Gate 7: Mira system map guard..."
+
+if [ -f "ui/scripts/mira-system-map-guard.js" ]; then
+    node ui/scripts/mira-system-map-guard.js --staged
+    if [ $? -ne 0 ]; then
+        echo "❌ Mira system map guard failed"
+        echo "   Run: node ui/scripts/mira-system-map-guard.js --staged"
+        FAILED=1
+    else
+        echo "✅ Mira system map guard passed"
+    fi
+else
+    echo "❌ ui/scripts/mira-system-map-guard.js not found; Mira system map guard cannot be skipped"
+    FAILED=1
+fi
+
+echo ""
+
+# =============================================================================
+# Gate 8: Build Doc Hygiene Lint (staged docs only)
+# =============================================================================
+
+echo "Gate 8: Build doc hygiene lint..."
 
 if [ -f "ui/scripts/doc-lint.js" ]; then
     node ui/scripts/doc-lint.js --staged
