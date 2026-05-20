@@ -49,7 +49,7 @@ function createElement(tagName = 'div') {
   return element;
 }
 
-function createRuntimeBootHarness() {
+function createRuntimeBootHarness({ allowTurn = false } = {}) {
   const elements = {};
   const calls = [];
   const response = (payload, ok = true) => ({
@@ -158,11 +158,93 @@ function createRuntimeBootHarness() {
         available: false,
       },
     },
+    '/conversation/memory': {
+      ok: true,
+      loaded: true,
+      summary: {
+        summary: 'Submitted turn recorded locally.',
+        topics: ['local runtime turn'],
+        open_loops: [],
+        quality_notes: [],
+        source_record_count: 1,
+      },
+    },
   };
   const fetchImpl = jest.fn(async (url, options = {}) => {
     const pathname = String(url);
     const method = String(options.method || 'GET').toUpperCase();
-    calls.push({ url: pathname, method });
+    const body = typeof options.body === 'string' ? JSON.parse(options.body) : null;
+    calls.push({ url: pathname, method, body });
+    if (pathname === '/turn' && method === 'POST' && allowTurn) {
+      return response({
+        ok: true,
+        protocol: 'mira.runtime_turn.v0',
+        runtimeExecutes: false,
+        modelInvoked: false,
+        telegramRouteControl: false,
+        uiSurfaceControl: false,
+        model: {
+          requested: body?.useModel === true,
+          provider: null,
+          model: null,
+          responseId: null,
+          toolsEnabled: false,
+          sendsEnabled: false,
+          store: false,
+        },
+        input: {
+          text: body?.text || '',
+          sessionId: body?.sessionId || null,
+        },
+        state: {
+          stateRootReady: true,
+          continuityLoaded: false,
+          liveDataImported: false,
+          acceptanceContinuityLoaded: true,
+          acceptanceDocumentCount: 3,
+          normalizedCoreLoaded: true,
+          normalizedCoreDocumentCount: 3,
+        },
+        loadedCoreSummary: {
+          available: true,
+          metadataOnly: true,
+          liveContinuityExcluded: true,
+        },
+        operatorContext: {
+          loaded: true,
+          operatingLanes: ['local workbench'],
+        },
+        personaCore: {
+          loaded: true,
+          name: 'Mira',
+          traits: ['present', 'direct'],
+          style: ['plain'],
+        },
+        recentTurns: [],
+        recentMemory: {
+          loaded: true,
+          summary: 'Submitted turn recorded locally.',
+          topics: ['local runtime turn'],
+          openLoops: [],
+          qualityNotes: [],
+          sourceRecordCount: 1,
+        },
+        response: {
+          role: 'mira',
+          content: 'Mira. Deterministic local turn.',
+        },
+        voiceLab: null,
+        suggestedTeamPlan: null,
+        journal: {
+          ok: true,
+          written: true,
+          record: {
+            external_send: false,
+            tools_executed: false,
+          },
+        },
+      });
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -227,18 +309,18 @@ describe('Mira runtime UI boot', () => {
     await waitForBoot(harness.calls);
 
     expect(harness.calls).toEqual(expect.arrayContaining([
-      { url: '/model/providers', method: 'GET' },
-      { url: '/model/status', method: 'GET' },
-      { url: '/session', method: 'GET' },
-      { url: '/capabilities', method: 'GET' },
-      { url: '/voice/corrections', method: 'GET' },
-      { url: '/work/drafts', method: 'GET' },
-      { url: '/work/tasks', method: 'GET' },
-      { url: '/work/ready', method: 'GET' },
-      { url: '/work/send-packets', method: 'GET' },
-      { url: '/work/send-confirmations', method: 'GET' },
-      { url: '/work/send-checks', method: 'GET' },
-      { url: '/autonomy/status', method: 'GET' },
+      expect.objectContaining({ url: '/model/providers', method: 'GET' }),
+      expect.objectContaining({ url: '/model/status', method: 'GET' }),
+      expect.objectContaining({ url: '/session', method: 'GET' }),
+      expect.objectContaining({ url: '/capabilities', method: 'GET' }),
+      expect.objectContaining({ url: '/voice/corrections', method: 'GET' }),
+      expect.objectContaining({ url: '/work/drafts', method: 'GET' }),
+      expect.objectContaining({ url: '/work/tasks', method: 'GET' }),
+      expect.objectContaining({ url: '/work/ready', method: 'GET' }),
+      expect.objectContaining({ url: '/work/send-packets', method: 'GET' }),
+      expect.objectContaining({ url: '/work/send-confirmations', method: 'GET' }),
+      expect.objectContaining({ url: '/work/send-checks', method: 'GET' }),
+      expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
@@ -248,5 +330,48 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.coreSummary.textContent).toBe('3 acceptance docs and 3 core records available.');
     expect(harness.elements.lastTurn.textContent).toBe('no turn yet');
     expect(harness.elements.workSummary.textContent).toContain('0 drafts / 0 pending');
+  });
+
+  test('posts exactly one deterministic turn after explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
+
+    harness.elements.useModel.checked = false;
+    harness.elements.turnText.value = 'Who are you?';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+    const postCalls = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCalls).toHaveLength(1);
+    expect(turnCalls).toHaveLength(1);
+    expect(turnCalls[0].body).toEqual(expect.objectContaining({
+      text: 'Who are you?',
+      useModel: false,
+      modelProvider: 'openai_responses',
+      modelName: 'gpt-5.5',
+    }));
+    expect(turnCalls[0].body.sessionId).toMatch(/^mira-ui-\d+$/);
+    expect(turnCalls[0].body.messageId).toBe(`${turnCalls[0].body.sessionId}-turn-0`);
+    expect(harness.calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: '/conversation/memory', method: 'GET' }),
+    ]));
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
+      'Who are you?',
+      'Mira. Deterministic local turn.',
+    ]);
+    expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 });
