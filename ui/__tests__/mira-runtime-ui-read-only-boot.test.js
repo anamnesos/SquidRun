@@ -1,0 +1,252 @@
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+function createElement(tagName = 'div') {
+  const element = {
+    tagName: String(tagName).toUpperCase(),
+    attributes: {},
+    children: [],
+    dataset: {},
+    style: {},
+    hidden: false,
+    disabled: false,
+    checked: false,
+    readOnly: false,
+    value: '',
+    textContent: '',
+    className: '',
+    type: '',
+    rows: 0,
+    placeholder: '',
+    scrollTop: 0,
+    scrollHeight: 0,
+    selectedOptions: [{ dataset: {} }],
+    listeners: {},
+    addEventListener(event, handler) {
+      this.listeners[event] = handler;
+    },
+    append(...nodes) {
+      this.children.push(...nodes);
+    },
+    appendChild(node) {
+      this.children.push(node);
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [...nodes];
+      if (nodes.length > 0) {
+        this.textContent = '';
+      }
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+    focus() {},
+    remove() {},
+    select() {},
+  };
+  return element;
+}
+
+function createRuntimeBootHarness() {
+  const elements = {};
+  const calls = [];
+  const response = (payload, ok = true) => ({
+    ok,
+    status: ok ? 200 : 500,
+    json: async () => payload,
+  });
+  const payloads = {
+    '/model/providers': {
+      ok: true,
+      selectedProvider: 'openai_responses',
+      choices: [{
+        id: 'openai_default',
+        label: 'OpenAI API',
+        provider: 'openai_responses',
+        model: 'gpt-5.5',
+        available: true,
+        selectable: true,
+        runtimeAdapterReady: true,
+      }],
+    },
+    '/model/status': {
+      ok: true,
+      available: true,
+      selectedProvider: 'openai_responses',
+      model: 'gpt-5.5',
+      nextLocalModelStep: null,
+    },
+    '/session': {
+      service: 'mira-runtime',
+      session: {
+        stateRootReady: true,
+        stateRootPath: 'D:/projects/squidrun/mira/.state-dev',
+        liveDataImported: false,
+        continuityLoaded: false,
+        acceptanceContinuity: {
+          loaded: true,
+          documentCount: 3,
+        },
+        normalizedCore: {
+          loaded: true,
+          documentCount: 3,
+        },
+        bridge: {
+          autoSend: false,
+          runtimeInvokesSendCli: false,
+          telegramRouteControl: false,
+        },
+      },
+    },
+    '/capabilities': {
+      service: 'mira-runtime',
+      capabilities: [
+        { id: 'health', status: 'available' },
+        { id: 'capabilities', status: 'available' },
+        { id: 'session', status: 'planned' },
+        { id: 'telegram_route', status: 'blocked' },
+      ],
+    },
+    '/voice/corrections': {
+      ok: true,
+      pending_count: 0,
+    },
+    '/work/drafts': {
+      ok: true,
+      draftCount: 0,
+      drafts: [],
+    },
+    '/work/tasks': {
+      ok: true,
+      taskCount: 0,
+      pendingCount: 0,
+      reviewedCount: 0,
+      tasks: [],
+    },
+    '/work/ready': {
+      ok: true,
+      readyCount: 0,
+      ready: [],
+    },
+    '/work/send-packets': {
+      ok: true,
+      packetCount: 0,
+      packets: [],
+    },
+    '/work/send-confirmations': {
+      ok: true,
+      confirmationCount: 0,
+      confirmations: [],
+    },
+    '/work/send-checks': {
+      ok: true,
+      checkCount: 0,
+      checks: [],
+    },
+    '/autonomy/status': {
+      ok: true,
+      queueCount: 0,
+      queue: [],
+      followThroughCount: 0,
+      followThrough: [],
+      loop: {
+        status: 'disabled',
+      },
+      brief: {
+        available: false,
+      },
+    },
+  };
+  const fetchImpl = jest.fn(async (url, options = {}) => {
+    const pathname = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    calls.push({ url: pathname, method });
+    if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
+      return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
+    }
+    return response(payloads[pathname]);
+  });
+  const document = {
+    body: createElement('body'),
+    createElement,
+    execCommand: jest.fn(),
+    getElementById(id) {
+      if (!elements[id]) elements[id] = createElement();
+      return elements[id];
+    },
+  };
+
+  elements.useModel = document.getElementById('useModel');
+  elements.useModel.checked = true;
+
+  return {
+    calls,
+    context: {
+      console,
+      document,
+      fetch: fetchImpl,
+      navigator: {
+        clipboard: {
+          writeText: jest.fn(),
+        },
+      },
+      window: {
+        addEventListener: jest.fn(),
+        matchMedia: jest.fn(() => ({
+          matches: false,
+        })),
+      },
+    },
+    elements,
+    fetchImpl,
+  };
+}
+
+async function waitForBoot(calls) {
+  for (let index = 0; index < 30; index += 1) {
+    if (calls.some((call) => call.url === '/autonomy/status')) {
+      await new Promise((resolve) => setImmediate(resolve));
+      return;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`boot did not complete; calls=${JSON.stringify(calls)}`);
+}
+
+describe('Mira runtime UI boot', () => {
+  test('hydrates the workbench with read-only GET calls and does not call turn endpoints', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    expect(harness.calls).toEqual(expect.arrayContaining([
+      { url: '/model/providers', method: 'GET' },
+      { url: '/model/status', method: 'GET' },
+      { url: '/session', method: 'GET' },
+      { url: '/capabilities', method: 'GET' },
+      { url: '/voice/corrections', method: 'GET' },
+      { url: '/work/drafts', method: 'GET' },
+      { url: '/work/tasks', method: 'GET' },
+      { url: '/work/ready', method: 'GET' },
+      { url: '/work/send-packets', method: 'GET' },
+      { url: '/work/send-confirmations', method: 'GET' },
+      { url: '/work/send-checks', method: 'GET' },
+      { url: '/autonomy/status', method: 'GET' },
+    ]));
+    expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls.some((call) => call.url === '/conversation/memory')).toBe(false);
+    expect(harness.elements.modelSummary.textContent).toContain('OpenAI ready: gpt-5.5');
+    expect(harness.elements.operatorSummary.textContent).toBe('Local state root ready.');
+    expect(harness.elements.coreSummary.textContent).toBe('3 acceptance docs and 3 core records available.');
+    expect(harness.elements.lastTurn.textContent).toBe('no turn yet');
+    expect(harness.elements.workSummary.textContent).toContain('0 drafts / 0 pending');
+  });
+});

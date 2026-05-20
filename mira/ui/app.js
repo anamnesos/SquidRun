@@ -131,6 +131,46 @@ function updateRuntimeState(payload) {
   setText(elements.lastTurn, payload?.modelInvoked ? 'model-backed' : 'deterministic');
 }
 
+function findCapability(payload, id) {
+  const capabilities = Array.isArray(payload?.capabilities) ? payload.capabilities : [];
+  return capabilities.find((capability) => capability?.id === id) || null;
+}
+
+function updateReadOnlyRuntimeState(sessionPayload, capabilitiesPayload) {
+  const session = sessionPayload?.session || {};
+  const acceptance = session.acceptanceContinuity || {};
+  const normalizedCore = session.normalizedCore || {};
+  const telegramRoute = findCapability(capabilitiesPayload, 'telegram_route');
+  const stateRootReady = session.stateRootReady === true;
+  const acceptanceCount = Number(acceptance.documentCount || 0);
+  const coreCount = Number(normalizedCore.documentCount || 0);
+
+  renderChips([
+    { label: stateRootReady ? 'state root ready' : 'state root missing', kind: stateRootReady ? 'good' : 'warn' },
+    { label: acceptance.loaded ? 'acceptance loaded' : 'acceptance missing', kind: acceptance.loaded ? 'good' : 'warn' },
+    { label: normalizedCore.loaded ? 'core loaded' : 'core missing', kind: normalizedCore.loaded ? 'good' : 'warn' },
+    modelStatus ? {
+      label: modelStatus.available ? `${modelStatus.model} ready` : `${modelStatus.model} not ready`,
+      kind: modelStatus.available ? 'good' : 'warn',
+    } : { label: 'model unknown', kind: 'warn' },
+    {
+      label: telegramRoute?.status === 'blocked' ? 'channels gated' : 'channels checked',
+      kind: telegramRoute?.status === 'blocked' ? 'warn' : 'good',
+    },
+  ]);
+
+  setText(elements.operatorSummary, stateRootReady ? 'Local state root ready.' : 'Local state root not ready.');
+  setText(
+    elements.coreSummary,
+    acceptance.loaded || normalizedCore.loaded
+      ? `${acceptanceCount} acceptance docs and ${coreCount} core records available.`
+      : 'Core state not loaded.',
+  );
+  setText(elements.personaSummary, 'Mira workbench ready.');
+  setText(elements.lastTurn, 'no turn yet');
+  setText(elements.recentSummary, 'not loaded on boot');
+}
+
 function updateModelChoices(payload) {
   if (!payload || !Array.isArray(payload.choices)) return;
   const options = payload.choices.map((choice) => {
@@ -251,7 +291,7 @@ function updateDraftList(payload) {
       action.disabled = true;
       action.textContent = 'making';
       try {
-        const task = await createTaskFromDraft(draft);
+        await createTaskFromDraft(draft);
         appendMessage('mira', 'Task saved for review.');
         await refreshTasks();
       } catch (error) {
@@ -1039,6 +1079,17 @@ async function refreshModelStatus() {
   }
 }
 
+async function refreshRuntimeReadiness() {
+  const [sessionResponse, capabilitiesResponse] = await Promise.all([
+    fetch('/session'),
+    fetch('/capabilities'),
+  ]);
+  const sessionPayload = await sessionResponse.json();
+  const capabilitiesPayload = await capabilitiesResponse.json();
+  if (!sessionResponse.ok || !capabilitiesResponse.ok) return;
+  updateReadOnlyRuntimeState(sessionPayload, capabilitiesPayload);
+}
+
 function attachCorrectionControl(article, payload, prompt) {
   const actions = document.createElement('div');
   actions.className = 'message-actions';
@@ -1062,14 +1113,10 @@ function attachCorrectionControl(article, payload, prompt) {
   article.append(actions);
 }
 
-async function prime() {
+async function primeReadOnlyWorkbench() {
   try {
-    const useModel = elements.useModel.checked;
-    elements.useModel.checked = false;
     await refreshModelStatus();
-    const payload = await sendTurn('status');
-    elements.useModel.checked = useModel;
-    updateRuntimeState(payload);
+    await refreshRuntimeReadiness();
     await refreshCorrections();
     await refreshDrafts();
     await refreshTasks();
@@ -1078,7 +1125,6 @@ async function prime() {
     await refreshSendConfirmations();
     await refreshSendChecks();
     await refreshAutonomy();
-    await refreshRecentTurns();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
     setText(elements.lastTurn, error.message);
@@ -1129,7 +1175,7 @@ elements.draftButton.addEventListener('click', async () => {
   elements.draftButton.disabled = true;
   elements.draftButton.textContent = 'Drafting';
   try {
-    const payload = await createDraft(text);
+    await createDraft(text);
     appendMessage('mira', 'Draft saved for review.');
     await refreshDrafts();
   } catch (error) {
@@ -1198,4 +1244,4 @@ elements.form.addEventListener('submit', async (event) => {
 
 window.addEventListener('resize', syncWorkbenchForViewport);
 syncWorkbenchForViewport();
-prime();
+primeReadOnlyWorkbench();
