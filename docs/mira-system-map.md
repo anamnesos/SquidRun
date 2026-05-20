@@ -111,6 +111,12 @@ Get-CimInstance Win32_Process -Filter "name='node.exe'" | Where-Object { $_.Comm
 Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 47373,47374,3000,5173 } | Select-Object LocalAddress,LocalPort,OwningProcess
 ```
 
+Map enforcement guard:
+
+```powershell
+node ui/scripts/mira-system-map-guard.js --staged
+```
+
 ## Inventory
 
 | Family | Paths | Purpose / Why Built | Status Tag | Current Capability Today | What It Is Not | Dependencies / Tests | Risk If Removed | Next Evidence Gate |
@@ -133,7 +139,7 @@ Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object 
 | Server/upload/auth/encryption/storage/identity scaffold | `ui/modules/mira-core/server-api.js`, `server-handler.js`, `auth-binding.js`, `identity-signing.js`, `encryption-key.js`, `storage-retention.js`, `persistence-audit.js` | Reference boundaries for future server/API, auth, storage, identity, retention, encryption. | ARCHIVE / PARK | Design constraints for future work. | Not live server/auth/storage/KMS behavior and not current Mira capability. | Fixtures, validation reports, no-side-effect checks; matching tests/fixtures. | Removing without replacement can lose safety requirements. | Pull only live requirements into New Mira when a feature needs them. |
 | Active Mira contracts and boundary docs | `docs/mira-presence-runtime-acceptance-v0.md`, `docs/mira-north-star-acceptance.md`, `docs/mira-pc-embodiment-permission-v0.md`, `docs/mira-voice-audio-intake-v0.md` | Preserves accepted product direction and boundary truth across restarts. | LIVE / KEEP | Presence and north-star are active product contracts. PC embodiment and voice/audio are active boundary docs for future transport/device work. | Not runtime authority and not permission to start live voice, PC embodiment, external action, or hidden capture. | Acceptance fixtures/tests, startup durable summaries. | Removing makes future work re-argue settled decisions. | Keep wording current with this map; promote any future capability only with matching tests. |
 | Mira design notes | `docs/mira-care-intake-design-note-v0.md` and future docs explicitly labelled design notes | Captures product thinking that has not been promoted into an active contract. | PROTOTYPE / PARK | Gives useful design context. | Not current capability, not a live gate, and not acceptance authority unless promoted. | Doc review and any future acceptance fixture if promoted. | Removing may lose context, but it should not block live code by itself. | Promote to active contract only with owner, tests, and map update; otherwise keep labelled as design note. |
-| Tests, fixtures, wrappers | `ui/__tests__/mira-*.test.js`, `ui/__tests__/hm-mira-*.test.js`, `ui/__tests__/fixtures/mira-*-contract.json`, `ui/scripts/hm-mira-core-*.js` | Regression coverage and CLI seams for current and historical Mira modules. | TRANSITION / KEEP-PARK SPLIT | High value for live speech, Telegram, restart, voice; lower value for repeated phase history. | Not product behavior by itself and not proof that old scaffolding is live. | Jest, fixtures, module builders, wrappers. | Removing blindly hides regressions and breaks proof chains. | Keep live tests; consolidate duplicate phase fixtures only after replacement coverage. |
+| Tests, fixtures, wrappers, and map guard | `ui/__tests__/mira-*.test.js`, `ui/__tests__/hm-mira-*.test.js`, `ui/__tests__/fixtures/mira-*-contract.json`, `ui/scripts/hm-mira-core-*.js`, `ui/scripts/mira-system-map-guard.js`, `scripts/pre-commit.sh` | Regression coverage, CLI seams, and source-of-truth enforcement for current and historical Mira modules. | TRANSITION / KEEP-PARK SPLIT | High value for live speech, Telegram, restart, voice; lower value for repeated phase history. The map guard blocks staged Mira-owned changes unless this map is staged too. | Not product behavior by itself and not proof that old scaffolding is live. | Jest, fixtures, module builders, wrappers, `mira-system-map-guard.test.js`. | Removing blindly hides regressions, breaks proof chains, or lets new Mira surfaces drift away from this map. | Keep live tests; keep the guard path list aligned with this map; consolidate duplicate phase fixtures only after replacement coverage. |
 
 ## James Does / Does Not Need To Do
 
@@ -157,6 +163,27 @@ New Mira can help as a local workbench/prototype today; it cannot truthfully be 
 
 James does need the team to say plainly when something is live, prototype, archive, or ready to delete.
 
+## Roadmap / Checkpoints
+
+The current next slices are:
+
+- Create a single capability/status truth card for SquidRun Mira vs New Mira.
+- Prove one New Mira local runtime start end-to-end without external side effects.
+- Consolidate the runtime/kill-switch phase scaffold into a latest-summary archive and replacement tests.
+- Migrate one live SquidRun speech/restart behavior into New Mira with parity tests.
+
+The team can continue autonomously when the slice is local, reversible, and already covered by this map: doc updates, static guards, focused tests, proof harnesses, inventory work, and no-side-effect seams that do not start runtime services, send externally, write durable state beyond the named state root, delete preserved history, or change live routes.
+
+James must stop/test/choose when the slice would activate or change live voice, off-PC access, external sends, durable writes beyond the scoped state root, deletion of preserved history, money/customer/account/device-impact actions, or a visible product surface where his experience is the acceptance test.
+
+Checkpoint reports must say, in plain English:
+
+- Which map row or capability changed.
+- Whether the team can keep going or James must test/choose.
+- What evidence was run.
+- Whether any restart or process-start path is truly required.
+- What remains parked, prototype, archive, or delete-after-parity.
+
 ## Source-Of-Truth Update Rule
 
 Any Mira feature, route, capability, removal, migration, or cleanup must update this file in the same PR or commit.
@@ -166,6 +193,10 @@ The update must change the relevant inventory row and, when needed, the glossary
 A Mira change is not done if this map still says the old truth.
 
 If a change touches a path that is not represented here, add a row before claiming the work is complete.
+
+The staged guard `node ui/scripts/mira-system-map-guard.js --staged` blocks Mira-owned path changes unless this file is staged too. For a mechanical/non-semantic exception, stage a tiny note in this map explaining why no capability, route, status, checkpoint, or deletion truth changed.
+
+The guard protects its own enforcement path: changes to `ui/scripts/mira-system-map-guard.js` require this map, `scripts/pre-commit.sh` requires this map when its staged diff touches the Mira guard wiring, and deleting or renaming the canonical map path fails plainly.
 
 ## Deletion Policy
 
@@ -182,16 +213,5 @@ Removal requires all of these:
 7. The deletion PR/commit updates this map and reports exactly what user-facing behavior is unchanged.
 
 If those conditions are not met, mark the family `ARCHIVE`, `TRANSITION`, or `PROTOTYPE`; do not pretend parking is deletion.
-
-## Near-Term Direction
-
-Do not add more Mira feature work until the affected family is labelled here.
-
-The next sane cleanup/build slice should be one of:
-
-- Create a single capability/status truth card for SquidRun Mira vs New Mira.
-- Prove one New Mira local runtime start end-to-end without external side effects.
-- Consolidate the runtime/kill-switch phase scaffold into a latest-summary archive and replacement tests.
-- Migrate one live SquidRun speech/restart behavior into New Mira with parity tests.
 
 Every slice must leave this map more accurate than it found it.
