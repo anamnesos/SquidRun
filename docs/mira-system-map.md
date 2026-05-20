@@ -58,7 +58,7 @@ When anyone says "Mira can do X," this table must answer which Mira surface they
 - `ui/modules/mira-core/`: current SquidRun Mira core, many proof modules, and a large runtime/kill-switch/server scaffold pile.
 - `ui/modules/mira-lab-surface.js`: the large current workhorse for visible replies, audits, transcripts, replay, self-direction, and curiosity.
 - Telegram and restart continuity are SquidRun-owned live protections today.
-- New Mira status evidence says `continuityLoaded=false`, `liveDataImported=false`, bridge auto-send false, and Telegram route control false. Treat New Mira as a local prototype/workbench until a separate parity lane changes that.
+- New Mira status/start evidence says the state root is ready, acceptance docs load, the loopback runtime can start on `127.0.0.1:47373`, and local UI/status endpoints respond. It still reports `continuityLoaded=false`, `liveDataImported=false`, bridge auto-send false, and Telegram route control false. Treat New Mira as a local prototype/workbench until a separate parity lane changes that.
 - Runtime, kill-switch, server, auth, encryption, storage, and security files are not proof that Mira can act in those domains today. They are mostly reference-only or future safety scaffolds unless a row below says LIVE.
 
 ## Current Capability Card
@@ -72,6 +72,7 @@ What is LIVE now:
 What is PROTOTYPE:
 
 - New Mira in `mira/` is a local workbench for state-root separation, runtime experiments, imports, model/status checks, bridge planning, and local UI.
+- The local runtime has been proven to start on loopback with dev state and serve read-only proof endpoints plus the local UI.
 - New Mira can help shape the product and prepare reviewable work, but it is not the live anywhere-access or action layer yet.
 
 What is PARKED / ARCHIVE:
@@ -133,6 +134,22 @@ $env:MIRA_STATE_ROOT='D:\projects\squidrun\mira\.state-dev'
 node mira\runtime\dist\status.js --json
 ```
 
+New Mira loopback runtime proof, only when a lane allows a local start:
+
+```powershell
+$env:MIRA_STATE_ROOT='D:\projects\squidrun\mira\.state-dev'
+$env:MIRA_AUTONOMY_LOOP='disabled'
+node mira\tools\start-local-runtime.js --json --no-build --no-kill --port 47373 --state-root D:\projects\squidrun\mira\.state-dev
+Invoke-RestMethod -Uri http://127.0.0.1:47373/health -Method Get
+Invoke-RestMethod -Uri http://127.0.0.1:47373/state-root -Method Get
+Invoke-RestMethod -Uri http://127.0.0.1:47373/capabilities -Method Get
+Invoke-RestMethod -Uri http://127.0.0.1:47373/session -Method Get
+Invoke-RestMethod -Uri http://127.0.0.1:47373/model/status -Method Get
+Stop-Process -Id <runtimePid-from-start-result> -Force
+Get-CimInstance Win32_Process -Filter "name='node.exe'" | Where-Object { $_.CommandLine -match 'mira/runtime|start-local-runtime|node.*47373' } | Select-Object ProcessId,CommandLine
+Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 47373,47374,3000,5173 } | Select-Object LocalAddress,LocalPort,OwningProcess
+```
+
 Optional live-process checks, only when a lane needs runtime evidence:
 
 ```powershell
@@ -152,8 +169,8 @@ node ui/scripts/mira-system-map-guard.js --staged
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | New Mira product boundary | `mira/README.md`, `mira/import-disposition-manifest.json`, `mira/state/README.md` | Defines Mira as a product extracted from SquidRun and records import/delete policy. Built to stop adding Mira back as another SquidRun tab. | PROTOTYPE / KEEP | Gives the team a clearer product frame and migration boundary. | Not a live runtime, Telegram owner, or replacement for SquidRun agents. | Import disposition docs; `ui/__tests__/mira-product-foundation.test.js`. | Losing it re-blurs Mira, SquidRun, and agent roles. | Keep aligned with this map on every Mira feature/removal. |
 | New Mira state and imports | `mira/.state-dev/**`, `mira/imports/**`, `mira/state/state-root-contract.json` | Holds Mira-owned dev state, reviewed receipts, normalized core records, work queues, acceptance copies. Built to prove state can live outside `.squidrun`. | PROTOTYPE / KEEP | Provides prototype state root and reviewed import discipline. | Not live continuity, not full memory sync, not a blind copy of SquidRun memory. | `MIRA_STATE_ROOT`, receipts, normalized metadata; `mira-state-import-tooling`, `mira-import-*`, `mira-normalized-core-import-contract`. | Removing loses receipts and state-root separation proof. | Promote one import family at a time with provenance, receipt, and parity tests. |
-| New Mira runtime service | `mira/runtime/src/*.ts`, `mira/runtime/dist/*.js`, `mira/runtime/package.json`, `mira/tools/start-local-runtime.js` | Local Node/TypeScript runtime with health, status, turn, model, work, autonomy, voice correction, and UI endpoints. Built to prototype Mira outside Electron. | PROTOTYPE / KEEP | Can run a local workbench if manually started. | Not current Telegram, off-PC, action, or restart-continuity owner. | Node/TypeScript, OpenAI/Ollama env, port 47373; `mira-start-local-runtime`, runtime bridge/state/status tests. | Removing loses extraction path and local prototype. | Prove one end-to-end local runtime start, model/status path, and no external side effects. |
-| New Mira local UI | `mira/ui/index.html`, `mira/ui/app.js`, `mira/ui/styles.css` | Browser UI for runtime turns, model status, work queues, autonomy, and local context. Built to inspect New Mira without embedding it back into SquidRun. | PROTOTYPE / KEEP | Useful when the local runtime is running. | Not the current user-facing Mira surface in SquidRun or Telegram. | `mira/runtime/src/server.ts`, runtime endpoints; covered indirectly by runtime/start-local tests. | Removing makes New Mira harder to inspect. | Decide whether the first product UI is local web, Telegram, or both. |
+| New Mira runtime service | `mira/runtime/src/*.ts`, `mira/runtime/dist/*.js`, `mira/runtime/package.json`, `mira/tools/start-local-runtime.js` | Local Node/TypeScript runtime with health, status, turn, model, work, autonomy, voice correction, and UI endpoints. Built to prototype Mira outside Electron. | PROTOTYPE / KEEP | Can start a loopback local workbench on `127.0.0.1:47373` with dev state and read-only proof endpoints. | Not current Telegram, off-PC, action, or restart-continuity owner. Runtime start proof did not run a model turn or external action. | Node/TypeScript, OpenAI/Ollama env, port 47373; `mira-start-local-runtime`, runtime bridge/state/status tests; 2026-05-20 loopback start proof. | Removing loses extraction path and local prototype. | Next proof: one local runtime status card or read-only workbench flow that uses the running UI without sending externally or claiming live continuity. |
+| New Mira local UI | `mira/ui/index.html`, `mira/ui/app.js`, `mira/ui/styles.css` | Browser UI for runtime turns, model status, work queues, autonomy, and local context. Built to inspect New Mira without embedding it back into SquidRun. | PROTOTYPE / KEEP | Serves from the local runtime when it is running; loopback proof returned HTTP 200 for `/`. | Not the current user-facing Mira surface in SquidRun or Telegram. | `mira/runtime/src/server.ts`, runtime endpoints; covered indirectly by runtime/start-local tests. | Removing makes New Mira harder to inspect. | Decide whether the first product UI is local web, Telegram, or both. |
 | New Mira bridge planning | `mira/bridge/**`, `mira/runtime/src/bridge-request-plan.ts`, `mira/runtime/src/bridge-status.ts` | Manual envelopes and command plans for internal pane messages. Built to let Mira ask arms without auto-send authority. | PROTOTYPE / KEEP | Can prepare internal Architect/Builder/Oracle pane plans with manual execution required. | Not auto-send, not Telegram/user/external/device route, not runtime command execution. | `ui/scripts/hm-send.js`; `mira-runtime-bridge-request-plan`, `mira-bridge-*`, `mira-hm-send-adapter`. | Removing loses the safest bridge shape. | Prove a scoped internal send lane with delivery audit and refusal tests before promotion. |
 | SquidRun visible Mira speech | `ui/modules/mira-live-entrypoint.js`, `ui/modules/mira-lab-surface.js`, `ui/modules/ipc/mira-lab-handlers.js`, `ui/modules/mira-core/text-model-attachment-v1.js`, `ui/modules/mira-core/mira-language-rules-v0.js` | Current visible reply engine and gates. Built because user-facing Mira needed replies before New Mira parity. | LIVE / KEEP | Produces current visible Mira text and held/annotated reply behavior. | Not New Mira runtime, not proof of external action, not clean product architecture. | Electron IPC, model config, audits/transcripts; `mira-live-entrypoint`, `mira-lab-prompt-reply`, language/meta-posture tests. | Removing breaks current Mira and Telegram Live reply path. | New Mira must pass equivalent reply, audit, held-reply, and anti-leak tests before replacement. |
 | Embedded Mira Lab window and IPC | `ui/mira-lab.html`, `ui/mira-lab-renderer.js`, `ui/styles/mira-lab.css`, `ui/modules/main/mira-lab-window.js`, `ui/modules/ipc/mira-lab-handlers.js` | Electron diagnostic/lab surface around replies, transcripts, export, renderer drive. Built as the original lab surface. | TRANSITION / DELETE-AFTER-PARITY | Gives diagnostics and true renderer-path validation. | Not the desired final Mira product surface. | Electron `BrowserWindow`, preload, IPC; `mira-lab-*`, IPC/channel tests. | Removing before parity loses diagnostic access and IPC route. | Replace with New Mira UI/bridge parity, then delete completely. |
