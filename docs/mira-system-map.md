@@ -61,6 +61,35 @@ When anyone says "Mira can do X," this table must answer which Mira surface they
 - New Mira status evidence says `continuityLoaded=false`, `liveDataImported=false`, bridge auto-send false, and Telegram route control false. Treat New Mira as a local prototype/workbench until a separate parity lane changes that.
 - Runtime, kill-switch, server, auth, encryption, storage, and security files are not proof that Mira can act in those domains today. They are mostly reference-only or future safety scaffolds unless a row below says LIVE.
 
+## Current Capability Card
+
+What is LIVE now:
+
+- Mira can speak through the current SquidRun Mira Lab/Live reply path, with restart continuity and anti-leak checks backed by tests.
+- SquidRun can route work through Architect, Builder, Oracle, and local scripts when a current lane proves scope.
+- Telegram is the current external text path only when the existing SquidRun Telegram route is configured and running.
+
+What is PROTOTYPE:
+
+- New Mira in `mira/` is a local workbench for state-root separation, runtime experiments, imports, model/status checks, bridge planning, and local UI.
+- New Mira can help shape the product and prepare reviewable work, but it is not the live anywhere-access or action layer yet.
+
+What is PARKED / ARCHIVE:
+
+- Runtime, server, kill-switch, storage, auth, upload, encryption, and broad phase-chain scaffolds are reference or future-readiness material until a map row promotes them.
+- Voice transport groundwork exists, but accepted live Mira voice is still a separate future lane.
+
+What is NOT current capability:
+
+- No hidden mic, live voice identity, off-PC survival layer, customer/account/device action, deploy, trade, external send, or durable write beyond scoped state root is live because a file exists.
+- New Mira does not own Telegram, bridge auto-send, live continuity, or verified external action today.
+
+Next autonomous moves:
+
+- Keep this map accurate while the team continues through map-backed doc, guard, inventory, proof, and parity-test slices.
+- Prefer small tests and seams over asking James to manually verify restarts, routes, or internal distinctions.
+- Pause only when the rule in Roadmap / Checkpoints says there is a real stop reason.
+
 ## Capability Truth Table
 
 | Capability | Current Owner | Current Truth | What It Is Not | Source Paths / Evidence | Next Evidence Gate |
@@ -176,10 +205,13 @@ The team can continue autonomously when the slice is local, reversible, and alre
 
 James must stop/test/choose when the slice would activate or change live voice, off-PC access, external sends, durable writes beyond the scoped state root, deletion of preserved history, money/customer/account/device-impact actions, or a visible product surface where his experience is the acceptance test.
 
+Pause rule: the team pauses only for an explicit review gate, commit gate, concrete blocker, James choice, or live-effect risk. If none of those exists, the team continues to the next map-backed step and reports why no James action is needed.
+
 Checkpoint reports must say, in plain English:
 
 - Which map row or capability changed.
 - Whether the team can keep going or James must test/choose.
+- If paused, the exact pause reason; if continuing, why no James action is needed.
 - What evidence was run.
 - Whether any restart or process-start path is truly required.
 - What remains parked, prototype, archive, or delete-after-parity.
