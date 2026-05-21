@@ -2567,6 +2567,8 @@ describe('Mira runtime UI boot', () => {
     expect(emptyPipelineText).toContain('Manual action preflight: blocked no source: no manual action · No manual action is ready because there is no selected saved artifact with a token and next missing stage.');
     expect(emptyPipelineText).toContain('Manual action input: No manual action input is ready.');
     expect(emptyPipelineText).toContain('Workbench focus: No manual workbench step is ready to highlight.');
+    expect(emptyPipelineText).toContain('Manual selector summary: blocked: no existing manual action is ready to select.');
+    expect(emptyPipelineText).toContain('Manual-only checklist: ok: status surface is read-only / blocked: manual preflight ready (blocked_no_source) / blocked: highlighted source available (no) / blocked: payload matches handler (blocked) / ok: selector summary does not submit anything');
     expect(emptyPipelineText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
     expect(emptyPipelineText).toContain('Payload body: No payload body is available.');
     expect(emptyPipelineText).toContain('Payload validation: blocked: Manual action preflight is ready. / blocked: Existing workbench endpoint is known. / blocked: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
@@ -2730,6 +2732,8 @@ describe('Mira runtime UI boot', () => {
     expect(routePreviewPipelineText).toContain('Manual action preflight: ready: Make review item · Make review item is the next manual internal action because Route preview is selected and Review item is the first missing stage. Use the selected token as previewToken; this preflight does not perform the action.');
     expect(routePreviewPipelineText).toContain('Manual action input: previewToken=mission-route-test; source mission-control/route-previews/mission-route-preview-test.json; next Review item');
     expect(routePreviewPipelineText).toContain('Workbench focus: Highlight the existing Route preview card at mission-control/route-previews/mission-route-preview-test.json and use its existing Make review item action.');
+    expect(routePreviewPipelineText).toContain('Manual selector summary: ready: Make review item on Route preview; previewToken=mission-route-test; POST /mission-control/internal-route-requests; manual-only because this status card does not submit.');
+    expect(routePreviewPipelineText).toContain('Manual-only checklist: ok: status surface is read-only / ok: highlighted source is an existing workbench card / ok: payload preview matches existing handler / ok: use the existing highlighted button manually / ok: selector summary does not submit anything');
     expect(routePreviewPipelineText).toContain('Preflight checks: ok: Selected artifact token is available. / ok: Selected artifact path is available or the selected entry is derived. / ok: A next missing stage exists for manual advancement.');
     expect(routePreviewPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-route-requests · This is the exact workbench payload preview for Make review item; it is not submitted by the status surface.');
     expect(routePreviewPipelineText).toContain('Payload body: {"previewToken":"mission-route-test"}');
@@ -3202,6 +3206,8 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Manual action preflight: blocked hard stop: no manual action · No manual advancement is available from this read-only surface because the selected artifact is the live activation hard-stop contract.');
     expect(pipelineStatusText).toContain('Manual action input: No manual action input is ready.');
     expect(pipelineStatusText).toContain('Workbench focus: No manual workbench step is ready to highlight.');
+    expect(pipelineStatusText).toContain('Manual selector summary: blocked: no existing manual action is ready to select.');
+    expect(pipelineStatusText).toContain('Manual-only checklist: ok: status surface is read-only / blocked: manual preflight ready (blocked_hard_stop) / blocked: highlighted source available (no) / blocked: payload matches handler (blocked) / ok: selector summary does not submit anything');
     expect(pipelineStatusText).toContain('blocked: A next missing stage exists for manual advancement.');
     expect(pipelineStatusText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
     expect(pipelineStatusText).toContain('Payload body: No payload body is available.');

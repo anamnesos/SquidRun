@@ -482,6 +482,41 @@ function applyMissionControlActionFocus() {
   });
 }
 
+function buildManualActionSelectorSummary(preflight, payloadPreview, focus) {
+  const driftCheck = payloadPreview?.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : null;
+  const ready = Boolean(
+    focus
+      && preflight?.status === 'ready'
+      && payloadPreview?.status === 'ready'
+      && driftCheck?.status === 'matched',
+  );
+  if (!ready) {
+    return {
+      selector: 'blocked: no existing manual action is ready to select.',
+      checklist: [
+        'ok: status surface is read-only',
+        `blocked: manual preflight ready (${preflight?.status || 'missing'})`,
+        `blocked: highlighted source available (${focus ? 'yes' : 'no'})`,
+        `blocked: payload matches handler (${driftCheck?.status || 'missing'})`,
+        'ok: selector summary does not submit anything',
+      ].join(' / '),
+    };
+  }
+
+  return {
+    selector: `ready: ${focus.actionLabel} on ${focus.stageLabel}; ${focus.tokenField}=${focus.tokenValue}; ${payloadPreview.method || 'no method'} ${payloadPreview.endpoint || 'no endpoint'}; manual-only because this status card does not submit.`,
+    checklist: [
+      'ok: status surface is read-only',
+      'ok: highlighted source is an existing workbench card',
+      'ok: payload preview matches existing handler',
+      'ok: use the existing highlighted button manually',
+      'ok: selector summary does not submit anything',
+    ].join(' / '),
+  };
+}
+
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
   setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.missionControlInternalSendActivationDesignCount} activation designs / ${state.missionControlInternalSendActivationRequestCount} activation requests / ${state.missionControlInternalSendActivationAuditCount} activation audits / ${state.missionControlInternalSendActivationReadinessCount} activation readiness / ${state.missionControlInternalSendLiveGateCount} live gates / ${state.missionControlActivationPipelineStageCount} pipeline stages / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
@@ -1591,6 +1626,7 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'Comparison', selection.comparisonSummary || 'No comparison available.');
   }
   if (preflight) {
+    const selectorSummary = buildManualActionSelectorSummary(preflight, payloadPreview, state.missionControlActionFocus);
     const preflightStatus = String(preflight.status || 'unknown').replace(/_/g, ' ');
     appendPreviewLine(card, 'Manual action preflight', `${preflightStatus}: ${preflight.manualActionLabel || 'no manual action'} · ${preflight.explanation || ''}`.trim());
     appendPreviewLine(card, 'Manual action input', preflight.tokenField
@@ -1599,6 +1635,8 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'Workbench focus', state.missionControlActionFocus
       ? `Highlight the existing ${state.missionControlActionFocus.stageLabel || 'source'} card at ${state.missionControlActionFocus.relativePath || 'unknown path'} and use its existing ${state.missionControlActionFocus.actionLabel || 'manual'} action.`
       : 'No manual workbench step is ready to highlight.');
+    appendPreviewLine(card, 'Manual selector summary', selectorSummary.selector);
+    appendPreviewLine(card, 'Manual-only checklist', selectorSummary.checklist);
     if (Array.isArray(preflight.evidenceChecks)) {
       appendPreviewLine(card, 'Preflight checks', preflight.evidenceChecks.map((check) => `${check.ok ? 'ok' : 'blocked'}: ${check.label}`).join(' / '));
     }
