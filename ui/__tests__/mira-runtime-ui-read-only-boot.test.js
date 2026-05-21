@@ -3003,6 +3003,7 @@ describe('Mira runtime UI boot', () => {
       .join('\n');
     expect(requestText).toContain('oracle · benchmark review review item');
     expect(requestText).toContain('pending internal review · manual execution required · not sent');
+    expect(requestText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(requestText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Route review item saved locally. Nothing was sent or executed.');
 

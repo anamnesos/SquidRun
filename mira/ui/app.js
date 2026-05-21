@@ -1034,6 +1034,7 @@ function updateRouteRequestList(payload) {
     meta.textContent = `${String(request.status || 'pending_internal_review').replace(/_/g, ' ')} · manual execution required · not sent · ${formatReadyStamp(request.createdAt)}`;
     card.append(title, meta);
     appendPreviewLine(card, 'Request', request.contentPreview || request.content);
+    appendPreviewLine(card, 'Mission answer', request.missionAnswerPreview || 'No originating Mission Control answer is attached to this review item.');
     appendPreviewLine(card, 'Audit', 'reviewable owned work only; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
     const action = document.createElement('button');
     action.type = 'button';
