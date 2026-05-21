@@ -244,6 +244,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlAvailableAnswersQuestion(text)
     || isMissionControlLiveBoundaryQuestion(text)
     || isMissionControlManualActionQuestion(text)
+    || isMissionControlChecksumEvidenceQuestion(text)
     || isMissionControlArtifactEvidenceQuestion(text)
     || isMissionControlProofSummaryQuestion(text)
     || isMissionControlNoEffectBoundaryQuestion(text)
@@ -291,6 +292,16 @@ function isMissionControlManualActionQuestion(text) {
     && (/\bwhat\s+manual\s+action\s+is\s+next\b/i.test(normalized)
       || /\bwhich\s+mission\s*control\s+button\s+is\s+highlighted\b/i.test(normalized)
       || /\bwhat\s+(button|workbench\s+action)\s+should\s+i\s+use\s+next\b/i.test(normalized));
+}
+
+function isMissionControlChecksumEvidenceQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+(checksum|hash|sha256)\s+backs\s+.*\b(artifact|evidence|stage)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(evidence|artifact|body|adapter|packet)\s+(checksum|hash|sha256)\b/i.test(normalized)
+      || /\bwhat\s+(mission\s*control|new\s+mira)\s+(checksum|hash|sha256)\s+(is\s+)?(loaded|recorded)\b/i.test(normalized)
+      || /\bwhich\s+(checksum|hash|sha256)\s+.*\b(mission\s*control|new\s+mira)\s+.*\b(artifact|evidence|stage)\b/i.test(normalized)
+      || /\bhow\s+.*\b(mission\s*control|new\s+mira)\s+.*\b(checksum|hash|sha256)\s+.*\b(artifact|evidence|trace)\b/i.test(normalized));
 }
 
 function isMissionControlArtifactEvidenceQuestion(text) {
@@ -473,6 +484,10 @@ function currentMissionControlAnswer(text = '') {
     const manualActionAnswer = buildMissionControlManualActionAnswer();
     if (manualActionAnswer) return manualActionAnswer;
   }
+  if (isMissionControlChecksumEvidenceQuestion(text)) {
+    const checksumEvidenceAnswer = buildMissionControlChecksumEvidenceAnswer();
+    if (checksumEvidenceAnswer) return checksumEvidenceAnswer;
+  }
   if (isMissionControlArtifactEvidenceQuestion(text)) {
     const artifactEvidenceAnswer = buildMissionControlArtifactEvidenceAnswer();
     if (artifactEvidenceAnswer) return artifactEvidenceAnswer;
@@ -610,6 +625,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('payload/endpoint preview');
     available.push('handler drift check');
     available.push('validation checks');
+    available.push('checksum/evidence integrity');
     available.push('blocked reason');
     available.push('no-effect boundary');
     available.push('manual input requirements');
@@ -750,6 +766,49 @@ function buildMissionControlArtifactEvidenceAnswer(status = state.missionControl
     `Body preview: ${currentEntry?.contentPreview || 'No body preview recorded.'}`,
     'Source: already-loaded Mission Control activation pipeline status/trace from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, file read, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlChecksumEvidenceAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const trace = status.currentStageTrace && typeof status.currentStageTrace === 'object' ? status.currentStageTrace : {};
+  const entries = Array.isArray(trace.entries) ? trace.entries : [];
+  const currentStageId = status.currentStageId || status.currentStage?.id || null;
+  const currentEntry = entries.find((entry) => entry?.stageId === currentStageId)
+    || entries[entries.length - 1]
+    || null;
+  const currentStage = status.currentStage && typeof status.currentStage === 'object' ? status.currentStage : {};
+  const selection = status.advanceSelection && typeof status.advanceSelection === 'object' ? status.advanceSelection : {};
+  const bodyChecksum = currentEntry?.bodySha256 || selection.selectedBodySha256 || 'not available';
+  const adapterChecksum = currentEntry?.adapterPacketSha256 || selection.selectedAdapterPacketSha256 || 'not available';
+  const checksumReady = Boolean(currentEntry?.bodySha256 || currentEntry?.adapterPacketSha256 || selection.selectedBodySha256 || selection.selectedAdapterPacketSha256);
+  const traceChecksumTrail = entries.length > 0
+    ? entries.map((entry) => {
+      const label = entry.label || entry.stageId || 'stage';
+      const body = entry.bodySha256 || 'no body checksum';
+      const adapter = entry.adapterPacketSha256 || 'no adapter checksum';
+      return `${label}: body ${body}; adapter ${adapter}`;
+    }).join(' / ')
+    : 'none loaded';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control checksum inspection; no setup or live action is needed.');
+  return [
+    `Checksum evidence ready: ${checksumReady ? 'yes' : 'no'}`,
+    `Current stage: ${currentStage.label || 'No saved Mission Control send chain yet'}`,
+    `Artifact token: ${currentEntry?.token || currentStage.latestToken || selection.selectedArtifactToken || 'not available'}`,
+    `Artifact path: ${currentEntry?.relativePath || currentStage.relativePath || selection.selectedRelativePath || 'No saved artifact path is available.'}`,
+    `Body checksum: ${bodyChecksum}`,
+    `Adapter checksum: ${adapterChecksum}`,
+    `Selected checksum snapshot: body ${selection.selectedBodySha256 || 'not available'}; adapter ${selection.selectedAdapterPacketSha256 || 'not available'}`,
+    `Trace checksum trail: ${traceChecksumTrail}`,
+    `Body preview: ${currentEntry?.contentPreview || 'No body preview recorded.'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline current-stage trace and advance-selection checksum fields from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, checksum verification run, file read, open, fix, update, submit, endpoint call, handler call, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
