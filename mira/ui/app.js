@@ -29,6 +29,7 @@ const state = {
   missionControlActionFocus: null,
   missionControlWhatNowAnswer: null,
   missionControlDemoInspectionAnswer: null,
+  missionControlActivationPipelineStatus: null,
   missionControlContext: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -241,6 +242,7 @@ function renderCoordinationDrafts(drafts) {
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlAvailableAnswersQuestion(text)
+    || isMissionControlLiveBoundaryQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -262,6 +264,13 @@ function isMissionControlAvailableAnswersQuestion(text) {
     && /\b(mission\s*control|mira|local|preview)\b/i.test(normalized);
   const asksQuestionList = /\bmission\s*control\s+(local\s+)?(answers?|previews?|question\s+list)\b/i.test(normalized);
   return asksMissionControl || asksAvailablePreviews || asksQuestionList;
+}
+
+function isMissionControlLiveBoundaryQuestion(text) {
+  const normalized = String(text || '');
+  const hasMissionControlContext = /\b(mission\s*control|new\s+mira)\b/i.test(normalized);
+  return /\b(live[-\s]+send|real[-\s]+send|live\s+activation)\b/i.test(normalized)
+    || (hasMissionControlContext && /\b(send\s+boundary|activation\s+boundary|send\s+available)\b/i.test(normalized));
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -337,6 +346,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlAvailableAnswersQuestion(text)) {
     const availableAnswers = buildMissionControlAvailableAnswersAnswer();
     if (availableAnswers) return availableAnswers;
+  }
+  if (isMissionControlLiveBoundaryQuestion(text)) {
+    const liveBoundaryAnswer = buildMissionControlLiveBoundaryAnswer();
+    if (liveBoundaryAnswer) return liveBoundaryAnswer;
   }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
@@ -461,6 +474,30 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     `Example prompts: ${examples.join(' / ')}`,
     'Source: already-loaded Mission Control UI state and /squidrun/context; this only names existing local answers.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlLiveBoundaryAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const hardStop = status.hardStopTruth && typeof status.hardStopTruth === 'object' ? status.hardStopTruth : {};
+  const nextBoundary = status.nextBoundary && typeof status.nextBoundary === 'object' ? status.nextBoundary : {};
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object' ? status.endToEndReadout : {};
+  const currentStage = status.currentStage && typeof status.currentStage === 'object' ? status.currentStage : {};
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control live-send boundary; no setup or live action is needed.');
+  return [
+    `Live send available: ${hardStop.liveSendAvailable === true ? 'yes' : 'no'}`,
+    `Hard stop recorded: ${hardStop.hardStopContractRecorded === true || endToEndReadout.hardStopRecorded === true ? 'yes' : 'no'}`,
+    `James setup required before live send: ${hardStop.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}`,
+    `Current stage: ${currentStage.label || endToEndReadout.currentStageLabel || 'No saved Mission Control send chain yet'}`,
+    `Next boundary: ${nextBoundary.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
+    `Future gate: ${nextBoundary.futureJamesVisibleGate || 'Future real send would require a separate James-visible setup/activation lane.'}`,
+    'Source: already-loaded Mission Control activation pipeline status from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
@@ -2163,6 +2200,7 @@ function updateActivationPipelineStatus(payload) {
     || null;
   state.missionControlWhatNowAnswer = null;
   state.missionControlDemoInspectionAnswer = null;
+  state.missionControlActivationPipelineStatus = payload && typeof payload === 'object' ? payload : null;
   state.missionControlActionFocus = preflight?.status === 'ready' && preflight.tokenValue
     ? {
       stageId: preflight.selectedStageId,
