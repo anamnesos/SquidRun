@@ -3257,6 +3257,87 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+    const postActivationRequestPipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const postActivationRequestPipelineStatusPayload = await postActivationRequestPipelineStatusResponse.json();
+    const decisionAuditStatusDir = path.join(tempStateRoot, 'mission-control', 'internal-send-activation-decision-audits');
+    const decisionAuditFilesAfterStatusRefresh = fs.existsSync(decisionAuditStatusDir)
+      ? fs.readdirSync(decisionAuditStatusDir).filter((file) => file.endsWith('.json'))
+      : [];
+    expect(postActivationRequestPipelineStatusResponse.status).toBe(200);
+    expect(postActivationRequestPipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
+      id: 'activation_request',
+      label: 'Activation request',
+      latestToken: activationRequestPayload.request.actionToken,
+      relativePath: activationRequestPayload.relativePath,
+      sourceStageId: 'activation_design',
+      sourceToken: activationDesignPayload.design.actionToken,
+      bodySha256: expectedDeliveryBodySha256,
+      adapterPacketSha256: expectedAdapterPacketSha256,
+    }));
+    expect(postActivationRequestPipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
+      id: 'activation_request',
+      label: 'Activation request',
+      latestToken: activationRequestPayload.request.actionToken,
+      relativePath: activationRequestPayload.relativePath,
+    }));
+    expect(postActivationRequestPipelineStatusPayload.currentStageTrace.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stageId: 'activation_design',
+        token: activationDesignPayload.design.actionToken,
+        sourceStageId: 'internal_send_dry_run',
+        sourceToken: internalSendDryRunPayload.dryRun.actionToken,
+        bodySha256: expectedDeliveryBodySha256,
+        adapterPacketSha256: expectedAdapterPacketSha256,
+      }),
+      expect.objectContaining({
+        stageId: 'activation_request',
+        token: activationRequestPayload.request.actionToken,
+        relativePath: activationRequestPayload.relativePath,
+        sourceStageId: 'activation_design',
+        sourceToken: activationDesignPayload.design.actionToken,
+        bodySha256: expectedDeliveryBodySha256,
+        adapterPacketSha256: expectedAdapterPacketSha256,
+      }),
+    ]));
+    expect(postActivationRequestPipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      status: 'advance_available',
+      selectedStageId: 'activation_request',
+      selectedStageLabel: 'Activation request',
+      selectedArtifactToken: activationRequestPayload.request.actionToken,
+      selectedRelativePath: activationRequestPayload.relativePath,
+      selectedSourceStageId: 'activation_design',
+      selectedSourceToken: activationDesignPayload.design.actionToken,
+      selectedBodySha256: expectedDeliveryBodySha256,
+      selectedAdapterPacketSha256: expectedAdapterPacketSha256,
+      nextStageId: 'activation_decision_audit',
+      nextStageLabel: 'Decision audit',
+    }));
+    expect(postActivationRequestPipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      status: 'ready',
+      selectedStageId: 'activation_request',
+      selectedStageLabel: 'Activation request',
+      manualActionLabel: 'Record decision audit',
+      tokenField: 'internalSendActivationRequestToken',
+      tokenValue: activationRequestPayload.request.actionToken,
+    }));
+    expect(postActivationRequestPipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      status: 'ready',
+      actionLabel: 'Record decision audit',
+      method: 'POST',
+      endpoint: '/mission-control/internal-send-activation-decision-audits',
+      payload: {
+        internalSendActivationRequestToken: activationRequestPayload.request.actionToken,
+      },
+      requiredManualInputs: [],
+    }));
+    expect(postActivationRequestPipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      status: 'matched',
+      handlerName: 'createInternalSendActivationDecisionAudit',
+      expectedEndpoint: '/mission-control/internal-send-activation-decision-audits',
+      expectedTokenField: 'internalSendActivationRequestToken',
+      previewTokenField: 'internalSendActivationRequestToken',
+    }));
+    expect(decisionAuditFilesAfterStatusRefresh).toHaveLength(0);
     fs.writeFileSync(activationDesignPayload.absolutePath, `${JSON.stringify({
       ...storedActivationDesign,
       bodySha256: 'bad-body-sha256',

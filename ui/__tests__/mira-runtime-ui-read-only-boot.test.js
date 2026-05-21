@@ -3247,12 +3247,38 @@ describe('Mira runtime UI boot', () => {
     expect(activationRequestText).toContain('Missing or unknown activation-design tokens must return 400 without writing.');
     expect(activationRequestText).toContain('A later activation must define rollback/failure handling before execution is allowed.');
     expect(activationRequestText).toContain('request preview only; reviewer, refusal, rollback, and audit fields are visible; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.elements.routeInternalSendActivationDesignList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationDesignList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeInternalSendActivationRequestList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationRequestList.children[0].attributes.id).toBe('mission-control-manual-step-activation-request-mission-send-activation-request-test');
     const activationAuditCallsBeforeClick = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-decision-audits');
     expect(activationAuditCallsBeforeClick.every((call) => call.method === 'GET')).toBe(true);
     expect(activationAuditCallsBeforeClick).toHaveLength(9);
     const activationAuditButton = harness.elements.routeInternalSendActivationRequestList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Record decision audit');
     expect(activationAuditButton.textContent).toBe('Record decision audit');
+    expect(activationAuditButton.className).toContain('selected-manual-action');
+    expect(activationAuditButton.attributes['aria-label']).toBe('Selected Mission Control action: Record decision audit');
+    const postActivationRequestPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postActivationRequestStepHeader = postActivationRequestPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postActivationRequestStepHeader.textContent).toBe('Next manual step: Record decision audit on Activation request. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postActivationRequestStepHeader.children).toHaveLength(1);
+    expect(postActivationRequestStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-activation-request-mission-send-activation-request-test');
+    const postActivationRequestPipelineText = postActivationRequestPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postActivationRequestPipelineText).toContain('Current stage: Activation request: activation request review only; token mission-send-activation-request-test.');
+    expect(postActivationRequestPipelineText).toContain('Last saved: Activation request: activation_request_review_only; token mission-send-activation-request-test');
+    expect(postActivationRequestPipelineText).toContain('Current evidence: token mission-send-activation-request-test; status saved; path mission-control/internal-send-activation-requests/mission-send-activation-request-test.json; relation activation_design -> activation_request; source token mission-send-activation-design-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postActivationRequestPipelineText).toContain('Advance selector: advance available: Activation request -> Decision audit. Activation request is the latest available stage before the first missing stage, Decision audit.');
+    expect(postActivationRequestPipelineText).toContain('Manual action preflight: ready: Record decision audit · Record decision audit is the next manual internal action because Activation request is selected and Decision audit is the first missing stage. Use the selected token as internalSendActivationRequestToken; this preflight does not perform the action.');
+    expect(postActivationRequestPipelineText).toContain('Manual action input: internalSendActivationRequestToken=mission-send-activation-request-test; source mission-control/internal-send-activation-requests/mission-send-activation-request-test.json; next Decision audit');
+    expect(postActivationRequestPipelineText).toContain('Selected artifact: token mission-send-activation-request-test; path mission-control/internal-send-activation-requests/mission-send-activation-request-test.json; source mission-send-activation-design-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postActivationRequestPipelineText).toContain('Workbench focus: Highlight the existing Activation request card at mission-control/internal-send-activation-requests/mission-send-activation-request-test.json and use its existing Record decision audit action.');
+    expect(postActivationRequestPipelineText).toContain('Manual selector summary: ready: Record decision audit on Activation request; internalSendActivationRequestToken=mission-send-activation-request-test; POST /mission-control/internal-send-activation-decision-audits; manual-only because this status card does not submit.');
+    expect(postActivationRequestPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-send-activation-decision-audits · This is the exact workbench payload preview for Record decision audit; it is not submitted by the status surface.');
+    expect(postActivationRequestPipelineText).toContain('Payload body: {"internalSendActivationRequestToken":"mission-send-activation-request-test"}');
+    expect(postActivationRequestPipelineText).toContain('Handler drift check: matched: createInternalSendActivationDecisionAudit · createInternalSendActivationDecisionAudit expects POST /mission-control/internal-send-activation-decision-audits with internalSendActivationRequestToken; payload preview matches that workbench handler contract.');
     await activationAuditButton.listeners.click();
 
     const activationAuditCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-decision-audits');
