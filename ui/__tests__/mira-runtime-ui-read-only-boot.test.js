@@ -1742,6 +1742,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: readiness.purpose,
         content: readiness.copiedPaneMessage.body,
         contentPreview: readiness.contentPreview,
+        missionAnswerPreview: readiness.missionAnswerPreview,
         bodySha256: readiness.bodySha256,
         packetSha256: readiness.packetSha256,
         adapterDryRun: {
@@ -3291,6 +3292,7 @@ describe('Mira runtime UI boot', () => {
     expect(dryRunText).toContain('dry run ready · adapter/audit only · manual execution required · not sent');
     expect(dryRunText).toContain('Pane target: oracle pane 3');
     expect(dryRunText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(dryRunText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(dryRunText).toContain('Adapter: hm-send dry-run via ui/scripts/hm-send.js');
     expect(dryRunText).toContain('Activation gate: separate_reviewed_activation');
     expect(dryRunText).toContain('no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');

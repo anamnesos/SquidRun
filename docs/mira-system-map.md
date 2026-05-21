@@ -412,6 +412,7 @@ The existing `Review continuation` manual-input proof now pins that the owned-wo
 The existing follow-through recommendation selector now carries the same originating `missionAnswerPreview` from the selected continuation and displays it on the existing recommendation card before the delivery-preview step.
 The existing `Preview delivery packet` proof now pins that the internal delivery-preview record carries the same originating `missionAnswerPreview`, and the delivery-preview card displays it as compact review context before dispatch-readiness review.
 The existing `Review dispatch readiness` proof now pins that the dispatch-readiness checklist carries the same originating `missionAnswerPreview`, and the checklist card displays it as compact review context before the send dry-run step.
+The existing `Create send dry run` proof now pins that the internal-send dry-run artifact carries the same originating `missionAnswerPreview`, and the dry-run card displays it as compact review context before activation-design review.
 
 New Mira runtime-turn export/replay projection proof, without live provider calls, fixed-port runtime, Telegram, or route changes:
 

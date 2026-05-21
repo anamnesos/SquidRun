@@ -1367,6 +1367,7 @@ function updateInternalSendDryRunList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', dryRun.targetLabel || `${dryRun.targetRole || 'team'} pane ${dryRun.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', dryRun.adapterDryRun?.body?.content || dryRun.contentPreview || dryRun.content);
+    appendPreviewLine(card, 'Mission answer', dryRun.missionAnswerPreview || 'No originating Mission Control answer is attached to this internal-send dry run.');
     appendPreviewLine(card, 'Adapter', `${dryRun.adapterDryRun?.channel || 'hm-send'} dry-run via ${dryRun.adapterDryRun?.transport || 'ui/scripts/hm-send.js'}`);
     appendPreviewLine(card, 'Activation gate', dryRun.activationGate?.requiredReview || 'separate reviewed activation');
     appendPreviewLine(card, 'Audit', 'dry-run adapter/audit only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');

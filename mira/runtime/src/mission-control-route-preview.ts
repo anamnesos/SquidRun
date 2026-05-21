@@ -592,6 +592,7 @@ export type MissionControlInternalSendDryRunRecord = {
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   bodySha256: string;
   packetSha256: string;
   adapterDryRun: {
@@ -4493,6 +4494,7 @@ function internalSendDryRunFromDispatchReadiness(readiness: MissionControlDispat
     purpose: readiness.purpose,
     content: bodyContent,
     contentPreview: bodyContent.length > 260 ? `${bodyContent.slice(0, 259)}...` : bodyContent,
+    missionAnswerPreview: readiness.missionAnswerPreview,
     bodySha256,
     packetSha256: readiness.packetSha256,
     adapterDryRun: {
