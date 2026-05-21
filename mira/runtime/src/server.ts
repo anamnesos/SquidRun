@@ -7,8 +7,10 @@ import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import {
   createMissionControlInternalRouteRequest,
+  createMissionControlOwnedWorkContinuation,
   createMissionControlRoutePreviewRecord,
   listMissionControlInternalRouteRequests,
+  listMissionControlOwnedWorkContinuations,
   listMissionControlRoutePreviewRecords,
 } from "./mission-control-route-preview.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
@@ -535,6 +537,17 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/mission-control/owned-work-continuations") {
+    try {
+      const body = await readJsonBody(request);
+      const continuation = createMissionControlOwnedWorkContinuation(body);
+      sendJson(response, 200, continuation);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method === "POST" && requestUrl.pathname === "/autonomy/tick") {
     try {
       sendJson(response, 200, runAutonomyTick());
@@ -686,6 +699,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/mission-control/internal-route-requests") {
     sendJson(response, 200, listMissionControlInternalRouteRequests(process.env, { includeInternal: includeInternalFields(requestUrl) }));
+    return;
+  }
+
+  if (requestUrl.pathname === "/mission-control/owned-work-continuations") {
+    sendJson(response, 200, listMissionControlOwnedWorkContinuations(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 

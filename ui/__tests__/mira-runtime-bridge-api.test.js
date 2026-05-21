@@ -352,6 +352,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="sendCheckList"');
     expect(indexHtml).toContain('Pre-send checks');
     expect(indexHtml).toContain('id="routeRequestList"');
+    expect(indexHtml).toContain('id="routeContinuationPanel"');
+    expect(indexHtml).toContain('id="routeContinuationList"');
     expect(indexHtml).toContain('id="autonomyTickButton"');
     expect(indexHtml).toContain('id="autonomyFollowButton"');
     expect(indexHtml).toContain('id="autonomyList"');
@@ -382,8 +384,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/work/send-checks'");
     expect(appJs).toContain("fetch('/mission-control/route-previews'");
     expect(appJs).toContain("fetch('/mission-control/internal-route-requests'");
+    expect(appJs).toContain("fetch('/mission-control/owned-work-continuations'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
+    expect(appJs).toContain('review continuation');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1098,6 +1102,245 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+
+    const continuationDir = path.join(tempStateRoot, 'mission-control', 'owned-work-continuations');
+    const emptyContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`);
+    const emptyContinuationPayload = await emptyContinuationResponse.json();
+    const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingContinuationTokenPayload = await missingContinuationTokenResponse.json();
+    const badContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestToken: 'mission-request-not-saved', decision: 'approve' }),
+    });
+    const badContinuationTokenPayload = await badContinuationTokenResponse.json();
+    const approveContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        requestToken: createRequestPayload.request.actionToken,
+        decision: 'approve',
+        note: 'Approved as a review-only owned-work continuation.',
+      }),
+    });
+    const approveContinuationPayload = await approveContinuationResponse.json();
+    const editContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        requestToken: createRequestPayload.request.actionToken,
+        decision: 'edit',
+        editedContent: 'Edited internal continuation for Oracle review.',
+        note: 'Edited locally before review.',
+      }),
+    });
+    const editContinuationPayload = await editContinuationResponse.json();
+    const rejectContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        requestToken: createRequestPayload.request.actionToken,
+        decision: 'reject',
+        note: 'Rejected as the wrong next move.',
+      }),
+    });
+    const rejectContinuationPayload = await rejectContinuationResponse.json();
+    const duplicateEditContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        requestToken: createRequestPayload.request.actionToken,
+        decision: 'edit',
+        editedContent: 'Edited internal continuation for Oracle review.',
+        note: 'Edited locally before review.',
+      }),
+    });
+    const duplicateEditContinuationPayload = await duplicateEditContinuationResponse.json();
+    const listContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations?includeInternal=1`);
+    const listContinuationPayload = await listContinuationResponse.json();
+
+    expect(emptyContinuationResponse.status).toBe(200);
+    expect(emptyContinuationPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_owned_work_continuation_list.v0',
+      continuationCount: 0,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(missingContinuationTokenResponse.status).toBe(400);
+    expect(missingContinuationTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_route_request_token_required',
+    }));
+    expect(badContinuationTokenResponse.status).toBe(400);
+    expect(badContinuationTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_route_request_not_found',
+    }));
+    expect(approveContinuationResponse.status).toBe(200);
+    expect(approveContinuationPayload.continuation).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_owned_work_continuation.v0',
+      status: 'approved_for_internal_review',
+      decision: 'approve',
+      sourceRequestId: createRequestPayload.request.id,
+      sourceRequestToken: createRequestPayload.request.actionToken,
+      sourcePreviewId: savePayload.record.id,
+      reviewableOwnedWork: true,
+      manualExecutionRequired: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(editContinuationResponse.status).toBe(200);
+    expect(editContinuationPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_owned_work_continuation_write.v0',
+      created: true,
+      stateRootPath: path.resolve(tempStateRoot),
+      relativePath: expect.stringMatching(/^mission-control\/owned-work-continuations\/mission-owned-work-continuation-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(editContinuationPayload.continuation).toEqual(expect.objectContaining({
+      status: 'edited_for_internal_review',
+      decision: 'edit',
+      content: 'Edited internal continuation for Oracle review.',
+      editedContent: 'Edited internal continuation for Oracle review.',
+      note: 'Edited locally before review.',
+      sourceRequestToken: createRequestPayload.request.actionToken,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(rejectContinuationResponse.status).toBe(200);
+    expect(rejectContinuationPayload.continuation).toEqual(expect.objectContaining({
+      status: 'rejected',
+      decision: 'reject',
+      note: 'Rejected as the wrong next move.',
+      notSent: true,
+      commandStored: false,
+    }));
+    expect(editContinuationPayload.continuation).not.toHaveProperty('command');
+    expect(editContinuationPayload.continuation).not.toHaveProperty('args');
+    expect(fs.existsSync(editContinuationPayload.absolutePath)).toBe(true);
+    const storedContinuation = JSON.parse(fs.readFileSync(editContinuationPayload.absolutePath, 'utf8'));
+    expect(storedContinuation).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_owned_work_continuation.v0',
+      status: 'edited_for_internal_review',
+      decision: 'edit',
+      editedContent: 'Edited internal continuation for Oracle review.',
+      sourceRequestToken: createRequestPayload.request.actionToken,
+      manualExecutionRequired: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedContinuation).not.toHaveProperty('command');
+    expect(storedContinuation).not.toHaveProperty('args');
+    expect(duplicateEditContinuationResponse.status).toBe(200);
+    expect(duplicateEditContinuationPayload.created).toBe(false);
+    expect(duplicateEditContinuationPayload.relativePath).toBe(editContinuationPayload.relativePath);
+    expect(listContinuationResponse.status).toBe(200);
+    expect(listContinuationPayload.continuationCount).toBe(3);
+    expect(listContinuationPayload.continuations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        actionToken: expect.stringMatching(/^mission-continuation-/),
+        relativePath: editContinuationPayload.relativePath,
+        status: 'edited_for_internal_review',
+        decision: 'edit',
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      }),
+    ]));
+    for (const input of [
+      { requestToken: createRequestPayload.request.actionToken, decision: 'approve', telegramSend: true },
+      { requestToken: createRequestPayload.request.actionToken, decision: 'approve', audit: { accountOrTokenAccess: true } },
+      { requestToken: createRequestPayload.request.actionToken, decision: 'approve', plan: { liveHmSend: true } },
+    ]) {
+      const blockedContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedContinuationPayload = await blockedContinuationResponse.json();
+      expect(blockedContinuationResponse.status).toBe(400);
+      expect(blockedContinuationPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_continuation_has_live_effect',
+      }));
+      expect(fs.readdirSync(continuationDir).filter((file) => file.endsWith('.json'))).toHaveLength(3);
+    }
+    for (const input of [
+      { requestToken: createRequestPayload.request.actionToken, decision: 'approve', command: { executable: process.execPath } },
+      { requestToken: createRequestPayload.request.actionToken, decision: 'approve', args: ['hm-send', 'oracle'] },
+      { requestToken: createRequestPayload.request.actionToken, decision: 'approve', plan: { command: { executable: process.execPath } } },
+      { requestToken: createRequestPayload.request.actionToken, decision: 'approve', audit: { args: ['hm-send', 'oracle'] } },
+    ]) {
+      const blockedCommandContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandContinuationPayload = await blockedCommandContinuationResponse.json();
+      expect(blockedCommandContinuationResponse.status).toBe(400);
+      expect(blockedCommandContinuationPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_continuation_command_not_allowed',
+      }));
+      expect(fs.readdirSync(continuationDir).filter((file) => file.endsWith('.json'))).toHaveLength(3);
+    }
 
     const previewDir = path.join(tempStateRoot, 'mission-control', 'route-previews');
     for (const flag of ['telegramSend', 'accountOrTokenAccess', 'liveHmSend']) {

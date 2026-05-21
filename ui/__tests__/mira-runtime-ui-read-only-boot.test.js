@@ -328,6 +328,25 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       accountOrTokenAccess: false,
       liveHmSend: false,
     },
+    '/mission-control/owned-work-continuations': {
+      ok: true,
+      continuationCount: 0,
+      continuations: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
     '/autonomy/status': {
       ok: true,
       queueCount: 0,
@@ -565,6 +584,73 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         liveHmSend: false,
       });
     }
+    if (pathname === '/mission-control/owned-work-continuations' && method === 'POST') {
+      const request = payloads['/mission-control/internal-route-requests'].requests
+        .find((candidate) => candidate.actionToken === body?.requestToken);
+      if (!request) {
+        return response({ ok: false, error: { message: 'Mission Control route request was not found.' } }, false);
+      }
+      const continuation = {
+        protocol: 'mira.mission_control_owned_work_continuation.v0',
+        id: 'mission-owned-work-continuation-test',
+        actionToken: 'mission-continuation-test',
+        status: body?.decision === 'reject' ? 'rejected' : (body?.decision === 'edit' ? 'edited_for_internal_review' : 'approved_for_internal_review'),
+        decision: body?.decision || 'approve',
+        createdAt: '2026-05-21T00:00:02.000Z',
+        sourceRequestId: request.id,
+        sourceRequestToken: request.actionToken,
+        sourcePreviewId: request.sourcePreviewId,
+        targetRole: request.targetRole,
+        targetPaneId: request.targetPaneId,
+        purpose: request.purpose,
+        content: body?.decision === 'edit' ? body?.editedContent : request.content,
+        contentPreview: body?.decision === 'edit' ? body?.editedContent : request.contentPreview,
+        editedContent: body?.decision === 'edit' ? body?.editedContent : null,
+        note: body?.note || null,
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      };
+      payloads['/mission-control/owned-work-continuations'] = {
+        ...payloads['/mission-control/owned-work-continuations'],
+        continuationCount: 1,
+        continuations: [continuation],
+      };
+      return response({
+        ok: true,
+        protocol: 'mira.mission_control_owned_work_continuation_write.v0',
+        created: true,
+        stateRootPath: 'D:/projects/squidrun/mira/.state-dev',
+        relativePath: 'mission-control/owned-work-continuations/mission-owned-work-continuation-test.json',
+        absolutePath: 'D:/projects/squidrun/mira/.state-dev/mission-control/owned-work-continuations/mission-owned-work-continuation-test.json',
+        continuation,
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      });
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -662,6 +748,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/work/send-checks', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/route-previews', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-route-requests', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/owned-work-continuations', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -680,6 +767,8 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.saveRoutePreviewButton.textContent).toBe('Save preview for review');
     expect(harness.elements.routePreviewHistoryList.textContent).toBe('no saved route previews yet');
     expect(harness.elements.routeRequestList.textContent).toBe('no route review items yet');
+    expect(harness.elements.routeContinuationPanel.textContent).toBe('choose a route review item');
+    expect(harness.elements.routeContinuationList.textContent).toBe('no owned-work continuations yet');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -691,10 +780,11 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.workSummary.textContent).toContain('0 drafts / 0 pending');
     expect(harness.elements.workSummary.textContent).toContain('0 route previews');
     expect(harness.elements.workSummary.textContent).toContain('0 route review items');
+    expect(harness.elements.workSummary.textContent).toContain('0 continuations');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
   });
 
-  test('saves the Mission Control route preview and promotes it only after explicit user actions', async () => {
+  test('saves the Mission Control route preview and promotes it to continuation only after explicit user actions', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
     const harness = createRuntimeBootHarness();
@@ -709,6 +799,9 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-route-requests')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/owned-work-continuations')).toEqual([
       expect.objectContaining({ method: 'GET' }),
     ]);
 
@@ -746,6 +839,10 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-route-requests')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/owned-work-continuations')).toEqual([
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
@@ -792,6 +889,51 @@ describe('Mira runtime UI boot', () => {
     expect(requestText).toContain('pending internal review · manual execution required · not sent');
     expect(requestText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Route review item saved locally. Nothing was sent or executed.');
+
+    const reviewButton = harness.elements.routeRequestList.children[0].children
+      .find((child) => child.tagName === 'BUTTON');
+    expect(reviewButton.textContent).toBe('review continuation');
+    reviewButton.listeners.click();
+    expect(harness.elements.routeContinuationPanel.children[0].textContent).toBe('oracle · benchmark review continuation');
+    const editor = harness.elements.routeContinuationPanel.children
+      .find((child) => child.tagName === 'TEXTAREA');
+    const note = harness.elements.routeContinuationPanel.children
+      .find((child) => child.tagName === 'INPUT');
+    editor.value = 'Edited internal continuation for Oracle review.';
+    note.value = 'Keep this as Mission Control owned-work metadata only.';
+    const actions = harness.elements.routeContinuationPanel.children
+      .find((child) => child.className === 'review-actions');
+    const saveEditButton = actions.children.find((child) => child.textContent === 'Save edit');
+    await saveEditButton.listeners.click();
+
+    const routeContinuationCalls = harness.calls.filter((call) => call.url === '/mission-control/owned-work-continuations');
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(3);
+    expect(routeContinuationCalls).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: {
+          requestToken: 'mission-request-test',
+          decision: 'edit',
+          editedContent: 'Edited internal continuation for Oracle review.',
+          note: 'Keep this as Mission Control owned-work metadata only.',
+        },
+      }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.elements.routeContinuationList.children).toHaveLength(1);
+    const continuationText = harness.elements.routeContinuationList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(continuationText).toContain('oracle · edit continuation');
+    expect(continuationText).toContain('edited for internal review · manual execution required · not sent');
+    expect(continuationText).toContain('Edited internal continuation for Oracle review.');
+    expect(continuationText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send');
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('edit continuation metadata saved locally. Nothing was sent or executed.');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {

@@ -168,6 +168,94 @@ export type MissionControlInternalRouteRequestListResult = {
   liveHmSend: false;
 };
 
+export type MissionControlOwnedWorkContinuationDecision = "approve" | "reject" | "edit";
+export type MissionControlOwnedWorkContinuationStatus =
+  | "approved_for_internal_review"
+  | "rejected"
+  | "edited_for_internal_review";
+
+export type MissionControlOwnedWorkContinuationRecord = {
+  protocol: "mira.mission_control_owned_work_continuation.v0";
+  id: string;
+  status: MissionControlOwnedWorkContinuationStatus;
+  decision: MissionControlOwnedWorkContinuationDecision;
+  createdAt: string;
+  sourceRequestId: string;
+  sourceRequestToken: string;
+  sourcePreviewId: string;
+  targetRole: "architect" | "builder" | "oracle";
+  targetPaneId: "1" | "2" | "3";
+  purpose: string;
+  content: string;
+  contentPreview: string;
+  editedContent: string | null;
+  note: string | null;
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlOwnedWorkContinuationWriteResult = {
+  ok: true;
+  protocol: "mira.mission_control_owned_work_continuation_write.v0";
+  created: boolean;
+  stateRootPath: string;
+  relativePath: string;
+  absolutePath: string;
+  continuation: MissionControlOwnedWorkContinuationRecord & { actionToken: string };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlOwnedWorkContinuationListResult = {
+  ok: true;
+  protocol: "mira.mission_control_owned_work_continuation_list.v0";
+  stateRootPath: string | null;
+  continuationCount: number;
+  continuations: Array<MissionControlOwnedWorkContinuationRecord & {
+    actionToken: string;
+    relativePath?: string;
+    absolutePath?: string;
+  }>;
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
 const allowedRoles = new Set(["architect", "builder", "oracle"]);
 
 function isInside(rootPath: string, candidatePath: string): boolean {
@@ -181,6 +269,10 @@ function previewsDir(rootPath: string): string {
 
 function routeRequestsDir(rootPath: string): string {
   return path.resolve(rootPath, "mission-control", "internal-route-requests");
+}
+
+function continuationsDir(rootPath: string): string {
+  return path.resolve(rootPath, "mission-control", "owned-work-continuations");
 }
 
 function asObject(value: unknown, label: string): JsonObject {
@@ -232,6 +324,14 @@ function rejectRouteRequestLiveEffect(value: unknown, label: string): void {
   if (value === true) {
     throw Object.assign(new Error(`${label} cannot be true for an internal route request.`), {
       code: "mission_control_route_request_has_live_effect",
+    });
+  }
+}
+
+function rejectContinuationLiveEffect(value: unknown, label: string): void {
+  if (value === true) {
+    throw Object.assign(new Error(`${label} cannot be true for an owned-work continuation.`), {
+      code: "mission_control_continuation_has_live_effect",
     });
   }
 }
@@ -288,6 +388,10 @@ function buildRouteRequestActionToken(id: string): string {
   return `mission-request-${crypto.createHash("sha256").update(`mira.mission_control_internal_route_request.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
+function buildOwnedWorkContinuationActionToken(id: string): string {
+  return `mission-continuation-${crypto.createHash("sha256").update(`mira.mission_control_owned_work_continuation.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
 function toPublicRecord(record: MissionControlRoutePreviewRecord): MissionControlRoutePreviewRecord & { actionToken: string } {
   return {
     ...record,
@@ -299,6 +403,13 @@ function toPublicRouteRequest(record: MissionControlInternalRouteRequestRecord):
   return {
     ...record,
     actionToken: buildRouteRequestActionToken(record.id),
+  };
+}
+
+function toPublicContinuation(record: MissionControlOwnedWorkContinuationRecord): MissionControlOwnedWorkContinuationRecord & { actionToken: string } {
+  return {
+    ...record,
+    actionToken: buildOwnedWorkContinuationActionToken(record.id),
   };
 }
 
@@ -346,6 +457,32 @@ function parseRouteRequestRecord(value: string): MissionControlInternalRouteRequ
     if (!allowedRoles.has(String(parsed.targetRole))) return null;
     if ("command" in parsed || "args" in parsed) return null;
     return parsed as MissionControlInternalRouteRequestRecord;
+  } catch {
+    return null;
+  }
+}
+
+function parseContinuationRecord(value: string): MissionControlOwnedWorkContinuationRecord | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<MissionControlOwnedWorkContinuationRecord>;
+    if (parsed.protocol !== "mira.mission_control_owned_work_continuation.v0" || typeof parsed.id !== "string") return null;
+    if (!["approved_for_internal_review", "rejected", "edited_for_internal_review"].includes(String(parsed.status))) return null;
+    if (!["approve", "reject", "edit"].includes(String(parsed.decision))) return null;
+    if (parsed.manualExecutionRequired !== true || parsed.reviewRequired !== true || parsed.internalOnly !== true) return null;
+    if (parsed.reviewableOwnedWork !== true || parsed.notSent !== true || parsed.commandStored !== false) return null;
+    if (
+      parsed.sendPerformed !== false
+      || parsed.runtimeExecutes !== false
+      || parsed.externalSend !== false
+      || parsed.telegramSend !== false
+      || parsed.routeFlip !== false
+      || parsed.providerInvoked !== false
+      || parsed.accountOrTokenAccess !== false
+      || parsed.liveHmSend !== false
+    ) return null;
+    if (!allowedRoles.has(String(parsed.targetRole))) return null;
+    if ("command" in parsed || "args" in parsed) return null;
+    return parsed as MissionControlOwnedWorkContinuationRecord;
   } catch {
     return null;
   }
@@ -461,6 +598,20 @@ function readRouteRequestRecords(rootPath: string): MissionControlInternalRouteR
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 }
 
+function readContinuationRecords(rootPath: string): MissionControlOwnedWorkContinuationRecord[] {
+  const dir = continuationsDir(rootPath);
+  if (!isInside(rootPath, dir) || !fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(dir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseContinuationRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is MissionControlOwnedWorkContinuationRecord => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
 function resolvePreviewRecord(input: { previewToken?: unknown }, rootPath: string): MissionControlRoutePreviewRecord {
   const previewToken = optionalPreview(input.previewToken, 200);
   if (!previewToken) {
@@ -496,6 +647,110 @@ function routeRequestFromPreview(preview: MissionControlRoutePreviewRecord): Mis
     contentPreview: preview.contentPreview,
     missionAnswerPreview: preview.missionAnswerPreview,
     evidence: preview.evidence,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+function normalizeContinuationDecision(value: unknown): MissionControlOwnedWorkContinuationDecision {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "approve" || normalized === "approved") return "approve";
+  if (normalized === "reject" || normalized === "rejected") return "reject";
+  if (normalized === "edit" || normalized === "edited") return "edit";
+  throw Object.assign(new Error("Continuation decision must be approve, reject, or edit."), {
+    code: "invalid_mission_control_continuation_decision",
+  });
+}
+
+function continuationStatus(decision: MissionControlOwnedWorkContinuationDecision): MissionControlOwnedWorkContinuationStatus {
+  if (decision === "approve") return "approved_for_internal_review";
+  if (decision === "reject") return "rejected";
+  return "edited_for_internal_review";
+}
+
+function rejectContinuationInput(input: JsonObject): void {
+  const audit = optionalObject(input.audit);
+  const plan = optionalObject(input.plan);
+  for (const [containerLabel, container] of [["continuation", input], ["audit", audit], ["plan", plan]] as const) {
+    if (!container) continue;
+    if ("command" in container || "args" in container) {
+      throw Object.assign(new Error(`Mission Control continuations do not accept command or args fields in ${containerLabel}.`), {
+        code: "mission_control_continuation_command_not_allowed",
+      });
+    }
+    for (const flag of [
+      "sendPerformed",
+      "runtimeExecutes",
+      "externalSend",
+      "telegramSend",
+      "routeFlip",
+      "providerInvoked",
+      "accountOrTokenAccess",
+      "liveHmSend",
+    ]) {
+      rejectContinuationLiveEffect(container[flag], `${containerLabel}.${flag}`);
+    }
+  }
+}
+
+function resolveRouteRequest(input: { requestToken?: unknown }, rootPath: string): MissionControlInternalRouteRequestRecord {
+  const requestToken = optionalPreview(input.requestToken, 220);
+  if (!requestToken) {
+    throw Object.assign(new Error("Mission Control route request token is required."), {
+      code: "mission_control_route_request_token_required",
+    });
+  }
+  const record = readRouteRequestRecords(rootPath).find((candidate) => buildRouteRequestActionToken(candidate.id) === requestToken);
+  if (!record) {
+    throw Object.assign(new Error("Mission Control route request was not found."), {
+      code: "mission_control_route_request_not_found",
+    });
+  }
+  return record;
+}
+
+function continuationFromRouteRequest(
+  request: MissionControlInternalRouteRequestRecord,
+  input: { decision?: unknown; editedContent?: unknown; note?: unknown },
+): MissionControlOwnedWorkContinuationRecord {
+  const decision = normalizeContinuationDecision(input.decision);
+  const editedContent = decision === "edit" ? nonEmptyText(input.editedContent, "edited continuation content", 5000) : null;
+  const note = optionalPreview(input.note, 500);
+  const content = editedContent || request.content;
+  const fingerprint = crypto.createHash("sha256")
+    .update([request.id, decision, editedContent || "", note || ""].join("\n"))
+    .digest("hex")
+    .slice(0, 24);
+  const id = `mission-owned-work-continuation-${fingerprint}`;
+
+  return {
+    protocol: "mira.mission_control_owned_work_continuation.v0",
+    id,
+    status: continuationStatus(decision),
+    decision,
+    createdAt: new Date().toISOString(),
+    sourceRequestId: request.id,
+    sourceRequestToken: buildRouteRequestActionToken(request.id),
+    sourcePreviewId: request.sourcePreviewId,
+    targetRole: request.targetRole,
+    targetPaneId: request.targetPaneId,
+    purpose: request.purpose,
+    content,
+    contentPreview: content.length > 260 ? `${content.slice(0, 259)}...` : content,
+    editedContent,
+    note,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,
@@ -758,6 +1013,140 @@ export function listMissionControlInternalRouteRequests(
     stateRootPath: options.includeInternal ? rootPath : null,
     requestCount: requests.length,
     requests,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function createMissionControlOwnedWorkContinuation(
+  input: { requestToken?: unknown; decision?: unknown; editedContent?: unknown; note?: unknown } & JsonObject,
+  env: NodeJS.ProcessEnv = process.env,
+): MissionControlOwnedWorkContinuationWriteResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before Mission Control continuations can be saved."), {
+      code: "state_root_not_ready",
+    });
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  rejectContinuationInput(input);
+  const request = resolveRouteRequest(input, rootPath);
+  const dir = continuationsDir(rootPath);
+  if (!isInside(rootPath, dir)) {
+    throw Object.assign(new Error("Mission Control continuation destination escaped Mira state root."), {
+      code: "unsafe_mission_control_continuation_path",
+    });
+  }
+
+  const record = continuationFromRouteRequest(request, input);
+  const absolutePath = path.resolve(dir, `${record.id}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Mission Control continuation file escaped Mira state root."), {
+      code: "unsafe_mission_control_continuation_path",
+    });
+  }
+
+  fs.mkdirSync(dir, { recursive: true });
+  let created = false;
+  let stored = record;
+  if (fs.existsSync(absolutePath)) {
+    const parsed = parseContinuationRecord(fs.readFileSync(absolutePath, "utf8"));
+    if (parsed) stored = parsed;
+  } else {
+    const handle = fs.openSync(absolutePath, "wx");
+    try {
+      fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      created = true;
+    } finally {
+      fs.closeSync(handle);
+    }
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_owned_work_continuation_write.v0",
+    created,
+    stateRootPath: rootPath,
+    relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+    absolutePath,
+    continuation: toPublicContinuation(stored),
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function listMissionControlOwnedWorkContinuations(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { includeInternal?: boolean } = {},
+): MissionControlOwnedWorkContinuationListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.mission_control_owned_work_continuation_list.v0",
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
+      continuationCount: 0,
+      continuations: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    };
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  const continuations = readContinuationRecords(rootPath).map((record) => {
+    const publicRecord = toPublicContinuation(record);
+    if (!options.includeInternal) return publicRecord;
+    const absolutePath = path.resolve(continuationsDir(rootPath), `${record.id}.json`);
+    return {
+      ...publicRecord,
+      relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+      absolutePath,
+    };
+  });
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_owned_work_continuation_list.v0",
+    stateRootPath: options.includeInternal ? rootPath : null,
+    continuationCount: continuations.length,
+    continuations,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,

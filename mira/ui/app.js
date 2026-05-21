@@ -14,6 +14,8 @@ const state = {
   workSendCheckCount: 0,
   missionControlRoutePreviewCount: 0,
   missionControlRouteRequestCount: 0,
+  missionControlContinuationCount: 0,
+  selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
   autonomyQueueCount: 0,
@@ -41,6 +43,8 @@ const elements = {
   saveRoutePreviewButton: document.getElementById('saveRoutePreviewButton'),
   routePreviewHistoryList: document.getElementById('routePreviewHistoryList'),
   routeRequestList: document.getElementById('routeRequestList'),
+  routeContinuationPanel: document.getElementById('routeContinuationPanel'),
+  routeContinuationList: document.getElementById('routeContinuationList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -373,7 +377,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -775,6 +779,7 @@ function updateRoutePreviewHistoryList(payload) {
         promote.textContent = 'Review item made';
         appendMessage('mira', 'Route review item saved locally. Nothing was sent or executed.');
         await refreshRouteRequests();
+        await refreshRouteContinuations();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -792,6 +797,9 @@ function updateRouteRequestList(payload) {
   renderWorkSummary();
   if (requests.length === 0) {
     setText(elements.routeRequestList, 'no route review items yet');
+    if (!state.selectedRouteRequestToken) {
+      renderRouteContinuationPanel(null);
+    }
     return;
   }
 
@@ -805,6 +813,108 @@ function updateRouteRequestList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Request', request.contentPreview || request.content);
     appendPreviewLine(card, 'Audit', 'reviewable owned work only; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'subtle-button';
+    action.textContent = state.selectedRouteRequestToken === request.actionToken ? 'selected' : 'review continuation';
+    action.addEventListener('click', () => {
+      state.selectedRouteRequestToken = request.actionToken;
+      renderRouteContinuationPanel(request);
+      updateRouteRequestList(payload);
+    });
+    card.append(action);
+    return card;
+  }));
+  if (state.selectedRouteRequestToken) {
+    const selected = requests.find((request) => request.actionToken === state.selectedRouteRequestToken);
+    renderRouteContinuationPanel(selected || null);
+  }
+}
+
+function renderRouteContinuationPanel(request) {
+  if (!request) {
+    setText(elements.routeContinuationPanel, 'choose a route review item');
+    return;
+  }
+
+  elements.routeContinuationPanel.replaceChildren();
+  const heading = document.createElement('strong');
+  heading.textContent = `${request.targetRole || 'team'} · ${request.purpose || 'coordination'} continuation`;
+
+  const requestText = document.createElement('p');
+  requestText.textContent = cleanPreviewText(request.contentPreview || request.content);
+
+  const label = document.createElement('label');
+  label.className = 'review-editor-label';
+  label.textContent = 'Continuation text';
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'review-editor';
+  textarea.rows = 5;
+  textarea.value = cleanPreviewText(request.content || request.contentPreview);
+
+  const note = document.createElement('input');
+  note.className = 'review-note';
+  note.type = 'text';
+  note.placeholder = 'Review note';
+
+  const actions = document.createElement('div');
+  actions.className = 'review-actions';
+  [
+    ['approve', 'Approve'],
+    ['edit', 'Save edit'],
+    ['reject', 'Reject'],
+  ].forEach(([decision, labelText]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = decision === 'reject' ? 'subtle-button danger-button' : 'subtle-button';
+    button.textContent = labelText;
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const payload = await createOwnedWorkContinuation({
+          requestToken: request.actionToken,
+          decision,
+          editedContent: textarea.value,
+          note: note.value,
+        });
+        appendMessage('mira', `${payload.continuation.decision} continuation metadata saved locally. Nothing was sent or executed.`);
+        await refreshRouteContinuations();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+    actions.append(button);
+  });
+
+  const audit = document.createElement('p');
+  audit.textContent = 'Review-only continuation; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.';
+
+  elements.routeContinuationPanel.append(heading, requestText, label, textarea, note, actions, audit);
+}
+
+function updateRouteContinuationList(payload) {
+  const continuations = Array.isArray(payload?.continuations) ? payload.continuations : [];
+  state.missionControlContinuationCount = Number(payload?.continuationCount || continuations.length || 0);
+  renderWorkSummary();
+  if (continuations.length === 0) {
+    setText(elements.routeContinuationList, 'no owned-work continuations yet');
+    return;
+  }
+
+  elements.routeContinuationList.replaceChildren(...continuations.slice(0, 5).map((continuation) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-continuation-history';
+    const title = document.createElement('strong');
+    title.textContent = `${continuation.targetRole || 'team'} · ${continuation.decision || 'review'} continuation`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(continuation.status || 'pending_internal_review').replace(/_/g, ' ')} · manual execution required · not sent · ${formatReadyStamp(continuation.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Continuation', continuation.contentPreview || continuation.content);
+    appendPreviewLine(card, 'Note', continuation.note);
+    appendPreviewLine(card, 'Audit', 'owned-work continuation only; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
     return card;
   }));
 }
@@ -1071,6 +1181,13 @@ async function refreshRouteRequests() {
   updateRouteRequestList(payload);
 }
 
+async function refreshRouteContinuations() {
+  const response = await fetch('/mission-control/owned-work-continuations');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateRouteContinuationList(payload);
+}
+
 async function refreshAutonomy() {
   const response = await fetch('/autonomy/status');
   const payload = await response.json();
@@ -1284,6 +1401,24 @@ async function createRouteRequestFromPreview(preview) {
   return payload;
 }
 
+async function createOwnedWorkContinuation(input) {
+  const response = await fetch('/mission-control/owned-work-continuations', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      requestToken: input.requestToken,
+      decision: input.decision,
+      editedContent: input.editedContent,
+      note: input.note,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control continuation save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1364,6 +1499,7 @@ async function primeReadOnlyWorkbench() {
     await refreshSendChecks();
     await refreshRoutePreviewHistory();
     await refreshRouteRequests();
+    await refreshRouteContinuations();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1387,6 +1523,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshSendChecks();
     await refreshRoutePreviewHistory();
     await refreshRouteRequests();
+    await refreshRouteContinuations();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1473,6 +1610,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     appendMessage('mira', 'Route preview saved for internal review. Nothing was sent or executed.');
     await refreshRoutePreviewHistory();
     await refreshRouteRequests();
+    await refreshRouteContinuations();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {
