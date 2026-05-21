@@ -1612,6 +1612,16 @@ export type MissionControlActivationPipelineEndToEndReadout = {
       stillManual: string;
       nextBoundary: string;
     };
+    whatNowSummary: {
+      protocol: "mira.mission_control_what_now_summary.v0";
+      answer: string;
+      currentMeaning: string;
+      inspectNext: string;
+      noLiveReason: string;
+      nextBoundary: string;
+      sourceEvidence: string[];
+      noEffectSummary: string;
+    };
     noEffectSummary: string;
   };
   noEffectSummary: string;
@@ -3346,6 +3356,28 @@ function buildActivationPipelineEndToEndReadout(
         whyUseful: "This is useful because Mission Control turns saved local team-work artifacts into an inspectable next-state explanation instead of generic chat.",
         stillManual: "The walkthrough does not click, submit, send, execute, call a provider/model, flip routes, or access accounts/tokens.",
         nextBoundary: nextBoundary.currentNextStep,
+      },
+      whatNowSummary: {
+        protocol: "mira.mission_control_what_now_summary.v0",
+        answer: status === "terminal_hard_stop"
+          ? "Inspect the local status card as a completed Mission Control demo; the chain ends at a hard stop, not a live send."
+          : "Inspect the local status card for the current saved stage and the next explicit manual workbench step.",
+        currentMeaning: status === "terminal_hard_stop"
+          ? `The saved chain is complete as a read-only demo: ${availableStages.length}/${stages.length} stages are available and the current artifact is ${currentStage?.label || "the hard stop"}.`
+          : `The saved chain is in progress: ${availableStages.length}/${stages.length} stages are available and the current artifact is ${currentStage?.label || "not saved yet"}.`,
+        inspectNext: status === "terminal_hard_stop"
+          ? "Read the status card's Readout, Current evidence, Trace path, Demo walkthrough, and Hard stop rows."
+          : "Read the status card's Current stage, Selected artifact, Manual action preflight, and Payload preview rows.",
+        noLiveReason: "Live action is unavailable because this status projection is read-only and any real send requires a separate James-visible setup/activation lane.",
+        nextBoundary: nextBoundary.currentNextStep,
+        sourceEvidence: [
+          `current stage: ${currentStage?.label || "No saved stage"}`,
+          `artifact token: ${currentStage?.latestToken || "none"}`,
+          `artifact path: ${currentStage?.relativePath || "none"}`,
+          `available stages: ${availableStages.length}/${stages.length}`,
+          `live send available: ${hardStopTruth.liveSendAvailable}`,
+        ],
+        noEffectSummary: "What-now summary is derived from existing status/artifact evidence only; it does not persist, submit, execute, send, call a provider/model, flip routes, or access accounts/tokens.",
       },
       noEffectSummary: "Read-only demo path only; it explains where to look in the local workbench and what the saved status means without adding a write path or live action.",
     },

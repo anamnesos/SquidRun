@@ -1673,6 +1673,15 @@ function updateActivationPipelineStatus(payload) {
         appendPreviewLine(card, 'Why useful', walkthrough.whyUseful || 'Mission Control explains saved local team-work state.');
         appendPreviewLine(card, 'Still manual', walkthrough.stillManual || 'Read-only walkthrough; no live action.');
       }
+      const whatNowSummary = demoPath.whatNowSummary && typeof demoPath.whatNowSummary === 'object' ? demoPath.whatNowSummary : null;
+      if (whatNowSummary) {
+        const whatNowEvidence = Array.isArray(whatNowSummary.sourceEvidence) ? whatNowSummary.sourceEvidence : [];
+        appendPreviewLine(card, 'What now', whatNowSummary.answer || 'Inspect the local status card.');
+        appendPreviewLine(card, 'What now meaning', whatNowSummary.currentMeaning || 'Mission Control summarizes saved local evidence.');
+        appendPreviewLine(card, 'Inspect next', whatNowSummary.inspectNext || 'Read the Mission Control status rows.');
+        appendPreviewLine(card, 'No live action', whatNowSummary.noLiveReason || 'Live action is unavailable from this read-only status surface.');
+        appendPreviewLine(card, 'What now evidence', whatNowEvidence.join(' / ') || 'saved local status evidence');
+      }
     }
   }
   appendPreviewLine(card, 'Current stage', current?.summary || 'No saved Mission Control send chain yet.');
