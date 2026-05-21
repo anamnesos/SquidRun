@@ -1826,6 +1826,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       targetPaneId: '3',
       nextTeamMove: 'Ask oracle to review the edit benchmark review continuation: Edited internal continuation for Oracle review.',
       contentPreview: 'Edited internal continuation for Oracle review.',
+      missionAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
       note: 'Edited locally before review.',
       selectorReason: 'Newest approved or edited continuation; use this as the next internal team move.',
       manualExecutionRequired: true,

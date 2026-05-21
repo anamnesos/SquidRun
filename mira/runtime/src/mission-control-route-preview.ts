@@ -281,6 +281,7 @@ export type MissionControlFollowThroughRecommendation = {
   purpose: string;
   nextTeamMove: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   note: string | null;
   selectorReason: string;
   manualExecutionRequired: true;
@@ -4157,6 +4158,7 @@ function buildFollowThroughRecommendation(
     purpose: continuation.purpose,
     nextTeamMove,
     contentPreview,
+    missionAnswerPreview: continuation.missionAnswerPreview,
     note: continuation.note,
     selectorReason,
     manualExecutionRequired: true,

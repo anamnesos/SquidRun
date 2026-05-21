@@ -1183,6 +1183,7 @@ function updateRouteFollowThroughList(payload) {
     meta.textContent = `${String(recommendation.status || 'available_for_internal_review').replace(/_/g, ' ')} · review-only selector · manual execution required · not sent · ${formatReadyStamp(recommendation.createdAt)}`;
     card.append(title, meta);
     appendPreviewLine(card, 'Next move', recommendation.nextTeamMove);
+    appendPreviewLine(card, 'Mission answer', recommendation.missionAnswerPreview || 'No originating Mission Control answer is attached to this recommendation.');
     appendPreviewLine(card, 'Source continuation', `${recommendation.sourceContinuationDecision || 'review'} · ${String(recommendation.sourceContinuationStatus || '').replace(/_/g, ' ')}`);
     appendPreviewLine(card, 'Reason', recommendation.selectorReason);
     appendPreviewLine(card, 'Audit', 'recommendation only; no command stored, runtime execution, external send, route flip, provider, account or token access, Telegram, or live hm-send.');

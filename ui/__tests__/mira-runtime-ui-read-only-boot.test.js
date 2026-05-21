@@ -1453,6 +1453,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: continuation.purpose,
         nextTeamMove: `Ask ${continuation.targetRole} to review the ${continuation.decision} ${continuation.purpose} continuation: ${continuation.contentPreview}`,
         contentPreview: continuation.contentPreview,
+        missionAnswerPreview: continuation.missionAnswerPreview,
         note: continuation.note,
         selectorReason: 'Newest approved or edited continuation; use this as the next internal team move.',
         manualExecutionRequired: true,
@@ -3101,6 +3102,7 @@ describe('Mira runtime UI boot', () => {
     expect(followThroughText).toContain('Selected next internal move: oracle');
     expect(followThroughText).toContain('review-only selector · manual execution required · not sent');
     expect(followThroughText).toContain('Next move: Ask oracle to review the edit benchmark review continuation: Edited internal continuation for Oracle review.');
+    expect(followThroughText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(followThroughText).toContain('Source continuation: edit · edited for internal review');
     expect(followThroughText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, Telegram, or live hm-send');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('edit continuation metadata saved locally. Nothing was sent or executed.');
