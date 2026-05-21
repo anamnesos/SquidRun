@@ -246,6 +246,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlManualActionQuestion(text)
     || isMissionControlArtifactEvidenceQuestion(text)
     || isMissionControlProofSummaryQuestion(text)
+    || isMissionControlMissingStageQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -298,6 +299,14 @@ function isMissionControlProofSummaryQuestion(text) {
     && (/\bwhat\s+did\s+.*\bprove\b/i.test(normalized)
       || /\bwhat\s+(proof|proof\s+summary)\s+(do\s+we\s+have|is\s+loaded|is\s+there)\b/i.test(normalized)
       || /\bwhat\s+was\s+proven\b/i.test(normalized));
+}
+
+function isMissionControlMissingStageQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+.*\b(missing|blocked|gap|gaps)\b/i.test(normalized)
+      || /\bwhich\s+.*\b(stage|artifact|step)\s+.*\b(missing|blocked)\b/i.test(normalized)
+      || /\bis\s+anything\s+missing\b/i.test(normalized));
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -390,6 +399,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlProofSummaryQuestion(text)) {
     const proofSummaryAnswer = buildMissionControlProofSummaryAnswer();
     if (proofSummaryAnswer) return proofSummaryAnswer;
+  }
+  if (isMissionControlMissingStageQuestion(text)) {
+    const missingStageAnswer = buildMissionControlMissingStageAnswer();
+    if (missingStageAnswer) return missingStageAnswer;
   }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
@@ -638,6 +651,39 @@ function buildMissionControlProofSummaryAnswer(status = state.missionControlActi
     `Next boundary: ${endToEndReadout.nextBoundary || status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline status/readout from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, click, file read, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlMissingStageAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object'
+    ? status.endToEndReadout
+    : {};
+  const selection = status.advanceSelection && typeof status.advanceSelection === 'object' ? status.advanceSelection : {};
+  const preflight = status.manualActionPreflight && typeof status.manualActionPreflight === 'object' ? status.manualActionPreflight : {};
+  const missing = Array.isArray(endToEndReadout.missingStageLabels)
+    ? endToEndReadout.missingStageLabels
+    : [];
+  const stageCount = Number.isFinite(Number(endToEndReadout.stageCount)) ? Number(endToEndReadout.stageCount) : Number(status.stageCount || 0);
+  const availableStageCount = Number.isFinite(Number(endToEndReadout.availableStageCount))
+    ? Number(endToEndReadout.availableStageCount)
+    : Number(status.availableStageCount || 0);
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control missing-stage inspection; no setup or live action is needed.');
+  return [
+    `Missing stages: ${missing.length > 0 ? missing.join(' / ') : 'none'}`,
+    `Available stages: ${availableStageCount}/${stageCount || 'unknown'}`,
+    `Advance status: ${String(selection.status || 'unknown').replace(/_/g, ' ')}`,
+    `Next missing stage: ${selection.nextStageLabel || missing[0] || 'none'}`,
+    `Current source stage: ${selection.selectedStageLabel || 'No saved artifact'}`,
+    `Manual preflight: ${String(preflight.status || 'unknown').replace(/_/g, ' ')} · ${preflight.explanation || 'No manual action is ready from this status.'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline status/selection from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
