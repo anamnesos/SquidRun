@@ -245,6 +245,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlDirtyWorkQuestion(text)
     || isMissionControlEvidenceQuestion(text)
     || isMissionControlJamesActionQuestion(text)
+    || isMissionControlRecentCommsQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
 }
@@ -272,6 +273,11 @@ function isMissionControlEvidenceQuestion(text) {
 
 function isMissionControlJamesActionQuestion(text) {
   return /\b(james\s+needed|need\s+james|need\s+me|do\s+you\s+need\s+me|my\s+action|james\s+action)\b/i.test(text);
+}
+
+function isMissionControlRecentCommsQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(oracle\s+benchmark|benchmark\s+from\s+oracle|what\s+did\s+oracle\s+(say|find|report)|what\s+did\s+architect\s+(say|ask|assign)|latest\s+(architect|oracle)\s+(instruction|benchmark|note))\b/i.test(normalized);
 }
 
 function isMissionControlCoordinationQuestion(text) {
@@ -304,6 +310,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlJamesActionQuestion(text)) {
     const jamesActionAnswer = buildMissionControlJamesActionAnswer();
     if (jamesActionAnswer) return jamesActionAnswer;
+  }
+  if (isMissionControlRecentCommsQuestion(text)) {
+    const recentCommsAnswer = buildMissionControlRecentCommsAnswer();
+    if (recentCommsAnswer) return recentCommsAnswer;
   }
   if (isMissionControlCoordinationQuestion(text)) {
     const coordinationAnswer = buildMissionControlCoordinationAnswer(text);
@@ -455,6 +465,29 @@ function buildMissionControlEvidenceAnswer(context = state.missionControlContext
     `Evidence sources: ${evidence.join(' / ') || 'No explicit evidence list loaded.'}`,
     `Loaded reads: ${reads.join(' / ') || 'No local read flags loaded.'}`,
     `Map truth: ${truth}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlRecentCommsAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const recentComms = context.recentComms || {};
+  if (recentComms.loaded !== true) return '';
+  const oracle = recentComms.oracleBenchmark || {};
+  const architect = recentComms.latestBuilderInstruction || {};
+  const roadmap = context.roadmap || {};
+  const systemMap = context.systemMap || {};
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control team-context answer; no send or setup is needed.');
+  return [
+    `Oracle benchmark: ${oracle.sourceRef || 'unknown'} - ${oracle.excerpt || 'No Oracle benchmark excerpt loaded.'}`,
+    `Latest Architect instruction: ${architect.sourceRef || 'unknown'} - ${architect.excerpt || 'No Architect instruction excerpt loaded.'}`,
+    `Hard truth: ${roadmap.hardTruth || systemMap.truth || 'No hard-truth text loaded.'}`,
+    `Stop/pivot: ${roadmap.stopPivot || 'No stop/pivot text loaded.'}`,
     'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
