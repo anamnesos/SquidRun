@@ -942,6 +942,11 @@ describe('Mira runtime bridge manual-plan API', () => {
       }),
     });
     const savePayload = await saveResponse.json();
+    const previewOnlyPipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const previewOnlyPipelineStatusPayload = await previewOnlyPipelineStatusResponse.json();
+    const routeRequestFilesAfterPreviewOnlyStatus = fs.existsSync(routeRequestDir)
+      ? fs.readdirSync(routeRequestDir).filter((file) => file.endsWith('.json'))
+      : [];
     const emptyRequestResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`);
     const emptyRequestPayload = await emptyRequestResponse.json();
     const missingTokenResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
@@ -976,6 +981,30 @@ describe('Mira runtime bridge manual-plan API', () => {
     const listRequestPayload = await listRequestResponse.json();
 
     expect(saveResponse.status).toBe(200);
+    expect(previewOnlyPipelineStatusResponse.status).toBe(200);
+    expect(previewOnlyPipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_advance_selection.v0',
+      status: 'advance_available',
+      selectedStageId: 'route_preview',
+      selectedStageLabel: 'Route preview',
+      selectedArtifactToken: savePayload.record.actionToken,
+      selectedRelativePath: savePayload.relativePath,
+      nextStageId: 'internal_route_request',
+      nextStageLabel: 'Review item',
+      comparisonSummary: 'Compared 1 available stage(s); selected Route preview because Review item is the first missing stage.',
+      noEffectSummary: expect.stringContaining('Read-only selection aid only'),
+    }));
+    expect(previewOnlyPipelineStatusPayload.advanceSelection.reason).toContain('Route preview is the latest available stage before the first missing stage');
+    expect(previewOnlyPipelineStatusPayload.advanceSelection.candidates).toEqual([
+      expect.objectContaining({
+        stageId: 'route_preview',
+        token: savePayload.record.actionToken,
+        relativePath: savePayload.relativePath,
+        selected: true,
+        nextStageId: 'internal_route_request',
+      }),
+    ]);
+    expect(routeRequestFilesAfterPreviewOnlyStatus).toHaveLength(0);
     expect(emptyRequestResponse.status).toBe(200);
     expect(emptyRequestPayload).toEqual(expect.objectContaining({
       ok: true,
@@ -3517,6 +3546,30 @@ describe('Mira runtime bridge manual-plan API', () => {
       separateActivationLaneRequired: true,
     }));
     expect(pipelineStatusPayload.nextBoundary.currentNextStep).toContain('hard-stop contract');
+    expect(pipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_advance_selection.v0',
+      status: 'hard_stop_reached',
+      selectedStageId: 'live_activation_gate_contract',
+      selectedStageLabel: 'Live activation hard-stop contract',
+      selectedArtifactToken: liveGatePayload.contract.actionToken,
+      selectedRelativePath: liveGatePayload.relativePath,
+      selectedArtifactStatus: 'saved',
+      selectedSourceStageId: 'activation_implementation_readiness',
+      selectedSourceToken: implementationReadinessPayload.readiness.actionToken,
+      selectedBodySha256: implementationReadinessPayload.readiness.bodySha256,
+      selectedAdapterPacketSha256: implementationReadinessPayload.readiness.adapterPacketSha256,
+      nextStageId: null,
+      nextStageLabel: null,
+      comparisonSummary: 'Compared 12 available stage(s); no advancement is available after the hard-stop contract.',
+      noEffectSummary: expect.stringContaining('does not persist a selection'),
+    }));
+    expect(pipelineStatusPayload.advanceSelection.reason).toContain('no next artifact to advance');
+    expect(pipelineStatusPayload.advanceSelection.candidates).toHaveLength(12);
+    expect(pipelineStatusPayload.advanceSelection.candidates.find((candidate) => candidate.stageId === 'live_activation_gate_contract')).toEqual(expect.objectContaining({
+      selected: true,
+      relativePath: liveGatePayload.relativePath,
+      nextStageId: null,
+    }));
     expect(pipelineStatusPayload.currentStageTrace).toEqual(expect.objectContaining({
       protocol: 'mira.mission_control_activation_pipeline_trace.v0',
       entryCount: 12,

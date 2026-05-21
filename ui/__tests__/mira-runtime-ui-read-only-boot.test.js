@@ -647,6 +647,35 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         adapterPacketSha256: stage.adapterPacketSha256,
         summary: stage.summary,
       }));
+    const availableStages = stages.filter((stage) => stage.status !== 'missing');
+    const firstMissingIndex = stages.findIndex((stage) => stage.status === 'missing');
+    const hardStopReached = firstMissingIndex === -1
+      && stages.some((stage) => stage.id === 'live_activation_gate_contract' && stage.status !== 'missing');
+    const selectedStage = hardStopReached
+      ? stages.find((stage) => stage.id === 'live_activation_gate_contract')
+      : firstMissingIndex > 0
+        ? stages[firstMissingIndex - 1]
+        : null;
+    const nextStage = hardStopReached
+      ? null
+      : firstMissingIndex >= 0
+        ? stages[firstMissingIndex]
+        : null;
+    const selectionStatus = hardStopReached
+      ? 'hard_stop_reached'
+      : selectedStage && nextStage
+        ? 'advance_available'
+        : 'no_chain';
+    const selectionReason = selectionStatus === 'hard_stop_reached'
+      ? 'The chain is already at the live activation hard-stop contract. This read-only surface has no next artifact to advance; future real send would require a separate James-visible setup/activation lane.'
+      : selectionStatus === 'advance_available'
+        ? `${selectedStage.label} is the latest available stage before the first missing stage, ${nextStage.label}.`
+        : 'No saved Mission Control route preview exists yet, so there is no artifact to advance.';
+    const stageNext = (stageId) => {
+      const index = activationStageDefinitions.findIndex(([id]) => id === stageId);
+      const next = index >= 0 ? activationStageDefinitions[index + 1] : null;
+      return next ? { id: next[0], label: next[1] } : null;
+    };
     return {
       ok: true,
       protocol: 'mira.mission_control_activation_pipeline_status.v0',
@@ -667,6 +696,44 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
           : 'No saved Mission Control activation artifacts yet.',
         entries: traceEntries,
         noEffectSummary: 'Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.',
+      },
+      advanceSelection: {
+        protocol: 'mira.mission_control_activation_pipeline_advance_selection.v0',
+        status: selectionStatus,
+        selectedStageId: selectedStage?.id || null,
+        selectedStageLabel: selectedStage?.label || null,
+        selectedArtifactToken: selectedStage?.latestToken || null,
+        selectedRelativePath: selectedStage?.relativePath || null,
+        selectedArtifactStatus: selectedStage?.status || null,
+        selectedSourceStageId: selectedStage?.sourceStageId || null,
+        selectedSourceToken: selectedStage?.sourceToken || null,
+        selectedBodySha256: selectedStage?.bodySha256 || null,
+        selectedAdapterPacketSha256: selectedStage?.adapterPacketSha256 || null,
+        nextStageId: nextStage?.id || null,
+        nextStageLabel: nextStage?.label || null,
+        reason: selectionReason,
+        comparisonSummary: selectionStatus === 'hard_stop_reached'
+          ? `Compared ${availableStages.length} available stage(s); no advancement is available after the hard-stop contract.`
+          : selectionStatus === 'advance_available'
+            ? `Compared ${availableStages.length} available stage(s); selected ${selectedStage.label} because ${nextStage.label} is the first missing stage.`
+            : 'Compared 0 available stages; start by saving a route preview.',
+        candidates: availableStages.map((stage) => {
+          const next = stageNext(stage.id);
+          return {
+            stageId: stage.id,
+            label: stage.label,
+            token: stage.latestToken,
+            relativePath: stage.relativePath,
+            status: stage.status,
+            selected: selectedStage?.id === stage.id,
+            nextStageId: next?.id || null,
+            nextStageLabel: next?.label || null,
+            reason: selectedStage?.id === stage.id
+              ? selectionReason
+              : `${stage.label} is available evidence, but ${selectedStage?.label || 'no saved artifact'} is the current selection.`,
+          };
+        }),
+        noEffectSummary: 'Read-only selection aid only; it compares existing trace entries and does not persist a selection, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
       },
       hardStopTruth: {
         liveSendAvailable: false,
@@ -2115,6 +2182,9 @@ describe('Mira runtime UI boot', () => {
     expect(emptyPipelineText).toContain('Future real send would require a separate James-visible setup/activation lane.');
     expect(emptyPipelineText).toContain('Trace path: No saved Mission Control activation artifacts yet.');
     expect(emptyPipelineText).toContain('Current evidence: No saved artifact backs this chain yet.');
+    expect(emptyPipelineText).toContain('Advance selector: no chain: No saved artifact -> Route preview. No saved Mission Control route preview exists yet, so there is no artifact to advance.');
+    expect(emptyPipelineText).toContain('Selected artifact: No saved artifact is available to advance.');
+    expect(emptyPipelineText).toContain('Comparison: Compared 0 available stages; start by saving a route preview.');
     expect(emptyPipelineText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
@@ -2261,6 +2331,12 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Route preview saved for internal review. Nothing was sent or executed.');
     expect(harness.elements.saveRoutePreviewButton.disabled).toBe(false);
     expect(harness.elements.saveRoutePreviewButton.textContent).toBe('Save preview for review');
+    const routePreviewPipelineText = harness.elements.routeActivationPipelineStatus.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(routePreviewPipelineText).toContain('Advance selector: advance available: Route preview -> Review item. Route preview is the latest available stage before the first missing stage, Review item.');
+    expect(routePreviewPipelineText).toContain('Selected artifact: token mission-route-test; path mission-control/route-previews/mission-route-preview-test.json; source not available; body not available; adapter not available');
+    expect(routePreviewPipelineText).toContain('Comparison: Compared 1 available stage(s); selected Route preview because Review item is the first missing stage.');
 
     const promoteButton = harness.elements.routePreviewHistoryList.children[0].children
       .find((child) => child.tagName === 'BUTTON');
@@ -2715,6 +2791,9 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Current evidence: token mission-send-live-gate-test; status saved; path mission-control/internal-send-live-activation-gate-contracts/mission-send-live-gate-test.json; relation activation_implementation_readiness -> live_activation_gate_contract; source token mission-send-activation-ready-test; body ');
     expect(pipelineStatusText).toContain('adapter ');
     expect(pipelineStatusText).toContain('Body preview: Edited internal continuation for Oracle review.');
+    expect(pipelineStatusText).toContain('Advance selector: hard stop reached: Live activation hard-stop contract -> no next stage. The chain is already at the live activation hard-stop contract. This read-only surface has no next artifact to advance; future real send would require a separate James-visible setup/activation lane.');
+    expect(pipelineStatusText).toContain('Selected artifact: token mission-send-live-gate-test; path mission-control/internal-send-live-activation-gate-contracts/mission-send-live-gate-test.json; source mission-send-activation-ready-test; body ');
+    expect(pipelineStatusText).toContain('Comparison: Compared 12 available stage(s); no advancement is available after the hard-stop contract.');
     expect(pipelineStatusText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(pipelineStatusText).not.toContain('live send available: yes');
   });

@@ -1473,6 +1473,36 @@ export type MissionControlActivationPipelineTrace = {
   noEffectSummary: string;
 };
 
+export type MissionControlActivationPipelineAdvanceSelection = {
+  protocol: "mira.mission_control_activation_pipeline_advance_selection.v0";
+  status: "no_chain" | "advance_available" | "hard_stop_reached";
+  selectedStageId: MissionControlActivationPipelineStageId | null;
+  selectedStageLabel: string | null;
+  selectedArtifactToken: string | null;
+  selectedRelativePath: string | null;
+  selectedArtifactStatus: MissionControlActivationPipelineStageStatus | null;
+  selectedSourceStageId: MissionControlActivationPipelineStageId | null;
+  selectedSourceToken: string | null;
+  selectedBodySha256: string | null;
+  selectedAdapterPacketSha256: string | null;
+  nextStageId: MissionControlActivationPipelineStageId | null;
+  nextStageLabel: string | null;
+  reason: string;
+  comparisonSummary: string;
+  candidates: Array<{
+    stageId: MissionControlActivationPipelineStageId;
+    label: string;
+    token: string | null;
+    relativePath: string | null;
+    status: MissionControlActivationPipelineStageStatus;
+    selected: boolean;
+    nextStageId: MissionControlActivationPipelineStageId | null;
+    nextStageLabel: string | null;
+    reason: string;
+  }>;
+  noEffectSummary: string;
+};
+
 export type MissionControlActivationPipelineStatusResult = {
   ok: true;
   protocol: "mira.mission_control_activation_pipeline_status.v0";
@@ -1484,6 +1514,7 @@ export type MissionControlActivationPipelineStatusResult = {
   stageCount: number;
   stages: MissionControlActivationPipelineStage[];
   currentStageTrace: MissionControlActivationPipelineTrace;
+  advanceSelection: MissionControlActivationPipelineAdvanceSelection;
   hardStopTruth: {
     liveSendAvailable: false;
     liveActivationAllowed: false;
@@ -2555,6 +2586,84 @@ function buildActivationPipelineTrace(
       : "No saved Mission Control activation artifacts yet.",
     entries,
     noEffectSummary: "Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.",
+  };
+}
+
+function nextStageAfter(
+  stageId: MissionControlActivationPipelineStageId | null,
+): { id: MissionControlActivationPipelineStageId; label: string } | null {
+  if (!stageId) return null;
+  const currentIndex = activationPipelineStageDefinitions.findIndex((definition) => definition.id === stageId);
+  return currentIndex >= 0 ? activationPipelineStageDefinitions[currentIndex + 1] || null : null;
+}
+
+function buildActivationPipelineAdvanceSelection(
+  stages: MissionControlActivationPipelineStage[],
+): MissionControlActivationPipelineAdvanceSelection {
+  const availableStages = stages.filter((stage) => stage.status !== "missing");
+  const firstMissingIndex = stages.findIndex((stage) => stage.status === "missing");
+  const hardStopReached = firstMissingIndex === -1
+    && stages.some((stage) => stage.id === "live_activation_gate_contract" && stage.status !== "missing");
+  const selectedStage = hardStopReached
+    ? stages.find((stage) => stage.id === "live_activation_gate_contract") || null
+    : firstMissingIndex > 0
+      ? stages[firstMissingIndex - 1]
+      : null;
+  const nextStage = hardStopReached
+    ? null
+    : firstMissingIndex >= 0
+      ? stages[firstMissingIndex]
+      : null;
+  const status: MissionControlActivationPipelineAdvanceSelection["status"] = hardStopReached
+    ? "hard_stop_reached"
+    : selectedStage && nextStage
+      ? "advance_available"
+      : "no_chain";
+  const reason = status === "hard_stop_reached"
+    ? "The chain is already at the live activation hard-stop contract. This read-only surface has no next artifact to advance; future real send would require a separate James-visible setup/activation lane."
+    : status === "advance_available" && selectedStage && nextStage
+      ? `${selectedStage.label} is the latest available stage before the first missing stage, ${nextStage.label}.`
+      : "No saved Mission Control route preview exists yet, so there is no artifact to advance.";
+  const comparisonSummary = status === "hard_stop_reached"
+    ? `Compared ${availableStages.length} available stage(s); no advancement is available after the hard-stop contract.`
+    : status === "advance_available" && selectedStage && nextStage
+      ? `Compared ${availableStages.length} available stage(s); selected ${selectedStage.label} because ${nextStage.label} is the first missing stage.`
+      : "Compared 0 available stages; start by saving a route preview.";
+
+  return {
+    protocol: "mira.mission_control_activation_pipeline_advance_selection.v0",
+    status,
+    selectedStageId: selectedStage?.id || null,
+    selectedStageLabel: selectedStage?.label || null,
+    selectedArtifactToken: selectedStage?.latestToken || null,
+    selectedRelativePath: selectedStage?.relativePath || null,
+    selectedArtifactStatus: selectedStage?.status || null,
+    selectedSourceStageId: selectedStage?.sourceStageId || null,
+    selectedSourceToken: selectedStage?.sourceToken || null,
+    selectedBodySha256: selectedStage?.bodySha256 || null,
+    selectedAdapterPacketSha256: selectedStage?.adapterPacketSha256 || null,
+    nextStageId: nextStage?.id || null,
+    nextStageLabel: nextStage?.label || null,
+    reason,
+    comparisonSummary,
+    candidates: availableStages.map((stage) => {
+      const stageNext = nextStageAfter(stage.id);
+      const selected = selectedStage?.id === stage.id;
+      return {
+        stageId: stage.id,
+        label: stage.label,
+        token: stage.latestToken,
+        relativePath: stage.relativePath,
+        status: stage.status,
+        selected,
+        nextStageId: stageNext?.id || null,
+        nextStageLabel: stageNext?.label || null,
+        reason: selected
+          ? reason
+          : `${stage.label} is available evidence, but ${selectedStage?.label || "no saved artifact"} is the current selection.`,
+      };
+    }),
+    noEffectSummary: "Read-only selection aid only; it compares existing trace entries and does not persist a selection, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
   };
 }
 
@@ -5978,6 +6087,7 @@ export function getMissionControlActivationPipelineStatus(
   const liveGateStage = stages.find((stage) => stage.id === "live_activation_gate_contract") || null;
   const hardStop = liveGateStage?.hardStop || null;
   const currentStageTrace = buildActivationPipelineTrace(stages, currentStage);
+  const advanceSelection = buildActivationPipelineAdvanceSelection(stages);
 
   return {
     ok: true,
@@ -5990,6 +6100,7 @@ export function getMissionControlActivationPipelineStatus(
     stageCount: stages.length,
     stages,
     currentStageTrace,
+    advanceSelection,
     hardStopTruth: {
       liveSendAvailable: false,
       liveActivationAllowed: false,

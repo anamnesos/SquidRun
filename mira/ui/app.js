@@ -1415,6 +1415,7 @@ function updateActivationPipelineStatus(payload) {
   const hardStop = payload?.hardStopTruth && typeof payload.hardStopTruth === 'object' ? payload.hardStopTruth : {};
   const nextBoundary = payload?.nextBoundary && typeof payload.nextBoundary === 'object' ? payload.nextBoundary : {};
   const trace = payload?.currentStageTrace && typeof payload.currentStageTrace === 'object' ? payload.currentStageTrace : null;
+  const selection = payload?.advanceSelection && typeof payload.advanceSelection === 'object' ? payload.advanceSelection : null;
   const traceEntries = Array.isArray(trace?.entries) ? trace.entries : [];
   const currentTrace = traceEntries.find((entry) => entry?.stageId === payload?.currentStageId)
     || traceEntries[traceEntries.length - 1]
@@ -1448,6 +1449,16 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'Body preview', currentTrace.contentPreview || 'No body preview recorded.');
   } else {
     appendPreviewLine(card, 'Current evidence', 'No saved artifact backs this chain yet.');
+  }
+  if (selection) {
+    const selectedLabel = selection.selectedStageLabel || 'No saved artifact';
+    const nextLabel = selection.nextStageLabel || 'no next stage';
+    const selectionStatus = String(selection.status || 'unknown').replace(/_/g, ' ');
+    appendPreviewLine(card, 'Advance selector', `${selectionStatus}: ${selectedLabel} -> ${nextLabel}. ${selection.reason || ''}`.trim());
+    appendPreviewLine(card, 'Selected artifact', selection.selectedStageLabel
+      ? `token ${selection.selectedArtifactToken || 'not available'}; path ${selection.selectedRelativePath || 'not available'}; source ${selection.selectedSourceToken || 'not available'}; body ${selection.selectedBodySha256 || 'not available'}; adapter ${selection.selectedAdapterPacketSha256 || 'not available'}`
+      : 'No saved artifact is available to advance.');
+    appendPreviewLine(card, 'Comparison', selection.comparisonSummary || 'No comparison available.');
   }
   appendPreviewLine(card, 'Trace audit', trace?.noEffectSummary || 'Read-only status only; no send or execution path.');
   appendPreviewLine(card, 'Timeline', stages.map((stage) => `${stage.label}: ${stage.status}`).join(' -> ') || 'No stages loaded.');
