@@ -979,6 +979,12 @@ describe('Mira runtime bridge manual-plan API', () => {
     const duplicateRequestPayload = await duplicateRequestResponse.json();
     const listRequestResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests?includeInternal=1`);
     const listRequestPayload = await listRequestResponse.json();
+    const postAdvancePipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const postAdvancePipelineStatusPayload = await postAdvancePipelineStatusResponse.json();
+    const continuationDir = path.join(tempStateRoot, 'mission-control', 'owned-work-continuations');
+    const continuationFilesAfterStatusRefresh = fs.existsSync(continuationDir)
+      ? fs.readdirSync(continuationDir).filter((file) => file.endsWith('.json'))
+      : [];
 
     expect(saveResponse.status).toBe(200);
     expect(previewOnlyPipelineStatusResponse.status).toBe(200);
@@ -1172,6 +1178,72 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(duplicateRequestResponse.status).toBe(200);
     expect(duplicateRequestPayload.created).toBe(false);
     expect(duplicateRequestPayload.relativePath).toBe(createRequestPayload.relativePath);
+    expect(postAdvancePipelineStatusResponse.status).toBe(200);
+    expect(postAdvancePipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
+      id: 'internal_route_request',
+      label: 'Review item',
+      latestToken: createRequestPayload.request.actionToken,
+      relativePath: createRequestPayload.relativePath,
+      sourceStageId: 'route_preview',
+      sourceToken: savePayload.record.actionToken,
+    }));
+    expect(postAdvancePipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
+      id: 'internal_route_request',
+      latestToken: createRequestPayload.request.actionToken,
+      relativePath: createRequestPayload.relativePath,
+    }));
+    expect(postAdvancePipelineStatusPayload.currentStageTrace.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stageId: 'route_preview',
+        token: savePayload.record.actionToken,
+        relativePath: savePayload.relativePath,
+      }),
+      expect.objectContaining({
+        stageId: 'internal_route_request',
+        token: createRequestPayload.request.actionToken,
+        relativePath: createRequestPayload.relativePath,
+        sourceStageId: 'route_preview',
+        sourceToken: savePayload.record.actionToken,
+      }),
+    ]));
+    expect(postAdvancePipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      status: 'advance_available',
+      selectedStageId: 'internal_route_request',
+      selectedStageLabel: 'Review item',
+      selectedArtifactToken: createRequestPayload.request.actionToken,
+      selectedRelativePath: createRequestPayload.relativePath,
+      nextStageId: 'owned_work_continuation',
+      nextStageLabel: 'Owned-work continuation',
+    }));
+    expect(postAdvancePipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      status: 'ready',
+      selectedStageId: 'internal_route_request',
+      selectedStageLabel: 'Review item',
+      selectedArtifactToken: createRequestPayload.request.actionToken,
+      selectedRelativePath: createRequestPayload.relativePath,
+      manualActionLabel: 'Review continuation',
+      tokenField: 'requestToken',
+      tokenValue: createRequestPayload.request.actionToken,
+    }));
+    expect(postAdvancePipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      status: 'needs_manual_input',
+      actionLabel: 'Review continuation',
+      method: 'POST',
+      endpoint: '/mission-control/owned-work-continuations',
+      payload: expect.objectContaining({
+        requestToken: createRequestPayload.request.actionToken,
+        decision: '<approve|edit|reject>',
+      }),
+      requiredManualInputs: ['decision', 'editedContent when decision is edit', 'optional note'],
+    }));
+    expect(postAdvancePipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      status: 'matched',
+      handlerName: 'createOwnedWorkContinuation',
+      expectedEndpoint: '/mission-control/owned-work-continuations',
+      expectedTokenField: 'requestToken',
+      previewTokenField: 'requestToken',
+    }));
+    expect(continuationFilesAfterStatusRefresh).toHaveLength(0);
     for (const input of [
       { previewToken: savePayload.record.actionToken, telegramSend: true },
       { previewToken: savePayload.record.actionToken, audit: { accountOrTokenAccess: true } },
@@ -1223,7 +1295,6 @@ describe('Mira runtime bridge manual-plan API', () => {
       liveHmSend: false,
     }));
 
-    const continuationDir = path.join(tempStateRoot, 'mission-control', 'owned-work-continuations');
     const emptyContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`);
     const emptyContinuationPayload = await emptyContinuationResponse.json();
     const emptyRecommendationResponse = await fetch(`${baseUrl}/mission-control/follow-through-recommendations`);

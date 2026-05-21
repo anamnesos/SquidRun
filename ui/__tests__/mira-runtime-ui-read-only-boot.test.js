@@ -2779,6 +2779,34 @@ describe('Mira runtime UI boot', () => {
       }),
       expect.objectContaining({ method: 'GET' }),
     ]);
+    expect(harness.elements.routePreviewHistoryList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routePreviewHistoryList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeRequestList.children).toHaveLength(1);
+    expect(harness.elements.routeRequestList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeRequestList.children[0].attributes.id).toBe('mission-control-manual-step-internal-route-request-mission-request-test');
+    const requestActionButton = harness.elements.routeRequestList.children[0].children
+      .find((child) => child.tagName === 'BUTTON');
+    expect(requestActionButton.textContent).toBe('review continuation');
+    expect(requestActionButton.className).toContain('selected-manual-action');
+    expect(requestActionButton.attributes['aria-label']).toBe('Selected Mission Control action: Review continuation');
+    const postPromotePipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postPromoteStepHeader = postPromotePipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postPromoteStepHeader.textContent).toBe('Next manual step: none ready. Read-only status card only; no manual action is selected.');
+    expect(postPromoteStepHeader.children).toHaveLength(0);
+    const postPromotePipelineText = postPromotePipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postPromotePipelineText).toContain('Current stage: Review item: pending internal review; token mission-request-test.');
+    expect(postPromotePipelineText).toContain('Current evidence: token mission-request-test; status saved; path mission-control/internal-route-requests/mission-route-request-test.json; relation route_preview -> internal_route_request; source token mission-route-test; no checksum recorded');
+    expect(postPromotePipelineText).toContain('Advance selector: advance available: Review item -> Owned-work continuation. Review item is the latest available stage before the first missing stage, Owned-work continuation.');
+    expect(postPromotePipelineText).toContain('Manual action preflight: ready: Review continuation · Review continuation is the next manual internal action because Review item is selected and Owned-work continuation is the first missing stage. Use the selected token as requestToken; this preflight does not perform the action.');
+    expect(postPromotePipelineText).toContain('Manual action input: requestToken=mission-request-test; source mission-control/internal-route-requests/mission-route-request-test.json; next Owned-work continuation');
+    expect(postPromotePipelineText).toContain('Workbench focus: Highlight the existing Review item card at mission-control/internal-route-requests/mission-route-request-test.json and use its existing Review continuation action.');
+    expect(postPromotePipelineText).toContain('Manual selector summary: blocked: no existing manual action is ready to select.');
+    expect(postPromotePipelineText).toContain('Manual-only checklist: ok: status surface is read-only / blocked: manual preflight ready (ready) / blocked: highlighted source available (yes) / blocked: payload matches handler (matched) / ok: selector summary does not submit anything');
+    expect(postPromotePipelineText).toContain('Payload preview: needs manual input: POST /mission-control/owned-work-continuations · This payload skeleton needs manual input before Review continuation can be submitted from the workbench.');
+    expect(postPromotePipelineText).toContain('Payload body: {"requestToken":"mission-request-test","decision":"<approve|edit|reject>","editedContent":"<review text when editing>","note":"<optional note>"}');
+    expect(postPromotePipelineText).toContain('Handler drift check: matched: createOwnedWorkContinuation · createOwnedWorkContinuation expects POST /mission-control/owned-work-continuations with requestToken; payload preview matches that workbench handler contract.');
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.routeRequestList.children).toHaveLength(1);
