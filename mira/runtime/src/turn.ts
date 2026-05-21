@@ -77,8 +77,17 @@ export type RuntimeTurnResponse = {
     role: "mira";
     content: string;
   };
+  visibleReplyGate: RuntimeVisibleReplyGateResult;
   voiceLab: VoiceLabMatch | null;
   suggestedTeamPlan: ManualBridgeRequestPlan | null;
+};
+
+export type RuntimeVisibleReplyGateResult = {
+  ok: boolean;
+  checked: true;
+  held: boolean;
+  violations: string[];
+  source: "mira_runtime_visible_reply_gate_v0";
 };
 
 export type RecentTurnMemory = {
@@ -254,6 +263,105 @@ function memoryContextLine(summary: RuntimeTurnMemorySummary | null): string {
   return "";
 }
 
+const RUNTIME_HELD_REPLY_CONTENT =
+  "That answer came out wrong, so I am holding it instead of making you clean it up.";
+
+const RUNTIME_PREAMBLE_BLOCKLIST = [
+  /^i\s+understand[\s,.\-—:]/i,
+  /^sure[\s,.\-—:]/i,
+  /^of\s+course[\s,.\-—:]/i,
+  /^happy\s+to[\s,.\-—:]/i,
+  /^let\s+me\s/i,
+  /^right[\s,.\-—:]/i,
+  /^absolutely[\s,.\-—:]/i,
+  /^great[\s,.\-—:]/i,
+  /^totally[\s,.\-—:]/i,
+  /^here(?:'s|\s+(?:is|are))\s/i,
+  /^here\s+you\s+go[\s,.\-—:]/i,
+  /^got\s+it[\s,.\-—:]/i,
+];
+
+const RUNTIME_POSTAMBLE_BLOCKLIST = [
+  /hope\s+(that|this)\s+helps[.!]?\s*$/i,
+  /anything\s+else\??\s*$/i,
+  /(let\s+me\s+know|just\s+let\s+me\s+know|happy\s+to\s+help)[^.!?]*[.!?]?\s*$/i,
+  /(feel\s+free\s+to|don'?t\s+hesitate\s+to)[^.!?]*[.!?]?\s*$/i,
+];
+
+const RUNTIME_ASSISTANT_SHAPE_BLOCKLIST = [
+  /^to\s+clarify[\s,.\-—:]/i,
+  /^to\s+be\s+clear[\s,.\-—:]/i,
+  /^for\s+clarity[\s,.\-—:]/i,
+  /^just\s+to\s+be\s+clear[\s,.\-—:]/i,
+  /^that'?s\s+(valid|fair|good|true)[\s,.\-—:!]/i,
+  /^if\s+(?:you'?d\s+like|you\s+(?:want|need))[\s,.\-—:]/i,
+  /^would\s+you\s+like\s+me\s+to/i,
+  /\bi\s+hear\s+you[\s,.\-—:]/i,
+  /\bi\s+get\s+(it|that)[\s,.\-—:]/i,
+  /\b(good|great|fair|valid)\s+point[\s,.\-—:]/i,
+  /\bthat'?s\s+a\s+(good|great|fair|valid)\s+point[\s,.\-—:]/i,
+  /\b(i'?m\s+an\s+ai|i\s+am\s+an\s+ai|mira\s+voice|practical\s+rules|my\s+rules|internal\s+rules|constraints:|instructions:|prompt:|character:)\b/i,
+];
+
+const RUNTIME_BACKSTAGE_LEAK_BLOCKLIST = [
+  /\b(ruleset|rule set|constraints?|guardrails?|system prompt|prompt hierarchy|policy|validation fixture|proof scaffolding)\b/i,
+  /\b(runtime_turn|mira\.runtime_turn|telegram_turn_candidate|direct_channel_readiness|protocol|route owner|route-owner|pane routing|architect|builder|oracle)\b/i,
+  /\b(anti-smoothing|anti-performance|anti-leak|rule-recitation|politeness padding|customer-service disagreement|label substitution)\b/i,
+];
+
+function runtimeReplySegments(text: string): string[] {
+  const segments = [text];
+  const re = /(?:\n\s*\n+|\n\s*(?:[-*+]\s+|>\s+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const tail = text.slice(match.index + match[0].length);
+    segments.push(tail);
+    const stripped = tail.replace(/^\s*(?:[-*+]\s+|>\s+)/, "");
+    if (stripped !== tail) segments.push(stripped);
+  }
+  return segments;
+}
+
+export function evaluateRuntimeVisibleReply(text: string): RuntimeVisibleReplyGateResult {
+  const trimmed = String(text || "").trim();
+  const violations: string[] = [];
+  if (!trimmed) violations.push("empty_reply");
+
+  const segments = runtimeReplySegments(trimmed).map((segment) => segment.trim()).filter(Boolean);
+  if (segments.some((segment) => RUNTIME_PREAMBLE_BLOCKLIST.some((rule) => rule.test(segment)))) {
+    violations.push("preamble");
+  }
+  if (RUNTIME_POSTAMBLE_BLOCKLIST.some((rule) => rule.test(trimmed))) {
+    violations.push("postamble");
+  }
+  if (RUNTIME_ASSISTANT_SHAPE_BLOCKLIST.some((rule) => rule.test(trimmed))) {
+    violations.push("assistant_shape");
+  }
+  if (RUNTIME_BACKSTAGE_LEAK_BLOCKLIST.some((rule) => rule.test(trimmed))) {
+    violations.push("backstage_label");
+  }
+
+  return {
+    ok: violations.length === 0,
+    checked: true,
+    held: violations.length > 0,
+    violations,
+    source: "mira_runtime_visible_reply_gate_v0",
+  };
+}
+
+export function applyRuntimeVisibleReplyGate(content: string): {
+  content: string;
+  gate: RuntimeVisibleReplyGateResult;
+} {
+  const gate = evaluateRuntimeVisibleReply(content);
+  if (gate.ok) return { content: String(content || "").trim(), gate };
+  return {
+    content: RUNTIME_HELD_REPLY_CONTENT,
+    gate,
+  };
+}
+
 export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<RuntimeTurnResponse> {
   const text = String(input.text || "").trim();
   if (!text) {
@@ -301,11 +409,14 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     modelName = modelResult.model;
     modelResponseId = modelResult.responseId;
   }
+  const visibleReply = applyRuntimeVisibleReplyGate(
+    `${responseContent}${input.useModel === true || memoryPrompt ? "" : memoryContextLine(recentMemorySummary)}`.trim(),
+  );
   let suggestedTeamPlan: ManualBridgeRequestPlan | null = null;
   if (input.suggestTeamPlanFor) {
     const planInput = {
       targetRole: input.suggestTeamPlanFor,
-      content: responseContent,
+      content: visibleReply.content,
       sessionId,
     };
     if (input.messageId) {
@@ -353,8 +464,9 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     recentMemory: toRecentMemoryResponse(recentMemorySummary),
     response: {
       role: "mira",
-      content: `${responseContent}${input.useModel === true || memoryPrompt ? "" : memoryContextLine(recentMemorySummary)}`.trim(),
+      content: visibleReply.content,
     },
+    visibleReplyGate: visibleReply.gate,
     voiceLab,
     suggestedTeamPlan,
   };
