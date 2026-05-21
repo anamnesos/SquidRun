@@ -4366,6 +4366,24 @@ describe('Mira runtime bridge manual-plan API', () => {
       verification: expect.stringContaining('existing status GET'),
       boundary: expect.stringContaining('Inspection is read-only product clarity'),
     }));
+    const walkthrough = pipelineStatusPayload.endToEndReadout.demoPath.walkthrough;
+    expect(walkthrough).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_demo_walkthrough.v0',
+      title: 'Mission Control completed-chain hard-stop walkthrough',
+      narrativeSteps: expect.arrayContaining([
+        'Mission Control reads the saved local coordination chain from route preview through live-gate contract.',
+        'It points the next boundary at a separate James-visible setup/activation lane for any future real send proposal.',
+      ]),
+      whyUseful: expect.stringContaining('inspectable next-state explanation instead of generic chat'),
+      stillManual: expect.stringContaining('does not click, submit, send, execute'),
+      nextBoundary: expect.stringContaining('hard-stop contract'),
+    }));
+    expect(walkthrough.sourceEvidence).toEqual(expect.arrayContaining([
+      'current stage: Live activation hard-stop contract',
+      'saved stages: 12/12',
+    ]));
+    expect(walkthrough.sourceEvidence.join(' / ')).toContain('artifact token: mission-send-live-gate-');
+    expect(walkthrough.sourceEvidence.join(' / ')).toContain('artifact path: mission-control/internal-send-live-activation-gate-contracts/mission-send-live-gate-');
     expect(pipelineStatusPayload.endToEndReadout.provenSummary).toContain('Saved local evidence covers route preview through live activation hard-stop contract');
     expect(pipelineStatusPayload.endToEndReadout.manualOnlySummary).toContain('explicit workbench actions');
     expect(pipelineStatusPayload.endToEndReadout.nextBoundary).toContain('future real send would require a separate James-visible setup/activation lane');

@@ -1603,6 +1603,15 @@ export type MissionControlActivationPipelineEndToEndReadout = {
       verification: string;
       boundary: string;
     };
+    walkthrough: {
+      protocol: "mira.mission_control_demo_walkthrough.v0";
+      title: string;
+      sourceEvidence: string[];
+      narrativeSteps: string[];
+      whyUseful: string;
+      stillManual: string;
+      nextBoundary: string;
+    };
     noEffectSummary: string;
   };
   noEffectSummary: string;
@@ -3310,6 +3319,33 @@ function buildActivationPipelineEndToEndReadout(
           ],
         verification: "API and UI harnesses verify this card from the existing status GET; no screenshot, fixed-port runtime, write, or send is required for the proof.",
         boundary: "Inspection is read-only product clarity over saved local artifacts/status; it is not a dispatch, activation, model turn, route flip, or external action.",
+      },
+      walkthrough: {
+        protocol: "mira.mission_control_demo_walkthrough.v0",
+        title: status === "terminal_hard_stop"
+          ? "Mission Control completed-chain hard-stop walkthrough"
+          : "Mission Control in-progress saved-chain walkthrough",
+        sourceEvidence: [
+          `current stage: ${currentStage?.label || "No saved stage"}`,
+          `artifact token: ${currentStage?.latestToken || "none"}`,
+          `artifact path: ${currentStage?.relativePath || "none"}`,
+          `saved stages: ${availableStages.length}/${stages.length}`,
+        ],
+        narrativeSteps: status === "terminal_hard_stop"
+          ? [
+            "Mission Control reads the saved local coordination chain from route preview through live-gate contract.",
+            "It shows the current evidence is the live activation hard-stop contract, backed by token/path/source checksums.",
+            "It explains that the chain is complete as an inspection demo, but live send is not available from this surface.",
+            "It points the next boundary at a separate James-visible setup/activation lane for any future real send proposal.",
+          ]
+          : [
+            "Mission Control reads the saved local coordination chain and identifies the current furthest artifact.",
+            "It shows which local evidence backs the current stage and what manual workbench action would be next.",
+            "It keeps the walkthrough read-only so the demo explains the next move without taking it.",
+          ],
+        whyUseful: "This is useful because Mission Control turns saved local team-work artifacts into an inspectable next-state explanation instead of generic chat.",
+        stillManual: "The walkthrough does not click, submit, send, execute, call a provider/model, flip routes, or access accounts/tokens.",
+        nextBoundary: nextBoundary.currentNextStep,
       },
       noEffectSummary: "Read-only demo path only; it explains where to look in the local workbench and what the saved status means without adding a write path or live action.",
     },

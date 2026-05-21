@@ -1663,6 +1663,16 @@ function updateActivationPipelineStatus(payload) {
         appendPreviewLine(card, 'Inspection expected', expectedReadout.join(' / ') || 'read-only saved status evidence');
         appendPreviewLine(card, 'Inspection boundary', inspectionRunbook.boundary || inspectionRunbook.verification || demoPath.noEffectSummary || 'Read-only inspection proof.');
       }
+      const walkthrough = demoPath.walkthrough && typeof demoPath.walkthrough === 'object' ? demoPath.walkthrough : null;
+      if (walkthrough) {
+        const sourceEvidence = Array.isArray(walkthrough.sourceEvidence) ? walkthrough.sourceEvidence : [];
+        const narrativeSteps = Array.isArray(walkthrough.narrativeSteps) ? walkthrough.narrativeSteps : [];
+        appendPreviewLine(card, 'Demo walkthrough', walkthrough.title || 'Mission Control local evidence walkthrough');
+        appendPreviewLine(card, 'Walkthrough evidence', sourceEvidence.join(' / ') || 'saved local status evidence');
+        appendPreviewLine(card, 'Walkthrough steps', narrativeSteps.join(' / ') || 'Read the status card and boundary.');
+        appendPreviewLine(card, 'Why useful', walkthrough.whyUseful || 'Mission Control explains saved local team-work state.');
+        appendPreviewLine(card, 'Still manual', walkthrough.stillManual || 'Read-only walkthrough; no live action.');
+      }
     }
   }
   appendPreviewLine(card, 'Current stage', current?.summary || 'No saved Mission Control send chain yet.');
