@@ -249,6 +249,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlMissingStageQuestion(text)
     || isMissionControlCurrentStageQuestion(text)
     || isMissionControlPayloadPreviewQuestion(text)
+    || isMissionControlBlockedReasonQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -327,6 +328,15 @@ function isMissionControlPayloadPreviewQuestion(text) {
       || /\bwhich\s+(endpoint|payload|body|token\s+field)\s+(would|will|does)\s+(mission\s*control|new\s+mira)\b/i.test(normalized)
       || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(payload|payload\s+preview|endpoint|handler\s+drift)\b/i.test(normalized)
       || /\b(is|does)\s+the\s+(mission\s*control|new\s+mira)\s+(payload|endpoint|handler)\s+.*\b(ready|matched|valid)\b/i.test(normalized));
+}
+
+function isMissionControlBlockedReasonQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhy\s+(is|are)\s+(mission\s*control|new\s+mira)\s+.*\b(blocked|stuck|not\s+ready|unavailable)\b/i.test(normalized)
+      || /\bwhy\s+(can't|cannot|can\s+not)\s+(mission\s*control|new\s+mira)\s+(advance|continue|complete)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?blocking\s+(mission\s*control|new\s+mira)\b/i.test(normalized)
+      || /\bwhat\s+blocks\s+(mission\s*control|new\s+mira)\b/i.test(normalized));
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -432,6 +442,10 @@ function currentMissionControlAnswer(text = '') {
     const payloadPreviewAnswer = buildMissionControlPayloadPreviewAnswer();
     if (payloadPreviewAnswer) return payloadPreviewAnswer;
   }
+  if (isMissionControlBlockedReasonQuestion(text)) {
+    const blockedReasonAnswer = buildMissionControlBlockedReasonAnswer();
+    if (blockedReasonAnswer) return blockedReasonAnswer;
+  }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
@@ -522,6 +536,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
   if (state.missionControlActivationPipelineStatus) {
     available.push('current stage/status');
     available.push('payload/endpoint preview');
+    available.push('blocked reason');
   }
   if (Array.isArray(mission?.coordinationDrafts) && mission.coordinationDrafts.length > 0) {
     available.push('coordination draft preview');
@@ -794,6 +809,37 @@ function buildMissionControlPayloadPreviewAnswer(status = state.missionControlAc
     `Validation checks: ${checksSummary}`,
     `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline payload preview/manual preflight/handler drift from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlBlockedReasonAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const selection = status.advanceSelection && typeof status.advanceSelection === 'object' ? status.advanceSelection : {};
+  const preflight = status.manualActionPreflight && typeof status.manualActionPreflight === 'object' ? status.manualActionPreflight : {};
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object' ? status.payloadPreview : {};
+  const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : {};
+  const hardStop = status.hardStopTruth && typeof status.hardStopTruth === 'object' ? status.hardStopTruth : {};
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object'
+    ? status.endToEndReadout
+    : {};
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control blocked-reason inspection; no setup or live action is needed.');
+  return [
+    `Blocked reason: ${selection.reason || preflight.explanation || 'No blocking reason is loaded.'}`,
+    `Advance status: ${String(selection.status || 'unknown').replace(/_/g, ' ')}`,
+    `Manual preflight: ${String(preflight.status || 'unknown').replace(/_/g, ' ')} · ${preflight.explanation || 'No manual preflight explanation is loaded.'}`,
+    `Payload preview: ${String(payloadPreview.status || 'unknown').replace(/_/g, ' ')} · ${payloadPreview.explanation || 'No payload-preview explanation is loaded.'}`,
+    `Handler drift: ${driftCheck.status || 'not available'} · ${driftCheck.explanation || 'No handler-drift explanation is loaded.'}`,
+    `Hard stop: recorded ${hardStop.hardStopContractRecorded === true || endToEndReadout.hardStopRecorded === true ? 'yes' : 'no'}; live send available ${hardStop.liveSendAvailable === true || endToEndReadout.liveSendAvailable === true ? 'yes' : 'no'}.`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline selection/preflight/payload/drift status from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
