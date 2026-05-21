@@ -2909,10 +2909,35 @@ describe('Mira runtime UI boot', () => {
     expect(followThroughText).toContain('Source continuation: edit · edited for internal review');
     expect(followThroughText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, Telegram, or live hm-send');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('edit continuation metadata saved locally. Nothing was sent or executed.');
+    expect(harness.elements.routeRequestList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeRequestList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeFollowThroughList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeFollowThroughList.children[0].attributes.id).toBe('mission-control-manual-step-follow-through-recommendation-mission-follow-through-test');
 
     const deliveryButton = harness.elements.routeFollowThroughList.children[0].children
       .find((child) => child.tagName === 'BUTTON');
     expect(deliveryButton.textContent).toBe('Preview delivery packet');
+    expect(deliveryButton.className).toContain('selected-manual-action');
+    expect(deliveryButton.attributes['aria-label']).toBe('Selected Mission Control action: Preview delivery packet');
+    const postContinuationPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postContinuationStepHeader = postContinuationPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postContinuationStepHeader.textContent).toBe('Next manual step: Preview delivery packet on Follow-through recommendation. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postContinuationStepHeader.children).toHaveLength(1);
+    expect(postContinuationStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-follow-through-recommendation-mission-follow-through-test');
+    const postContinuationPipelineText = postContinuationPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postContinuationPipelineText).toContain('Current stage: Follow-through recommendation: selected for internal review; token mission-follow-through-test.');
+    expect(postContinuationPipelineText).toContain('Last saved: Owned-work continuation: edited_for_internal_review; token mission-continuation-test');
+    expect(postContinuationPipelineText).toContain('Current evidence: token mission-follow-through-test; status derived; path not available; relation owned_work_continuation -> follow_through_recommendation; source token mission-continuation-test; no checksum recorded');
+    expect(postContinuationPipelineText).toContain('Advance selector: advance available: Follow-through recommendation -> Delivery preview. Follow-through recommendation is the latest available stage before the first missing stage, Delivery preview.');
+    expect(postContinuationPipelineText).toContain('Manual action preflight: ready: Preview delivery packet · Preview delivery packet is the next manual internal action because Follow-through recommendation is selected and Delivery preview is the first missing stage. Use the selected token as recommendationToken; this preflight does not perform the action.');
+    expect(postContinuationPipelineText).toContain('Manual action input: recommendationToken=mission-follow-through-test; source not available; next Delivery preview');
+    expect(postContinuationPipelineText).toContain('Workbench focus: Highlight the existing Follow-through recommendation card at unknown path and use its existing Preview delivery packet action.');
+    expect(postContinuationPipelineText).toContain('Manual selector summary: ready: Preview delivery packet on Follow-through recommendation; recommendationToken=mission-follow-through-test; POST /mission-control/internal-delivery-previews; manual-only because this status card does not submit.');
+    expect(postContinuationPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-delivery-previews · This is the exact workbench payload preview for Preview delivery packet; it is not submitted by the status surface.');
+    expect(postContinuationPipelineText).toContain('Payload body: {"recommendationToken":"mission-follow-through-test"}');
+    expect(postContinuationPipelineText).toContain('Handler drift check: matched: createInternalDeliveryPreview · createInternalDeliveryPreview expects POST /mission-control/internal-delivery-previews with recommendationToken; payload preview matches that workbench handler contract.');
     await deliveryButton.listeners.click();
 
     const deliveryPreviewCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-delivery-previews');

@@ -1337,6 +1337,12 @@ describe('Mira runtime bridge manual-plan API', () => {
       }),
     });
     const approveContinuationPayload = await approveContinuationResponse.json();
+    const postContinuationPipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const postContinuationPipelineStatusPayload = await postContinuationPipelineStatusResponse.json();
+    const deliveryPreviewStatusDir = path.join(tempStateRoot, 'mission-control', 'internal-delivery-previews');
+    const deliveryPreviewFilesAfterStatusRefresh = fs.existsSync(deliveryPreviewStatusDir)
+      ? fs.readdirSync(deliveryPreviewStatusDir).filter((file) => file.endsWith('.json'))
+      : [];
     const editContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1611,6 +1617,78 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+    expect(postContinuationPipelineStatusResponse.status).toBe(200);
+    expect(postContinuationPipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
+      id: 'owned_work_continuation',
+      label: 'Owned-work continuation',
+      latestToken: approveContinuationPayload.continuation.actionToken,
+      relativePath: expect.stringMatching(/^mission-control\/owned-work-continuations\/mission-owned-work-continuation-.*\.json$/),
+      sourceStageId: 'internal_route_request',
+      sourceToken: createRequestPayload.request.actionToken,
+    }));
+    expect(postContinuationPipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
+      id: 'follow_through_recommendation',
+      label: 'Follow-through recommendation',
+      status: 'derived',
+      latestToken: expect.stringMatching(/^mission-follow-through-/),
+      relativePath: null,
+      sourceStageId: 'owned_work_continuation',
+      sourceToken: approveContinuationPayload.continuation.actionToken,
+    }));
+    expect(postContinuationPipelineStatusPayload.currentStageTrace.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stageId: 'owned_work_continuation',
+        token: approveContinuationPayload.continuation.actionToken,
+        relativePath: expect.stringMatching(/^mission-control\/owned-work-continuations\/mission-owned-work-continuation-.*\.json$/),
+        sourceStageId: 'internal_route_request',
+        sourceToken: createRequestPayload.request.actionToken,
+      }),
+      expect.objectContaining({
+        stageId: 'follow_through_recommendation',
+        status: 'derived',
+        token: expect.stringMatching(/^mission-follow-through-/),
+        relativePath: null,
+        sourceStageId: 'owned_work_continuation',
+        sourceToken: approveContinuationPayload.continuation.actionToken,
+      }),
+    ]));
+    expect(postContinuationPipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      status: 'advance_available',
+      selectedStageId: 'follow_through_recommendation',
+      selectedStageLabel: 'Follow-through recommendation',
+      selectedArtifactToken: expect.stringMatching(/^mission-follow-through-/),
+      selectedRelativePath: null,
+      selectedSourceStageId: 'owned_work_continuation',
+      selectedSourceToken: approveContinuationPayload.continuation.actionToken,
+      nextStageId: 'internal_delivery_preview',
+      nextStageLabel: 'Delivery preview',
+    }));
+    expect(postContinuationPipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      status: 'ready',
+      selectedStageId: 'follow_through_recommendation',
+      selectedStageLabel: 'Follow-through recommendation',
+      manualActionLabel: 'Preview delivery packet',
+      tokenField: 'recommendationToken',
+      tokenValue: postContinuationPipelineStatusPayload.advanceSelection.selectedArtifactToken,
+    }));
+    expect(postContinuationPipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      status: 'ready',
+      actionLabel: 'Preview delivery packet',
+      method: 'POST',
+      endpoint: '/mission-control/internal-delivery-previews',
+      payload: {
+        recommendationToken: postContinuationPipelineStatusPayload.advanceSelection.selectedArtifactToken,
+      },
+      requiredManualInputs: [],
+    }));
+    expect(postContinuationPipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      status: 'matched',
+      handlerName: 'createInternalDeliveryPreview',
+      expectedEndpoint: '/mission-control/internal-delivery-previews',
+      expectedTokenField: 'recommendationToken',
+      previewTokenField: 'recommendationToken',
+    }));
+    expect(deliveryPreviewFilesAfterStatusRefresh).toHaveLength(0);
     expect(editContinuationResponse.status).toBe(200);
     expect(editContinuationPayload).toEqual(expect.objectContaining({
       ok: true,
