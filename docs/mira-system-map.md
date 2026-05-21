@@ -435,6 +435,8 @@ Product-facing live-send boundary prompts such as `is live send available in Mis
 
 Product-facing manual-action/status-focus prompts such as `what manual action is next in Mission Control?` and `which Mission Control button is highlighted?` now answer from the already-loaded activation pipeline status/focus state, without posting `/turn`, adding fetches, clicking buttons, persisting, or sending externally.
 
+Product-facing manual-only boundary prompts such as `what remains manual-only in Mission Control?` and `why is Mission Control manual-only?` now answer from the already-loaded activation pipeline manual-only readout, selector, manual preflight, payload preview, and handler-drift status, without posting `/turn`, adding fetches, making/manualizing/performing/clicking/submitting/saving manual actions, creating artifacts, persisting, or sending externally.
+
 Product-facing checksum/evidence-integrity prompts such as `what checksum backs the Mission Control artifact?` and `what is the Mission Control evidence checksum?` now answer from the already-loaded activation pipeline current-stage trace and advance-selection checksum fields, without posting `/turn`, adding fetches, verifying checksums, reading files, opening paths, fixing, updating, submitting, persisting, clicking, or sending externally.
 
 Product-facing source/provenance prompts such as `where did this Mission Control artifact come from?` and `what is the Mission Control source relation?` now answer from the already-loaded activation pipeline current-stage trace/source relation fields, without posting `/turn`, adding fetches, tracing files, reading files, opening paths, fixing, updating, submitting, persisting, clicking, or sending externally.

@@ -3990,6 +3990,7 @@ describe('Mira runtime UI boot', () => {
       expect(availableReply).toContain('whether James is needed');
       expect(availableReply).toContain('stage trail/status list');
       expect(availableReply).toContain('advance selection');
+      expect(availableReply).toContain('manual-only boundary');
       expect(availableReply).toContain('validation checks');
       expect(availableReply).toContain('checksum/evidence integrity');
       expect(availableReply).toContain('source/provenance trail');
@@ -4080,6 +4081,48 @@ describe('Mira runtime UI boot', () => {
       expect(manualActionReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, button click, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
       expect(manualActionReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
       expect((manualActionReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
+  test('answers manual-only boundary questions from existing Mission Control status without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['what remains manual-only in Mission Control?', 'why is Mission Control manual-only?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Manual-only status: blocked'),
+      ]);
+      const manualOnlyReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(manualOnlyReply).toContain('Manual-only summary: No manual advancement is ready from this readout.');
+      expect(manualOnlyReply).toContain('Selector summary: blocked: no existing manual action is ready to select.');
+      expect(manualOnlyReply).toContain('Manual preflight: blocked no source · No manual action is ready because there is no selected saved artifact with a token and next missing stage.');
+      expect(manualOnlyReply).toContain('Manual action: No manual action is ready.');
+      expect(manualOnlyReply).toContain('Payload preview: blocked; no method no endpoint; No payload preview is available because the manual action preflight is blocked.');
+      expect(manualOnlyReply).toContain('Handler drift: blocked · No workbench handler drift check is available because the manual action preflight is blocked.');
+      expect(manualOnlyReply).toContain('Next boundary: Next inspectable step is local review; live send is still unavailable.');
+      expect(manualOnlyReply).toContain('Source: already-loaded Mission Control manual-only readout, selector, preflight, payload, and handler-drift status from local SquidRun context.');
+      expect(manualOnlyReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, make manual, manualize, perform, do, click, submit, save, endpoint call, handler call, workbench action, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
+      expect(manualOnlyReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((manualOnlyReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
       expect(harness.elements.lastTurn.textContent).toBe('mission control local');
       expect(harness.elements.sendButton.disabled).toBe(false);
       expect(harness.elements.sendButton.textContent).toBe('Send');
@@ -5463,6 +5506,51 @@ describe('Mira runtime UI boot', () => {
       expect(harness.elements.sendButton.textContent).toBe('Send');
     }
     expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(2);
+  });
+
+  test('does not hijack generic manual-only action instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    for (const question of [
+      'make Mission Control manual-only with the runtime fixture',
+      'manualize the Mission Control action with the runtime fixture',
+      'perform the Mission Control manual action with the runtime fixture',
+      'do the Mission Control manual action with the runtime fixture',
+      'click the Mission Control manual action with the runtime fixture',
+      'submit the Mission Control manual action with the runtime fixture',
+      'save the New Mira manual boundary with the runtime fixture',
+    ]) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+      const postCalls = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCalls).toHaveLength(turnCalls.length);
+      expect(turnCalls[turnCalls.length - 1].body).toEqual(expect.objectContaining({
+        text: question,
+        useModel: false,
+        modelProvider: 'openai_responses',
+        modelName: 'gpt-5.5',
+      }));
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        'Mira. Deterministic local turn.',
+      ]);
+      expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+    expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(7);
   });
 
   test('does not hijack generic artifact path instructions from explicit user submit', async () => {

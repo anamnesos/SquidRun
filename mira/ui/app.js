@@ -244,6 +244,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlAvailableAnswersQuestion(text)
     || isMissionControlLiveBoundaryQuestion(text)
     || isMissionControlManualActionQuestion(text)
+    || isMissionControlManualOnlyBoundaryQuestion(text)
     || isMissionControlChecksumEvidenceQuestion(text)
     || isMissionControlSourceProvenanceQuestion(text)
     || isMissionControlArtifactEvidenceQuestion(text)
@@ -297,6 +298,15 @@ function isMissionControlManualActionQuestion(text) {
     && (/\bwhat\s+manual\s+action\s+is\s+next\b/i.test(normalized)
       || /\bwhich\s+mission\s*control\s+button\s+is\s+highlighted\b/i.test(normalized)
       || /\bwhat\s+(button|workbench\s+action)\s+should\s+i\s+use\s+next\b/i.test(normalized));
+}
+
+function isMissionControlManualOnlyBoundaryQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+remains\s+manual[-\s]+only\b/i.test(normalized)
+      || /\bwhy\s+.*\b(manual[-\s]+only|manual\s+boundary)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+manual[-\s]+only\s+(boundary|status)\b/i.test(normalized)
+      || /\bwhich\s+.*\bmanual[-\s]+only\s+.*\b(remains|blocked|ready)\b/i.test(normalized));
 }
 
 function isMissionControlChecksumEvidenceQuestion(text) {
@@ -515,6 +525,10 @@ function currentMissionControlAnswer(text = '') {
     const manualActionAnswer = buildMissionControlManualActionAnswer();
     if (manualActionAnswer) return manualActionAnswer;
   }
+  if (isMissionControlManualOnlyBoundaryQuestion(text)) {
+    const manualOnlyBoundaryAnswer = buildMissionControlManualOnlyBoundaryAnswer();
+    if (manualOnlyBoundaryAnswer) return manualOnlyBoundaryAnswer;
+  }
   if (isMissionControlChecksumEvidenceQuestion(text)) {
     const checksumEvidenceAnswer = buildMissionControlChecksumEvidenceAnswer();
     if (checksumEvidenceAnswer) return checksumEvidenceAnswer;
@@ -666,6 +680,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('current stage/status');
     available.push('stage trail/status list');
     available.push('advance selection');
+    available.push('manual-only boundary');
     available.push('payload/endpoint preview');
     available.push('handler drift check');
     available.push('validation checks');
@@ -771,6 +786,46 @@ function buildMissionControlManualActionAnswer(
     `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is not available from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline status/focus from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, button click, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlManualOnlyBoundaryAnswer(
+  status = state.missionControlActivationPipelineStatus,
+  focus = state.missionControlActionFocus,
+  mission = state.missionControl,
+) {
+  if (!status || typeof status !== 'object') return '';
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object'
+    ? status.endToEndReadout
+    : {};
+  const preflight = status.manualActionPreflight && typeof status.manualActionPreflight === 'object'
+    ? status.manualActionPreflight
+    : {};
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object'
+    ? status.payloadPreview
+    : {};
+  const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : {};
+  const selectorSummary = buildManualActionSelectorSummary(preflight, payloadPreview, focus);
+  const payloadText = `${payloadPreview.method || 'no method'} ${payloadPreview.endpoint || 'no endpoint'}`;
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control manual-only boundary inspection; no setup or live action is needed.');
+  return [
+    `Manual-only status: ${selectorSummary.ready ? 'ready manual action' : 'blocked'}`,
+    `Manual-only summary: ${endToEndReadout.manualOnlySummary || 'No manual-only summary is loaded.'}`,
+    `Selector summary: ${selectorSummary.selector || 'No selector summary is loaded.'}`,
+    `Manual preflight: ${String(preflight.status || 'unknown').replace(/_/g, ' ')} · ${preflight.explanation || 'No manual preflight explanation is loaded.'}`,
+    `Manual action: ${preflight.manualActionLabel || focus?.actionLabel || 'No manual action is ready.'}`,
+    `Payload preview: ${String(payloadPreview.status || 'unknown').replace(/_/g, ' ')}; ${payloadText}; ${payloadPreview.explanation || 'No payload-preview explanation is loaded.'}`,
+    `Handler drift: ${driftCheck.status || 'not available'} · ${driftCheck.explanation || driftCheck.handlerName || 'No handler drift explanation is loaded.'}`,
+    `Next boundary: ${endToEndReadout.nextBoundary || status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control manual-only readout, selector, preflight, payload, and handler-drift status from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, make manual, manualize, perform, do, click, submit, save, endpoint call, handler call, workbench action, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
