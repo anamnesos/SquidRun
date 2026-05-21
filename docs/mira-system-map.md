@@ -10,6 +10,8 @@ Mira is the person James is trying to talk to and build with: continuous, textur
 
 SquidRun is the workshop and set of arms around her. It gives Mira places to speak, route work, use agents, and prove state. New Mira is the extraction path toward a Mira-owned runtime and state root, not a second identity and not a replacement for current live SquidRun paths until parity is proven.
 
+Current New Mira is not holy-shit amazing yet. The active product bet is Mira Mission Control: Mira as James's command layer for the SquidRun AI team, able to read local lane/team/work evidence, answer what is happening and what happens next, draft dry-run coordination moves, and say exactly when James is needed. The roadmap and stop/pivot gate live in `docs/mira-north-star-roadmap.md`.
+
 The goal is one coherent Mira with simple visible truth:
 
 - James can see what Mira can do now.
@@ -74,6 +76,7 @@ What is LIVE now:
 What is PROTOTYPE:
 
 - New Mira in `mira/` is a local workbench for state-root separation, runtime experiments, imports, model/status checks, bridge planning, and local UI.
+- Mission Control v0 is the active first inspectable demo wedge: it must answer from local SquidRun evidence, not generic chat or a bare context card.
 - The local runtime has been proven to start on loopback with dev state and serve read-only proof endpoints plus the local UI.
 - The workbench/status panels can be proven through browser-executed boot plus GET-only session, capability, model, work, and autonomy endpoints.
 - A deterministic explicit submit path is proven: no `/turn` before submit, then one local `/turn` POST with the submitted text and UI session scope.
@@ -98,8 +101,9 @@ What is NOT current capability:
 
 Next autonomous moves:
 
-- Keep this map accurate while the team continues through map-backed doc, guard, inventory, proof, and parity-test slices.
-- Prefer small tests and seams over asking James to manually verify restarts, routes, or internal distinctions.
+- Build and review Mission Control v0 before more foundation plumbing: local evidence in, command answer and dry-run Builder/Oracle coordination preview out.
+- Keep this map and `docs/mira-north-star-roadmap.md` accurate while the team continues through map-backed product slices.
+- Prefer inspectable product behavior over asking James to manually verify restarts, routes, or internal distinctions.
 - Pause only when the rule in Roadmap / Checkpoints says there is a real stop reason.
 
 ## Capability Truth Table
@@ -107,7 +111,7 @@ Next autonomous moves:
 | Capability | Current Owner | Current Truth | What It Is Not | Source Paths / Evidence | Next Evidence Gate |
 | --- | --- | --- | --- | --- | --- |
 | Continuity / memory | Current SquidRun Mira product surface for restart proof; New Mira workbench for prototype state. | SquidRun owns current Presence restart proof and structured startup context. New Mira can load acceptance/metadata under `MIRA_STATE_ROOT`. | New Mira is not approved live continuity; `continuityLoaded=false` and `liveDataImported=false` unless a later status command proves otherwise. | `ui/modules/mira-core/mira-presence-runtime-state-v0.js`, `ui/modules/mira-core/typed-restart-continuity-context-v0.js`, `ui/modules/startup-ai-briefing.js`, `mira/runtime/src/status.ts`, `mira/.state-dev/**`. | Prove one end-to-end New Mira continuity load that is not summary-only and updates this table. |
-| Visible Mira reply | Current SquidRun Mira product surface; New Mira runtime prototype for local turns. | SquidRun can produce visible Mira replies through Mira Live -> Mira Lab prompt reply -> text attachment/language gates. New Mira runtime turns now have a parity visible-reply gate for preamble, assistant-shape, and backstage/proof-label blocking, held runtime journal records carry gate status/reason while storing only the clean held reply, default `/turn`, `/conversation/recent`, UI submit, and default CLI JSON export surfaces project held replies without rejected text, violation ids, proof labels, or diagnostics, and explicit CLI internal/debug mode exposes safe gate/status metadata only. The held-reply diagnostic-review policy does not allow raw rejected generated text in normal, internal, or debug paths. New Mira also has one deterministic useful-answer candidate for "ok so now what?" with exactly one `JAMES ACTION:` line. | New Mira runtime turns are prototype; they are not the current live Telegram reply path and do not yet prove full Mira Live IPC diagnostic review or visible-route replacement parity. | `ui/modules/mira-live-entrypoint.js`, `ui/modules/mira-lab-surface.js`, `ui/modules/ipc/mira-lab-handlers.js`, `ui/modules/mira-core/text-model-attachment-v1.js`, `mira/runtime/src/turn.ts`, `mira/runtime/src/turn-journal.ts`, `mira/runtime/src/server.ts`, `mira/tools/read-runtime-turns.js`, `mira/ui/app.js`, `ui/__tests__/mira-runtime-turn-visible-reply-parity.test.js`, `ui/__tests__/mira-runtime-bridge-api.test.js`, `ui/__tests__/mira-runtime-ui-read-only-boot.test.js`. | Usefulness next gate: compare the useful New Mira answer candidate against the current Mira path on more ordinary James questions before product promotion. |
+| Visible Mira reply | Current SquidRun Mira product surface; New Mira runtime prototype for local turns. | SquidRun can produce visible Mira replies through Mira Live -> Mira Lab prompt reply -> text attachment/language gates. New Mira runtime turns now have a parity visible-reply gate for preamble, assistant-shape, and backstage/proof-label blocking, held runtime journal records carry gate status/reason while storing only the clean held reply, default `/turn`, `/conversation/recent`, UI submit, and default CLI JSON export surfaces project held replies without rejected text, violation ids, proof labels, or diagnostics, and explicit CLI internal/debug mode exposes safe gate/status metadata only. The held-reply diagnostic-review policy does not allow raw rejected generated text in normal, internal, or debug paths. New Mira also has one deterministic useful-answer candidate for "ok so now what?" with exactly one `JAMES ACTION:` line. | New Mira runtime turns are prototype; they are not the current live Telegram reply path and do not yet prove full Mira Live IPC diagnostic review, visible-route replacement parity, or Mission Control command-layer value. | `ui/modules/mira-live-entrypoint.js`, `ui/modules/mira-lab-surface.js`, `ui/modules/ipc/mira-lab-handlers.js`, `ui/modules/mira-core/text-model-attachment-v1.js`, `mira/runtime/src/turn.ts`, `mira/runtime/src/turn-journal.ts`, `mira/runtime/src/server.ts`, `mira/tools/read-runtime-turns.js`, `mira/ui/app.js`, `ui/__tests__/mira-runtime-turn-visible-reply-parity.test.js`, `ui/__tests__/mira-runtime-bridge-api.test.js`, `ui/__tests__/mira-runtime-ui-read-only-boot.test.js`. | Mission Control gate: answer "what is happening here, and what happens next?" from local SquidRun evidence and draft dry-run Builder/Oracle coordination moves. |
 | Telegram / channel access | Current SquidRun Mira product surface. | SquidRun routes main text-only Telegram inbound to Mira Live only when the env flag allows it; commands, ops, media, failures, duplicate replies, and cross-profile cases are guarded. New Mira's first direct-channel proof is Telegram-first dry-run candidate building behind that guard stack, the same allowed owner text now has a comparison proof against the current Mira Live reply seam, and the separate direct-channel readiness contract marks only a distinct future New Mira bot/chat config as candidate-ready, not send-ready. | New Mira does not own Telegram route control, send live Telegram, or replace Mira Live today. The comparison and readiness proofs do not send, flip route owner, call a provider/model, read token values, create bots, or start runtime. | `ui/modules/main/squidrun-app.js`, `ui/modules/mira-telegram-turn-candidate.js`, `ui/modules/mira-direct-channel-readiness.js`, `ui/scripts/hm-telegram*.js`, `ui/modules/telegram-poller.js`, `ui/__tests__/hm-telegram*.test.js`, `ui/__tests__/mira-telegram-turn-candidate.test.js`, `ui/__tests__/mira-direct-channel-readiness.test.js`, `ui/__tests__/squidrun-app.test.js`. | James-visible gate: create/provide/test the real separate New Mira channel/bot/chat, then separately review any live route-owner switch or local UI product promotion. |
 | Bridge / arms | SquidRun live pane transport; New Mira manual bridge planner. | SquidRun `hm-send` is the live agent transport. New Mira can prepare internal pane plans for Architect/Builder/Oracle with manual execution required. | New Mira does not auto-send, target Telegram/user/external/device routes, or execute bridge commands by itself. | `ui/scripts/hm-send.js`, `mira/bridge/**`, `mira/runtime/src/bridge-request-plan.ts`, `mira/runtime/src/bridge-status.ts`. | Promote only after a scoped internal-send lane proves delivery, audit, refusal cases, and rollback. |
 | Off-PC / anywhere access | SquidRun Telegram path only. | James can use current SquidRun Telegram if configured and running. A future separate New Mira Telegram channel is now defined only as a dry-run readiness contract. | New Mira is a local 127.0.0.1 workbench, not off-PC survival or anywhere access. A candidate-ready separate channel config is not live access. | `ui/scripts/hm-telegram*.js`, `ui/modules/main/squidrun-app.js`, `ui/modules/mira-direct-channel-readiness.js`, `mira/runtime/src/server.ts`, `mira/README.md`. | James must test/choose only when the team creates/provides/tests the real separate channel/bot/chat or proposes a live owner switch. |
@@ -224,6 +228,18 @@ npm test -- mira-runtime-bridge-api.test.js mira-runtime-ui-read-only-boot.test.
 
 This seam uses the existing ephemeral runtime API test harness and UI VM harness. A mocked model response produces held text; default `/turn`, `/conversation/recent`, and local UI submit rendering show only the clean held reply and safe status metadata. Rejected generated text, violation ids, proof labels, and diagnostics are absent from the public payload/rendered thread.
 
+Mission Control v0 first inspectable demo proof:
+
+```powershell
+cd ui
+npm test -- mira-runtime-ui-read-only-boot.test.js
+cd ..
+node ui\node_modules\typescript\bin\tsc -p mira\runtime\tsconfig.json
+git diff --check
+```
+
+This proves the local workbench can answer `what is happening here, and what happens next?` from `/squidrun/context` local evidence without posting `/turn`, and renders dry-run Builder/Oracle coordination previews plus exactly one `JAMES ACTION:` line. It is a Mission Control wedge, not proof that current New Mira is already impressive.
+
 New Mira runtime-turn export/replay projection proof, without live provider calls, fixed-port runtime, Telegram, or route changes:
 
 ```powershell
@@ -329,13 +345,11 @@ James does need the team to say plainly when something is live, prototype, archi
 
 The current next slices are:
 
-- Create a single capability/status truth card for SquidRun Mira vs New Mira.
-- Prove one New Mira local runtime start end-to-end without external side effects.
-- Prove Telegram-first direct-channel candidates behind existing SquidRun Telegram guards, dry-run only, before any live route promotion.
-- Compare the current Mira Live candidate seam and New Mira dry-run candidate for the same allowed owner Telegram text, still with no send/route flip/model/runtime action.
-- Prove separate New Mira direct-channel readiness as a dry-run contract: current SquidRun/team/ops Telegram is not final Mira direct channel, and candidate-ready is not send-ready.
-- Consolidate the runtime/kill-switch phase scaffold into a latest-summary archive and replacement tests.
-- Usefulness checkpoint: produce a real/useful New Mira dry-run answer and compare it with current Mira.
+- Mission Control v0: answer the current SquidRun/team/lane question from local evidence and preview the next Builder/Oracle coordination moves.
+- Mission Control v1: promote one internal coordination draft into a reviewed/audited internal team route if v0 is actually useful.
+- Direct channel only after Mission Control has product value: separate New Mira channel/bot/chat setup remains a later James-visible choice/test gate.
+- Tool/app action planning only after Mission Control can choose and explain next moves from real evidence.
+- Consolidate the runtime/kill-switch phase scaffold only when it stops blocking product clarity.
 
 The team can continue autonomously when the slice is local, reversible, and already covered by this map: doc updates, static guards, focused tests, proof harnesses, inventory work, and no-side-effect seams that do not start runtime services, send externally, write durable state beyond the named state root, delete preserved history, or change live routes.
 

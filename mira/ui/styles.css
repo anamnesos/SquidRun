@@ -179,7 +179,7 @@ h1 {
 
 .memory-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   border-bottom: 1px solid var(--line);
   background: var(--line);
@@ -442,6 +442,15 @@ button:disabled {
 
 .workbench-section p + p {
   margin-top: 8px;
+}
+
+.mission-control #missionAnswer {
+  color: var(--ink);
+  white-space: pre-line;
+}
+
+.mission-control .draft-list {
+  margin: 12px 0;
 }
 
 .drafts-panel {

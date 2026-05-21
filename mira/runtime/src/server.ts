@@ -6,6 +6,7 @@ import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyLoopOnce, runAu
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
+import { getSquidRunContext } from "./squidrun-context.js";
 import { runRuntimeTurn, type RuntimeTurnInput, type RuntimeTurnResponse } from "./turn.js";
 import { readRuntimeTurnMemorySummary, refreshRuntimeTurnMemorySummary } from "./turn-memory.js";
 import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal.js";
@@ -648,6 +649,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/autonomy/status") {
     sendJson(response, 200, getAutonomyStatus());
+    return;
+  }
+
+  if (requestUrl.pathname === "/squidrun/context") {
+    sendJson(response, 200, getSquidRunContext());
     return;
   }
 

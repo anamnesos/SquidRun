@@ -111,6 +111,120 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         { id: 'telegram_route', status: 'blocked' },
       ],
     },
+    '/squidrun/context': {
+      ok: true,
+      protocol: 'mira.squidrun_context.v0',
+      project: {
+        name: 'squidrun',
+        workspace: 'D:/projects/squidrun',
+        squidrunRoot: 'D:/projects/squidrun',
+        sessionId: 'app-session-377',
+      },
+      lane: {
+        loaded: true,
+        status: 'active',
+        sourceRef: 'architect#253',
+        targetRole: 'builder',
+        objective: 'Build Mission Control from actual local SquidRun evidence.',
+        nextAction: 'Implement the Mission Control answer and dry-run coordination preview.',
+      },
+      ownedWork: {
+        loaded: true,
+        active: [],
+        pendingCount: 2,
+      },
+      git: {
+        loaded: true,
+        branch: 'main',
+        dirtyCount: 3,
+        statusPreview: [
+          'M mira/ui/app.js',
+          'M mira/ui/index.html',
+          'A mira/runtime/src/squidrun-context.ts',
+        ],
+      },
+      dirtyWork: {
+        loaded: true,
+        summary: '3 changed file(s): mira/ui/app.js, mira/ui/index.html, mira/runtime/src/squidrun-context.ts.',
+        files: [
+          'mira/ui/app.js',
+          'mira/ui/index.html',
+          'mira/runtime/src/squidrun-context.ts',
+        ],
+      },
+      systemMap: {
+        loaded: true,
+        relativePath: 'docs/mira-system-map.md',
+        truth: 'New Mira is a prototype until Mission Control proves product value.',
+        nextGate: 'Build Mission Control v0.',
+      },
+      roadmap: {
+        loaded: true,
+        relativePath: 'docs/mira-north-star-roadmap.md',
+        hardTruth: 'Current New Mira is not holy-shit amazing.',
+        firstDemo: 'Name: Mira Mission Control v0.',
+        stopPivot: 'Stop or pivot if Mission Control cannot answer from local evidence.',
+      },
+      recentComms: {
+        loaded: true,
+        latestBuilderInstruction: {
+          sourceRef: 'architect#253',
+          excerpt: 'Build the smallest judgment/conversation layer on top of local evidence.',
+        },
+        oracleBenchmark: {
+          sourceRef: 'oracle#104',
+          excerpt: 'Current New Mira is not impressive yet; Mission Control must prove command-layer value.',
+        },
+      },
+      missionControl: {
+        question: 'what is happening here, and what happens next?',
+        foundationVsProduct: 'SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.',
+        answer: [
+          'Project/lane: squidrun / architect#253. Build Mission Control from actual local SquidRun evidence.',
+          'Dirty work: 3 changed file(s): mira/ui/app.js, mira/ui/index.html, mira/runtime/src/squidrun-context.ts.',
+          'Benchmark gate: oracle#104 says current New Mira is not impressive yet; the demo must prove command-layer usefulness.',
+          'Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.',
+          'Next team move: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.',
+          'JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.',
+        ].join('\n'),
+        nextTeamMove: 'Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.',
+        jamesAction: 'NONE',
+        jamesActionReason: 'Local dry-run Mission Control work; no account setup needed.',
+        coordinationDrafts: [
+          {
+            target: 'builder',
+            purpose: 'implementation',
+            message: 'Build Mission Control v0 from local evidence.',
+          },
+          {
+            target: 'oracle',
+            purpose: 'benchmark review',
+            message: 'Challenge Mission Control v0 against the external-agent benchmark.',
+          },
+        ],
+        evidence: [
+          '.squidrun/link.json',
+          'git status --short',
+          'docs/mira-north-star-roadmap.md',
+        ],
+      },
+      summary: {
+        headline: 'squidrun: Mission Control local evidence loaded',
+        happening: 'Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.',
+        nextStep: 'Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.',
+        jamesAction: 'NONE',
+        jamesActionReason: 'Local dry-run Mission Control work; no account setup needed.',
+      },
+      reads: {
+        link: true,
+        currentLane: true,
+        ownedWorkQueue: true,
+        gitStatus: true,
+        systemMap: true,
+        roadmap: true,
+        recentComms: true,
+      },
+    },
     '/voice/corrections': {
       ok: true,
       pending_count: 0,
@@ -314,6 +428,22 @@ async function waitForBoot(calls) {
   throw new Error(`boot did not complete; calls=${JSON.stringify(calls)}`);
 }
 
+function collectMissionControlText(elements) {
+  const draftText = elements.coordinationDraftList.children
+    .flatMap((item) => item.children.map((child) => child.textContent))
+    .join('\n');
+  return [
+    elements.missionAnswer.textContent,
+    draftText,
+    elements.foundationSummary.textContent,
+    elements.laneSummary.textContent,
+    elements.nextStepSummary.textContent,
+    elements.gitSummary.textContent,
+    elements.mapTruthSummary.textContent,
+    elements.jamesNeedSummary.textContent,
+  ].join('\n');
+}
+
 describe('Mira runtime UI boot', () => {
   test('hydrates the workbench with read-only GET calls and does not call turn endpoints', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
@@ -330,6 +460,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/model/status', method: 'GET' }),
       expect.objectContaining({ url: '/session', method: 'GET' }),
       expect.objectContaining({ url: '/capabilities', method: 'GET' }),
+      expect.objectContaining({ url: '/squidrun/context', method: 'GET' }),
       expect.objectContaining({ url: '/voice/corrections', method: 'GET' }),
       expect.objectContaining({ url: '/work/drafts', method: 'GET' }),
       expect.objectContaining({ url: '/work/tasks', method: 'GET' }),
@@ -345,8 +476,53 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.modelSummary.textContent).toContain('OpenAI ready: gpt-5.5');
     expect(harness.elements.operatorSummary.textContent).toBe('Local state root ready.');
     expect(harness.elements.coreSummary.textContent).toBe('3 acceptance docs and 3 core records available.');
+    expect(harness.elements.projectSummary.textContent).toBe('squidrun · architect#253');
+    expect(harness.elements.missionAnswer.textContent).toContain('Project/lane: squidrun / architect#253.');
+    expect(harness.elements.missionAnswer.textContent).toContain('Benchmark gate: oracle#104');
+    expect(harness.elements.missionAnswer.textContent).toContain('Foundation vs product: SquidRun context is foundation.');
+    expect(harness.elements.coordinationDraftList.children).toHaveLength(2);
+    expect(harness.elements.coordinationDraftList.children[0].children[0].textContent).toBe('builder · implementation');
+    expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
+    expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
+    expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
+    expect(harness.elements.gitSummary.textContent).toBe('Git: 3 changed file(s): mira/ui/app.js, mira/ui/index.html, mira/runtime/src/squidrun-context.ts.');
+    expect(harness.elements.mapTruthSummary.textContent).toBe('Map truth: Current New Mira is not holy-shit amazing.');
+    expect(harness.elements.jamesNeedSummary.textContent).toBe('James needed: no · Local dry-run Mission Control work; no account setup needed.');
+    expect((collectMissionControlText(harness.elements).match(/JAMES ACTION:/g) || [])).toHaveLength(1);
     expect(harness.elements.lastTurn.textContent).toBe('no turn yet');
     expect(harness.elements.workSummary.textContent).toContain('0 drafts / 0 pending');
+    expect(harness.elements.workSummary.textContent).toContain('2 queued');
+  });
+
+  test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.turnText.value = 'what is happening here, and what happens next?';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const postCalls = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCalls).toHaveLength(0);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
+      'what is happening here, and what happens next?',
+      expect.stringContaining('Project/lane: squidrun / architect#253.'),
+    ]);
+    const missionReply = harness.elements.thread.children[1].children[0].textContent;
+    expect(missionReply).toContain('Next team move: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
+    expect(missionReply).toContain('Foundation vs product: SquidRun context is foundation.');
+    expect((missionReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 
   test('posts exactly one deterministic turn after explicit user submit', async () => {

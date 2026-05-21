@@ -12,6 +12,8 @@ const state = {
   workSendPacketCount: 0,
   workSendConfirmationCount: 0,
   workSendCheckCount: 0,
+  queuedOwnedWorkCount: 0,
+  missionControl: null,
   autonomyQueueCount: 0,
   autonomyFollowThroughCount: 0,
   autonomyLoopLabel: 'waiting',
@@ -30,6 +32,15 @@ const elements = {
   contextPanel: document.getElementById('contextPanel'),
   brainLine: document.getElementById('brainLine'),
   modelPill: document.getElementById('modelPill'),
+  projectSummary: document.getElementById('projectSummary'),
+  missionAnswer: document.getElementById('missionAnswer'),
+  coordinationDraftList: document.getElementById('coordinationDraftList'),
+  foundationSummary: document.getElementById('foundationSummary'),
+  laneSummary: document.getElementById('laneSummary'),
+  nextStepSummary: document.getElementById('nextStepSummary'),
+  gitSummary: document.getElementById('gitSummary'),
+  mapTruthSummary: document.getElementById('mapTruthSummary'),
+  jamesNeedSummary: document.getElementById('jamesNeedSummary'),
   operatorSummary: document.getElementById('operatorSummary'),
   coreSummary: document.getElementById('coreSummary'),
   personaSummary: document.getElementById('personaSummary'),
@@ -171,6 +182,82 @@ function updateReadOnlyRuntimeState(sessionPayload, capabilitiesPayload) {
   setText(elements.recentSummary, 'not loaded on boot');
 }
 
+function renderCoordinationDrafts(drafts) {
+  if (!Array.isArray(drafts) || drafts.length === 0) {
+    elements.coordinationDraftList.textContent = 'no coordination preview yet';
+    return;
+  }
+
+  const nodes = drafts.slice(0, 4).map((draft) => {
+    const item = document.createElement('div');
+    item.className = 'draft-item coordination-draft';
+
+    const title = document.createElement('strong');
+    title.textContent = `${draft.target || 'team'} · ${draft.purpose || 'next move'}`;
+
+    const message = document.createElement('p');
+    message.textContent = draft.message || '';
+
+    item.append(title, message);
+    return item;
+  });
+  elements.coordinationDraftList.replaceChildren(...nodes);
+}
+
+function isMissionControlQuestion(text) {
+  return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text);
+}
+
+function answerMissionControlQuestion() {
+  const mission = state.missionControl;
+  if (!mission?.answer) return false;
+  appendMessage('mira', mission.answer, 'mira mission-answer');
+  setText(elements.lastTurn, 'mission control local');
+  return true;
+}
+
+function updateSquidRunContext(payload) {
+  if (!payload || payload.ok !== true) {
+    setText(elements.projectSummary, 'SquidRun context unavailable');
+    setText(elements.missionAnswer, 'Mission Control is waiting for local SquidRun evidence.');
+    renderCoordinationDrafts([]);
+    setText(elements.foundationSummary, 'No foundation evidence loaded.');
+    setText(elements.laneSummary, 'No local project context loaded.');
+    setText(elements.nextStepSummary, 'Open the current SquidRun lane.');
+    setText(elements.gitSummary, 'Git status unavailable.');
+    setText(elements.mapTruthSummary, 'System map unavailable.');
+    setText(elements.jamesNeedSummary, 'James needed: no concrete setup step yet.');
+    return;
+  }
+
+  const projectName = payload.project?.name || 'current project';
+  const lane = payload.lane || {};
+  const owned = payload.ownedWork || {};
+  const git = payload.git || {};
+  const dirtyWork = payload.dirtyWork || {};
+  const systemMap = payload.systemMap || {};
+  const roadmap = payload.roadmap || {};
+  const summary = payload.summary || {};
+  const mission = payload.missionControl || {};
+  const laneLabel = lane.sourceRef || lane.status || 'local context';
+  const objective = summary.happening || lane.objective || 'No active lane objective found.';
+  const gitBranch = git.branch ? ` on ${git.branch}` : '';
+  const dirtyText = git.loaded ? `${git.dirtyCount || 0} changed files${gitBranch}` : 'git status unavailable';
+  state.queuedOwnedWorkCount = Number(owned.pendingCount || 0);
+  state.missionControl = mission;
+
+  setText(elements.projectSummary, `${projectName} · ${laneLabel}`);
+  setText(elements.missionAnswer, mission.answer || 'Mission Control has no local answer yet.');
+  renderCoordinationDrafts(mission.coordinationDrafts);
+  setText(elements.foundationSummary, `Foundation vs product: ${mission.foundationVsProduct || 'Local context is foundation; Mission Control is the product test.'}`);
+  setText(elements.laneSummary, `What is happening: ${objective}`);
+  setText(elements.nextStepSummary, `Next here: ${summary.nextStep || 'No current local next step found.'}`);
+  setText(elements.gitSummary, `Git: ${dirtyWork.summary || dirtyText}`);
+  setText(elements.mapTruthSummary, `Map truth: ${roadmap.hardTruth || systemMap.truth || 'No system-map truth line found.'}`);
+  setText(elements.jamesNeedSummary, `James needed: ${summary.jamesAction === 'DO THIS' ? 'yes' : 'no'} · ${summary.jamesActionReason || 'No James setup needed for local context.'}`);
+  renderWorkSummary();
+}
+
 function updateModelChoices(payload) {
   if (!payload || !Array.isArray(payload.choices)) return;
   const options = payload.choices.map((choice) => {
@@ -262,7 +349,8 @@ function appendPreviewLine(container, label, value) {
 }
 
 function renderWorkSummary() {
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed`);
+  const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -921,6 +1009,13 @@ async function refreshRecentTurns() {
   updateRecentTurns(payload);
 }
 
+async function refreshSquidRunContext() {
+  const response = await fetch('/squidrun/context');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateSquidRunContext(payload);
+}
+
 async function createDraft(text) {
   const response = await fetch('/work/drafts', {
     method: 'POST',
@@ -1121,6 +1216,7 @@ async function primeReadOnlyWorkbench() {
   try {
     await refreshModelStatus();
     await refreshRuntimeReadiness();
+    await refreshSquidRunContext();
     await refreshCorrections();
     await refreshDrafts();
     await refreshTasks();
@@ -1141,6 +1237,7 @@ elements.contextToggle.addEventListener('click', async () => {
   elements.contextToggle.setAttribute('aria-expanded', String(shouldOpen));
   if (shouldOpen) {
     await refreshModelStatus();
+    await refreshSquidRunContext();
     await refreshCorrections();
     await refreshDrafts();
     await refreshTasks();
@@ -1231,6 +1328,9 @@ elements.form.addEventListener('submit', async (event) => {
   elements.sendButton.disabled = true;
   elements.sendButton.textContent = 'Sending';
   try {
+    if (isMissionControlQuestion(text) && answerMissionControlQuestion()) {
+      return;
+    }
     const payload = await sendTurn(text);
     updateRuntimeState(payload);
     const article = appendMessage('mira', visibleTurnContent(payload));
