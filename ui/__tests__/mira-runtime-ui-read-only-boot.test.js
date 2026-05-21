@@ -1633,6 +1633,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: preview.purpose,
         content: preview.content,
         contentPreview: preview.contentPreview,
+        missionAnswerPreview: preview.missionAnswerPreview,
         packetSha256: preview.reviewDetails.packetSha256,
         bodySha256: preview.reviewDetails.bodySha256,
         copyTextSha256: preview.reviewDetails.bodySha256,
@@ -3228,6 +3229,7 @@ describe('Mira runtime UI boot', () => {
     expect(readinessText).toContain('ready for manual dispatch review · review/checklist only · manual execution required · not sent');
     expect(readinessText).toContain('Pane target: oracle pane 3');
     expect(readinessText).toContain('Copied body: Edited internal continuation for Oracle review.');
+    expect(readinessText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(readinessText).toContain('Body checksum: body-sha256-test');
     expect(readinessText).toContain('Packet checksum: packet-sha256-test');
     expect(readinessText).toContain('Checksum match: yes');

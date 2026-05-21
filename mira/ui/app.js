@@ -1307,6 +1307,7 @@ function updateDispatchReadinessList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', item.targetLabel || `${item.targetRole || 'team'} pane ${item.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Copied body', item.copiedPaneMessage?.body || item.contentPreview || item.content);
+    appendPreviewLine(card, 'Mission answer', item.missionAnswerPreview || 'No originating Mission Control answer is attached to this dispatch-readiness checklist.');
     appendPreviewLine(card, 'Body checksum', item.bodySha256);
     appendPreviewLine(card, 'Packet checksum', item.packetSha256);
     appendPreviewLine(card, 'Checksum match', item.checksumMatched === true ? 'yes' : 'no');

@@ -473,6 +473,7 @@ export type MissionControlDispatchReadinessRecord = {
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   packetSha256: string;
   bodySha256: string;
   copyTextSha256: string;
@@ -5281,6 +5282,7 @@ function dispatchReadinessFromDeliveryPreview(preview: MissionControlInternalDel
     purpose: preview.purpose,
     content: preview.content,
     contentPreview: preview.contentPreview,
+    missionAnswerPreview: preview.missionAnswerPreview,
     packetSha256,
     bodySha256,
     copyTextSha256,
