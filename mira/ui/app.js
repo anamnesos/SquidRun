@@ -249,6 +249,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlNoEffectBoundaryQuestion(text)
     || isMissionControlMissingStageQuestion(text)
     || isMissionControlCurrentStageQuestion(text)
+    || isMissionControlHandlerDriftQuestion(text)
     || isMissionControlPayloadPreviewQuestion(text)
     || isMissionControlBlockedReasonQuestion(text)
     || isMissionControlManualInputQuestion(text)
@@ -321,6 +322,15 @@ function isMissionControlCurrentStageQuestion(text) {
       || /\bwhat\s+is\s+the\s+(current|loaded)\s+(mission\s*control|new\s+mira)\s+(stage|status)\b/i.test(normalized)
       || /\bwhere\s+is\s+(mission\s*control|new\s+mira)\s+(now|in\s+the\s+(chain|pipeline))\b/i.test(normalized)
       || /\bwhich\s+(mission\s*control|new\s+mira)\s+(stage|status)\s+is\s+(current|loaded)\b/i.test(normalized));
+}
+
+function isMissionControlHandlerDriftQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bdoes\s+.*\b(payload|preview)\s+match\s+.*\b(handler|workbench\s+handler)\b/i.test(normalized)
+      || /\bis\s+.*\b(handler\s+drift|workbench\s+handler|handler\s+contract)\s+.*\b(matched|matching|valid|ok)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(handler\s+drift|handler\s+contract)\b/i.test(normalized)
+      || /\bwhich\s+handler\s+(would|does)\s+(mission\s*control|new\s+mira)\s+match\b/i.test(normalized));
 }
 
 function isMissionControlPayloadPreviewQuestion(text) {
@@ -462,6 +472,10 @@ function currentMissionControlAnswer(text = '') {
     const currentStageAnswer = buildMissionControlCurrentStageAnswer();
     if (currentStageAnswer) return currentStageAnswer;
   }
+  if (isMissionControlHandlerDriftQuestion(text)) {
+    const handlerDriftAnswer = buildMissionControlHandlerDriftAnswer();
+    if (handlerDriftAnswer) return handlerDriftAnswer;
+  }
   if (isMissionControlPayloadPreviewQuestion(text)) {
     const payloadPreviewAnswer = buildMissionControlPayloadPreviewAnswer();
     if (payloadPreviewAnswer) return payloadPreviewAnswer;
@@ -564,6 +578,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
   if (state.missionControlActivationPipelineStatus) {
     available.push('current stage/status');
     available.push('payload/endpoint preview');
+    available.push('handler drift check');
     available.push('blocked reason');
     available.push('no-effect boundary');
     available.push('manual input requirements');
@@ -840,6 +855,39 @@ function buildMissionControlPayloadPreviewAnswer(status = state.missionControlAc
     `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline payload preview/manual preflight/handler drift from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlHandlerDriftAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object' ? status.payloadPreview : {};
+  const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : {};
+  const checks = Array.isArray(driftCheck.checks) ? driftCheck.checks : [];
+  const checkSummary = checks.length > 0
+    ? checks.map((check) => `${check.id || check.label || 'check'}:${check.ok === true ? 'ok' : 'blocked'}`).join(' / ')
+    : 'No handler drift checks are loaded.';
+  const expectedBodyFields = Array.isArray(driftCheck.expectedBodyFields) ? driftCheck.expectedBodyFields.join(', ') : '';
+  const previewBodyFields = Array.isArray(driftCheck.previewBodyFields) ? driftCheck.previewBodyFields.join(', ') : '';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control handler-drift inspection; no setup or live action is needed.');
+  return [
+    `Handler drift status: ${driftCheck.status || 'not available'}`,
+    `Handler: ${driftCheck.handlerName || 'no handler'}`,
+    `Expected method/endpoint: ${driftCheck.expectedMethod || 'no method'} ${driftCheck.expectedEndpoint || 'no endpoint'}`,
+    `Preview method/endpoint: ${driftCheck.previewMethod || 'no method'} ${driftCheck.previewEndpoint || 'no endpoint'}`,
+    `Token field: expected ${driftCheck.expectedTokenField || 'none'}; preview ${driftCheck.previewTokenField || 'none'}`,
+    `Body fields: expected ${expectedBodyFields || 'none'}; preview ${previewBodyFields || 'none'}`,
+    `Checks: ${checkSummary}`,
+    `Explanation: ${driftCheck.explanation || 'No handler drift explanation is loaded.'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control payloadPreview.handlerDriftCheck from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, handler call, endpoint call, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
