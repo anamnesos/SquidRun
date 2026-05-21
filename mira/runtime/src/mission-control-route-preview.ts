@@ -735,6 +735,7 @@ export type MissionControlInternalSendActivationDesignRecord = {
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   bodySha256: string;
   adapterPacketSha256: string;
   activationDesign: {
@@ -4587,6 +4588,7 @@ function activationDesignFromInternalSendDryRun(dryRun: MissionControlInternalSe
     purpose: dryRun.purpose,
     content: bodyContent,
     contentPreview: bodyContent.length > 260 ? `${bodyContent.slice(0, 259)}...` : bodyContent,
+    missionAnswerPreview: dryRun.missionAnswerPreview,
     bodySha256,
     adapterPacketSha256,
     activationDesign: {

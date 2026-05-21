@@ -1855,6 +1855,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: dryRun.purpose,
         content: dryRun.content,
         contentPreview: dryRun.contentPreview,
+        missionAnswerPreview: dryRun.missionAnswerPreview,
         bodySha256: dryRun.bodySha256,
         adapterPacketSha256: 'adapter-packet-sha256',
         activationDesign: {
@@ -3372,6 +3373,7 @@ describe('Mira runtime UI boot', () => {
     expect(activationDesignText).toContain('activation design review only · refusal/rollback/audit required · manual execution required · not sent');
     expect(activationDesignText).toContain('Pane target: oracle pane 3');
     expect(activationDesignText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(activationDesignText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(activationDesignText).toContain('Activation gate: separate_reviewed_activation; activation allowed: no');
     expect(activationDesignText).toContain('Missing or unknown internal-send dry-run tokens must return 400 without writing.');
     expect(activationDesignText).toContain('Future activation must snapshot the dry-run token, target, body checksum, and adapter checksum before any execution.');

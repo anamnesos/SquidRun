@@ -1421,6 +1421,7 @@ function updateInternalSendActivationDesignList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', design.targetLabel || `${design.targetRole || 'team'} pane ${design.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', design.contentPreview || design.content);
+    appendPreviewLine(card, 'Mission answer', design.missionAnswerPreview || 'No originating Mission Control answer is attached to this activation-design proof.');
     appendPreviewLine(card, 'Activation gate', `${design.activationDesign?.requiredReview || 'separate_reviewed_activation'}; activation allowed: ${design.activationDesign?.activationAllowed === true ? 'yes' : 'no'}`);
     appendPreviewLine(card, 'Refusal', (design.refusalRequirements || []).map((item) => item.label).join(' / '));
     appendPreviewLine(card, 'Rollback', (design.rollbackRequirements || []).map((item) => item.label).join(' / '));
