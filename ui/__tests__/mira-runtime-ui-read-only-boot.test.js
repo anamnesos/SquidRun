@@ -448,6 +448,26 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       accountOrTokenAccess: false,
       liveHmSend: false,
     },
+    '/mission-control/internal-send-activation-requests': {
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_request_preview_list.v0',
+      requestCount: 0,
+      requests: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
     '/autonomy/status': {
       ok: true,
       queueCount: 0,
@@ -1233,6 +1253,129 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         liveHmSend: false,
       });
     }
+    if (pathname === '/mission-control/internal-send-activation-requests' && method === 'POST') {
+      const design = payloads['/mission-control/internal-send-activation-designs'].designs
+        .find((candidate) => candidate.actionToken === body?.internalSendActivationDesignToken);
+      if (!design) {
+        return response({ ok: false, error: { message: 'Mission Control internal-send activation design was not found.' } }, false);
+      }
+      const request = {
+        protocol: 'mira.mission_control_internal_send_activation_request_preview.v0',
+        id: 'mission-send-activation-request-test',
+        actionToken: 'mission-send-activation-request-test',
+        status: 'activation_request_review_only',
+        createdAt: '2026-05-21T00:00:07.000Z',
+        sourceInternalSendActivationDesignId: design.id,
+        sourceInternalSendActivationDesignToken: design.actionToken,
+        sourceInternalSendDryRunId: design.sourceInternalSendDryRunId,
+        sourceInternalSendDryRunToken: design.sourceInternalSendDryRunToken,
+        sourceDispatchReadinessId: design.sourceDispatchReadinessId,
+        sourceDispatchReadinessToken: design.sourceDispatchReadinessToken,
+        sourceDeliveryPreviewId: design.sourceDeliveryPreviewId,
+        sourceDeliveryPreviewToken: design.sourceDeliveryPreviewToken,
+        sourceRecommendationId: design.sourceRecommendationId,
+        sourceContinuationId: design.sourceContinuationId,
+        sourceRequestId: design.sourceRequestId,
+        sourcePreviewId: design.sourcePreviewId,
+        targetRole: design.targetRole,
+        targetPaneId: design.targetPaneId,
+        targetLabel: design.targetLabel,
+        purpose: design.purpose,
+        content: design.content,
+        contentPreview: design.contentPreview,
+        bodySha256: design.bodySha256,
+        adapterPacketSha256: design.adapterPacketSha256,
+        reviewer: {
+          required: true,
+          status: 'pending_review',
+          reviewerRole: 'architect_or_oracle',
+          note: 'A reviewer must accept the request preview before any separate live activation lane.',
+        },
+        activationRequest: {
+          protocol: 'mira.mission_control_internal_send_activation_request_gate.v0',
+          previewOnly: true,
+          activationAllowed: false,
+          requiredReview: 'separate_reviewed_activation',
+          reviewerRequired: true,
+          refusalRollbackAuditRequired: true,
+          liveHmSendExecutionAllowed: false,
+          realSendAllowed: false,
+        },
+        refusalPolicy: [
+          { id: 'activation_design_token_required', label: 'Missing or unknown activation-design tokens must return 400 without writing.', ok: true },
+          { id: 'activation_design_checksum_required', label: 'Activation-design body checksum must match before a request preview is written.', ok: true },
+          { id: 'separate_activation_required', label: 'This request preview cannot perform live hm-send; real send remains a later reviewed activation gate.', ok: true },
+        ],
+        rollbackPlan: [
+          { id: 'rollback_path_required', label: 'A later activation must define rollback/failure handling before execution is allowed.', ok: true },
+          { id: 'activation_design_checksum_required', label: 'The activation design token, body checksum, and adapter checksum must be preserved for rollback review.', ok: true },
+        ],
+        auditPlan: [
+          { id: 'reviewer_required', label: 'A reviewer field is required before any activation request can leave preview mode.', ok: true },
+          { id: 'audit_path_required', label: 'A later activation must record reviewer, refusal, rollback, transport outcome, and no-route-flip evidence.', ok: true },
+        ],
+        audit: {
+          reviewStatus: 'activation_request_preview_ready',
+          previewOnly: true,
+          manualExecutionRequired: true,
+          realSendRequiresSeparateActivation: true,
+          sourceActivationDesignChecksumMatched: true,
+          reviewerRequired: true,
+          notSent: true,
+          commandStored: false,
+          sendPerformed: false,
+          runtimeExecutes: false,
+          externalSend: false,
+          telegramSend: false,
+          routeFlip: false,
+          providerInvoked: false,
+          accountOrTokenAccess: false,
+          liveHmSend: false,
+        },
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      };
+      payloads['/mission-control/internal-send-activation-requests'] = {
+        ...payloads['/mission-control/internal-send-activation-requests'],
+        requestCount: 1,
+        requests: [request],
+      };
+      return response({
+        ok: true,
+        protocol: 'mira.mission_control_internal_send_activation_request_preview_write.v0',
+        created: true,
+        stateRootPath: 'D:/projects/squidrun/mira/.state-dev',
+        relativePath: 'mission-control/internal-send-activation-requests/mission-send-activation-request-test.json',
+        absolutePath: 'D:/projects/squidrun/mira/.state-dev/mission-control/internal-send-activation-requests/mission-send-activation-request-test.json',
+        request,
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      });
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -1336,6 +1479,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/mission-control/dispatch-readiness', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-send-dry-runs', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-send-activation-designs', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/internal-send-activation-requests', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -1361,6 +1505,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.routeDispatchReadinessList.textContent).toBe('no dispatch-readiness checklists yet');
     expect(harness.elements.routeInternalSendDryRunList.textContent).toBe('no internal-send dry runs yet');
     expect(harness.elements.routeInternalSendActivationDesignList.textContent).toBe('no activation designs yet');
+    expect(harness.elements.routeInternalSendActivationRequestList.textContent).toBe('no activation requests yet');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -1378,6 +1523,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.workSummary.textContent).toContain('0 dispatch checklists');
     expect(harness.elements.workSummary.textContent).toContain('0 send dry runs');
     expect(harness.elements.workSummary.textContent).toContain('0 activation designs');
+    expect(harness.elements.workSummary.textContent).toContain('0 activation requests');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
   });
 
@@ -1414,6 +1560,9 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-designs')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests')).toEqual([
       expect.objectContaining({ method: 'GET' }),
     ]);
 
@@ -1475,6 +1624,10 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-designs')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests')).toEqual([
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
@@ -1582,6 +1735,12 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-designs')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests')).toEqual([
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
@@ -1724,6 +1883,15 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
     const activationDesignButton = harness.elements.routeInternalSendDryRunList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Design activation proof');
     expect(activationDesignButton.textContent).toBe('Design activation proof');
@@ -1759,12 +1927,61 @@ describe('Mira runtime UI boot', () => {
     expect(activationDesignText).toContain('Missing or unknown internal-send dry-run tokens must return 400 without writing.');
     expect(activationDesignText).toContain('Future activation must snapshot the dry-run token, target, body checksum, and adapter checksum before any execution.');
     expect(activationDesignText).toContain('design/proof only; durable audit, refusal, and rollback requirements are visible; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    const activationRequestCallsBeforeClick = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests');
+    expect(activationRequestCallsBeforeClick).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    const activationRequestButton = harness.elements.routeInternalSendActivationDesignList.children[0].children
+      .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Preview activation request');
+    expect(activationRequestButton.textContent).toBe('Preview activation request');
+    await activationRequestButton.listeners.click();
+
+    const activationRequestCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests');
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(8);
+    expect(activationRequestCalls).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: {
+          internalSendActivationDesignToken: 'mission-send-activation-design-test',
+        },
+      }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.elements.routeInternalSendActivationRequestList.children).toHaveLength(1);
+    const activationRequestText = harness.elements.routeInternalSendActivationRequestList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(activationRequestText).toContain('oracle · activation request preview');
+    expect(activationRequestText).toContain('activation request review only · reviewer/refusal/rollback/audit required · manual execution required · not sent');
+    expect(activationRequestText).toContain('Pane target: oracle pane 3');
+    expect(activationRequestText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(activationRequestText).toContain('Reviewer: architect_or_oracle · pending review');
+    expect(activationRequestText).toContain('Activation request: separate_reviewed_activation; activation allowed: no');
+    expect(activationRequestText).toContain('Missing or unknown activation-design tokens must return 400 without writing.');
+    expect(activationRequestText).toContain('A later activation must define rollback/failure handling before execution is allowed.');
+    expect(activationRequestText).toContain('request preview only; reviewer, refusal, rollback, and audit fields are visible; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal delivery preview saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Dispatch-readiness checklist saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal-send dry-run audit saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Activation-design proof saved locally. Nothing was sent or executed.');
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Activation request preview saved locally. Nothing was sent or executed.');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {

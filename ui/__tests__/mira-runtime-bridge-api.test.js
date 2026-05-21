@@ -390,6 +390,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/dispatch-readiness'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-dry-runs'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-designs'");
+    expect(appJs).toContain("fetch('/mission-control/internal-send-activation-requests'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
@@ -402,6 +403,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="routeDispatchReadinessList"');
     expect(indexHtml).toContain('id="routeInternalSendDryRunList"');
     expect(indexHtml).toContain('id="routeInternalSendActivationDesignList"');
+    expect(indexHtml).toContain('id="routeInternalSendActivationRequestList"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1130,6 +1132,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     const emptyInternalSendDryRunPayload = await emptyInternalSendDryRunResponse.json();
     const emptyActivationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`);
     const emptyActivationDesignPayload = await emptyActivationDesignResponse.json();
+    const emptyActivationRequestResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`);
+    const emptyActivationRequestPayload = await emptyActivationRequestResponse.json();
     const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1298,6 +1302,27 @@ describe('Mira runtime bridge manual-plan API', () => {
       protocol: 'mira.mission_control_internal_send_activation_design_list.v0',
       designCount: 0,
       designs: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(emptyActivationRequestResponse.status).toBe(200);
+    expect(emptyActivationRequestPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_request_preview_list.v0',
+      requestCount: 0,
+      requests: [],
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -2400,6 +2425,266 @@ describe('Mira runtime bridge manual-plan API', () => {
         code: 'mission_control_internal_send_activation_design_command_not_allowed',
       }));
       expect(fs.readdirSync(activationDesignDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    const activationRequestDir = path.join(tempStateRoot, 'mission-control', 'internal-send-activation-requests');
+    const missingActivationRequestTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingActivationRequestTokenPayload = await missingActivationRequestTokenResponse.json();
+    const badActivationRequestTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationDesignToken: 'mission-send-activation-design-not-saved' }),
+    });
+    const badActivationRequestTokenPayload = await badActivationRequestTokenResponse.json();
+    expect(missingActivationRequestTokenResponse.status).toBe(400);
+    expect(missingActivationRequestTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_design_token_required',
+    }));
+    expect(fs.existsSync(activationRequestDir)).toBe(false);
+    expect(badActivationRequestTokenResponse.status).toBe(400);
+    expect(badActivationRequestTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_design_not_found',
+    }));
+    expect(fs.existsSync(activationRequestDir)).toBe(false);
+    const activationRequestResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationDesignToken: activationDesignPayload.design.actionToken }),
+    });
+    const activationRequestPayload = await activationRequestResponse.json();
+    const duplicateActivationRequestResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ activationDesignToken: activationDesignPayload.design.actionToken }),
+    });
+    const duplicateActivationRequestPayload = await duplicateActivationRequestResponse.json();
+    const listActivationRequestResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests?includeInternal=1`);
+    const listActivationRequestPayload = await listActivationRequestResponse.json();
+    expect(activationRequestResponse.status).toBe(200);
+    expect(activationRequestPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_request_preview_write.v0',
+      created: true,
+      relativePath: expect.stringMatching(/^mission-control\/internal-send-activation-requests\/mission-send-activation-request-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(activationRequestPayload.request).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_activation_request_preview.v0',
+      status: 'activation_request_review_only',
+      sourceInternalSendActivationDesignId: activationDesignPayload.design.id,
+      sourceInternalSendActivationDesignToken: activationDesignPayload.design.actionToken,
+      sourceInternalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      targetLabel: 'oracle pane 3',
+      content: 'Edited internal continuation for Oracle review.',
+      bodySha256: internalSendDryRunPayload.dryRun.bodySha256,
+      adapterPacketSha256: activationDesignPayload.design.adapterPacketSha256,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(activationRequestPayload.request.reviewer).toEqual(expect.objectContaining({
+      required: true,
+      status: 'pending_review',
+      reviewerRole: 'architect_or_oracle',
+    }));
+    expect(activationRequestPayload.request.activationRequest).toEqual({
+      protocol: 'mira.mission_control_internal_send_activation_request_gate.v0',
+      previewOnly: true,
+      activationAllowed: false,
+      requiredReview: 'separate_reviewed_activation',
+      reviewerRequired: true,
+      refusalRollbackAuditRequired: true,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+    });
+    expect(activationRequestPayload.request.refusalPolicy.map((item) => item.id)).toEqual([
+      'activation_design_token_required',
+      'activation_design_checksum_required',
+      'separate_activation_required',
+    ]);
+    expect(activationRequestPayload.request.rollbackPlan.map((item) => item.id)).toEqual([
+      'rollback_path_required',
+      'activation_design_checksum_required',
+    ]);
+    expect(activationRequestPayload.request.auditPlan.map((item) => item.id)).toEqual([
+      'reviewer_required',
+      'audit_path_required',
+    ]);
+    expect(activationRequestPayload.request.audit).toEqual(expect.objectContaining({
+      reviewStatus: 'activation_request_preview_ready',
+      previewOnly: true,
+      manualExecutionRequired: true,
+      realSendRequiresSeparateActivation: true,
+      sourceActivationDesignChecksumMatched: true,
+      reviewerRequired: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(activationRequestPayload.request).not.toHaveProperty('command');
+    expect(activationRequestPayload.request).not.toHaveProperty('args');
+    expect(activationRequestPayload.request).not.toHaveProperty('delivery');
+    const storedActivationRequest = JSON.parse(fs.readFileSync(activationRequestPayload.absolutePath, 'utf8'));
+    expect(storedActivationRequest).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_activation_request_preview.v0',
+      status: 'activation_request_review_only',
+      sourceInternalSendActivationDesignToken: activationDesignPayload.design.actionToken,
+      targetLabel: 'oracle pane 3',
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedActivationRequest).not.toHaveProperty('command');
+    expect(storedActivationRequest).not.toHaveProperty('args');
+    expect(storedActivationRequest).not.toHaveProperty('delivery');
+    expect(duplicateActivationRequestResponse.status).toBe(200);
+    expect(duplicateActivationRequestPayload.created).toBe(false);
+    expect(duplicateActivationRequestPayload.relativePath).toBe(activationRequestPayload.relativePath);
+    expect(listActivationRequestResponse.status).toBe(200);
+    expect(listActivationRequestPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_request_preview_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      requestCount: 1,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(listActivationRequestPayload.requests[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-send-activation-request-/),
+      relativePath: activationRequestPayload.relativePath,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    fs.writeFileSync(activationDesignPayload.absolutePath, `${JSON.stringify({
+      ...storedActivationDesign,
+      bodySha256: 'bad-body-sha256',
+    }, null, 2)}\n`, 'utf8');
+    const mismatchedActivationRequestResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationDesignToken: activationDesignPayload.design.actionToken }),
+    });
+    const mismatchedActivationRequestPayload = await mismatchedActivationRequestResponse.json();
+    fs.writeFileSync(activationDesignPayload.absolutePath, `${JSON.stringify(storedActivationDesign, null, 2)}\n`, 'utf8');
+    expect(mismatchedActivationRequestResponse.status).toBe(400);
+    expect(mismatchedActivationRequestPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_request_checksum_mismatch',
+    }));
+    expect(fs.readdirSync(activationRequestDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    for (const input of [
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, liveHmSend: true },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, activationRequest: { activationAllowed: true } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, activationRequest: { liveHmSendExecutionAllowed: true } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, activationRequest: { body: { telegramSend: true } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, request: { telegramSend: true } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, request: { target: { routeFlip: true } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, reviewer: { externalSend: true } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, reviewer: { body: { liveHmSend: true } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, auditPlan: { routeFlip: true } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, auditPlan: { target: { accountOrTokenAccess: true } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, rollbackPlan: { bridgeDelivery: true } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, rollbackPlan: { body: { bridgeDelivery: true } } },
+    ]) {
+      const blockedActivationRequestResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedActivationRequestPayload = await blockedActivationRequestResponse.json();
+      expect(blockedActivationRequestResponse.status).toBe(400);
+      expect(blockedActivationRequestPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_activation_request_has_live_effect',
+      }));
+      expect(fs.readdirSync(activationRequestDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    for (const input of [
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, command: 'hm-send oracle' },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, activationRequest: { command: 'hm-send oracle' } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, activationRequest: { body: { command: 'hm-send oracle' } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, request: { args: ['hm-send', 'oracle'] } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, request: { target: { command: 'hm-send oracle' } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, reviewer: { command: 'hm-send oracle' } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, reviewer: { body: { args: ['hm-send', 'oracle'] } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, auditPlan: { args: ['hm-send', 'oracle'] } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, auditPlan: { target: { command: 'hm-send oracle' } } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, rollbackPlan: { command: 'hm-send oracle' } },
+      { internalSendActivationDesignToken: activationDesignPayload.design.actionToken, rollbackPlan: { body: { args: ['hm-send', 'oracle'] } } },
+    ]) {
+      const blockedCommandActivationRequestResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-requests`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandActivationRequestPayload = await blockedCommandActivationRequestResponse.json();
+      expect(blockedCommandActivationRequestResponse.status).toBe(400);
+      expect(blockedCommandActivationRequestPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_activation_request_command_not_allowed',
+      }));
+      expect(fs.readdirSync(activationRequestDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
     }
     fs.writeFileSync(deliveryPreviewPayload.absolutePath, `${JSON.stringify({
       ...storedDeliveryPreview,

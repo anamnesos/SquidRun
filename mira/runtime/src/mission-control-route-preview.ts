@@ -828,6 +828,147 @@ export type MissionControlInternalSendActivationDesignListResult = {
   liveHmSend: false;
 };
 
+export type MissionControlInternalSendActivationRequestRequirement = {
+  id:
+    | "activation_design_token_required"
+    | "activation_design_checksum_required"
+    | "reviewer_required"
+    | "refusal_path_required"
+    | "rollback_path_required"
+    | "audit_path_required"
+    | "separate_activation_required";
+  label: string;
+  ok: true;
+};
+
+export type MissionControlInternalSendActivationRequestRecord = {
+  protocol: "mira.mission_control_internal_send_activation_request_preview.v0";
+  id: string;
+  status: "activation_request_review_only";
+  createdAt: string;
+  sourceInternalSendActivationDesignId: string;
+  sourceInternalSendActivationDesignToken: string;
+  sourceInternalSendDryRunId: string;
+  sourceInternalSendDryRunToken: string;
+  sourceDispatchReadinessId: string;
+  sourceDispatchReadinessToken: string;
+  sourceDeliveryPreviewId: string;
+  sourceDeliveryPreviewToken: string;
+  sourceRecommendationId: string;
+  sourceContinuationId: string;
+  sourceRequestId: string;
+  sourcePreviewId: string;
+  targetRole: "architect" | "builder" | "oracle";
+  targetPaneId: "1" | "2" | "3";
+  targetLabel: string;
+  purpose: string;
+  content: string;
+  contentPreview: string;
+  bodySha256: string;
+  adapterPacketSha256: string;
+  reviewer: {
+    required: true;
+    status: "pending_review";
+    reviewerRole: "architect_or_oracle";
+    note: string;
+  };
+  activationRequest: {
+    protocol: "mira.mission_control_internal_send_activation_request_gate.v0";
+    previewOnly: true;
+    activationAllowed: false;
+    requiredReview: "separate_reviewed_activation";
+    reviewerRequired: true;
+    refusalRollbackAuditRequired: true;
+    liveHmSendExecutionAllowed: false;
+    realSendAllowed: false;
+  };
+  refusalPolicy: MissionControlInternalSendActivationRequestRequirement[];
+  rollbackPlan: MissionControlInternalSendActivationRequestRequirement[];
+  auditPlan: MissionControlInternalSendActivationRequestRequirement[];
+  audit: {
+    reviewStatus: "activation_request_preview_ready";
+    previewOnly: true;
+    manualExecutionRequired: true;
+    realSendRequiresSeparateActivation: true;
+    sourceActivationDesignChecksumMatched: true;
+    reviewerRequired: true;
+    notSent: true;
+    commandStored: false;
+    sendPerformed: false;
+    runtimeExecutes: false;
+    externalSend: false;
+    telegramSend: false;
+    routeFlip: false;
+    providerInvoked: false;
+    accountOrTokenAccess: false;
+    liveHmSend: false;
+  };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlInternalSendActivationRequestWriteResult = {
+  ok: true;
+  protocol: "mira.mission_control_internal_send_activation_request_preview_write.v0";
+  created: boolean;
+  stateRootPath: string;
+  relativePath: string;
+  absolutePath: string;
+  request: MissionControlInternalSendActivationRequestRecord & { actionToken: string };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlInternalSendActivationRequestListResult = {
+  ok: true;
+  protocol: "mira.mission_control_internal_send_activation_request_preview_list.v0";
+  stateRootPath: string | null;
+  requestCount: number;
+  requests: Array<MissionControlInternalSendActivationRequestRecord & {
+    actionToken: string;
+    relativePath?: string;
+    absolutePath?: string;
+  }>;
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
 const allowedRoles = new Set(["architect", "builder", "oracle"]);
 
 function isInside(rootPath: string, candidatePath: string): boolean {
@@ -861,6 +1002,10 @@ function internalSendDryRunsDir(rootPath: string): string {
 
 function internalSendActivationDesignsDir(rootPath: string): string {
   return path.resolve(rootPath, "mission-control", "internal-send-activation-designs");
+}
+
+function internalSendActivationRequestsDir(rootPath: string): string {
+  return path.resolve(rootPath, "mission-control", "internal-send-activation-requests");
 }
 
 function asObject(value: unknown, label: string): JsonObject {
@@ -956,6 +1101,14 @@ function rejectInternalSendActivationDesignLiveEffect(value: unknown, label: str
   }
 }
 
+function rejectInternalSendActivationRequestLiveEffect(value: unknown, label: string): void {
+  if (value === true) {
+    throw Object.assign(new Error(`${label} cannot be true for an internal-send activation request preview.`), {
+      code: "mission_control_internal_send_activation_request_has_live_effect",
+    });
+  }
+}
+
 function optionalObject(value: unknown): JsonObject | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as JsonObject;
@@ -1036,6 +1189,10 @@ function buildInternalSendActivationDesignActionToken(id: string): string {
   return `mission-send-activation-design-${crypto.createHash("sha256").update(`mira.mission_control_internal_send_activation_design.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
+function buildInternalSendActivationRequestActionToken(id: string): string {
+  return `mission-send-activation-request-${crypto.createHash("sha256").update(`mira.mission_control_internal_send_activation_request_preview.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
 function sha256Text(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -1090,6 +1247,13 @@ function toPublicInternalSendActivationDesign(record: MissionControlInternalSend
   return {
     ...record,
     actionToken: buildInternalSendActivationDesignActionToken(record.id),
+  };
+}
+
+function toPublicInternalSendActivationRequest(record: MissionControlInternalSendActivationRequestRecord): MissionControlInternalSendActivationRequestRecord & { actionToken: string } {
+  return {
+    ...record,
+    actionToken: buildInternalSendActivationRequestActionToken(record.id),
   };
 }
 
@@ -1264,6 +1428,31 @@ function parseInternalSendActivationDesignRecord(value: string): MissionControlI
     if (!allowedRoles.has(String(parsed.targetRole))) return null;
     if ("command" in parsed || "args" in parsed) return null;
     return parsed as MissionControlInternalSendActivationDesignRecord;
+  } catch {
+    return null;
+  }
+}
+
+function parseInternalSendActivationRequestRecord(value: string): MissionControlInternalSendActivationRequestRecord | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<MissionControlInternalSendActivationRequestRecord>;
+    if (parsed.protocol !== "mira.mission_control_internal_send_activation_request_preview.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "activation_request_review_only") return null;
+    if (parsed.manualExecutionRequired !== true || parsed.reviewRequired !== true || parsed.internalOnly !== true) return null;
+    if (parsed.reviewableOwnedWork !== true || parsed.notSent !== true || parsed.commandStored !== false) return null;
+    if (
+      parsed.sendPerformed !== false
+      || parsed.runtimeExecutes !== false
+      || parsed.externalSend !== false
+      || parsed.telegramSend !== false
+      || parsed.routeFlip !== false
+      || parsed.providerInvoked !== false
+      || parsed.accountOrTokenAccess !== false
+      || parsed.liveHmSend !== false
+    ) return null;
+    if (!allowedRoles.has(String(parsed.targetRole))) return null;
+    if ("command" in parsed || "args" in parsed) return null;
+    return parsed as MissionControlInternalSendActivationRequestRecord;
   } catch {
     return null;
   }
@@ -1446,6 +1635,20 @@ function readInternalSendActivationDesignRecords(rootPath: string): MissionContr
       return parseInternalSendActivationDesignRecord(fs.readFileSync(absolutePath, "utf8"));
     })
     .filter((record): record is MissionControlInternalSendActivationDesignRecord => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function readInternalSendActivationRequestRecords(rootPath: string): MissionControlInternalSendActivationRequestRecord[] {
+  const dir = internalSendActivationRequestsDir(rootPath);
+  if (!isInside(rootPath, dir) || !fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(dir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseInternalSendActivationRequestRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is MissionControlInternalSendActivationRequestRecord => Boolean(record))
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 }
 
@@ -1735,6 +1938,82 @@ function rejectInternalSendActivationDesignInput(input: JsonObject): void {
   }
 }
 
+function rejectInternalSendActivationRequestInput(input: JsonObject): void {
+  const activationRequest = optionalObject(input.activationRequest);
+  const activationRequestTarget = optionalObject(activationRequest?.target);
+  const activationRequestBody = optionalObject(activationRequest?.body);
+  const request = optionalObject(input.request);
+  const requestTarget = optionalObject(request?.target);
+  const requestBody = optionalObject(request?.body);
+  const reviewer = optionalObject(input.reviewer);
+  const reviewerTarget = optionalObject(reviewer?.target);
+  const reviewerBody = optionalObject(reviewer?.body);
+  const refusal = optionalObject(input.refusal);
+  const refusalPolicy = optionalObject(input.refusalPolicy);
+  const rollback = optionalObject(input.rollback);
+  const rollbackPlan = optionalObject(input.rollbackPlan);
+  const rollbackPlanTarget = optionalObject(rollbackPlan?.target);
+  const rollbackPlanBody = optionalObject(rollbackPlan?.body);
+  const audit = optionalObject(input.audit);
+  const auditPlan = optionalObject(input.auditPlan);
+  const auditPlanTarget = optionalObject(auditPlan?.target);
+  const auditPlanBody = optionalObject(auditPlan?.body);
+  const delivery = optionalObject(input.delivery);
+  const dispatch = optionalObject(input.dispatch);
+  for (const [containerLabel, container] of [
+    ["activationRequest", input],
+    ["activationRequest", activationRequest],
+    ["activationRequest.target", activationRequestTarget],
+    ["activationRequest.body", activationRequestBody],
+    ["request", request],
+    ["request.target", requestTarget],
+    ["request.body", requestBody],
+    ["reviewer", reviewer],
+    ["reviewer.target", reviewerTarget],
+    ["reviewer.body", reviewerBody],
+    ["refusal", refusal],
+    ["refusalPolicy", refusalPolicy],
+    ["rollback", rollback],
+    ["rollbackPlan", rollbackPlan],
+    ["rollbackPlan.target", rollbackPlanTarget],
+    ["rollbackPlan.body", rollbackPlanBody],
+    ["audit", audit],
+    ["auditPlan", auditPlan],
+    ["auditPlan.target", auditPlanTarget],
+    ["auditPlan.body", auditPlanBody],
+    ["delivery", delivery],
+    ["dispatch", dispatch],
+  ] as const) {
+    if (!container) continue;
+    if ("command" in container || "args" in container) {
+      throw Object.assign(new Error(`Mission Control internal-send activation request previews do not accept command or args fields in ${containerLabel}.`), {
+        code: "mission_control_internal_send_activation_request_command_not_allowed",
+      });
+    }
+    for (const flag of [
+      "sendPerformed",
+      "runtimeExecutes",
+      "externalSend",
+      "telegramSend",
+      "routeFlip",
+      "providerInvoked",
+      "accountOrTokenAccess",
+      "liveHmSend",
+      "realSendAllowed",
+      "liveHmSendExecutionAllowed",
+      "activationAllowed",
+      "execute",
+      "executed",
+      "sendNow",
+      "activate",
+      "deliveryPerformed",
+      "bridgeDelivery",
+    ]) {
+      rejectInternalSendActivationRequestLiveEffect(container[flag], `${containerLabel}.${flag}`);
+    }
+  }
+}
+
 function resolveRouteRequest(input: { requestToken?: unknown }, rootPath: string): MissionControlInternalRouteRequestRecord {
   const requestToken = optionalPreview(input.requestToken, 220);
   if (!requestToken) {
@@ -1965,6 +2244,27 @@ function resolveInternalSendDryRun(
   if (!record) {
     throw Object.assign(new Error("Mission Control internal-send dry run was not found."), {
       code: "mission_control_internal_send_dry_run_not_found",
+    });
+  }
+  return record;
+}
+
+function resolveInternalSendActivationDesign(
+  input: { internalSendActivationDesignToken?: unknown; activationDesignToken?: unknown; designToken?: unknown },
+  rootPath: string,
+): MissionControlInternalSendActivationDesignRecord {
+  const designToken = optionalPreview(input.internalSendActivationDesignToken ?? input.activationDesignToken ?? input.designToken, 320);
+  if (!designToken) {
+    throw Object.assign(new Error("Mission Control internal-send activation-design token is required."), {
+      code: "mission_control_internal_send_activation_design_token_required",
+    });
+  }
+  const record = readInternalSendActivationDesignRecords(rootPath).find((candidate) => {
+    return buildInternalSendActivationDesignActionToken(candidate.id) === designToken;
+  });
+  if (!record) {
+    throw Object.assign(new Error("Mission Control internal-send activation design was not found."), {
+      code: "mission_control_internal_send_activation_design_not_found",
     });
   }
   return record;
@@ -2247,6 +2547,137 @@ function activationDesignFromInternalSendDryRun(dryRun: MissionControlInternalSe
       manualExecutionRequired: true,
       realSendRequiresSeparateActivation: true,
       sourceDryRunChecksumMatched: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+function activationRequestPreviewFromActivationDesign(
+  design: MissionControlInternalSendActivationDesignRecord,
+): MissionControlInternalSendActivationRequestRecord {
+  const bodySha256 = sha256Text(design.content);
+  if (bodySha256 !== design.bodySha256) {
+    throw Object.assign(new Error("Mission Control activation-design checksum does not match the activation-request source."), {
+      code: "mission_control_internal_send_activation_request_checksum_mismatch",
+    });
+  }
+  const id = `mission-send-activation-request-${crypto.createHash("sha256")
+    .update(`mira.mission_control_internal_send_activation_request_preview.v0:${design.id}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+
+  return {
+    protocol: "mira.mission_control_internal_send_activation_request_preview.v0",
+    id,
+    status: "activation_request_review_only",
+    createdAt: new Date().toISOString(),
+    sourceInternalSendActivationDesignId: design.id,
+    sourceInternalSendActivationDesignToken: buildInternalSendActivationDesignActionToken(design.id),
+    sourceInternalSendDryRunId: design.sourceInternalSendDryRunId,
+    sourceInternalSendDryRunToken: design.sourceInternalSendDryRunToken,
+    sourceDispatchReadinessId: design.sourceDispatchReadinessId,
+    sourceDispatchReadinessToken: design.sourceDispatchReadinessToken,
+    sourceDeliveryPreviewId: design.sourceDeliveryPreviewId,
+    sourceDeliveryPreviewToken: design.sourceDeliveryPreviewToken,
+    sourceRecommendationId: design.sourceRecommendationId,
+    sourceContinuationId: design.sourceContinuationId,
+    sourceRequestId: design.sourceRequestId,
+    sourcePreviewId: design.sourcePreviewId,
+    targetRole: design.targetRole,
+    targetPaneId: design.targetPaneId,
+    targetLabel: design.targetLabel,
+    purpose: design.purpose,
+    content: design.content,
+    contentPreview: design.contentPreview,
+    bodySha256,
+    adapterPacketSha256: design.adapterPacketSha256,
+    reviewer: {
+      required: true,
+      status: "pending_review",
+      reviewerRole: "architect_or_oracle",
+      note: "A reviewer must accept the request preview before any separate live activation lane.",
+    },
+    activationRequest: {
+      protocol: "mira.mission_control_internal_send_activation_request_gate.v0",
+      previewOnly: true,
+      activationAllowed: false,
+      requiredReview: "separate_reviewed_activation",
+      reviewerRequired: true,
+      refusalRollbackAuditRequired: true,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+    },
+    refusalPolicy: [
+      {
+        id: "activation_design_token_required",
+        label: "Missing or unknown activation-design tokens must return 400 without writing.",
+        ok: true,
+      },
+      {
+        id: "activation_design_checksum_required",
+        label: "Activation-design body checksum must match before a request preview is written.",
+        ok: true,
+      },
+      {
+        id: "separate_activation_required",
+        label: "This request preview cannot perform live hm-send; real send remains a later reviewed activation gate.",
+        ok: true,
+      },
+    ],
+    rollbackPlan: [
+      {
+        id: "rollback_path_required",
+        label: "A later activation must define rollback/failure handling before execution is allowed.",
+        ok: true,
+      },
+      {
+        id: "activation_design_checksum_required",
+        label: "The activation design token, body checksum, and adapter checksum must be preserved for rollback review.",
+        ok: true,
+      },
+    ],
+    auditPlan: [
+      {
+        id: "reviewer_required",
+        label: "A reviewer field is required before any activation request can leave preview mode.",
+        ok: true,
+      },
+      {
+        id: "audit_path_required",
+        label: "A later activation must record reviewer, refusal, rollback, transport outcome, and no-route-flip evidence.",
+        ok: true,
+      },
+    ],
+    audit: {
+      reviewStatus: "activation_request_preview_ready",
+      previewOnly: true,
+      manualExecutionRequired: true,
+      realSendRequiresSeparateActivation: true,
+      sourceActivationDesignChecksumMatched: true,
+      reviewerRequired: true,
       notSent: true,
       commandStored: false,
       sendPerformed: false,
@@ -2995,6 +3426,76 @@ export function createMissionControlInternalSendActivationDesign(
   };
 }
 
+export function createMissionControlInternalSendActivationRequest(
+  input: { internalSendActivationDesignToken?: unknown; activationDesignToken?: unknown; designToken?: unknown } & JsonObject,
+  env: NodeJS.ProcessEnv = process.env,
+): MissionControlInternalSendActivationRequestWriteResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before Mission Control internal-send activation request previews can be saved."), {
+      code: "state_root_not_ready",
+    });
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  rejectInternalSendActivationRequestInput(input);
+  const design = resolveInternalSendActivationDesign(input, rootPath);
+  const dir = internalSendActivationRequestsDir(rootPath);
+  if (!isInside(rootPath, dir)) {
+    throw Object.assign(new Error("Mission Control internal-send activation request destination escaped Mira state root."), {
+      code: "unsafe_mission_control_internal_send_activation_request_path",
+    });
+  }
+
+  const record = activationRequestPreviewFromActivationDesign(design);
+  const absolutePath = path.resolve(dir, `${record.id}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Mission Control internal-send activation request file escaped Mira state root."), {
+      code: "unsafe_mission_control_internal_send_activation_request_path",
+    });
+  }
+
+  fs.mkdirSync(dir, { recursive: true });
+  let created = false;
+  let stored = record;
+  if (fs.existsSync(absolutePath)) {
+    const parsed = parseInternalSendActivationRequestRecord(fs.readFileSync(absolutePath, "utf8"));
+    if (parsed) stored = parsed;
+  } else {
+    const handle = fs.openSync(absolutePath, "wx");
+    try {
+      fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      created = true;
+    } finally {
+      fs.closeSync(handle);
+    }
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_internal_send_activation_request_preview_write.v0",
+    created,
+    stateRootPath: rootPath,
+    relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+    absolutePath,
+    request: toPublicInternalSendActivationRequest(stored),
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
 export function listMissionControlOwnedWorkContinuations(
   env: NodeJS.ProcessEnv = process.env,
   options: { includeInternal?: boolean } = {},
@@ -3298,6 +3799,70 @@ export function listMissionControlInternalSendActivationDesigns(
     stateRootPath: options.includeInternal ? rootPath : null,
     designCount: designs.length,
     designs,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function listMissionControlInternalSendActivationRequests(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { includeInternal?: boolean } = {},
+): MissionControlInternalSendActivationRequestListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.mission_control_internal_send_activation_request_preview_list.v0",
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
+      requestCount: 0,
+      requests: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    };
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  const requests = readInternalSendActivationRequestRecords(rootPath).map((record) => {
+    const publicRecord = toPublicInternalSendActivationRequest(record);
+    if (!options.includeInternal) return publicRecord;
+    const absolutePath = path.resolve(internalSendActivationRequestsDir(rootPath), `${record.id}.json`);
+    return {
+      ...publicRecord,
+      relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+      absolutePath,
+    };
+  });
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_internal_send_activation_request_preview_list.v0",
+    stateRootPath: options.includeInternal ? rootPath : null,
+    requestCount: requests.length,
+    requests,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,

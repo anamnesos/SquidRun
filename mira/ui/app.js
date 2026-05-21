@@ -20,6 +20,7 @@ const state = {
   missionControlDispatchReadinessCount: 0,
   missionControlInternalSendDryRunCount: 0,
   missionControlInternalSendActivationDesignCount: 0,
+  missionControlInternalSendActivationRequestCount: 0,
   selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -55,6 +56,7 @@ const elements = {
   routeDispatchReadinessList: document.getElementById('routeDispatchReadinessList'),
   routeInternalSendDryRunList: document.getElementById('routeInternalSendDryRunList'),
   routeInternalSendActivationDesignList: document.getElementById('routeInternalSendActivationDesignList'),
+  routeInternalSendActivationRequestList: document.getElementById('routeInternalSendActivationRequestList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -387,7 +389,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.missionControlInternalSendActivationDesignCount} activation designs / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.missionControlInternalSendActivationDesignCount} activation designs / ${state.missionControlInternalSendActivationRequestCount} activation requests / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -795,6 +797,7 @@ function updateRoutePreviewHistoryList(payload) {
         await refreshDispatchReadiness();
         await refreshInternalSendDryRuns();
         await refreshInternalSendActivationDesigns();
+        await refreshInternalSendActivationRequests();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -900,6 +903,7 @@ function renderRouteContinuationPanel(request) {
         await refreshDispatchReadiness();
         await refreshInternalSendDryRuns();
         await refreshInternalSendActivationDesigns();
+        await refreshInternalSendActivationRequests();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
       } finally {
@@ -982,6 +986,7 @@ function updateRouteFollowThroughList(payload) {
           await refreshDispatchReadiness();
           await refreshInternalSendDryRuns();
           await refreshInternalSendActivationDesigns();
+          await refreshInternalSendActivationRequests();
         } catch (error) {
           appendMessage('mira', error.message, 'error');
           action.disabled = false;
@@ -1039,6 +1044,7 @@ function updateRouteDeliveryPreviewList(payload) {
         await refreshDispatchReadiness();
         await refreshInternalSendDryRuns();
         await refreshInternalSendActivationDesigns();
+        await refreshInternalSendActivationRequests();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         readiness.disabled = false;
@@ -1090,6 +1096,7 @@ function updateDispatchReadinessList(payload) {
         appendMessage('mira', 'Internal-send dry-run audit saved locally. Nothing was sent or executed.');
         await refreshInternalSendDryRuns();
         await refreshInternalSendActivationDesigns();
+        await refreshInternalSendActivationRequests();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         dryRun.disabled = false;
@@ -1135,6 +1142,7 @@ function updateInternalSendDryRunList(payload) {
         design.textContent = 'Activation design saved';
         appendMessage('mira', 'Activation-design proof saved locally. Nothing was sent or executed.');
         await refreshInternalSendActivationDesigns();
+        await refreshInternalSendActivationRequests();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         design.disabled = false;
@@ -1169,6 +1177,53 @@ function updateInternalSendActivationDesignList(payload) {
     appendPreviewLine(card, 'Refusal', (design.refusalRequirements || []).map((item) => item.label).join(' / '));
     appendPreviewLine(card, 'Rollback', (design.rollbackRequirements || []).map((item) => item.label).join(' / '));
     appendPreviewLine(card, 'Audit', 'design/proof only; durable audit, refusal, and rollback requirements are visible; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
+    const request = document.createElement('button');
+    request.type = 'button';
+    request.className = 'subtle-button';
+    request.textContent = 'Preview activation request';
+    request.addEventListener('click', async () => {
+      request.disabled = true;
+      request.textContent = 'Previewing request';
+      try {
+        await createInternalSendActivationRequest(design);
+        request.textContent = 'Activation request previewed';
+        appendMessage('mira', 'Activation request preview saved locally. Nothing was sent or executed.');
+        await refreshInternalSendActivationRequests();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        request.disabled = false;
+        request.textContent = 'Preview activation request';
+      }
+    });
+    card.append(request);
+    return card;
+  }));
+}
+
+function updateInternalSendActivationRequestList(payload) {
+  const requests = Array.isArray(payload?.requests) ? payload.requests : [];
+  state.missionControlInternalSendActivationRequestCount = Number(payload?.requestCount || requests.length || 0);
+  renderWorkSummary();
+  if (requests.length === 0) {
+    setText(elements.routeInternalSendActivationRequestList, 'no activation requests yet');
+    return;
+  }
+
+  elements.routeInternalSendActivationRequestList.replaceChildren(...requests.slice(0, 5).map((request) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-internal-send-activation-request';
+    const title = document.createElement('strong');
+    title.textContent = `${request.targetRole || 'team'} · activation request preview`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(request.status || 'activation_request_review_only').replace(/_/g, ' ')} · reviewer/refusal/rollback/audit required · manual execution required · not sent · ${formatReadyStamp(request.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Pane target', request.targetLabel || `${request.targetRole || 'team'} pane ${request.targetPaneId || '?'}`);
+    appendPreviewLine(card, 'Body', request.contentPreview || request.content);
+    appendPreviewLine(card, 'Reviewer', `${request.reviewer?.reviewerRole || 'architect_or_oracle'} · ${String(request.reviewer?.status || 'pending_review').replace(/_/g, ' ')}`);
+    appendPreviewLine(card, 'Activation request', `${request.activationRequest?.requiredReview || 'separate_reviewed_activation'}; activation allowed: ${request.activationRequest?.activationAllowed === true ? 'yes' : 'no'}`);
+    appendPreviewLine(card, 'Refusal', (request.refusalPolicy || []).map((item) => item.label).join(' / '));
+    appendPreviewLine(card, 'Rollback', (request.rollbackPlan || []).map((item) => item.label).join(' / '));
+    appendPreviewLine(card, 'Audit', 'request preview only; reviewer, refusal, rollback, and audit fields are visible; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     return card;
   }));
 }
@@ -1477,6 +1532,13 @@ async function refreshInternalSendActivationDesigns() {
   updateInternalSendActivationDesignList(payload);
 }
 
+async function refreshInternalSendActivationRequests() {
+  const response = await fetch('/mission-control/internal-send-activation-requests');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateInternalSendActivationRequestList(payload);
+}
+
 async function refreshAutonomy() {
   const response = await fetch('/autonomy/status');
   const payload = await response.json();
@@ -1768,6 +1830,21 @@ async function createInternalSendActivationDesign(dryRun) {
   return payload;
 }
 
+async function createInternalSendActivationRequest(design) {
+  const response = await fetch('/mission-control/internal-send-activation-requests', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      internalSendActivationDesignToken: design?.actionToken || '',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control activation request preview save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1854,6 +1931,7 @@ async function primeReadOnlyWorkbench() {
     await refreshDispatchReadiness();
     await refreshInternalSendDryRuns();
     await refreshInternalSendActivationDesigns();
+    await refreshInternalSendActivationRequests();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1883,6 +1961,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshDispatchReadiness();
     await refreshInternalSendDryRuns();
     await refreshInternalSendActivationDesigns();
+    await refreshInternalSendActivationRequests();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1975,6 +2054,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     await refreshDispatchReadiness();
     await refreshInternalSendDryRuns();
     await refreshInternalSendActivationDesigns();
+    await refreshInternalSendActivationRequests();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {
