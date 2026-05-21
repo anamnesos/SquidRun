@@ -140,7 +140,8 @@ function main() {
   try {
     const args = parseArgs(process.argv.slice(2));
     if (args.help) {
-      console.log('Usage: node mira/tools/read-runtime-turns.js [--json] [--include-internal] [--limit N] [--state-root PATH]');
+      console.log('Usage: node mira/tools/read-runtime-turns.js [--json] [--include-internal|--debug] [--limit N] [--state-root PATH]');
+      console.log('Internal/debug mode includes safe gate/status metadata only; rejected generated text is never exported.');
       return;
     }
     const result = readRuntimeTurns(args);

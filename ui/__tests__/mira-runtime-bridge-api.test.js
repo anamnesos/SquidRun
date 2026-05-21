@@ -2404,6 +2404,18 @@ describe('Mira runtime bridge manual-plan API', () => {
       cwd: repoRoot,
       encoding: 'utf8',
     }));
+    const cliDebugPayload = JSON.parse(execFileSync(process.execPath, [
+      path.join(repoRoot, 'mira', 'tools', 'read-runtime-turns.js'),
+      '--json',
+      '--debug',
+      '--limit',
+      '1',
+      '--state-root',
+      tempStateRoot,
+    ], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }));
 
     expect(response.status).toBe(200);
     expect(openAiRequests).toHaveLength(1);
@@ -2481,6 +2493,16 @@ describe('Mira runtime bridge manual-plan API', () => {
       reason: 'visible_reply_gate_violation',
       journalStoresRejectedText: false,
     }));
+    expect(cliDebugPayload.records[0].visible_reply_gate).toEqual(expect.objectContaining({
+      held: true,
+      violations: expect.arrayContaining(['backstage_label']),
+      source: 'mira_runtime_visible_reply_gate_v0',
+    }));
+    expect(cliDebugPayload.records[0].held_reply_audit).toEqual(expect.objectContaining({
+      held: true,
+      reason: 'visible_reply_gate_violation',
+      journalStoresRejectedText: false,
+    }));
 
     const publicText = `${JSON.stringify(payload)}\n${JSON.stringify(recentPayload)}\n${JSON.stringify(cliPublicPayload)}`;
     expect(publicText).not.toContain(rejectedGeneratedText);
@@ -2495,6 +2517,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(JSON.stringify(cliInternalPayload)).not.toContain('validation fixture');
     expect(JSON.stringify(cliInternalPayload)).not.toContain('proof scaffolding');
     expect(JSON.stringify(cliInternalPayload)).not.toContain('route owner protocol');
+    expect(JSON.stringify(cliDebugPayload)).not.toContain(rejectedGeneratedText);
+    expect(JSON.stringify(cliDebugPayload)).not.toContain('validation fixture');
+    expect(JSON.stringify(cliDebugPayload)).not.toContain('proof scaffolding');
+    expect(JSON.stringify(cliDebugPayload)).not.toContain('route owner protocol');
   });
 
   test('can use local Ollama/Gemma chat for model-backed turns without tools or sends', async () => {
