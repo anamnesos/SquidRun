@@ -2908,6 +2908,7 @@ describe('Mira runtime UI boot', () => {
       .join('\n');
     expect(historyText).toContain('oracle · benchmark review');
     expect(historyText).toContain('pending internal review · manual execution required · not sent');
+    expect(historyText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(historyText).toContain('no runtime execution, external send, route flip, provider, account or token access, or live hm-send');
     expect(historyText).toContain('Mission Control focus: selected source for Make review item; use the existing Make review item action.');
     expect(harness.elements.routePreviewHistoryList.children[0].className).toContain('selected-manual-source');
@@ -3763,6 +3764,12 @@ describe('Mira runtime UI boot', () => {
       .filter((call) => call.url === '/mission-control/route-previews' && call.method === 'POST');
     expect(routePreviewPostCalls).toHaveLength(routePreviewPostCountBeforeSave + 1);
     expect(routePreviewPostCalls[routePreviewPostCalls.length - 1].body.missionAnswer).toBe(visiblePanelAnswer);
+    const savedPreviewText = harness.elements.routePreviewHistoryList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(savedPreviewText).toContain('Mission answer: What now: Inspect the local status card as a completed Mission Control demo; the chain ends at a hard stop, not a live send.');
+    expect(savedPreviewText).toContain('Meaning: The saved chain is complete as a read-only demo: 12/12 stages are available and the current artifact is Live activation hard-stop contract.');
+    expect(savedPreviewText).toContain('Next boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
 
     harness.elements.turnText.value = 'what now?';
     const submitEvent = { preventDefault: jest.fn() };

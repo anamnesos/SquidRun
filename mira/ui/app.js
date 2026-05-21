@@ -974,6 +974,7 @@ function updateRoutePreviewHistoryList(payload) {
     meta.textContent = `${String(preview.status || 'pending_internal_review').replace(/_/g, ' ')} · manual execution required · not sent · ${formatReadyStamp(preview.createdAt)}`;
     card.append(title, meta);
     appendPreviewLine(card, 'Preview', preview.contentPreview || preview.content);
+    appendPreviewLine(card, 'Mission answer', preview.missionAnswerPreview || 'No Mission Control answer was captured with this preview.');
     appendPreviewLine(card, 'Audit', 'internal review only; no runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
     const promote = document.createElement('button');
     promote.type = 'button';
