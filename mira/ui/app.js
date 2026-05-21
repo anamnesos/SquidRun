@@ -404,6 +404,21 @@ function setClassToken(node, className, enabled) {
   node.className = next.join(' ');
 }
 
+function setElementAttribute(node, name, value) {
+  if (!node || !name) return;
+  if (value) {
+    node.setAttribute(name, value);
+    node[name] = value;
+    return;
+  }
+  if (typeof node.removeAttribute === 'function') {
+    node.removeAttribute(name);
+  } else if (node.attributes) {
+    delete node.attributes[name];
+  }
+  node[name] = '';
+}
+
 function missionControlActionContainers() {
   return [
     elements.routePreviewHistoryList,
@@ -417,6 +432,12 @@ function missionControlActionContainers() {
     elements.routeInternalSendActivationAuditList,
     elements.routeInternalSendActivationReadinessList,
   ].filter(Boolean);
+}
+
+function missionControlActionAnchorId(focus) {
+  const raw = `${focus?.stageId || 'source'}-${focus?.tokenValue || 'token'}`;
+  const safe = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return `mission-control-manual-step-${safe || 'source'}`;
 }
 
 function findMissionControlFocusLine(card) {
@@ -456,6 +477,7 @@ function applyMissionControlActionFocusToCard(card) {
       && card.dataset?.missionActionToken === focus.tokenValue,
   );
   setClassToken(card, 'selected-manual-source', selected);
+  setElementAttribute(card, 'id', selected ? missionControlActionAnchorId(focus) : '');
 
   const focusLine = selected ? ensureMissionControlFocusLine(card) : findMissionControlFocusLine(card);
   if (focusLine) {
@@ -494,6 +516,8 @@ function buildManualActionSelectorSummary(preflight, payloadPreview, focus) {
   );
   if (!ready) {
     return {
+      ready: false,
+      header: 'Next manual step: none ready. Read-only status card only; no manual action is selected.',
       selector: 'blocked: no existing manual action is ready to select.',
       checklist: [
         'ok: status surface is read-only',
@@ -506,6 +530,10 @@ function buildManualActionSelectorSummary(preflight, payloadPreview, focus) {
   }
 
   return {
+    ready: true,
+    header: `Next manual step: ${focus.actionLabel} on ${focus.stageLabel}. Manual-only. Use the existing highlighted card/button; this status card does not submit.`,
+    anchorHref: `#${missionControlActionAnchorId(focus)}`,
+    anchorText: `Jump to highlighted ${focus.stageLabel} card`,
     selector: `ready: ${focus.actionLabel} on ${focus.stageLabel}; ${focus.tokenField}=${focus.tokenValue}; ${payloadPreview.method || 'no method'} ${payloadPreview.endpoint || 'no endpoint'}; manual-only because this status card does not submit.`,
     checklist: [
       'ok: status surface is read-only',
@@ -515,6 +543,22 @@ function buildManualActionSelectorSummary(preflight, payloadPreview, focus) {
       'ok: selector summary does not submit anything',
     ].join(' / '),
   };
+}
+
+function appendManualActionStepHeader(card, selectorSummary) {
+  if (!selectorSummary?.header) return;
+  const line = document.createElement('p');
+  line.className = 'manual-action-step-header';
+  line.dataset.missionManualStepHeader = 'true';
+  line.textContent = selectorSummary.header;
+  if (selectorSummary.ready && selectorSummary.anchorHref && selectorSummary.anchorText) {
+    const anchor = document.createElement('a');
+    anchor.textContent = selectorSummary.anchorText;
+    anchor.setAttribute('href', selectorSummary.anchorHref);
+    anchor.setAttribute('aria-label', selectorSummary.anchorText);
+    line.append(anchor);
+  }
+  card.append(line);
 }
 
 function renderWorkSummary() {
@@ -1596,6 +1640,8 @@ function updateActivationPipelineStatus(payload) {
   const meta = document.createElement('span');
   meta.textContent = `${current?.label || 'No chain yet'} · read only · not sent`;
   card.append(title, meta);
+  const selectorSummary = buildManualActionSelectorSummary(preflight, payloadPreview, state.missionControlActionFocus);
+  appendManualActionStepHeader(card, selectorSummary);
   appendPreviewLine(card, 'Current stage', current?.summary || 'No saved Mission Control send chain yet.');
   appendPreviewLine(card, 'Last saved', lastSaved ? `${lastSaved.label}: ${lastSaved.latestStatus || 'saved'}; token ${lastSaved.latestToken || 'not available'}` : 'No saved artifact yet.');
   appendPreviewLine(card, 'Hard stop', `live send available: no; hard-stop contract: ${hardStop.hardStopContractRecorded === true ? 'yes' : 'no'}; James setup before live send: ${hardStop.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}`);
@@ -1626,7 +1672,6 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'Comparison', selection.comparisonSummary || 'No comparison available.');
   }
   if (preflight) {
-    const selectorSummary = buildManualActionSelectorSummary(preflight, payloadPreview, state.missionControlActionFocus);
     const preflightStatus = String(preflight.status || 'unknown').replace(/_/g, ' ');
     appendPreviewLine(card, 'Manual action preflight', `${preflightStatus}: ${preflight.manualActionLabel || 'no manual action'} · ${preflight.explanation || ''}`.trim());
     appendPreviewLine(card, 'Manual action input', preflight.tokenField

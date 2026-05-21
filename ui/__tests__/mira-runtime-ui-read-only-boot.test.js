@@ -2551,7 +2551,11 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.routeInternalSendActivationAuditList.textContent).toBe('no activation decision audits yet');
     expect(harness.elements.routeInternalSendActivationReadinessList.textContent).toBe('no activation implementation readiness yet');
     expect(harness.elements.routeInternalSendLiveGateList.textContent).toBe('no live activation gate contracts yet');
-    const emptyPipelineText = harness.elements.routeActivationPipelineStatus.children[0].children
+    const emptyPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const emptyStepHeader = emptyPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(emptyStepHeader.textContent).toBe('Next manual step: none ready. Read-only status card only; no manual action is selected.');
+    expect(emptyStepHeader.children).toHaveLength(0);
+    const emptyPipelineText = emptyPipelineCard.children
       .map((child) => child.textContent)
       .join('\n');
     expect(emptyPipelineText).toContain('Activation pipeline status');
@@ -2720,10 +2724,19 @@ describe('Mira runtime UI boot', () => {
     expect(historyText).toContain('no runtime execution, external send, route flip, provider, account or token access, or live hm-send');
     expect(historyText).toContain('Mission Control focus: selected source for Make review item; use the existing Make review item action.');
     expect(harness.elements.routePreviewHistoryList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routePreviewHistoryList.children[0].attributes.id).toBe('mission-control-manual-step-route-preview-mission-route-test');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Route preview saved for internal review. Nothing was sent or executed.');
     expect(harness.elements.saveRoutePreviewButton.disabled).toBe(false);
     expect(harness.elements.saveRoutePreviewButton.textContent).toBe('Save preview for review');
-    const routePreviewPipelineText = harness.elements.routeActivationPipelineStatus.children[0].children
+    const routePreviewPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const routePreviewStepHeader = routePreviewPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(routePreviewStepHeader.textContent).toBe('Next manual step: Make review item on Route preview. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(routePreviewStepHeader.children).toHaveLength(1);
+    expect(routePreviewStepHeader.children[0].tagName).toBe('A');
+    expect(routePreviewStepHeader.children[0].textContent).toBe('Jump to highlighted Route preview card');
+    expect(routePreviewStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-route-preview-mission-route-test');
+    expect(routePreviewStepHeader.children[0].attributes['aria-label']).toBe('Jump to highlighted Route preview card');
+    const routePreviewPipelineText = routePreviewPipelineCard.children
       .map((child) => child.textContent)
       .join('\n');
     expect(routePreviewPipelineText).toContain('Advance selector: advance available: Route preview -> Review item. Route preview is the latest available stage before the first missing stage, Review item.');
@@ -3187,7 +3200,11 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusCalls.length).toBeGreaterThan(1);
     expect(pipelineStatusCalls.every((call) => call.method === 'GET')).toBe(true);
     expect(pipelineStatusCalls.some((call) => call.method === 'POST')).toBe(false);
-    const pipelineStatusText = harness.elements.routeActivationPipelineStatus.children[0].children
+    const hardStopPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const hardStopStepHeader = hardStopPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(hardStopStepHeader.textContent).toBe('Next manual step: none ready. Read-only status card only; no manual action is selected.');
+    expect(hardStopStepHeader.children).toHaveLength(0);
+    const pipelineStatusText = hardStopPipelineCard.children
       .map((child) => child.textContent)
       .join('\n');
     expect(pipelineStatusText).toContain('Activation pipeline status');
