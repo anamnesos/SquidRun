@@ -870,6 +870,7 @@ export type MissionControlInternalSendActivationRequestRecord = {
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   bodySha256: string;
   adapterPacketSha256: string;
   reviewer: {
@@ -4723,6 +4724,7 @@ function activationRequestPreviewFromActivationDesign(
     purpose: design.purpose,
     content: design.content,
     contentPreview: design.contentPreview,
+    missionAnswerPreview: design.missionAnswerPreview,
     bodySha256,
     adapterPacketSha256: design.adapterPacketSha256,
     reviewer: {

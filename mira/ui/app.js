@@ -1475,6 +1475,7 @@ function updateInternalSendActivationRequestList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', request.targetLabel || `${request.targetRole || 'team'} pane ${request.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', request.contentPreview || request.content);
+    appendPreviewLine(card, 'Mission answer', request.missionAnswerPreview || 'No originating Mission Control answer is attached to this activation-request preview.');
     appendPreviewLine(card, 'Reviewer', `${request.reviewer?.reviewerRole || 'architect_or_oracle'} · ${String(request.reviewer?.status || 'pending_review').replace(/_/g, ' ')}`);
     appendPreviewLine(card, 'Activation request', `${request.activationRequest?.requiredReview || 'separate_reviewed_activation'}; activation allowed: ${request.activationRequest?.activationAllowed === true ? 'yes' : 'no'}`);
     appendPreviewLine(card, 'Refusal', (request.refusalPolicy || []).map((item) => item.label).join(' / '));

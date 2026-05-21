@@ -1974,6 +1974,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: design.purpose,
         content: design.content,
         contentPreview: design.contentPreview,
+        missionAnswerPreview: design.missionAnswerPreview,
         bodySha256: design.bodySha256,
         adapterPacketSha256: design.adapterPacketSha256,
         reviewer: {
@@ -3447,6 +3448,7 @@ describe('Mira runtime UI boot', () => {
     expect(activationRequestText).toContain('activation request review only · reviewer/refusal/rollback/audit required · manual execution required · not sent');
     expect(activationRequestText).toContain('Pane target: oracle pane 3');
     expect(activationRequestText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(activationRequestText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(activationRequestText).toContain('Reviewer: architect_or_oracle · pending review');
     expect(activationRequestText).toContain('Activation request: separate_reviewed_activation; activation allowed: no');
     expect(activationRequestText).toContain('Missing or unknown activation-design tokens must return 400 without writing.');
