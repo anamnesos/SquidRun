@@ -2178,6 +2178,12 @@ describe('Mira runtime bridge manual-plan API', () => {
     const duplicateDispatchReadinessPayload = await duplicateDispatchReadinessResponse.json();
     const listDispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness?includeInternal=1`);
     const listDispatchReadinessPayload = await listDispatchReadinessResponse.json();
+    const postDispatchPipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const postDispatchPipelineStatusPayload = await postDispatchPipelineStatusResponse.json();
+    const internalSendDryRunStatusDir = path.join(tempStateRoot, 'mission-control', 'internal-send-dry-runs');
+    const internalSendDryRunFilesAfterStatusRefresh = fs.existsSync(internalSendDryRunStatusDir)
+      ? fs.readdirSync(internalSendDryRunStatusDir).filter((file) => file.endsWith('.json'))
+      : [];
     expect(dispatchReadinessResponse.status).toBe(200);
     expect(dispatchReadinessPayload).toEqual(expect.objectContaining({
       ok: true,
@@ -2329,6 +2335,79 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+    expect(postDispatchPipelineStatusResponse.status).toBe(200);
+    expect(postDispatchPipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
+      id: 'dispatch_readiness',
+      label: 'Dispatch readiness',
+      latestToken: dispatchReadinessPayload.readiness.actionToken,
+      relativePath: dispatchReadinessPayload.relativePath,
+      sourceStageId: 'internal_delivery_preview',
+      sourceToken: deliveryPreviewPayload.preview.actionToken,
+      bodySha256: expectedDeliveryBodySha256,
+      adapterPacketSha256: null,
+    }));
+    expect(postDispatchPipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
+      id: 'dispatch_readiness',
+      label: 'Dispatch readiness',
+      latestToken: dispatchReadinessPayload.readiness.actionToken,
+      relativePath: dispatchReadinessPayload.relativePath,
+    }));
+    expect(postDispatchPipelineStatusPayload.currentStageTrace.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stageId: 'internal_delivery_preview',
+        token: deliveryPreviewPayload.preview.actionToken,
+        sourceStageId: 'follow_through_recommendation',
+        sourceToken: followThroughPayload.selectedRecommendation.actionToken,
+      }),
+      expect.objectContaining({
+        stageId: 'dispatch_readiness',
+        token: dispatchReadinessPayload.readiness.actionToken,
+        relativePath: dispatchReadinessPayload.relativePath,
+        sourceStageId: 'internal_delivery_preview',
+        sourceToken: deliveryPreviewPayload.preview.actionToken,
+        bodySha256: expectedDeliveryBodySha256,
+        adapterPacketSha256: null,
+      }),
+    ]));
+    expect(postDispatchPipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      status: 'advance_available',
+      selectedStageId: 'dispatch_readiness',
+      selectedStageLabel: 'Dispatch readiness',
+      selectedArtifactToken: dispatchReadinessPayload.readiness.actionToken,
+      selectedRelativePath: dispatchReadinessPayload.relativePath,
+      selectedSourceStageId: 'internal_delivery_preview',
+      selectedSourceToken: deliveryPreviewPayload.preview.actionToken,
+      selectedBodySha256: expectedDeliveryBodySha256,
+      selectedAdapterPacketSha256: null,
+      nextStageId: 'internal_send_dry_run',
+      nextStageLabel: 'Internal-send dry run',
+    }));
+    expect(postDispatchPipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      status: 'ready',
+      selectedStageId: 'dispatch_readiness',
+      selectedStageLabel: 'Dispatch readiness',
+      manualActionLabel: 'Create send dry run',
+      tokenField: 'dispatchReadinessToken',
+      tokenValue: dispatchReadinessPayload.readiness.actionToken,
+    }));
+    expect(postDispatchPipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      status: 'ready',
+      actionLabel: 'Create send dry run',
+      method: 'POST',
+      endpoint: '/mission-control/internal-send-dry-runs',
+      payload: {
+        dispatchReadinessToken: dispatchReadinessPayload.readiness.actionToken,
+      },
+      requiredManualInputs: [],
+    }));
+    expect(postDispatchPipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      status: 'matched',
+      handlerName: 'createInternalSendDryRun',
+      expectedEndpoint: '/mission-control/internal-send-dry-runs',
+      expectedTokenField: 'dispatchReadinessToken',
+      previewTokenField: 'dispatchReadinessToken',
+    }));
+    expect(internalSendDryRunFilesAfterStatusRefresh).toHaveLength(0);
 
     const internalSendDryRunDir = path.join(tempStateRoot, 'mission-control', 'internal-send-dry-runs');
     const missingDryRunTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-dry-runs`, {

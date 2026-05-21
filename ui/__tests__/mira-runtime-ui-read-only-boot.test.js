@@ -3034,9 +3034,35 @@ describe('Mira runtime UI boot', () => {
     expect(readinessText).toContain('Checksum match: yes');
     expect(readinessText).toContain('Copied pane body checksum matches the saved delivery preview body.');
     expect(readinessText).toContain('no command stored, hm-send execution, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.elements.routeDeliveryPreviewList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeDeliveryPreviewList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeDispatchReadinessList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeDispatchReadinessList.children[0].attributes.id).toBe('mission-control-manual-step-dispatch-readiness-mission-dispatch-readiness-test');
     const dryRunButton = harness.elements.routeDispatchReadinessList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Create send dry run');
     expect(dryRunButton.textContent).toBe('Create send dry run');
+    expect(dryRunButton.className).toContain('selected-manual-action');
+    expect(dryRunButton.attributes['aria-label']).toBe('Selected Mission Control action: Create send dry run');
+    const postDispatchPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postDispatchStepHeader = postDispatchPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postDispatchStepHeader.textContent).toBe('Next manual step: Create send dry run on Dispatch readiness. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postDispatchStepHeader.children).toHaveLength(1);
+    expect(postDispatchStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-dispatch-readiness-mission-dispatch-readiness-test');
+    const postDispatchPipelineText = postDispatchPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postDispatchPipelineText).toContain('Current stage: Dispatch readiness: ready for manual dispatch review; token mission-dispatch-readiness-test.');
+    expect(postDispatchPipelineText).toContain('Last saved: Dispatch readiness: ready_for_manual_dispatch_review; token mission-dispatch-readiness-test');
+    expect(postDispatchPipelineText).toContain('Current evidence: token mission-dispatch-readiness-test; status saved; path mission-control/dispatch-readiness/mission-dispatch-readiness-test.json; relation internal_delivery_preview -> dispatch_readiness; source token mission-delivery-preview-test; body body-sha256-test');
+    expect(postDispatchPipelineText).toContain('Advance selector: advance available: Dispatch readiness -> Internal-send dry run. Dispatch readiness is the latest available stage before the first missing stage, Internal-send dry run.');
+    expect(postDispatchPipelineText).toContain('Manual action preflight: ready: Create send dry run · Create send dry run is the next manual internal action because Dispatch readiness is selected and Internal-send dry run is the first missing stage. Use the selected token as dispatchReadinessToken; this preflight does not perform the action.');
+    expect(postDispatchPipelineText).toContain('Manual action input: dispatchReadinessToken=mission-dispatch-readiness-test; source mission-control/dispatch-readiness/mission-dispatch-readiness-test.json; next Internal-send dry run');
+    expect(postDispatchPipelineText).toContain('Selected artifact: token mission-dispatch-readiness-test; path mission-control/dispatch-readiness/mission-dispatch-readiness-test.json; source mission-delivery-preview-test; body body-sha256-test; adapter not available');
+    expect(postDispatchPipelineText).toContain('Workbench focus: Highlight the existing Dispatch readiness card at mission-control/dispatch-readiness/mission-dispatch-readiness-test.json and use its existing Create send dry run action.');
+    expect(postDispatchPipelineText).toContain('Manual selector summary: ready: Create send dry run on Dispatch readiness; dispatchReadinessToken=mission-dispatch-readiness-test; POST /mission-control/internal-send-dry-runs; manual-only because this status card does not submit.');
+    expect(postDispatchPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-send-dry-runs · This is the exact workbench payload preview for Create send dry run; it is not submitted by the status surface.');
+    expect(postDispatchPipelineText).toContain('Payload body: {"dispatchReadinessToken":"mission-dispatch-readiness-test"}');
+    expect(postDispatchPipelineText).toContain('Handler drift check: matched: createInternalSendDryRun · createInternalSendDryRun expects POST /mission-control/internal-send-dry-runs with dispatchReadinessToken; payload preview matches that workbench handler contract.');
     await dryRunButton.listeners.click();
 
     const dryRunCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-dry-runs');
