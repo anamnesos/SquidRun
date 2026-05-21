@@ -240,9 +240,12 @@ function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text);
 }
 
+function currentMissionControlAnswer() {
+  return state.missionControlWhatNowAnswer || state.missionControl?.answer || '';
+}
+
 function answerMissionControlQuestion() {
-  const mission = state.missionControl;
-  const answer = state.missionControlWhatNowAnswer || mission?.answer;
+  const answer = currentMissionControlAnswer();
   if (!answer) return false;
   appendMessage('mira', answer, 'mira mission-answer');
   setText(elements.lastTurn, 'mission control local');
@@ -2307,7 +2310,7 @@ async function saveMissionControlRoutePreview() {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       preview,
-      missionAnswer: state.missionControl?.answer || '',
+      missionAnswer: currentMissionControlAnswer(),
       source: 'runtime-ui',
     }),
   });

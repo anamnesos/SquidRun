@@ -3755,6 +3755,14 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.missionAnswer.textContent).toContain('Next boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
     expect((harness.elements.missionAnswer.textContent.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
     const visiblePanelAnswer = harness.elements.missionAnswer.textContent;
+    const routePreviewPostCountBeforeSave = harness.calls
+      .filter((call) => call.url === '/mission-control/route-previews' && call.method === 'POST')
+      .length;
+    await harness.elements.saveRoutePreviewButton.listeners.click();
+    const routePreviewPostCalls = harness.calls
+      .filter((call) => call.url === '/mission-control/route-previews' && call.method === 'POST');
+    expect(routePreviewPostCalls).toHaveLength(routePreviewPostCountBeforeSave + 1);
+    expect(routePreviewPostCalls[routePreviewPostCalls.length - 1].body.missionAnswer).toBe(visiblePanelAnswer);
 
     harness.elements.turnText.value = 'what now?';
     const submitEvent = { preventDefault: jest.fn() };
