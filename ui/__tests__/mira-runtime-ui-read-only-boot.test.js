@@ -3306,12 +3306,38 @@ describe('Mira runtime UI boot', () => {
     expect(activationAuditText).toContain('Refusal: refused_for_live_execution · No live hm-send execution is allowed from this review-only audit artifact.');
     expect(activationAuditText).toContain('Rollback audit: rollback_audit_previewed · snapshot: required · failure audit: required');
     expect(activationAuditText).toContain('decision/refusal/rollback audit only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.elements.routeInternalSendActivationRequestList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationRequestList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeInternalSendActivationAuditList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationAuditList.children[0].attributes.id).toBe('mission-control-manual-step-activation-decision-audit-mission-send-activation-audit-test');
+    const postDecisionAuditPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postDecisionAuditStepHeader = postDecisionAuditPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postDecisionAuditStepHeader.textContent).toBe('Next manual step: Check implementation readiness on Decision audit. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postDecisionAuditStepHeader.children).toHaveLength(1);
+    expect(postDecisionAuditStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-activation-decision-audit-mission-send-activation-audit-test');
+    const postDecisionAuditPipelineText = postDecisionAuditPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postDecisionAuditPipelineText).toContain('Current stage: Decision audit: activation decision audit review only; token mission-send-activation-audit-test.');
+    expect(postDecisionAuditPipelineText).toContain('Last saved: Decision audit: activation_decision_audit_review_only; token mission-send-activation-audit-test');
+    expect(postDecisionAuditPipelineText).toContain('Current evidence: token mission-send-activation-audit-test; status saved; path mission-control/internal-send-activation-decision-audits/mission-send-activation-audit-test.json; relation activation_request -> activation_decision_audit; source token mission-send-activation-request-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postDecisionAuditPipelineText).toContain('Advance selector: advance available: Decision audit -> Implementation readiness. Decision audit is the latest available stage before the first missing stage, Implementation readiness.');
+    expect(postDecisionAuditPipelineText).toContain('Manual action preflight: ready: Check implementation readiness · Check implementation readiness is the next manual internal action because Decision audit is selected and Implementation readiness is the first missing stage. Use the selected token as internalSendActivationDecisionAuditToken; this preflight does not perform the action.');
+    expect(postDecisionAuditPipelineText).toContain('Manual action input: internalSendActivationDecisionAuditToken=mission-send-activation-audit-test; source mission-control/internal-send-activation-decision-audits/mission-send-activation-audit-test.json; next Implementation readiness');
+    expect(postDecisionAuditPipelineText).toContain('Selected artifact: token mission-send-activation-audit-test; path mission-control/internal-send-activation-decision-audits/mission-send-activation-audit-test.json; source mission-send-activation-request-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postDecisionAuditPipelineText).toContain('Workbench focus: Highlight the existing Decision audit card at mission-control/internal-send-activation-decision-audits/mission-send-activation-audit-test.json and use its existing Check implementation readiness action.');
+    expect(postDecisionAuditPipelineText).toContain('Manual selector summary: ready: Check implementation readiness on Decision audit; internalSendActivationDecisionAuditToken=mission-send-activation-audit-test; POST /mission-control/internal-send-activation-implementation-readiness; manual-only because this status card does not submit.');
+    expect(postDecisionAuditPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-send-activation-implementation-readiness · This is the exact workbench payload preview for Check implementation readiness; it is not submitted by the status surface.');
+    expect(postDecisionAuditPipelineText).toContain('Payload body: {"internalSendActivationDecisionAuditToken":"mission-send-activation-audit-test"}');
+    expect(postDecisionAuditPipelineText).toContain('Handler drift check: matched: createInternalSendActivationImplementationReadiness · createInternalSendActivationImplementationReadiness expects POST /mission-control/internal-send-activation-implementation-readiness with internalSendActivationDecisionAuditToken; payload preview matches that workbench handler contract.');
     const implementationReadinessCallsBeforeClick = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-implementation-readiness');
     expect(implementationReadinessCallsBeforeClick.every((call) => call.method === 'GET')).toBe(true);
     expect(implementationReadinessCallsBeforeClick).toHaveLength(10);
     const implementationReadinessButton = harness.elements.routeInternalSendActivationAuditList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Check implementation readiness');
     expect(implementationReadinessButton.textContent).toBe('Check implementation readiness');
+    expect(implementationReadinessButton.className).toContain('selected-manual-action');
+    expect(implementationReadinessButton.attributes['aria-label']).toBe('Selected Mission Control action: Check implementation readiness');
     await implementationReadinessButton.listeners.click();
 
     const implementationReadinessCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-implementation-readiness');
