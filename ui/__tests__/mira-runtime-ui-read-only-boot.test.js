@@ -3093,6 +3093,35 @@ describe('Mira runtime UI boot', () => {
     expect(dryRunText).toContain('Adapter: hm-send dry-run via ui/scripts/hm-send.js');
     expect(dryRunText).toContain('Activation gate: separate_reviewed_activation');
     expect(dryRunText).toContain('no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.elements.routeDispatchReadinessList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeDispatchReadinessList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeInternalSendDryRunList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendDryRunList.children[0].attributes.id).toBe('mission-control-manual-step-internal-send-dry-run-mission-send-dry-run-test');
+    const activationDesignButton = harness.elements.routeInternalSendDryRunList.children[0].children
+      .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Design activation proof');
+    expect(activationDesignButton.textContent).toBe('Design activation proof');
+    expect(activationDesignButton.className).toContain('selected-manual-action');
+    expect(activationDesignButton.attributes['aria-label']).toBe('Selected Mission Control action: Design activation proof');
+    const postDryRunPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postDryRunStepHeader = postDryRunPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postDryRunStepHeader.textContent).toBe('Next manual step: Design activation proof on Internal-send dry run. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postDryRunStepHeader.children).toHaveLength(1);
+    expect(postDryRunStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-internal-send-dry-run-mission-send-dry-run-test');
+    const postDryRunPipelineText = postDryRunPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postDryRunPipelineText).toContain('Current stage: Internal-send dry run: dry run ready; token mission-send-dry-run-test.');
+    expect(postDryRunPipelineText).toContain('Last saved: Internal-send dry run: dry_run_ready; token mission-send-dry-run-test');
+    expect(postDryRunPipelineText).toContain('Current evidence: token mission-send-dry-run-test; status saved; path mission-control/internal-send-dry-runs/mission-send-dry-run-test.json; relation dispatch_readiness -> internal_send_dry_run; source token mission-dispatch-readiness-test; body body-sha256-test');
+    expect(postDryRunPipelineText).toContain('Advance selector: advance available: Internal-send dry run -> Activation design. Internal-send dry run is the latest available stage before the first missing stage, Activation design.');
+    expect(postDryRunPipelineText).toContain('Manual action preflight: ready: Design activation proof · Design activation proof is the next manual internal action because Internal-send dry run is selected and Activation design is the first missing stage. Use the selected token as internalSendDryRunToken; this preflight does not perform the action.');
+    expect(postDryRunPipelineText).toContain('Manual action input: internalSendDryRunToken=mission-send-dry-run-test; source mission-control/internal-send-dry-runs/mission-send-dry-run-test.json; next Activation design');
+    expect(postDryRunPipelineText).toContain('Selected artifact: token mission-send-dry-run-test; path mission-control/internal-send-dry-runs/mission-send-dry-run-test.json; source mission-dispatch-readiness-test; body body-sha256-test; adapter not available');
+    expect(postDryRunPipelineText).toContain('Workbench focus: Highlight the existing Internal-send dry run card at mission-control/internal-send-dry-runs/mission-send-dry-run-test.json and use its existing Design activation proof action.');
+    expect(postDryRunPipelineText).toContain('Manual selector summary: ready: Design activation proof on Internal-send dry run; internalSendDryRunToken=mission-send-dry-run-test; POST /mission-control/internal-send-activation-designs; manual-only because this status card does not submit.');
+    expect(postDryRunPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-send-activation-designs · This is the exact workbench payload preview for Design activation proof; it is not submitted by the status surface.');
+    expect(postDryRunPipelineText).toContain('Payload body: {"internalSendDryRunToken":"mission-send-dry-run-test"}');
+    expect(postDryRunPipelineText).toContain('Handler drift check: matched: createInternalSendActivationDesign · createInternalSendActivationDesign expects POST /mission-control/internal-send-activation-designs with internalSendDryRunToken; payload preview matches that workbench handler contract.');
     const activationDesignCallsBeforeClick = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-designs');
     expect(activationDesignCallsBeforeClick).toEqual([
       expect.objectContaining({ method: 'GET' }),
@@ -3112,9 +3141,6 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
-    const activationDesignButton = harness.elements.routeInternalSendDryRunList.children[0].children
-      .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Design activation proof');
-    expect(activationDesignButton.textContent).toBe('Design activation proof');
     await activationDesignButton.listeners.click();
 
     const activationDesignCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-designs');
