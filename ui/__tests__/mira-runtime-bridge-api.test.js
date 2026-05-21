@@ -4350,6 +4350,22 @@ describe('Mira runtime bridge manual-plan API', () => {
       nextBoundary: expect.stringContaining('hard-stop contract'),
     }));
     expect(pipelineStatusPayload.endToEndReadout.demoPath.noEffectSummary).toContain('without adding a write path or live action');
+    expect(pipelineStatusPayload.endToEndReadout.demoPath.inspectionRunbook).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_demo_inspection_runbook.v0',
+      entryPoint: 'Local New Mira workbench -> Mission Control activation pipeline status card',
+      evidenceSource: 'GET /mission-control/activation-pipeline-status',
+      steps: expect.arrayContaining([
+        'Open the local New Mira workbench',
+        'Find the Activation pipeline status card',
+      ]),
+      expectedReadout: expect.arrayContaining([
+        'terminal hard stop',
+        '12/12 stages available',
+        'live send unavailable',
+      ]),
+      verification: expect.stringContaining('existing status GET'),
+      boundary: expect.stringContaining('Inspection is read-only product clarity'),
+    }));
     expect(pipelineStatusPayload.endToEndReadout.provenSummary).toContain('Saved local evidence covers route preview through live activation hard-stop contract');
     expect(pipelineStatusPayload.endToEndReadout.manualOnlySummary).toContain('explicit workbench actions');
     expect(pipelineStatusPayload.endToEndReadout.nextBoundary).toContain('future real send would require a separate James-visible setup/activation lane');

@@ -1651,9 +1651,18 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'Readout boundary', endToEndReadout.nextBoundary || nextBoundary.currentNextStep || 'Live send is unavailable.');
     const demoPath = endToEndReadout.demoPath && typeof endToEndReadout.demoPath === 'object' ? endToEndReadout.demoPath : null;
     if (demoPath) {
-      appendPreviewLine(card, 'Demo path', `${demoPath.open || 'Open the local workbench status card'} Read: ${(demoPath.read || []).join(' / ') || 'status readout'}.`);
+      const demoRead = Array.isArray(demoPath.read) ? demoPath.read : [];
+      appendPreviewLine(card, 'Demo path', `${demoPath.open || 'Open the local workbench status card'} Read: ${demoRead.join(' / ') || 'status readout'}.`);
       appendPreviewLine(card, 'Demo meaning', demoPath.means || 'This readout explains saved local Mission Control evidence.');
       appendPreviewLine(card, 'Demo boundary', demoPath.manualOnly || demoPath.nextBoundary || 'Read-only demo path; no live action.');
+      const inspectionRunbook = demoPath.inspectionRunbook && typeof demoPath.inspectionRunbook === 'object' ? demoPath.inspectionRunbook : null;
+      if (inspectionRunbook) {
+        const steps = Array.isArray(inspectionRunbook.steps) ? inspectionRunbook.steps : [];
+        const expectedReadout = Array.isArray(inspectionRunbook.expectedReadout) ? inspectionRunbook.expectedReadout : [];
+        appendPreviewLine(card, 'Inspection runbook', `${inspectionRunbook.entryPoint || 'Local workbench status card'} Steps: ${steps.join(' / ') || 'read the status card'}.`);
+        appendPreviewLine(card, 'Inspection expected', expectedReadout.join(' / ') || 'read-only saved status evidence');
+        appendPreviewLine(card, 'Inspection boundary', inspectionRunbook.boundary || inspectionRunbook.verification || demoPath.noEffectSummary || 'Read-only inspection proof.');
+      }
     }
   }
   appendPreviewLine(card, 'Current stage', current?.summary || 'No saved Mission Control send chain yet.');
