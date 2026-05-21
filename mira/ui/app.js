@@ -243,6 +243,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlDirtyWorkQuestion(text)
     || isMissionControlEvidenceQuestion(text)
+    || isMissionControlJamesActionQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
 }
@@ -259,6 +260,10 @@ function isMissionControlDirtyWorkQuestion(text) {
 function isMissionControlEvidenceQuestion(text) {
   return /\b(evidence|sources?|proof|basis|based\s+on|loaded|reads?)\b/i.test(text)
     && /\b(mission\s*control|mira|squidrun|local|this|answer)\b/i.test(text);
+}
+
+function isMissionControlJamesActionQuestion(text) {
+  return /\b(james\s+needed|need\s+james|need\s+me|do\s+you\s+need\s+me|my\s+action|james\s+action)\b/i.test(text);
 }
 
 function isMissionControlCoordinationQuestion(text) {
@@ -283,6 +288,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlEvidenceQuestion(text)) {
     const evidenceAnswer = buildMissionControlEvidenceAnswer();
     if (evidenceAnswer) return evidenceAnswer;
+  }
+  if (isMissionControlJamesActionQuestion(text)) {
+    const jamesActionAnswer = buildMissionControlJamesActionAnswer();
+    if (jamesActionAnswer) return jamesActionAnswer;
   }
   if (isMissionControlCoordinationQuestion(text)) {
     const coordinationAnswer = buildMissionControlCoordinationAnswer(text);
@@ -347,6 +356,26 @@ function buildMissionControlDirtyWorkAnswer(context = state.missionControlContex
     `Changed files: ${changedFiles.join(' / ') || 'No dirty file list loaded.'}`,
     `Git status preview: ${statusPreview.join(' / ') || 'No git status preview loaded.'}`,
     `Mission answer context: ${missionDirtyLine || 'No dirty-work line loaded in the Mission Control answer.'}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlJamesActionAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const summary = context.summary || {};
+  const lane = context.lane || {};
+  const jamesAction = summary.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = summary.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'No James setup is needed for this local Mission Control work.');
+  const nextStep = summary.nextStep || mission?.nextTeamMove || lane.nextAction || 'No local next step is loaded yet.';
+  const actionState = jamesAction === 'DO THIS' ? 'yes' : 'no';
+  return [
+    `James needed: ${actionState}`,
+    `Reason: ${actionReason}`,
+    `Current next step: ${nextStep}`,
     'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
