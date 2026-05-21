@@ -1314,6 +1314,7 @@ export type MissionControlInternalSendLiveActivationGateContractRecord = {
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   bodySha256: string;
   adapterPacketSha256: string;
   hardStop: {
@@ -5147,6 +5148,7 @@ function liveActivationGateContractFromImplementationReadiness(
     purpose: readiness.purpose,
     content: readiness.content,
     contentPreview: readiness.contentPreview,
+    missionAnswerPreview: readiness.missionAnswerPreview,
     bodySha256,
     adapterPacketSha256: readiness.adapterPacketSha256,
     hardStop: {

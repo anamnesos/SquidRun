@@ -1633,6 +1633,7 @@ function updateInternalSendLiveActivationGateContractList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', contract.targetLabel || `${contract.targetRole || 'team'} pane ${contract.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', contract.contentPreview || contract.content);
+    appendPreviewLine(card, 'Mission answer', contract.missionAnswerPreview || 'No originating Mission Control answer is attached to this live-gate contract.');
     appendPreviewLine(card, 'Hard stop', `live activation: ${contract.hardStop?.liveActivationAllowed === true ? 'yes' : 'no'}; implementation enabled: ${contract.hardStop?.implementationEnabled === true ? 'yes' : 'no'}; James setup required: ${contract.hardStop?.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}`);
     appendPreviewLine(card, 'James/setup', (contract.jamesRequirements || []).map((item) => item.label).join(' / '));
     appendPreviewLine(card, 'Audit', 'hard-stop contract only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');

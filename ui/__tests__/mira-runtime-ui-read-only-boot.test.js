@@ -2360,6 +2360,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: readiness.purpose,
         content: readiness.content,
         contentPreview: readiness.contentPreview,
+        missionAnswerPreview: readiness.missionAnswerPreview,
         bodySha256: readiness.bodySha256,
         adapterPacketSha256: readiness.adapterPacketSha256,
         hardStop: {
@@ -3629,6 +3630,7 @@ describe('Mira runtime UI boot', () => {
     expect(liveGateText).toContain('live activation gate hard stop · James setup required before live send · not sent');
     expect(liveGateText).toContain('Pane target: oracle pane 3');
     expect(liveGateText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(liveGateText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(liveGateText).toContain('Hard stop: live activation: no; implementation enabled: no; James setup required: yes');
     expect(liveGateText).toContain('James/setup: James must explicitly request a later live internal-send activation for this exact target and body.');
     expect(liveGateText).toContain('hard-stop contract only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
