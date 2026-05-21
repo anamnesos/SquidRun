@@ -246,6 +246,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlManualActionQuestion(text)
     || isMissionControlArtifactEvidenceQuestion(text)
     || isMissionControlProofSummaryQuestion(text)
+    || isMissionControlNoEffectBoundaryQuestion(text)
     || isMissionControlMissingStageQuestion(text)
     || isMissionControlCurrentStageQuestion(text)
     || isMissionControlPayloadPreviewQuestion(text)
@@ -339,6 +340,15 @@ function isMissionControlBlockedReasonQuestion(text) {
       || /\bwhat\s+blocks\s+(mission\s*control|new\s+mira)\b/i.test(normalized));
 }
 
+function isMissionControlNoEffectBoundaryQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+can\s+(mission\s*control|new\s+mira)\s+not\s+do\b/i.test(normalized)
+      || /\bwhat\s+(effects|actions|live\s+effects|external\s+effects)\s+(are|remain)\s+(blocked|unavailable|off[-\s]?limits)\b/i.test(normalized)
+      || /\bwhat\s+is\s+(mission\s*control|new\s+mira)\s+(not\s+allowed|forbidden|blocked)\s+to\s+do\b/i.test(normalized)
+      || /\bwhich\s+(effects|actions|sends?|execution)\s+are\s+blocked\s+in\s+(mission\s*control|new\s+mira)\b/i.test(normalized));
+}
+
 function isMissionControlRoutePreviewQuestion(text) {
   return /\b(internal\s+route|route\s+preview)\b/i.test(text);
 }
@@ -429,6 +439,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlProofSummaryQuestion(text)) {
     const proofSummaryAnswer = buildMissionControlProofSummaryAnswer();
     if (proofSummaryAnswer) return proofSummaryAnswer;
+  }
+  if (isMissionControlNoEffectBoundaryQuestion(text)) {
+    const noEffectBoundaryAnswer = buildMissionControlNoEffectBoundaryAnswer();
+    if (noEffectBoundaryAnswer) return noEffectBoundaryAnswer;
   }
   if (isMissionControlMissingStageQuestion(text)) {
     const missingStageAnswer = buildMissionControlMissingStageAnswer();
@@ -537,6 +551,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('current stage/status');
     available.push('payload/endpoint preview');
     available.push('blocked reason');
+    available.push('no-effect boundary');
   }
   if (Array.isArray(mission?.coordinationDrafts) && mission.coordinationDrafts.length > 0) {
     available.push('coordination draft preview');
@@ -840,6 +855,49 @@ function buildMissionControlBlockedReasonAnswer(status = state.missionControlAct
     `Hard stop: recorded ${hardStop.hardStopContractRecorded === true || endToEndReadout.hardStopRecorded === true ? 'yes' : 'no'}; live send available ${hardStop.liveSendAvailable === true || endToEndReadout.liveSendAvailable === true ? 'yes' : 'no'}.`,
     `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline selection/preflight/payload/drift status from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlNoEffectBoundaryAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const hardStop = status.hardStopTruth && typeof status.hardStopTruth === 'object' ? status.hardStopTruth : {};
+  const trace = status.currentStageTrace && typeof status.currentStageTrace === 'object' ? status.currentStageTrace : {};
+  const selection = status.advanceSelection && typeof status.advanceSelection === 'object' ? status.advanceSelection : {};
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object' ? status.payloadPreview : {};
+  const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : {};
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object'
+    ? status.endToEndReadout
+    : {};
+  const blockedEffects = [
+    `live send ${hardStop.liveSendAvailable === true ? 'available' : 'blocked'}`,
+    `live hm-send ${hardStop.liveHmSendExecutionAllowed === true ? 'available' : 'blocked'}`,
+    `real send ${hardStop.realSendAllowed === true ? 'available' : 'blocked'}`,
+    `implementation ${hardStop.implementationEnabled === true ? 'enabled' : 'disabled'}`,
+    `runtime execution ${status.runtimeExecutes === true ? 'available' : 'blocked'}`,
+    `Telegram ${status.telegramSend === true ? 'available' : 'blocked'}`,
+    `route flip ${status.routeFlip === true ? 'available' : 'blocked'}`,
+    `provider/model ${status.providerInvoked === true ? 'available' : 'blocked'}`,
+    `account/token access ${status.accountOrTokenAccess === true ? 'available' : 'blocked'}`,
+  ];
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control no-effect boundary inspection; no setup or live action is needed.');
+  return [
+    `Live send available: ${hardStop.liveSendAvailable === true || endToEndReadout.liveSendAvailable === true ? 'yes' : 'no'}`,
+    `Blocked effects: ${blockedEffects.join(' / ')}`,
+    `Hard stop: recorded ${hardStop.hardStopContractRecorded === true || endToEndReadout.hardStopRecorded === true ? 'yes' : 'no'}; separate activation lane ${hardStop.separateActivationLaneRequired === true || endToEndReadout.realSendRequiresSeparateActivation === true ? 'yes' : 'no'}; James setup required ${hardStop.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}.`,
+    `Trace no-effect: ${trace.noEffectSummary || 'No trace no-effect summary is loaded.'}`,
+    `Selection no-effect: ${selection.noEffectSummary || 'No selection no-effect summary is loaded.'}`,
+    `Payload no-effect: ${payloadPreview.noEffectSummary || 'No payload no-effect summary is loaded.'}`,
+    `Handler no-effect: ${driftCheck.noEffectSummary || 'No handler no-effect summary is loaded.'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline hard-stop/no-effect status from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');

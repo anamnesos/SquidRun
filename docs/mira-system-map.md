@@ -447,6 +447,8 @@ Product-facing payload/endpoint preview prompts such as `what payload would Miss
 
 Product-facing blocked-reason prompts such as `why is Mission Control blocked?` and `why can't Mission Control advance?` now answer from the already-loaded activation pipeline advance-selection/manual-preflight/payload-preview/handler-drift/hard-stop fields, without posting `/turn`, adding fetches, unblocking, advancing, invoking endpoints or handlers, creating artifacts, persisting, clicking, or sending externally.
 
+Product-facing no-effect/safety-boundary prompts such as `what can Mission Control not do?` and `what effects are blocked in Mission Control?` now answer from the already-loaded activation pipeline hard-stop/readout/trace/selection/payload no-effect fields, without posting `/turn`, adding fetches, changing safety state, invoking endpoints or handlers, creating artifacts, persisting, clicking, or sending externally.
+
 The existing `Make review item` promotion proof now pins that the internal-route request/review-item record carries the same `missionAnswerPreview`, and the review-item card displays it as compact review context before the next manual continuation step.
 The existing `Review continuation` manual-input proof now pins that the owned-work continuation record carries the originating `missionAnswerPreview`, and the continuation panel/history card display it as compact review context before follow-through.
 The existing follow-through recommendation selector now carries the same originating `missionAnswerPreview` from the selected continuation and displays it on the existing recommendation card before the delivery-preview step.

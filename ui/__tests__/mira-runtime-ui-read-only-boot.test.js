@@ -4331,6 +4331,48 @@ describe('Mira runtime UI boot', () => {
     }
   });
 
+  test('answers no-effect boundary questions from existing Mission Control status without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['what can Mission Control not do?', 'what effects are blocked in Mission Control?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Live send available: no'),
+      ]);
+      const noEffectReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(noEffectReply).toContain('Blocked effects: live send blocked / live hm-send blocked / real send blocked / implementation disabled / runtime execution blocked / Telegram blocked / route flip blocked / provider/model blocked / account/token access blocked');
+      expect(noEffectReply).toContain('Hard stop: recorded no; separate activation lane yes; James setup required yes.');
+      expect(noEffectReply).toContain('Trace no-effect: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
+      expect(noEffectReply).toContain('Selection no-effect: Read-only selection aid only; it compares existing trace entries and does not persist a selection, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.');
+      expect(noEffectReply).toContain('Payload no-effect: Read-only payload preview only; it validates the existing workbench action payload shape and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.');
+      expect(noEffectReply).toContain('Handler no-effect: Read-only workbench handler drift check only; it compares endpoint and token-field expectations and does not submit, persist, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.');
+      expect(noEffectReply).toContain('Next boundary: Next inspectable step is local review; live send is still unavailable.');
+      expect(noEffectReply).toContain('Source: already-loaded Mission Control activation pipeline hard-stop/no-effect status from local SquidRun context.');
+      expect(noEffectReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
+      expect(noEffectReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((noEffectReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
   test('answers recent team-context questions from existing Mission Control context without a turn POST', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
@@ -5292,6 +5334,48 @@ describe('Mira runtime UI boot', () => {
       'fix Mission Control blocked state with the runtime fixture',
       'advance Mission Control past the blocker with the runtime fixture',
       'submit the Mission Control unblock action with the runtime fixture',
+    ]) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+      const postCalls = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCalls).toHaveLength(turnCalls.length);
+      expect(turnCalls[turnCalls.length - 1].body).toEqual(expect.objectContaining({
+        text: question,
+        useModel: false,
+        modelProvider: 'openai_responses',
+        modelName: 'gpt-5.5',
+      }));
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        'Mira. Deterministic local turn.',
+      ]);
+      expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+    expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(4);
+  });
+
+  test('does not hijack generic no-effect or safety instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    for (const question of [
+      'block Mission Control effects with the runtime fixture',
+      'stop Mission Control from sending with the runtime fixture',
+      'fix the Mission Control safety boundary with the runtime fixture',
+      'do the Mission Control no-effect action with the runtime fixture',
     ]) {
       harness.elements.turnText.value = question;
       const submitEvent = { preventDefault: jest.fn() };
