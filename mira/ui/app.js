@@ -251,6 +251,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlMissingStageQuestion(text)
     || isMissionControlCurrentStageQuestion(text)
     || isMissionControlHandlerDriftQuestion(text)
+    || isMissionControlValidationCheckQuestion(text)
     || isMissionControlPayloadPreviewQuestion(text)
     || isMissionControlBlockedReasonQuestion(text)
     || isMissionControlManualInputQuestion(text)
@@ -342,6 +343,15 @@ function isMissionControlHandlerDriftQuestion(text) {
       || /\bis\s+.*\b(handler\s+drift|workbench\s+handler|handler\s+contract)\s+.*\b(matched|matching|valid|ok)\b/i.test(normalized)
       || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(handler\s+drift|handler\s+contract)\b/i.test(normalized)
       || /\bwhich\s+handler\s+(would|does)\s+(mission\s*control|new\s+mira)\s+match\b/i.test(normalized));
+}
+
+function isMissionControlValidationCheckQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\b(are|is)\s+.*\b(validation|payload|preflight)\s+checks?\s+.*\b(passing|ready|ok|blocked)\b/i.test(normalized)
+      || /\bwhat\s+.*\b(validation|payload|preflight)\s+checks?\s+.*\b(loaded|passing|blocked|ready)\b/i.test(normalized)
+      || /\bwhich\s+.*\b(validation|payload|preflight)\s+checks?\s+.*\b(blocked|passing|ready)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(validation\s+status|check\s+status|checks?\s+status)\b/i.test(normalized));
 }
 
 function isMissionControlPayloadPreviewQuestion(text) {
@@ -491,6 +501,10 @@ function currentMissionControlAnswer(text = '') {
     const handlerDriftAnswer = buildMissionControlHandlerDriftAnswer();
     if (handlerDriftAnswer) return handlerDriftAnswer;
   }
+  if (isMissionControlValidationCheckQuestion(text)) {
+    const validationCheckAnswer = buildMissionControlValidationCheckAnswer();
+    if (validationCheckAnswer) return validationCheckAnswer;
+  }
   if (isMissionControlPayloadPreviewQuestion(text)) {
     const payloadPreviewAnswer = buildMissionControlPayloadPreviewAnswer();
     if (payloadPreviewAnswer) return payloadPreviewAnswer;
@@ -595,6 +609,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('advance selection');
     available.push('payload/endpoint preview');
     available.push('handler drift check');
+    available.push('validation checks');
     available.push('blocked reason');
     available.push('no-effect boundary');
     available.push('manual input requirements');
@@ -938,6 +953,43 @@ function buildMissionControlHandlerDriftAnswer(status = state.missionControlActi
     `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control payloadPreview.handlerDriftCheck from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, handler call, endpoint call, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlValidationCheckAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const preflight = status.manualActionPreflight && typeof status.manualActionPreflight === 'object' ? status.manualActionPreflight : {};
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object' ? status.payloadPreview : {};
+  const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : {};
+  const payloadChecks = Array.isArray(payloadPreview.validationChecks) ? payloadPreview.validationChecks : [];
+  const preflightChecks = Array.isArray(preflight.evidenceChecks) ? preflight.evidenceChecks : [];
+  const driftChecks = Array.isArray(driftCheck.checks) ? driftCheck.checks : [];
+  const summarizeChecks = (checks) => checks.length > 0
+    ? checks.map((check) => `${check.id || check.label || 'check'}:${check.ok === true ? 'ok' : 'blocked'}`).join(' / ')
+    : 'none loaded';
+  const allChecks = [...preflightChecks, ...payloadChecks, ...driftChecks];
+  const okCount = allChecks.filter((check) => check.ok === true).length;
+  const blockedCount = allChecks.filter((check) => check.ok !== true).length;
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control validation-check inspection; no setup or live action is needed.');
+  return [
+    `Validation status: ${blockedCount === 0 && allChecks.length > 0 ? 'passing' : 'blocked'}`,
+    `Check counts: ${okCount} ok / ${blockedCount} blocked / ${allChecks.length} total`,
+    `Manual preflight: ${String(preflight.status || 'unknown').replace(/_/g, ' ')} · ${preflight.explanation || 'No manual preflight explanation is loaded.'}`,
+    `Payload preview: ${String(payloadPreview.status || 'unknown').replace(/_/g, ' ')} · ${payloadPreview.explanation || 'No payload-preview explanation is loaded.'}`,
+    `Preflight checks: ${summarizeChecks(preflightChecks)}`,
+    `Payload checks: ${summarizeChecks(payloadChecks)}`,
+    `Handler drift checks: ${summarizeChecks(driftChecks)}`,
+    `Handler drift status: ${driftCheck.status || 'not available'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control manual-action preflight, payload-preview validation, and handler-drift checks from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, validation run, fix, update, submit, endpoint call, handler call, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
