@@ -241,6 +241,7 @@ function renderCoordinationDrafts(drafts) {
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlRoutePreviewQuestion(text)
+    || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
     || isMissionControlOwnedWorkQuestion(text)
     || isMissionControlDirtyWorkQuestion(text)
@@ -254,6 +255,13 @@ function isMissionControlQuestion(text) {
 
 function isMissionControlRoutePreviewQuestion(text) {
   return /\b(internal\s+route|route\s+preview)\b/i.test(text);
+}
+
+function isMissionControlProjectQuestion(text) {
+  const normalized = String(text || '');
+  return /\bwhat\s+project\s+is\s+(loaded|this)\b/i.test(normalized)
+    || /\bwhat\s+(workspace|project)\s+is\s+this\b/i.test(normalized)
+    || /\b(which|what)\s+(mission\s*control|mira|squidrun|local|new\s+mira)\s+(project|workspace)\b/i.test(normalized);
 }
 
 function isMissionControlLaneQuestion(text) {
@@ -310,6 +318,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
+  }
+  if (isMissionControlProjectQuestion(text)) {
+    const projectAnswer = buildMissionControlProjectAnswer();
+    if (projectAnswer) return projectAnswer;
   }
   if (isMissionControlLaneQuestion(text)) {
     const laneAnswer = buildMissionControlLaneAnswer();
@@ -373,6 +385,31 @@ function buildMissionControlRoutePreviewAnswer(mission = state.missionControl) {
     `Message preview: ${message}`,
     'Source: already-loaded Mission Control internal route preview from local SquidRun context.',
     'Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlProjectAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const project = context.project || {};
+  if (!project.name && !project.workspace) return '';
+  const reads = context.reads && typeof context.reads === 'object'
+    ? Object.entries(context.reads)
+      .filter(([, loaded]) => loaded === true)
+      .map(([key]) => key)
+    : [];
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control project answer; no send or setup is needed.');
+  return [
+    `Project: ${project.name || 'unknown project'}`,
+    `Workspace: ${project.workspace || 'No workspace path loaded.'}`,
+    `SquidRun root: ${project.squidrunRoot || 'No SquidRun root loaded.'}`,
+    `Session: ${project.sessionId || 'No session id loaded.'}`,
+    `Loaded reads: ${reads.join(' / ') || 'No local read flags loaded.'}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
