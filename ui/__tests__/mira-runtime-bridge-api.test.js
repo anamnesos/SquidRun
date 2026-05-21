@@ -1026,6 +1026,26 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect.objectContaining({ id: 'next_stage_missing', ok: true }),
       expect.objectContaining({ id: 'preflight_is_read_only', ok: true }),
     ]));
+    expect(previewOnlyPipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_payload_preview.v0',
+      status: 'ready',
+      actionLabel: 'Make review item',
+      method: 'POST',
+      endpoint: '/mission-control/internal-route-requests',
+      payload: { previewToken: savePayload.record.actionToken },
+      requiredManualInputs: [],
+      selectedStageId: 'route_preview',
+      selectedArtifactToken: savePayload.record.actionToken,
+      selectedRelativePath: savePayload.relativePath,
+      explanation: 'This is the exact workbench payload preview for Make review item; it is not submitted by the status surface.',
+      noEffectSummary: expect.stringContaining('Read-only payload preview only'),
+    }));
+    expect(previewOnlyPipelineStatusPayload.payloadPreview.validationChecks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'manual_preflight_ready', ok: true }),
+      expect.objectContaining({ id: 'endpoint_known', ok: true }),
+      expect.objectContaining({ id: 'selected_token_present', ok: true }),
+      expect.objectContaining({ id: 'payload_preview_read_only', ok: true }),
+    ]));
     expect(routeRequestFilesAfterPreviewOnlyStatus).toHaveLength(0);
     expect(emptyRequestResponse.status).toBe(200);
     expect(emptyRequestPayload).toEqual(expect.objectContaining({
@@ -3614,6 +3634,26 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect.objectContaining({ id: 'next_stage_missing', ok: false }),
       expect.objectContaining({ id: 'not_hard_stop', ok: false }),
       expect.objectContaining({ id: 'preflight_is_read_only', ok: true }),
+    ]));
+    expect(pipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_payload_preview.v0',
+      status: 'blocked',
+      actionLabel: null,
+      method: null,
+      endpoint: null,
+      payload: null,
+      requiredManualInputs: [],
+      selectedStageId: 'live_activation_gate_contract',
+      selectedArtifactToken: liveGatePayload.contract.actionToken,
+      selectedRelativePath: liveGatePayload.relativePath,
+      explanation: 'No payload preview is available because the manual action preflight is blocked.',
+      noEffectSummary: expect.stringContaining('Read-only payload preview only'),
+    }));
+    expect(pipelineStatusPayload.payloadPreview.validationChecks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'manual_preflight_ready', ok: false }),
+      expect.objectContaining({ id: 'endpoint_known', ok: false }),
+      expect.objectContaining({ id: 'selected_token_present', ok: false }),
+      expect.objectContaining({ id: 'payload_preview_read_only', ok: true }),
     ]));
     expect(pipelineStatusPayload.currentStageTrace).toEqual(expect.objectContaining({
       protocol: 'mira.mission_control_activation_pipeline_trace.v0',

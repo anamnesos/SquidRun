@@ -1417,6 +1417,7 @@ function updateActivationPipelineStatus(payload) {
   const trace = payload?.currentStageTrace && typeof payload.currentStageTrace === 'object' ? payload.currentStageTrace : null;
   const selection = payload?.advanceSelection && typeof payload.advanceSelection === 'object' ? payload.advanceSelection : null;
   const preflight = payload?.manualActionPreflight && typeof payload.manualActionPreflight === 'object' ? payload.manualActionPreflight : null;
+  const payloadPreview = payload?.payloadPreview && typeof payload.payloadPreview === 'object' ? payload.payloadPreview : null;
   const traceEntries = Array.isArray(trace?.entries) ? trace.entries : [];
   const currentTrace = traceEntries.find((entry) => entry?.stageId === payload?.currentStageId)
     || traceEntries[traceEntries.length - 1]
@@ -1469,6 +1470,17 @@ function updateActivationPipelineStatus(payload) {
       : 'No manual action input is ready.');
     if (Array.isArray(preflight.evidenceChecks)) {
       appendPreviewLine(card, 'Preflight checks', preflight.evidenceChecks.map((check) => `${check.ok ? 'ok' : 'blocked'}: ${check.label}`).join(' / '));
+    }
+  }
+  if (payloadPreview) {
+    const payloadStatus = String(payloadPreview.status || 'unknown').replace(/_/g, ' ');
+    appendPreviewLine(card, 'Payload preview', `${payloadStatus}: ${payloadPreview.method || 'no method'} ${payloadPreview.endpoint || 'no endpoint'} · ${payloadPreview.explanation || ''}`.trim());
+    appendPreviewLine(card, 'Payload body', payloadPreview.payload ? JSON.stringify(payloadPreview.payload) : 'No payload body is available.');
+    if (Array.isArray(payloadPreview.requiredManualInputs) && payloadPreview.requiredManualInputs.length > 0) {
+      appendPreviewLine(card, 'Payload needs', payloadPreview.requiredManualInputs.join(' / '));
+    }
+    if (Array.isArray(payloadPreview.validationChecks)) {
+      appendPreviewLine(card, 'Payload validation', payloadPreview.validationChecks.map((check) => `${check.ok ? 'ok' : 'blocked'}: ${check.label}`).join(' / '));
     }
   }
   appendPreviewLine(card, 'Trace audit', trace?.noEffectSummary || 'Read-only status only; no send or execution path.');

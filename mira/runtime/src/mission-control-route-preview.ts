@@ -1525,6 +1525,26 @@ export type MissionControlActivationPipelineManualActionPreflight = {
   noEffectSummary: string;
 };
 
+export type MissionControlActivationPipelinePayloadPreview = {
+  protocol: "mira.mission_control_activation_pipeline_payload_preview.v0";
+  status: "ready" | "needs_manual_input" | "blocked";
+  actionLabel: string | null;
+  method: "POST" | null;
+  endpoint: string | null;
+  payload: Record<string, string> | null;
+  requiredManualInputs: string[];
+  selectedStageId: MissionControlActivationPipelineStageId | null;
+  selectedArtifactToken: string | null;
+  selectedRelativePath: string | null;
+  explanation: string;
+  validationChecks: Array<{
+    id: string;
+    label: string;
+    ok: boolean;
+  }>;
+  noEffectSummary: string;
+};
+
 export type MissionControlActivationPipelineStatusResult = {
   ok: true;
   protocol: "mira.mission_control_activation_pipeline_status.v0";
@@ -1538,6 +1558,7 @@ export type MissionControlActivationPipelineStatusResult = {
   currentStageTrace: MissionControlActivationPipelineTrace;
   advanceSelection: MissionControlActivationPipelineAdvanceSelection;
   manualActionPreflight: MissionControlActivationPipelineManualActionPreflight;
+  payloadPreview: MissionControlActivationPipelinePayloadPreview;
   hardStopTruth: {
     liveSendAvailable: false;
     liveActivationAllowed: false;
@@ -2773,6 +2794,142 @@ function buildActivationPipelineManualActionPreflight(
       },
     ],
     noEffectSummary: "Read-only preflight only; it explains the next manual internal action and does not persist, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
+  };
+}
+
+function manualActionPayloadPreviewForStage(
+  stageId: MissionControlActivationPipelineStageId | null,
+  tokenValue: string | null,
+): {
+  endpoint: string;
+  payload: Record<string, string>;
+  requiredManualInputs: string[];
+} | null {
+  if (!tokenValue) return null;
+  switch (stageId) {
+    case "route_preview":
+      return {
+        endpoint: "/mission-control/internal-route-requests",
+        payload: { previewToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "internal_route_request":
+      return {
+        endpoint: "/mission-control/owned-work-continuations",
+        payload: {
+          requestToken: tokenValue,
+          decision: "<approve|edit|reject>",
+          editedContent: "<review text when editing>",
+          note: "<optional note>",
+        },
+        requiredManualInputs: ["decision", "editedContent when decision is edit", "optional note"],
+      };
+    case "follow_through_recommendation":
+      return {
+        endpoint: "/mission-control/internal-delivery-previews",
+        payload: { recommendationToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "internal_delivery_preview":
+      return {
+        endpoint: "/mission-control/dispatch-readiness",
+        payload: { deliveryPreviewToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "dispatch_readiness":
+      return {
+        endpoint: "/mission-control/internal-send-dry-runs",
+        payload: { dispatchReadinessToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "internal_send_dry_run":
+      return {
+        endpoint: "/mission-control/internal-send-activation-designs",
+        payload: { internalSendDryRunToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "activation_design":
+      return {
+        endpoint: "/mission-control/internal-send-activation-requests",
+        payload: { internalSendActivationDesignToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "activation_request":
+      return {
+        endpoint: "/mission-control/internal-send-activation-decision-audits",
+        payload: { internalSendActivationRequestToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "activation_decision_audit":
+      return {
+        endpoint: "/mission-control/internal-send-activation-implementation-readiness",
+        payload: { internalSendActivationDecisionAuditToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "activation_implementation_readiness":
+      return {
+        endpoint: "/mission-control/internal-send-live-activation-gate-contracts",
+        payload: { internalSendActivationImplementationReadinessToken: tokenValue },
+        requiredManualInputs: [],
+      };
+    case "owned_work_continuation":
+    case "live_activation_gate_contract":
+    default:
+      return null;
+  }
+}
+
+function buildActivationPipelinePayloadPreview(
+  preflight: MissionControlActivationPipelineManualActionPreflight,
+): MissionControlActivationPipelinePayloadPreview {
+  const payloadDefinition = manualActionPayloadPreviewForStage(preflight.selectedStageId, preflight.tokenValue);
+  const readyForPayload = preflight.status === "ready" && Boolean(payloadDefinition);
+  const status: MissionControlActivationPipelinePayloadPreview["status"] = !readyForPayload
+    ? "blocked"
+    : payloadDefinition && payloadDefinition.requiredManualInputs.length > 0
+      ? "needs_manual_input"
+      : "ready";
+  const explanation = status === "ready" && payloadDefinition
+    ? `This is the exact workbench payload preview for ${preflight.manualActionLabel}; it is not submitted by the status surface.`
+    : status === "needs_manual_input" && payloadDefinition
+      ? `This payload skeleton needs manual input before ${preflight.manualActionLabel} can be submitted from the workbench.`
+      : "No payload preview is available because the manual action preflight is blocked.";
+
+  return {
+    protocol: "mira.mission_control_activation_pipeline_payload_preview.v0",
+    status,
+    actionLabel: preflight.manualActionLabel,
+    method: payloadDefinition ? "POST" : null,
+    endpoint: payloadDefinition?.endpoint || null,
+    payload: payloadDefinition?.payload || null,
+    requiredManualInputs: payloadDefinition?.requiredManualInputs || [],
+    selectedStageId: preflight.selectedStageId,
+    selectedArtifactToken: preflight.selectedArtifactToken,
+    selectedRelativePath: preflight.selectedRelativePath,
+    explanation,
+    validationChecks: [
+      {
+        id: "manual_preflight_ready",
+        label: "Manual action preflight is ready.",
+        ok: preflight.status === "ready",
+      },
+      {
+        id: "endpoint_known",
+        label: "Existing workbench endpoint is known.",
+        ok: Boolean(payloadDefinition?.endpoint),
+      },
+      {
+        id: "selected_token_present",
+        label: "Selected artifact token is present in the preview payload.",
+        ok: Boolean(preflight.tokenValue),
+      },
+      {
+        id: "payload_preview_read_only",
+        label: "Payload preview is derived from GET status and is not submitted or persisted.",
+        ok: true,
+      },
+    ],
+    noEffectSummary: "Read-only payload preview only; it validates the existing workbench action payload shape and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
   };
 }
 
@@ -6198,6 +6355,7 @@ export function getMissionControlActivationPipelineStatus(
   const currentStageTrace = buildActivationPipelineTrace(stages, currentStage);
   const advanceSelection = buildActivationPipelineAdvanceSelection(stages);
   const manualActionPreflight = buildActivationPipelineManualActionPreflight(advanceSelection);
+  const payloadPreview = buildActivationPipelinePayloadPreview(manualActionPreflight);
 
   return {
     ok: true,
@@ -6212,6 +6370,7 @@ export function getMissionControlActivationPipelineStatus(
     currentStageTrace,
     advanceSelection,
     manualActionPreflight,
+    payloadPreview,
     hardStopTruth: {
       liveSendAvailable: false,
       liveActivationAllowed: false,

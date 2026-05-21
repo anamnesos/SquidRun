@@ -783,6 +783,103 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
           noEffectSummary: 'Read-only preflight only; it explains the next manual internal action and does not persist, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
         };
       })(),
+      payloadPreview: (() => {
+        const actionMap = {
+          route_preview: {
+            label: 'Make review item',
+            endpoint: '/mission-control/internal-route-requests',
+            payload: { previewToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          internal_route_request: {
+            label: 'Review continuation',
+            endpoint: '/mission-control/owned-work-continuations',
+            payload: {
+              requestToken: selectedStage?.latestToken || '',
+              decision: '<approve|edit|reject>',
+              editedContent: '<review text when editing>',
+              note: '<optional note>',
+            },
+            requiredManualInputs: ['decision', 'editedContent when decision is edit', 'optional note'],
+          },
+          follow_through_recommendation: {
+            label: 'Preview delivery packet',
+            endpoint: '/mission-control/internal-delivery-previews',
+            payload: { recommendationToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          internal_delivery_preview: {
+            label: 'Review dispatch readiness',
+            endpoint: '/mission-control/dispatch-readiness',
+            payload: { deliveryPreviewToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          dispatch_readiness: {
+            label: 'Create send dry run',
+            endpoint: '/mission-control/internal-send-dry-runs',
+            payload: { dispatchReadinessToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          internal_send_dry_run: {
+            label: 'Design activation proof',
+            endpoint: '/mission-control/internal-send-activation-designs',
+            payload: { internalSendDryRunToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          activation_design: {
+            label: 'Preview activation request',
+            endpoint: '/mission-control/internal-send-activation-requests',
+            payload: { internalSendActivationDesignToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          activation_request: {
+            label: 'Record decision audit',
+            endpoint: '/mission-control/internal-send-activation-decision-audits',
+            payload: { internalSendActivationRequestToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          activation_decision_audit: {
+            label: 'Check implementation readiness',
+            endpoint: '/mission-control/internal-send-activation-implementation-readiness',
+            payload: { internalSendActivationDecisionAuditToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+          activation_implementation_readiness: {
+            label: 'Define live gate contract',
+            endpoint: '/mission-control/internal-send-live-activation-gate-contracts',
+            payload: { internalSendActivationImplementationReadinessToken: selectedStage?.latestToken || '' },
+            requiredManualInputs: [],
+          },
+        };
+        const action = actionMap[selectedStage?.id] || null;
+        const preflightReady = selectionStatus === 'advance_available' && Boolean(action);
+        const status = !preflightReady ? 'blocked' : action.requiredManualInputs.length > 0 ? 'needs_manual_input' : 'ready';
+        const explanation = status === 'ready'
+          ? `This is the exact workbench payload preview for ${action.label}; it is not submitted by the status surface.`
+          : status === 'needs_manual_input'
+            ? `This payload skeleton needs manual input before ${action.label} can be submitted from the workbench.`
+            : 'No payload preview is available because the manual action preflight is blocked.';
+        return {
+          protocol: 'mira.mission_control_activation_pipeline_payload_preview.v0',
+          status,
+          actionLabel: preflightReady ? action.label : null,
+          method: action ? 'POST' : null,
+          endpoint: action?.endpoint || null,
+          payload: action?.payload || null,
+          requiredManualInputs: action?.requiredManualInputs || [],
+          selectedStageId: selectedStage?.id || null,
+          selectedArtifactToken: selectedStage?.latestToken || null,
+          selectedRelativePath: selectedStage?.relativePath || null,
+          explanation,
+          validationChecks: [
+            { id: 'manual_preflight_ready', label: 'Manual action preflight is ready.', ok: preflightReady },
+            { id: 'endpoint_known', label: 'Existing workbench endpoint is known.', ok: Boolean(action?.endpoint) },
+            { id: 'selected_token_present', label: 'Selected artifact token is present in the preview payload.', ok: preflightReady && Boolean(selectedStage?.latestToken) },
+            { id: 'payload_preview_read_only', label: 'Payload preview is derived from GET status and is not submitted or persisted.', ok: true },
+          ],
+          noEffectSummary: 'Read-only payload preview only; it validates the existing workbench action payload shape and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
+        };
+      })(),
       hardStopTruth: {
         liveSendAvailable: false,
         liveActivationAllowed: false,
@@ -2235,6 +2332,9 @@ describe('Mira runtime UI boot', () => {
     expect(emptyPipelineText).toContain('Comparison: Compared 0 available stages; start by saving a route preview.');
     expect(emptyPipelineText).toContain('Manual action preflight: blocked no source: no manual action · No manual action is ready because there is no selected saved artifact with a token and next missing stage.');
     expect(emptyPipelineText).toContain('Manual action input: No manual action input is ready.');
+    expect(emptyPipelineText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
+    expect(emptyPipelineText).toContain('Payload body: No payload body is available.');
+    expect(emptyPipelineText).toContain('Payload validation: blocked: Manual action preflight is ready. / blocked: Existing workbench endpoint is known. / blocked: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
     expect(emptyPipelineText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
@@ -2390,6 +2490,9 @@ describe('Mira runtime UI boot', () => {
     expect(routePreviewPipelineText).toContain('Manual action preflight: ready: Make review item · Make review item is the next manual internal action because Route preview is selected and Review item is the first missing stage. Use the selected token as previewToken; this preflight does not perform the action.');
     expect(routePreviewPipelineText).toContain('Manual action input: previewToken=mission-route-test; source mission-control/route-previews/mission-route-preview-test.json; next Review item');
     expect(routePreviewPipelineText).toContain('Preflight checks: ok: Selected artifact token is available. / ok: Selected artifact path is available or the selected entry is derived. / ok: A next missing stage exists for manual advancement.');
+    expect(routePreviewPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-route-requests · This is the exact workbench payload preview for Make review item; it is not submitted by the status surface.');
+    expect(routePreviewPipelineText).toContain('Payload body: {"previewToken":"mission-route-test"}');
+    expect(routePreviewPipelineText).toContain('Payload validation: ok: Manual action preflight is ready. / ok: Existing workbench endpoint is known. / ok: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
 
     const promoteButton = harness.elements.routePreviewHistoryList.children[0].children
       .find((child) => child.tagName === 'BUTTON');
@@ -2850,6 +2953,9 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Manual action preflight: blocked hard stop: no manual action · No manual advancement is available from this read-only surface because the selected artifact is the live activation hard-stop contract.');
     expect(pipelineStatusText).toContain('Manual action input: No manual action input is ready.');
     expect(pipelineStatusText).toContain('blocked: A next missing stage exists for manual advancement.');
+    expect(pipelineStatusText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
+    expect(pipelineStatusText).toContain('Payload body: No payload body is available.');
+    expect(pipelineStatusText).toContain('Payload validation: blocked: Manual action preflight is ready. / blocked: Existing workbench endpoint is known. / blocked: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
     expect(pipelineStatusText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(pipelineStatusText).not.toContain('live send available: yes');
   });
