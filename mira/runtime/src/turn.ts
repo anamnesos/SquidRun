@@ -78,6 +78,7 @@ export type RuntimeTurnResponse = {
     content: string;
   };
   visibleReplyGate: RuntimeVisibleReplyGateResult;
+  heldReplyAudit: RuntimeHeldReplyAudit;
   voiceLab: VoiceLabMatch | null;
   suggestedTeamPlan: ManualBridgeRequestPlan | null;
 };
@@ -88,6 +89,21 @@ export type RuntimeVisibleReplyGateResult = {
   held: boolean;
   violations: string[];
   source: "mira_runtime_visible_reply_gate_v0";
+};
+
+export type RuntimeHeldReplyAudit = {
+  schema: "mira.runtime_held_reply_audit.v0";
+  checked: true;
+  held: boolean;
+  reason: "visible_reply_gate_violation" | null;
+  gateSource: RuntimeVisibleReplyGateResult["source"];
+  violationCount: number;
+  visibleContentReplaced: boolean;
+  journalStoresHeldReply: boolean;
+  journalStoresRejectedText: false;
+  diagnosticsVisible: false;
+  externalSend: false;
+  toolsExecuted: false;
 };
 
 export type RecentTurnMemory = {
@@ -350,15 +366,35 @@ export function evaluateRuntimeVisibleReply(text: string): RuntimeVisibleReplyGa
   };
 }
 
+function buildRuntimeHeldReplyAudit(gate: RuntimeVisibleReplyGateResult): RuntimeHeldReplyAudit {
+  return {
+    schema: "mira.runtime_held_reply_audit.v0",
+    checked: true,
+    held: gate.held,
+    reason: gate.held ? "visible_reply_gate_violation" : null,
+    gateSource: gate.source,
+    violationCount: gate.violations.length,
+    visibleContentReplaced: gate.held,
+    journalStoresHeldReply: gate.held,
+    journalStoresRejectedText: false,
+    diagnosticsVisible: false,
+    externalSend: false,
+    toolsExecuted: false,
+  };
+}
+
 export function applyRuntimeVisibleReplyGate(content: string): {
   content: string;
   gate: RuntimeVisibleReplyGateResult;
+  audit: RuntimeHeldReplyAudit;
 } {
   const gate = evaluateRuntimeVisibleReply(content);
-  if (gate.ok) return { content: String(content || "").trim(), gate };
+  const audit = buildRuntimeHeldReplyAudit(gate);
+  if (gate.ok) return { content: String(content || "").trim(), gate, audit };
   return {
     content: RUNTIME_HELD_REPLY_CONTENT,
     gate,
+    audit,
   };
 }
 
@@ -467,6 +503,7 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
       content: visibleReply.content,
     },
     visibleReplyGate: visibleReply.gate,
+    heldReplyAudit: visibleReply.audit,
     voiceLab,
     suggestedTeamPlan,
   };

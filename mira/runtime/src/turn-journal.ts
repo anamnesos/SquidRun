@@ -21,6 +21,8 @@ export type RuntimeTurnJournalRecord = {
     role: "mira";
     content: string;
   } | null;
+  visible_reply_gate: RuntimeTurnResponse["visibleReplyGate"] | null;
+  held_reply_audit: RuntimeTurnResponse["heldReplyAudit"] | null;
   state: RuntimeTurnResponse["state"] | null;
   error: {
     code: string;
@@ -103,6 +105,8 @@ export function appendRuntimeTurnJournal(input: {
     model: input.response?.model || null,
     voice_lab: input.response?.voiceLab || null,
     response: input.response?.response || null,
+    visible_reply_gate: input.response?.visibleReplyGate || null,
+    held_reply_audit: input.response?.heldReplyAudit || null,
     state: input.response?.state || null,
     error: input.error ? {
       code: errorCode(input.error),
