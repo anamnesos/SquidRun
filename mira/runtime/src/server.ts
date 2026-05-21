@@ -6,7 +6,7 @@ import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyLoopOnce, runAu
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
-import { runRuntimeTurn, type RuntimeTurnInput } from "./turn.js";
+import { runRuntimeTurn, type RuntimeTurnInput, type RuntimeTurnResponse } from "./turn.js";
 import { readRuntimeTurnMemorySummary, refreshRuntimeTurnMemorySummary } from "./turn-memory.js";
 import { appendRuntimeTurnJournal, listRuntimeTurnJournal } from "./turn-journal.js";
 import { captureVoiceCorrection, listVoiceCorrections } from "./voice-correction.js";
@@ -93,6 +93,80 @@ function errorPayload(error: unknown): { error: { code: string; message: string;
 function includeInternalFields(requestUrl: URL): boolean {
   const value = requestUrl.searchParams.get("includeInternal") || requestUrl.searchParams.get("internal") || "";
   return ["1", "true", "yes"].includes(value.toLowerCase());
+}
+
+function buildVisibleReplyStatus(input: {
+  held?: boolean;
+  checked?: boolean;
+  contentReplaced?: boolean;
+}): Record<string, unknown> {
+  const held = input.held === true;
+  return {
+    checked: input.checked === true,
+    held,
+    reason: held ? "held_for_visible_reply_quality" : null,
+    visibleContentReplaced: input.contentReplaced === true,
+    rejectedTextVisible: false,
+    violationIdsVisible: false,
+    diagnosticsVisible: false,
+  };
+}
+
+function publicJournalRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const visibleReplyGate = record.visible_reply_gate && typeof record.visible_reply_gate === "object" && !Array.isArray(record.visible_reply_gate)
+    ? record.visible_reply_gate as Record<string, unknown>
+    : null;
+  const heldReplyAudit = record.held_reply_audit && typeof record.held_reply_audit === "object" && !Array.isArray(record.held_reply_audit)
+    ? record.held_reply_audit as Record<string, unknown>
+    : null;
+  const publicRecord = { ...record };
+  delete publicRecord.visible_reply_gate;
+  delete publicRecord.held_reply_audit;
+  publicRecord.visible_reply_status = buildVisibleReplyStatus({
+    held: visibleReplyGate?.held === true || heldReplyAudit?.held === true,
+    checked: visibleReplyGate?.checked === true || heldReplyAudit?.checked === true,
+    contentReplaced: heldReplyAudit?.visibleContentReplaced === true,
+  });
+  return publicRecord;
+}
+
+function publicJournalResult(journal: unknown): unknown {
+  if (!journal || typeof journal !== "object" || Array.isArray(journal)) return journal;
+  const publicJournal = { ...journal } as Record<string, unknown>;
+  if (publicJournal.record && typeof publicJournal.record === "object" && !Array.isArray(publicJournal.record)) {
+    publicJournal.record = publicJournalRecord(publicJournal.record as Record<string, unknown>);
+  }
+  return publicJournal;
+}
+
+function publicJournalList(journal: ReturnType<typeof listRuntimeTurnJournal>): Record<string, unknown> & {
+  records: Record<string, unknown>[];
+} {
+  return {
+    ...journal,
+    records: journal.records.map((record) => publicJournalRecord(record as unknown as Record<string, unknown>)),
+  };
+}
+
+function publicRuntimeTurnResponse(turnResponse: RuntimeTurnResponse): Record<string, unknown> {
+  const payload = { ...turnResponse } as Record<string, unknown>;
+  const content = turnResponse.response.content;
+  payload.visibleReply = {
+    role: "mira",
+    content,
+    held: turnResponse.visibleReplyGate.held,
+  };
+  payload.visibleReplyStatus = buildVisibleReplyStatus({
+    held: turnResponse.visibleReplyGate.held,
+    checked: turnResponse.visibleReplyGate.checked,
+    contentReplaced: turnResponse.heldReplyAudit.visibleContentReplaced,
+  });
+  delete payload.visibleReplyGate;
+  delete payload.heldReplyAudit;
+  if (payload.journal) {
+    payload.journal = publicJournalResult(payload.journal);
+  }
+  return payload;
 }
 
 function readRequestBody(request: IncomingMessage): Promise<string> {
@@ -259,7 +333,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
           sourceRecordCount: recentMemory.summary?.source_record_count || 0,
         },
       });
-      sendJson(response, 200, turnResponse);
+      sendJson(
+        response,
+        200,
+        includeInternalFields(requestUrl) ? turnResponse : publicRuntimeTurnResponse(turnResponse),
+      );
     } catch (error) {
       if (turnInput) {
         const journal = appendRuntimeTurnJournal({
@@ -467,7 +545,8 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/conversation/recent") {
     const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "20", 10);
-    sendJson(response, 200, listRuntimeTurnJournal({ limit }));
+    const journal = listRuntimeTurnJournal({ limit });
+    sendJson(response, 200, includeInternalFields(requestUrl) ? journal : publicJournalList(journal));
     return;
   }
 

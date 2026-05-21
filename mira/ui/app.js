@@ -779,6 +779,10 @@ async function sendTurn(text) {
   return payload;
 }
 
+function visibleTurnContent(payload) {
+  return String(payload?.visibleReply?.content || payload?.response?.content || '').trim();
+}
+
 function buildTurnMetadata(payload) {
   return {
     protocol: 'mira.turn_quality_capture_metadata.v0',
@@ -807,7 +811,7 @@ async function captureCorrection(payload, prompt, better = '') {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       prompt,
-      soundedFake: payload.response.content,
+      soundedFake: visibleTurnContent(payload),
       better,
       caseId: payload.voiceLab?.caseId || null,
       source: 'runtime-ui',
@@ -1229,7 +1233,7 @@ elements.form.addEventListener('submit', async (event) => {
   try {
     const payload = await sendTurn(text);
     updateRuntimeState(payload);
-    const article = appendMessage('mira', payload.response.content);
+    const article = appendMessage('mira', visibleTurnContent(payload));
     attachCorrectionControl(article, payload, text);
     await refreshRecentTurns();
   } catch (error) {

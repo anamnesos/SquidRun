@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
+/* global describe, expect, jest, test */
+
 function createElement(tagName = 'div') {
   const element = {
     tagName: String(tagName).toUpperCase(),
@@ -49,7 +51,7 @@ function createElement(tagName = 'div') {
   return element;
 }
 
-function createRuntimeBootHarness({ allowTurn = false } = {}) {
+function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}) {
   const elements = {};
   const calls = [];
   const response = (payload, ok = true) => ({
@@ -176,7 +178,7 @@ function createRuntimeBootHarness({ allowTurn = false } = {}) {
     const body = typeof options.body === 'string' ? JSON.parse(options.body) : null;
     calls.push({ url: pathname, method, body });
     if (pathname === '/turn' && method === 'POST' && allowTurn) {
-      return response({
+      const defaultTurnPayload = {
         ok: true,
         protocol: 'mira.runtime_turn.v0',
         runtimeExecutes: false,
@@ -233,6 +235,20 @@ function createRuntimeBootHarness({ allowTurn = false } = {}) {
           role: 'mira',
           content: 'Mira. Deterministic local turn.',
         },
+        visibleReply: {
+          role: 'mira',
+          content: 'Mira. Deterministic local turn.',
+          held: false,
+        },
+        visibleReplyStatus: {
+          checked: true,
+          held: false,
+          reason: null,
+          visibleContentReplaced: false,
+          rejectedTextVisible: false,
+          violationIdsVisible: false,
+          diagnosticsVisible: false,
+        },
         voiceLab: null,
         suggestedTeamPlan: null,
         journal: {
@@ -243,7 +259,8 @@ function createRuntimeBootHarness({ allowTurn = false } = {}) {
             tools_executed: false,
           },
         },
-      });
+      };
+      return response(typeof turnPayload === 'function' ? turnPayload(body, defaultTurnPayload) : (turnPayload || defaultTurnPayload));
     }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
@@ -373,5 +390,76 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.lastTurn.textContent).toBe('deterministic');
     expect(harness.elements.sendButton.disabled).toBe(false);
     expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
+  test('renders held replies from the public visible reply without leaking gate labels', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const heldText = 'That answer came out wrong, so I am holding it instead of making you clean it up.';
+    const rejectedGeneratedText = 'The validation fixture and proof scaffolding show the route owner protocol.';
+    const harness = createRuntimeBootHarness({
+      allowTurn: true,
+      turnPayload: (body, defaultPayload) => ({
+        ...defaultPayload,
+        input: {
+          text: body?.text || '',
+          sessionId: body?.sessionId || null,
+        },
+        response: {
+          role: 'mira',
+          content: heldText,
+        },
+        visibleReply: {
+          role: 'mira',
+          content: heldText,
+          held: true,
+        },
+        visibleReplyStatus: {
+          checked: true,
+          held: true,
+          reason: 'held_for_visible_reply_quality',
+          visibleContentReplaced: true,
+          rejectedTextVisible: false,
+          violationIdsVisible: false,
+          diagnosticsVisible: false,
+        },
+        visibleReplyGate: {
+          ok: false,
+          checked: true,
+          held: true,
+          violations: ['backstage_label'],
+          source: 'mira_runtime_visible_reply_gate_v0',
+        },
+        heldReplyAudit: {
+          schema: 'mira.runtime_held_reply_audit.v0',
+          checked: true,
+          held: true,
+          reason: 'visible_reply_gate_violation',
+          journalStoresRejectedText: false,
+          rejectedGeneratedText,
+        },
+      }),
+    });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    harness.elements.turnText.value = 'Say something shaped wrong.';
+    await harness.elements.turnForm.listeners.submit({ preventDefault: jest.fn() });
+
+    const renderedText = harness.elements.thread.children
+      .map((node) => node.children[0].textContent)
+      .join('\n');
+    expect(renderedText).toContain('Say something shaped wrong.');
+    expect(renderedText).toContain(heldText);
+    expect(renderedText).not.toContain('backstage_label');
+    expect(renderedText).not.toContain('mira_runtime_visible_reply_gate_v0');
+    expect(renderedText).not.toContain('visible_reply_gate_violation');
+    expect(renderedText).not.toContain('validation fixture');
+    expect(renderedText).not.toContain('proof scaffolding');
+    expect(renderedText).not.toContain('route owner protocol');
   });
 });

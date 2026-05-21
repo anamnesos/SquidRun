@@ -1,5 +1,7 @@
 'use strict';
 
+/* global afterEach, beforeAll, describe, expect, test */
+
 const { spawn, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -2347,6 +2349,100 @@ describe('Mira runtime bridge manual-plan API', () => {
         authorization: 'Bearer sk-test-fake-key-do-not-use',
       }));
     });
+
+  test('keeps held model reply gate details out of default API and recent surfaces', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-held-api-'));
+    const rejectedGeneratedText = 'The validation fixture and proof scaffolding show the route owner protocol.';
+    const heldText = 'That answer came out wrong, so I am holding it instead of making you clean it up.';
+    const openAiBaseUrl = await startOpenAiMock((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        id: 'resp_held_reply_projection_1',
+        output_text: rejectedGeneratedText,
+      }));
+    });
+    await startServer({
+      MIRA_STATE_ROOT: tempStateRoot,
+      OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      MIRA_OPENAI_BASE_URL: openAiBaseUrl,
+      MIRA_RUNTIME_TURN_MODEL: 'gpt-5.5',
+    });
+
+    const response = await fetch(`${baseUrl}/turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Give me a local reply.',
+        sessionId: 'app-session-held-public-api',
+        messageId: 'held-public-api-1',
+        useModel: true,
+      }),
+    });
+    const payload = await response.json();
+    const recentResponse = await fetch(`${baseUrl}/conversation/recent?limit=1`);
+    const recentPayload = await recentResponse.json();
+
+    expect(response.status).toBe(200);
+    expect(openAiRequests).toHaveLength(1);
+    expect(payload.modelInvoked).toBe(true);
+    expect(payload.response).toEqual({
+      role: 'mira',
+      content: heldText,
+    });
+    expect(payload.visibleReply).toEqual({
+      role: 'mira',
+      content: heldText,
+      held: true,
+    });
+    expect(payload.visibleReplyStatus).toEqual({
+      checked: true,
+      held: true,
+      reason: 'held_for_visible_reply_quality',
+      visibleContentReplaced: true,
+      rejectedTextVisible: false,
+      violationIdsVisible: false,
+      diagnosticsVisible: false,
+    });
+    expect(payload.visibleReplyGate).toBeUndefined();
+    expect(payload.heldReplyAudit).toBeUndefined();
+    expect(payload.journal.record.visible_reply_gate).toBeUndefined();
+    expect(payload.journal.record.held_reply_audit).toBeUndefined();
+    expect(payload.journal.record.visible_reply_status).toEqual(expect.objectContaining({
+      held: true,
+      reason: 'held_for_visible_reply_quality',
+      rejectedTextVisible: false,
+      violationIdsVisible: false,
+      diagnosticsVisible: false,
+    }));
+    expect(recentResponse.status).toBe(200);
+    expect(recentPayload.records).toHaveLength(1);
+    expect(recentPayload.records[0]).toEqual(expect.objectContaining({
+      prompt: 'Give me a local reply.',
+      response: {
+        role: 'mira',
+        content: heldText,
+      },
+      visible_reply_status: expect.objectContaining({
+        held: true,
+        reason: 'held_for_visible_reply_quality',
+        rejectedTextVisible: false,
+        violationIdsVisible: false,
+        diagnosticsVisible: false,
+      }),
+    }));
+    expect(recentPayload.records[0].visible_reply_gate).toBeUndefined();
+    expect(recentPayload.records[0].held_reply_audit).toBeUndefined();
+
+    const publicText = `${JSON.stringify(payload)}\n${JSON.stringify(recentPayload)}`;
+    expect(publicText).not.toContain(rejectedGeneratedText);
+    expect(publicText).not.toContain('validation fixture');
+    expect(publicText).not.toContain('proof scaffolding');
+    expect(publicText).not.toContain('route owner protocol');
+    expect(publicText).not.toContain('backstage_label');
+    expect(publicText).not.toContain('mira_runtime_visible_reply_gate_v0');
+    expect(publicText).not.toContain('mira.runtime_held_reply_audit.v0');
+    expect(publicText).not.toContain('visible_reply_gate_violation');
+  });
 
   test('can use local Ollama/Gemma chat for model-backed turns without tools or sends', async () => {
     const stateRoot = writeNormalizedCoreStateRoot();
