@@ -2968,6 +2968,10 @@ describe('Mira runtime UI boot', () => {
     expect(deliveryText).toContain('Checksum: packet-sha256-test');
     expect(deliveryText).toContain('Review: Manual copy only: paste this body into oracle pane 3 after review.');
     expect(deliveryText).toContain('no command stored, runtime execution, external send, route flip, provider/model call, account or token access, Telegram, or live hm-send');
+    expect(harness.elements.routeFollowThroughList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeFollowThroughList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeDeliveryPreviewList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeDeliveryPreviewList.children[0].attributes.id).toBe('mission-control-manual-step-internal-delivery-preview-mission-delivery-preview-test');
     const copyButton = harness.elements.routeDeliveryPreviewList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Copy packet body');
     expect(copyButton.textContent).toBe('Copy packet body');
@@ -2977,6 +2981,28 @@ describe('Mira runtime UI boot', () => {
     const readinessButton = harness.elements.routeDeliveryPreviewList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Review dispatch readiness');
     expect(readinessButton.textContent).toBe('Review dispatch readiness');
+    expect(readinessButton.className).toContain('selected-manual-action');
+    expect(readinessButton.attributes['aria-label']).toBe('Selected Mission Control action: Review dispatch readiness');
+    const postDeliveryPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postDeliveryStepHeader = postDeliveryPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postDeliveryStepHeader.textContent).toBe('Next manual step: Review dispatch readiness on Delivery preview. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postDeliveryStepHeader.children).toHaveLength(1);
+    expect(postDeliveryStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-internal-delivery-preview-mission-delivery-preview-test');
+    const postDeliveryPipelineText = postDeliveryPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postDeliveryPipelineText).toContain('Current stage: Delivery preview: reviewed preview only; token mission-delivery-preview-test.');
+    expect(postDeliveryPipelineText).toContain('Last saved: Delivery preview: reviewed_preview_only; token mission-delivery-preview-test');
+    expect(postDeliveryPipelineText).toContain('Current evidence: token mission-delivery-preview-test; status saved; path mission-control/internal-delivery-previews/mission-delivery-preview-test.json; relation follow_through_recommendation -> internal_delivery_preview; source token mission-follow-through-test; no checksum recorded');
+    expect(postDeliveryPipelineText).toContain('Advance selector: advance available: Delivery preview -> Dispatch readiness. Delivery preview is the latest available stage before the first missing stage, Dispatch readiness.');
+    expect(postDeliveryPipelineText).toContain('Manual action preflight: ready: Review dispatch readiness · Review dispatch readiness is the next manual internal action because Delivery preview is selected and Dispatch readiness is the first missing stage. Use the selected token as deliveryPreviewToken; this preflight does not perform the action.');
+    expect(postDeliveryPipelineText).toContain('Manual action input: deliveryPreviewToken=mission-delivery-preview-test; source mission-control/internal-delivery-previews/mission-delivery-preview-test.json; next Dispatch readiness');
+    expect(postDeliveryPipelineText).toContain('Selected artifact: token mission-delivery-preview-test; path mission-control/internal-delivery-previews/mission-delivery-preview-test.json; source mission-follow-through-test; body not available; adapter not available');
+    expect(postDeliveryPipelineText).toContain('Workbench focus: Highlight the existing Delivery preview card at mission-control/internal-delivery-previews/mission-delivery-preview-test.json and use its existing Review dispatch readiness action.');
+    expect(postDeliveryPipelineText).toContain('Manual selector summary: ready: Review dispatch readiness on Delivery preview; deliveryPreviewToken=mission-delivery-preview-test; POST /mission-control/dispatch-readiness; manual-only because this status card does not submit.');
+    expect(postDeliveryPipelineText).toContain('Payload preview: ready: POST /mission-control/dispatch-readiness · This is the exact workbench payload preview for Review dispatch readiness; it is not submitted by the status surface.');
+    expect(postDeliveryPipelineText).toContain('Payload body: {"deliveryPreviewToken":"mission-delivery-preview-test"}');
+    expect(postDeliveryPipelineText).toContain('Handler drift check: matched: createDispatchReadiness · createDispatchReadiness expects POST /mission-control/dispatch-readiness with deliveryPreviewToken; payload preview matches that workbench handler contract.');
     await readinessButton.listeners.click();
 
     const dispatchReadinessCalls = harness.calls.filter((call) => call.url === '/mission-control/dispatch-readiness');

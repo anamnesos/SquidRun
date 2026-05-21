@@ -1880,6 +1880,12 @@ describe('Mira runtime bridge manual-plan API', () => {
       }),
     });
     const deliveryPreviewPayload = await deliveryPreviewResponse.json();
+    const postDeliveryPipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const postDeliveryPipelineStatusPayload = await postDeliveryPipelineStatusResponse.json();
+    const dispatchReadinessStatusDir = path.join(tempStateRoot, 'mission-control', 'dispatch-readiness');
+    const dispatchReadinessFilesAfterStatusRefresh = fs.existsSync(dispatchReadinessStatusDir)
+      ? fs.readdirSync(dispatchReadinessStatusDir).filter((file) => file.endsWith('.json'))
+      : [];
     const duplicateDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1990,6 +1996,77 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+    expect(postDeliveryPipelineStatusResponse.status).toBe(200);
+    expect(postDeliveryPipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
+      id: 'internal_delivery_preview',
+      label: 'Delivery preview',
+      latestToken: deliveryPreviewPayload.preview.actionToken,
+      relativePath: deliveryPreviewPayload.relativePath,
+      sourceStageId: 'follow_through_recommendation',
+      sourceToken: followThroughPayload.selectedRecommendation.actionToken,
+    }));
+    expect(postDeliveryPipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
+      id: 'internal_delivery_preview',
+      label: 'Delivery preview',
+      latestToken: deliveryPreviewPayload.preview.actionToken,
+      relativePath: deliveryPreviewPayload.relativePath,
+    }));
+    expect(postDeliveryPipelineStatusPayload.currentStageTrace.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stageId: 'follow_through_recommendation',
+        token: followThroughPayload.selectedRecommendation.actionToken,
+        sourceStageId: 'owned_work_continuation',
+        sourceToken: editContinuationPayload.continuation.actionToken,
+      }),
+      expect.objectContaining({
+        stageId: 'internal_delivery_preview',
+        token: deliveryPreviewPayload.preview.actionToken,
+        relativePath: deliveryPreviewPayload.relativePath,
+        sourceStageId: 'follow_through_recommendation',
+        sourceToken: followThroughPayload.selectedRecommendation.actionToken,
+        bodySha256: null,
+        adapterPacketSha256: null,
+      }),
+    ]));
+    expect(postDeliveryPipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      status: 'advance_available',
+      selectedStageId: 'internal_delivery_preview',
+      selectedStageLabel: 'Delivery preview',
+      selectedArtifactToken: deliveryPreviewPayload.preview.actionToken,
+      selectedRelativePath: deliveryPreviewPayload.relativePath,
+      selectedSourceStageId: 'follow_through_recommendation',
+      selectedSourceToken: followThroughPayload.selectedRecommendation.actionToken,
+      selectedBodySha256: null,
+      selectedAdapterPacketSha256: null,
+      nextStageId: 'dispatch_readiness',
+      nextStageLabel: 'Dispatch readiness',
+    }));
+    expect(postDeliveryPipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      status: 'ready',
+      selectedStageId: 'internal_delivery_preview',
+      selectedStageLabel: 'Delivery preview',
+      manualActionLabel: 'Review dispatch readiness',
+      tokenField: 'deliveryPreviewToken',
+      tokenValue: deliveryPreviewPayload.preview.actionToken,
+    }));
+    expect(postDeliveryPipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      status: 'ready',
+      actionLabel: 'Review dispatch readiness',
+      method: 'POST',
+      endpoint: '/mission-control/dispatch-readiness',
+      payload: {
+        deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken,
+      },
+      requiredManualInputs: [],
+    }));
+    expect(postDeliveryPipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      status: 'matched',
+      handlerName: 'createDispatchReadiness',
+      expectedEndpoint: '/mission-control/dispatch-readiness',
+      expectedTokenField: 'deliveryPreviewToken',
+      previewTokenField: 'deliveryPreviewToken',
+    }));
+    expect(dispatchReadinessFilesAfterStatusRefresh).toHaveLength(0);
     expect(deliveryPreviewPayload.preview).not.toHaveProperty('command');
     expect(deliveryPreviewPayload.preview).not.toHaveProperty('args');
     expect(deliveryPreviewPayload.preview.deliveryPacket).not.toHaveProperty('command');
