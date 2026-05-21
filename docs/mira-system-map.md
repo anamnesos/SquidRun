@@ -437,6 +437,8 @@ Product-facing manual-action/status-focus prompts such as `what manual action is
 
 Product-facing checksum/evidence-integrity prompts such as `what checksum backs the Mission Control artifact?` and `what is the Mission Control evidence checksum?` now answer from the already-loaded activation pipeline current-stage trace and advance-selection checksum fields, without posting `/turn`, adding fetches, verifying checksums, reading files, opening paths, fixing, updating, submitting, persisting, clicking, or sending externally.
 
+Product-facing source/provenance prompts such as `where did this Mission Control artifact come from?` and `what is the Mission Control source relation?` now answer from the already-loaded activation pipeline current-stage trace/source relation fields, without posting `/turn`, adding fetches, tracing files, reading files, opening paths, fixing, updating, submitting, persisting, clicking, or sending externally.
+
 Product-facing artifact/evidence-path prompts such as `where is the current Mission Control artifact?` and `what is the Mission Control evidence path?` now answer from the already-loaded activation pipeline status/trace state, without posting `/turn`, adding fetches, reading files, persisting, or sending externally.
 
 Product-facing proof-summary prompts such as `what did Mission Control prove?` and `what proof summary is loaded in Mission Control?` now answer from the already-loaded activation pipeline status/readout fields, without posting `/turn`, adding fetches, persisting, clicking, or sending externally.
