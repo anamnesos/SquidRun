@@ -351,6 +351,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('Confirmations');
     expect(indexHtml).toContain('id="sendCheckList"');
     expect(indexHtml).toContain('Pre-send checks');
+    expect(indexHtml).toContain('id="routeRequestList"');
     expect(indexHtml).toContain('id="autonomyTickButton"');
     expect(indexHtml).toContain('id="autonomyFollowButton"');
     expect(indexHtml).toContain('id="autonomyList"');
@@ -380,7 +381,9 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/work/send-confirmations'");
     expect(appJs).toContain("fetch('/work/send-checks'");
     expect(appJs).toContain("fetch('/mission-control/route-previews'");
+    expect(appJs).toContain("fetch('/mission-control/internal-route-requests'");
     expect(appJs).toContain('Save preview for review');
+    expect(appJs).toContain('Make review item');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -843,6 +846,284 @@ describe('Mira runtime bridge manual-plan API', () => {
       providerInvoked: false,
     }));
     expect(fs.readdirSync(path.join(tempStateRoot, 'mission-control', 'route-previews')).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+  });
+
+  test('promotes saved Mission Control route previews into internal route requests only', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-mission-route-request-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const preview = {
+      status: 'reviewed_preview_only',
+      selectedDraftTarget: 'oracle',
+      selectedDraftPurpose: 'benchmark review',
+      plan: {
+        ok: true,
+        protocol: 'mira.runtime_bridge_request_plan.v0',
+        manualExecutionRequired: true,
+        runtimeExecutes: false,
+        target: {
+          role: 'oracle',
+          paneId: '3',
+        },
+        envelope: {
+          protocol: 'mira.hm_send_adapter.v0',
+          request_id: 'req-mission-route-request-test',
+          message_id: 'mission-route-request-test',
+          session_id: null,
+          evidence: [{
+            kind: 'file',
+            path: 'docs/mira-system-map.md',
+            summary: 'Mission Control internal-route request proof.',
+          }],
+          body: {
+            content: 'Review the saved Mission Control route preview and decide the next internal move.',
+          },
+        },
+        command: {
+          executable: process.execPath,
+          args: ['mira/bridge/send-pane-message.js', '--target', 'oracle'],
+          cwd: repoRoot,
+        },
+      },
+      audit: {
+        reviewStatus: 'preview_ready',
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        telegramSend: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+        note: 'Preview only; no send invoked.',
+      },
+    };
+
+    const routeRequestToken = (id) => `mission-route-${crypto.createHash('sha256')
+      .update(`mira.mission_control_route_preview.v0:${id}`)
+      .digest('base64url')
+      .slice(0, 18)}`;
+    const routeRequestDir = path.join(tempStateRoot, 'mission-control', 'internal-route-requests');
+    const saveResponse = await fetch(`${baseUrl}/mission-control/route-previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        preview,
+        missionAnswer: 'Project/lane: squidrun / architect#298.\nJAMES ACTION: NONE - local request promotion.',
+        source: 'runtime-ui-test',
+      }),
+    });
+    const savePayload = await saveResponse.json();
+    const emptyRequestResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`);
+    const emptyRequestPayload = await emptyRequestResponse.json();
+    const missingTokenResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingTokenPayload = await missingTokenResponse.json();
+    const badTokenResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ previewToken: 'mission-route-not-saved' }),
+    });
+    const badTokenPayload = await badTokenResponse.json();
+    const createRequestResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        previewToken: savePayload.record.actionToken,
+      }),
+    });
+    const createRequestPayload = await createRequestResponse.json();
+    const duplicateRequestResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        previewToken: savePayload.record.actionToken,
+      }),
+    });
+    const duplicateRequestPayload = await duplicateRequestResponse.json();
+    const listRequestResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests?includeInternal=1`);
+    const listRequestPayload = await listRequestResponse.json();
+
+    expect(saveResponse.status).toBe(200);
+    expect(emptyRequestResponse.status).toBe(200);
+    expect(emptyRequestPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_route_request_list.v0',
+      requestCount: 0,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(missingTokenResponse.status).toBe(400);
+    expect(missingTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_route_preview_token_required',
+    }));
+    expect(badTokenResponse.status).toBe(400);
+    expect(badTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_route_preview_not_found',
+    }));
+    expect(createRequestResponse.status).toBe(200);
+    expect(createRequestPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_route_request_write.v0',
+      created: true,
+      stateRootPath: path.resolve(tempStateRoot),
+      relativePath: expect.stringMatching(/^mission-control\/internal-route-requests\/mission-route-request-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(createRequestPayload.request).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_route_request.v0',
+      status: 'pending_internal_review',
+      sourcePreviewId: savePayload.record.id,
+      sourcePreviewToken: savePayload.record.actionToken,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      purpose: 'benchmark review',
+      contentPreview: 'Review the saved Mission Control route preview and decide the next internal move.',
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(createRequestPayload.request).not.toHaveProperty('command');
+    expect(createRequestPayload.request).not.toHaveProperty('args');
+    expect(fs.existsSync(createRequestPayload.absolutePath)).toBe(true);
+    const storedRequest = JSON.parse(fs.readFileSync(createRequestPayload.absolutePath, 'utf8'));
+    expect(storedRequest).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_route_request.v0',
+      status: 'pending_internal_review',
+      sourcePreviewToken: savePayload.record.actionToken,
+      reviewableOwnedWork: true,
+      manualExecutionRequired: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedRequest).not.toHaveProperty('command');
+    expect(storedRequest).not.toHaveProperty('args');
+    expect(duplicateRequestResponse.status).toBe(200);
+    expect(duplicateRequestPayload.created).toBe(false);
+    expect(duplicateRequestPayload.relativePath).toBe(createRequestPayload.relativePath);
+    for (const input of [
+      { previewToken: savePayload.record.actionToken, telegramSend: true },
+      { previewToken: savePayload.record.actionToken, audit: { accountOrTokenAccess: true } },
+      { previewToken: savePayload.record.actionToken, plan: { liveHmSend: true } },
+    ]) {
+      const blockedRequestResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedRequestPayload = await blockedRequestResponse.json();
+      expect(blockedRequestResponse.status).toBe(400);
+      expect(blockedRequestPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_route_request_has_live_effect',
+      }));
+      expect(fs.readdirSync(routeRequestDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    for (const input of [
+      { previewToken: savePayload.record.actionToken, command: { executable: process.execPath } },
+      { previewToken: savePayload.record.actionToken, args: ['hm-send', 'oracle'] },
+    ]) {
+      const blockedCommandResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandPayload = await blockedCommandResponse.json();
+      expect(blockedCommandResponse.status).toBe(400);
+      expect(blockedCommandPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_route_request_command_not_allowed',
+      }));
+      expect(fs.readdirSync(routeRequestDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    expect(listRequestResponse.status).toBe(200);
+    expect(listRequestPayload.requestCount).toBe(1);
+    expect(listRequestPayload.requests[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-request-/),
+      status: 'pending_internal_review',
+      relativePath: createRequestPayload.relativePath,
+      reviewableOwnedWork: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+
+    const previewDir = path.join(tempStateRoot, 'mission-control', 'route-previews');
+    for (const flag of ['telegramSend', 'accountOrTokenAccess', 'liveHmSend']) {
+      const badRecord = {
+        ...savePayload.record,
+        id: `mission-route-preview-bad-${flag}`,
+        content: `This corrupted saved preview has ${flag} true.`,
+        contentPreview: `This corrupted saved preview has ${flag} true.`,
+        [flag]: true,
+      };
+      delete badRecord.actionToken;
+      fs.writeFileSync(path.join(previewDir, `${badRecord.id}.json`), `${JSON.stringify(badRecord, null, 2)}\n`, 'utf8');
+      const blockedResponse = await fetch(`${baseUrl}/mission-control/internal-route-requests`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          previewToken: routeRequestToken(badRecord.id),
+        }),
+      });
+      const blockedPayload = await blockedResponse.json();
+      expect(blockedResponse.status).toBe(400);
+      expect(blockedPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_route_preview_not_found',
+      }));
+      expect(fs.readdirSync(routeRequestDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
   });
 
   test('creates and lists pending-review customer work drafts without external send', async () => {

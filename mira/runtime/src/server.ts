@@ -6,7 +6,9 @@ import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyLoopOnce, runAu
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
 import {
+  createMissionControlInternalRouteRequest,
   createMissionControlRoutePreviewRecord,
+  listMissionControlInternalRouteRequests,
   listMissionControlRoutePreviewRecords,
 } from "./mission-control-route-preview.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
@@ -522,6 +524,17 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/mission-control/internal-route-requests") {
+    try {
+      const body = await readJsonBody(request);
+      const routeRequest = createMissionControlInternalRouteRequest(body);
+      sendJson(response, 200, routeRequest);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method === "POST" && requestUrl.pathname === "/autonomy/tick") {
     try {
       sendJson(response, 200, runAutonomyTick());
@@ -668,6 +681,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/mission-control/route-previews") {
     sendJson(response, 200, listMissionControlRoutePreviewRecords(process.env, { includeInternal: includeInternalFields(requestUrl) }));
+    return;
+  }
+
+  if (requestUrl.pathname === "/mission-control/internal-route-requests") {
+    sendJson(response, 200, listMissionControlInternalRouteRequests(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 

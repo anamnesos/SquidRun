@@ -13,6 +13,7 @@ const state = {
   workSendConfirmationCount: 0,
   workSendCheckCount: 0,
   missionControlRoutePreviewCount: 0,
+  missionControlRouteRequestCount: 0,
   queuedOwnedWorkCount: 0,
   missionControl: null,
   autonomyQueueCount: 0,
@@ -39,6 +40,7 @@ const elements = {
   routePreviewSummary: document.getElementById('routePreviewSummary'),
   saveRoutePreviewButton: document.getElementById('saveRoutePreviewButton'),
   routePreviewHistoryList: document.getElementById('routePreviewHistoryList'),
+  routeRequestList: document.getElementById('routeRequestList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -371,7 +373,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -761,6 +763,48 @@ function updateRoutePreviewHistoryList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Preview', preview.contentPreview || preview.content);
     appendPreviewLine(card, 'Audit', 'internal review only; no runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
+    const promote = document.createElement('button');
+    promote.type = 'button';
+    promote.className = 'subtle-button';
+    promote.textContent = 'Make review item';
+    promote.addEventListener('click', async () => {
+      promote.disabled = true;
+      promote.textContent = 'Making';
+      try {
+        await createRouteRequestFromPreview(preview);
+        promote.textContent = 'Review item made';
+        appendMessage('mira', 'Route review item saved locally. Nothing was sent or executed.');
+        await refreshRouteRequests();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        promote.disabled = false;
+        promote.textContent = 'Make review item';
+      }
+    });
+    card.append(promote);
+    return card;
+  }));
+}
+
+function updateRouteRequestList(payload) {
+  const requests = Array.isArray(payload?.requests) ? payload.requests : [];
+  state.missionControlRouteRequestCount = Number(payload?.requestCount || requests.length || 0);
+  renderWorkSummary();
+  if (requests.length === 0) {
+    setText(elements.routeRequestList, 'no route review items yet');
+    return;
+  }
+
+  elements.routeRequestList.replaceChildren(...requests.slice(0, 5).map((request) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-request-history';
+    const title = document.createElement('strong');
+    title.textContent = `${request.targetRole || 'team'} · ${request.purpose || 'coordination'} review item`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(request.status || 'pending_internal_review').replace(/_/g, ' ')} · manual execution required · not sent · ${formatReadyStamp(request.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Request', request.contentPreview || request.content);
+    appendPreviewLine(card, 'Audit', 'reviewable owned work only; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
     return card;
   }));
 }
@@ -1020,6 +1064,13 @@ async function refreshRoutePreviewHistory() {
   updateRoutePreviewHistoryList(payload);
 }
 
+async function refreshRouteRequests() {
+  const response = await fetch('/mission-control/internal-route-requests');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateRouteRequestList(payload);
+}
+
 async function refreshAutonomy() {
   const response = await fetch('/autonomy/status');
   const payload = await response.json();
@@ -1218,6 +1269,21 @@ async function saveMissionControlRoutePreview() {
   return payload;
 }
 
+async function createRouteRequestFromPreview(preview) {
+  const response = await fetch('/mission-control/internal-route-requests', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      previewToken: preview?.actionToken || '',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control route review item save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1297,6 +1363,7 @@ async function primeReadOnlyWorkbench() {
     await refreshSendConfirmations();
     await refreshSendChecks();
     await refreshRoutePreviewHistory();
+    await refreshRouteRequests();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1319,6 +1386,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshSendConfirmations();
     await refreshSendChecks();
     await refreshRoutePreviewHistory();
+    await refreshRouteRequests();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1404,6 +1472,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     });
     appendMessage('mira', 'Route preview saved for internal review. Nothing was sent or executed.');
     await refreshRoutePreviewHistory();
+    await refreshRouteRequests();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {
