@@ -392,6 +392,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-designs'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-requests'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-decision-audits'");
+    expect(appJs).toContain("fetch('/mission-control/internal-send-activation-implementation-readiness'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
@@ -406,6 +407,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="routeInternalSendActivationDesignList"');
     expect(indexHtml).toContain('id="routeInternalSendActivationRequestList"');
     expect(indexHtml).toContain('id="routeInternalSendActivationAuditList"');
+    expect(indexHtml).toContain('id="routeInternalSendActivationReadinessList"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1138,6 +1140,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     const emptyActivationRequestPayload = await emptyActivationRequestResponse.json();
     const emptyActivationDecisionAuditResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-decision-audits`);
     const emptyActivationDecisionAuditPayload = await emptyActivationDecisionAuditResponse.json();
+    const emptyActivationImplementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`);
+    const emptyActivationImplementationReadinessPayload = await emptyActivationImplementationReadinessResponse.json();
     const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1348,6 +1352,27 @@ describe('Mira runtime bridge manual-plan API', () => {
       protocol: 'mira.mission_control_internal_send_activation_decision_audit_list.v0',
       auditCount: 0,
       audits: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(emptyActivationImplementationReadinessResponse.status).toBe(200);
+    expect(emptyActivationImplementationReadinessPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_implementation_readiness_list.v0',
+      readinessCount: 0,
+      readiness: [],
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -2958,6 +2983,260 @@ describe('Mira runtime bridge manual-plan API', () => {
         code: 'mission_control_internal_send_activation_decision_audit_command_not_allowed',
       }));
       expect(fs.readdirSync(activationDecisionAuditDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    const activationImplementationReadinessDir = path.join(tempStateRoot, 'mission-control', 'internal-send-activation-implementation-readiness');
+    const missingImplementationReadinessTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingImplementationReadinessTokenPayload = await missingImplementationReadinessTokenResponse.json();
+    const badImplementationReadinessTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationDecisionAuditToken: 'mission-send-activation-audit-not-saved' }),
+    });
+    const badImplementationReadinessTokenPayload = await badImplementationReadinessTokenResponse.json();
+    expect(missingImplementationReadinessTokenResponse.status).toBe(400);
+    expect(missingImplementationReadinessTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_decision_audit_token_required',
+    }));
+    expect(fs.existsSync(activationImplementationReadinessDir)).toBe(false);
+    expect(badImplementationReadinessTokenResponse.status).toBe(400);
+    expect(badImplementationReadinessTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_decision_audit_not_found',
+    }));
+    expect(fs.existsSync(activationImplementationReadinessDir)).toBe(false);
+    const implementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken }),
+    });
+    const implementationReadinessPayload = await implementationReadinessResponse.json();
+    const duplicateImplementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ decisionAuditToken: decisionAuditPayload.audit.actionToken }),
+    });
+    const duplicateImplementationReadinessPayload = await duplicateImplementationReadinessResponse.json();
+    const listImplementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness?includeInternal=1`);
+    const listImplementationReadinessPayload = await listImplementationReadinessResponse.json();
+    expect(implementationReadinessResponse.status).toBe(200);
+    expect(implementationReadinessPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_implementation_readiness_write.v0',
+      created: true,
+      relativePath: expect.stringMatching(/^mission-control\/internal-send-activation-implementation-readiness\/mission-send-activation-implementation-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(implementationReadinessPayload.readiness).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_activation_implementation_readiness.v0',
+      status: 'activation_implementation_readiness_review_only',
+      sourceInternalSendActivationDecisionAuditId: decisionAuditPayload.audit.id,
+      sourceInternalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken,
+      sourceInternalSendActivationRequestToken: activationRequestPayload.request.actionToken,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      targetLabel: 'oracle pane 3',
+      content: 'Edited internal continuation for Oracle review.',
+      bodySha256: decisionAuditPayload.audit.bodySha256,
+      adapterPacketSha256: decisionAuditPayload.audit.adapterPacketSha256,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(implementationReadinessPayload.readiness.implementationGate).toEqual({
+      protocol: 'mira.mission_control_internal_send_activation_implementation_gate.v0',
+      readinessOnly: true,
+      disabledByDefault: true,
+      implementationEnabled: false,
+      activationAllowed: false,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+      separateActivationRequired: true,
+    });
+    expect(implementationReadinessPayload.readiness.refusal).toEqual(expect.objectContaining({
+      status: 'live_activation_still_refused',
+      sourceDecision: 'refuse_live_activation_until_separate_gate',
+    }));
+    expect(implementationReadinessPayload.readiness.rollback).toEqual({
+      status: 'rollback_requirements_ready',
+      preActivationSnapshotRequired: true,
+      failureAuditRequired: true,
+      transportOutcomeAuditRequired: true,
+    });
+    expect(implementationReadinessPayload.readiness.auditRequirements.map((item) => item.id)).toEqual([
+      'decision_audit_token_required',
+      'decision_audit_checksum_required',
+      'decision_refusal_required',
+      'disabled_by_default_required',
+      'rollback_audit_required',
+      'separate_activation_required',
+    ]);
+    expect(implementationReadinessPayload.readiness.audit).toEqual(expect.objectContaining({
+      reviewStatus: 'activation_implementation_readiness_ready',
+      readinessOnly: true,
+      disabledByDefault: true,
+      implementationEnabled: false,
+      manualExecutionRequired: true,
+      sourceDecisionAuditChecksumMatched: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(implementationReadinessPayload.readiness).not.toHaveProperty('command');
+    expect(implementationReadinessPayload.readiness).not.toHaveProperty('args');
+    expect(implementationReadinessPayload.readiness).not.toHaveProperty('delivery');
+    const storedImplementationReadiness = JSON.parse(fs.readFileSync(implementationReadinessPayload.absolutePath, 'utf8'));
+    expect(storedImplementationReadiness).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_activation_implementation_readiness.v0',
+      status: 'activation_implementation_readiness_review_only',
+      sourceInternalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken,
+      targetLabel: 'oracle pane 3',
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedImplementationReadiness).not.toHaveProperty('command');
+    expect(storedImplementationReadiness).not.toHaveProperty('args');
+    expect(storedImplementationReadiness).not.toHaveProperty('delivery');
+    expect(duplicateImplementationReadinessResponse.status).toBe(200);
+    expect(duplicateImplementationReadinessPayload.created).toBe(false);
+    expect(duplicateImplementationReadinessPayload.relativePath).toBe(implementationReadinessPayload.relativePath);
+    expect(listImplementationReadinessResponse.status).toBe(200);
+    expect(listImplementationReadinessPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_implementation_readiness_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      readinessCount: 1,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(listImplementationReadinessPayload.readiness[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-send-activation-ready-/),
+      relativePath: implementationReadinessPayload.relativePath,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    fs.writeFileSync(decisionAuditPayload.absolutePath, `${JSON.stringify({
+      ...storedDecisionAudit,
+      bodySha256: 'bad-body-sha256',
+    }, null, 2)}\n`, 'utf8');
+    const mismatchedImplementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken }),
+    });
+    const mismatchedImplementationReadinessPayload = await mismatchedImplementationReadinessResponse.json();
+    fs.writeFileSync(decisionAuditPayload.absolutePath, `${JSON.stringify(storedDecisionAudit, null, 2)}\n`, 'utf8');
+    expect(mismatchedImplementationReadinessResponse.status).toBe(400);
+    expect(mismatchedImplementationReadinessPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_implementation_readiness_checksum_mismatch',
+    }));
+    expect(fs.readdirSync(activationImplementationReadinessDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    for (const input of [
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, liveHmSend: true },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, implementationReadiness: { implementationEnabled: true } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, implementation: { target: { telegramSend: true } } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, activationImplementation: { body: { liveHmSendExecutionAllowed: true } } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, gate: { activationAllowed: true } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, refusal: { externalSend: true } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, rollbackAudit: { body: { routeFlip: true } } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, audit: { target: { providerInvoked: true } } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, decisionAudit: { body: { accountOrTokenAccess: true } } },
+    ]) {
+      const blockedImplementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedImplementationReadinessPayload = await blockedImplementationReadinessResponse.json();
+      expect(blockedImplementationReadinessResponse.status).toBe(400);
+      expect(blockedImplementationReadinessPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_activation_implementation_readiness_has_live_effect',
+      }));
+      expect(fs.readdirSync(activationImplementationReadinessDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    for (const input of [
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, command: 'hm-send oracle' },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, implementationReadiness: { command: 'hm-send oracle' } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, implementation: { body: { command: 'hm-send oracle' } } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, activationImplementation: { target: { args: ['hm-send', 'oracle'] } } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, gate: { args: ['hm-send', 'oracle'] } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, rollbackAudit: { target: { command: 'hm-send oracle' } } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, audit: { args: ['hm-send', 'oracle'] } },
+      { internalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken, decisionAudit: { body: { command: 'hm-send oracle' } } },
+    ]) {
+      const blockedCommandImplementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandImplementationReadinessPayload = await blockedCommandImplementationReadinessResponse.json();
+      expect(blockedCommandImplementationReadinessResponse.status).toBe(400);
+      expect(blockedCommandImplementationReadinessPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_activation_implementation_readiness_command_not_allowed',
+      }));
+      expect(fs.readdirSync(activationImplementationReadinessDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
     }
     fs.writeFileSync(deliveryPreviewPayload.absolutePath, `${JSON.stringify({
       ...storedDeliveryPreview,
