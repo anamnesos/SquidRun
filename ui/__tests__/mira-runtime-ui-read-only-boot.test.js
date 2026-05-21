@@ -3951,6 +3951,41 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 
+  test('answers route-preview questions from existing Mission Control context without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    expect(harness.elements.routePreviewSummary.textContent).toContain('Route preview: oracle · benchmark review');
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    harness.elements.turnText.value = 'what route preview is prepared?';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+      'what route preview is prepared?',
+      expect.stringContaining('Route preview: oracle · benchmark review'),
+    ]);
+    const previewReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+    expect(previewReply).toContain('Message preview: Challenge Mission Control v0 against the external-agent benchmark.');
+    expect(previewReply).toContain('Source: already-loaded Mission Control internal route preview from local SquidRun context.');
+    expect(previewReply).toContain('Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
+    expect(previewReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+    expect((previewReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
   test('posts exactly one deterministic turn after explicit user submit', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');

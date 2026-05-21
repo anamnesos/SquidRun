@@ -239,8 +239,13 @@ function renderCoordinationDrafts(drafts) {
 
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
+    || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
+}
+
+function isMissionControlRoutePreviewQuestion(text) {
+  return /\b(internal\s+route|route\s+preview)\b/i.test(text);
 }
 
 function isMissionControlCoordinationQuestion(text) {
@@ -254,6 +259,10 @@ function isMissionControlDemoInspectionQuestion(text) {
 }
 
 function currentMissionControlAnswer(text = '') {
+  if (isMissionControlRoutePreviewQuestion(text)) {
+    const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
+    if (routePreviewAnswer) return routePreviewAnswer;
+  }
   if (isMissionControlCoordinationQuestion(text)) {
     const coordinationAnswer = buildMissionControlCoordinationAnswer(text);
     if (coordinationAnswer) return coordinationAnswer;
@@ -270,6 +279,26 @@ function answerMissionControlQuestion(text = '') {
   appendMessage('mira', answer, 'mira mission-answer');
   setText(elements.lastTurn, 'mission control local');
   return true;
+}
+
+function buildMissionControlRoutePreviewAnswer(mission = state.missionControl) {
+  const preview = mission?.internalRoutePreview;
+  if (!preview || preview.status !== 'reviewed_preview_only') return '';
+  const target = preview.selectedDraftTarget || preview.plan?.target?.role || 'team';
+  const purpose = preview.selectedDraftPurpose || 'coordination';
+  const message = preview.plan?.envelope?.body?.content || 'No route-preview message text is loaded yet.';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control route preview; no send or setup is needed.');
+  return [
+    `Route preview: ${target} · ${purpose}`,
+    `Message preview: ${message}`,
+    'Source: already-loaded Mission Control internal route preview from local SquidRun context.',
+    'Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
 }
 
 function targetFromMissionControlCoordinationQuestion(text) {
