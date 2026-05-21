@@ -5,6 +5,8 @@
  * Session 72: Added per audit finding - 650 lines of core code had ZERO tests
  */
 
+/* global afterEach, beforeEach, describe, expect, it, jest */
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -413,6 +415,9 @@ jest.mock('../modules/local-model-capabilities', () => ({
 // Now require the module under test
 const { spawn } = require('child_process');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
+const {
+  buildNewMiraTelegramTurnCandidate,
+} = require('../modules/mira-telegram-turn-candidate');
 const SquidRunApp = require('../modules/main/squidrun-app');
 
 describe('SquidRunApp', () => {
@@ -4045,6 +4050,105 @@ describe('SquidRunApp', () => {
           profile: 'main',
           lastInboundBody: 'main hello',
         }));
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+        } else {
+          process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = previousFlag;
+        }
+      }
+    });
+
+    it('compares current Mira Live and New Mira dry-run candidates for allowed owner Telegram text without sending', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      const previousFlag = process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+      process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = '1';
+      const body = 'what are we doing next?';
+      const metadata = { chatId: '5613428850', updateId: 167, messageId: 7001 };
+      const sessionId = 'app-session-377:main';
+
+      try {
+        const inboundRoute = app.resolveTelegramInboundRoute(metadata.chatId);
+        expect(inboundRoute).toEqual(expect.objectContaining({
+          ok: true,
+          chatId: '5613428850',
+          windowKey: 'main',
+          profile: 'main',
+          reason: 'owner_chat',
+        }));
+        expect(app.shouldRouteMainTelegramInboundToMira({
+          body,
+          inboundWindowKey: 'main',
+        })).toBe(true);
+
+        const currentMiraLiveReply = await app.buildTelegramMiraLiveReply(body, {
+          sessionId,
+          sender: 'james',
+          metadata,
+          inboundMessageId: 'telegram-in-167',
+        });
+        const newMiraCandidate = buildNewMiraTelegramTurnCandidate({
+          body,
+          sender: 'james',
+          metadata,
+          inboundRoute,
+          inboundSessionScopeId: sessionId,
+        });
+
+        expect(currentMiraLiveReply).toEqual(expect.objectContaining({
+          ok: true,
+          state: 'ready',
+          message: 'Mira visible reply from Telegram.',
+        }));
+        expect(sendMiraLivePrompt).toHaveBeenCalledTimes(1);
+        expect(sendMiraLivePrompt).toHaveBeenCalledWith(
+          {
+            prompt: body,
+            sessionId,
+            source: 'telegram-mira-live',
+          },
+          expect.objectContaining({
+            invoke: expect.any(Function),
+          })
+        );
+
+        expect(newMiraCandidate).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'new_mira_telegram_turn_candidate_ready',
+          dryRun: true,
+        }));
+        expect(newMiraCandidate.route).toEqual(expect.objectContaining({
+          currentOwner: 'squidrun-telegram-guard-stack',
+          routeOwnerChange: false,
+          liveRouteChanged: false,
+        }));
+        expect(newMiraCandidate.candidate).toEqual({
+          endpoint: '/turn',
+          method: 'POST',
+          body: {
+            text: body,
+            sessionId,
+            messageId: 'telegram-in-167',
+            requestId: 'telegram-in-167-new-mira-dry-run',
+            useModel: false,
+          },
+        });
+        expect(newMiraCandidate.sideEffects).toEqual(expect.objectContaining({
+          telegramSendFunctionCall: false,
+          liveTelegramSend: false,
+          routeOwnerChange: false,
+          runtimeExecutes: false,
+          runtimeActions: false,
+          toolsEnabled: false,
+          sendsEnabled: false,
+          store: false,
+          modelInvoked: false,
+          modelProviderCall: false,
+          telegramRouteControl: false,
+          uiSurfaceControl: false,
+        }));
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
       } finally {
         if (previousFlag === undefined) {
           delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
