@@ -735,6 +735,54 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         }),
         noEffectSummary: 'Read-only selection aid only; it compares existing trace entries and does not persist a selection, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
       },
+      manualActionPreflight: (() => {
+        const actionMap = {
+          route_preview: ['Make review item', 'previewToken'],
+          internal_route_request: ['Review continuation', 'requestToken'],
+          follow_through_recommendation: ['Preview delivery packet', 'recommendationToken'],
+          internal_delivery_preview: ['Review dispatch readiness', 'deliveryPreviewToken'],
+          dispatch_readiness: ['Create send dry run', 'dispatchReadinessToken'],
+          internal_send_dry_run: ['Design activation proof', 'internalSendDryRunToken'],
+          activation_design: ['Preview activation request', 'internalSendActivationDesignToken'],
+          activation_request: ['Record decision audit', 'internalSendActivationRequestToken'],
+          activation_decision_audit: ['Check implementation readiness', 'internalSendActivationDecisionAuditToken'],
+          activation_implementation_readiness: ['Define live gate contract', 'internalSendActivationImplementationReadinessToken'],
+        };
+        const action = actionMap[selectedStage?.id] || null;
+        const status = selectionStatus === 'hard_stop_reached'
+          ? 'blocked_hard_stop'
+          : selectedStage && nextStage && action
+            ? 'ready'
+            : 'blocked_no_source';
+        const explanation = status === 'ready'
+          ? `${action[0]} is the next manual internal action because ${selectedStage.label} is selected and ${nextStage.label} is the first missing stage. Use the selected token as ${action[1]}; this preflight does not perform the action.`
+          : status === 'blocked_hard_stop'
+            ? 'No manual advancement is available from this read-only surface because the selected artifact is the live activation hard-stop contract.'
+            : 'No manual action is ready because there is no selected saved artifact with a token and next missing stage.';
+        return {
+          protocol: 'mira.mission_control_activation_pipeline_manual_action_preflight.v0',
+          status,
+          selectedStageId: selectedStage?.id || null,
+          selectedStageLabel: selectedStage?.label || null,
+          selectedArtifactToken: selectedStage?.latestToken || null,
+          selectedRelativePath: selectedStage?.relativePath || null,
+          nextStageId: nextStage?.id || null,
+          nextStageLabel: nextStage?.label || null,
+          manualActionLabel: status === 'ready' ? action[0] : null,
+          manualActionSurface: status === 'ready' ? 'mission_control_workbench' : null,
+          tokenField: status === 'ready' ? action[1] : null,
+          tokenValue: status === 'ready' ? selectedStage.latestToken : null,
+          explanation,
+          evidenceChecks: [
+            { id: 'selected_artifact_token_present', label: 'Selected artifact token is available.', ok: Boolean(selectedStage?.latestToken) },
+            { id: 'selected_artifact_path_present', label: 'Selected artifact path is available or the selected entry is derived.', ok: Boolean(selectedStage?.relativePath) || selectedStage?.status === 'derived' },
+            { id: 'next_stage_missing', label: 'A next missing stage exists for manual advancement.', ok: Boolean(nextStage) },
+            { id: 'not_hard_stop', label: 'Selected artifact is not the live activation hard-stop contract.', ok: selectionStatus !== 'hard_stop_reached' },
+            { id: 'preflight_is_read_only', label: 'Preflight is derived from GET status and does not persist or execute anything.', ok: true },
+          ],
+          noEffectSummary: 'Read-only preflight only; it explains the next manual internal action and does not persist, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
+        };
+      })(),
       hardStopTruth: {
         liveSendAvailable: false,
         liveActivationAllowed: false,
@@ -2185,6 +2233,8 @@ describe('Mira runtime UI boot', () => {
     expect(emptyPipelineText).toContain('Advance selector: no chain: No saved artifact -> Route preview. No saved Mission Control route preview exists yet, so there is no artifact to advance.');
     expect(emptyPipelineText).toContain('Selected artifact: No saved artifact is available to advance.');
     expect(emptyPipelineText).toContain('Comparison: Compared 0 available stages; start by saving a route preview.');
+    expect(emptyPipelineText).toContain('Manual action preflight: blocked no source: no manual action · No manual action is ready because there is no selected saved artifact with a token and next missing stage.');
+    expect(emptyPipelineText).toContain('Manual action input: No manual action input is ready.');
     expect(emptyPipelineText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
@@ -2337,6 +2387,9 @@ describe('Mira runtime UI boot', () => {
     expect(routePreviewPipelineText).toContain('Advance selector: advance available: Route preview -> Review item. Route preview is the latest available stage before the first missing stage, Review item.');
     expect(routePreviewPipelineText).toContain('Selected artifact: token mission-route-test; path mission-control/route-previews/mission-route-preview-test.json; source not available; body not available; adapter not available');
     expect(routePreviewPipelineText).toContain('Comparison: Compared 1 available stage(s); selected Route preview because Review item is the first missing stage.');
+    expect(routePreviewPipelineText).toContain('Manual action preflight: ready: Make review item · Make review item is the next manual internal action because Route preview is selected and Review item is the first missing stage. Use the selected token as previewToken; this preflight does not perform the action.');
+    expect(routePreviewPipelineText).toContain('Manual action input: previewToken=mission-route-test; source mission-control/route-previews/mission-route-preview-test.json; next Review item');
+    expect(routePreviewPipelineText).toContain('Preflight checks: ok: Selected artifact token is available. / ok: Selected artifact path is available or the selected entry is derived. / ok: A next missing stage exists for manual advancement.');
 
     const promoteButton = harness.elements.routePreviewHistoryList.children[0].children
       .find((child) => child.tagName === 'BUTTON');
@@ -2794,6 +2847,9 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Advance selector: hard stop reached: Live activation hard-stop contract -> no next stage. The chain is already at the live activation hard-stop contract. This read-only surface has no next artifact to advance; future real send would require a separate James-visible setup/activation lane.');
     expect(pipelineStatusText).toContain('Selected artifact: token mission-send-live-gate-test; path mission-control/internal-send-live-activation-gate-contracts/mission-send-live-gate-test.json; source mission-send-activation-ready-test; body ');
     expect(pipelineStatusText).toContain('Comparison: Compared 12 available stage(s); no advancement is available after the hard-stop contract.');
+    expect(pipelineStatusText).toContain('Manual action preflight: blocked hard stop: no manual action · No manual advancement is available from this read-only surface because the selected artifact is the live activation hard-stop contract.');
+    expect(pipelineStatusText).toContain('Manual action input: No manual action input is ready.');
+    expect(pipelineStatusText).toContain('blocked: A next missing stage exists for manual advancement.');
     expect(pipelineStatusText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(pipelineStatusText).not.toContain('live send available: yes');
   });

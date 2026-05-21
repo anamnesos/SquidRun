@@ -1004,6 +1004,28 @@ describe('Mira runtime bridge manual-plan API', () => {
         nextStageId: 'internal_route_request',
       }),
     ]);
+    expect(previewOnlyPipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_manual_action_preflight.v0',
+      status: 'ready',
+      selectedStageId: 'route_preview',
+      selectedStageLabel: 'Route preview',
+      selectedArtifactToken: savePayload.record.actionToken,
+      selectedRelativePath: savePayload.relativePath,
+      nextStageId: 'internal_route_request',
+      nextStageLabel: 'Review item',
+      manualActionLabel: 'Make review item',
+      manualActionSurface: 'mission_control_workbench',
+      tokenField: 'previewToken',
+      tokenValue: savePayload.record.actionToken,
+      noEffectSummary: expect.stringContaining('does not persist'),
+    }));
+    expect(previewOnlyPipelineStatusPayload.manualActionPreflight.explanation).toContain('this preflight does not perform the action');
+    expect(previewOnlyPipelineStatusPayload.manualActionPreflight.evidenceChecks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'selected_artifact_token_present', ok: true }),
+      expect.objectContaining({ id: 'selected_artifact_path_present', ok: true }),
+      expect.objectContaining({ id: 'next_stage_missing', ok: true }),
+      expect.objectContaining({ id: 'preflight_is_read_only', ok: true }),
+    ]));
     expect(routeRequestFilesAfterPreviewOnlyStatus).toHaveLength(0);
     expect(emptyRequestResponse.status).toBe(200);
     expect(emptyRequestPayload).toEqual(expect.objectContaining({
@@ -3570,6 +3592,29 @@ describe('Mira runtime bridge manual-plan API', () => {
       relativePath: liveGatePayload.relativePath,
       nextStageId: null,
     }));
+    expect(pipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_manual_action_preflight.v0',
+      status: 'blocked_hard_stop',
+      selectedStageId: 'live_activation_gate_contract',
+      selectedStageLabel: 'Live activation hard-stop contract',
+      selectedArtifactToken: liveGatePayload.contract.actionToken,
+      selectedRelativePath: liveGatePayload.relativePath,
+      nextStageId: null,
+      nextStageLabel: null,
+      manualActionLabel: null,
+      manualActionSurface: null,
+      tokenField: null,
+      tokenValue: null,
+      noEffectSummary: expect.stringContaining('Read-only preflight only'),
+    }));
+    expect(pipelineStatusPayload.manualActionPreflight.explanation).toContain('No manual advancement is available');
+    expect(pipelineStatusPayload.manualActionPreflight.evidenceChecks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'selected_artifact_token_present', ok: true }),
+      expect.objectContaining({ id: 'selected_artifact_path_present', ok: true }),
+      expect.objectContaining({ id: 'next_stage_missing', ok: false }),
+      expect.objectContaining({ id: 'not_hard_stop', ok: false }),
+      expect.objectContaining({ id: 'preflight_is_read_only', ok: true }),
+    ]));
     expect(pipelineStatusPayload.currentStageTrace).toEqual(expect.objectContaining({
       protocol: 'mira.mission_control_activation_pipeline_trace.v0',
       entryCount: 12,

@@ -1503,6 +1503,28 @@ export type MissionControlActivationPipelineAdvanceSelection = {
   noEffectSummary: string;
 };
 
+export type MissionControlActivationPipelineManualActionPreflight = {
+  protocol: "mira.mission_control_activation_pipeline_manual_action_preflight.v0";
+  status: "ready" | "blocked_no_source" | "blocked_hard_stop";
+  selectedStageId: MissionControlActivationPipelineStageId | null;
+  selectedStageLabel: string | null;
+  selectedArtifactToken: string | null;
+  selectedRelativePath: string | null;
+  nextStageId: MissionControlActivationPipelineStageId | null;
+  nextStageLabel: string | null;
+  manualActionLabel: string | null;
+  manualActionSurface: "mission_control_workbench" | null;
+  tokenField: string | null;
+  tokenValue: string | null;
+  explanation: string;
+  evidenceChecks: Array<{
+    id: string;
+    label: string;
+    ok: boolean;
+  }>;
+  noEffectSummary: string;
+};
+
 export type MissionControlActivationPipelineStatusResult = {
   ok: true;
   protocol: "mira.mission_control_activation_pipeline_status.v0";
@@ -1515,6 +1537,7 @@ export type MissionControlActivationPipelineStatusResult = {
   stages: MissionControlActivationPipelineStage[];
   currentStageTrace: MissionControlActivationPipelineTrace;
   advanceSelection: MissionControlActivationPipelineAdvanceSelection;
+  manualActionPreflight: MissionControlActivationPipelineManualActionPreflight;
   hardStopTruth: {
     liveSendAvailable: false;
     liveActivationAllowed: false;
@@ -2664,6 +2687,92 @@ function buildActivationPipelineAdvanceSelection(
       };
     }),
     noEffectSummary: "Read-only selection aid only; it compares existing trace entries and does not persist a selection, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
+  };
+}
+
+function manualActionForActivationAdvance(
+  selectedStageId: MissionControlActivationPipelineStageId | null,
+): { label: string; tokenField: string } | null {
+  switch (selectedStageId) {
+    case "route_preview": return { label: "Make review item", tokenField: "previewToken" };
+    case "internal_route_request": return { label: "Review continuation", tokenField: "requestToken" };
+    case "follow_through_recommendation": return { label: "Preview delivery packet", tokenField: "recommendationToken" };
+    case "internal_delivery_preview": return { label: "Review dispatch readiness", tokenField: "deliveryPreviewToken" };
+    case "dispatch_readiness": return { label: "Create send dry run", tokenField: "dispatchReadinessToken" };
+    case "internal_send_dry_run": return { label: "Design activation proof", tokenField: "internalSendDryRunToken" };
+    case "activation_design": return { label: "Preview activation request", tokenField: "internalSendActivationDesignToken" };
+    case "activation_request": return { label: "Record decision audit", tokenField: "internalSendActivationRequestToken" };
+    case "activation_decision_audit": return { label: "Check implementation readiness", tokenField: "internalSendActivationDecisionAuditToken" };
+    case "activation_implementation_readiness": return { label: "Define live gate contract", tokenField: "internalSendActivationImplementationReadinessToken" };
+    case "owned_work_continuation":
+    case "live_activation_gate_contract":
+    default:
+      return null;
+  }
+}
+
+function buildActivationPipelineManualActionPreflight(
+  selection: MissionControlActivationPipelineAdvanceSelection,
+): MissionControlActivationPipelineManualActionPreflight {
+  const action = manualActionForActivationAdvance(selection.selectedStageId);
+  const blockedHardStop = selection.status === "hard_stop_reached";
+  const ready = selection.status === "advance_available"
+    && Boolean(action)
+    && Boolean(selection.selectedArtifactToken)
+    && Boolean(selection.nextStageId);
+  const status: MissionControlActivationPipelineManualActionPreflight["status"] = blockedHardStop
+    ? "blocked_hard_stop"
+    : ready
+      ? "ready"
+      : "blocked_no_source";
+  const explanation = status === "ready" && action
+    ? `${action.label} is the next manual internal action because ${selection.selectedStageLabel} is selected and ${selection.nextStageLabel} is the first missing stage. Use the selected token as ${action.tokenField}; this preflight does not perform the action.`
+    : status === "blocked_hard_stop"
+      ? "No manual advancement is available from this read-only surface because the selected artifact is the live activation hard-stop contract."
+      : "No manual action is ready because there is no selected saved artifact with a token and next missing stage.";
+
+  return {
+    protocol: "mira.mission_control_activation_pipeline_manual_action_preflight.v0",
+    status,
+    selectedStageId: selection.selectedStageId,
+    selectedStageLabel: selection.selectedStageLabel,
+    selectedArtifactToken: selection.selectedArtifactToken,
+    selectedRelativePath: selection.selectedRelativePath,
+    nextStageId: selection.nextStageId,
+    nextStageLabel: selection.nextStageLabel,
+    manualActionLabel: status === "ready" ? action?.label || null : null,
+    manualActionSurface: status === "ready" ? "mission_control_workbench" : null,
+    tokenField: status === "ready" ? action?.tokenField || null : null,
+    tokenValue: status === "ready" ? selection.selectedArtifactToken : null,
+    explanation,
+    evidenceChecks: [
+      {
+        id: "selected_artifact_token_present",
+        label: "Selected artifact token is available.",
+        ok: Boolean(selection.selectedArtifactToken),
+      },
+      {
+        id: "selected_artifact_path_present",
+        label: "Selected artifact path is available or the selected entry is derived.",
+        ok: Boolean(selection.selectedRelativePath) || selection.selectedArtifactStatus === "derived",
+      },
+      {
+        id: "next_stage_missing",
+        label: "A next missing stage exists for manual advancement.",
+        ok: Boolean(selection.nextStageId),
+      },
+      {
+        id: "not_hard_stop",
+        label: "Selected artifact is not the live activation hard-stop contract.",
+        ok: !blockedHardStop,
+      },
+      {
+        id: "preflight_is_read_only",
+        label: "Preflight is derived from GET status and does not persist or execute anything.",
+        ok: true,
+      },
+    ],
+    noEffectSummary: "Read-only preflight only; it explains the next manual internal action and does not persist, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
   };
 }
 
@@ -6088,6 +6197,7 @@ export function getMissionControlActivationPipelineStatus(
   const hardStop = liveGateStage?.hardStop || null;
   const currentStageTrace = buildActivationPipelineTrace(stages, currentStage);
   const advanceSelection = buildActivationPipelineAdvanceSelection(stages);
+  const manualActionPreflight = buildActivationPipelineManualActionPreflight(advanceSelection);
 
   return {
     ok: true,
@@ -6101,6 +6211,7 @@ export function getMissionControlActivationPipelineStatus(
     stages,
     currentStageTrace,
     advanceSelection,
+    manualActionPreflight,
     hardStopTruth: {
       liveSendAvailable: false,
       liveActivationAllowed: false,

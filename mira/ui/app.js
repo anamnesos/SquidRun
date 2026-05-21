@@ -1416,6 +1416,7 @@ function updateActivationPipelineStatus(payload) {
   const nextBoundary = payload?.nextBoundary && typeof payload.nextBoundary === 'object' ? payload.nextBoundary : {};
   const trace = payload?.currentStageTrace && typeof payload.currentStageTrace === 'object' ? payload.currentStageTrace : null;
   const selection = payload?.advanceSelection && typeof payload.advanceSelection === 'object' ? payload.advanceSelection : null;
+  const preflight = payload?.manualActionPreflight && typeof payload.manualActionPreflight === 'object' ? payload.manualActionPreflight : null;
   const traceEntries = Array.isArray(trace?.entries) ? trace.entries : [];
   const currentTrace = traceEntries.find((entry) => entry?.stageId === payload?.currentStageId)
     || traceEntries[traceEntries.length - 1]
@@ -1459,6 +1460,16 @@ function updateActivationPipelineStatus(payload) {
       ? `token ${selection.selectedArtifactToken || 'not available'}; path ${selection.selectedRelativePath || 'not available'}; source ${selection.selectedSourceToken || 'not available'}; body ${selection.selectedBodySha256 || 'not available'}; adapter ${selection.selectedAdapterPacketSha256 || 'not available'}`
       : 'No saved artifact is available to advance.');
     appendPreviewLine(card, 'Comparison', selection.comparisonSummary || 'No comparison available.');
+  }
+  if (preflight) {
+    const preflightStatus = String(preflight.status || 'unknown').replace(/_/g, ' ');
+    appendPreviewLine(card, 'Manual action preflight', `${preflightStatus}: ${preflight.manualActionLabel || 'no manual action'} · ${preflight.explanation || ''}`.trim());
+    appendPreviewLine(card, 'Manual action input', preflight.tokenField
+      ? `${preflight.tokenField}=${preflight.tokenValue || 'not available'}; source ${preflight.selectedRelativePath || 'not available'}; next ${preflight.nextStageLabel || 'no next stage'}`
+      : 'No manual action input is ready.');
+    if (Array.isArray(preflight.evidenceChecks)) {
+      appendPreviewLine(card, 'Preflight checks', preflight.evidenceChecks.map((check) => `${check.ok ? 'ok' : 'blocked'}: ${check.label}`).join(' / '));
+    }
   }
   appendPreviewLine(card, 'Trace audit', trace?.noEffectSummary || 'Read-only status only; no send or execution path.');
   appendPreviewLine(card, 'Timeline', stages.map((stage) => `${stage.label}: ${stage.status}`).join(' -> ') || 'No stages loaded.');
