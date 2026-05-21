@@ -1414,6 +1414,11 @@ function updateActivationPipelineStatus(payload) {
   const lastSaved = payload?.lastSavedArtifact && typeof payload.lastSavedArtifact === 'object' ? payload.lastSavedArtifact : null;
   const hardStop = payload?.hardStopTruth && typeof payload.hardStopTruth === 'object' ? payload.hardStopTruth : {};
   const nextBoundary = payload?.nextBoundary && typeof payload.nextBoundary === 'object' ? payload.nextBoundary : {};
+  const trace = payload?.currentStageTrace && typeof payload.currentStageTrace === 'object' ? payload.currentStageTrace : null;
+  const traceEntries = Array.isArray(trace?.entries) ? trace.entries : [];
+  const currentTrace = traceEntries.find((entry) => entry?.stageId === payload?.currentStageId)
+    || traceEntries[traceEntries.length - 1]
+    || null;
   state.missionControlActivationPipelineStageCount = Number(payload?.stageCount || stages.length || 0);
   renderWorkSummary();
   if (!elements.routeActivationPipelineStatus) return;
@@ -1430,6 +1435,21 @@ function updateActivationPipelineStatus(payload) {
   appendPreviewLine(card, 'Hard stop', `live send available: no; hard-stop contract: ${hardStop.hardStopContractRecorded === true ? 'yes' : 'no'}; James setup before live send: ${hardStop.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}`);
   appendPreviewLine(card, 'Next boundary', nextBoundary.currentNextStep || 'Live send is not available from this surface.');
   appendPreviewLine(card, 'Future gate', nextBoundary.futureJamesVisibleGate || 'Future real send would require a separate James-visible setup/activation lane.');
+  appendPreviewLine(card, 'Trace path', trace?.sourcePath || 'No saved Mission Control activation artifacts yet.');
+  if (currentTrace) {
+    const sourceText = currentTrace.sourceStageId
+      ? `${currentTrace.sourceStageId} -> ${currentTrace.stageId}; source token ${currentTrace.sourceToken || 'not available'}`
+      : 'root artifact; no source token';
+    const checksumText = [
+      currentTrace.bodySha256 ? `body ${currentTrace.bodySha256}` : null,
+      currentTrace.adapterPacketSha256 ? `adapter ${currentTrace.adapterPacketSha256}` : null,
+    ].filter(Boolean).join('; ') || 'no checksum recorded';
+    appendPreviewLine(card, 'Current evidence', `token ${currentTrace.token || 'not available'}; status ${String(currentTrace.status || 'unknown').replace(/_/g, ' ')}; path ${currentTrace.relativePath || 'not available'}; relation ${sourceText}; ${checksumText}`);
+    appendPreviewLine(card, 'Body preview', currentTrace.contentPreview || 'No body preview recorded.');
+  } else {
+    appendPreviewLine(card, 'Current evidence', 'No saved artifact backs this chain yet.');
+  }
+  appendPreviewLine(card, 'Trace audit', trace?.noEffectSummary || 'Read-only status only; no send or execution path.');
   appendPreviewLine(card, 'Timeline', stages.map((stage) => `${stage.label}: ${stage.status}`).join(' -> ') || 'No stages loaded.');
   elements.routeActivationPipelineStatus.replaceChildren(card);
 }

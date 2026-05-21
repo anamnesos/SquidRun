@@ -3482,12 +3482,18 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(pipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
       id: 'live_activation_gate_contract',
       label: 'Live activation hard-stop contract',
+      protocol: 'mira.mission_control_internal_send_live_activation_gate_contract.v0',
       status: 'saved',
       latestToken: liveGatePayload.contract.actionToken,
       latestStatus: 'live_activation_gate_hard_stop',
+      relativePath: liveGatePayload.relativePath,
+      sourceStageId: 'activation_implementation_readiness',
+      sourceToken: implementationReadinessPayload.readiness.actionToken,
       targetRole: 'oracle',
       targetPaneId: '3',
       contentPreview: 'Edited internal continuation for Oracle review.',
+      bodySha256: implementationReadinessPayload.readiness.bodySha256,
+      adapterPacketSha256: implementationReadinessPayload.readiness.adapterPacketSha256,
     }));
     expect(pipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
       id: 'live_activation_gate_contract',
@@ -3511,6 +3517,40 @@ describe('Mira runtime bridge manual-plan API', () => {
       separateActivationLaneRequired: true,
     }));
     expect(pipelineStatusPayload.nextBoundary.currentNextStep).toContain('hard-stop contract');
+    expect(pipelineStatusPayload.currentStageTrace).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_trace.v0',
+      entryCount: 12,
+      currentStageId: 'live_activation_gate_contract',
+      currentArtifactToken: liveGatePayload.contract.actionToken,
+      sourcePath: 'Route preview -> Review item -> Owned-work continuation -> Follow-through recommendation -> Delivery preview -> Dispatch readiness -> Internal-send dry run -> Activation design -> Activation request -> Decision audit -> Implementation readiness -> Live activation hard-stop contract',
+      noEffectSummary: expect.stringContaining('Read-only trace only'),
+    }));
+    expect(pipelineStatusPayload.currentStageTrace.noEffectSummary).toContain('no command stored');
+    expect(pipelineStatusPayload.currentStageTrace.noEffectSummary).toContain('external delivery');
+    const liveGateTrace = pipelineStatusPayload.currentStageTrace.entries.find((entry) => entry.stageId === 'live_activation_gate_contract');
+    expect(liveGateTrace).toEqual(expect.objectContaining({
+      stageId: 'live_activation_gate_contract',
+      label: 'Live activation hard-stop contract',
+      status: 'saved',
+      token: liveGatePayload.contract.actionToken,
+      relativePath: liveGatePayload.relativePath,
+      sourceStageId: 'activation_implementation_readiness',
+      sourceToken: implementationReadinessPayload.readiness.actionToken,
+      targetRole: 'oracle',
+      contentPreview: 'Edited internal continuation for Oracle review.',
+      bodySha256: implementationReadinessPayload.readiness.bodySha256,
+      adapterPacketSha256: implementationReadinessPayload.readiness.adapterPacketSha256,
+    }));
+    const activationDesignTrace = pipelineStatusPayload.currentStageTrace.entries.find((entry) => entry.stageId === 'activation_design');
+    expect(activationDesignTrace).toEqual(expect.objectContaining({
+      stageId: 'activation_design',
+      sourceStageId: 'internal_send_dry_run',
+      sourceToken: internalSendDryRunPayload.dryRun.actionToken,
+      token: activationDesignPayload.design.actionToken,
+      relativePath: activationDesignPayload.relativePath,
+      bodySha256: activationDesignPayload.design.bodySha256,
+      adapterPacketSha256: activationDesignPayload.design.adapterPacketSha256,
+    }));
     expect(pipelineStatusPayload.stages.map((stage) => stage.id)).toEqual([
       'route_preview',
       'internal_route_request',

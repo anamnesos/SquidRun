@@ -1422,16 +1422,22 @@ export type MissionControlActivationPipelineStageStatus = "missing" | "saved" | 
 export type MissionControlActivationPipelineStage = {
   id: MissionControlActivationPipelineStageId;
   label: string;
+  protocol: string | null;
   status: MissionControlActivationPipelineStageStatus;
   count: number;
   latestId: string | null;
   latestToken: string | null;
   latestStatus: string | null;
+  relativePath: string | null;
+  sourceStageId: MissionControlActivationPipelineStageId | null;
+  sourceToken: string | null;
   latestCreatedAt: string | null;
   targetRole: string | null;
   targetPaneId: string | null;
   targetLabel: string | null;
   contentPreview: string | null;
+  bodySha256: string | null;
+  adapterPacketSha256: string | null;
   summary: string;
   hardStop: {
     liveActivationAllowed: false;
@@ -1441,6 +1447,30 @@ export type MissionControlActivationPipelineStage = {
     separateActivationLaneRequired: boolean;
     jamesSetupRequiredBeforeLiveSend: boolean;
   } | null;
+};
+
+export type MissionControlActivationPipelineTrace = {
+  protocol: "mira.mission_control_activation_pipeline_trace.v0";
+  entryCount: number;
+  currentStageId: MissionControlActivationPipelineStageId | null;
+  currentArtifactToken: string | null;
+  sourcePath: string;
+  entries: Array<{
+    stageId: MissionControlActivationPipelineStageId;
+    label: string;
+    status: MissionControlActivationPipelineStageStatus;
+    token: string | null;
+    relativePath: string | null;
+    sourceStageId: MissionControlActivationPipelineStageId | null;
+    sourceToken: string | null;
+    createdAt: string | null;
+    targetRole: string | null;
+    contentPreview: string | null;
+    bodySha256: string | null;
+    adapterPacketSha256: string | null;
+    summary: string;
+  }>;
+  noEffectSummary: string;
 };
 
 export type MissionControlActivationPipelineStatusResult = {
@@ -1453,6 +1483,7 @@ export type MissionControlActivationPipelineStatusResult = {
   lastSavedArtifact: MissionControlActivationPipelineStage | null;
   stageCount: number;
   stages: MissionControlActivationPipelineStage[];
+  currentStageTrace: MissionControlActivationPipelineTrace;
   hardStopTruth: {
     liveSendAvailable: false;
     liveActivationAllowed: false;
@@ -2392,6 +2423,70 @@ function hardStopFromRecord(record: Record<string, unknown> | null): MissionCont
   };
 }
 
+function sourceStageIdForActivationStage(
+  id: MissionControlActivationPipelineStageId,
+): MissionControlActivationPipelineStageId | null {
+  switch (id) {
+    case "internal_route_request": return "route_preview";
+    case "owned_work_continuation": return "internal_route_request";
+    case "follow_through_recommendation": return "owned_work_continuation";
+    case "internal_delivery_preview": return "follow_through_recommendation";
+    case "dispatch_readiness": return "internal_delivery_preview";
+    case "internal_send_dry_run": return "dispatch_readiness";
+    case "activation_design": return "internal_send_dry_run";
+    case "activation_request": return "activation_design";
+    case "activation_decision_audit": return "activation_request";
+    case "activation_implementation_readiness": return "activation_decision_audit";
+    case "live_activation_gate_contract": return "activation_implementation_readiness";
+    case "route_preview": return null;
+    default: return null;
+  }
+}
+
+function sourceTokenForActivationStage(
+  id: MissionControlActivationPipelineStageId,
+  record: Record<string, unknown> | null,
+): string | null {
+  switch (id) {
+    case "internal_route_request": return unknownRecordValue(record, "sourcePreviewToken");
+    case "owned_work_continuation": return unknownRecordValue(record, "sourceRequestToken");
+    case "follow_through_recommendation": return unknownRecordValue(record, "sourceContinuationToken");
+    case "internal_delivery_preview": return unknownRecordValue(record, "sourceRecommendationToken");
+    case "dispatch_readiness": return unknownRecordValue(record, "sourceDeliveryPreviewToken");
+    case "internal_send_dry_run": return unknownRecordValue(record, "sourceDispatchReadinessToken");
+    case "activation_design": return unknownRecordValue(record, "sourceInternalSendDryRunToken");
+    case "activation_request": return unknownRecordValue(record, "sourceInternalSendActivationDesignToken");
+    case "activation_decision_audit": return unknownRecordValue(record, "sourceInternalSendActivationRequestToken");
+    case "activation_implementation_readiness": return unknownRecordValue(record, "sourceInternalSendActivationDecisionAuditToken");
+    case "live_activation_gate_contract": return unknownRecordValue(record, "sourceInternalSendActivationImplementationReadinessToken");
+    case "route_preview": return null;
+    default: return null;
+  }
+}
+
+function relativePathForActivationStage(
+  id: MissionControlActivationPipelineStageId,
+  record: Record<string, unknown> | null,
+): string | null {
+  const recordId = unknownRecordValue(record, "id");
+  if (!recordId || !/^[A-Za-z0-9._-]+$/.test(recordId)) return null;
+  switch (id) {
+    case "route_preview": return `mission-control/route-previews/${recordId}.json`;
+    case "internal_route_request": return `mission-control/internal-route-requests/${recordId}.json`;
+    case "owned_work_continuation": return `mission-control/owned-work-continuations/${recordId}.json`;
+    case "internal_delivery_preview": return `mission-control/internal-delivery-previews/${recordId}.json`;
+    case "dispatch_readiness": return `mission-control/dispatch-readiness/${recordId}.json`;
+    case "internal_send_dry_run": return `mission-control/internal-send-dry-runs/${recordId}.json`;
+    case "activation_design": return `mission-control/internal-send-activation-designs/${recordId}.json`;
+    case "activation_request": return `mission-control/internal-send-activation-requests/${recordId}.json`;
+    case "activation_decision_audit": return `mission-control/internal-send-activation-decision-audits/${recordId}.json`;
+    case "activation_implementation_readiness": return `mission-control/internal-send-activation-implementation-readiness/${recordId}.json`;
+    case "live_activation_gate_contract": return `mission-control/internal-send-live-activation-gate-contracts/${recordId}.json`;
+    case "follow_through_recommendation": return null;
+    default: return null;
+  }
+}
+
 function stageFromRecord(
   id: MissionControlActivationPipelineStageId,
   label: string,
@@ -2405,20 +2500,61 @@ function stageFromRecord(
   return {
     id,
     label,
+    protocol: unknownRecordValue(record, "protocol"),
     status: record ? status : "missing",
     count,
     latestId: unknownRecordValue(record, "id"),
     latestToken,
     latestStatus,
+    relativePath: record ? relativePathForActivationStage(id, record) : null,
+    sourceStageId: record ? sourceStageIdForActivationStage(id) : null,
+    sourceToken: record ? sourceTokenForActivationStage(id, record) : null,
     latestCreatedAt: unknownRecordValue(record, "createdAt"),
     targetRole: unknownRecordValue(record, "targetRole"),
     targetPaneId: unknownRecordValue(record, "targetPaneId"),
     targetLabel: unknownRecordValue(record, "targetLabel"),
     contentPreview,
+    bodySha256: unknownRecordValue(record, "bodySha256"),
+    adapterPacketSha256: unknownRecordValue(record, "adapterPacketSha256"),
     summary: record
       ? `${label}: ${String(latestStatus || status).replace(/_/g, " ")}; token ${latestToken || "not available"}.`
       : `${label}: not saved yet.`,
     hardStop: hardStopFromRecord(record),
+  };
+}
+
+function buildActivationPipelineTrace(
+  stages: MissionControlActivationPipelineStage[],
+  currentStage: MissionControlActivationPipelineStage | null,
+): MissionControlActivationPipelineTrace {
+  const entries = stages
+    .filter((stage) => stage.status !== "missing")
+    .map((stage) => ({
+      stageId: stage.id,
+      label: stage.label,
+      status: stage.status,
+      token: stage.latestToken,
+      relativePath: stage.relativePath,
+      sourceStageId: stage.sourceStageId,
+      sourceToken: stage.sourceToken,
+      createdAt: stage.latestCreatedAt,
+      targetRole: stage.targetRole,
+      contentPreview: stage.contentPreview,
+      bodySha256: stage.bodySha256,
+      adapterPacketSha256: stage.adapterPacketSha256,
+      summary: stage.summary,
+    }));
+
+  return {
+    protocol: "mira.mission_control_activation_pipeline_trace.v0",
+    entryCount: entries.length,
+    currentStageId: currentStage?.id || null,
+    currentArtifactToken: currentStage?.latestToken || null,
+    sourcePath: entries.length
+      ? entries.map((entry) => entry.label).join(" -> ")
+      : "No saved Mission Control activation artifacts yet.",
+    entries,
+    noEffectSummary: "Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.",
   };
 }
 
@@ -5841,6 +5977,7 @@ export function getMissionControlActivationPipelineStatus(
   const lastSavedArtifact = [...stages].reverse().find((stage) => stage.status === "saved") || null;
   const liveGateStage = stages.find((stage) => stage.id === "live_activation_gate_contract") || null;
   const hardStop = liveGateStage?.hardStop || null;
+  const currentStageTrace = buildActivationPipelineTrace(stages, currentStage);
 
   return {
     ok: true,
@@ -5852,6 +5989,7 @@ export function getMissionControlActivationPipelineStatus(
     lastSavedArtifact,
     stageCount: stages.length,
     stages,
+    currentStageTrace,
     hardStopTruth: {
       liveSendAvailable: false,
       liveActivationAllowed: false,

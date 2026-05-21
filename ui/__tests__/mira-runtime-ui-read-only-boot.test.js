@@ -567,6 +567,19 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
     ['activation_implementation_readiness', 'Implementation readiness', '/mission-control/internal-send-activation-implementation-readiness', 'readiness', 'readinessCount', 'saved'],
     ['live_activation_gate_contract', 'Live activation hard-stop contract', '/mission-control/internal-send-live-activation-gate-contracts', 'contracts', 'contractCount', 'saved'],
   ];
+  const activationStageSources = {
+    internal_route_request: ['route_preview', 'sourcePreviewToken'],
+    owned_work_continuation: ['internal_route_request', 'sourceRequestToken'],
+    follow_through_recommendation: ['owned_work_continuation', 'sourceContinuationToken'],
+    internal_delivery_preview: ['follow_through_recommendation', 'sourceRecommendationToken'],
+    dispatch_readiness: ['internal_delivery_preview', 'sourceDeliveryPreviewToken'],
+    internal_send_dry_run: ['dispatch_readiness', 'sourceDispatchReadinessToken'],
+    activation_design: ['internal_send_dry_run', 'sourceInternalSendDryRunToken'],
+    activation_request: ['activation_design', 'sourceInternalSendActivationDesignToken'],
+    activation_decision_audit: ['activation_request', 'sourceInternalSendActivationRequestToken'],
+    activation_implementation_readiness: ['activation_decision_audit', 'sourceInternalSendActivationDecisionAuditToken'],
+    live_activation_gate_contract: ['activation_implementation_readiness', 'sourceInternalSendActivationImplementationReadinessToken'],
+  };
   const buildActivationPipelineStatus = () => {
     const stages = activationStageDefinitions.map(([id, label, endpoint, listKey, countKey, availableStatus]) => {
       const payload = payloads[endpoint];
@@ -576,19 +589,29 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         : records[0];
       const status = record ? availableStatus : 'missing';
       const latestStatus = record?.status || null;
+      const source = activationStageSources[id] || [null, null];
+      const relativePath = record && id !== 'follow_through_recommendation'
+        ? `${endpoint.replace('/mission-control/', 'mission-control/')}/${record.id}.json`
+        : null;
       return {
         id,
         label,
+        protocol: record?.protocol || null,
         status,
         count: Number(payload?.[countKey] || records.length || 0),
         latestId: record?.id || null,
         latestToken: record?.actionToken || null,
         latestStatus,
+        relativePath,
+        sourceStageId: record ? source[0] : null,
+        sourceToken: record && source[1] ? record[source[1]] || null : null,
         latestCreatedAt: record?.createdAt || null,
         targetRole: record?.targetRole || null,
         targetPaneId: record?.targetPaneId || null,
         targetLabel: record?.targetLabel || null,
         contentPreview: record?.contentPreview || record?.content || null,
+        bodySha256: record?.bodySha256 || null,
+        adapterPacketSha256: record?.adapterPacketSha256 || null,
         summary: record
           ? `${label}: ${String(latestStatus || status).replace(/_/g, ' ')}; token ${record.actionToken || 'not available'}.`
           : `${label}: not saved yet.`,
@@ -607,6 +630,23 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
     const currentStage = [...stages].reverse().find((stage) => stage.status !== 'missing') || null;
     const lastSavedArtifact = [...stages].reverse().find((stage) => stage.status === 'saved') || null;
     const hardStopContractRecorded = stages.find((stage) => stage.id === 'live_activation_gate_contract')?.status === 'saved';
+    const traceEntries = stages
+      .filter((stage) => stage.status !== 'missing')
+      .map((stage) => ({
+        stageId: stage.id,
+        label: stage.label,
+        status: stage.status,
+        token: stage.latestToken,
+        relativePath: stage.relativePath,
+        sourceStageId: stage.sourceStageId,
+        sourceToken: stage.sourceToken,
+        createdAt: stage.latestCreatedAt,
+        targetRole: stage.targetRole,
+        contentPreview: stage.contentPreview,
+        bodySha256: stage.bodySha256,
+        adapterPacketSha256: stage.adapterPacketSha256,
+        summary: stage.summary,
+      }));
     return {
       ok: true,
       protocol: 'mira.mission_control_activation_pipeline_status.v0',
@@ -617,6 +657,17 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       lastSavedArtifact,
       stageCount: stages.length,
       stages,
+      currentStageTrace: {
+        protocol: 'mira.mission_control_activation_pipeline_trace.v0',
+        entryCount: traceEntries.length,
+        currentStageId: currentStage?.id || null,
+        currentArtifactToken: currentStage?.latestToken || null,
+        sourcePath: traceEntries.length
+          ? traceEntries.map((entry) => entry.label).join(' -> ')
+          : 'No saved Mission Control activation artifacts yet.',
+        entries: traceEntries,
+        noEffectSummary: 'Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.',
+      },
       hardStopTruth: {
         liveSendAvailable: false,
         liveActivationAllowed: false,
@@ -2062,6 +2113,9 @@ describe('Mira runtime UI boot', () => {
     expect(emptyPipelineText).toContain('Current stage: No saved Mission Control send chain yet.');
     expect(emptyPipelineText).toContain('Hard stop: live send available: no; hard-stop contract: no; James setup before live send: yes');
     expect(emptyPipelineText).toContain('Future real send would require a separate James-visible setup/activation lane.');
+    expect(emptyPipelineText).toContain('Trace path: No saved Mission Control activation artifacts yet.');
+    expect(emptyPipelineText).toContain('Current evidence: No saved artifact backs this chain yet.');
+    expect(emptyPipelineText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -2657,6 +2711,11 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Last saved: Live activation hard-stop contract: live_activation_gate_hard_stop; token mission-send-live-gate-test');
     expect(pipelineStatusText).toContain('Hard stop: live send available: no; hard-stop contract: yes; James setup before live send: yes');
     expect(pipelineStatusText).toContain('Future real send would require a separate James-visible setup/activation lane.');
+    expect(pipelineStatusText).toContain('Trace path: Route preview -> Review item -> Owned-work continuation -> Follow-through recommendation -> Delivery preview -> Dispatch readiness -> Internal-send dry run -> Activation design -> Activation request -> Decision audit -> Implementation readiness -> Live activation hard-stop contract');
+    expect(pipelineStatusText).toContain('Current evidence: token mission-send-live-gate-test; status saved; path mission-control/internal-send-live-activation-gate-contracts/mission-send-live-gate-test.json; relation activation_implementation_readiness -> live_activation_gate_contract; source token mission-send-activation-ready-test; body ');
+    expect(pipelineStatusText).toContain('adapter ');
+    expect(pipelineStatusText).toContain('Body preview: Edited internal continuation for Oracle review.');
+    expect(pipelineStatusText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(pipelineStatusText).not.toContain('live send available: yes');
   });
 
