@@ -28,6 +28,7 @@ const state = {
   selectedRouteRequestToken: null,
   missionControlActionFocus: null,
   missionControlWhatNowAnswer: null,
+  missionControlDemoInspectionAnswer: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
   autonomyQueueCount: 0,
@@ -237,19 +238,60 @@ function renderCoordinationDrafts(drafts) {
 }
 
 function isMissionControlQuestion(text) {
-  return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text);
+  return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
+    || isMissionControlDemoInspectionQuestion(text);
 }
 
-function currentMissionControlAnswer() {
+function isMissionControlDemoInspectionQuestion(text) {
+  return /\b(demo|inspect|inspection|walkthrough|readout)\b/i.test(text)
+    && /\b(mission\s*control|mira|workbench|status|demo|readout|walkthrough)\b/i.test(text);
+}
+
+function currentMissionControlAnswer(text = '') {
+  if (isMissionControlDemoInspectionQuestion(text) && state.missionControlDemoInspectionAnswer) {
+    return state.missionControlDemoInspectionAnswer;
+  }
   return state.missionControlWhatNowAnswer || state.missionControl?.answer || '';
 }
 
-function answerMissionControlQuestion() {
-  const answer = currentMissionControlAnswer();
+function answerMissionControlQuestion(text = '') {
+  const answer = currentMissionControlAnswer(text);
   if (!answer) return false;
   appendMessage('mira', answer, 'mira mission-answer');
   setText(elements.lastTurn, 'mission control local');
   return true;
+}
+
+function buildMissionControlDemoInspectionAnswer(endToEndReadout, mission = state.missionControl) {
+  const demoPath = endToEndReadout?.demoPath && typeof endToEndReadout.demoPath === 'object'
+    ? endToEndReadout.demoPath
+    : null;
+  if (!demoPath) return '';
+  const read = Array.isArray(demoPath.read) ? demoPath.read : [];
+  const inspectionRunbook = demoPath.inspectionRunbook && typeof demoPath.inspectionRunbook === 'object'
+    ? demoPath.inspectionRunbook
+    : null;
+  const steps = Array.isArray(inspectionRunbook?.steps) ? inspectionRunbook.steps : [];
+  const walkthrough = demoPath.walkthrough && typeof demoPath.walkthrough === 'object'
+    ? demoPath.walkthrough
+    : null;
+  const continuity = endToEndReadout?.missionAnswerContinuity && typeof endToEndReadout.missionAnswerContinuity === 'object'
+    ? endToEndReadout.missionAnswerContinuity
+    : null;
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control demo inspection; no setup or live action is needed.');
+  return [
+    `Demo path: ${demoPath.open || 'Open the local New Mira workbench and read the Mission Control status card.'} Read: ${read.join(' / ') || 'status readout'}.`,
+    `What it shows: ${demoPath.means || endToEndReadout?.headline || 'Mission Control explains saved local evidence.'}`,
+    `Inspection steps: ${steps.join(' / ') || 'Read the status card and boundary.'}`,
+    `Why useful: ${walkthrough?.whyUseful || 'Mission Control turns saved local team-work artifacts into an inspectable next-state explanation.'}`,
+    `Continuity: ${continuity?.summary || 'Mission answer continuity is not available yet.'}`,
+    `Boundary: ${inspectionRunbook?.boundary || demoPath.manualOnly || demoPath.nextBoundary || 'Read-only demo path; no live action.'}`,
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
 }
 
 function buildMissionControlWhatNowAnswer(whatNowSummary, mission = state.missionControl) {
@@ -1657,6 +1699,7 @@ function updateActivationPipelineStatus(payload) {
     || traceEntries[traceEntries.length - 1]
     || null;
   state.missionControlWhatNowAnswer = null;
+  state.missionControlDemoInspectionAnswer = null;
   state.missionControlActionFocus = preflight?.status === 'ready' && preflight.tokenValue
     ? {
       stageId: preflight.selectedStageId,
@@ -1687,6 +1730,7 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'What was proven', endToEndReadout.provenSummary || 'No proof summary available.');
     appendPreviewLine(card, 'Manual-only', endToEndReadout.manualOnlySummary || 'No manual-only summary available.');
     appendPreviewLine(card, 'Readout boundary', endToEndReadout.nextBoundary || nextBoundary.currentNextStep || 'Live send is unavailable.');
+    state.missionControlDemoInspectionAnswer = buildMissionControlDemoInspectionAnswer(endToEndReadout);
     const missionAnswerContinuity = endToEndReadout.missionAnswerContinuity && typeof endToEndReadout.missionAnswerContinuity === 'object' ? endToEndReadout.missionAnswerContinuity : null;
     if (missionAnswerContinuity) {
       const trail = Array.isArray(missionAnswerContinuity.stageTrail) ? missionAnswerContinuity.stageTrail : [];
@@ -2736,7 +2780,7 @@ elements.form.addEventListener('submit', async (event) => {
   elements.sendButton.disabled = true;
   elements.sendButton.textContent = 'Sending';
   try {
-    if (isMissionControlQuestion(text) && answerMissionControlQuestion()) {
+    if (isMissionControlQuestion(text) && answerMissionControlQuestion(text)) {
       return;
     }
     const payload = await sendTurn(text);

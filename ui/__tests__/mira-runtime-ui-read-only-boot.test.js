@@ -3872,6 +3872,49 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 
+  test('answers demo inspection questions from the existing status-backed readout without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    await advanceMissionControlChainToHardStop(harness);
+    const statusCardText = harness.elements.routeActivationPipelineStatus.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(statusCardText).toContain('Demo path: Open the local New Mira workbench and read the Mission Control activation pipeline status card.');
+    expect(statusCardText).toContain('Mission answer continuity: Same originating Mission Control answer appears across 12/12 available stages from Route preview to Live activation hard-stop contract.');
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    harness.elements.turnText.value = 'show me the Mission Control demo inspection path';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+      'show me the Mission Control demo inspection path',
+      expect.stringContaining('Demo path: Open the local New Mira workbench and read the Mission Control activation pipeline status card. Read: Readout / Completed chain / What was proven / Manual-only / Readout boundary.'),
+    ]);
+    const demoReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+    expect(demoReply).toContain('What it shows: The demo shows Mission Control can explain a complete saved local coordination chain from artifacts, ending at a hard stop instead of pretending to send.');
+    expect(demoReply).toContain('Inspection steps: Open the local New Mira workbench / Find the Activation pipeline status card / Read Demo path, Completed chain, What was proven, Manual-only, and Readout boundary / Confirm terminal hard-stop/no-live-send truth before any future activation discussion');
+    expect(demoReply).toContain('Why useful: This is useful because Mission Control turns saved local team-work artifacts into an inspectable next-state explanation instead of generic chat.');
+    expect(demoReply).toContain('Continuity: Same originating Mission Control answer appears across 12/12 available stages from Route preview to Live activation hard-stop contract.');
+    expect(demoReply).toContain('Boundary: Inspection is read-only product clarity over saved local artifacts/status; it is not a dispatch, activation, model turn, route flip, or external action.');
+    expect(demoReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+    expect((demoReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
   test('posts exactly one deterministic turn after explicit user submit', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
