@@ -2514,6 +2514,50 @@ function collectMissionControlText(elements) {
   ].join('\n');
 }
 
+function findButtonByText(elements, text) {
+  const roots = Object.values(elements).filter(Boolean);
+  const queue = [...roots];
+  while (queue.length > 0) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object') continue;
+    if (node.tagName === 'BUTTON' && node.textContent === text) return node;
+    if (Array.isArray(node.children)) {
+      queue.push(...node.children);
+    }
+  }
+  throw new Error(`button not found: ${text}`);
+}
+
+async function clickMissionControlButton(harness, text) {
+  const button = findButtonByText(harness.elements, text);
+  await button.listeners.click();
+  return button;
+}
+
+async function advanceMissionControlChainToHardStop(harness) {
+  await harness.elements.saveRoutePreviewButton.listeners.click();
+  await clickMissionControlButton(harness, 'Make review item');
+  await clickMissionControlButton(harness, 'review continuation');
+  const editor = harness.elements.routeContinuationPanel.children
+    .find((child) => child.tagName === 'TEXTAREA');
+  const note = harness.elements.routeContinuationPanel.children
+    .find((child) => child.tagName === 'INPUT');
+  editor.value = 'Edited internal continuation for Oracle review.';
+  note.value = 'Keep this as Mission Control owned-work metadata only.';
+  const actions = harness.elements.routeContinuationPanel.children
+    .find((child) => child.className === 'review-actions');
+  const saveEditButton = actions.children.find((child) => child.textContent === 'Save edit');
+  await saveEditButton.listeners.click();
+  await clickMissionControlButton(harness, 'Preview delivery packet');
+  await clickMissionControlButton(harness, 'Review dispatch readiness');
+  await clickMissionControlButton(harness, 'Create send dry run');
+  await clickMissionControlButton(harness, 'Design activation proof');
+  await clickMissionControlButton(harness, 'Preview activation request');
+  await clickMissionControlButton(harness, 'Record decision audit');
+  await clickMissionControlButton(harness, 'Check implementation readiness');
+  await clickMissionControlButton(harness, 'Define live gate contract');
+}
+
 function extractBracedBlock(source, openBraceIndex) {
   let depth = 0;
   for (let index = openBraceIndex; index < source.length; index += 1) {
@@ -3677,10 +3721,51 @@ describe('Mira runtime UI boot', () => {
       'what is happening here, and what happens next?',
       expect.stringContaining('Project/lane: squidrun / architect#253.'),
     ]);
-    const missionReply = harness.elements.thread.children[1].children[0].textContent;
+    const missionReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
     expect(missionReply).toContain('Next team move: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
     expect(missionReply).toContain('Foundation vs product: SquidRun context is foundation.');
     expect((missionReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
+  test('answers what now from loaded Mission Control status summary without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    await advanceMissionControlChainToHardStop(harness);
+    expect(harness.elements.missionAnswer.textContent).toContain('What now: Inspect the local status card as a completed Mission Control demo; the chain ends at a hard stop, not a live send.');
+    expect(harness.elements.missionAnswer.textContent).toContain('Meaning: The saved chain is complete as a read-only demo: 12/12 stages are available and the current artifact is Live activation hard-stop contract.');
+    expect(harness.elements.missionAnswer.textContent).toContain("Inspect next: Read the status card's Readout, Current evidence, Trace path, Demo walkthrough, and Hard stop rows.");
+    expect(harness.elements.missionAnswer.textContent).toContain('No live action: Live action is unavailable because this status projection is read-only and any real send requires a separate James-visible setup/activation lane.');
+    expect(harness.elements.missionAnswer.textContent).toContain('Next boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
+    expect((harness.elements.missionAnswer.textContent.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+
+    harness.elements.turnText.value = 'what now?';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const postCalls = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+      'what now?',
+      expect.stringContaining('What now: Inspect the local status card as a completed Mission Control demo; the chain ends at a hard stop, not a live send.'),
+    ]);
+    const missionReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+    expect(missionReply).toContain('Meaning: The saved chain is complete as a read-only demo: 12/12 stages are available and the current artifact is Live activation hard-stop contract.');
+    expect(missionReply).toContain("Inspect next: Read the status card's Readout, Current evidence, Trace path, Demo walkthrough, and Hard stop rows.");
+    expect(missionReply).toContain('No live action: Live action is unavailable because this status projection is read-only and any real send requires a separate James-visible setup/activation lane.');
+    expect(missionReply).toContain('Next boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
+    expect((missionReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(postCalls.every((call) => call.url !== '/turn')).toBe(true);
     expect(harness.elements.lastTurn.textContent).toBe('mission control local');
     expect(harness.elements.sendButton.disabled).toBe(false);
     expect(harness.elements.sendButton.textContent).toBe('Send');

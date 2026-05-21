@@ -27,6 +27,7 @@ const state = {
   missionControlActivationPipelineStageCount: 0,
   selectedRouteRequestToken: null,
   missionControlActionFocus: null,
+  missionControlWhatNowAnswer: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
   autonomyQueueCount: 0,
@@ -241,10 +242,28 @@ function isMissionControlQuestion(text) {
 
 function answerMissionControlQuestion() {
   const mission = state.missionControl;
-  if (!mission?.answer) return false;
-  appendMessage('mira', mission.answer, 'mira mission-answer');
+  const answer = state.missionControlWhatNowAnswer || mission?.answer;
+  if (!answer) return false;
+  appendMessage('mira', answer, 'mira mission-answer');
   setText(elements.lastTurn, 'mission control local');
   return true;
+}
+
+function buildMissionControlWhatNowAnswer(whatNowSummary, mission = state.missionControl) {
+  if (!whatNowSummary || typeof whatNowSummary !== 'object') return '';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control status; no setup or live action is needed.');
+  return [
+    `What now: ${whatNowSummary.answer || 'Inspect the local status card.'}`,
+    `Meaning: ${whatNowSummary.currentMeaning || 'Mission Control summarizes saved local evidence.'}`,
+    `Inspect next: ${whatNowSummary.inspectNext || 'Read the Mission Control status rows.'}`,
+    `No live action: ${whatNowSummary.noLiveReason || 'Live action is unavailable from this read-only status surface.'}`,
+    `Next boundary: ${whatNowSummary.nextBoundary || 'Future real send would require a separate James-visible setup/activation lane.'}`,
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
 }
 
 function describeRoutePreview(preview) {
@@ -1619,6 +1638,7 @@ function updateActivationPipelineStatus(payload) {
   const currentTrace = traceEntries.find((entry) => entry?.stageId === payload?.currentStageId)
     || traceEntries[traceEntries.length - 1]
     || null;
+  state.missionControlWhatNowAnswer = null;
   state.missionControlActionFocus = preflight?.status === 'ready' && preflight.tokenValue
     ? {
       stageId: preflight.selectedStageId,
@@ -1681,6 +1701,13 @@ function updateActivationPipelineStatus(payload) {
         appendPreviewLine(card, 'Inspect next', whatNowSummary.inspectNext || 'Read the Mission Control status rows.');
         appendPreviewLine(card, 'No live action', whatNowSummary.noLiveReason || 'Live action is unavailable from this read-only status surface.');
         appendPreviewLine(card, 'What now evidence', whatNowEvidence.join(' / ') || 'saved local status evidence');
+        if (endToEndReadout.status && endToEndReadout.status !== 'empty') {
+          const whatNowAnswer = buildMissionControlWhatNowAnswer(whatNowSummary);
+          state.missionControlWhatNowAnswer = whatNowAnswer;
+          if (whatNowAnswer) {
+            setText(elements.missionAnswer, whatNowAnswer);
+          }
+        }
       }
     }
   }
