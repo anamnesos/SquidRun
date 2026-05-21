@@ -2381,6 +2381,29 @@ describe('Mira runtime bridge manual-plan API', () => {
     const payload = await response.json();
     const recentResponse = await fetch(`${baseUrl}/conversation/recent?limit=1`);
     const recentPayload = await recentResponse.json();
+    const cliPublicPayload = JSON.parse(execFileSync(process.execPath, [
+      path.join(repoRoot, 'mira', 'tools', 'read-runtime-turns.js'),
+      '--json',
+      '--limit',
+      '1',
+      '--state-root',
+      tempStateRoot,
+    ], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }));
+    const cliInternalPayload = JSON.parse(execFileSync(process.execPath, [
+      path.join(repoRoot, 'mira', 'tools', 'read-runtime-turns.js'),
+      '--json',
+      '--include-internal',
+      '--limit',
+      '1',
+      '--state-root',
+      tempStateRoot,
+    ], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }));
 
     expect(response.status).toBe(200);
     expect(openAiRequests).toHaveLength(1);
@@ -2432,8 +2455,34 @@ describe('Mira runtime bridge manual-plan API', () => {
     }));
     expect(recentPayload.records[0].visible_reply_gate).toBeUndefined();
     expect(recentPayload.records[0].held_reply_audit).toBeUndefined();
+    expect(cliPublicPayload.records).toHaveLength(1);
+    expect(cliPublicPayload.records[0]).toEqual(expect.objectContaining({
+      response: {
+        role: 'mira',
+        content: heldText,
+      },
+      visible_reply_status: expect.objectContaining({
+        held: true,
+        reason: 'held_for_visible_reply_quality',
+        rejectedTextVisible: false,
+        violationIdsVisible: false,
+        diagnosticsVisible: false,
+      }),
+    }));
+    expect(cliPublicPayload.records[0].visible_reply_gate).toBeUndefined();
+    expect(cliPublicPayload.records[0].held_reply_audit).toBeUndefined();
+    expect(cliInternalPayload.records[0].visible_reply_gate).toEqual(expect.objectContaining({
+      held: true,
+      violations: expect.arrayContaining(['backstage_label']),
+      source: 'mira_runtime_visible_reply_gate_v0',
+    }));
+    expect(cliInternalPayload.records[0].held_reply_audit).toEqual(expect.objectContaining({
+      held: true,
+      reason: 'visible_reply_gate_violation',
+      journalStoresRejectedText: false,
+    }));
 
-    const publicText = `${JSON.stringify(payload)}\n${JSON.stringify(recentPayload)}`;
+    const publicText = `${JSON.stringify(payload)}\n${JSON.stringify(recentPayload)}\n${JSON.stringify(cliPublicPayload)}`;
     expect(publicText).not.toContain(rejectedGeneratedText);
     expect(publicText).not.toContain('validation fixture');
     expect(publicText).not.toContain('proof scaffolding');
@@ -2442,6 +2491,10 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(publicText).not.toContain('mira_runtime_visible_reply_gate_v0');
     expect(publicText).not.toContain('mira.runtime_held_reply_audit.v0');
     expect(publicText).not.toContain('visible_reply_gate_violation');
+    expect(JSON.stringify(cliInternalPayload)).not.toContain(rejectedGeneratedText);
+    expect(JSON.stringify(cliInternalPayload)).not.toContain('validation fixture');
+    expect(JSON.stringify(cliInternalPayload)).not.toContain('proof scaffolding');
+    expect(JSON.stringify(cliInternalPayload)).not.toContain('route owner protocol');
   });
 
   test('can use local Ollama/Gemma chat for model-backed turns without tools or sends', async () => {
