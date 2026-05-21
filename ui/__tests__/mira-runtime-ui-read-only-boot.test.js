@@ -3364,12 +3364,38 @@ describe('Mira runtime UI boot', () => {
     expect(implementationReadinessText).toContain('Refusal: live_activation_still_refused · Implementation readiness is review-only and remains disabled until a separate activation implementation gate exists.');
     expect(implementationReadinessText).toContain('Rollback: rollback_requirements_ready · snapshot: required · failure audit: required');
     expect(implementationReadinessText).toContain('implementation readiness only; disabled by default; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.elements.routeInternalSendActivationAuditList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationAuditList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeInternalSendActivationReadinessList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationReadinessList.children[0].attributes.id).toBe('mission-control-manual-step-activation-implementation-readiness-mission-send-activation-ready-test');
+    const postImplementationReadinessPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postImplementationReadinessStepHeader = postImplementationReadinessPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postImplementationReadinessStepHeader.textContent).toBe('Next manual step: Define live gate contract on Implementation readiness. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postImplementationReadinessStepHeader.children).toHaveLength(1);
+    expect(postImplementationReadinessStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-activation-implementation-readiness-mission-send-activation-ready-test');
+    const postImplementationReadinessPipelineText = postImplementationReadinessPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postImplementationReadinessPipelineText).toContain('Current stage: Implementation readiness: activation implementation readiness review only; token mission-send-activation-ready-test.');
+    expect(postImplementationReadinessPipelineText).toContain('Last saved: Implementation readiness: activation_implementation_readiness_review_only; token mission-send-activation-ready-test');
+    expect(postImplementationReadinessPipelineText).toContain('Current evidence: token mission-send-activation-ready-test; status saved; path mission-control/internal-send-activation-implementation-readiness/mission-send-activation-implementation-test.json; relation activation_decision_audit -> activation_implementation_readiness; source token mission-send-activation-audit-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postImplementationReadinessPipelineText).toContain('Advance selector: advance available: Implementation readiness -> Live activation hard-stop contract. Implementation readiness is the latest available stage before the first missing stage, Live activation hard-stop contract.');
+    expect(postImplementationReadinessPipelineText).toContain('Manual action preflight: ready: Define live gate contract · Define live gate contract is the next manual internal action because Implementation readiness is selected and Live activation hard-stop contract is the first missing stage. Use the selected token as internalSendActivationImplementationReadinessToken; this preflight does not perform the action.');
+    expect(postImplementationReadinessPipelineText).toContain('Manual action input: internalSendActivationImplementationReadinessToken=mission-send-activation-ready-test; source mission-control/internal-send-activation-implementation-readiness/mission-send-activation-implementation-test.json; next Live activation hard-stop contract');
+    expect(postImplementationReadinessPipelineText).toContain('Selected artifact: token mission-send-activation-ready-test; path mission-control/internal-send-activation-implementation-readiness/mission-send-activation-implementation-test.json; source mission-send-activation-audit-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postImplementationReadinessPipelineText).toContain('Workbench focus: Highlight the existing Implementation readiness card at mission-control/internal-send-activation-implementation-readiness/mission-send-activation-implementation-test.json and use its existing Define live gate contract action.');
+    expect(postImplementationReadinessPipelineText).toContain('Manual selector summary: ready: Define live gate contract on Implementation readiness; internalSendActivationImplementationReadinessToken=mission-send-activation-ready-test; POST /mission-control/internal-send-live-activation-gate-contracts; manual-only because this status card does not submit.');
+    expect(postImplementationReadinessPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-send-live-activation-gate-contracts · This is the exact workbench payload preview for Define live gate contract; it is not submitted by the status surface.');
+    expect(postImplementationReadinessPipelineText).toContain('Payload body: {"internalSendActivationImplementationReadinessToken":"mission-send-activation-ready-test"}');
+    expect(postImplementationReadinessPipelineText).toContain('Handler drift check: matched: createInternalSendLiveActivationGateContract · createInternalSendLiveActivationGateContract expects POST /mission-control/internal-send-live-activation-gate-contracts with internalSendActivationImplementationReadinessToken; payload preview matches that workbench handler contract.');
     const liveGateCallsBeforeClick = harness.calls.filter((call) => call.url === '/mission-control/internal-send-live-activation-gate-contracts');
     expect(liveGateCallsBeforeClick.every((call) => call.method === 'GET')).toBe(true);
     expect(liveGateCallsBeforeClick).toHaveLength(11);
     const liveGateButton = harness.elements.routeInternalSendActivationReadinessList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Define live gate contract');
     expect(liveGateButton.textContent).toBe('Define live gate contract');
+    expect(liveGateButton.className).toContain('selected-manual-action');
+    expect(liveGateButton.attributes['aria-label']).toBe('Selected Mission Control action: Define live gate contract');
     await liveGateButton.listeners.click();
 
     const liveGateCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-live-activation-gate-contracts');

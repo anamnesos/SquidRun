@@ -3928,6 +3928,88 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+    const postImplementationReadinessPipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const postImplementationReadinessPipelineStatusPayload = await postImplementationReadinessPipelineStatusResponse.json();
+    const liveGateStatusDir = path.join(tempStateRoot, 'mission-control', 'internal-send-live-activation-gate-contracts');
+    const liveGateFilesAfterStatusRefresh = fs.existsSync(liveGateStatusDir)
+      ? fs.readdirSync(liveGateStatusDir).filter((file) => file.endsWith('.json'))
+      : [];
+    expect(postImplementationReadinessPipelineStatusResponse.status).toBe(200);
+    expect(postImplementationReadinessPipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
+      id: 'activation_implementation_readiness',
+      label: 'Implementation readiness',
+      latestToken: implementationReadinessPayload.readiness.actionToken,
+      relativePath: implementationReadinessPayload.relativePath,
+      sourceStageId: 'activation_decision_audit',
+      sourceToken: decisionAuditPayload.audit.actionToken,
+      bodySha256: expectedDeliveryBodySha256,
+      adapterPacketSha256: expectedAdapterPacketSha256,
+    }));
+    expect(postImplementationReadinessPipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
+      id: 'activation_implementation_readiness',
+      label: 'Implementation readiness',
+      latestToken: implementationReadinessPayload.readiness.actionToken,
+      relativePath: implementationReadinessPayload.relativePath,
+    }));
+    expect(postImplementationReadinessPipelineStatusPayload.currentStageTrace.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stageId: 'activation_decision_audit',
+        token: decisionAuditPayload.audit.actionToken,
+        relativePath: decisionAuditPayload.relativePath,
+        sourceStageId: 'activation_request',
+        sourceToken: activationRequestPayload.request.actionToken,
+        bodySha256: expectedDeliveryBodySha256,
+        adapterPacketSha256: expectedAdapterPacketSha256,
+      }),
+      expect.objectContaining({
+        stageId: 'activation_implementation_readiness',
+        token: implementationReadinessPayload.readiness.actionToken,
+        relativePath: implementationReadinessPayload.relativePath,
+        sourceStageId: 'activation_decision_audit',
+        sourceToken: decisionAuditPayload.audit.actionToken,
+        bodySha256: expectedDeliveryBodySha256,
+        adapterPacketSha256: expectedAdapterPacketSha256,
+      }),
+    ]));
+    expect(postImplementationReadinessPipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
+      status: 'advance_available',
+      selectedStageId: 'activation_implementation_readiness',
+      selectedStageLabel: 'Implementation readiness',
+      selectedArtifactToken: implementationReadinessPayload.readiness.actionToken,
+      selectedRelativePath: implementationReadinessPayload.relativePath,
+      selectedSourceStageId: 'activation_decision_audit',
+      selectedSourceToken: decisionAuditPayload.audit.actionToken,
+      selectedBodySha256: expectedDeliveryBodySha256,
+      selectedAdapterPacketSha256: expectedAdapterPacketSha256,
+      nextStageId: 'live_activation_gate_contract',
+      nextStageLabel: 'Live activation hard-stop contract',
+    }));
+    expect(postImplementationReadinessPipelineStatusPayload.manualActionPreflight).toEqual(expect.objectContaining({
+      status: 'ready',
+      selectedStageId: 'activation_implementation_readiness',
+      selectedStageLabel: 'Implementation readiness',
+      manualActionLabel: 'Define live gate contract',
+      tokenField: 'internalSendActivationImplementationReadinessToken',
+      tokenValue: implementationReadinessPayload.readiness.actionToken,
+    }));
+    expect(postImplementationReadinessPipelineStatusPayload.payloadPreview).toEqual(expect.objectContaining({
+      status: 'ready',
+      actionLabel: 'Define live gate contract',
+      method: 'POST',
+      endpoint: '/mission-control/internal-send-live-activation-gate-contracts',
+      payload: {
+        internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken,
+      },
+      requiredManualInputs: [],
+    }));
+    expect(postImplementationReadinessPipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      status: 'matched',
+      handlerName: 'createInternalSendLiveActivationGateContract',
+      expectedEndpoint: '/mission-control/internal-send-live-activation-gate-contracts',
+      expectedTokenField: 'internalSendActivationImplementationReadinessToken',
+      previewTokenField: 'internalSendActivationImplementationReadinessToken',
+    }));
+    expect(liveGateFilesAfterStatusRefresh).toHaveLength(0);
     fs.writeFileSync(decisionAuditPayload.absolutePath, `${JSON.stringify({
       ...storedDecisionAudit,
       bodySha256: 'bad-body-sha256',
