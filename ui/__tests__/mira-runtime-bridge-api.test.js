@@ -394,6 +394,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-decision-audits'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-implementation-readiness'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-live-activation-gate-contracts'");
+    expect(appJs).toContain("fetch('/mission-control/activation-pipeline-status'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
@@ -410,6 +411,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="routeInternalSendActivationAuditList"');
     expect(indexHtml).toContain('id="routeInternalSendActivationReadinessList"');
     expect(indexHtml).toContain('id="routeInternalSendLiveGateList"');
+    expect(indexHtml).toContain('id="routeActivationPipelineStatus"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -3450,6 +3452,100 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+    const liveGateFileCountBeforeStatus = fs.readdirSync(liveActivationGateContractDir).filter((file) => file.endsWith('.json')).length;
+    const pipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status?includeInternal=1`);
+    const pipelineStatusPayload = await pipelineStatusResponse.json();
+    expect(pipelineStatusResponse.status).toBe(200);
+    expect(fs.readdirSync(liveActivationGateContractDir).filter((file) => file.endsWith('.json'))).toHaveLength(liveGateFileCountBeforeStatus);
+    expect(pipelineStatusPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_activation_pipeline_status.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      currentStageId: 'live_activation_gate_contract',
+      currentStageLabel: 'Live activation hard-stop contract',
+      stageCount: 12,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(pipelineStatusPayload.currentStage).toEqual(expect.objectContaining({
+      id: 'live_activation_gate_contract',
+      label: 'Live activation hard-stop contract',
+      status: 'saved',
+      latestToken: liveGatePayload.contract.actionToken,
+      latestStatus: 'live_activation_gate_hard_stop',
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      contentPreview: 'Edited internal continuation for Oracle review.',
+    }));
+    expect(pipelineStatusPayload.lastSavedArtifact).toEqual(expect.objectContaining({
+      id: 'live_activation_gate_contract',
+      latestToken: liveGatePayload.contract.actionToken,
+      latestStatus: 'live_activation_gate_hard_stop',
+    }));
+    expect(pipelineStatusPayload.hardStopTruth).toEqual({
+      liveSendAvailable: false,
+      liveActivationAllowed: false,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+      implementationEnabled: false,
+      hardStopContractRecorded: true,
+      separateActivationLaneRequired: true,
+      jamesSetupRequiredBeforeLiveSend: true,
+    });
+    expect(pipelineStatusPayload.nextBoundary).toEqual(expect.objectContaining({
+      label: 'Live send is not available from this surface.',
+      futureJamesVisibleGate: 'Future real send would require a separate James-visible setup/activation lane.',
+      liveSendAvailable: false,
+      separateActivationLaneRequired: true,
+    }));
+    expect(pipelineStatusPayload.nextBoundary.currentNextStep).toContain('hard-stop contract');
+    expect(pipelineStatusPayload.stages.map((stage) => stage.id)).toEqual([
+      'route_preview',
+      'internal_route_request',
+      'owned_work_continuation',
+      'follow_through_recommendation',
+      'internal_delivery_preview',
+      'dispatch_readiness',
+      'internal_send_dry_run',
+      'activation_design',
+      'activation_request',
+      'activation_decision_audit',
+      'activation_implementation_readiness',
+      'live_activation_gate_contract',
+    ]);
+    expect(pipelineStatusPayload.stages.every((stage) => stage.status !== 'missing')).toBe(true);
+    const countMissionControlJsonFiles = (dirPath) => {
+      if (!fs.existsSync(dirPath)) return 0;
+      return fs.readdirSync(dirPath, { withFileTypes: true }).reduce((count, entry) => {
+        const entryPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) return count + countMissionControlJsonFiles(entryPath);
+        return count + (entry.isFile() && entry.name.endsWith('.json') ? 1 : 0);
+      }, 0);
+    };
+    const missionControlFileCountBeforePostStatus = countMissionControlJsonFiles(path.join(tempStateRoot, 'mission-control'));
+    const postPipelineStatusResponse = await fetch(`${baseUrl}/mission-control/activation-pipeline-status`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ shouldNotCreateAnything: true }),
+    });
+    const postPipelineStatusPayload = await postPipelineStatusResponse.json();
+    expect(postPipelineStatusResponse.status).toBe(405);
+    expect(postPipelineStatusPayload).toEqual({ error: 'method_not_allowed' });
+    expect(postPipelineStatusPayload.protocol).toBeUndefined();
+    expect(postPipelineStatusPayload.ok).toBeUndefined();
+    expect(countMissionControlJsonFiles(path.join(tempStateRoot, 'mission-control'))).toBe(missionControlFileCountBeforePostStatus);
     fs.writeFileSync(implementationReadinessPayload.absolutePath, `${JSON.stringify({
       ...storedImplementationReadiness,
       bodySha256: 'bad-body-sha256',

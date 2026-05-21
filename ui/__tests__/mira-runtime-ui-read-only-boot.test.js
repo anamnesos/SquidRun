@@ -553,6 +553,105 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       },
     },
   };
+  const activationStageDefinitions = [
+    ['route_preview', 'Route preview', '/mission-control/route-previews', 'previews', 'previewCount', 'saved'],
+    ['internal_route_request', 'Review item', '/mission-control/internal-route-requests', 'requests', 'requestCount', 'saved'],
+    ['owned_work_continuation', 'Owned-work continuation', '/mission-control/owned-work-continuations', 'continuations', 'continuationCount', 'saved'],
+    ['follow_through_recommendation', 'Follow-through recommendation', '/mission-control/follow-through-recommendations', 'recommendations', 'recommendationCount', 'derived'],
+    ['internal_delivery_preview', 'Delivery preview', '/mission-control/internal-delivery-previews', 'previews', 'previewCount', 'saved'],
+    ['dispatch_readiness', 'Dispatch readiness', '/mission-control/dispatch-readiness', 'readiness', 'readinessCount', 'saved'],
+    ['internal_send_dry_run', 'Internal-send dry run', '/mission-control/internal-send-dry-runs', 'dryRuns', 'dryRunCount', 'saved'],
+    ['activation_design', 'Activation design', '/mission-control/internal-send-activation-designs', 'designs', 'designCount', 'saved'],
+    ['activation_request', 'Activation request', '/mission-control/internal-send-activation-requests', 'requests', 'requestCount', 'saved'],
+    ['activation_decision_audit', 'Decision audit', '/mission-control/internal-send-activation-decision-audits', 'audits', 'auditCount', 'saved'],
+    ['activation_implementation_readiness', 'Implementation readiness', '/mission-control/internal-send-activation-implementation-readiness', 'readiness', 'readinessCount', 'saved'],
+    ['live_activation_gate_contract', 'Live activation hard-stop contract', '/mission-control/internal-send-live-activation-gate-contracts', 'contracts', 'contractCount', 'saved'],
+  ];
+  const buildActivationPipelineStatus = () => {
+    const stages = activationStageDefinitions.map(([id, label, endpoint, listKey, countKey, availableStatus]) => {
+      const payload = payloads[endpoint];
+      const records = Array.isArray(payload?.[listKey]) ? payload[listKey] : [];
+      const record = id === 'follow_through_recommendation'
+        ? payload?.selectedRecommendation
+        : records[0];
+      const status = record ? availableStatus : 'missing';
+      const latestStatus = record?.status || null;
+      return {
+        id,
+        label,
+        status,
+        count: Number(payload?.[countKey] || records.length || 0),
+        latestId: record?.id || null,
+        latestToken: record?.actionToken || null,
+        latestStatus,
+        latestCreatedAt: record?.createdAt || null,
+        targetRole: record?.targetRole || null,
+        targetPaneId: record?.targetPaneId || null,
+        targetLabel: record?.targetLabel || null,
+        contentPreview: record?.contentPreview || record?.content || null,
+        summary: record
+          ? `${label}: ${String(latestStatus || status).replace(/_/g, ' ')}; token ${record.actionToken || 'not available'}.`
+          : `${label}: not saved yet.`,
+        hardStop: record?.hardStop
+          ? {
+            liveActivationAllowed: false,
+            liveHmSendExecutionAllowed: false,
+            realSendAllowed: false,
+            implementationEnabled: false,
+            separateActivationLaneRequired: record.hardStop.separateActivationLaneRequired === true,
+            jamesSetupRequiredBeforeLiveSend: record.hardStop.jamesSetupRequiredBeforeLiveSend === true,
+          }
+          : null,
+      };
+    });
+    const currentStage = [...stages].reverse().find((stage) => stage.status !== 'missing') || null;
+    const lastSavedArtifact = [...stages].reverse().find((stage) => stage.status === 'saved') || null;
+    const hardStopContractRecorded = stages.find((stage) => stage.id === 'live_activation_gate_contract')?.status === 'saved';
+    return {
+      ok: true,
+      protocol: 'mira.mission_control_activation_pipeline_status.v0',
+      stateRootPath: null,
+      currentStage,
+      currentStageId: currentStage?.id || null,
+      currentStageLabel: currentStage?.label || 'No Mission Control send chain yet',
+      lastSavedArtifact,
+      stageCount: stages.length,
+      stages,
+      hardStopTruth: {
+        liveSendAvailable: false,
+        liveActivationAllowed: false,
+        liveHmSendExecutionAllowed: false,
+        realSendAllowed: false,
+        implementationEnabled: false,
+        hardStopContractRecorded,
+        separateActivationLaneRequired: true,
+        jamesSetupRequiredBeforeLiveSend: true,
+      },
+      nextBoundary: {
+        label: 'Live send is not available from this surface.',
+        currentNextStep: hardStopContractRecorded
+          ? 'The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.'
+          : 'Next inspectable step is local review; live send is still unavailable.',
+        futureJamesVisibleGate: 'Future real send would require a separate James-visible setup/activation lane.',
+        liveSendAvailable: false,
+        separateActivationLaneRequired: true,
+      },
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    };
+  };
   const fetchImpl = jest.fn(async (url, options = {}) => {
     const pathname = String(url);
     const method = String(options.method || 'GET').toUpperCase();
@@ -1812,6 +1911,12 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         liveHmSend: false,
       });
     }
+    if (pathname === '/mission-control/activation-pipeline-status' && method === 'GET') {
+      return response(buildActivationPipelineStatus());
+    }
+    if (pathname === '/mission-control/activation-pipeline-status' && method !== 'GET') {
+      return response({ ok: false, error: { message: 'method not allowed' } }, false);
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -1919,6 +2024,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/mission-control/internal-send-activation-decision-audits', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-send-activation-implementation-readiness', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-send-live-activation-gate-contracts', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/activation-pipeline-status', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -1948,6 +2054,14 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.routeInternalSendActivationAuditList.textContent).toBe('no activation decision audits yet');
     expect(harness.elements.routeInternalSendActivationReadinessList.textContent).toBe('no activation implementation readiness yet');
     expect(harness.elements.routeInternalSendLiveGateList.textContent).toBe('no live activation gate contracts yet');
+    const emptyPipelineText = harness.elements.routeActivationPipelineStatus.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(emptyPipelineText).toContain('Activation pipeline status');
+    expect(emptyPipelineText).toContain('No chain yet · read only · not sent');
+    expect(emptyPipelineText).toContain('Current stage: No saved Mission Control send chain yet.');
+    expect(emptyPipelineText).toContain('Hard stop: live send available: no; hard-stop contract: no; James setup before live send: yes');
+    expect(emptyPipelineText).toContain('Future real send would require a separate James-visible setup/activation lane.');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -1969,6 +2083,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.workSummary.textContent).toContain('0 activation audits');
     expect(harness.elements.workSummary.textContent).toContain('0 activation readiness');
     expect(harness.elements.workSummary.textContent).toContain('0 live gates');
+    expect(harness.elements.workSummary.textContent).toContain('12 pipeline stages');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
   });
 
@@ -2008,6 +2123,9 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/activation-pipeline-status')).toEqual([
       expect.objectContaining({ method: 'GET' }),
     ]);
 
@@ -2526,6 +2644,20 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Activation decision audit saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Activation implementation readiness saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Live activation gate contract saved locally. Nothing was sent or executed.');
+    const pipelineStatusCalls = harness.calls.filter((call) => call.url === '/mission-control/activation-pipeline-status');
+    expect(pipelineStatusCalls.length).toBeGreaterThan(1);
+    expect(pipelineStatusCalls.every((call) => call.method === 'GET')).toBe(true);
+    expect(pipelineStatusCalls.some((call) => call.method === 'POST')).toBe(false);
+    const pipelineStatusText = harness.elements.routeActivationPipelineStatus.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(pipelineStatusText).toContain('Activation pipeline status');
+    expect(pipelineStatusText).toContain('Live activation hard-stop contract · read only · not sent');
+    expect(pipelineStatusText).toContain('Current stage: Live activation hard-stop contract: live activation gate hard stop; token mission-send-live-gate-test.');
+    expect(pipelineStatusText).toContain('Last saved: Live activation hard-stop contract: live_activation_gate_hard_stop; token mission-send-live-gate-test');
+    expect(pipelineStatusText).toContain('Hard stop: live send available: no; hard-stop contract: yes; James setup before live send: yes');
+    expect(pipelineStatusText).toContain('Future real send would require a separate James-visible setup/activation lane.');
+    expect(pipelineStatusText).not.toContain('live send available: yes');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {

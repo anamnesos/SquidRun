@@ -17,6 +17,7 @@ import {
   createMissionControlInternalDeliveryPreview,
   createMissionControlOwnedWorkContinuation,
   createMissionControlRoutePreviewRecord,
+  getMissionControlActivationPipelineStatus,
   listMissionControlDispatchReadiness,
   listMissionControlFollowThroughRecommendations,
   listMissionControlInternalDeliveryPreviews,
@@ -680,6 +681,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (requestUrl.pathname === "/mission-control/activation-pipeline-status" && request.method !== "GET") {
+    sendJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "method_not_allowed" });
     return;
@@ -854,6 +860,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/mission-control/internal-send-live-activation-gate-contracts") {
     sendJson(response, 200, listMissionControlInternalSendLiveActivationGateContracts(process.env, { includeInternal: includeInternalFields(requestUrl) }));
+    return;
+  }
+
+  if (request.method === "GET" && requestUrl.pathname === "/mission-control/activation-pipeline-status") {
+    sendJson(response, 200, getMissionControlActivationPipelineStatus(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 

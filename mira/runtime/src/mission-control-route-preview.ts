@@ -1403,7 +1403,108 @@ export type MissionControlInternalSendLiveActivationGateContractListResult = {
   liveHmSend: false;
 };
 
+export type MissionControlActivationPipelineStageId =
+  | "route_preview"
+  | "internal_route_request"
+  | "owned_work_continuation"
+  | "follow_through_recommendation"
+  | "internal_delivery_preview"
+  | "dispatch_readiness"
+  | "internal_send_dry_run"
+  | "activation_design"
+  | "activation_request"
+  | "activation_decision_audit"
+  | "activation_implementation_readiness"
+  | "live_activation_gate_contract";
+
+export type MissionControlActivationPipelineStageStatus = "missing" | "saved" | "derived";
+
+export type MissionControlActivationPipelineStage = {
+  id: MissionControlActivationPipelineStageId;
+  label: string;
+  status: MissionControlActivationPipelineStageStatus;
+  count: number;
+  latestId: string | null;
+  latestToken: string | null;
+  latestStatus: string | null;
+  latestCreatedAt: string | null;
+  targetRole: string | null;
+  targetPaneId: string | null;
+  targetLabel: string | null;
+  contentPreview: string | null;
+  summary: string;
+  hardStop: {
+    liveActivationAllowed: false;
+    liveHmSendExecutionAllowed: false;
+    realSendAllowed: false;
+    implementationEnabled: false;
+    separateActivationLaneRequired: boolean;
+    jamesSetupRequiredBeforeLiveSend: boolean;
+  } | null;
+};
+
+export type MissionControlActivationPipelineStatusResult = {
+  ok: true;
+  protocol: "mira.mission_control_activation_pipeline_status.v0";
+  stateRootPath: string | null;
+  currentStage: MissionControlActivationPipelineStage | null;
+  currentStageId: MissionControlActivationPipelineStageId | null;
+  currentStageLabel: string;
+  lastSavedArtifact: MissionControlActivationPipelineStage | null;
+  stageCount: number;
+  stages: MissionControlActivationPipelineStage[];
+  hardStopTruth: {
+    liveSendAvailable: false;
+    liveActivationAllowed: false;
+    liveHmSendExecutionAllowed: false;
+    realSendAllowed: false;
+    implementationEnabled: false;
+    hardStopContractRecorded: boolean;
+    separateActivationLaneRequired: true;
+    jamesSetupRequiredBeforeLiveSend: true;
+  };
+  nextBoundary: {
+    label: string;
+    currentNextStep: string;
+    futureJamesVisibleGate: string;
+    liveSendAvailable: false;
+    separateActivationLaneRequired: true;
+  };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
 const allowedRoles = new Set(["architect", "builder", "oracle"]);
+
+const activationPipelineStageDefinitions: Array<{
+  id: MissionControlActivationPipelineStageId;
+  label: string;
+}> = [
+  { id: "route_preview", label: "Route preview" },
+  { id: "internal_route_request", label: "Review item" },
+  { id: "owned_work_continuation", label: "Owned-work continuation" },
+  { id: "follow_through_recommendation", label: "Follow-through recommendation" },
+  { id: "internal_delivery_preview", label: "Delivery preview" },
+  { id: "dispatch_readiness", label: "Dispatch readiness" },
+  { id: "internal_send_dry_run", label: "Internal-send dry run" },
+  { id: "activation_design", label: "Activation design" },
+  { id: "activation_request", label: "Activation request" },
+  { id: "activation_decision_audit", label: "Decision audit" },
+  { id: "activation_implementation_readiness", label: "Implementation readiness" },
+  { id: "live_activation_gate_contract", label: "Live activation hard-stop contract" },
+];
 
 function isInside(rootPath: string, candidatePath: string): boolean {
   const relative = path.relative(rootPath, candidatePath);
@@ -2270,6 +2371,110 @@ function readInternalSendLiveActivationGateContractRecords(rootPath: string): Mi
     })
     .filter((record): record is MissionControlInternalSendLiveActivationGateContractRecord => Boolean(record))
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function unknownRecordValue(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function hardStopFromRecord(record: Record<string, unknown> | null): MissionControlActivationPipelineStage["hardStop"] {
+  const hardStop = record?.hardStop;
+  if (!hardStop || typeof hardStop !== "object" || Array.isArray(hardStop)) return null;
+  const hardStopRecord = hardStop as Record<string, unknown>;
+  return {
+    liveActivationAllowed: false,
+    liveHmSendExecutionAllowed: false,
+    realSendAllowed: false,
+    implementationEnabled: false,
+    separateActivationLaneRequired: hardStopRecord.separateActivationLaneRequired === true,
+    jamesSetupRequiredBeforeLiveSend: hardStopRecord.jamesSetupRequiredBeforeLiveSend === true,
+  };
+}
+
+function stageFromRecord(
+  id: MissionControlActivationPipelineStageId,
+  label: string,
+  count: number,
+  record: (Record<string, unknown> & { actionToken?: string }) | null,
+  status: MissionControlActivationPipelineStageStatus,
+): MissionControlActivationPipelineStage {
+  const latestStatus = unknownRecordValue(record, "status");
+  const latestToken = unknownRecordValue(record, "actionToken");
+  const contentPreview = unknownRecordValue(record, "contentPreview") || unknownRecordValue(record, "content");
+  return {
+    id,
+    label,
+    status: record ? status : "missing",
+    count,
+    latestId: unknownRecordValue(record, "id"),
+    latestToken,
+    latestStatus,
+    latestCreatedAt: unknownRecordValue(record, "createdAt"),
+    targetRole: unknownRecordValue(record, "targetRole"),
+    targetPaneId: unknownRecordValue(record, "targetPaneId"),
+    targetLabel: unknownRecordValue(record, "targetLabel"),
+    contentPreview,
+    summary: record
+      ? `${label}: ${String(latestStatus || status).replace(/_/g, " ")}; token ${latestToken || "not available"}.`
+      : `${label}: not saved yet.`,
+    hardStop: hardStopFromRecord(record),
+  };
+}
+
+function missingStage(id: MissionControlActivationPipelineStageId, label: string): MissionControlActivationPipelineStage {
+  return stageFromRecord(id, label, 0, null, "missing");
+}
+
+function currentPipelineNextStep(currentStageId: MissionControlActivationPipelineStageId | null): string {
+  if (!currentStageId) return "Save a Mission Control route preview before this chain has a current stage.";
+  if (currentStageId === "live_activation_gate_contract") {
+    return "The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.";
+  }
+  const currentIndex = activationPipelineStageDefinitions.findIndex((stage) => stage.id === currentStageId);
+  const nextStage = activationPipelineStageDefinitions[currentIndex + 1] || null;
+  return nextStage
+    ? `Next inspectable step is ${nextStage.label.toLowerCase()}; live send is still unavailable.`
+    : "Live send is unavailable; future real send would require a separate James-visible setup/activation lane.";
+}
+
+function buildActivationPipelineStages(rootPath: string | null): MissionControlActivationPipelineStage[] {
+  if (!rootPath) {
+    return activationPipelineStageDefinitions.map((definition) => missingStage(definition.id, definition.label));
+  }
+
+  const previews = readPreviewRecords(rootPath).map(toPublicRecord);
+  const routeRequests = readRouteRequestRecords(rootPath).map(toPublicRouteRequest);
+  const continuations = readContinuationRecords(rootPath).map(toPublicContinuation);
+  const rawContinuations = readContinuationRecords(rootPath);
+  const selectedContinuation = selectFollowThroughContinuation(rawContinuations);
+  const followThrough = selectedContinuation
+    ? buildFollowThroughRecommendation(selectedContinuation, selectedContinuation.id)
+    : null;
+  const recommendations = rawContinuations.map((record) => buildFollowThroughRecommendation(record, selectedContinuation?.id || null));
+  const deliveryPreviews = readDeliveryPreviewRecords(rootPath).map(toPublicDeliveryPreview);
+  const dispatchReadiness = readDispatchReadinessRecords(rootPath).map(toPublicDispatchReadiness);
+  const dryRuns = readInternalSendDryRunRecords(rootPath).map(toPublicInternalSendDryRun);
+  const activationDesigns = readInternalSendActivationDesignRecords(rootPath).map(toPublicInternalSendActivationDesign);
+  const activationRequests = readInternalSendActivationRequestRecords(rootPath).map(toPublicInternalSendActivationRequest);
+  const decisionAudits = readInternalSendActivationDecisionAuditRecords(rootPath).map(toPublicInternalSendActivationDecisionAudit);
+  const implementationReadiness = readInternalSendActivationImplementationReadinessRecords(rootPath).map(toPublicInternalSendActivationImplementationReadiness);
+  const liveGateContracts = readInternalSendLiveActivationGateContractRecords(rootPath).map(toPublicInternalSendLiveActivationGateContract);
+
+  return [
+    stageFromRecord("route_preview", "Route preview", previews.length, previews[0] || null, "saved"),
+    stageFromRecord("internal_route_request", "Review item", routeRequests.length, routeRequests[0] || null, "saved"),
+    stageFromRecord("owned_work_continuation", "Owned-work continuation", continuations.length, continuations[0] || null, "saved"),
+    stageFromRecord("follow_through_recommendation", "Follow-through recommendation", recommendations.length, followThrough, "derived"),
+    stageFromRecord("internal_delivery_preview", "Delivery preview", deliveryPreviews.length, deliveryPreviews[0] || null, "saved"),
+    stageFromRecord("dispatch_readiness", "Dispatch readiness", dispatchReadiness.length, dispatchReadiness[0] || null, "saved"),
+    stageFromRecord("internal_send_dry_run", "Internal-send dry run", dryRuns.length, dryRuns[0] || null, "saved"),
+    stageFromRecord("activation_design", "Activation design", activationDesigns.length, activationDesigns[0] || null, "saved"),
+    stageFromRecord("activation_request", "Activation request", activationRequests.length, activationRequests[0] || null, "saved"),
+    stageFromRecord("activation_decision_audit", "Decision audit", decisionAudits.length, decisionAudits[0] || null, "saved"),
+    stageFromRecord("activation_implementation_readiness", "Implementation readiness", implementationReadiness.length, implementationReadiness[0] || null, "saved"),
+    stageFromRecord("live_activation_gate_contract", "Live activation hard-stop contract", liveGateContracts.length, liveGateContracts[0] || null, "saved"),
+  ];
 }
 
 function resolvePreviewRecord(input: { previewToken?: unknown }, rootPath: string): MissionControlRoutePreviewRecord {
@@ -5608,6 +5813,62 @@ export function listMissionControlInternalSendLiveActivationGateContracts(
     stateRootPath: options.includeInternal ? rootPath : null,
     contractCount: contracts.length,
     contracts,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function getMissionControlActivationPipelineStatus(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { includeInternal?: boolean } = {},
+): MissionControlActivationPipelineStatusResult {
+  const stateRoot = getStateRootReadiness(env);
+  const rootPath = stateRoot.ready && stateRoot.path ? path.resolve(stateRoot.path) : null;
+  const stages = buildActivationPipelineStages(rootPath);
+  const currentStage = [...stages].reverse().find((stage) => stage.status !== "missing") || null;
+  const lastSavedArtifact = [...stages].reverse().find((stage) => stage.status === "saved") || null;
+  const liveGateStage = stages.find((stage) => stage.id === "live_activation_gate_contract") || null;
+  const hardStop = liveGateStage?.hardStop || null;
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_activation_pipeline_status.v0",
+    stateRootPath: options.includeInternal ? rootPath : null,
+    currentStage,
+    currentStageId: currentStage?.id || null,
+    currentStageLabel: currentStage?.label || "No Mission Control send chain yet",
+    lastSavedArtifact,
+    stageCount: stages.length,
+    stages,
+    hardStopTruth: {
+      liveSendAvailable: false,
+      liveActivationAllowed: false,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+      implementationEnabled: false,
+      hardStopContractRecorded: liveGateStage?.status === "saved" && Boolean(hardStop),
+      separateActivationLaneRequired: true,
+      jamesSetupRequiredBeforeLiveSend: true,
+    },
+    nextBoundary: {
+      label: "Live send is not available from this surface.",
+      currentNextStep: currentPipelineNextStep(currentStage?.id || null),
+      futureJamesVisibleGate: "Future real send would require a separate James-visible setup/activation lane.",
+      liveSendAvailable: false,
+      separateActivationLaneRequired: true,
+    },
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,
