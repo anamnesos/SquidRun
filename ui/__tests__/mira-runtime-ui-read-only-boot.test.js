@@ -610,6 +610,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         targetPaneId: record?.targetPaneId || null,
         targetLabel: record?.targetLabel || null,
         contentPreview: record?.contentPreview || record?.content || null,
+        missionAnswerPreview: record?.missionAnswerPreview || null,
         bodySha256: record?.bodySha256 || null,
         adapterPacketSha256: record?.adapterPacketSha256 || null,
         summary: record
@@ -643,6 +644,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         createdAt: stage.latestCreatedAt,
         targetRole: stage.targetRole,
         contentPreview: stage.contentPreview,
+        missionAnswerPreview: stage.missionAnswerPreview,
         bodySha256: stage.bodySha256,
         adapterPacketSha256: stage.adapterPacketSha256,
         summary: stage.summary,
@@ -687,6 +689,38 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       const next = index >= 0 ? activationStageDefinitions[index + 1] : null;
       return next ? { id: next[0], label: next[1] } : null;
     };
+    const originStage = availableStages.find((stage) => stage.id === 'route_preview' && stage.missionAnswerPreview)
+      || availableStages.find((stage) => stage.missionAnswerPreview)
+      || null;
+    const originatingAnswerPreview = originStage?.missionAnswerPreview || null;
+    const missionAnswerTrail = availableStages.map((stage) => ({
+      stageId: stage.id,
+      label: stage.label,
+      status: stage.status,
+      token: stage.latestToken,
+      relativePath: stage.relativePath,
+      sourceStageId: stage.sourceStageId,
+      sourceToken: stage.sourceToken,
+      missionAnswerPreview: stage.missionAnswerPreview,
+      matchesOriginatingAnswer: Boolean(originatingAnswerPreview) && stage.missionAnswerPreview === originatingAnswerPreview,
+    }));
+    const missionAnswerMatchingCount = missionAnswerTrail.filter((entry) => entry.matchesOriginatingAnswer).length;
+    const missionAnswerMissingLabels = missionAnswerTrail
+      .filter((entry) => !entry.missionAnswerPreview)
+      .map((entry) => entry.label);
+    const missionAnswerMismatchedLabels = missionAnswerTrail
+      .filter((entry) => entry.missionAnswerPreview && !entry.matchesOriginatingAnswer)
+      .map((entry) => entry.label);
+    const missionAnswerContinuityStatus = !originatingAnswerPreview
+      ? 'empty'
+      : missionAnswerMatchingCount === availableStages.length
+        ? 'complete'
+        : 'partial';
+    const missionAnswerContinuitySummary = missionAnswerContinuityStatus === 'complete'
+      ? `Same originating Mission Control answer appears across ${missionAnswerMatchingCount}/${availableStages.length} available stages from ${missionAnswerTrail[0]?.label || 'no saved stage'} to ${missionAnswerTrail[missionAnswerTrail.length - 1]?.label || 'no saved stage'}.`
+      : missionAnswerContinuityStatus === 'partial'
+        ? `Mission answer continuity is partial: ${missionAnswerMatchingCount}/${availableStages.length} available stages match the originating answer; missing ${missionAnswerMissingLabels.join(', ') || 'none'}; mismatched ${missionAnswerMismatchedLabels.join(', ') || 'none'}.`
+        : 'No originating Mission Control answer is attached to the saved activation pipeline yet.';
     return {
       ok: true,
       protocol: 'mira.mission_control_activation_pipeline_status.v0',
@@ -1042,6 +1076,21 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         hardStopRecorded: hardStopContractRecorded,
         liveSendAvailable: false,
         realSendRequiresSeparateActivation: true,
+        missionAnswerContinuity: {
+          protocol: 'mira.mission_control_mission_answer_continuity.v0',
+          status: missionAnswerContinuityStatus,
+          originatingAnswerPreview,
+          currentAnswerPreview: [...availableStages].reverse().find((stage) => stage.missionAnswerPreview)?.missionAnswerPreview || null,
+          stageCount: stages.length,
+          availableStageCount: availableStages.length,
+          carriedStageCount: missionAnswerTrail.filter((entry) => entry.missionAnswerPreview).length,
+          matchingStageCount: missionAnswerMatchingCount,
+          missingStageLabels: missionAnswerMissingLabels,
+          mismatchedStageLabels: missionAnswerMismatchedLabels,
+          summary: missionAnswerContinuitySummary,
+          stageTrail: missionAnswerTrail,
+          noEffectSummary: 'Read-only Mission answer continuity proof only; it derives from existing saved Mission Control artifacts/status and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
+        },
         demoPath: {
           protocol: 'mira.mission_control_activation_pipeline_demo_path.v0',
           surface: 'New Mira local workbench',
@@ -3683,6 +3732,9 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('What was proven: Saved local evidence covers route preview through live activation hard-stop contract; the status refresh is read-only and no next artifact is available.');
     expect(pipelineStatusText).toContain('Manual-only: All advancement before the hard stop used explicit workbench actions; this readout has no submit, send, execution, provider, route, account, or token path.');
     expect(pipelineStatusText).toContain('Readout boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
+    expect(pipelineStatusText).toContain('Mission answer continuity: Same originating Mission Control answer appears across 12/12 available stages from Route preview to Live activation hard-stop contract.');
+    expect(pipelineStatusText).toContain('Mission answer source: Project/lane: squidrun / architect#253.');
+    expect(pipelineStatusText).toContain('Mission answer trail: Route preview: same -> Review item: same -> Owned-work continuation: same -> Follow-through recommendation: same -> Delivery preview: same -> Dispatch readiness: same -> Internal-send dry run: same -> Activation design: same -> Activation request: same -> Decision audit: same -> Implementation readiness: same -> Live activation hard-stop contract: same');
     expect(pipelineStatusText).toContain('Demo path: Open the local New Mira workbench and read the Mission Control activation pipeline status card. Read: Readout / Completed chain / What was proven / Manual-only / Readout boundary.');
     expect(pipelineStatusText).toContain('Demo meaning: The demo shows Mission Control can explain a complete saved local coordination chain from artifacts, ending at a hard stop instead of pretending to send.');
     expect(pipelineStatusText).toContain('Demo boundary: This demo path only reads existing status/artifact evidence; it does not submit, send, execute, call a model/provider, flip routes, or access accounts/tokens.');

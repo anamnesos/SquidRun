@@ -1687,6 +1687,13 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'What was proven', endToEndReadout.provenSummary || 'No proof summary available.');
     appendPreviewLine(card, 'Manual-only', endToEndReadout.manualOnlySummary || 'No manual-only summary available.');
     appendPreviewLine(card, 'Readout boundary', endToEndReadout.nextBoundary || nextBoundary.currentNextStep || 'Live send is unavailable.');
+    const missionAnswerContinuity = endToEndReadout.missionAnswerContinuity && typeof endToEndReadout.missionAnswerContinuity === 'object' ? endToEndReadout.missionAnswerContinuity : null;
+    if (missionAnswerContinuity) {
+      const trail = Array.isArray(missionAnswerContinuity.stageTrail) ? missionAnswerContinuity.stageTrail : [];
+      appendPreviewLine(card, 'Mission answer continuity', missionAnswerContinuity.summary || 'No Mission answer continuity proof is available.');
+      appendPreviewLine(card, 'Mission answer source', missionAnswerContinuity.originatingAnswerPreview || 'No originating Mission Control answer is attached to this chain.');
+      appendPreviewLine(card, 'Mission answer trail', trail.map((entry) => `${entry.label || entry.stageId}: ${entry.matchesOriginatingAnswer === true ? 'same' : 'not matched'}`).join(' -> ') || 'No saved stages to trace.');
+    }
     const demoPath = endToEndReadout.demoPath && typeof endToEndReadout.demoPath === 'object' ? endToEndReadout.demoPath : null;
     if (demoPath) {
       const demoRead = Array.isArray(demoPath.read) ? demoPath.read : [];

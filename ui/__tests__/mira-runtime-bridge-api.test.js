@@ -4372,6 +4372,50 @@ describe('Mira runtime bridge manual-plan API', () => {
       liveSendAvailable: false,
       realSendRequiresSeparateActivation: true,
     }));
+    const missionAnswerContinuity = pipelineStatusPayload.endToEndReadout.missionAnswerContinuity;
+    expect(missionAnswerContinuity).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_mission_answer_continuity.v0',
+      status: 'complete',
+      originatingAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
+      currentAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
+      stageCount: 12,
+      availableStageCount: 12,
+      carriedStageCount: 12,
+      matchingStageCount: 12,
+      missingStageLabels: [],
+      mismatchedStageLabels: [],
+      summary: 'Same originating Mission Control answer appears across 12/12 available stages from Route preview to Live activation hard-stop contract.',
+    }));
+    expect(missionAnswerContinuity.stageTrail.map((entry) => entry.label)).toEqual([
+      'Route preview',
+      'Review item',
+      'Owned-work continuation',
+      'Follow-through recommendation',
+      'Delivery preview',
+      'Dispatch readiness',
+      'Internal-send dry run',
+      'Activation design',
+      'Activation request',
+      'Decision audit',
+      'Implementation readiness',
+      'Live activation hard-stop contract',
+    ]);
+    expect(missionAnswerContinuity.stageTrail.every((entry) => entry.matchesOriginatingAnswer)).toBe(true);
+    expect(missionAnswerContinuity.stageTrail).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stageId: 'route_preview',
+        missionAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
+        matchesOriginatingAnswer: true,
+      }),
+      expect.objectContaining({
+        stageId: 'live_activation_gate_contract',
+        token: liveGatePayload.contract.actionToken,
+        relativePath: liveGatePayload.relativePath,
+        missionAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
+        matchesOriginatingAnswer: true,
+      }),
+    ]));
+    expect(missionAnswerContinuity.noEffectSummary).toContain('does not persist, submit, execute, send');
     expect(pipelineStatusPayload.endToEndReadout.demoPath).toEqual(expect.objectContaining({
       protocol: 'mira.mission_control_activation_pipeline_demo_path.v0',
       surface: 'New Mira local workbench',
@@ -4557,6 +4601,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       sourceToken: implementationReadinessPayload.readiness.actionToken,
       targetRole: 'oracle',
       contentPreview: 'Edited internal continuation for Oracle review.',
+      missionAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
       bodySha256: implementationReadinessPayload.readiness.bodySha256,
       adapterPacketSha256: implementationReadinessPayload.readiness.adapterPacketSha256,
     }));

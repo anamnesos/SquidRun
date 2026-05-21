@@ -1446,6 +1446,7 @@ export type MissionControlActivationPipelineStage = {
   targetPaneId: string | null;
   targetLabel: string | null;
   contentPreview: string | null;
+  missionAnswerPreview: string | null;
   bodySha256: string | null;
   adapterPacketSha256: string | null;
   summary: string;
@@ -1476,6 +1477,7 @@ export type MissionControlActivationPipelineTrace = {
     createdAt: string | null;
     targetRole: string | null;
     contentPreview: string | null;
+    missionAnswerPreview: string | null;
     bodySha256: string | null;
     adapterPacketSha256: string | null;
     summary: string;
@@ -1596,6 +1598,31 @@ export type MissionControlActivationPipelineEndToEndReadout = {
   hardStopRecorded: boolean;
   liveSendAvailable: false;
   realSendRequiresSeparateActivation: true;
+  missionAnswerContinuity: {
+    protocol: "mira.mission_control_mission_answer_continuity.v0";
+    status: "empty" | "partial" | "complete";
+    originatingAnswerPreview: string | null;
+    currentAnswerPreview: string | null;
+    stageCount: number;
+    availableStageCount: number;
+    carriedStageCount: number;
+    matchingStageCount: number;
+    missingStageLabels: string[];
+    mismatchedStageLabels: string[];
+    summary: string;
+    stageTrail: Array<{
+      stageId: MissionControlActivationPipelineStageId;
+      label: string;
+      status: MissionControlActivationPipelineStageStatus;
+      token: string | null;
+      relativePath: string | null;
+      sourceStageId: MissionControlActivationPipelineStageId | null;
+      sourceToken: string | null;
+      missionAnswerPreview: string | null;
+      matchesOriginatingAnswer: boolean;
+    }>;
+    noEffectSummary: string;
+  };
   demoPath: {
     protocol: "mira.mission_control_activation_pipeline_demo_path.v0";
     surface: "New Mira local workbench";
@@ -2682,6 +2709,7 @@ function stageFromRecord(
     targetPaneId: unknownRecordValue(record, "targetPaneId"),
     targetLabel: unknownRecordValue(record, "targetLabel"),
     contentPreview,
+    missionAnswerPreview: unknownRecordValue(record, "missionAnswerPreview"),
     bodySha256: unknownRecordValue(record, "bodySha256"),
     adapterPacketSha256: unknownRecordValue(record, "adapterPacketSha256"),
     summary: record
@@ -2708,6 +2736,7 @@ function buildActivationPipelineTrace(
       createdAt: stage.latestCreatedAt,
       targetRole: stage.targetRole,
       contentPreview: stage.contentPreview,
+      missionAnswerPreview: stage.missionAnswerPreview,
       bodySha256: stage.bodySha256,
       adapterPacketSha256: stage.adapterPacketSha256,
       summary: stage.summary,
@@ -2723,6 +2752,68 @@ function buildActivationPipelineTrace(
       : "No saved Mission Control activation artifacts yet.",
     entries,
     noEffectSummary: "Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.",
+  };
+}
+
+function buildMissionAnswerContinuity(
+  stages: MissionControlActivationPipelineStage[],
+): MissionControlActivationPipelineEndToEndReadout["missionAnswerContinuity"] {
+  const availableStages = stages.filter((stage) => stage.status !== "missing");
+  const originStage = availableStages.find((stage) => stage.id === "route_preview" && Boolean(stage.missionAnswerPreview))
+    || availableStages.find((stage) => Boolean(stage.missionAnswerPreview))
+    || null;
+  const originatingAnswerPreview = originStage?.missionAnswerPreview || null;
+  const currentAnswerPreview = [...availableStages].reverse().find((stage) => Boolean(stage.missionAnswerPreview))?.missionAnswerPreview || null;
+  const stageTrail = availableStages.map((stage) => {
+    const matchesOriginatingAnswer = Boolean(originatingAnswerPreview)
+      && stage.missionAnswerPreview === originatingAnswerPreview;
+    return {
+      stageId: stage.id,
+      label: stage.label,
+      status: stage.status,
+      token: stage.latestToken,
+      relativePath: stage.relativePath,
+      sourceStageId: stage.sourceStageId,
+      sourceToken: stage.sourceToken,
+      missionAnswerPreview: stage.missionAnswerPreview,
+      matchesOriginatingAnswer,
+    };
+  });
+  const carriedStageCount = stageTrail.filter((entry) => Boolean(entry.missionAnswerPreview)).length;
+  const matchingStageCount = stageTrail.filter((entry) => entry.matchesOriginatingAnswer).length;
+  const missingStageLabels = stageTrail
+    .filter((entry) => !entry.missionAnswerPreview)
+    .map((entry) => entry.label);
+  const mismatchedStageLabels = stageTrail
+    .filter((entry) => Boolean(entry.missionAnswerPreview) && !entry.matchesOriginatingAnswer)
+    .map((entry) => entry.label);
+  const status: MissionControlActivationPipelineEndToEndReadout["missionAnswerContinuity"]["status"] = !originatingAnswerPreview
+    ? "empty"
+    : matchingStageCount === availableStages.length
+      ? "complete"
+      : "partial";
+  const firstLabel = stageTrail[0]?.label || "no saved stage";
+  const lastLabel = stageTrail[stageTrail.length - 1]?.label || "no saved stage";
+  const summary = status === "complete"
+    ? `Same originating Mission Control answer appears across ${matchingStageCount}/${availableStages.length} available stages from ${firstLabel} to ${lastLabel}.`
+    : status === "partial"
+      ? `Mission answer continuity is partial: ${matchingStageCount}/${availableStages.length} available stages match the originating answer; missing ${missingStageLabels.join(", ") || "none"}; mismatched ${mismatchedStageLabels.join(", ") || "none"}.`
+      : "No originating Mission Control answer is attached to the saved activation pipeline yet.";
+
+  return {
+    protocol: "mira.mission_control_mission_answer_continuity.v0",
+    status,
+    originatingAnswerPreview,
+    currentAnswerPreview,
+    stageCount: stages.length,
+    availableStageCount: availableStages.length,
+    carriedStageCount,
+    matchingStageCount,
+    missingStageLabels,
+    mismatchedStageLabels,
+    summary,
+    stageTrail,
+    noEffectSummary: "Read-only Mission answer continuity proof only; it derives from existing saved Mission Control artifacts/status and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
   };
 }
 
@@ -3278,6 +3369,7 @@ function buildActivationPipelineEndToEndReadout(
       ? `${manualActionPreflight.manualActionLabel} remains an explicit workbench action; this readout only explains it.`
       : "No manual advancement is ready from this readout.";
   const currentHardStopTruth = `liveSendAvailable:${hardStopTruth.liveSendAvailable}; hardStopRecorded:${hardStopRecorded}; jamesSetupRequiredBeforeLiveSend:${hardStopTruth.jamesSetupRequiredBeforeLiveSend}.`;
+  const missionAnswerContinuity = buildMissionAnswerContinuity(stages);
 
   return {
     protocol: "mira.mission_control_activation_pipeline_end_to_end_readout.v0",
@@ -3298,6 +3390,7 @@ function buildActivationPipelineEndToEndReadout(
     hardStopRecorded,
     liveSendAvailable: false,
     realSendRequiresSeparateActivation: true,
+    missionAnswerContinuity,
     demoPath: {
       protocol: "mira.mission_control_activation_pipeline_demo_path.v0",
       surface: "New Mira local workbench",

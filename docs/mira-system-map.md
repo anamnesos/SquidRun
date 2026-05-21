@@ -418,6 +418,7 @@ The existing `Preview activation request` proof now pins that the activation-req
 The existing `Record decision audit` proof now pins that the decision/refusal/rollback audit artifact carries the same originating `missionAnswerPreview`, and the decision-audit card displays it as compact review context before implementation-readiness review.
 The existing `Check implementation readiness` proof now pins that the disabled-by-default implementation-readiness artifact carries the same originating `missionAnswerPreview`, and the readiness card displays it as compact review context before live-gate contract review.
 The existing `Define live gate contract` proof now pins that the hard-stop live-gate contract carries the same originating `missionAnswerPreview`, and the live-gate card displays it as compact review context for the terminal no-live-send boundary.
+The read-only activation-pipeline status/readout now caps that chain with a Mission answer continuity proof: the same originating `missionAnswerPreview` is traceable from route preview through review item, continuation, recommendation, delivery preview, dispatch readiness, send dry run, activation design/request, decision audit, implementation readiness, and live-gate hard stop without adding a new artifact stage, write path, send, or activation authority.
 
 New Mira runtime-turn export/replay projection proof, without live provider calls, fixed-port runtime, Telegram, or route changes:
 
