@@ -251,6 +251,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlCurrentStageQuestion(text)
     || isMissionControlPayloadPreviewQuestion(text)
     || isMissionControlBlockedReasonQuestion(text)
+    || isMissionControlManualInputQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -347,6 +348,15 @@ function isMissionControlNoEffectBoundaryQuestion(text) {
       || /\bwhat\s+(effects|actions|live\s+effects|external\s+effects)\s+(are|remain)\s+(blocked|unavailable|off[-\s]?limits)\b/i.test(normalized)
       || /\bwhat\s+is\s+(mission\s*control|new\s+mira)\s+(not\s+allowed|forbidden|blocked)\s+to\s+do\b/i.test(normalized)
       || /\bwhich\s+(effects|actions|sends?|execution)\s+are\s+blocked\s+in\s+(mission\s*control|new\s+mira)\b/i.test(normalized));
+}
+
+function isMissionControlManualInputQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+manual\s+input\s+(does|would)\s+(mission\s*control|new\s+mira)\s+need\b/i.test(normalized)
+      || /\bwhat\s+(fields?|inputs?)\s+(would|does)\s+(mission\s*control|new\s+mira)\s+need\b/i.test(normalized)
+      || /\bwhat\s+(mission\s*control|new\s+mira)\s+(fields?|inputs?)\s+would\s+i\s+need\s+to\s+fill\b/i.test(normalized)
+      || /\bwhich\s+(fields?|inputs?)\s+(are|remain)\s+(manual|required)\s+in\s+(mission\s*control|new\s+mira)\b/i.test(normalized));
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -460,6 +470,10 @@ function currentMissionControlAnswer(text = '') {
     const blockedReasonAnswer = buildMissionControlBlockedReasonAnswer();
     if (blockedReasonAnswer) return blockedReasonAnswer;
   }
+  if (isMissionControlManualInputQuestion(text)) {
+    const manualInputAnswer = buildMissionControlManualInputAnswer();
+    if (manualInputAnswer) return manualInputAnswer;
+  }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
@@ -552,6 +566,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('payload/endpoint preview');
     available.push('blocked reason');
     available.push('no-effect boundary');
+    available.push('manual input requirements');
   }
   if (Array.isArray(mission?.coordinationDrafts) && mission.coordinationDrafts.length > 0) {
     available.push('coordination draft preview');
@@ -899,6 +914,44 @@ function buildMissionControlNoEffectBoundaryAnswer(status = state.missionControl
     `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline hard-stop/no-effect status from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlManualInputAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const preflight = status.manualActionPreflight && typeof status.manualActionPreflight === 'object' ? status.manualActionPreflight : {};
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object' ? status.payloadPreview : {};
+  const requiredInputs = Array.isArray(payloadPreview.requiredManualInputs)
+    ? payloadPreview.requiredManualInputs
+    : [];
+  const validationChecks = Array.isArray(payloadPreview.validationChecks)
+    ? payloadPreview.validationChecks
+    : [];
+  const validationSummary = validationChecks.length > 0
+    ? validationChecks.map((check) => `${check.id || check.label || 'check'}:${check.ok === true ? 'ok' : 'blocked'}`).join(' / ')
+    : 'No validation checks are loaded.';
+  const requiredInputSummary = requiredInputs.length > 0
+    ? requiredInputs.join(' / ')
+    : 'none loaded';
+  const tokenReady = Boolean(preflight.tokenField && preflight.tokenValue);
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control manual-input inspection; no setup or live action is needed.');
+  return [
+    `Manual input status: ${String(payloadPreview.status || preflight.status || 'unknown').replace(/_/g, ' ')}`,
+    `Required manual inputs: ${requiredInputSummary}`,
+    `Action label: ${payloadPreview.actionLabel || preflight.manualActionLabel || 'No manual action payload is ready.'}`,
+    `Token field/value: ${preflight.tokenField || 'no token'}=${preflight.tokenValue || 'not ready'}`,
+    `Token ready: ${tokenReady ? 'yes' : 'no'}`,
+    `Selected stage: ${preflight.selectedStageLabel || 'No selected saved artifact'}`,
+    `Validation checks: ${validationSummary}`,
+    `Explanation: ${payloadPreview.explanation || preflight.explanation || 'No manual input explanation is loaded.'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control manual-action preflight and payload-preview validation from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, fill, edit, save, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }

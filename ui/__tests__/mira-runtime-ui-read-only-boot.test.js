@@ -4373,6 +4373,49 @@ describe('Mira runtime UI boot', () => {
     }
   });
 
+  test('answers manual-input questions from existing Mission Control status without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['what manual input does Mission Control need?', 'what Mission Control fields would I need to fill?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Manual input status: blocked'),
+      ]);
+      const manualInputReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(manualInputReply).toContain('Required manual inputs: none loaded');
+      expect(manualInputReply).toContain('Action label: No manual action payload is ready.');
+      expect(manualInputReply).toContain('Token field/value: no token=not ready');
+      expect(manualInputReply).toContain('Token ready: no');
+      expect(manualInputReply).toContain('Selected stage: No selected saved artifact');
+      expect(manualInputReply).toContain('Validation checks: manual_preflight_ready:blocked / endpoint_known:blocked / selected_token_present:blocked / payload_preview_read_only:ok');
+      expect(manualInputReply).toContain('Explanation: No payload preview is available because the manual action preflight is blocked.');
+      expect(manualInputReply).toContain('Next boundary: Next inspectable step is local review; live send is still unavailable.');
+      expect(manualInputReply).toContain('Source: already-loaded Mission Control manual-action preflight and payload-preview validation from local SquidRun context.');
+      expect(manualInputReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, fill, edit, save, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
+      expect(manualInputReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((manualInputReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
   test('answers recent team-context questions from existing Mission Control context without a turn POST', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
@@ -5400,6 +5443,50 @@ describe('Mira runtime UI boot', () => {
       expect(harness.elements.sendButton.textContent).toBe('Send');
     }
     expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(4);
+  });
+
+  test('does not hijack generic manual-input instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    for (const question of [
+      'fill the Mission Control fields with the runtime fixture',
+      'edit the New Mira manual input with the runtime fixture',
+      'type the Mission Control token with the runtime fixture',
+      'save the Mission Control manual input with the runtime fixture',
+      'submit the Mission Control fields with the runtime fixture',
+      'create the New Mira manual input with the runtime fixture',
+    ]) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+      const postCalls = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCalls).toHaveLength(turnCalls.length);
+      expect(turnCalls[turnCalls.length - 1].body).toEqual(expect.objectContaining({
+        text: question,
+        useModel: false,
+        modelProvider: 'openai_responses',
+        modelName: 'gpt-5.5',
+      }));
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        'Mira. Deterministic local turn.',
+      ]);
+      expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+    expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(6);
   });
 
   test('renders held replies from the public visible reply without leaking gate labels', async () => {
