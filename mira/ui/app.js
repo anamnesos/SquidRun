@@ -250,6 +250,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlProofSummaryQuestion(text)
     || isMissionControlNoEffectBoundaryQuestion(text)
     || isMissionControlAdvanceSelectionQuestion(text)
+    || isMissionControlStageTrailQuestion(text)
     || isMissionControlMissingStageQuestion(text)
     || isMissionControlCurrentStageQuestion(text)
     || isMissionControlHandlerDriftQuestion(text)
@@ -339,6 +340,14 @@ function isMissionControlAdvanceSelectionQuestion(text) {
       || /\bwhy\s+.*\b(mission\s*control|new\s+mira)\s+.*\b(artifact|stage|candidate)\s+.*\b(selected|chosen)\b/i.test(normalized)
       || /\bwhy\s+.*\b(artifact|stage|candidate)\s+.*\b(selected|chosen)\s+.*\b(mission\s*control|new\s+mira)\b/i.test(normalized)
       || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(advance\s+selection|candidate\s+selection|selected\s+artifact)\b/i.test(normalized));
+}
+
+function isMissionControlStageTrailQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(stage\s+trail|stage\s+list|chain\s+trail|pipeline\s+trail)\b/i.test(normalized)
+      || /\bwhich\s+(mission\s*control|new\s+mira)\s+(stages?|chain\s+stages?|pipeline\s+stages?)\s+(are\s+)?(loaded|saved|available|missing)\b/i.test(normalized)
+      || /\bwhat\s+(stages?|chain\s+stages?|pipeline\s+stages?)\s+(are\s+)?(loaded|saved|available|missing)\s+in\s+(mission\s*control|new\s+mira)\b/i.test(normalized));
 }
 
 function isMissionControlMissingStageQuestion(text) {
@@ -519,6 +528,10 @@ function currentMissionControlAnswer(text = '') {
     const advanceSelectionAnswer = buildMissionControlAdvanceSelectionAnswer();
     if (advanceSelectionAnswer) return advanceSelectionAnswer;
   }
+  if (isMissionControlStageTrailQuestion(text)) {
+    const stageTrailAnswer = buildMissionControlStageTrailAnswer();
+    if (stageTrailAnswer) return stageTrailAnswer;
+  }
   if (isMissionControlMissingStageQuestion(text)) {
     const missingStageAnswer = buildMissionControlMissingStageAnswer();
     if (missingStageAnswer) return missingStageAnswer;
@@ -636,6 +649,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
   }
   if (state.missionControlActivationPipelineStatus) {
     available.push('current stage/status');
+    available.push('stage trail/status list');
     available.push('advance selection');
     available.push('payload/endpoint preview');
     available.push('handler drift check');
@@ -970,6 +984,50 @@ function buildMissionControlCurrentStageAnswer(status = state.missionControlActi
     `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline status/current-stage trace from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlStageTrailAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const stages = Array.isArray(status.stages) ? status.stages : [];
+  const currentStage = status.currentStage && typeof status.currentStage === 'object' ? status.currentStage : {};
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object'
+    ? status.endToEndReadout
+    : {};
+  const hardStop = status.hardStopTruth && typeof status.hardStopTruth === 'object' ? status.hardStopTruth : {};
+  const stageCount = Number.isFinite(Number(status.stageCount))
+    ? Number(status.stageCount)
+    : Number(endToEndReadout.stageCount || stages.length || 0);
+  const availableCount = Number.isFinite(Number(status.availableStageCount))
+    ? Number(status.availableStageCount)
+    : Number(endToEndReadout.availableStageCount || stages.filter((stage) => stage.status !== 'missing').length || 0);
+  const missingLabels = stages
+    .filter((stage) => stage.status === 'missing')
+    .map((stage) => stage.label || stage.id || 'stage');
+  const stageTrail = stages.length > 0
+    ? stages.map((stage) => {
+      const label = stage.label || stage.id || 'stage';
+      const stageStatus = String(stage.status || 'unknown').replace(/_/g, ' ');
+      const tokenState = stage.latestToken ? 'token loaded' : 'no token';
+      return `${label}:${stageStatus}:${tokenState}`;
+    }).join(' / ')
+    : 'none loaded';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control stage-trail inspection; no setup or live action is needed.');
+  return [
+    `Stage list ready: ${stages.length > 0 ? 'yes' : 'no'}`,
+    `Saved stages: ${availableCount}/${stageCount || 'unknown'}`,
+    `Current stage: ${currentStage.label || endToEndReadout.currentStageLabel || 'No Mission Control send chain yet'}`,
+    `Missing stages: ${missingLabels.join(' / ') || 'none'}`,
+    `Hard stop recorded: ${hardStop.hardStopContractRecorded === true || endToEndReadout.hardStopRecorded === true ? 'yes' : 'no'}`,
+    `Stage trail: ${stageTrail}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline stage/status list from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, list file read, create, update, change, fix, advance, submit, endpoint call, handler call, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }

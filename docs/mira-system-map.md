@@ -447,6 +447,8 @@ Product-facing missing-stage/status-gap prompts such as `what is missing in Miss
 
 Product-facing current-stage/status prompts such as `what stage is Mission Control on?` and `where is Mission Control in the chain?` now answer from the already-loaded activation pipeline status/current-stage trace fields, without posting `/turn`, adding fetches, creating artifacts, persisting, clicking, or sending externally.
 
+Product-facing stage-trail/status-list prompts such as `what is the Mission Control stage trail?` and `which Mission Control stages are loaded?` now answer from the already-loaded activation pipeline stage/status list, without posting `/turn`, adding fetches, reading files, listing directories, creating stages, updating status, advancing, persisting, clicking, or sending externally.
+
 Product-facing advance-selection/candidate prompts such as `which Mission Control artifact would advance next?` and `why is that Mission Control artifact selected?` now answer from the already-loaded activation pipeline `advanceSelection` comparison fields, without posting `/turn`, adding fetches, selecting, advancing, promoting, creating artifacts, changing state, persisting, clicking, or sending externally.
 
 Product-facing payload/endpoint preview prompts such as `what payload would Mission Control use?` and `which endpoint would Mission Control action call?` now answer from the already-loaded activation pipeline payload preview/manual preflight/handler drift fields, without posting `/turn`, adding fetches, invoking endpoints or handlers, creating artifacts, persisting, clicking, or sending externally.
