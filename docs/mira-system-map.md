@@ -437,6 +437,8 @@ Product-facing manual-action/status-focus prompts such as `what manual action is
 
 Product-facing artifact/evidence-path prompts such as `where is the current Mission Control artifact?` and `what is the Mission Control evidence path?` now answer from the already-loaded activation pipeline status/trace state, without posting `/turn`, adding fetches, reading files, persisting, or sending externally.
 
+Product-facing proof-summary prompts such as `what did Mission Control prove?` and `what proof summary is loaded in Mission Control?` now answer from the already-loaded activation pipeline status/readout fields, without posting `/turn`, adding fetches, persisting, clicking, or sending externally.
+
 The existing `Make review item` promotion proof now pins that the internal-route request/review-item record carries the same `missionAnswerPreview`, and the review-item card displays it as compact review context before the next manual continuation step.
 The existing `Review continuation` manual-input proof now pins that the owned-work continuation record carries the originating `missionAnswerPreview`, and the continuation panel/history card display it as compact review context before follow-through.
 The existing follow-through recommendation selector now carries the same originating `missionAnswerPreview` from the selected continuation and displays it on the existing recommendation card before the delivery-preview step.

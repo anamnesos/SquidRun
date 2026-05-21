@@ -245,6 +245,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlLiveBoundaryQuestion(text)
     || isMissionControlManualActionQuestion(text)
     || isMissionControlArtifactEvidenceQuestion(text)
+    || isMissionControlProofSummaryQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -289,6 +290,14 @@ function isMissionControlArtifactEvidenceQuestion(text) {
     && (/\b(where|what)\s+(is|are)\s+.*\b(artifact|evidence)\b/i.test(normalized)
       || /\b(where|what|which)\s+.*\b(artifact|evidence)\s+(path|token|trace)\b/i.test(normalized)
       || /\bwhere\s+is\s+the\s+proof\s+artifact\b/i.test(normalized));
+}
+
+function isMissionControlProofSummaryQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+did\s+.*\bprove\b/i.test(normalized)
+      || /\bwhat\s+(proof|proof\s+summary)\s+(do\s+we\s+have|is\s+loaded|is\s+there)\b/i.test(normalized)
+      || /\bwhat\s+was\s+proven\b/i.test(normalized));
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -377,6 +386,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlArtifactEvidenceQuestion(text)) {
     const artifactEvidenceAnswer = buildMissionControlArtifactEvidenceAnswer();
     if (artifactEvidenceAnswer) return artifactEvidenceAnswer;
+  }
+  if (isMissionControlProofSummaryQuestion(text)) {
+    const proofSummaryAnswer = buildMissionControlProofSummaryAnswer();
+    if (proofSummaryAnswer) return proofSummaryAnswer;
   }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
@@ -601,6 +614,30 @@ function buildMissionControlArtifactEvidenceAnswer(status = state.missionControl
     `Body preview: ${currentEntry?.contentPreview || 'No body preview recorded.'}`,
     'Source: already-loaded Mission Control activation pipeline status/trace from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, file read, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlProofSummaryAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object'
+    ? status.endToEndReadout
+    : {};
+  const hardStop = status.hardStopTruth && typeof status.hardStopTruth === 'object' ? status.hardStopTruth : {};
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control proof summary; no setup or live action is needed.');
+  return [
+    `Proof status: ${String(endToEndReadout.status || 'empty').replace(/_/g, ' ')}`,
+    `Completed chain: ${endToEndReadout.completedChainSummary || 'No completed-chain proof is loaded.'}`,
+    `What was proven: ${endToEndReadout.provenSummary || 'No proof summary is loaded.'}`,
+    `Manual-only proof: ${endToEndReadout.manualOnlySummary || 'No manual-only proof is loaded.'}`,
+    `Hard-stop truth: live send available ${hardStop.liveSendAvailable === true ? 'yes' : 'no'}; hard-stop recorded ${hardStop.hardStopContractRecorded === true ? 'yes' : 'no'}; separate activation lane ${hardStop.separateActivationLaneRequired === true ? 'yes' : 'no'}.`,
+    `Next boundary: ${endToEndReadout.nextBoundary || status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline status/readout from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, click, file read, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
