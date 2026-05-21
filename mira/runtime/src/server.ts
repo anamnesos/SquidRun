@@ -9,6 +9,7 @@ import {
   createMissionControlInternalRouteRequest,
   createMissionControlOwnedWorkContinuation,
   createMissionControlRoutePreviewRecord,
+  listMissionControlFollowThroughRecommendations,
   listMissionControlInternalRouteRequests,
   listMissionControlOwnedWorkContinuations,
   listMissionControlRoutePreviewRecords,
@@ -704,6 +705,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/mission-control/owned-work-continuations") {
     sendJson(response, 200, listMissionControlOwnedWorkContinuations(process.env, { includeInternal: includeInternalFields(requestUrl) }));
+    return;
+  }
+
+  if (requestUrl.pathname === "/mission-control/follow-through-recommendations") {
+    sendJson(response, 200, listMissionControlFollowThroughRecommendations(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 

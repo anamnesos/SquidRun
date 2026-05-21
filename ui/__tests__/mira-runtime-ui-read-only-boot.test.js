@@ -347,6 +347,27 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       accountOrTokenAccess: false,
       liveHmSend: false,
     },
+    '/mission-control/follow-through-recommendations': {
+      ok: true,
+      protocol: 'mira.mission_control_follow_through_recommendation_list.v0',
+      recommendationCount: 0,
+      selectedRecommendation: null,
+      recommendations: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
     '/autonomy/status': {
       ok: true,
       queueCount: 0,
@@ -627,6 +648,47 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         continuationCount: 1,
         continuations: [continuation],
       };
+      const recommendation = {
+        protocol: 'mira.mission_control_follow_through_recommendation.v0',
+        id: 'mission-follow-through-test',
+        status: continuation.decision === 'reject' ? 'not_recommended' : 'selected_for_internal_review',
+        selected: continuation.decision !== 'reject',
+        createdAt: continuation.createdAt,
+        sourceContinuationId: continuation.id,
+        sourceContinuationToken: continuation.actionToken,
+        sourceContinuationDecision: continuation.decision,
+        sourceContinuationStatus: continuation.status,
+        sourceRequestId: continuation.sourceRequestId,
+        sourceRequestToken: continuation.sourceRequestToken,
+        sourcePreviewId: continuation.sourcePreviewId,
+        targetRole: continuation.targetRole,
+        targetPaneId: continuation.targetPaneId,
+        purpose: continuation.purpose,
+        nextTeamMove: `Ask ${continuation.targetRole} to review the ${continuation.decision} ${continuation.purpose} continuation: ${continuation.contentPreview}`,
+        contentPreview: continuation.contentPreview,
+        note: continuation.note,
+        selectorReason: 'Newest approved or edited continuation; use this as the next internal team move.',
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      };
+      payloads['/mission-control/follow-through-recommendations'] = {
+        ...payloads['/mission-control/follow-through-recommendations'],
+        recommendationCount: 1,
+        selectedRecommendation: recommendation.selected ? recommendation : null,
+        recommendations: [recommendation],
+      };
       return response({
         ok: true,
         protocol: 'mira.mission_control_owned_work_continuation_write.v0',
@@ -749,6 +811,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/mission-control/route-previews', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-route-requests', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/owned-work-continuations', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/follow-through-recommendations', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -769,6 +832,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.routeRequestList.textContent).toBe('no route review items yet');
     expect(harness.elements.routeContinuationPanel.textContent).toBe('choose a route review item');
     expect(harness.elements.routeContinuationList.textContent).toBe('no owned-work continuations yet');
+    expect(harness.elements.routeFollowThroughList.textContent).toBe('no follow-through recommendation yet');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -781,6 +845,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.workSummary.textContent).toContain('0 route previews');
     expect(harness.elements.workSummary.textContent).toContain('0 route review items');
     expect(harness.elements.workSummary.textContent).toContain('0 continuations');
+    expect(harness.elements.workSummary.textContent).toContain('0 team recommendations');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
   });
 
@@ -802,6 +867,9 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/owned-work-continuations')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/follow-through-recommendations')).toEqual([
       expect.objectContaining({ method: 'GET' }),
     ]);
 
@@ -843,6 +911,10 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/owned-work-continuations')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/follow-through-recommendations')).toEqual([
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
@@ -923,6 +995,14 @@ describe('Mira runtime UI boot', () => {
       }),
       expect.objectContaining({ method: 'GET' }),
     ]);
+    const followThroughCalls = harness.calls.filter((call) => call.url === '/mission-control/follow-through-recommendations');
+    expect(followThroughCalls).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(followThroughCalls.every((call) => call.method === 'GET')).toBe(true);
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.routeContinuationList.children).toHaveLength(1);
@@ -933,6 +1013,15 @@ describe('Mira runtime UI boot', () => {
     expect(continuationText).toContain('edited for internal review · manual execution required · not sent');
     expect(continuationText).toContain('Edited internal continuation for Oracle review.');
     expect(continuationText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send');
+    expect(harness.elements.routeFollowThroughList.children).toHaveLength(1);
+    const followThroughText = harness.elements.routeFollowThroughList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(followThroughText).toContain('Selected next internal move: oracle');
+    expect(followThroughText).toContain('review-only selector · manual execution required · not sent');
+    expect(followThroughText).toContain('Next move: Ask oracle to review the edit benchmark review continuation: Edited internal continuation for Oracle review.');
+    expect(followThroughText).toContain('Source continuation: edit · edited for internal review');
+    expect(followThroughText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, Telegram, or live hm-send');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('edit continuation metadata saved locally. Nothing was sent or executed.');
   });
 

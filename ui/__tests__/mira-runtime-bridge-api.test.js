@@ -385,9 +385,11 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/route-previews'");
     expect(appJs).toContain("fetch('/mission-control/internal-route-requests'");
     expect(appJs).toContain("fetch('/mission-control/owned-work-continuations'");
+    expect(appJs).toContain("fetch('/mission-control/follow-through-recommendations'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
+    expect(indexHtml).toContain('id="routeFollowThroughList"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1106,6 +1108,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     const continuationDir = path.join(tempStateRoot, 'mission-control', 'owned-work-continuations');
     const emptyContinuationResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`);
     const emptyContinuationPayload = await emptyContinuationResponse.json();
+    const emptyRecommendationResponse = await fetch(`${baseUrl}/mission-control/follow-through-recommendations`);
+    const emptyRecommendationPayload = await emptyRecommendationResponse.json();
     const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1168,6 +1172,28 @@ describe('Mira runtime bridge manual-plan API', () => {
       ok: true,
       protocol: 'mira.mission_control_owned_work_continuation_list.v0',
       continuationCount: 0,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(emptyRecommendationResponse.status).toBe(200);
+    expect(emptyRecommendationPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_follow_through_recommendation_list.v0',
+      recommendationCount: 0,
+      selectedRecommendation: null,
+      recommendations: [],
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -1306,6 +1332,81 @@ describe('Mira runtime bridge manual-plan API', () => {
         liveHmSend: false,
       }),
     ]));
+    const followThroughResponse = await fetch(`${baseUrl}/mission-control/follow-through-recommendations?includeInternal=1`);
+    const followThroughPayload = await followThroughResponse.json();
+    expect(followThroughResponse.status).toBe(200);
+    expect(followThroughPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_follow_through_recommendation_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      recommendationCount: 3,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(followThroughPayload.selectedRecommendation).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_follow_through_recommendation.v0',
+      status: 'selected_for_internal_review',
+      selected: true,
+      sourceContinuationId: editContinuationPayload.continuation.id,
+      sourceContinuationToken: editContinuationPayload.continuation.actionToken,
+      sourceContinuationDecision: 'edit',
+      sourceContinuationStatus: 'edited_for_internal_review',
+      sourceRequestId: createRequestPayload.request.id,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      nextTeamMove: 'Ask oracle to review the edit benchmark review continuation: Edited internal continuation for Oracle review.',
+      contentPreview: 'Edited internal continuation for Oracle review.',
+      note: 'Edited locally before review.',
+      selectorReason: 'Newest approved or edited continuation; use this as the next internal team move.',
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(followThroughPayload.selectedRecommendation).not.toHaveProperty('command');
+    expect(followThroughPayload.selectedRecommendation).not.toHaveProperty('args');
+    const rejectedRecommendation = followThroughPayload.recommendations.find((recommendation) => {
+      return recommendation.sourceContinuationId === rejectContinuationPayload.continuation.id;
+    });
+    expect(rejectedRecommendation).toEqual(expect.objectContaining({
+      status: 'not_recommended',
+      selected: false,
+      sourceContinuationDecision: 'reject',
+      selectorReason: 'Rejected continuation is retained as history and is not selected.',
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(followThroughPayload.recommendations.filter((recommendation) => recommendation.selected === true)).toHaveLength(1);
     for (const input of [
       { requestToken: createRequestPayload.request.actionToken, decision: 'approve', telegramSend: true },
       { requestToken: createRequestPayload.request.actionToken, decision: 'approve', audit: { accountOrTokenAccess: true } },

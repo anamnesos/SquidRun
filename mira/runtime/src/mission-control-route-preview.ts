@@ -256,6 +256,70 @@ export type MissionControlOwnedWorkContinuationListResult = {
   liveHmSend: false;
 };
 
+export type MissionControlFollowThroughRecommendationStatus =
+  | "selected_for_internal_review"
+  | "available_for_internal_review"
+  | "not_recommended";
+
+export type MissionControlFollowThroughRecommendation = {
+  protocol: "mira.mission_control_follow_through_recommendation.v0";
+  id: string;
+  status: MissionControlFollowThroughRecommendationStatus;
+  selected: boolean;
+  createdAt: string;
+  sourceContinuationId: string;
+  sourceContinuationToken: string;
+  sourceContinuationDecision: MissionControlOwnedWorkContinuationDecision;
+  sourceContinuationStatus: MissionControlOwnedWorkContinuationStatus;
+  sourceRequestId: string;
+  sourceRequestToken: string;
+  sourcePreviewId: string;
+  targetRole: "architect" | "builder" | "oracle";
+  targetPaneId: "1" | "2" | "3";
+  purpose: string;
+  nextTeamMove: string;
+  contentPreview: string;
+  note: string | null;
+  selectorReason: string;
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlFollowThroughRecommendationListResult = {
+  ok: true;
+  protocol: "mira.mission_control_follow_through_recommendation_list.v0";
+  stateRootPath: string | null;
+  recommendationCount: number;
+  selectedRecommendation: MissionControlFollowThroughRecommendation | null;
+  recommendations: MissionControlFollowThroughRecommendation[];
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
 const allowedRoles = new Set(["architect", "builder", "oracle"]);
 
 function isInside(rootPath: string, candidatePath: string): boolean {
@@ -390,6 +454,10 @@ function buildRouteRequestActionToken(id: string): string {
 
 function buildOwnedWorkContinuationActionToken(id: string): string {
   return `mission-continuation-${crypto.createHash("sha256").update(`mira.mission_control_owned_work_continuation.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
+function buildFollowThroughRecommendationId(id: string): string {
+  return `mission-follow-through-${crypto.createHash("sha256").update(`mira.mission_control_follow_through_recommendation.v0:${id}`).digest("hex").slice(0, 24)}`;
 }
 
 function toPublicRecord(record: MissionControlRoutePreviewRecord): MissionControlRoutePreviewRecord & { actionToken: string } {
@@ -766,6 +834,81 @@ function continuationFromRouteRequest(
     accountOrTokenAccess: false,
     liveHmSend: false,
   };
+}
+
+function buildFollowThroughRecommendation(
+  continuation: MissionControlOwnedWorkContinuationRecord,
+  selectedContinuationId: string | null,
+): MissionControlFollowThroughRecommendation {
+  const selected = continuation.id === selectedContinuationId;
+  const contentPreview = continuation.contentPreview || continuation.content;
+  const target = continuation.targetRole;
+  const purpose = continuation.purpose || "coordination";
+  const nextTeamMove = continuation.decision === "reject"
+    ? `Do not advance the rejected ${target} ${purpose} continuation.`
+    : `Ask ${target} to review the ${continuation.decision} ${purpose} continuation: ${contentPreview}`;
+  const selectorReason = continuation.decision === "reject"
+    ? "Rejected continuation is retained as history and is not selected."
+    : selected
+      ? "Newest approved or edited continuation; use this as the next internal team move."
+      : "Approved or edited continuation is available, but a newer reviewable continuation is selected.";
+
+  return {
+    protocol: "mira.mission_control_follow_through_recommendation.v0",
+    id: buildFollowThroughRecommendationId(continuation.id),
+    status: continuation.decision === "reject"
+      ? "not_recommended"
+      : selected
+        ? "selected_for_internal_review"
+        : "available_for_internal_review",
+    selected,
+    createdAt: continuation.createdAt,
+    sourceContinuationId: continuation.id,
+    sourceContinuationToken: buildOwnedWorkContinuationActionToken(continuation.id),
+    sourceContinuationDecision: continuation.decision,
+    sourceContinuationStatus: continuation.status,
+    sourceRequestId: continuation.sourceRequestId,
+    sourceRequestToken: continuation.sourceRequestToken,
+    sourcePreviewId: continuation.sourcePreviewId,
+    targetRole: continuation.targetRole,
+    targetPaneId: continuation.targetPaneId,
+    purpose: continuation.purpose,
+    nextTeamMove,
+    contentPreview,
+    note: continuation.note,
+    selectorReason,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+function continuationSelectionRank(continuation: MissionControlOwnedWorkContinuationRecord): number {
+  if (continuation.decision === "edit") return 2;
+  if (continuation.decision === "approve") return 1;
+  return 0;
+}
+
+function selectFollowThroughContinuation(records: MissionControlOwnedWorkContinuationRecord[]): MissionControlOwnedWorkContinuationRecord | null {
+  const eligible = records
+    .filter((record) => record.decision !== "reject")
+    .sort((left, right) => {
+      const byTime = String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+      if (byTime !== 0) return byTime;
+      return continuationSelectionRank(right) - continuationSelectionRank(left);
+    });
+  return eligible[0] || null;
 }
 
 export function createMissionControlRoutePreviewRecord(
@@ -1147,6 +1290,66 @@ export function listMissionControlOwnedWorkContinuations(
     stateRootPath: options.includeInternal ? rootPath : null,
     continuationCount: continuations.length,
     continuations,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function listMissionControlFollowThroughRecommendations(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { includeInternal?: boolean } = {},
+): MissionControlFollowThroughRecommendationListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.mission_control_follow_through_recommendation_list.v0",
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
+      recommendationCount: 0,
+      selectedRecommendation: null,
+      recommendations: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    };
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  const continuations = readContinuationRecords(rootPath);
+  const selectedContinuation = selectFollowThroughContinuation(continuations);
+  const recommendations = continuations.map((record) => buildFollowThroughRecommendation(record, selectedContinuation?.id || null));
+  const selectedRecommendation = recommendations.find((recommendation) => recommendation.selected) || null;
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_follow_through_recommendation_list.v0",
+    stateRootPath: options.includeInternal ? rootPath : null,
+    recommendationCount: recommendations.length,
+    selectedRecommendation,
+    recommendations,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,

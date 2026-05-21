@@ -15,6 +15,7 @@ const state = {
   missionControlRoutePreviewCount: 0,
   missionControlRouteRequestCount: 0,
   missionControlContinuationCount: 0,
+  missionControlFollowThroughCount: 0,
   selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -45,6 +46,7 @@ const elements = {
   routeRequestList: document.getElementById('routeRequestList'),
   routeContinuationPanel: document.getElementById('routeContinuationPanel'),
   routeContinuationList: document.getElementById('routeContinuationList'),
+  routeFollowThroughList: document.getElementById('routeFollowThroughList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -377,7 +379,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -780,6 +782,7 @@ function updateRoutePreviewHistoryList(payload) {
         appendMessage('mira', 'Route review item saved locally. Nothing was sent or executed.');
         await refreshRouteRequests();
         await refreshRouteContinuations();
+        await refreshRouteFollowThroughRecommendations();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -880,6 +883,7 @@ function renderRouteContinuationPanel(request) {
         });
         appendMessage('mira', `${payload.continuation.decision} continuation metadata saved locally. Nothing was sent or executed.`);
         await refreshRouteContinuations();
+        await refreshRouteFollowThroughRecommendations();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
       } finally {
@@ -915,6 +919,37 @@ function updateRouteContinuationList(payload) {
     appendPreviewLine(card, 'Continuation', continuation.contentPreview || continuation.content);
     appendPreviewLine(card, 'Note', continuation.note);
     appendPreviewLine(card, 'Audit', 'owned-work continuation only; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
+    return card;
+  }));
+}
+
+function updateRouteFollowThroughList(payload) {
+  const recommendations = Array.isArray(payload?.recommendations) ? payload.recommendations : [];
+  const selected = payload?.selectedRecommendation || recommendations.find((recommendation) => recommendation?.selected === true) || null;
+  state.missionControlFollowThroughCount = Number(payload?.recommendationCount || recommendations.length || 0);
+  renderWorkSummary();
+  if (recommendations.length === 0) {
+    setText(elements.routeFollowThroughList, 'no follow-through recommendation yet');
+    return;
+  }
+
+  const ordered = selected
+    ? [selected, ...recommendations.filter((recommendation) => recommendation.id !== selected.id)]
+    : recommendations;
+  elements.routeFollowThroughList.replaceChildren(...ordered.slice(0, 5).map((recommendation) => {
+    const card = document.createElement('article');
+    card.className = `draft-item route-follow-through${recommendation.selected ? ' selected' : ''}`;
+    const title = document.createElement('strong');
+    title.textContent = recommendation.selected
+      ? `Selected next internal move: ${recommendation.targetRole || 'team'}`
+      : `${recommendation.targetRole || 'team'} · ${String(recommendation.status || 'available_for_internal_review').replace(/_/g, ' ')}`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(recommendation.status || 'available_for_internal_review').replace(/_/g, ' ')} · review-only selector · manual execution required · not sent · ${formatReadyStamp(recommendation.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Next move', recommendation.nextTeamMove);
+    appendPreviewLine(card, 'Source continuation', `${recommendation.sourceContinuationDecision || 'review'} · ${String(recommendation.sourceContinuationStatus || '').replace(/_/g, ' ')}`);
+    appendPreviewLine(card, 'Reason', recommendation.selectorReason);
+    appendPreviewLine(card, 'Audit', 'recommendation only; no command stored, runtime execution, external send, route flip, provider, account or token access, Telegram, or live hm-send.');
     return card;
   }));
 }
@@ -1186,6 +1221,13 @@ async function refreshRouteContinuations() {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) return;
   updateRouteContinuationList(payload);
+}
+
+async function refreshRouteFollowThroughRecommendations() {
+  const response = await fetch('/mission-control/follow-through-recommendations');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateRouteFollowThroughList(payload);
 }
 
 async function refreshAutonomy() {
@@ -1500,6 +1542,7 @@ async function primeReadOnlyWorkbench() {
     await refreshRoutePreviewHistory();
     await refreshRouteRequests();
     await refreshRouteContinuations();
+    await refreshRouteFollowThroughRecommendations();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1524,6 +1567,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshRoutePreviewHistory();
     await refreshRouteRequests();
     await refreshRouteContinuations();
+    await refreshRouteFollowThroughRecommendations();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1611,6 +1655,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     await refreshRoutePreviewHistory();
     await refreshRouteRequests();
     await refreshRouteContinuations();
+    await refreshRouteFollowThroughRecommendations();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {
