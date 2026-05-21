@@ -1411,6 +1411,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: request.purpose,
         content: body?.decision === 'edit' ? body?.editedContent : request.content,
         contentPreview: body?.decision === 'edit' ? body?.editedContent : request.contentPreview,
+        missionAnswerPreview: request.missionAnswerPreview,
         editedContent: body?.decision === 'edit' ? body?.editedContent : null,
         note: body?.note || null,
         manualExecutionRequired: true,
@@ -3012,6 +3013,10 @@ describe('Mira runtime UI boot', () => {
     expect(reviewButton.textContent).toBe('review continuation');
     reviewButton.listeners.click();
     expect(harness.elements.routeContinuationPanel.children[0].textContent).toBe('oracle · benchmark review continuation');
+    const continuationPanelText = harness.elements.routeContinuationPanel.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(continuationPanelText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     const editor = harness.elements.routeContinuationPanel.children
       .find((child) => child.tagName === 'TEXTAREA');
     const note = harness.elements.routeContinuationPanel.children
@@ -3087,6 +3092,7 @@ describe('Mira runtime UI boot', () => {
     expect(continuationText).toContain('oracle · edit continuation');
     expect(continuationText).toContain('edited for internal review · manual execution required · not sent');
     expect(continuationText).toContain('Edited internal continuation for Oracle review.');
+    expect(continuationText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(continuationText).toContain('no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send');
     expect(harness.elements.routeFollowThroughList.children).toHaveLength(1);
     const followThroughText = harness.elements.routeFollowThroughList.children[0].children

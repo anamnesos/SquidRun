@@ -1070,6 +1070,9 @@ function renderRouteContinuationPanel(request) {
   const requestText = document.createElement('p');
   requestText.textContent = cleanPreviewText(request.contentPreview || request.content);
 
+  const missionAnswer = document.createElement('p');
+  missionAnswer.textContent = `Mission answer: ${cleanPreviewText(request.missionAnswerPreview) || 'No originating Mission Control answer is attached to this review item.'}`;
+
   const label = document.createElement('label');
   label.className = 'review-editor-label';
   label.textContent = 'Continuation text';
@@ -1128,7 +1131,7 @@ function renderRouteContinuationPanel(request) {
   const audit = document.createElement('p');
   audit.textContent = 'Review-only continuation; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.';
 
-  elements.routeContinuationPanel.append(heading, requestText, label, textarea, note, actions, audit);
+  elements.routeContinuationPanel.append(heading, requestText, missionAnswer, label, textarea, note, actions, audit);
 }
 
 function updateRouteContinuationList(payload) {
@@ -1149,6 +1152,7 @@ function updateRouteContinuationList(payload) {
     meta.textContent = `${String(continuation.status || 'pending_internal_review').replace(/_/g, ' ')} · manual execution required · not sent · ${formatReadyStamp(continuation.createdAt)}`;
     card.append(title, meta);
     appendPreviewLine(card, 'Continuation', continuation.contentPreview || continuation.content);
+    appendPreviewLine(card, 'Mission answer', continuation.missionAnswerPreview || 'No originating Mission Control answer is attached to this continuation.');
     appendPreviewLine(card, 'Note', continuation.note);
     appendPreviewLine(card, 'Audit', 'owned-work continuation only; no command stored, runtime execution, external send, route flip, provider, account or token access, or live hm-send.');
     return card;

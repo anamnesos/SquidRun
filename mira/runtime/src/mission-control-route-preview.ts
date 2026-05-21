@@ -188,6 +188,7 @@ export type MissionControlOwnedWorkContinuationRecord = {
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   editedContent: string | null;
   note: string | null;
   manualExecutionRequired: true;
@@ -4095,6 +4096,7 @@ function continuationFromRouteRequest(
     purpose: request.purpose,
     content,
     contentPreview: content.length > 260 ? `${content.slice(0, 259)}...` : content,
+    missionAnswerPreview: request.missionAnswerPreview,
     editedContent,
     note,
     manualExecutionRequired: true,
