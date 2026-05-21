@@ -3988,6 +3988,7 @@ describe('Mira runtime UI boot', () => {
       expect(availableReply).toContain('roadmap/north-star/stop-pivot');
       expect(availableReply).toContain('foundation-vs-product framing');
       expect(availableReply).toContain('whether James is needed');
+      expect(availableReply).toContain('advance selection');
       expect(availableReply).toContain('Example prompts: what now? / what project is loaded? / what lane are we on? / what changed here? / what did Oracle say? / is James needed?');
       expect(availableReply).toContain('Source: already-loaded Mission Control UI state and /squidrun/context; this only names existing local answers.');
       expect(availableReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
@@ -4241,6 +4242,49 @@ describe('Mira runtime UI boot', () => {
       expect(currentStageReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
       expect(currentStageReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
       expect((currentStageReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
+  test('answers advance-selection questions from existing Mission Control status without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['which Mission Control artifact would advance next?', 'why is that Mission Control artifact selected?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Advance selection status: no chain'),
+      ]);
+      const advanceReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(advanceReply).toContain('Selected artifact: none · not available');
+      expect(advanceReply).toContain('Selected path: No selected artifact path is loaded.');
+      expect(advanceReply).toContain('Next stage: Route preview');
+      expect(advanceReply).toContain('Comparison: Compared 0 available stages; start by saving a route preview.');
+      expect(advanceReply).toContain('Selection reason: No saved Mission Control route preview exists yet, so there is no artifact to advance.');
+      expect(advanceReply).toContain('Candidates: none loaded');
+      expect(advanceReply).toContain('No-effect: Read-only selection aid only; it compares existing trace entries and does not persist a selection, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.');
+      expect(advanceReply).toContain('Next boundary: Next inspectable step is local review; live send is still unavailable.');
+      expect(advanceReply).toContain('Source: already-loaded Mission Control activation pipeline advanceSelection from local SquidRun context.');
+      expect(advanceReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, selection persistence, advance, promote, create, change, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
+      expect(advanceReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((advanceReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
       expect(harness.elements.lastTurn.textContent).toBe('mission control local');
       expect(harness.elements.sendButton.disabled).toBe(false);
       expect(harness.elements.sendButton.textContent).toBe('Send');
@@ -5336,6 +5380,49 @@ describe('Mira runtime UI boot', () => {
       'advance Mission Control to the next stage with the runtime fixture',
       'change the current New Mira stage with the runtime fixture',
       'create the current Mission Control status with the runtime fixture',
+    ]) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+      const postCalls = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCalls).toHaveLength(turnCalls.length);
+      expect(turnCalls[turnCalls.length - 1].body).toEqual(expect.objectContaining({
+        text: question,
+        useModel: false,
+        modelProvider: 'openai_responses',
+        modelName: 'gpt-5.5',
+      }));
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        'Mira. Deterministic local turn.',
+      ]);
+      expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+    expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(5);
+  });
+
+  test('does not hijack generic advance-selection instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    for (const question of [
+      'select the Mission Control artifact with the runtime fixture',
+      'advance the Mission Control artifact with the runtime fixture',
+      'promote the New Mira stage with the runtime fixture',
+      'create the Mission Control selected artifact with the runtime fixture',
+      'change the Mission Control advance selection with the runtime fixture',
     ]) {
       harness.elements.turnText.value = question;
       const submitEvent = { preventDefault: jest.fn() };

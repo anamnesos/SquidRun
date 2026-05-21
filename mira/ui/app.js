@@ -247,6 +247,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlArtifactEvidenceQuestion(text)
     || isMissionControlProofSummaryQuestion(text)
     || isMissionControlNoEffectBoundaryQuestion(text)
+    || isMissionControlAdvanceSelectionQuestion(text)
     || isMissionControlMissingStageQuestion(text)
     || isMissionControlCurrentStageQuestion(text)
     || isMissionControlHandlerDriftQuestion(text)
@@ -305,6 +306,16 @@ function isMissionControlProofSummaryQuestion(text) {
     && (/\bwhat\s+did\s+.*\bprove\b/i.test(normalized)
       || /\bwhat\s+(proof|proof\s+summary)\s+(do\s+we\s+have|is\s+loaded|is\s+there)\b/i.test(normalized)
       || /\bwhat\s+was\s+proven\b/i.test(normalized));
+}
+
+function isMissionControlAdvanceSelectionQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhich\s+.*\b(artifact|stage|candidate)\s+.*\b(would|will|should)\s+advance\s+next\b/i.test(normalized)
+      || /\bwhat\s+(artifact|stage|candidate)\s+(would|will|should)\s+(mission\s*control|new\s+mira)\s+advance\s+next\b/i.test(normalized)
+      || /\bwhy\s+.*\b(mission\s*control|new\s+mira)\s+.*\b(artifact|stage|candidate)\s+.*\b(selected|chosen)\b/i.test(normalized)
+      || /\bwhy\s+.*\b(artifact|stage|candidate)\s+.*\b(selected|chosen)\s+.*\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(advance\s+selection|candidate\s+selection|selected\s+artifact)\b/i.test(normalized));
 }
 
 function isMissionControlMissingStageQuestion(text) {
@@ -464,6 +475,10 @@ function currentMissionControlAnswer(text = '') {
     const noEffectBoundaryAnswer = buildMissionControlNoEffectBoundaryAnswer();
     if (noEffectBoundaryAnswer) return noEffectBoundaryAnswer;
   }
+  if (isMissionControlAdvanceSelectionQuestion(text)) {
+    const advanceSelectionAnswer = buildMissionControlAdvanceSelectionAnswer();
+    if (advanceSelectionAnswer) return advanceSelectionAnswer;
+  }
   if (isMissionControlMissingStageQuestion(text)) {
     const missingStageAnswer = buildMissionControlMissingStageAnswer();
     if (missingStageAnswer) return missingStageAnswer;
@@ -577,6 +592,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
   }
   if (state.missionControlActivationPipelineStatus) {
     available.push('current stage/status');
+    available.push('advance selection');
     available.push('payload/endpoint preview');
     available.push('handler drift check');
     available.push('blocked reason');
@@ -818,6 +834,40 @@ function buildMissionControlCurrentStageAnswer(status = state.missionControlActi
     `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline status/current-stage trace from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlAdvanceSelectionAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const selection = status.advanceSelection && typeof status.advanceSelection === 'object' ? status.advanceSelection : {};
+  const candidates = Array.isArray(selection.candidates) ? selection.candidates : [];
+  const candidateSummary = candidates.length > 0
+    ? candidates.slice(0, 5).map((candidate) => {
+      const label = candidate.label || candidate.stageId || 'candidate';
+      const selectedState = candidate.selected === true ? 'selected' : 'available';
+      const token = candidate.token || 'no token';
+      const next = candidate.nextStageLabel ? `next ${candidate.nextStageLabel}` : 'no next stage';
+      return `${label}:${selectedState}:${token}:${next}`;
+    }).join(' / ')
+    : 'none loaded';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control advance-selection inspection; no setup or live action is needed.');
+  return [
+    `Advance selection status: ${String(selection.status || 'unknown').replace(/_/g, ' ')}`,
+    `Selected artifact: ${selection.selectedStageLabel || 'none'} · ${selection.selectedArtifactToken || 'not available'}`,
+    `Selected path: ${selection.selectedRelativePath || 'No selected artifact path is loaded.'}`,
+    `Next stage: ${selection.nextStageLabel || 'none'}`,
+    `Comparison: ${selection.comparisonSummary || 'No comparison summary is loaded.'}`,
+    `Selection reason: ${selection.reason || 'No selection reason is loaded.'}`,
+    `Candidates: ${candidateSummary}`,
+    `No-effect: ${selection.noEffectSummary || 'No selection no-effect summary is loaded.'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline advanceSelection from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, selection persistence, advance, promote, create, change, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
