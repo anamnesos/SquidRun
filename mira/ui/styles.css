@@ -473,6 +473,21 @@ button:disabled {
   background: var(--surface-strong);
 }
 
+.draft-item.selected-manual-source {
+  border-color: rgba(200, 243, 109, 0.72);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.manual-action-focus-line {
+  color: var(--green);
+  font-weight: 650;
+}
+
+.subtle-button.selected-manual-action {
+  border-color: rgba(200, 243, 109, 0.72);
+  color: var(--green);
+}
+
 .draft-item strong {
   color: var(--ink);
   font-size: 12px;

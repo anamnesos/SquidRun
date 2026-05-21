@@ -26,6 +26,7 @@ const state = {
   missionControlInternalSendLiveGateCount: 0,
   missionControlActivationPipelineStageCount: 0,
   selectedRouteRequestToken: null,
+  missionControlActionFocus: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
   autonomyQueueCount: 0,
@@ -393,6 +394,92 @@ function appendPreviewLine(container, label, value) {
   const paragraph = document.createElement('p');
   paragraph.textContent = label ? `${label}: ${cleaned}` : cleaned;
   container.append(paragraph);
+}
+
+function setClassToken(node, className, enabled) {
+  const classes = String(node.className || '').split(/\s+/).filter(Boolean);
+  const next = enabled
+    ? [...new Set([...classes, className])]
+    : classes.filter((value) => value !== className);
+  node.className = next.join(' ');
+}
+
+function missionControlActionContainers() {
+  return [
+    elements.routePreviewHistoryList,
+    elements.routeRequestList,
+    elements.routeFollowThroughList,
+    elements.routeDeliveryPreviewList,
+    elements.routeDispatchReadinessList,
+    elements.routeInternalSendDryRunList,
+    elements.routeInternalSendActivationDesignList,
+    elements.routeInternalSendActivationRequestList,
+    elements.routeInternalSendActivationAuditList,
+    elements.routeInternalSendActivationReadinessList,
+  ].filter(Boolean);
+}
+
+function findMissionControlFocusLine(card) {
+  return Array.from(card.children || []).find((child) => child.dataset?.missionFocusLine === 'true') || null;
+}
+
+function ensureMissionControlFocusLine(card) {
+  const existing = findMissionControlFocusLine(card);
+  if (existing) return existing;
+  const line = document.createElement('p');
+  line.className = 'manual-action-focus-line';
+  line.dataset.missionFocusLine = 'true';
+  card.append(line);
+  return line;
+}
+
+function decorateManualActionButton(button, stageId, record, actionLabel) {
+  if (!button || !record?.actionToken) return;
+  button.dataset.missionStageId = stageId;
+  button.dataset.missionActionToken = record.actionToken;
+  button.dataset.missionActionLabel = actionLabel || '';
+}
+
+function decorateMissionControlSourceCard(card, stageId, record, actionLabel) {
+  if (!card || !record?.actionToken) return;
+  card.dataset.missionStageId = stageId;
+  card.dataset.missionActionToken = record.actionToken;
+  card.dataset.missionActionLabel = actionLabel || '';
+  applyMissionControlActionFocusToCard(card);
+}
+
+function applyMissionControlActionFocusToCard(card) {
+  const focus = state.missionControlActionFocus;
+  const selected = Boolean(
+    focus
+      && card.dataset?.missionStageId === focus.stageId
+      && card.dataset?.missionActionToken === focus.tokenValue,
+  );
+  setClassToken(card, 'selected-manual-source', selected);
+
+  const focusLine = selected ? ensureMissionControlFocusLine(card) : findMissionControlFocusLine(card);
+  if (focusLine) {
+    focusLine.hidden = !selected;
+    focusLine.textContent = selected
+      ? `Mission Control focus: selected source for ${focus.actionLabel}; use the existing ${focus.actionLabel} action.`
+      : '';
+  }
+
+  Array.from(card.children || []).forEach((child) => {
+    if (!child?.dataset || child.dataset.missionActionToken !== card.dataset?.missionActionToken) return;
+    setClassToken(child, 'selected-manual-action', selected);
+    if (selected) {
+      child.setAttribute('aria-label', `Selected Mission Control action: ${focus.actionLabel}`);
+    } else {
+      child.setAttribute('aria-label', child.textContent || 'Mission Control action');
+    }
+  });
+}
+
+function applyMissionControlActionFocus() {
+  missionControlActionContainers().forEach((container) => {
+    Array.from(container.children || []).forEach((card) => applyMissionControlActionFocusToCard(card));
+  });
 }
 
 function renderWorkSummary() {
@@ -816,9 +903,12 @@ function updateRoutePreviewHistoryList(payload) {
         promote.textContent = 'Make review item';
       }
     });
+    decorateManualActionButton(promote, 'route_preview', preview, 'Make review item');
     card.append(promote);
+    decorateMissionControlSourceCard(card, 'route_preview', preview, 'Make review item');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateRouteRequestList(payload) {
@@ -852,9 +942,12 @@ function updateRouteRequestList(payload) {
       renderRouteContinuationPanel(request);
       updateRouteRequestList(payload);
     });
+    decorateManualActionButton(action, 'internal_route_request', request, 'Review continuation');
     card.append(action);
+    decorateMissionControlSourceCard(card, 'internal_route_request', request, 'Review continuation');
     return card;
   }));
+  applyMissionControlActionFocus();
   if (state.selectedRouteRequestToken) {
     const selected = requests.find((request) => request.actionToken === state.selectedRouteRequestToken);
     renderRouteContinuationPanel(selected || null);
@@ -1013,10 +1106,13 @@ function updateRouteFollowThroughList(payload) {
           action.textContent = 'Preview delivery packet';
         }
       });
+      decorateManualActionButton(action, 'follow_through_recommendation', recommendation, 'Preview delivery packet');
       card.append(action);
     }
+    decorateMissionControlSourceCard(card, 'follow_through_recommendation', recommendation, 'Preview delivery packet');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateRouteDeliveryPreviewList(payload) {
@@ -1075,9 +1171,12 @@ function updateRouteDeliveryPreviewList(payload) {
         readiness.textContent = 'Review dispatch readiness';
       }
     });
+    decorateManualActionButton(readiness, 'internal_delivery_preview', preview, 'Review dispatch readiness');
     card.append(copy, readiness);
+    decorateMissionControlSourceCard(card, 'internal_delivery_preview', preview, 'Review dispatch readiness');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateDispatchReadinessList(payload) {
@@ -1131,9 +1230,12 @@ function updateDispatchReadinessList(payload) {
         dryRun.textContent = 'Create send dry run';
       }
     });
+    decorateManualActionButton(dryRun, 'dispatch_readiness', item, 'Create send dry run');
     card.append(dryRun);
+    decorateMissionControlSourceCard(card, 'dispatch_readiness', item, 'Create send dry run');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateInternalSendDryRunList(payload) {
@@ -1181,9 +1283,12 @@ function updateInternalSendDryRunList(payload) {
         design.textContent = 'Design activation proof';
       }
     });
+    decorateManualActionButton(design, 'internal_send_dry_run', dryRun, 'Design activation proof');
     card.append(design);
+    decorateMissionControlSourceCard(card, 'internal_send_dry_run', dryRun, 'Design activation proof');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateInternalSendActivationDesignList(payload) {
@@ -1231,9 +1336,12 @@ function updateInternalSendActivationDesignList(payload) {
         request.textContent = 'Preview activation request';
       }
     });
+    decorateManualActionButton(request, 'activation_design', design, 'Preview activation request');
     card.append(request);
+    decorateMissionControlSourceCard(card, 'activation_design', design, 'Preview activation request');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateInternalSendActivationRequestList(payload) {
@@ -1281,9 +1389,12 @@ function updateInternalSendActivationRequestList(payload) {
         audit.textContent = 'Record decision audit';
       }
     });
+    decorateManualActionButton(audit, 'activation_request', request, 'Record decision audit');
     card.append(audit);
+    decorateMissionControlSourceCard(card, 'activation_request', request, 'Record decision audit');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateInternalSendActivationDecisionAuditList(payload) {
@@ -1330,9 +1441,12 @@ function updateInternalSendActivationDecisionAuditList(payload) {
         readiness.textContent = 'Check implementation readiness';
       }
     });
+    decorateManualActionButton(readiness, 'activation_decision_audit', audit, 'Check implementation readiness');
     card.append(readiness);
+    decorateMissionControlSourceCard(card, 'activation_decision_audit', audit, 'Check implementation readiness');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateInternalSendActivationImplementationReadinessList(payload) {
@@ -1377,9 +1491,12 @@ function updateInternalSendActivationImplementationReadinessList(payload) {
         gate.textContent = 'Define live gate contract';
       }
     });
+    decorateManualActionButton(gate, 'activation_implementation_readiness', record, 'Define live gate contract');
     card.append(gate);
+    decorateMissionControlSourceCard(card, 'activation_implementation_readiness', record, 'Define live gate contract');
     return card;
   }));
+  applyMissionControlActionFocus();
 }
 
 function updateInternalSendLiveActivationGateContractList(payload) {
@@ -1422,6 +1539,17 @@ function updateActivationPipelineStatus(payload) {
   const currentTrace = traceEntries.find((entry) => entry?.stageId === payload?.currentStageId)
     || traceEntries[traceEntries.length - 1]
     || null;
+  state.missionControlActionFocus = preflight?.status === 'ready' && preflight.tokenValue
+    ? {
+      stageId: preflight.selectedStageId,
+      stageLabel: preflight.selectedStageLabel,
+      tokenValue: preflight.tokenValue,
+      tokenField: preflight.tokenField,
+      actionLabel: preflight.manualActionLabel,
+      relativePath: preflight.selectedRelativePath,
+      nextStageLabel: preflight.nextStageLabel,
+    }
+    : null;
   state.missionControlActivationPipelineStageCount = Number(payload?.stageCount || stages.length || 0);
   renderWorkSummary();
   if (!elements.routeActivationPipelineStatus) return;
@@ -1468,6 +1596,9 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'Manual action input', preflight.tokenField
       ? `${preflight.tokenField}=${preflight.tokenValue || 'not available'}; source ${preflight.selectedRelativePath || 'not available'}; next ${preflight.nextStageLabel || 'no next stage'}`
       : 'No manual action input is ready.');
+    appendPreviewLine(card, 'Workbench focus', state.missionControlActionFocus
+      ? `Highlight the existing ${state.missionControlActionFocus.stageLabel || 'source'} card at ${state.missionControlActionFocus.relativePath || 'unknown path'} and use its existing ${state.missionControlActionFocus.actionLabel || 'manual'} action.`
+      : 'No manual workbench step is ready to highlight.');
     if (Array.isArray(preflight.evidenceChecks)) {
       appendPreviewLine(card, 'Preflight checks', preflight.evidenceChecks.map((check) => `${check.ok ? 'ok' : 'blocked'}: ${check.label}`).join(' / '));
     }
@@ -1495,6 +1626,7 @@ function updateActivationPipelineStatus(payload) {
   appendPreviewLine(card, 'Trace audit', trace?.noEffectSummary || 'Read-only status only; no send or execution path.');
   appendPreviewLine(card, 'Timeline', stages.map((stage) => `${stage.label}: ${stage.status}`).join(' -> ') || 'No stages loaded.');
   elements.routeActivationPipelineStatus.replaceChildren(card);
+  applyMissionControlActionFocus();
 }
 
 function updateAutonomyList(payload) {

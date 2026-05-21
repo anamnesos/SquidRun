@@ -2566,6 +2566,7 @@ describe('Mira runtime UI boot', () => {
     expect(emptyPipelineText).toContain('Comparison: Compared 0 available stages; start by saving a route preview.');
     expect(emptyPipelineText).toContain('Manual action preflight: blocked no source: no manual action · No manual action is ready because there is no selected saved artifact with a token and next missing stage.');
     expect(emptyPipelineText).toContain('Manual action input: No manual action input is ready.');
+    expect(emptyPipelineText).toContain('Workbench focus: No manual workbench step is ready to highlight.');
     expect(emptyPipelineText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
     expect(emptyPipelineText).toContain('Payload body: No payload body is available.');
     expect(emptyPipelineText).toContain('Payload validation: blocked: Manual action preflight is ready. / blocked: Existing workbench endpoint is known. / blocked: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
@@ -2715,6 +2716,8 @@ describe('Mira runtime UI boot', () => {
     expect(historyText).toContain('oracle · benchmark review');
     expect(historyText).toContain('pending internal review · manual execution required · not sent');
     expect(historyText).toContain('no runtime execution, external send, route flip, provider, account or token access, or live hm-send');
+    expect(historyText).toContain('Mission Control focus: selected source for Make review item; use the existing Make review item action.');
+    expect(harness.elements.routePreviewHistoryList.children[0].className).toContain('selected-manual-source');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Route preview saved for internal review. Nothing was sent or executed.');
     expect(harness.elements.saveRoutePreviewButton.disabled).toBe(false);
     expect(harness.elements.saveRoutePreviewButton.textContent).toBe('Save preview for review');
@@ -2726,6 +2729,7 @@ describe('Mira runtime UI boot', () => {
     expect(routePreviewPipelineText).toContain('Comparison: Compared 1 available stage(s); selected Route preview because Review item is the first missing stage.');
     expect(routePreviewPipelineText).toContain('Manual action preflight: ready: Make review item · Make review item is the next manual internal action because Route preview is selected and Review item is the first missing stage. Use the selected token as previewToken; this preflight does not perform the action.');
     expect(routePreviewPipelineText).toContain('Manual action input: previewToken=mission-route-test; source mission-control/route-previews/mission-route-preview-test.json; next Review item');
+    expect(routePreviewPipelineText).toContain('Workbench focus: Highlight the existing Route preview card at mission-control/route-previews/mission-route-preview-test.json and use its existing Make review item action.');
     expect(routePreviewPipelineText).toContain('Preflight checks: ok: Selected artifact token is available. / ok: Selected artifact path is available or the selected entry is derived. / ok: A next missing stage exists for manual advancement.');
     expect(routePreviewPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-route-requests · This is the exact workbench payload preview for Make review item; it is not submitted by the status surface.');
     expect(routePreviewPipelineText).toContain('Payload body: {"previewToken":"mission-route-test"}');
@@ -2740,6 +2744,8 @@ describe('Mira runtime UI boot', () => {
     const promoteButton = harness.elements.routePreviewHistoryList.children[0].children
       .find((child) => child.tagName === 'BUTTON');
     expect(promoteButton.textContent).toBe('Make review item');
+    expect(promoteButton.className).toContain('selected-manual-action');
+    expect(promoteButton.attributes['aria-label']).toBe('Selected Mission Control action: Make review item');
     await promoteButton.listeners.click();
 
     const routeRequestCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-route-requests');
@@ -3195,6 +3201,7 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Comparison: Compared 12 available stage(s); no advancement is available after the hard-stop contract.');
     expect(pipelineStatusText).toContain('Manual action preflight: blocked hard stop: no manual action · No manual advancement is available from this read-only surface because the selected artifact is the live activation hard-stop contract.');
     expect(pipelineStatusText).toContain('Manual action input: No manual action input is ready.');
+    expect(pipelineStatusText).toContain('Workbench focus: No manual workbench step is ready to highlight.');
     expect(pipelineStatusText).toContain('blocked: A next missing stage exists for manual advancement.');
     expect(pipelineStatusText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
     expect(pipelineStatusText).toContain('Payload body: No payload body is available.');
@@ -3204,6 +3211,7 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Handler checks: blocked: Manual action preflight is ready. / blocked: Workbench handler method matches the payload preview method. / blocked: Workbench handler endpoint matches the payload preview endpoint.');
     expect(pipelineStatusText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(pipelineStatusText).not.toContain('live send available: yes');
+    expect(harness.elements.routeInternalSendLiveGateList.children[0].className).not.toContain('selected-manual-source');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {
