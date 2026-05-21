@@ -3986,6 +3986,41 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 
+  test('answers evidence-source questions from existing Mission Control context without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    harness.elements.turnText.value = 'what evidence is Mission Control based on?';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+      'what evidence is Mission Control based on?',
+      expect.stringContaining('Evidence scope: squidrun / architect#253'),
+    ]);
+    const evidenceReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+    expect(evidenceReply).toContain('Evidence sources: .squidrun/link.json / git status --short / docs/mira-north-star-roadmap.md');
+    expect(evidenceReply).toContain('Loaded reads: link / currentLane / ownedWorkQueue / gitStatus / systemMap / roadmap / recentComms');
+    expect(evidenceReply).toContain('Map truth: Current New Mira is not holy-shit amazing.');
+    expect(evidenceReply).toContain('Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
+    expect(evidenceReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+    expect((evidenceReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
   test('posts exactly one deterministic turn after explicit user submit', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');

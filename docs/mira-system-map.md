@@ -411,6 +411,8 @@ Product-facing coordination prompts such as `what should I tell Oracle?` now ans
 
 Product-facing route-preview prompts now answer from the already-loaded local `internalRoutePreview` as a preview of the existing Mission Control route plan, without posting `/turn`, adding fetches, persisting, or sending externally.
 
+Product-facing evidence/source prompts now answer from the already-loaded `/squidrun/context` evidence list and read flags, without posting `/turn`, adding fetches, persisting, or sending externally.
+
 The existing `Make review item` promotion proof now pins that the internal-route request/review-item record carries the same `missionAnswerPreview`, and the review-item card displays it as compact review context before the next manual continuation step.
 The existing `Review continuation` manual-input proof now pins that the owned-work continuation record carries the originating `missionAnswerPreview`, and the continuation panel/history card display it as compact review context before follow-through.
 The existing follow-through recommendation selector now carries the same originating `missionAnswerPreview` from the selected continuation and displays it on the existing recommendation card before the delivery-preview step.

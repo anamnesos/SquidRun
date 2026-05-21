@@ -29,6 +29,7 @@ const state = {
   missionControlActionFocus: null,
   missionControlWhatNowAnswer: null,
   missionControlDemoInspectionAnswer: null,
+  missionControlContext: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
   autonomyQueueCount: 0,
@@ -240,12 +241,18 @@ function renderCoordinationDrafts(drafts) {
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlRoutePreviewQuestion(text)
+    || isMissionControlEvidenceQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
   return /\b(internal\s+route|route\s+preview)\b/i.test(text);
+}
+
+function isMissionControlEvidenceQuestion(text) {
+  return /\b(evidence|sources?|proof|basis|based\s+on|loaded|reads?)\b/i.test(text)
+    && /\b(mission\s*control|mira|squidrun|local|this|answer)\b/i.test(text);
 }
 
 function isMissionControlCoordinationQuestion(text) {
@@ -262,6 +269,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
+  }
+  if (isMissionControlEvidenceQuestion(text)) {
+    const evidenceAnswer = buildMissionControlEvidenceAnswer();
+    if (evidenceAnswer) return evidenceAnswer;
   }
   if (isMissionControlCoordinationQuestion(text)) {
     const coordinationAnswer = buildMissionControlCoordinationAnswer(text);
@@ -297,6 +308,32 @@ function buildMissionControlRoutePreviewAnswer(mission = state.missionControl) {
     `Message preview: ${message}`,
     'Source: already-loaded Mission Control internal route preview from local SquidRun context.',
     'Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlEvidenceAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const evidence = Array.isArray(mission?.evidence) ? mission.evidence : [];
+  const reads = context.reads && typeof context.reads === 'object'
+    ? Object.entries(context.reads)
+      .filter(([, loaded]) => loaded === true)
+      .map(([key]) => key)
+    : [];
+  const project = context.project?.name || 'current project';
+  const lane = context.lane?.sourceRef || context.lane?.status || 'local context';
+  const truth = context.roadmap?.hardTruth || context.systemMap?.truth || 'No map truth loaded.';
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control evidence answer; no send or setup is needed.');
+  return [
+    `Evidence scope: ${project} / ${lane}`,
+    `Evidence sources: ${evidence.join(' / ') || 'No explicit evidence list loaded.'}`,
+    `Loaded reads: ${reads.join(' / ') || 'No local read flags loaded.'}`,
+    `Map truth: ${truth}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
@@ -399,6 +436,7 @@ function describeRoutePreview(preview) {
 
 function updateSquidRunContext(payload) {
   if (!payload || payload.ok !== true) {
+    state.missionControlContext = null;
     setText(elements.projectSummary, 'SquidRun context unavailable');
     setText(elements.missionAnswer, 'Mission Control is waiting for local SquidRun evidence.');
     renderCoordinationDrafts([]);
@@ -426,6 +464,7 @@ function updateSquidRunContext(payload) {
   const gitBranch = git.branch ? ` on ${git.branch}` : '';
   const dirtyText = git.loaded ? `${git.dirtyCount || 0} changed files${gitBranch}` : 'git status unavailable';
   state.queuedOwnedWorkCount = Number(owned.pendingCount || 0);
+  state.missionControlContext = payload;
   state.missionControl = mission;
 
   setText(elements.projectSummary, `${projectName} · ${laneLabel}`);
