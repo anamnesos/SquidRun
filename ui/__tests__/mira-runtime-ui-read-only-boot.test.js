@@ -3951,6 +3951,54 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 
+  test('answers local-preview availability questions from existing Mission Control context without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['what can I ask Mission Control locally?', 'what local previews are available?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Available local previews:'),
+      ]);
+      const availableReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(availableReply).toContain('what now / what is happening here');
+      expect(availableReply).toContain('coordination draft preview');
+      expect(availableReply).toContain('route preview');
+      expect(availableReply).toContain('project/workspace identity');
+      expect(availableReply).toContain('active lane');
+      expect(availableReply).toContain('evidence/source list');
+      expect(availableReply).toContain('owned-work queue');
+      expect(availableReply).toContain('dirty work/git status');
+      expect(availableReply).toContain('recent Architect/Oracle context');
+      expect(availableReply).toContain('roadmap/north-star/stop-pivot');
+      expect(availableReply).toContain('foundation-vs-product framing');
+      expect(availableReply).toContain('whether James is needed');
+      expect(availableReply).toContain('Example prompts: what now? / what project is loaded? / what lane are we on? / what changed here? / what did Oracle say? / is James needed?');
+      expect(availableReply).toContain('Source: already-loaded Mission Control UI state and /squidrun/context; this only names existing local answers.');
+      expect(availableReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
+      expect(availableReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((availableReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
   test('answers recent team-context questions from existing Mission Control context without a turn POST', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
@@ -4568,6 +4616,41 @@ describe('Mira runtime UI boot', () => {
     }));
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
       'please describe the product with the runtime fixture',
+      'Mira. Deterministic local turn.',
+    ]);
+    expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
+  test('does not hijack generic local-preview instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    harness.elements.turnText.value = 'please list local answers with the runtime fixture';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+    const postCalls = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCalls).toHaveLength(1);
+    expect(turnCalls).toHaveLength(1);
+    expect(turnCalls[0].body).toEqual(expect.objectContaining({
+      text: 'please list local answers with the runtime fixture',
+      useModel: false,
+      modelProvider: 'openai_responses',
+      modelName: 'gpt-5.5',
+    }));
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
+      'please list local answers with the runtime fixture',
       'Mira. Deterministic local turn.',
     ]);
     expect(harness.elements.lastTurn.textContent).toBe('deterministic');

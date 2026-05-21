@@ -240,6 +240,7 @@ function renderCoordinationDrafts(drafts) {
 
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
+    || isMissionControlAvailableAnswersQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -252,6 +253,15 @@ function isMissionControlQuestion(text) {
     || isMissionControlProductFramingQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
+}
+
+function isMissionControlAvailableAnswersQuestion(text) {
+  const normalized = String(text || '');
+  const asksMissionControl = /\bwhat\s+can\s+i\s+ask\s+(mission\s*control|mira)\b/i.test(normalized);
+  const asksAvailablePreviews = /\b(what|which)\s+(local\s+)?(previews?|answers?|questions?)\s+(are\s+)?available\b/i.test(normalized)
+    && /\b(mission\s*control|mira|local|preview)\b/i.test(normalized);
+  const asksQuestionList = /\bmission\s*control\s+(local\s+)?(answers?|previews?|question\s+list)\b/i.test(normalized);
+  return asksMissionControl || asksAvailablePreviews || asksQuestionList;
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -324,6 +334,10 @@ function isMissionControlDemoInspectionQuestion(text) {
 }
 
 function currentMissionControlAnswer(text = '') {
+  if (isMissionControlAvailableAnswersQuestion(text)) {
+    const availableAnswers = buildMissionControlAvailableAnswersAnswer();
+    if (availableAnswers) return availableAnswers;
+  }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
@@ -398,6 +412,55 @@ function buildMissionControlRoutePreviewAnswer(mission = state.missionControl) {
     `Message preview: ${message}`,
     'Source: already-loaded Mission Control internal route preview from local SquidRun context.',
     'Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlAvailableAnswersAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const available = [];
+  if (state.missionControlWhatNowAnswer || mission?.answer) {
+    available.push('what now / what is happening here');
+  }
+  if (state.missionControlDemoInspectionAnswer) {
+    available.push('demo inspection path');
+  }
+  if (Array.isArray(mission?.coordinationDrafts) && mission.coordinationDrafts.length > 0) {
+    available.push('coordination draft preview');
+  }
+  if (mission?.internalRoutePreview?.status === 'reviewed_preview_only') {
+    available.push('route preview');
+  }
+  if (context.project?.name || context.project?.workspace) available.push('project/workspace identity');
+  if (context.lane?.loaded === true) available.push('active lane');
+  if (Array.isArray(mission?.evidence) || context.reads) available.push('evidence/source list');
+  if (context.ownedWork?.loaded === true) available.push('owned-work queue');
+  if (context.git?.loaded === true || context.dirtyWork?.loaded === true) available.push('dirty work/git status');
+  if (context.recentComms?.loaded === true) available.push('recent Architect/Oracle context');
+  if (context.roadmap?.loaded === true || context.systemMap?.loaded === true) available.push('roadmap/north-star/stop-pivot');
+  if (context.missionControl?.foundationVsProduct || context.roadmap?.loaded === true) {
+    available.push('foundation-vs-product framing');
+  }
+  available.push('whether James is needed');
+
+  const examples = [
+    'what now?',
+    'what project is loaded?',
+    'what lane are we on?',
+    'what changed here?',
+    'what did Oracle say?',
+    'is James needed?',
+  ];
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control preview index; no send or setup is needed.');
+  return [
+    `Available local previews: ${available.join(' / ') || 'No local previews loaded yet.'}`,
+    `Example prompts: ${examples.join(' / ')}`,
+    'Source: already-loaded Mission Control UI state and /squidrun/context; this only names existing local answers.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
