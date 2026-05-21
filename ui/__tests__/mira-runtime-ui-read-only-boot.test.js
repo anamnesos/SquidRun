@@ -202,6 +202,36 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
             message: 'Challenge Mission Control v0 against the external-agent benchmark.',
           },
         ],
+        internalRoutePreview: {
+          status: 'reviewed_preview_only',
+          selectedDraftTarget: 'oracle',
+          selectedDraftPurpose: 'benchmark review',
+          plan: {
+            ok: true,
+            protocol: 'mira.runtime_bridge_request_plan.v0',
+            manualExecutionRequired: true,
+            runtimeExecutes: false,
+            target: {
+              role: 'oracle',
+              paneId: '3',
+            },
+            envelope: {
+              protocol: 'mira.hm_send_adapter.v0',
+              body: {
+                content: 'Challenge Mission Control v0 against the external-agent benchmark.',
+              },
+            },
+          },
+          audit: {
+            reviewStatus: 'preview_ready',
+            sendPerformed: false,
+            runtimeExecutes: false,
+            externalSend: false,
+            routeFlip: false,
+            providerInvoked: false,
+            note: 'Preview only; no send invoked.',
+          },
+        },
         evidence: [
           '.squidrun/link.json',
           'git status --short',
@@ -435,6 +465,7 @@ function collectMissionControlText(elements) {
   return [
     elements.missionAnswer.textContent,
     draftText,
+    elements.routePreviewSummary.textContent,
     elements.foundationSummary.textContent,
     elements.laneSummary.textContent,
     elements.nextStepSummary.textContent,
@@ -482,6 +513,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.missionAnswer.textContent).toContain('Foundation vs product: SquidRun context is foundation.');
     expect(harness.elements.coordinationDraftList.children).toHaveLength(2);
     expect(harness.elements.coordinationDraftList.children[0].children[0].textContent).toBe('builder · implementation');
+    expect(harness.elements.routePreviewSummary.textContent).toBe('Route preview: oracle · benchmark review · reviewed preview only · manual execution required · no runtime execution · no external send · no route flip · no provider.');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');

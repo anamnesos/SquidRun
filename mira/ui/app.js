@@ -35,6 +35,7 @@ const elements = {
   projectSummary: document.getElementById('projectSummary'),
   missionAnswer: document.getElementById('missionAnswer'),
   coordinationDraftList: document.getElementById('coordinationDraftList'),
+  routePreviewSummary: document.getElementById('routePreviewSummary'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -216,11 +217,27 @@ function answerMissionControlQuestion() {
   return true;
 }
 
+function describeRoutePreview(preview) {
+  if (!preview || preview.status !== 'reviewed_preview_only') {
+    return 'Route preview: not prepared yet.';
+  }
+  const target = preview.selectedDraftTarget || preview.plan?.target?.role || 'team';
+  const purpose = preview.selectedDraftPurpose || 'coordination';
+  const audit = preview.audit || {};
+  const manualState = preview.plan?.manualExecutionRequired === true ? 'manual execution required' : 'manual review required';
+  const runtimeState = preview.plan?.runtimeExecutes === true || audit.runtimeExecutes === true ? 'runtime execution pending review' : 'no runtime execution';
+  const sendState = audit.externalSend === true || audit.sendPerformed === true ? 'send pending review' : 'no external send';
+  const routeState = audit.routeFlip === true ? 'route change pending review' : 'no route flip';
+  const providerState = audit.providerInvoked === true ? 'provider pending review' : 'no provider';
+  return `Route preview: ${target} · ${purpose} · ${preview.status.replace(/_/g, ' ')} · ${manualState} · ${runtimeState} · ${sendState} · ${routeState} · ${providerState}.`;
+}
+
 function updateSquidRunContext(payload) {
   if (!payload || payload.ok !== true) {
     setText(elements.projectSummary, 'SquidRun context unavailable');
     setText(elements.missionAnswer, 'Mission Control is waiting for local SquidRun evidence.');
     renderCoordinationDrafts([]);
+    setText(elements.routePreviewSummary, 'Route preview: not prepared yet.');
     setText(elements.foundationSummary, 'No foundation evidence loaded.');
     setText(elements.laneSummary, 'No local project context loaded.');
     setText(elements.nextStepSummary, 'Open the current SquidRun lane.');
@@ -249,6 +266,7 @@ function updateSquidRunContext(payload) {
   setText(elements.projectSummary, `${projectName} · ${laneLabel}`);
   setText(elements.missionAnswer, mission.answer || 'Mission Control has no local answer yet.');
   renderCoordinationDrafts(mission.coordinationDrafts);
+  setText(elements.routePreviewSummary, describeRoutePreview(mission.internalRoutePreview));
   setText(elements.foundationSummary, `Foundation vs product: ${mission.foundationVsProduct || 'Local context is foundation; Mission Control is the product test.'}`);
   setText(elements.laneSummary, `What is happening: ${objective}`);
   setText(elements.nextStepSummary, `Next here: ${summary.nextStep || 'No current local next step found.'}`);

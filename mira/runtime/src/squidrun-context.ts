@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { planManualBridgeRequest, type ManualBridgeRequestPlan } from "./bridge-request-plan.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -81,6 +82,21 @@ export type SquidRunProjectContext = {
       purpose: string;
       message: string;
     }>;
+    internalRoutePreview: {
+      status: "reviewed_preview_only";
+      selectedDraftTarget: "architect" | "builder" | "oracle";
+      selectedDraftPurpose: string;
+      plan: ManualBridgeRequestPlan;
+      audit: {
+        reviewStatus: "preview_ready";
+        sendPerformed: false;
+        runtimeExecutes: false;
+        externalSend: false;
+        routeFlip: false;
+        providerInvoked: false;
+        note: string;
+      };
+    };
     evidence: string[];
   };
   summary: {
@@ -452,6 +468,44 @@ function buildMissionControl(input: {
     `Next team move: ${nextTeamMove}`,
     `JAMES ACTION: NONE - ${jamesActionReason}`,
   ];
+  const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
+    {
+      target: "builder",
+      purpose: "implementation",
+      message: "Build Mission Control v0 from local SquidRun evidence: lane, git dirt, map/roadmap truth, owned-work continuation, and recent Architect/Oracle checkpoints. Keep sends dry-run.",
+    },
+    {
+      target: "oracle",
+      purpose: "benchmark review",
+      message: "Challenge Mission Control v0 against the external-agent benchmark. PASS only if it is more useful than a context card and does not overclaim current New Mira.",
+    },
+  ];
+  const selectedDraft = coordinationDrafts.find((draft) => draft.target === "oracle") ?? coordinationDrafts[0]!;
+  const evidence = [
+    ".squidrun/link.json",
+    ".squidrun/handoffs/current-lane.json",
+    ".squidrun/runtime/agent-task-queue.json",
+    "git status --short",
+    "docs/mira-system-map.md",
+    "docs/mira-north-star-roadmap.md",
+    "hm-comms history --last 30 --json",
+    input.fallbackNextStep,
+  ].filter(Boolean);
+  const routePlan = planManualBridgeRequest({
+    targetRole: selectedDraft.target,
+    content: selectedDraft.message,
+    messageId: "mira-mission-control-route-preview-v0",
+    requestId: "req-mira-mission-control-route-preview-v0",
+    evidence: evidence.slice(0, 6).map((item) => {
+      const text = String(item);
+      const isFile = text.includes(".") || text.includes("/");
+      return {
+        kind: isFile ? "file" : "summary",
+        ...(isFile ? { path: text } : {}),
+        summary: text,
+      };
+    }),
+  });
 
   return {
     question: "what is happening here, and what happens next?",
@@ -460,28 +514,23 @@ function buildMissionControl(input: {
     nextTeamMove,
     jamesAction: "NONE",
     jamesActionReason,
-    coordinationDrafts: [
-      {
-        target: "builder",
-        purpose: "implementation",
-        message: "Build Mission Control v0 from local SquidRun evidence: lane, git dirt, map/roadmap truth, owned-work continuation, and recent Architect/Oracle checkpoints. Keep sends dry-run.",
+    coordinationDrafts,
+    internalRoutePreview: {
+      status: "reviewed_preview_only",
+      selectedDraftTarget: selectedDraft.target,
+      selectedDraftPurpose: selectedDraft.purpose,
+      plan: routePlan,
+      audit: {
+        reviewStatus: "preview_ready",
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        note: "Mission Control prepared this internal route preview for review only; no hm-send, Telegram, model/provider, or external route was invoked.",
       },
-      {
-        target: "oracle",
-        purpose: "benchmark review",
-        message: "Challenge Mission Control v0 against the external-agent benchmark. PASS only if it is more useful than a context card and does not overclaim current New Mira.",
-      },
-    ],
-    evidence: [
-      ".squidrun/link.json",
-      ".squidrun/handoffs/current-lane.json",
-      ".squidrun/runtime/agent-task-queue.json",
-      "git status --short",
-      "docs/mira-system-map.md",
-      "docs/mira-north-star-roadmap.md",
-      "hm-comms history --last 30 --json",
-      input.fallbackNextStep,
-    ].filter(Boolean),
+    },
+    evidence,
   };
 }
 
