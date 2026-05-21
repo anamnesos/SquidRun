@@ -1474,6 +1474,7 @@ function updateActivationPipelineStatus(payload) {
   }
   if (payloadPreview) {
     const payloadStatus = String(payloadPreview.status || 'unknown').replace(/_/g, ' ');
+    const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object' ? payloadPreview.handlerDriftCheck : null;
     appendPreviewLine(card, 'Payload preview', `${payloadStatus}: ${payloadPreview.method || 'no method'} ${payloadPreview.endpoint || 'no endpoint'} · ${payloadPreview.explanation || ''}`.trim());
     appendPreviewLine(card, 'Payload body', payloadPreview.payload ? JSON.stringify(payloadPreview.payload) : 'No payload body is available.');
     if (Array.isArray(payloadPreview.requiredManualInputs) && payloadPreview.requiredManualInputs.length > 0) {
@@ -1481,6 +1482,14 @@ function updateActivationPipelineStatus(payload) {
     }
     if (Array.isArray(payloadPreview.validationChecks)) {
       appendPreviewLine(card, 'Payload validation', payloadPreview.validationChecks.map((check) => `${check.ok ? 'ok' : 'blocked'}: ${check.label}`).join(' / '));
+    }
+    if (driftCheck) {
+      const driftStatus = String(driftCheck.status || 'unknown').replace(/_/g, ' ');
+      appendPreviewLine(card, 'Handler drift check', `${driftStatus}: ${driftCheck.handlerName || 'no handler'} · ${driftCheck.explanation || ''}`.trim());
+      appendPreviewLine(card, 'Handler contract', `${driftCheck.expectedMethod || 'no method'} ${driftCheck.expectedEndpoint || 'no endpoint'}; token ${driftCheck.expectedTokenField || 'no token'}; body ${(driftCheck.expectedBodyFields || []).join(', ') || 'none'}`);
+      if (Array.isArray(driftCheck.checks)) {
+        appendPreviewLine(card, 'Handler checks', driftCheck.checks.map((check) => `${check.ok ? 'ok' : 'blocked'}: ${check.label}`).join(' / '));
+      }
     }
   }
   appendPreviewLine(card, 'Trace audit', trace?.noEffectSummary || 'Read-only status only; no send or execution path.');

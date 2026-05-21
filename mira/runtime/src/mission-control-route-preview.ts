@@ -1537,6 +1537,28 @@ export type MissionControlActivationPipelinePayloadPreview = {
   selectedArtifactToken: string | null;
   selectedRelativePath: string | null;
   explanation: string;
+  handlerDriftCheck: {
+    protocol: "mira.mission_control_workbench_handler_drift_check.v0";
+    status: "matched" | "mismatched" | "blocked";
+    handlerName: string | null;
+    handlerSource: string | null;
+    actionLabel: string | null;
+    expectedMethod: "POST" | null;
+    previewMethod: "POST" | null;
+    expectedEndpoint: string | null;
+    previewEndpoint: string | null;
+    expectedTokenField: string | null;
+    previewTokenField: string | null;
+    expectedBodyFields: string[];
+    previewBodyFields: string[];
+    explanation: string;
+    checks: Array<{
+      id: string;
+      label: string;
+      ok: boolean;
+    }>;
+    noEffectSummary: string;
+  };
   validationChecks: Array<{
     id: string;
     label: string;
@@ -2801,7 +2823,9 @@ function manualActionPayloadPreviewForStage(
   stageId: MissionControlActivationPipelineStageId | null,
   tokenValue: string | null,
 ): {
+  method: "POST";
   endpoint: string;
+  tokenField: string;
   payload: Record<string, string>;
   requiredManualInputs: string[];
 } | null {
@@ -2809,13 +2833,17 @@ function manualActionPayloadPreviewForStage(
   switch (stageId) {
     case "route_preview":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-route-requests",
+        tokenField: "previewToken",
         payload: { previewToken: tokenValue },
         requiredManualInputs: [],
       };
     case "internal_route_request":
       return {
+        method: "POST",
         endpoint: "/mission-control/owned-work-continuations",
+        tokenField: "requestToken",
         payload: {
           requestToken: tokenValue,
           decision: "<approve|edit|reject>",
@@ -2826,49 +2854,65 @@ function manualActionPayloadPreviewForStage(
       };
     case "follow_through_recommendation":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-delivery-previews",
+        tokenField: "recommendationToken",
         payload: { recommendationToken: tokenValue },
         requiredManualInputs: [],
       };
     case "internal_delivery_preview":
       return {
+        method: "POST",
         endpoint: "/mission-control/dispatch-readiness",
+        tokenField: "deliveryPreviewToken",
         payload: { deliveryPreviewToken: tokenValue },
         requiredManualInputs: [],
       };
     case "dispatch_readiness":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-send-dry-runs",
+        tokenField: "dispatchReadinessToken",
         payload: { dispatchReadinessToken: tokenValue },
         requiredManualInputs: [],
       };
     case "internal_send_dry_run":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-send-activation-designs",
+        tokenField: "internalSendDryRunToken",
         payload: { internalSendDryRunToken: tokenValue },
         requiredManualInputs: [],
       };
     case "activation_design":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-send-activation-requests",
+        tokenField: "internalSendActivationDesignToken",
         payload: { internalSendActivationDesignToken: tokenValue },
         requiredManualInputs: [],
       };
     case "activation_request":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-send-activation-decision-audits",
+        tokenField: "internalSendActivationRequestToken",
         payload: { internalSendActivationRequestToken: tokenValue },
         requiredManualInputs: [],
       };
     case "activation_decision_audit":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-send-activation-implementation-readiness",
+        tokenField: "internalSendActivationDecisionAuditToken",
         payload: { internalSendActivationDecisionAuditToken: tokenValue },
         requiredManualInputs: [],
       };
     case "activation_implementation_readiness":
       return {
+        method: "POST",
         endpoint: "/mission-control/internal-send-live-activation-gate-contracts",
+        tokenField: "internalSendActivationImplementationReadinessToken",
         payload: { internalSendActivationImplementationReadinessToken: tokenValue },
         requiredManualInputs: [],
       };
@@ -2877,6 +2921,201 @@ function manualActionPayloadPreviewForStage(
     default:
       return null;
   }
+}
+
+function workbenchHandlerExpectationForStage(
+  stageId: MissionControlActivationPipelineStageId | null,
+): {
+  handlerName: string;
+  handlerSource: string;
+  method: "POST";
+  endpoint: string;
+  tokenField: string;
+  bodyFields: string[];
+} | null {
+  switch (stageId) {
+    case "route_preview":
+      return {
+        handlerName: "createRouteRequestFromPreview",
+        handlerSource: "mira/ui/app.js:createRouteRequestFromPreview",
+        method: "POST",
+        endpoint: "/mission-control/internal-route-requests",
+        tokenField: "previewToken",
+        bodyFields: ["previewToken"],
+      };
+    case "internal_route_request":
+      return {
+        handlerName: "createOwnedWorkContinuation",
+        handlerSource: "mira/ui/app.js:createOwnedWorkContinuation",
+        method: "POST",
+        endpoint: "/mission-control/owned-work-continuations",
+        tokenField: "requestToken",
+        bodyFields: ["requestToken", "decision", "editedContent", "note"],
+      };
+    case "follow_through_recommendation":
+      return {
+        handlerName: "createInternalDeliveryPreview",
+        handlerSource: "mira/ui/app.js:createInternalDeliveryPreview",
+        method: "POST",
+        endpoint: "/mission-control/internal-delivery-previews",
+        tokenField: "recommendationToken",
+        bodyFields: ["recommendationToken"],
+      };
+    case "internal_delivery_preview":
+      return {
+        handlerName: "createDispatchReadiness",
+        handlerSource: "mira/ui/app.js:createDispatchReadiness",
+        method: "POST",
+        endpoint: "/mission-control/dispatch-readiness",
+        tokenField: "deliveryPreviewToken",
+        bodyFields: ["deliveryPreviewToken"],
+      };
+    case "dispatch_readiness":
+      return {
+        handlerName: "createInternalSendDryRun",
+        handlerSource: "mira/ui/app.js:createInternalSendDryRun",
+        method: "POST",
+        endpoint: "/mission-control/internal-send-dry-runs",
+        tokenField: "dispatchReadinessToken",
+        bodyFields: ["dispatchReadinessToken"],
+      };
+    case "internal_send_dry_run":
+      return {
+        handlerName: "createInternalSendActivationDesign",
+        handlerSource: "mira/ui/app.js:createInternalSendActivationDesign",
+        method: "POST",
+        endpoint: "/mission-control/internal-send-activation-designs",
+        tokenField: "internalSendDryRunToken",
+        bodyFields: ["internalSendDryRunToken"],
+      };
+    case "activation_design":
+      return {
+        handlerName: "createInternalSendActivationRequest",
+        handlerSource: "mira/ui/app.js:createInternalSendActivationRequest",
+        method: "POST",
+        endpoint: "/mission-control/internal-send-activation-requests",
+        tokenField: "internalSendActivationDesignToken",
+        bodyFields: ["internalSendActivationDesignToken"],
+      };
+    case "activation_request":
+      return {
+        handlerName: "createInternalSendActivationDecisionAudit",
+        handlerSource: "mira/ui/app.js:createInternalSendActivationDecisionAudit",
+        method: "POST",
+        endpoint: "/mission-control/internal-send-activation-decision-audits",
+        tokenField: "internalSendActivationRequestToken",
+        bodyFields: ["internalSendActivationRequestToken"],
+      };
+    case "activation_decision_audit":
+      return {
+        handlerName: "createInternalSendActivationImplementationReadiness",
+        handlerSource: "mira/ui/app.js:createInternalSendActivationImplementationReadiness",
+        method: "POST",
+        endpoint: "/mission-control/internal-send-activation-implementation-readiness",
+        tokenField: "internalSendActivationDecisionAuditToken",
+        bodyFields: ["internalSendActivationDecisionAuditToken"],
+      };
+    case "activation_implementation_readiness":
+      return {
+        handlerName: "createInternalSendLiveActivationGateContract",
+        handlerSource: "mira/ui/app.js:createInternalSendLiveActivationGateContract",
+        method: "POST",
+        endpoint: "/mission-control/internal-send-live-activation-gate-contracts",
+        tokenField: "internalSendActivationImplementationReadinessToken",
+        bodyFields: ["internalSendActivationImplementationReadinessToken"],
+      };
+    case "owned_work_continuation":
+    case "live_activation_gate_contract":
+    default:
+      return null;
+  }
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
+}
+
+function buildHandlerDriftCheck(
+  preflight: MissionControlActivationPipelineManualActionPreflight,
+  payloadDefinition: ReturnType<typeof manualActionPayloadPreviewForStage>,
+): MissionControlActivationPipelinePayloadPreview["handlerDriftCheck"] {
+  const expectation = workbenchHandlerExpectationForStage(preflight.selectedStageId);
+  const previewMethod = payloadDefinition?.method || null;
+  const previewBodyFields = payloadDefinition ? Object.keys(payloadDefinition.payload) : [];
+  const previewTokenField = payloadDefinition
+    ? Object.keys(payloadDefinition.payload).find((field) => field === payloadDefinition.tokenField) || null
+    : null;
+  const methodMatches = Boolean(expectation && previewMethod === expectation.method);
+  const endpointMatches = Boolean(expectation && payloadDefinition?.endpoint === expectation.endpoint);
+  const tokenFieldMatches = Boolean(expectation && payloadDefinition?.tokenField === expectation.tokenField && previewTokenField === expectation.tokenField);
+  const bodyShapeMatches = Boolean(expectation && sameStringSet(previewBodyFields, expectation.bodyFields));
+  const matched = preflight.status === "ready"
+    && Boolean(payloadDefinition)
+    && Boolean(expectation)
+    && methodMatches
+    && endpointMatches
+    && tokenFieldMatches
+    && bodyShapeMatches
+    && payloadDefinition?.payload[payloadDefinition.tokenField] === preflight.tokenValue;
+  const status = preflight.status !== "ready" || !payloadDefinition || !expectation
+    ? "blocked"
+    : matched
+      ? "matched"
+      : "mismatched";
+
+  return {
+    protocol: "mira.mission_control_workbench_handler_drift_check.v0",
+    status,
+    handlerName: expectation?.handlerName || null,
+    handlerSource: expectation?.handlerSource || null,
+    actionLabel: preflight.manualActionLabel,
+    expectedMethod: expectation?.method || null,
+    previewMethod,
+    expectedEndpoint: expectation?.endpoint || null,
+    previewEndpoint: payloadDefinition?.endpoint || null,
+    expectedTokenField: expectation?.tokenField || null,
+    previewTokenField,
+    expectedBodyFields: expectation?.bodyFields || [],
+    previewBodyFields,
+    explanation: status === "matched"
+      ? `${expectation?.handlerName} expects ${expectation?.method} ${expectation?.endpoint} with ${expectation?.tokenField}; payload preview matches that workbench handler contract.`
+      : status === "mismatched"
+        ? "Payload preview does not match the static workbench handler expectation for this selected stage."
+      : "No workbench handler drift check is available because the manual action preflight is blocked.",
+    checks: [
+      {
+        id: "manual_preflight_ready",
+        label: "Manual action preflight is ready.",
+        ok: preflight.status === "ready",
+      },
+      {
+        id: "handler_method_matches_preview",
+        label: "Workbench handler method matches the payload preview method.",
+        ok: methodMatches,
+      },
+      {
+        id: "handler_endpoint_matches_preview",
+        label: "Workbench handler endpoint matches the payload preview endpoint.",
+        ok: endpointMatches,
+      },
+      {
+        id: "handler_token_field_matches_preview",
+        label: "Workbench handler token field matches the payload preview token field.",
+        ok: tokenFieldMatches,
+      },
+      {
+        id: "handler_body_shape_matches_preview",
+        label: "Workbench handler body shape matches the payload preview body shape.",
+        ok: bodyShapeMatches,
+      },
+      {
+        id: "handler_drift_check_read_only",
+        label: "Drift check is derived from GET status and does not submit the handler.",
+        ok: true,
+      },
+    ],
+    noEffectSummary: "Read-only workbench handler drift check only; it compares endpoint and token-field expectations and does not submit, persist, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
+  };
 }
 
 function buildActivationPipelinePayloadPreview(
@@ -2907,6 +3146,7 @@ function buildActivationPipelinePayloadPreview(
     selectedArtifactToken: preflight.selectedArtifactToken,
     selectedRelativePath: preflight.selectedRelativePath,
     explanation,
+    handlerDriftCheck: buildHandlerDriftCheck(preflight, payloadDefinition),
     validationChecks: [
       {
         id: "manual_preflight_ready",

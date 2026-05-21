@@ -1046,6 +1046,31 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect.objectContaining({ id: 'selected_token_present', ok: true }),
       expect.objectContaining({ id: 'payload_preview_read_only', ok: true }),
     ]));
+    expect(previewOnlyPipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_workbench_handler_drift_check.v0',
+      status: 'matched',
+      handlerName: 'createRouteRequestFromPreview',
+      handlerSource: 'mira/ui/app.js:createRouteRequestFromPreview',
+      actionLabel: 'Make review item',
+      expectedMethod: 'POST',
+      previewMethod: 'POST',
+      expectedEndpoint: '/mission-control/internal-route-requests',
+      previewEndpoint: '/mission-control/internal-route-requests',
+      expectedTokenField: 'previewToken',
+      previewTokenField: 'previewToken',
+      expectedBodyFields: ['previewToken'],
+      previewBodyFields: ['previewToken'],
+      explanation: 'createRouteRequestFromPreview expects POST /mission-control/internal-route-requests with previewToken; payload preview matches that workbench handler contract.',
+      noEffectSummary: expect.stringContaining('Read-only workbench handler drift check only'),
+    }));
+    expect(previewOnlyPipelineStatusPayload.payloadPreview.handlerDriftCheck.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'manual_preflight_ready', ok: true }),
+      expect.objectContaining({ id: 'handler_method_matches_preview', ok: true }),
+      expect.objectContaining({ id: 'handler_endpoint_matches_preview', ok: true }),
+      expect.objectContaining({ id: 'handler_token_field_matches_preview', ok: true }),
+      expect.objectContaining({ id: 'handler_body_shape_matches_preview', ok: true }),
+      expect.objectContaining({ id: 'handler_drift_check_read_only', ok: true }),
+    ]));
     expect(routeRequestFilesAfterPreviewOnlyStatus).toHaveLength(0);
     expect(emptyRequestResponse.status).toBe(200);
     expect(emptyRequestPayload).toEqual(expect.objectContaining({
@@ -3654,6 +3679,31 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect.objectContaining({ id: 'endpoint_known', ok: false }),
       expect.objectContaining({ id: 'selected_token_present', ok: false }),
       expect.objectContaining({ id: 'payload_preview_read_only', ok: true }),
+    ]));
+    expect(pipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_workbench_handler_drift_check.v0',
+      status: 'blocked',
+      handlerName: null,
+      handlerSource: null,
+      actionLabel: null,
+      expectedMethod: null,
+      previewMethod: null,
+      expectedEndpoint: null,
+      previewEndpoint: null,
+      expectedTokenField: null,
+      previewTokenField: null,
+      expectedBodyFields: [],
+      previewBodyFields: [],
+      explanation: 'No workbench handler drift check is available because the manual action preflight is blocked.',
+      noEffectSummary: expect.stringContaining('Read-only workbench handler drift check only'),
+    }));
+    expect(pipelineStatusPayload.payloadPreview.handlerDriftCheck.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'manual_preflight_ready', ok: false }),
+      expect.objectContaining({ id: 'handler_method_matches_preview', ok: false }),
+      expect.objectContaining({ id: 'handler_endpoint_matches_preview', ok: false }),
+      expect.objectContaining({ id: 'handler_token_field_matches_preview', ok: false }),
+      expect.objectContaining({ id: 'handler_body_shape_matches_preview', ok: false }),
+      expect.objectContaining({ id: 'handler_drift_check_read_only', ok: true }),
     ]));
     expect(pipelineStatusPayload.currentStageTrace).toEqual(expect.objectContaining({
       protocol: 'mira.mission_control_activation_pipeline_trace.v0',

@@ -851,7 +851,90 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
             requiredManualInputs: [],
           },
         };
+        const handlerMap = {
+          route_preview: {
+            handlerName: 'createRouteRequestFromPreview',
+            handlerSource: 'mira/ui/app.js:createRouteRequestFromPreview',
+            method: 'POST',
+            endpoint: '/mission-control/internal-route-requests',
+            tokenField: 'previewToken',
+            bodyFields: ['previewToken'],
+          },
+          internal_route_request: {
+            handlerName: 'createOwnedWorkContinuation',
+            handlerSource: 'mira/ui/app.js:createOwnedWorkContinuation',
+            method: 'POST',
+            endpoint: '/mission-control/owned-work-continuations',
+            tokenField: 'requestToken',
+            bodyFields: ['requestToken', 'decision', 'editedContent', 'note'],
+          },
+          follow_through_recommendation: {
+            handlerName: 'createInternalDeliveryPreview',
+            handlerSource: 'mira/ui/app.js:createInternalDeliveryPreview',
+            method: 'POST',
+            endpoint: '/mission-control/internal-delivery-previews',
+            tokenField: 'recommendationToken',
+            bodyFields: ['recommendationToken'],
+          },
+          internal_delivery_preview: {
+            handlerName: 'createDispatchReadiness',
+            handlerSource: 'mira/ui/app.js:createDispatchReadiness',
+            method: 'POST',
+            endpoint: '/mission-control/dispatch-readiness',
+            tokenField: 'deliveryPreviewToken',
+            bodyFields: ['deliveryPreviewToken'],
+          },
+          dispatch_readiness: {
+            handlerName: 'createInternalSendDryRun',
+            handlerSource: 'mira/ui/app.js:createInternalSendDryRun',
+            method: 'POST',
+            endpoint: '/mission-control/internal-send-dry-runs',
+            tokenField: 'dispatchReadinessToken',
+            bodyFields: ['dispatchReadinessToken'],
+          },
+          internal_send_dry_run: {
+            handlerName: 'createInternalSendActivationDesign',
+            handlerSource: 'mira/ui/app.js:createInternalSendActivationDesign',
+            method: 'POST',
+            endpoint: '/mission-control/internal-send-activation-designs',
+            tokenField: 'internalSendDryRunToken',
+            bodyFields: ['internalSendDryRunToken'],
+          },
+          activation_design: {
+            handlerName: 'createInternalSendActivationRequest',
+            handlerSource: 'mira/ui/app.js:createInternalSendActivationRequest',
+            method: 'POST',
+            endpoint: '/mission-control/internal-send-activation-requests',
+            tokenField: 'internalSendActivationDesignToken',
+            bodyFields: ['internalSendActivationDesignToken'],
+          },
+          activation_request: {
+            handlerName: 'createInternalSendActivationDecisionAudit',
+            handlerSource: 'mira/ui/app.js:createInternalSendActivationDecisionAudit',
+            method: 'POST',
+            endpoint: '/mission-control/internal-send-activation-decision-audits',
+            tokenField: 'internalSendActivationRequestToken',
+            bodyFields: ['internalSendActivationRequestToken'],
+          },
+          activation_decision_audit: {
+            handlerName: 'createInternalSendActivationImplementationReadiness',
+            handlerSource: 'mira/ui/app.js:createInternalSendActivationImplementationReadiness',
+            method: 'POST',
+            endpoint: '/mission-control/internal-send-activation-implementation-readiness',
+            tokenField: 'internalSendActivationDecisionAuditToken',
+            bodyFields: ['internalSendActivationDecisionAuditToken'],
+          },
+          activation_implementation_readiness: {
+            handlerName: 'createInternalSendLiveActivationGateContract',
+            handlerSource: 'mira/ui/app.js:createInternalSendLiveActivationGateContract',
+            method: 'POST',
+            endpoint: '/mission-control/internal-send-live-activation-gate-contracts',
+            tokenField: 'internalSendActivationImplementationReadinessToken',
+            bodyFields: ['internalSendActivationImplementationReadinessToken'],
+          },
+        };
         const action = actionMap[selectedStage?.id] || null;
+        const handler = handlerMap[selectedStage?.id] || null;
         const preflightReady = selectionStatus === 'advance_available' && Boolean(action);
         const status = !preflightReady ? 'blocked' : action.requiredManualInputs.length > 0 ? 'needs_manual_input' : 'ready';
         const explanation = status === 'ready'
@@ -859,6 +942,14 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
           : status === 'needs_manual_input'
             ? `This payload skeleton needs manual input before ${action.label} can be submitted from the workbench.`
             : 'No payload preview is available because the manual action preflight is blocked.';
+        const previewBodyFields = action ? Object.keys(action.payload) : [];
+        const previewTokenField = action && handler ? previewBodyFields.find((field) => field === handler.tokenField) || null : null;
+        const methodMatches = Boolean(handler && action && handler.method === 'POST');
+        const endpointMatches = Boolean(handler && action && handler.endpoint === action.endpoint);
+        const tokenFieldMatches = Boolean(handler && action && previewTokenField === handler.tokenField);
+        const bodyShapeMatches = Boolean(handler && previewBodyFields.length === handler.bodyFields.length && previewBodyFields.every((field) => handler.bodyFields.includes(field)));
+        const handlerMatched = preflightReady && methodMatches && endpointMatches && tokenFieldMatches && bodyShapeMatches;
+        const handlerStatus = !preflightReady || !handler || !action ? 'blocked' : handlerMatched ? 'matched' : 'mismatched';
         return {
           protocol: 'mira.mission_control_activation_pipeline_payload_preview.v0',
           status,
@@ -871,6 +962,35 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
           selectedArtifactToken: selectedStage?.latestToken || null,
           selectedRelativePath: selectedStage?.relativePath || null,
           explanation,
+          handlerDriftCheck: {
+            protocol: 'mira.mission_control_workbench_handler_drift_check.v0',
+            status: handlerStatus,
+            handlerName: handler?.handlerName || null,
+            handlerSource: handler?.handlerSource || null,
+            actionLabel: preflightReady ? action.label : null,
+            expectedMethod: handler?.method || null,
+            previewMethod: action ? 'POST' : null,
+            expectedEndpoint: handler?.endpoint || null,
+            previewEndpoint: action?.endpoint || null,
+            expectedTokenField: handler?.tokenField || null,
+            previewTokenField,
+            expectedBodyFields: handler?.bodyFields || [],
+            previewBodyFields,
+            explanation: handlerStatus === 'matched'
+              ? `${handler.handlerName} expects POST ${handler.endpoint} with ${handler.tokenField}; payload preview matches that workbench handler contract.`
+              : handlerStatus === 'mismatched'
+                ? 'Payload preview does not match the static workbench handler expectation for this selected stage.'
+                : 'No workbench handler drift check is available because the manual action preflight is blocked.',
+            checks: [
+              { id: 'manual_preflight_ready', label: 'Manual action preflight is ready.', ok: preflightReady },
+              { id: 'handler_method_matches_preview', label: 'Workbench handler method matches the payload preview method.', ok: methodMatches },
+              { id: 'handler_endpoint_matches_preview', label: 'Workbench handler endpoint matches the payload preview endpoint.', ok: endpointMatches },
+              { id: 'handler_token_field_matches_preview', label: 'Workbench handler token field matches the payload preview token field.', ok: tokenFieldMatches },
+              { id: 'handler_body_shape_matches_preview', label: 'Workbench handler body shape matches the payload preview body shape.', ok: bodyShapeMatches },
+              { id: 'handler_drift_check_read_only', label: 'Drift check is derived from GET status and does not submit the handler.', ok: true },
+            ],
+            noEffectSummary: 'Read-only workbench handler drift check only; it compares endpoint and token-field expectations and does not submit, persist, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
+          },
           validationChecks: [
             { id: 'manual_preflight_ready', label: 'Manual action preflight is ready.', ok: preflightReady },
             { id: 'endpoint_known', label: 'Existing workbench endpoint is known.', ok: Boolean(action?.endpoint) },
@@ -2251,7 +2371,121 @@ function collectMissionControlText(elements) {
   ].join('\n');
 }
 
+function extractBracedBlock(source, openBraceIndex) {
+  let depth = 0;
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(openBraceIndex, index + 1);
+    }
+  }
+  throw new Error(`Could not extract braced block from index ${openBraceIndex}`);
+}
+
+function extractFunctionBody(source, functionName) {
+  const asyncMarker = `async function ${functionName}`;
+  const syncMarker = `function ${functionName}`;
+  const asyncIndex = source.indexOf(asyncMarker);
+  const functionIndex = asyncIndex >= 0 ? asyncIndex : source.indexOf(syncMarker);
+  if (functionIndex < 0) throw new Error(`Missing function ${functionName}`);
+  const paramsOpenIndex = source.indexOf('(', functionIndex);
+  let paramsDepth = 0;
+  let paramsCloseIndex = -1;
+  for (let index = paramsOpenIndex; index < source.length; index += 1) {
+    if (source[index] === '(') paramsDepth += 1;
+    if (source[index] === ')') {
+      paramsDepth -= 1;
+      if (paramsDepth === 0) {
+        paramsCloseIndex = index;
+        break;
+      }
+    }
+  }
+  if (paramsCloseIndex < 0) throw new Error(`Could not find parameter list for ${functionName}`);
+  let openBraceIndex = -1;
+  for (let index = paramsCloseIndex + 1; index < source.length; index += 1) {
+    if (source[index] !== '{') continue;
+    let previous = index - 1;
+    while (previous >= 0 && /\s/.test(source[previous])) previous -= 1;
+    if (source[previous] !== ':') {
+      openBraceIndex = index;
+      break;
+    }
+  }
+  if (openBraceIndex < 0) throw new Error(`Could not find function body for ${functionName}`);
+  return extractBracedBlock(source, openBraceIndex);
+}
+
+function parseRuntimeHandlerExpectations(runtimeSource) {
+  const functionBody = extractFunctionBody(runtimeSource, 'workbenchHandlerExpectationForStage');
+  const cases = [];
+  const casePattern = /case "([^"]+)":\s*return \{\s*handlerName: "([^"]+)",\s*handlerSource: "([^"]+)",\s*method: "([^"]+)",\s*endpoint: "([^"]+)",\s*tokenField: "([^"]+)",\s*bodyFields: \[([^\]]*)\],\s*\};/gs;
+  for (const match of functionBody.matchAll(casePattern)) {
+    cases.push({
+      stageId: match[1],
+      handlerName: match[2],
+      handlerSource: match[3],
+      method: match[4],
+      endpoint: match[5],
+      tokenField: match[6],
+      bodyFields: [...match[7].matchAll(/"([^"]+)"/g)].map((fieldMatch) => fieldMatch[1]),
+    });
+  }
+  return cases;
+}
+
+function parseWorkbenchHandlerContract(appSource, expectation) {
+  const functionBody = extractFunctionBody(appSource, expectation.handlerName);
+  const endpoint = functionBody.match(/fetch\('([^']+)'/)?.[1] || null;
+  const method = functionBody.match(/method:\s*'([^']+)'/)?.[1] || null;
+  const stringifyIndex = functionBody.indexOf('body: JSON.stringify({');
+  if (stringifyIndex < 0) throw new Error(`Missing JSON.stringify body in ${expectation.handlerName}`);
+  const bodyOpenBraceIndex = functionBody.indexOf('{', stringifyIndex);
+  const bodyObject = extractBracedBlock(functionBody, bodyOpenBraceIndex);
+  const bodyFields = [...bodyObject.matchAll(/^\s+([A-Za-z][A-Za-z0-9]*):/gm)]
+    .map((match) => match[1]);
+  return {
+    endpoint,
+    method,
+    bodyFields,
+  };
+}
+
 describe('Mira runtime UI boot', () => {
+  test('keeps activation payload drift expectations aligned with actual workbench handler bodies', () => {
+    const runtimePath = path.join(__dirname, '..', '..', 'mira', 'runtime', 'src', 'mission-control-route-preview.ts');
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const runtimeSource = fs.readFileSync(runtimePath, 'utf8');
+    const appSource = fs.readFileSync(appJsPath, 'utf8');
+    const expectations = parseRuntimeHandlerExpectations(runtimeSource);
+
+    expect(expectations.map((expectation) => expectation.stageId)).toEqual([
+      'route_preview',
+      'internal_route_request',
+      'follow_through_recommendation',
+      'internal_delivery_preview',
+      'dispatch_readiness',
+      'internal_send_dry_run',
+      'activation_design',
+      'activation_request',
+      'activation_decision_audit',
+      'activation_implementation_readiness',
+    ]);
+
+    expectations.forEach((expectation) => {
+      const handlerContract = parseWorkbenchHandlerContract(appSource, expectation);
+      expect(expectation.handlerSource).toBe(`mira/ui/app.js:${expectation.handlerName}`);
+      expect(handlerContract).toEqual({
+        endpoint: expectation.endpoint,
+        method: expectation.method,
+        bodyFields: expectation.bodyFields,
+      });
+      expect(handlerContract.bodyFields).toContain(expectation.tokenField);
+    });
+  });
+
   test('hydrates the workbench with read-only GET calls and does not call turn endpoints', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
@@ -2335,6 +2569,9 @@ describe('Mira runtime UI boot', () => {
     expect(emptyPipelineText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
     expect(emptyPipelineText).toContain('Payload body: No payload body is available.');
     expect(emptyPipelineText).toContain('Payload validation: blocked: Manual action preflight is ready. / blocked: Existing workbench endpoint is known. / blocked: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
+    expect(emptyPipelineText).toContain('Handler drift check: blocked: no handler · No workbench handler drift check is available because the manual action preflight is blocked.');
+    expect(emptyPipelineText).toContain('Handler contract: no method no endpoint; token no token; body none');
+    expect(emptyPipelineText).toContain('Handler checks: blocked: Manual action preflight is ready. / blocked: Workbench handler method matches the payload preview method. / blocked: Workbench handler endpoint matches the payload preview endpoint.');
     expect(emptyPipelineText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
@@ -2493,6 +2730,12 @@ describe('Mira runtime UI boot', () => {
     expect(routePreviewPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-route-requests · This is the exact workbench payload preview for Make review item; it is not submitted by the status surface.');
     expect(routePreviewPipelineText).toContain('Payload body: {"previewToken":"mission-route-test"}');
     expect(routePreviewPipelineText).toContain('Payload validation: ok: Manual action preflight is ready. / ok: Existing workbench endpoint is known. / ok: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
+    expect(routePreviewPipelineText).toContain('Handler drift check: matched: createRouteRequestFromPreview · createRouteRequestFromPreview expects POST /mission-control/internal-route-requests with previewToken; payload preview matches that workbench handler contract.');
+    expect(routePreviewPipelineText).toContain('Handler contract: POST /mission-control/internal-route-requests; token previewToken; body previewToken');
+    expect(routePreviewPipelineText).toContain('Handler checks: ok: Manual action preflight is ready. / ok: Workbench handler method matches the payload preview method. / ok: Workbench handler endpoint matches the payload preview endpoint. / ok: Workbench handler token field matches the payload preview token field.');
+    expect(appJs).toContain('async function createRouteRequestFromPreview(preview)');
+    expect(appJs).toContain("fetch('/mission-control/internal-route-requests'");
+    expect(appJs).toContain("previewToken: preview?.actionToken || ''");
 
     const promoteButton = harness.elements.routePreviewHistoryList.children[0].children
       .find((child) => child.tagName === 'BUTTON');
@@ -2956,6 +3199,9 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Payload preview: blocked: no method no endpoint · No payload preview is available because the manual action preflight is blocked.');
     expect(pipelineStatusText).toContain('Payload body: No payload body is available.');
     expect(pipelineStatusText).toContain('Payload validation: blocked: Manual action preflight is ready. / blocked: Existing workbench endpoint is known. / blocked: Selected artifact token is present in the preview payload. / ok: Payload preview is derived from GET status and is not submitted or persisted.');
+    expect(pipelineStatusText).toContain('Handler drift check: blocked: no handler · No workbench handler drift check is available because the manual action preflight is blocked.');
+    expect(pipelineStatusText).toContain('Handler contract: no method no endpoint; token no token; body none');
+    expect(pipelineStatusText).toContain('Handler checks: blocked: Manual action preflight is ready. / blocked: Workbench handler method matches the payload preview method. / blocked: Workbench handler endpoint matches the payload preview endpoint.');
     expect(pipelineStatusText).toContain('Trace audit: Read-only trace only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     expect(pipelineStatusText).not.toContain('live send available: yes');
   });
