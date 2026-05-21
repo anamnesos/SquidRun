@@ -4340,6 +4340,16 @@ describe('Mira runtime bridge manual-plan API', () => {
       liveSendAvailable: false,
       realSendRequiresSeparateActivation: true,
     }));
+    expect(pipelineStatusPayload.endToEndReadout.demoPath).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_demo_path.v0',
+      surface: 'New Mira local workbench',
+      open: 'Open the local New Mira workbench and read the Mission Control activation pipeline status card.',
+      read: ['Readout', 'Completed chain', 'What was proven', 'Manual-only', 'Readout boundary'],
+      means: expect.stringContaining('complete saved local coordination chain'),
+      manualOnly: expect.stringContaining('only reads existing status/artifact evidence'),
+      nextBoundary: expect.stringContaining('hard-stop contract'),
+    }));
+    expect(pipelineStatusPayload.endToEndReadout.demoPath.noEffectSummary).toContain('without adding a write path or live action');
     expect(pipelineStatusPayload.endToEndReadout.provenSummary).toContain('Saved local evidence covers route preview through live activation hard-stop contract');
     expect(pipelineStatusPayload.endToEndReadout.manualOnlySummary).toContain('explicit workbench actions');
     expect(pipelineStatusPayload.endToEndReadout.nextBoundary).toContain('future real send would require a separate James-visible setup/activation lane');

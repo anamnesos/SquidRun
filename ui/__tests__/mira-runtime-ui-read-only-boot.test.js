@@ -1042,6 +1042,26 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         hardStopRecorded: hardStopContractRecorded,
         liveSendAvailable: false,
         realSendRequiresSeparateActivation: true,
+        demoPath: {
+          protocol: 'mira.mission_control_activation_pipeline_demo_path.v0',
+          surface: 'New Mira local workbench',
+          open: 'Open the local New Mira workbench and read the Mission Control activation pipeline status card.',
+          read: [
+            'Readout',
+            'Completed chain',
+            'What was proven',
+            'Manual-only',
+            'Readout boundary',
+          ],
+          means: readoutStatus === 'terminal_hard_stop'
+            ? 'The demo shows Mission Control can explain a complete saved local coordination chain from artifacts, ending at a hard stop instead of pretending to send.'
+            : 'The demo shows the current saved Mission Control coordination chain and the next explicit manual workbench step.',
+          manualOnly: 'This demo path only reads existing status/artifact evidence; it does not submit, send, execute, call a model/provider, flip routes, or access accounts/tokens.',
+          nextBoundary: hardStopContractRecorded
+            ? 'The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.'
+            : 'Next inspectable step is local review; live send is still unavailable.',
+          noEffectSummary: 'Read-only demo path only; it explains where to look in the local workbench and what the saved status means without adding a write path or live action.',
+        },
         noEffectSummary: 'Read-only Mission Control end-to-end readout only; it summarizes existing status/trace artifacts and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
       },
       hardStopTruth: {
@@ -3514,6 +3534,9 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('What was proven: Saved local evidence covers route preview through live activation hard-stop contract; the status refresh is read-only and no next artifact is available.');
     expect(pipelineStatusText).toContain('Manual-only: All advancement before the hard stop used explicit workbench actions; this readout has no submit, send, execution, provider, route, account, or token path.');
     expect(pipelineStatusText).toContain('Readout boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
+    expect(pipelineStatusText).toContain('Demo path: Open the local New Mira workbench and read the Mission Control activation pipeline status card. Read: Readout / Completed chain / What was proven / Manual-only / Readout boundary.');
+    expect(pipelineStatusText).toContain('Demo meaning: The demo shows Mission Control can explain a complete saved local coordination chain from artifacts, ending at a hard stop instead of pretending to send.');
+    expect(pipelineStatusText).toContain('Demo boundary: This demo path only reads existing status/artifact evidence; it does not submit, send, execute, call a model/provider, flip routes, or access accounts/tokens.');
     expect(pipelineStatusText).toContain('Hard stop: live send available: no; hard-stop contract: yes; James setup before live send: yes');
     expect(pipelineStatusText).toContain('Future real send would require a separate James-visible setup/activation lane.');
     expect(pipelineStatusText).toContain('Trace path: Route preview -> Review item -> Owned-work continuation -> Follow-through recommendation -> Delivery preview -> Dispatch readiness -> Internal-send dry run -> Activation design -> Activation request -> Decision audit -> Implementation readiness -> Live activation hard-stop contract');

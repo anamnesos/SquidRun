@@ -1586,6 +1586,16 @@ export type MissionControlActivationPipelineEndToEndReadout = {
   hardStopRecorded: boolean;
   liveSendAvailable: false;
   realSendRequiresSeparateActivation: true;
+  demoPath: {
+    protocol: "mira.mission_control_activation_pipeline_demo_path.v0";
+    surface: "New Mira local workbench";
+    open: string;
+    read: string[];
+    means: string;
+    manualOnly: string;
+    nextBoundary: string;
+    noEffectSummary: string;
+  };
   noEffectSummary: string;
 };
 
@@ -3250,6 +3260,24 @@ function buildActivationPipelineEndToEndReadout(
     hardStopRecorded,
     liveSendAvailable: false,
     realSendRequiresSeparateActivation: true,
+    demoPath: {
+      protocol: "mira.mission_control_activation_pipeline_demo_path.v0",
+      surface: "New Mira local workbench",
+      open: "Open the local New Mira workbench and read the Mission Control activation pipeline status card.",
+      read: [
+        "Readout",
+        "Completed chain",
+        "What was proven",
+        "Manual-only",
+        "Readout boundary",
+      ],
+      means: status === "terminal_hard_stop"
+        ? "The demo shows Mission Control can explain a complete saved local coordination chain from artifacts, ending at a hard stop instead of pretending to send."
+        : "The demo shows the current saved Mission Control coordination chain and the next explicit manual workbench step.",
+      manualOnly: "This demo path only reads existing status/artifact evidence; it does not submit, send, execute, call a model/provider, flip routes, or access accounts/tokens.",
+      nextBoundary: nextBoundary.currentNextStep,
+      noEffectSummary: "Read-only demo path only; it explains where to look in the local workbench and what the saved status means without adding a write path or live action.",
+    },
     noEffectSummary: "Read-only Mission Control end-to-end readout only; it summarizes existing status/trace artifacts and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
   };
 }

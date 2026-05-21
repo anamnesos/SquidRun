@@ -1649,6 +1649,12 @@ function updateActivationPipelineStatus(payload) {
     appendPreviewLine(card, 'What was proven', endToEndReadout.provenSummary || 'No proof summary available.');
     appendPreviewLine(card, 'Manual-only', endToEndReadout.manualOnlySummary || 'No manual-only summary available.');
     appendPreviewLine(card, 'Readout boundary', endToEndReadout.nextBoundary || nextBoundary.currentNextStep || 'Live send is unavailable.');
+    const demoPath = endToEndReadout.demoPath && typeof endToEndReadout.demoPath === 'object' ? endToEndReadout.demoPath : null;
+    if (demoPath) {
+      appendPreviewLine(card, 'Demo path', `${demoPath.open || 'Open the local workbench status card'} Read: ${(demoPath.read || []).join(' / ') || 'status readout'}.`);
+      appendPreviewLine(card, 'Demo meaning', demoPath.means || 'This readout explains saved local Mission Control evidence.');
+      appendPreviewLine(card, 'Demo boundary', demoPath.manualOnly || demoPath.nextBoundary || 'Read-only demo path; no live action.');
+    }
   }
   appendPreviewLine(card, 'Current stage', current?.summary || 'No saved Mission Control send chain yet.');
   appendPreviewLine(card, 'Last saved', lastSaved ? `${lastSaved.label}: ${lastSaved.latestStatus || 'saved'}; token ${lastSaved.latestToken || 'not available'}` : 'No saved artifact yet.');
