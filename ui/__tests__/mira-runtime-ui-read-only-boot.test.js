@@ -3730,7 +3730,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 
-  test('answers what now from loaded Mission Control status summary without a turn POST', async () => {
+  test('shows the same status-backed what-now answer in the panel, status card, and typed reply', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
     const harness = createRuntimeBootHarness();
@@ -3741,12 +3741,20 @@ describe('Mira runtime UI boot', () => {
     await waitForBoot(harness.calls);
 
     await advanceMissionControlChainToHardStop(harness);
+    const statusCardText = harness.elements.routeActivationPipelineStatus.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(statusCardText).toContain('What now: Inspect the local status card as a completed Mission Control demo; the chain ends at a hard stop, not a live send.');
+    expect(statusCardText).toContain('What now meaning: The saved chain is complete as a read-only demo: 12/12 stages are available and the current artifact is Live activation hard-stop contract.');
+    expect(statusCardText).toContain("Inspect next: Read the status card's Readout, Current evidence, Trace path, Demo walkthrough, and Hard stop rows.");
+    expect(statusCardText).toContain('No live action: Live action is unavailable because this status projection is read-only and any real send requires a separate James-visible setup/activation lane.');
     expect(harness.elements.missionAnswer.textContent).toContain('What now: Inspect the local status card as a completed Mission Control demo; the chain ends at a hard stop, not a live send.');
     expect(harness.elements.missionAnswer.textContent).toContain('Meaning: The saved chain is complete as a read-only demo: 12/12 stages are available and the current artifact is Live activation hard-stop contract.');
     expect(harness.elements.missionAnswer.textContent).toContain("Inspect next: Read the status card's Readout, Current evidence, Trace path, Demo walkthrough, and Hard stop rows.");
     expect(harness.elements.missionAnswer.textContent).toContain('No live action: Live action is unavailable because this status projection is read-only and any real send requires a separate James-visible setup/activation lane.');
     expect(harness.elements.missionAnswer.textContent).toContain('Next boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
     expect((harness.elements.missionAnswer.textContent.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    const visiblePanelAnswer = harness.elements.missionAnswer.textContent;
 
     harness.elements.turnText.value = 'what now?';
     const submitEvent = { preventDefault: jest.fn() };
@@ -3764,6 +3772,7 @@ describe('Mira runtime UI boot', () => {
     expect(missionReply).toContain("Inspect next: Read the status card's Readout, Current evidence, Trace path, Demo walkthrough, and Hard stop rows.");
     expect(missionReply).toContain('No live action: Live action is unavailable because this status projection is read-only and any real send requires a separate James-visible setup/activation lane.');
     expect(missionReply).toContain('Next boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
+    expect(missionReply).toBe(visiblePanelAnswer);
     expect((missionReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
     expect(postCalls.every((call) => call.url !== '/turn')).toBe(true);
     expect(harness.elements.lastTurn.textContent).toBe('mission control local');
