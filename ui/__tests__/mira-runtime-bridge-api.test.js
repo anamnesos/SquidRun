@@ -386,10 +386,13 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/internal-route-requests'");
     expect(appJs).toContain("fetch('/mission-control/owned-work-continuations'");
     expect(appJs).toContain("fetch('/mission-control/follow-through-recommendations'");
+    expect(appJs).toContain("fetch('/mission-control/internal-delivery-previews'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
+    expect(appJs).toContain('Preview delivery packet');
     expect(indexHtml).toContain('id="routeFollowThroughList"');
+    expect(indexHtml).toContain('id="routeDeliveryPreviewList"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1110,6 +1113,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     const emptyContinuationPayload = await emptyContinuationResponse.json();
     const emptyRecommendationResponse = await fetch(`${baseUrl}/mission-control/follow-through-recommendations`);
     const emptyRecommendationPayload = await emptyRecommendationResponse.json();
+    const emptyDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`);
+    const emptyDeliveryPreviewPayload = await emptyDeliveryPreviewResponse.json();
     const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1194,6 +1199,27 @@ describe('Mira runtime bridge manual-plan API', () => {
       recommendationCount: 0,
       selectedRecommendation: null,
       recommendations: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(emptyDeliveryPreviewResponse.status).toBe(200);
+    expect(emptyDeliveryPreviewPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_delivery_preview_list.v0',
+      previewCount: 0,
+      previews: [],
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -1407,6 +1433,219 @@ describe('Mira runtime bridge manual-plan API', () => {
       liveHmSend: false,
     }));
     expect(followThroughPayload.recommendations.filter((recommendation) => recommendation.selected === true)).toHaveLength(1);
+    const deliveryPreviewDir = path.join(tempStateRoot, 'mission-control', 'internal-delivery-previews');
+    const missingDeliveryTokenResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingDeliveryTokenPayload = await missingDeliveryTokenResponse.json();
+    const rejectedRecommendationToken = rejectedRecommendation.actionToken;
+    const rejectedDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ recommendationToken: rejectedRecommendationToken }),
+    });
+    const rejectedDeliveryPreviewPayload = await rejectedDeliveryPreviewResponse.json();
+    const deliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        recommendationToken: followThroughPayload.selectedRecommendation.actionToken,
+      }),
+    });
+    const deliveryPreviewPayload = await deliveryPreviewResponse.json();
+    const duplicateDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        recommendationToken: followThroughPayload.selectedRecommendation.actionToken,
+      }),
+    });
+    const duplicateDeliveryPreviewPayload = await duplicateDeliveryPreviewResponse.json();
+    const listDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews?includeInternal=1`);
+    const listDeliveryPreviewPayload = await listDeliveryPreviewResponse.json();
+
+    expect(missingDeliveryTokenResponse.status).toBe(400);
+    expect(missingDeliveryTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_follow_through_recommendation_token_required',
+    }));
+    expect(rejectedDeliveryPreviewResponse.status).toBe(400);
+    expect(rejectedDeliveryPreviewPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_follow_through_recommendation_not_selected',
+    }));
+    expect(deliveryPreviewResponse.status).toBe(200);
+    expect(deliveryPreviewPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_delivery_preview_write.v0',
+      created: true,
+      stateRootPath: path.resolve(tempStateRoot),
+      relativePath: expect.stringMatching(/^mission-control\/internal-delivery-previews\/mission-delivery-preview-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(deliveryPreviewPayload.preview).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_delivery_preview.v0',
+      status: 'reviewed_preview_only',
+      sourceRecommendationId: followThroughPayload.selectedRecommendation.id,
+      sourceRecommendationToken: followThroughPayload.selectedRecommendation.actionToken,
+      sourceContinuationId: editContinuationPayload.continuation.id,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      purpose: 'benchmark review',
+      content: 'Edited internal continuation for Oracle review.',
+      nextTeamMove: 'Ask oracle to review the edit benchmark review continuation: Edited internal continuation for Oracle review.',
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(deliveryPreviewPayload.preview.deliveryPacket).toEqual({
+      protocol: 'mira.mission_control_internal_delivery_preview_packet.v0',
+      target: {
+        system: 'squidrun',
+        role: 'oracle',
+        paneId: '3',
+      },
+      body: {
+        content: 'Edited internal continuation for Oracle review.',
+      },
+    });
+    expect(deliveryPreviewPayload.preview.audit).toEqual(expect.objectContaining({
+      reviewStatus: 'preview_ready',
+      manualExecutionRequired: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(deliveryPreviewPayload.preview).not.toHaveProperty('command');
+    expect(deliveryPreviewPayload.preview).not.toHaveProperty('args');
+    expect(deliveryPreviewPayload.preview.deliveryPacket).not.toHaveProperty('command');
+    expect(deliveryPreviewPayload.preview.deliveryPacket).not.toHaveProperty('args');
+    const storedDeliveryPreview = JSON.parse(fs.readFileSync(deliveryPreviewPayload.absolutePath, 'utf8'));
+    expect(storedDeliveryPreview).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_delivery_preview.v0',
+      status: 'reviewed_preview_only',
+      sourceRecommendationToken: followThroughPayload.selectedRecommendation.actionToken,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedDeliveryPreview).not.toHaveProperty('command');
+    expect(storedDeliveryPreview).not.toHaveProperty('args');
+    expect(storedDeliveryPreview.deliveryPacket).not.toHaveProperty('command');
+    expect(storedDeliveryPreview.deliveryPacket).not.toHaveProperty('args');
+    expect(duplicateDeliveryPreviewResponse.status).toBe(200);
+    expect(duplicateDeliveryPreviewPayload.created).toBe(false);
+    expect(duplicateDeliveryPreviewPayload.relativePath).toBe(deliveryPreviewPayload.relativePath);
+    expect(listDeliveryPreviewResponse.status).toBe(200);
+    expect(listDeliveryPreviewPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_delivery_preview_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      previewCount: 1,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(listDeliveryPreviewPayload.previews[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-delivery-preview-/),
+      relativePath: deliveryPreviewPayload.relativePath,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    for (const input of [
+      { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, telegramSend: true },
+      { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, audit: { providerInvoked: true } },
+      { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, deliveryPacket: { body: { liveHmSend: true } } },
+    ]) {
+      const blockedDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedDeliveryPreviewPayload = await blockedDeliveryPreviewResponse.json();
+      expect(blockedDeliveryPreviewResponse.status).toBe(400);
+      expect(blockedDeliveryPreviewPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_delivery_preview_has_live_effect',
+      }));
+      expect(fs.readdirSync(deliveryPreviewDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    for (const input of [
+      { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, command: { executable: process.execPath } },
+      { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, packet: { args: ['hm-send', 'oracle'] } },
+      { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, deliveryPacket: { body: { command: 'hm-send oracle' } } },
+    ]) {
+      const blockedCommandDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandDeliveryPreviewPayload = await blockedCommandDeliveryPreviewResponse.json();
+      expect(blockedCommandDeliveryPreviewResponse.status).toBe(400);
+      expect(blockedCommandDeliveryPreviewPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_delivery_preview_command_not_allowed',
+      }));
+      expect(fs.readdirSync(deliveryPreviewDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
     for (const input of [
       { requestToken: createRequestPayload.request.actionToken, decision: 'approve', telegramSend: true },
       { requestToken: createRequestPayload.request.actionToken, decision: 'approve', audit: { accountOrTokenAccess: true } },

@@ -16,6 +16,7 @@ const state = {
   missionControlRouteRequestCount: 0,
   missionControlContinuationCount: 0,
   missionControlFollowThroughCount: 0,
+  missionControlDeliveryPreviewCount: 0,
   selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -47,6 +48,7 @@ const elements = {
   routeContinuationPanel: document.getElementById('routeContinuationPanel'),
   routeContinuationList: document.getElementById('routeContinuationList'),
   routeFollowThroughList: document.getElementById('routeFollowThroughList'),
+  routeDeliveryPreviewList: document.getElementById('routeDeliveryPreviewList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -379,7 +381,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -783,6 +785,7 @@ function updateRoutePreviewHistoryList(payload) {
         await refreshRouteRequests();
         await refreshRouteContinuations();
         await refreshRouteFollowThroughRecommendations();
+        await refreshRouteDeliveryPreviews();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -884,6 +887,7 @@ function renderRouteContinuationPanel(request) {
         appendMessage('mira', `${payload.continuation.decision} continuation metadata saved locally. Nothing was sent or executed.`);
         await refreshRouteContinuations();
         await refreshRouteFollowThroughRecommendations();
+        await refreshRouteDeliveryPreviews();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
       } finally {
@@ -950,6 +954,52 @@ function updateRouteFollowThroughList(payload) {
     appendPreviewLine(card, 'Source continuation', `${recommendation.sourceContinuationDecision || 'review'} · ${String(recommendation.sourceContinuationStatus || '').replace(/_/g, ' ')}`);
     appendPreviewLine(card, 'Reason', recommendation.selectorReason);
     appendPreviewLine(card, 'Audit', 'recommendation only; no command stored, runtime execution, external send, route flip, provider, account or token access, Telegram, or live hm-send.');
+    if (recommendation.selected === true) {
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'subtle-button';
+      action.textContent = 'Preview delivery packet';
+      action.addEventListener('click', async () => {
+        action.disabled = true;
+        action.textContent = 'Previewing';
+        try {
+          await createInternalDeliveryPreview(recommendation);
+          action.textContent = 'Preview saved';
+          appendMessage('mira', 'Internal delivery preview saved locally. Nothing was sent or executed.');
+          await refreshRouteDeliveryPreviews();
+        } catch (error) {
+          appendMessage('mira', error.message, 'error');
+          action.disabled = false;
+          action.textContent = 'Preview delivery packet';
+        }
+      });
+      card.append(action);
+    }
+    return card;
+  }));
+}
+
+function updateRouteDeliveryPreviewList(payload) {
+  const previews = Array.isArray(payload?.previews) ? payload.previews : [];
+  state.missionControlDeliveryPreviewCount = Number(payload?.previewCount || previews.length || 0);
+  renderWorkSummary();
+  if (previews.length === 0) {
+    setText(elements.routeDeliveryPreviewList, 'no internal delivery previews yet');
+    return;
+  }
+
+  elements.routeDeliveryPreviewList.replaceChildren(...previews.slice(0, 5).map((preview) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-delivery-preview';
+    const title = document.createElement('strong');
+    title.textContent = `${preview.targetRole || 'team'} · delivery preview`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(preview.status || 'reviewed_preview_only').replace(/_/g, ' ')} · preview/audit only · manual execution required · not sent · ${formatReadyStamp(preview.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Pane target', `${preview.targetRole || 'team'} pane ${preview.targetPaneId || '?'}`);
+    appendPreviewLine(card, 'Body', preview.deliveryPacket?.body?.content || preview.contentPreview || preview.content);
+    appendPreviewLine(card, 'Next move', preview.nextTeamMove);
+    appendPreviewLine(card, 'Audit', 'preview packet only; no command stored, runtime execution, external send, route flip, provider/model call, account or token access, Telegram, or live hm-send.');
     return card;
   }));
 }
@@ -1230,6 +1280,13 @@ async function refreshRouteFollowThroughRecommendations() {
   updateRouteFollowThroughList(payload);
 }
 
+async function refreshRouteDeliveryPreviews() {
+  const response = await fetch('/mission-control/internal-delivery-previews');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateRouteDeliveryPreviewList(payload);
+}
+
 async function refreshAutonomy() {
   const response = await fetch('/autonomy/status');
   const payload = await response.json();
@@ -1461,6 +1518,21 @@ async function createOwnedWorkContinuation(input) {
   return payload;
 }
 
+async function createInternalDeliveryPreview(recommendation) {
+  const response = await fetch('/mission-control/internal-delivery-previews', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      recommendationToken: recommendation?.actionToken || '',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control delivery preview save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1543,6 +1615,7 @@ async function primeReadOnlyWorkbench() {
     await refreshRouteRequests();
     await refreshRouteContinuations();
     await refreshRouteFollowThroughRecommendations();
+    await refreshRouteDeliveryPreviews();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1568,6 +1641,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshRouteRequests();
     await refreshRouteContinuations();
     await refreshRouteFollowThroughRecommendations();
+    await refreshRouteDeliveryPreviews();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1656,6 +1730,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     await refreshRouteRequests();
     await refreshRouteContinuations();
     await refreshRouteFollowThroughRecommendations();
+    await refreshRouteDeliveryPreviews();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {

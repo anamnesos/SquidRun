@@ -264,6 +264,7 @@ export type MissionControlFollowThroughRecommendationStatus =
 export type MissionControlFollowThroughRecommendation = {
   protocol: "mira.mission_control_follow_through_recommendation.v0";
   id: string;
+  actionToken: string;
   status: MissionControlFollowThroughRecommendationStatus;
   selected: boolean;
   createdAt: string;
@@ -320,6 +321,116 @@ export type MissionControlFollowThroughRecommendationListResult = {
   liveHmSend: false;
 };
 
+export type MissionControlInternalDeliveryPreviewRecord = {
+  protocol: "mira.mission_control_internal_delivery_preview.v0";
+  id: string;
+  status: "reviewed_preview_only";
+  createdAt: string;
+  sourceRecommendationId: string;
+  sourceRecommendationToken: string;
+  sourceContinuationId: string;
+  sourceContinuationToken: string;
+  sourceRequestId: string;
+  sourceRequestToken: string;
+  sourcePreviewId: string;
+  targetRole: "architect" | "builder" | "oracle";
+  targetPaneId: "1" | "2" | "3";
+  purpose: string;
+  content: string;
+  contentPreview: string;
+  nextTeamMove: string;
+  selectorReason: string;
+  deliveryPacket: {
+    protocol: "mira.mission_control_internal_delivery_preview_packet.v0";
+    target: {
+      system: "squidrun";
+      role: "architect" | "builder" | "oracle";
+      paneId: "1" | "2" | "3";
+    };
+    body: {
+      content: string;
+    };
+  };
+  audit: {
+    reviewStatus: "preview_ready";
+    manualExecutionRequired: true;
+    notSent: true;
+    commandStored: false;
+    sendPerformed: false;
+    runtimeExecutes: false;
+    externalSend: false;
+    telegramSend: false;
+    routeFlip: false;
+    providerInvoked: false;
+    accountOrTokenAccess: false;
+    liveHmSend: false;
+  };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlInternalDeliveryPreviewWriteResult = {
+  ok: true;
+  protocol: "mira.mission_control_internal_delivery_preview_write.v0";
+  created: boolean;
+  stateRootPath: string;
+  relativePath: string;
+  absolutePath: string;
+  preview: MissionControlInternalDeliveryPreviewRecord & { actionToken: string };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlInternalDeliveryPreviewListResult = {
+  ok: true;
+  protocol: "mira.mission_control_internal_delivery_preview_list.v0";
+  stateRootPath: string | null;
+  previewCount: number;
+  previews: Array<MissionControlInternalDeliveryPreviewRecord & {
+    actionToken: string;
+    relativePath?: string;
+    absolutePath?: string;
+  }>;
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
 const allowedRoles = new Set(["architect", "builder", "oracle"]);
 
 function isInside(rootPath: string, candidatePath: string): boolean {
@@ -337,6 +448,10 @@ function routeRequestsDir(rootPath: string): string {
 
 function continuationsDir(rootPath: string): string {
   return path.resolve(rootPath, "mission-control", "owned-work-continuations");
+}
+
+function deliveryPreviewsDir(rootPath: string): string {
+  return path.resolve(rootPath, "mission-control", "internal-delivery-previews");
 }
 
 function asObject(value: unknown, label: string): JsonObject {
@@ -396,6 +511,14 @@ function rejectContinuationLiveEffect(value: unknown, label: string): void {
   if (value === true) {
     throw Object.assign(new Error(`${label} cannot be true for an owned-work continuation.`), {
       code: "mission_control_continuation_has_live_effect",
+    });
+  }
+}
+
+function rejectDeliveryPreviewLiveEffect(value: unknown, label: string): void {
+  if (value === true) {
+    throw Object.assign(new Error(`${label} cannot be true for an internal delivery preview.`), {
+      code: "mission_control_delivery_preview_has_live_effect",
     });
   }
 }
@@ -460,6 +583,14 @@ function buildFollowThroughRecommendationId(id: string): string {
   return `mission-follow-through-${crypto.createHash("sha256").update(`mira.mission_control_follow_through_recommendation.v0:${id}`).digest("hex").slice(0, 24)}`;
 }
 
+function buildFollowThroughRecommendationActionToken(id: string): string {
+  return `mission-follow-through-${crypto.createHash("sha256").update(`mira.mission_control_follow_through_recommendation.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
+function buildDeliveryPreviewActionToken(id: string): string {
+  return `mission-delivery-preview-${crypto.createHash("sha256").update(`mira.mission_control_internal_delivery_preview.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
 function toPublicRecord(record: MissionControlRoutePreviewRecord): MissionControlRoutePreviewRecord & { actionToken: string } {
   return {
     ...record,
@@ -478,6 +609,13 @@ function toPublicContinuation(record: MissionControlOwnedWorkContinuationRecord)
   return {
     ...record,
     actionToken: buildOwnedWorkContinuationActionToken(record.id),
+  };
+}
+
+function toPublicDeliveryPreview(record: MissionControlInternalDeliveryPreviewRecord): MissionControlInternalDeliveryPreviewRecord & { actionToken: string } {
+  return {
+    ...record,
+    actionToken: buildDeliveryPreviewActionToken(record.id),
   };
 }
 
@@ -551,6 +689,31 @@ function parseContinuationRecord(value: string): MissionControlOwnedWorkContinua
     if (!allowedRoles.has(String(parsed.targetRole))) return null;
     if ("command" in parsed || "args" in parsed) return null;
     return parsed as MissionControlOwnedWorkContinuationRecord;
+  } catch {
+    return null;
+  }
+}
+
+function parseDeliveryPreviewRecord(value: string): MissionControlInternalDeliveryPreviewRecord | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<MissionControlInternalDeliveryPreviewRecord>;
+    if (parsed.protocol !== "mira.mission_control_internal_delivery_preview.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "reviewed_preview_only") return null;
+    if (parsed.manualExecutionRequired !== true || parsed.reviewRequired !== true || parsed.internalOnly !== true) return null;
+    if (parsed.reviewableOwnedWork !== true || parsed.notSent !== true || parsed.commandStored !== false) return null;
+    if (
+      parsed.sendPerformed !== false
+      || parsed.runtimeExecutes !== false
+      || parsed.externalSend !== false
+      || parsed.telegramSend !== false
+      || parsed.routeFlip !== false
+      || parsed.providerInvoked !== false
+      || parsed.accountOrTokenAccess !== false
+      || parsed.liveHmSend !== false
+    ) return null;
+    if (!allowedRoles.has(String(parsed.targetRole))) return null;
+    if ("command" in parsed || "args" in parsed) return null;
+    return parsed as MissionControlInternalDeliveryPreviewRecord;
   } catch {
     return null;
   }
@@ -680,6 +843,20 @@ function readContinuationRecords(rootPath: string): MissionControlOwnedWorkConti
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 }
 
+function readDeliveryPreviewRecords(rootPath: string): MissionControlInternalDeliveryPreviewRecord[] {
+  const dir = deliveryPreviewsDir(rootPath);
+  if (!isInside(rootPath, dir) || !fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(dir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseDeliveryPreviewRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is MissionControlInternalDeliveryPreviewRecord => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
 function resolvePreviewRecord(input: { previewToken?: unknown }, rootPath: string): MissionControlRoutePreviewRecord {
   const previewToken = optionalPreview(input.previewToken, 200);
   if (!previewToken) {
@@ -773,6 +950,43 @@ function rejectContinuationInput(input: JsonObject): void {
   }
 }
 
+function rejectDeliveryPreviewInput(input: JsonObject): void {
+  const audit = optionalObject(input.audit);
+  const plan = optionalObject(input.plan);
+  const packet = optionalObject(input.packet);
+  const deliveryPacket = optionalObject(input.deliveryPacket);
+  const deliveryPacketTarget = optionalObject(deliveryPacket?.target);
+  const deliveryPacketBody = optionalObject(deliveryPacket?.body);
+  for (const [containerLabel, container] of [
+    ["preview", input],
+    ["audit", audit],
+    ["plan", plan],
+    ["packet", packet],
+    ["deliveryPacket", deliveryPacket],
+    ["deliveryPacket.target", deliveryPacketTarget],
+    ["deliveryPacket.body", deliveryPacketBody],
+  ] as const) {
+    if (!container) continue;
+    if ("command" in container || "args" in container) {
+      throw Object.assign(new Error(`Mission Control delivery previews do not accept command or args fields in ${containerLabel}.`), {
+        code: "mission_control_delivery_preview_command_not_allowed",
+      });
+    }
+    for (const flag of [
+      "sendPerformed",
+      "runtimeExecutes",
+      "externalSend",
+      "telegramSend",
+      "routeFlip",
+      "providerInvoked",
+      "accountOrTokenAccess",
+      "liveHmSend",
+    ]) {
+      rejectDeliveryPreviewLiveEffect(container[flag], `${containerLabel}.${flag}`);
+    }
+  }
+}
+
 function resolveRouteRequest(input: { requestToken?: unknown }, rootPath: string): MissionControlInternalRouteRequestRecord {
   const requestToken = optionalPreview(input.requestToken, 220);
   if (!requestToken) {
@@ -841,6 +1055,7 @@ function buildFollowThroughRecommendation(
   selectedContinuationId: string | null,
 ): MissionControlFollowThroughRecommendation {
   const selected = continuation.id === selectedContinuationId;
+  const id = buildFollowThroughRecommendationId(continuation.id);
   const contentPreview = continuation.contentPreview || continuation.content;
   const target = continuation.targetRole;
   const purpose = continuation.purpose || "coordination";
@@ -855,7 +1070,8 @@ function buildFollowThroughRecommendation(
 
   return {
     protocol: "mira.mission_control_follow_through_recommendation.v0",
-    id: buildFollowThroughRecommendationId(continuation.id),
+    id,
+    actionToken: buildFollowThroughRecommendationActionToken(id),
     status: continuation.decision === "reject"
       ? "not_recommended"
       : selected
@@ -909,6 +1125,108 @@ function selectFollowThroughContinuation(records: MissionControlOwnedWorkContinu
       return continuationSelectionRank(right) - continuationSelectionRank(left);
     });
   return eligible[0] || null;
+}
+
+function resolveSelectedRecommendation(
+  input: { recommendationToken?: unknown },
+  rootPath: string,
+): {
+  recommendation: MissionControlFollowThroughRecommendation;
+  continuation: MissionControlOwnedWorkContinuationRecord;
+} {
+  const recommendationToken = optionalPreview(input.recommendationToken, 260);
+  if (!recommendationToken) {
+    throw Object.assign(new Error("Selected Mission Control follow-through recommendation token is required."), {
+      code: "mission_control_follow_through_recommendation_token_required",
+    });
+  }
+  const continuations = readContinuationRecords(rootPath);
+  const selectedContinuation = selectFollowThroughContinuation(continuations);
+  if (!selectedContinuation) {
+    throw Object.assign(new Error("No selected Mission Control follow-through recommendation is available."), {
+      code: "mission_control_follow_through_recommendation_not_found",
+    });
+  }
+  const selectedRecommendation = buildFollowThroughRecommendation(selectedContinuation, selectedContinuation.id);
+  if (selectedRecommendation.actionToken !== recommendationToken) {
+    throw Object.assign(new Error("Only the selected Mission Control follow-through recommendation can become a delivery preview."), {
+      code: "mission_control_follow_through_recommendation_not_selected",
+    });
+  }
+  return {
+    recommendation: selectedRecommendation,
+    continuation: selectedContinuation,
+  };
+}
+
+function deliveryPreviewFromRecommendation(
+  recommendation: MissionControlFollowThroughRecommendation,
+  continuation: MissionControlOwnedWorkContinuationRecord,
+): MissionControlInternalDeliveryPreviewRecord {
+  const id = `mission-delivery-preview-${crypto.createHash("sha256")
+    .update(`mira.mission_control_internal_delivery_preview.v0:${recommendation.id}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+  const content = continuation.content;
+  return {
+    protocol: "mira.mission_control_internal_delivery_preview.v0",
+    id,
+    status: "reviewed_preview_only",
+    createdAt: new Date().toISOString(),
+    sourceRecommendationId: recommendation.id,
+    sourceRecommendationToken: recommendation.actionToken,
+    sourceContinuationId: continuation.id,
+    sourceContinuationToken: buildOwnedWorkContinuationActionToken(continuation.id),
+    sourceRequestId: continuation.sourceRequestId,
+    sourceRequestToken: continuation.sourceRequestToken,
+    sourcePreviewId: continuation.sourcePreviewId,
+    targetRole: recommendation.targetRole,
+    targetPaneId: recommendation.targetPaneId,
+    purpose: recommendation.purpose,
+    content,
+    contentPreview: content.length > 260 ? `${content.slice(0, 259)}...` : content,
+    nextTeamMove: recommendation.nextTeamMove,
+    selectorReason: recommendation.selectorReason,
+    deliveryPacket: {
+      protocol: "mira.mission_control_internal_delivery_preview_packet.v0",
+      target: {
+        system: "squidrun",
+        role: recommendation.targetRole,
+        paneId: recommendation.targetPaneId,
+      },
+      body: {
+        content,
+      },
+    },
+    audit: {
+      reviewStatus: "preview_ready",
+      manualExecutionRequired: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
 }
 
 export function createMissionControlRoutePreviewRecord(
@@ -1243,6 +1561,76 @@ export function createMissionControlOwnedWorkContinuation(
   };
 }
 
+export function createMissionControlInternalDeliveryPreview(
+  input: { recommendationToken?: unknown } & JsonObject,
+  env: NodeJS.ProcessEnv = process.env,
+): MissionControlInternalDeliveryPreviewWriteResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before Mission Control delivery previews can be saved."), {
+      code: "state_root_not_ready",
+    });
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  rejectDeliveryPreviewInput(input);
+  const { recommendation, continuation } = resolveSelectedRecommendation(input, rootPath);
+  const dir = deliveryPreviewsDir(rootPath);
+  if (!isInside(rootPath, dir)) {
+    throw Object.assign(new Error("Mission Control delivery preview destination escaped Mira state root."), {
+      code: "unsafe_mission_control_delivery_preview_path",
+    });
+  }
+
+  const record = deliveryPreviewFromRecommendation(recommendation, continuation);
+  const absolutePath = path.resolve(dir, `${record.id}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Mission Control delivery preview file escaped Mira state root."), {
+      code: "unsafe_mission_control_delivery_preview_path",
+    });
+  }
+
+  fs.mkdirSync(dir, { recursive: true });
+  let created = false;
+  let stored = record;
+  if (fs.existsSync(absolutePath)) {
+    const parsed = parseDeliveryPreviewRecord(fs.readFileSync(absolutePath, "utf8"));
+    if (parsed) stored = parsed;
+  } else {
+    const handle = fs.openSync(absolutePath, "wx");
+    try {
+      fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      created = true;
+    } finally {
+      fs.closeSync(handle);
+    }
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_internal_delivery_preview_write.v0",
+    created,
+    stateRootPath: rootPath,
+    relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+    absolutePath,
+    preview: toPublicDeliveryPreview(stored),
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
 export function listMissionControlOwnedWorkContinuations(
   env: NodeJS.ProcessEnv = process.env,
   options: { includeInternal?: boolean } = {},
@@ -1290,6 +1678,70 @@ export function listMissionControlOwnedWorkContinuations(
     stateRootPath: options.includeInternal ? rootPath : null,
     continuationCount: continuations.length,
     continuations,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function listMissionControlInternalDeliveryPreviews(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { includeInternal?: boolean } = {},
+): MissionControlInternalDeliveryPreviewListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.mission_control_internal_delivery_preview_list.v0",
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
+      previewCount: 0,
+      previews: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    };
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  const previews = readDeliveryPreviewRecords(rootPath).map((record) => {
+    const publicRecord = toPublicDeliveryPreview(record);
+    if (!options.includeInternal) return publicRecord;
+    const absolutePath = path.resolve(deliveryPreviewsDir(rootPath), `${record.id}.json`);
+    return {
+      ...publicRecord,
+      relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+      absolutePath,
+    };
+  });
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_internal_delivery_preview_list.v0",
+    stateRootPath: options.includeInternal ? rootPath : null,
+    previewCount: previews.length,
+    previews,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,
