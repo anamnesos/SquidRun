@@ -1614,6 +1614,7 @@ function updateActivationPipelineStatus(payload) {
   const selection = payload?.advanceSelection && typeof payload.advanceSelection === 'object' ? payload.advanceSelection : null;
   const preflight = payload?.manualActionPreflight && typeof payload.manualActionPreflight === 'object' ? payload.manualActionPreflight : null;
   const payloadPreview = payload?.payloadPreview && typeof payload.payloadPreview === 'object' ? payload.payloadPreview : null;
+  const endToEndReadout = payload?.endToEndReadout && typeof payload.endToEndReadout === 'object' ? payload.endToEndReadout : null;
   const traceEntries = Array.isArray(trace?.entries) ? trace.entries : [];
   const currentTrace = traceEntries.find((entry) => entry?.stageId === payload?.currentStageId)
     || traceEntries[traceEntries.length - 1]
@@ -1642,6 +1643,13 @@ function updateActivationPipelineStatus(payload) {
   card.append(title, meta);
   const selectorSummary = buildManualActionSelectorSummary(preflight, payloadPreview, state.missionControlActionFocus);
   appendManualActionStepHeader(card, selectorSummary);
+  if (endToEndReadout) {
+    appendPreviewLine(card, 'Readout', endToEndReadout.headline || 'Mission Control chain readout unavailable.');
+    appendPreviewLine(card, 'Completed chain', endToEndReadout.completedChainSummary || 'No chain summary available.');
+    appendPreviewLine(card, 'What was proven', endToEndReadout.provenSummary || 'No proof summary available.');
+    appendPreviewLine(card, 'Manual-only', endToEndReadout.manualOnlySummary || 'No manual-only summary available.');
+    appendPreviewLine(card, 'Readout boundary', endToEndReadout.nextBoundary || nextBoundary.currentNextStep || 'Live send is unavailable.');
+  }
   appendPreviewLine(card, 'Current stage', current?.summary || 'No saved Mission Control send chain yet.');
   appendPreviewLine(card, 'Last saved', lastSaved ? `${lastSaved.label}: ${lastSaved.latestStatus || 'saved'}; token ${lastSaved.latestToken || 'not available'}` : 'No saved artifact yet.');
   appendPreviewLine(card, 'Hard stop', `live send available: no; hard-stop contract: ${hardStop.hardStopContractRecorded === true ? 'yes' : 'no'}; James setup before live send: ${hardStop.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}`);

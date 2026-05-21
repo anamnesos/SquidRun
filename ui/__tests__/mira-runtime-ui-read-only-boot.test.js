@@ -671,6 +671,17 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       : selectionStatus === 'advance_available'
         ? `${selectedStage.label} is the latest available stage before the first missing stage, ${nextStage.label}.`
         : 'No saved Mission Control route preview exists yet, so there is no artifact to advance.';
+    const missingStageLabels = stages.filter((stage) => stage.status === 'missing').map((stage) => stage.label);
+    const readoutStatus = hardStopContractRecorded
+      ? 'terminal_hard_stop'
+      : currentStage
+        ? 'in_progress'
+        : 'empty';
+    const readoutHeadline = readoutStatus === 'terminal_hard_stop'
+      ? 'Mission Control send chain is complete to the hard stop; live send is unavailable.'
+      : readoutStatus === 'in_progress'
+        ? `Mission Control send chain is at ${currentStage.label}; the next step remains manual-only.`
+        : 'Mission Control send chain has no saved artifact yet.';
     const stageNext = (stageId) => {
       const index = activationStageDefinitions.findIndex(([id]) => id === stageId);
       const next = index >= 0 ? activationStageDefinitions[index + 1] : null;
@@ -1000,6 +1011,39 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
           noEffectSummary: 'Read-only payload preview only; it validates the existing workbench action payload shape and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
         };
       })(),
+      endToEndReadout: {
+        protocol: 'mira.mission_control_activation_pipeline_end_to_end_readout.v0',
+        status: readoutStatus,
+        headline: readoutHeadline,
+        completedChainSummary: missingStageLabels.length === 0
+          ? `${availableStages.length}/${stages.length} stages have saved or derived local evidence.`
+          : `${availableStages.length}/${stages.length} stages have saved or derived local evidence; missing ${missingStageLabels.join(', ')}.`,
+        currentHardStopTruth: `liveSendAvailable:false; hardStopRecorded:${hardStopContractRecorded}; jamesSetupRequiredBeforeLiveSend:true.`,
+        provenSummary: readoutStatus === 'terminal_hard_stop'
+          ? 'Saved local evidence covers route preview through live activation hard-stop contract; the status refresh is read-only and no next artifact is available.'
+          : currentStage
+            ? `Saved local evidence currently reaches ${currentStage.label}; the next workbench action is ${selectionStatus === 'advance_available' ? 'ready' : 'not ready'}.`
+            : 'No saved chain evidence exists yet.',
+        manualOnlySummary: readoutStatus === 'terminal_hard_stop'
+          ? 'All advancement before the hard stop used explicit workbench actions; this readout has no submit, send, execution, provider, route, account, or token path.'
+          : selectionStatus === 'advance_available'
+            ? 'The next existing workbench action remains manual-only; this readout only explains it.'
+            : 'No manual advancement is ready from this readout.',
+        nextBoundary: hardStopContractRecorded
+          ? 'The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.'
+          : 'Next inspectable step is local review; live send is still unavailable.',
+        currentStageId: currentStage?.id || null,
+        currentStageLabel: currentStage?.label || 'No Mission Control send chain yet',
+        currentArtifactToken: currentStage?.latestToken || null,
+        currentRelativePath: currentStage?.relativePath || null,
+        stageCount: stages.length,
+        availableStageCount: availableStages.length,
+        missingStageLabels,
+        hardStopRecorded: hardStopContractRecorded,
+        liveSendAvailable: false,
+        realSendRequiresSeparateActivation: true,
+        noEffectSummary: 'Read-only Mission Control end-to-end readout only; it summarizes existing status/trace artifacts and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.',
+      },
       hardStopTruth: {
         liveSendAvailable: false,
         liveActivationAllowed: false,
@@ -3465,6 +3509,11 @@ describe('Mira runtime UI boot', () => {
     expect(pipelineStatusText).toContain('Live activation hard-stop contract · read only · not sent');
     expect(pipelineStatusText).toContain('Current stage: Live activation hard-stop contract: live activation gate hard stop; token mission-send-live-gate-test.');
     expect(pipelineStatusText).toContain('Last saved: Live activation hard-stop contract: live_activation_gate_hard_stop; token mission-send-live-gate-test');
+    expect(pipelineStatusText).toContain('Readout: Mission Control send chain is complete to the hard stop; live send is unavailable.');
+    expect(pipelineStatusText).toContain('Completed chain: 12/12 stages have saved or derived local evidence.');
+    expect(pipelineStatusText).toContain('What was proven: Saved local evidence covers route preview through live activation hard-stop contract; the status refresh is read-only and no next artifact is available.');
+    expect(pipelineStatusText).toContain('Manual-only: All advancement before the hard stop used explicit workbench actions; this readout has no submit, send, execution, provider, route, account, or token path.');
+    expect(pipelineStatusText).toContain('Readout boundary: The chain is at the hard-stop contract. Live send is unavailable; future real send would require a separate James-visible setup/activation lane.');
     expect(pipelineStatusText).toContain('Hard stop: live send available: no; hard-stop contract: yes; James setup before live send: yes');
     expect(pipelineStatusText).toContain('Future real send would require a separate James-visible setup/activation lane.');
     expect(pipelineStatusText).toContain('Trace path: Route preview -> Review item -> Owned-work continuation -> Follow-through recommendation -> Delivery preview -> Dispatch readiness -> Internal-send dry run -> Activation design -> Activation request -> Decision audit -> Implementation readiness -> Live activation hard-stop contract');

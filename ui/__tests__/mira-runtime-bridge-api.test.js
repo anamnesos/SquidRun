@@ -4323,6 +4323,27 @@ describe('Mira runtime bridge manual-plan API', () => {
       separateActivationLaneRequired: true,
     }));
     expect(pipelineStatusPayload.nextBoundary.currentNextStep).toContain('hard-stop contract');
+    expect(pipelineStatusPayload.endToEndReadout).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_activation_pipeline_end_to_end_readout.v0',
+      status: 'terminal_hard_stop',
+      headline: 'Mission Control send chain is complete to the hard stop; live send is unavailable.',
+      completedChainSummary: '12/12 stages have saved or derived local evidence.',
+      currentHardStopTruth: 'liveSendAvailable:false; hardStopRecorded:true; jamesSetupRequiredBeforeLiveSend:true.',
+      currentStageId: 'live_activation_gate_contract',
+      currentStageLabel: 'Live activation hard-stop contract',
+      currentArtifactToken: liveGatePayload.contract.actionToken,
+      currentRelativePath: liveGatePayload.relativePath,
+      stageCount: 12,
+      availableStageCount: 12,
+      missingStageLabels: [],
+      hardStopRecorded: true,
+      liveSendAvailable: false,
+      realSendRequiresSeparateActivation: true,
+    }));
+    expect(pipelineStatusPayload.endToEndReadout.provenSummary).toContain('Saved local evidence covers route preview through live activation hard-stop contract');
+    expect(pipelineStatusPayload.endToEndReadout.manualOnlySummary).toContain('explicit workbench actions');
+    expect(pipelineStatusPayload.endToEndReadout.nextBoundary).toContain('future real send would require a separate James-visible setup/activation lane');
+    expect(pipelineStatusPayload.endToEndReadout.noEffectSummary).toContain('does not persist, submit, execute, send');
     expect(pipelineStatusPayload.advanceSelection).toEqual(expect.objectContaining({
       protocol: 'mira.mission_control_activation_pipeline_advance_selection.v0',
       status: 'hard_stop_reached',

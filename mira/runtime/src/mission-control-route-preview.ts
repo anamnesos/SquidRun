@@ -1567,6 +1567,28 @@ export type MissionControlActivationPipelinePayloadPreview = {
   noEffectSummary: string;
 };
 
+export type MissionControlActivationPipelineEndToEndReadout = {
+  protocol: "mira.mission_control_activation_pipeline_end_to_end_readout.v0";
+  status: "empty" | "in_progress" | "terminal_hard_stop";
+  headline: string;
+  completedChainSummary: string;
+  currentHardStopTruth: string;
+  provenSummary: string;
+  manualOnlySummary: string;
+  nextBoundary: string;
+  currentStageId: MissionControlActivationPipelineStageId | null;
+  currentStageLabel: string;
+  currentArtifactToken: string | null;
+  currentRelativePath: string | null;
+  stageCount: number;
+  availableStageCount: number;
+  missingStageLabels: string[];
+  hardStopRecorded: boolean;
+  liveSendAvailable: false;
+  realSendRequiresSeparateActivation: true;
+  noEffectSummary: string;
+};
+
 export type MissionControlActivationPipelineStatusResult = {
   ok: true;
   protocol: "mira.mission_control_activation_pipeline_status.v0";
@@ -1581,6 +1603,7 @@ export type MissionControlActivationPipelineStatusResult = {
   advanceSelection: MissionControlActivationPipelineAdvanceSelection;
   manualActionPreflight: MissionControlActivationPipelineManualActionPreflight;
   payloadPreview: MissionControlActivationPipelinePayloadPreview;
+  endToEndReadout: MissionControlActivationPipelineEndToEndReadout;
   hardStopTruth: {
     liveSendAvailable: false;
     liveActivationAllowed: false;
@@ -3170,6 +3193,64 @@ function buildActivationPipelinePayloadPreview(
       },
     ],
     noEffectSummary: "Read-only payload preview only; it validates the existing workbench action payload shape and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
+  };
+}
+
+function buildActivationPipelineEndToEndReadout(
+  stages: MissionControlActivationPipelineStage[],
+  currentStage: MissionControlActivationPipelineStage | null,
+  hardStopTruth: MissionControlActivationPipelineStatusResult["hardStopTruth"],
+  nextBoundary: MissionControlActivationPipelineStatusResult["nextBoundary"],
+  manualActionPreflight: MissionControlActivationPipelineManualActionPreflight,
+): MissionControlActivationPipelineEndToEndReadout {
+  const availableStages = stages.filter((stage) => stage.status !== "missing");
+  const missingStageLabels = stages.filter((stage) => stage.status === "missing").map((stage) => stage.label);
+  const hardStopRecorded = hardStopTruth.hardStopContractRecorded === true;
+  const status: MissionControlActivationPipelineEndToEndReadout["status"] = hardStopRecorded
+    ? "terminal_hard_stop"
+    : currentStage
+      ? "in_progress"
+      : "empty";
+  const headline = status === "terminal_hard_stop"
+    ? "Mission Control send chain is complete to the hard stop; live send is unavailable."
+    : status === "in_progress"
+      ? `Mission Control send chain is at ${currentStage?.label || "an in-progress stage"}; the next step remains manual-only.`
+      : "Mission Control send chain has no saved artifact yet.";
+  const completedChainSummary = missingStageLabels.length === 0
+    ? `${availableStages.length}/${stages.length} stages have saved or derived local evidence.`
+    : `${availableStages.length}/${stages.length} stages have saved or derived local evidence; missing ${missingStageLabels.join(", ")}.`;
+  const provenSummary = status === "terminal_hard_stop"
+    ? "Saved local evidence covers route preview through live activation hard-stop contract; the status refresh is read-only and no next artifact is available."
+    : currentStage
+      ? `Saved local evidence currently reaches ${currentStage.label}; the next workbench action is ${manualActionPreflight.manualActionLabel || "not ready"}.`
+      : "No saved chain evidence exists yet.";
+  const manualOnlySummary = status === "terminal_hard_stop"
+    ? "All advancement before the hard stop used explicit workbench actions; this readout has no submit, send, execution, provider, route, account, or token path."
+    : manualActionPreflight.status === "ready"
+      ? `${manualActionPreflight.manualActionLabel} remains an explicit workbench action; this readout only explains it.`
+      : "No manual advancement is ready from this readout.";
+  const currentHardStopTruth = `liveSendAvailable:${hardStopTruth.liveSendAvailable}; hardStopRecorded:${hardStopRecorded}; jamesSetupRequiredBeforeLiveSend:${hardStopTruth.jamesSetupRequiredBeforeLiveSend}.`;
+
+  return {
+    protocol: "mira.mission_control_activation_pipeline_end_to_end_readout.v0",
+    status,
+    headline,
+    completedChainSummary,
+    currentHardStopTruth,
+    provenSummary,
+    manualOnlySummary,
+    nextBoundary: nextBoundary.currentNextStep,
+    currentStageId: currentStage?.id || null,
+    currentStageLabel: currentStage?.label || "No Mission Control send chain yet",
+    currentArtifactToken: currentStage?.latestToken || null,
+    currentRelativePath: currentStage?.relativePath || null,
+    stageCount: stages.length,
+    availableStageCount: availableStages.length,
+    missingStageLabels,
+    hardStopRecorded,
+    liveSendAvailable: false,
+    realSendRequiresSeparateActivation: true,
+    noEffectSummary: "Read-only Mission Control end-to-end readout only; it summarizes existing status/trace artifacts and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.",
   };
 }
 
@@ -6596,6 +6677,30 @@ export function getMissionControlActivationPipelineStatus(
   const advanceSelection = buildActivationPipelineAdvanceSelection(stages);
   const manualActionPreflight = buildActivationPipelineManualActionPreflight(advanceSelection);
   const payloadPreview = buildActivationPipelinePayloadPreview(manualActionPreflight);
+  const hardStopTruth = {
+    liveSendAvailable: false,
+    liveActivationAllowed: false,
+    liveHmSendExecutionAllowed: false,
+    realSendAllowed: false,
+    implementationEnabled: false,
+    hardStopContractRecorded: liveGateStage?.status === "saved" && Boolean(hardStop),
+    separateActivationLaneRequired: true,
+    jamesSetupRequiredBeforeLiveSend: true,
+  } as const;
+  const nextBoundary = {
+    label: "Live send is not available from this surface.",
+    currentNextStep: currentPipelineNextStep(currentStage?.id || null),
+    futureJamesVisibleGate: "Future real send would require a separate James-visible setup/activation lane.",
+    liveSendAvailable: false,
+    separateActivationLaneRequired: true,
+  } as const;
+  const endToEndReadout = buildActivationPipelineEndToEndReadout(
+    stages,
+    currentStage,
+    hardStopTruth,
+    nextBoundary,
+    manualActionPreflight,
+  );
 
   return {
     ok: true,
@@ -6611,23 +6716,9 @@ export function getMissionControlActivationPipelineStatus(
     advanceSelection,
     manualActionPreflight,
     payloadPreview,
-    hardStopTruth: {
-      liveSendAvailable: false,
-      liveActivationAllowed: false,
-      liveHmSendExecutionAllowed: false,
-      realSendAllowed: false,
-      implementationEnabled: false,
-      hardStopContractRecorded: liveGateStage?.status === "saved" && Boolean(hardStop),
-      separateActivationLaneRequired: true,
-      jamesSetupRequiredBeforeLiveSend: true,
-    },
-    nextBoundary: {
-      label: "Live send is not available from this surface.",
-      currentNextStep: currentPipelineNextStep(currentStage?.id || null),
-      futureJamesVisibleGate: "Future real send would require a separate James-visible setup/activation lane.",
-      liveSendAvailable: false,
-      separateActivationLaneRequired: true,
-    },
+    endToEndReadout,
+    hardStopTruth,
+    nextBoundary,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,
