@@ -415,6 +415,8 @@ Product-facing roadmap/north-star prompts such as `what is the north star?` and 
 
 Product-facing route-preview prompts now answer from the already-loaded local `internalRoutePreview` as a preview of the existing Mission Control route plan, without posting `/turn`, adding fetches, persisting, or sending externally.
 
+Product-facing active-lane prompts such as `what lane are we on?` and `what is the current Mission Control lane?` now answer from the already-loaded `/squidrun/context` lane and summary fields, without posting `/turn`, adding fetches, persisting, or sending externally.
+
 Product-facing evidence/source prompts now answer from the already-loaded `/squidrun/context` evidence list and read flags, without posting `/turn`, adding fetches, persisting, or sending externally.
 
 Product-facing owned-work/work-queue prompts such as `what owned work is pending?` and `what is in the Mission Control work queue?` now answer from the already-loaded `/squidrun/context` owned-work, lane, and summary fields, without posting `/turn`, adding fetches, persisting, or sending externally.

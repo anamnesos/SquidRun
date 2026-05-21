@@ -241,6 +241,7 @@ function renderCoordinationDrafts(drafts) {
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlRoutePreviewQuestion(text)
+    || isMissionControlLaneQuestion(text)
     || isMissionControlOwnedWorkQuestion(text)
     || isMissionControlDirtyWorkQuestion(text)
     || isMissionControlEvidenceQuestion(text)
@@ -255,6 +256,13 @@ function isMissionControlRoutePreviewQuestion(text) {
   return /\b(internal\s+route|route\s+preview)\b/i.test(text);
 }
 
+function isMissionControlLaneQuestion(text) {
+  const normalized = String(text || '');
+  return /\bwhat\s+(lane|work\s+lane)\s+are\s+we\s+on\b/i.test(normalized)
+    || /\b(what|which)\s+is\s+the\s+(current|active)\s+(mission\s*control\s+)?(lane|work\s+lane)\b/i.test(normalized)
+    || /\b(current|active)\s+(mission\s*control|mira|squidrun|local|new\s+mira)\s+(lane|work\s+lane)\b/i.test(normalized);
+}
+
 function isMissionControlOwnedWorkQuestion(text) {
   const normalized = String(text || '');
   if (/\bowned[-\s]?work\b/i.test(normalized)) return true;
@@ -263,8 +271,8 @@ function isMissionControlOwnedWorkQuestion(text) {
 }
 
 function isMissionControlDirtyWorkQuestion(text) {
-  return /\b(dirty|changed?|changes?|git|worktree|files?|diff)\b/i.test(text)
-    && /\b(here|mission\s*control|mira|squidrun|repo|repository|worktree|files?|local|dirty|changed?|git)\b/i.test(text);
+  return /\b(dirty|changed|changes|git|worktree|files?|diff)\b/i.test(text)
+    && /\b(here|mission\s*control|mira|squidrun|repo|repository|worktree|files?|local|dirty|changed|changes|git)\b/i.test(text);
 }
 
 function isMissionControlEvidenceQuestion(text) {
@@ -302,6 +310,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
+  }
+  if (isMissionControlLaneQuestion(text)) {
+    const laneAnswer = buildMissionControlLaneAnswer();
+    if (laneAnswer) return laneAnswer;
   }
   if (isMissionControlOwnedWorkQuestion(text)) {
     const ownedWorkAnswer = buildMissionControlOwnedWorkAnswer();
@@ -361,6 +373,25 @@ function buildMissionControlRoutePreviewAnswer(mission = state.missionControl) {
     `Message preview: ${message}`,
     'Source: already-loaded Mission Control internal route preview from local SquidRun context.',
     'Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlLaneAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const lane = context.lane || {};
+  if (lane.loaded !== true) return '';
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control lane answer; no send or setup is needed.');
+  return [
+    `Active lane: ${lane.sourceRef || 'unknown'} (${lane.status || 'unknown status'})`,
+    `Target role: ${lane.targetRole || 'unknown'}`,
+    `Objective: ${lane.objective || 'No lane objective loaded.'}`,
+    `Next action: ${context.summary?.nextStep || mission?.nextTeamMove || lane.nextAction || 'No local next action loaded.'}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
