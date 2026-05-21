@@ -241,6 +241,7 @@ function renderCoordinationDrafts(drafts) {
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlRoutePreviewQuestion(text)
+    || isMissionControlDirtyWorkQuestion(text)
     || isMissionControlEvidenceQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
@@ -248,6 +249,11 @@ function isMissionControlQuestion(text) {
 
 function isMissionControlRoutePreviewQuestion(text) {
   return /\b(internal\s+route|route\s+preview)\b/i.test(text);
+}
+
+function isMissionControlDirtyWorkQuestion(text) {
+  return /\b(dirty|changed?|changes?|git|worktree|files?|diff)\b/i.test(text)
+    && /\b(here|mission\s*control|mira|squidrun|repo|repository|worktree|files?|local|dirty|changed?|git)\b/i.test(text);
 }
 
 function isMissionControlEvidenceQuestion(text) {
@@ -269,6 +275,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
+  }
+  if (isMissionControlDirtyWorkQuestion(text)) {
+    const dirtyWorkAnswer = buildMissionControlDirtyWorkAnswer();
+    if (dirtyWorkAnswer) return dirtyWorkAnswer;
   }
   if (isMissionControlEvidenceQuestion(text)) {
     const evidenceAnswer = buildMissionControlEvidenceAnswer();
@@ -308,6 +318,36 @@ function buildMissionControlRoutePreviewAnswer(mission = state.missionControl) {
     `Message preview: ${message}`,
     'Source: already-loaded Mission Control internal route preview from local SquidRun context.',
     'Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlDirtyWorkAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const git = context.git || {};
+  const dirtyWork = context.dirtyWork || {};
+  if (git.loaded !== true && dirtyWork.loaded !== true) return '';
+  const project = context.project?.name || 'current project';
+  const branch = git.branch || 'unknown branch';
+  const changedFiles = Array.isArray(dirtyWork.files) ? dirtyWork.files : [];
+  const statusPreview = Array.isArray(git.statusPreview) ? git.statusPreview : [];
+  const dirtySummary = dirtyWork.summary
+    || `${Number(git.dirtyCount || changedFiles.length || 0)} changed file(s)${git.branch ? ` on ${git.branch}` : ''}.`;
+  const missionDirtyLine = String(mission?.answer || '')
+    .split('\n')
+    .find((line) => /^Dirty work:/i.test(line));
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control dirty-work answer; no send or setup is needed.');
+  return [
+    `Local changes: ${project} / ${branch}`,
+    `Dirty summary: ${dirtySummary}`,
+    `Changed files: ${changedFiles.join(' / ') || 'No dirty file list loaded.'}`,
+    `Git status preview: ${statusPreview.join(' / ') || 'No git status preview loaded.'}`,
+    `Mission answer context: ${missionDirtyLine || 'No dirty-work line loaded in the Mission Control answer.'}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }

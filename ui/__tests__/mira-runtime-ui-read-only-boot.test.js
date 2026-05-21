@@ -4021,6 +4021,44 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.sendButton.textContent).toBe('Send');
   });
 
+  test('answers dirty-work questions from existing Mission Control context without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['what changed here?', 'what files are dirty?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Local changes: squidrun / main'),
+      ]);
+      const dirtyWorkReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(dirtyWorkReply).toContain('Dirty summary: 3 changed file(s): mira/ui/app.js, mira/ui/index.html, mira/runtime/src/squidrun-context.ts.');
+      expect(dirtyWorkReply).toContain('Changed files: mira/ui/app.js / mira/ui/index.html / mira/runtime/src/squidrun-context.ts');
+      expect(dirtyWorkReply).toContain('Git status preview: M mira/ui/app.js / M mira/ui/index.html / A mira/runtime/src/squidrun-context.ts');
+      expect(dirtyWorkReply).toContain('Mission answer context: Dirty work: 3 changed file(s): mira/ui/app.js, mira/ui/index.html, mira/runtime/src/squidrun-context.ts.');
+      expect(dirtyWorkReply).toContain('Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
+      expect(dirtyWorkReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((dirtyWorkReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
   test('posts exactly one deterministic turn after explicit user submit', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
