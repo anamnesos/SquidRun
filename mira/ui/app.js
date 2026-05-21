@@ -244,6 +244,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlAvailableAnswersQuestion(text)
     || isMissionControlLiveBoundaryQuestion(text)
     || isMissionControlManualActionQuestion(text)
+    || isMissionControlArtifactEvidenceQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -282,6 +283,14 @@ function isMissionControlManualActionQuestion(text) {
       || /\bwhat\s+(button|workbench\s+action)\s+should\s+i\s+use\s+next\b/i.test(normalized));
 }
 
+function isMissionControlArtifactEvidenceQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\b(where|what)\s+(is|are)\s+.*\b(artifact|evidence)\b/i.test(normalized)
+      || /\b(where|what|which)\s+.*\b(artifact|evidence)\s+(path|token|trace)\b/i.test(normalized)
+      || /\bwhere\s+is\s+the\s+proof\s+artifact\b/i.test(normalized));
+}
+
 function isMissionControlRoutePreviewQuestion(text) {
   return /\b(internal\s+route|route\s+preview)\b/i.test(text);
 }
@@ -308,13 +317,14 @@ function isMissionControlOwnedWorkQuestion(text) {
 }
 
 function isMissionControlDirtyWorkQuestion(text) {
-  return /\b(dirty|changed|changes|git|worktree|files?|diff)\b/i.test(text)
+  return /\b(dirty|changed|changes|git|worktree|diff)\b/i.test(text)
     && /\b(here|mission\s*control|mira|squidrun|repo|repository|worktree|files?|local|dirty|changed|changes|git)\b/i.test(text);
 }
 
 function isMissionControlEvidenceQuestion(text) {
-  return /\b(evidence|sources?|proof|basis|based\s+on|loaded|reads?)\b/i.test(text)
-    && /\b(mission\s*control|mira|squidrun|local|this|answer)\b/i.test(text);
+  const normalized = String(text || '');
+  return /\b(what|which|where)\s+.*\b(evidence|sources?|proof|basis|based\s+on|loaded|reads?)\b/i.test(normalized)
+    && /\b(mission\s*control|mira|squidrun|local|this|answer)\b/i.test(normalized);
 }
 
 function isMissionControlJamesActionQuestion(text) {
@@ -363,6 +373,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlManualActionQuestion(text)) {
     const manualActionAnswer = buildMissionControlManualActionAnswer();
     if (manualActionAnswer) return manualActionAnswer;
+  }
+  if (isMissionControlArtifactEvidenceQuestion(text)) {
+    const artifactEvidenceAnswer = buildMissionControlArtifactEvidenceAnswer();
+    if (artifactEvidenceAnswer) return artifactEvidenceAnswer;
   }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
@@ -546,6 +560,47 @@ function buildMissionControlManualActionAnswer(
     `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is not available from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline status/focus from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, button click, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlArtifactEvidenceAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const trace = status.currentStageTrace && typeof status.currentStageTrace === 'object' ? status.currentStageTrace : {};
+  const entries = Array.isArray(trace.entries) ? trace.entries : [];
+  const currentStageId = status.currentStageId || status.currentStage?.id || null;
+  const currentEntry = entries.find((entry) => entry?.stageId === currentStageId)
+    || entries[entries.length - 1]
+    || null;
+  const currentStage = status.currentStage && typeof status.currentStage === 'object' ? status.currentStage : {};
+  const lastSaved = status.lastSavedArtifact && typeof status.lastSavedArtifact === 'object' ? status.lastSavedArtifact : {};
+  const token = currentEntry?.token || currentStage.latestToken || lastSaved.latestToken || 'not available';
+  const relativePath = currentEntry?.relativePath || currentStage.relativePath || lastSaved.relativePath || 'No saved artifact path is available.';
+  const relation = currentEntry?.sourceStageId
+    ? `${currentEntry.sourceStageId} -> ${currentEntry.stageId}; source token ${currentEntry.sourceToken || 'not available'}`
+    : currentEntry
+      ? 'root artifact; no source token'
+      : 'No saved source relation is available.';
+  const checksums = [
+    currentEntry?.bodySha256 ? `body ${currentEntry.bodySha256}` : null,
+    currentEntry?.adapterPacketSha256 ? `adapter ${currentEntry.adapterPacketSha256}` : null,
+  ].filter(Boolean).join('; ') || 'No checksum recorded.';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control artifact inspection; no setup or live action is needed.');
+  return [
+    `Current evidence ready: ${currentEntry ? 'yes' : 'no'}`,
+    `Current stage: ${currentStage.label || 'No saved Mission Control send chain yet'}`,
+    `Artifact token: ${token}`,
+    `Artifact path: ${relativePath}`,
+    `Source relation: ${relation}`,
+    `Checksums: ${checksums}`,
+    `Trace path: ${trace.sourcePath || 'No saved Mission Control activation artifacts yet.'}`,
+    `Body preview: ${currentEntry?.contentPreview || 'No body preview recorded.'}`,
+    'Source: already-loaded Mission Control activation pipeline status/trace from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, file read, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
