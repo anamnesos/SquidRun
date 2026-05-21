@@ -18,6 +18,7 @@ const state = {
   missionControlFollowThroughCount: 0,
   missionControlDeliveryPreviewCount: 0,
   missionControlDispatchReadinessCount: 0,
+  missionControlInternalSendDryRunCount: 0,
   selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -51,6 +52,7 @@ const elements = {
   routeFollowThroughList: document.getElementById('routeFollowThroughList'),
   routeDeliveryPreviewList: document.getElementById('routeDeliveryPreviewList'),
   routeDispatchReadinessList: document.getElementById('routeDispatchReadinessList'),
+  routeInternalSendDryRunList: document.getElementById('routeInternalSendDryRunList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -383,7 +385,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -789,6 +791,7 @@ function updateRoutePreviewHistoryList(payload) {
         await refreshRouteFollowThroughRecommendations();
         await refreshRouteDeliveryPreviews();
         await refreshDispatchReadiness();
+        await refreshInternalSendDryRuns();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -892,6 +895,7 @@ function renderRouteContinuationPanel(request) {
         await refreshRouteFollowThroughRecommendations();
         await refreshRouteDeliveryPreviews();
         await refreshDispatchReadiness();
+        await refreshInternalSendDryRuns();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
       } finally {
@@ -972,6 +976,7 @@ function updateRouteFollowThroughList(payload) {
           appendMessage('mira', 'Internal delivery preview saved locally. Nothing was sent or executed.');
           await refreshRouteDeliveryPreviews();
           await refreshDispatchReadiness();
+          await refreshInternalSendDryRuns();
         } catch (error) {
           appendMessage('mira', error.message, 'error');
           action.disabled = false;
@@ -1027,6 +1032,7 @@ function updateRouteDeliveryPreviewList(payload) {
         readiness.textContent = 'Readiness saved';
         appendMessage('mira', 'Dispatch-readiness checklist saved locally. Nothing was sent or executed.');
         await refreshDispatchReadiness();
+        await refreshInternalSendDryRuns();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         readiness.disabled = false;
@@ -1065,6 +1071,51 @@ function updateDispatchReadinessList(payload) {
       : '';
     appendPreviewLine(card, 'Checklist', checklist);
     appendPreviewLine(card, 'Audit', 'readiness checklist only; no command stored, hm-send execution, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
+    const dryRun = document.createElement('button');
+    dryRun.type = 'button';
+    dryRun.className = 'subtle-button';
+    dryRun.textContent = 'Create send dry run';
+    dryRun.addEventListener('click', async () => {
+      dryRun.disabled = true;
+      dryRun.textContent = 'Creating dry run';
+      try {
+        await createInternalSendDryRun(item);
+        dryRun.textContent = 'Dry run saved';
+        appendMessage('mira', 'Internal-send dry-run audit saved locally. Nothing was sent or executed.');
+        await refreshInternalSendDryRuns();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        dryRun.disabled = false;
+        dryRun.textContent = 'Create send dry run';
+      }
+    });
+    card.append(dryRun);
+    return card;
+  }));
+}
+
+function updateInternalSendDryRunList(payload) {
+  const dryRuns = Array.isArray(payload?.dryRuns) ? payload.dryRuns : [];
+  state.missionControlInternalSendDryRunCount = Number(payload?.dryRunCount || dryRuns.length || 0);
+  renderWorkSummary();
+  if (dryRuns.length === 0) {
+    setText(elements.routeInternalSendDryRunList, 'no internal-send dry runs yet');
+    return;
+  }
+
+  elements.routeInternalSendDryRunList.replaceChildren(...dryRuns.slice(0, 5).map((dryRun) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-internal-send-dry-run';
+    const title = document.createElement('strong');
+    title.textContent = `${dryRun.targetRole || 'team'} · internal-send dry run`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(dryRun.status || 'dry_run_ready').replace(/_/g, ' ')} · adapter/audit only · manual execution required · not sent · ${formatReadyStamp(dryRun.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Pane target', dryRun.targetLabel || `${dryRun.targetRole || 'team'} pane ${dryRun.targetPaneId || '?'}`);
+    appendPreviewLine(card, 'Body', dryRun.adapterDryRun?.body?.content || dryRun.contentPreview || dryRun.content);
+    appendPreviewLine(card, 'Adapter', `${dryRun.adapterDryRun?.channel || 'hm-send'} dry-run via ${dryRun.adapterDryRun?.transport || 'ui/scripts/hm-send.js'}`);
+    appendPreviewLine(card, 'Activation gate', dryRun.activationGate?.requiredReview || 'separate reviewed activation');
+    appendPreviewLine(card, 'Audit', 'dry-run adapter/audit only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     return card;
   }));
 }
@@ -1359,6 +1410,13 @@ async function refreshDispatchReadiness() {
   updateDispatchReadinessList(payload);
 }
 
+async function refreshInternalSendDryRuns() {
+  const response = await fetch('/mission-control/internal-send-dry-runs');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateInternalSendDryRunList(payload);
+}
+
 async function refreshAutonomy() {
   const response = await fetch('/autonomy/status');
   const payload = await response.json();
@@ -1620,6 +1678,21 @@ async function createDispatchReadiness(preview) {
   return payload;
 }
 
+async function createInternalSendDryRun(readiness) {
+  const response = await fetch('/mission-control/internal-send-dry-runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      dispatchReadinessToken: readiness?.actionToken || '',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control internal-send dry-run save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1704,6 +1777,7 @@ async function primeReadOnlyWorkbench() {
     await refreshRouteFollowThroughRecommendations();
     await refreshRouteDeliveryPreviews();
     await refreshDispatchReadiness();
+    await refreshInternalSendDryRuns();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1731,6 +1805,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshRouteFollowThroughRecommendations();
     await refreshRouteDeliveryPreviews();
     await refreshDispatchReadiness();
+    await refreshInternalSendDryRuns();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1821,6 +1896,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     await refreshRouteFollowThroughRecommendations();
     await refreshRouteDeliveryPreviews();
     await refreshDispatchReadiness();
+    await refreshInternalSendDryRuns();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {

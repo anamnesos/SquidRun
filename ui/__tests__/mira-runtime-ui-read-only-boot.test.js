@@ -408,6 +408,26 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       accountOrTokenAccess: false,
       liveHmSend: false,
     },
+    '/mission-control/internal-send-dry-runs': {
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_dry_run_list.v0',
+      dryRunCount: 0,
+      dryRuns: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
     '/autonomy/status': {
       ok: true,
       queueCount: 0,
@@ -967,6 +987,116 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         liveHmSend: false,
       });
     }
+    if (pathname === '/mission-control/internal-send-dry-runs' && method === 'POST') {
+      const readiness = payloads['/mission-control/dispatch-readiness'].readiness
+        .find((candidate) => candidate.actionToken === body?.dispatchReadinessToken);
+      if (!readiness) {
+        return response({ ok: false, error: { message: 'Mission Control dispatch-readiness checklist was not found.' } }, false);
+      }
+      const dryRun = {
+        protocol: 'mira.mission_control_internal_send_dry_run.v0',
+        id: 'mission-send-dry-run-test',
+        actionToken: 'mission-send-dry-run-test',
+        status: 'dry_run_ready',
+        createdAt: '2026-05-21T00:00:05.000Z',
+        sourceDispatchReadinessId: readiness.id,
+        sourceDispatchReadinessToken: readiness.actionToken,
+        sourceDeliveryPreviewId: readiness.sourceDeliveryPreviewId,
+        sourceDeliveryPreviewToken: readiness.sourceDeliveryPreviewToken,
+        sourceRecommendationId: readiness.sourceRecommendationId,
+        sourceContinuationId: readiness.sourceContinuationId,
+        sourceRequestId: readiness.sourceRequestId,
+        sourcePreviewId: readiness.sourcePreviewId,
+        targetRole: readiness.targetRole,
+        targetPaneId: readiness.targetPaneId,
+        targetLabel: readiness.targetLabel,
+        purpose: readiness.purpose,
+        content: readiness.copiedPaneMessage.body,
+        contentPreview: readiness.contentPreview,
+        bodySha256: readiness.bodySha256,
+        packetSha256: readiness.packetSha256,
+        adapterDryRun: {
+          protocol: 'mira.hm_send_adapter.v0',
+          dryRun: true,
+          channel: 'hm-send',
+          transport: 'ui/scripts/hm-send.js',
+          target: {
+            system: 'squidrun',
+            role: readiness.targetRole,
+            pane_id: readiness.targetPaneId,
+          },
+          body: {
+            content: readiness.copiedPaneMessage.body,
+          },
+        },
+        activationGate: {
+          protocol: 'mira.mission_control_internal_send_activation_gate.v0',
+          required: true,
+          requiredReview: 'separate_reviewed_activation',
+          realSendAllowed: false,
+          liveHmSendExecutionAllowed: false,
+        },
+        audit: {
+          reviewStatus: 'internal_send_dry_run_ready',
+          dryRunOnly: true,
+          manualExecutionRequired: true,
+          realSendRequiresSeparateActivation: true,
+          dispatchReadinessChecksumMatched: true,
+          notSent: true,
+          commandStored: false,
+          sendPerformed: false,
+          runtimeExecutes: false,
+          externalSend: false,
+          telegramSend: false,
+          routeFlip: false,
+          providerInvoked: false,
+          accountOrTokenAccess: false,
+          liveHmSend: false,
+        },
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      };
+      payloads['/mission-control/internal-send-dry-runs'] = {
+        ...payloads['/mission-control/internal-send-dry-runs'],
+        dryRunCount: 1,
+        dryRuns: [dryRun],
+      };
+      return response({
+        ok: true,
+        protocol: 'mira.mission_control_internal_send_dry_run_write.v0',
+        created: true,
+        stateRootPath: 'D:/projects/squidrun/mira/.state-dev',
+        relativePath: 'mission-control/internal-send-dry-runs/mission-send-dry-run-test.json',
+        absolutePath: 'D:/projects/squidrun/mira/.state-dev/mission-control/internal-send-dry-runs/mission-send-dry-run-test.json',
+        dryRun,
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      });
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -1068,6 +1198,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/mission-control/follow-through-recommendations', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-delivery-previews', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/dispatch-readiness', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/internal-send-dry-runs', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -1091,6 +1222,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.routeFollowThroughList.textContent).toBe('no follow-through recommendation yet');
     expect(harness.elements.routeDeliveryPreviewList.textContent).toBe('no internal delivery previews yet');
     expect(harness.elements.routeDispatchReadinessList.textContent).toBe('no dispatch-readiness checklists yet');
+    expect(harness.elements.routeInternalSendDryRunList.textContent).toBe('no internal-send dry runs yet');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -1106,6 +1238,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.workSummary.textContent).toContain('0 team recommendations');
     expect(harness.elements.workSummary.textContent).toContain('0 delivery previews');
     expect(harness.elements.workSummary.textContent).toContain('0 dispatch checklists');
+    expect(harness.elements.workSummary.textContent).toContain('0 send dry runs');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
   });
 
@@ -1136,6 +1269,9 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/dispatch-readiness')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-dry-runs')).toEqual([
       expect.objectContaining({ method: 'GET' }),
     ]);
 
@@ -1189,6 +1325,10 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/dispatch-readiness')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-dry-runs')).toEqual([
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
@@ -1289,6 +1429,12 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/internal-send-dry-runs')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.routeContinuationList.children).toHaveLength(1);
@@ -1383,10 +1529,44 @@ describe('Mira runtime UI boot', () => {
     expect(readinessText).toContain('Checksum match: yes');
     expect(readinessText).toContain('Copied pane body checksum matches the saved delivery preview body.');
     expect(readinessText).toContain('no command stored, hm-send execution, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    const dryRunButton = harness.elements.routeDispatchReadinessList.children[0].children
+      .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Create send dry run');
+    expect(dryRunButton.textContent).toBe('Create send dry run');
+    await dryRunButton.listeners.click();
+
+    const dryRunCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-dry-runs');
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(6);
+    expect(dryRunCalls).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: {
+          dispatchReadinessToken: 'mission-dispatch-readiness-test',
+        },
+      }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.elements.routeInternalSendDryRunList.children).toHaveLength(1);
+    const dryRunText = harness.elements.routeInternalSendDryRunList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(dryRunText).toContain('oracle · internal-send dry run');
+    expect(dryRunText).toContain('dry run ready · adapter/audit only · manual execution required · not sent');
+    expect(dryRunText).toContain('Pane target: oracle pane 3');
+    expect(dryRunText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(dryRunText).toContain('Adapter: hm-send dry-run via ui/scripts/hm-send.js');
+    expect(dryRunText).toContain('Activation gate: separate_reviewed_activation');
+    expect(dryRunText).toContain('no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal delivery preview saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Dispatch-readiness checklist saved locally. Nothing was sent or executed.');
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal-send dry-run audit saved locally. Nothing was sent or executed.');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {
