@@ -351,6 +351,18 @@ export type MissionControlInternalDeliveryPreviewRecord = {
       content: string;
     };
   };
+  reviewDetails: {
+    protocol: "mira.mission_control_internal_delivery_preview_review.v0";
+    targetLabel: string;
+    packetSha256: string;
+    bodySha256: string;
+    bodyCharCount: number;
+    copyText: string;
+    copyInstruction: string;
+    manualCopyRequired: true;
+    previewOnly: true;
+    noLiveSend: true;
+  };
   audit: {
     reviewStatus: "preview_ready";
     manualExecutionRequired: true;
@@ -589,6 +601,14 @@ function buildFollowThroughRecommendationActionToken(id: string): string {
 
 function buildDeliveryPreviewActionToken(id: string): string {
   return `mission-delivery-preview-${crypto.createHash("sha256").update(`mira.mission_control_internal_delivery_preview.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
+function sha256Text(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function checksumPayload(value: unknown): string {
+  return sha256Text(JSON.stringify(value));
 }
 
 function toPublicRecord(record: MissionControlRoutePreviewRecord): MissionControlRoutePreviewRecord & { actionToken: string } {
@@ -1168,6 +1188,18 @@ function deliveryPreviewFromRecommendation(
     .digest("hex")
     .slice(0, 24)}`;
   const content = continuation.content;
+  const deliveryPacket: MissionControlInternalDeliveryPreviewRecord["deliveryPacket"] = {
+    protocol: "mira.mission_control_internal_delivery_preview_packet.v0",
+    target: {
+      system: "squidrun",
+      role: recommendation.targetRole,
+      paneId: recommendation.targetPaneId,
+    },
+    body: {
+      content,
+    },
+  };
+  const targetLabel = `${recommendation.targetRole} pane ${recommendation.targetPaneId}`;
   return {
     protocol: "mira.mission_control_internal_delivery_preview.v0",
     id,
@@ -1187,16 +1219,18 @@ function deliveryPreviewFromRecommendation(
     contentPreview: content.length > 260 ? `${content.slice(0, 259)}...` : content,
     nextTeamMove: recommendation.nextTeamMove,
     selectorReason: recommendation.selectorReason,
-    deliveryPacket: {
-      protocol: "mira.mission_control_internal_delivery_preview_packet.v0",
-      target: {
-        system: "squidrun",
-        role: recommendation.targetRole,
-        paneId: recommendation.targetPaneId,
-      },
-      body: {
-        content,
-      },
+    deliveryPacket,
+    reviewDetails: {
+      protocol: "mira.mission_control_internal_delivery_preview_review.v0",
+      targetLabel,
+      packetSha256: checksumPayload(deliveryPacket),
+      bodySha256: sha256Text(content),
+      bodyCharCount: content.length,
+      copyText: content,
+      copyInstruction: `Manual copy only: paste this body into ${targetLabel} after review.`,
+      manualCopyRequired: true,
+      previewOnly: true,
+      noLiveSend: true,
     },
     audit: {
       reviewStatus: "preview_ready",

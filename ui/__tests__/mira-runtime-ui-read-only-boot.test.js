@@ -771,6 +771,18 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
             content: recommendation.contentPreview,
           },
         },
+        reviewDetails: {
+          protocol: 'mira.mission_control_internal_delivery_preview_review.v0',
+          targetLabel: `${recommendation.targetRole} pane ${recommendation.targetPaneId}`,
+          packetSha256: 'packet-sha256-test',
+          bodySha256: 'body-sha256-test',
+          bodyCharCount: recommendation.contentPreview.length,
+          copyText: recommendation.contentPreview,
+          copyInstruction: `Manual copy only: paste this body into ${recommendation.targetRole} pane ${recommendation.targetPaneId} after review.`,
+          manualCopyRequired: true,
+          previewOnly: true,
+          noLiveSend: true,
+        },
         audit: {
           reviewStatus: 'preview_ready',
           manualExecutionRequired: true,
@@ -1186,7 +1198,15 @@ describe('Mira runtime UI boot', () => {
     expect(deliveryText).toContain('reviewed preview only · preview/audit only · manual execution required · not sent');
     expect(deliveryText).toContain('Pane target: oracle pane 3');
     expect(deliveryText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(deliveryText).toContain('Checksum: packet-sha256-test');
+    expect(deliveryText).toContain('Review: Manual copy only: paste this body into oracle pane 3 after review.');
     expect(deliveryText).toContain('no command stored, runtime execution, external send, route flip, provider/model call, account or token access, Telegram, or live hm-send');
+    const copyButton = harness.elements.routeDeliveryPreviewList.children[0].children
+      .find((child) => child.tagName === 'BUTTON');
+    expect(copyButton.textContent).toBe('Copy packet body');
+    await copyButton.listeners.click();
+    expect(harness.context.navigator.clipboard.writeText).toHaveBeenCalledWith('Edited internal continuation for Oracle review.');
+    expect(copyButton.textContent).toBe('Copied body');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal delivery preview saved locally. Nothing was sent or executed.');
   });
 

@@ -1533,6 +1533,24 @@ describe('Mira runtime bridge manual-plan API', () => {
         content: 'Edited internal continuation for Oracle review.',
       },
     });
+    const expectedDeliveryPacketSha256 = crypto.createHash('sha256')
+      .update(JSON.stringify(deliveryPreviewPayload.preview.deliveryPacket))
+      .digest('hex');
+    const expectedDeliveryBodySha256 = crypto.createHash('sha256')
+      .update('Edited internal continuation for Oracle review.')
+      .digest('hex');
+    expect(deliveryPreviewPayload.preview.reviewDetails).toEqual({
+      protocol: 'mira.mission_control_internal_delivery_preview_review.v0',
+      targetLabel: 'oracle pane 3',
+      packetSha256: expectedDeliveryPacketSha256,
+      bodySha256: expectedDeliveryBodySha256,
+      bodyCharCount: 'Edited internal continuation for Oracle review.'.length,
+      copyText: 'Edited internal continuation for Oracle review.',
+      copyInstruction: 'Manual copy only: paste this body into oracle pane 3 after review.',
+      manualCopyRequired: true,
+      previewOnly: true,
+      noLiveSend: true,
+    });
     expect(deliveryPreviewPayload.preview.audit).toEqual(expect.objectContaining({
       reviewStatus: 'preview_ready',
       manualExecutionRequired: true,
@@ -1558,6 +1576,14 @@ describe('Mira runtime bridge manual-plan API', () => {
       sourceRecommendationToken: followThroughPayload.selectedRecommendation.actionToken,
       targetRole: 'oracle',
       targetPaneId: '3',
+      reviewDetails: expect.objectContaining({
+        targetLabel: 'oracle pane 3',
+        packetSha256: expectedDeliveryPacketSha256,
+        copyText: 'Edited internal continuation for Oracle review.',
+        manualCopyRequired: true,
+        previewOnly: true,
+        noLiveSend: true,
+      }),
       notSent: true,
       commandStored: false,
       sendPerformed: false,

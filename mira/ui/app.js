@@ -998,8 +998,19 @@ function updateRouteDeliveryPreviewList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', `${preview.targetRole || 'team'} pane ${preview.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', preview.deliveryPacket?.body?.content || preview.contentPreview || preview.content);
+    appendPreviewLine(card, 'Checksum', preview.reviewDetails?.packetSha256);
+    appendPreviewLine(card, 'Review', preview.reviewDetails?.copyInstruction);
     appendPreviewLine(card, 'Next move', preview.nextTeamMove);
     appendPreviewLine(card, 'Audit', 'preview packet only; no command stored, runtime execution, external send, route flip, provider/model call, account or token access, Telegram, or live hm-send.');
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'subtle-button';
+    copy.textContent = 'Copy packet body';
+    copy.addEventListener('click', async () => {
+      await copyTextToClipboard(preview.reviewDetails?.copyText || preview.deliveryPacket?.body?.content || preview.content || '');
+      copy.textContent = 'Copied body';
+    });
+    card.append(copy);
     return card;
   }));
 }
