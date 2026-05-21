@@ -1163,6 +1163,7 @@ export type MissionControlInternalSendActivationImplementationReadinessRecord = 
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   bodySha256: string;
   adapterPacketSha256: string;
   implementationGate: {
@@ -5003,6 +5004,7 @@ function activationImplementationReadinessFromDecisionAudit(
     purpose: audit.purpose,
     content: audit.content,
     contentPreview: audit.contentPreview,
+    missionAnswerPreview: audit.missionAnswerPreview,
     bodySha256,
     adapterPacketSha256: audit.adapterPacketSha256,
     implementationGate: {

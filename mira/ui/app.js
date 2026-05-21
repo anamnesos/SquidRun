@@ -1582,6 +1582,7 @@ function updateInternalSendActivationImplementationReadinessList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', record.targetLabel || `${record.targetRole || 'team'} pane ${record.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', record.contentPreview || record.content);
+    appendPreviewLine(card, 'Mission answer', record.missionAnswerPreview || 'No originating Mission Control answer is attached to this implementation-readiness record.');
     appendPreviewLine(card, 'Implementation gate', `enabled: ${record.implementationGate?.implementationEnabled === true ? 'yes' : 'no'}; activation allowed: ${record.implementationGate?.activationAllowed === true ? 'yes' : 'no'}; live hm-send: ${record.implementationGate?.liveHmSendExecutionAllowed === true ? 'yes' : 'no'}`);
     appendPreviewLine(card, 'Refusal', `${record.refusal?.status || 'live_activation_still_refused'} · ${record.refusal?.reason || 'live activation remains refused'}`);
     appendPreviewLine(card, 'Rollback', `${record.rollback?.status || 'rollback_requirements_ready'} · snapshot: ${record.rollback?.preActivationSnapshotRequired === true ? 'required' : 'missing'} · failure audit: ${record.rollback?.failureAuditRequired === true ? 'required' : 'missing'}`);

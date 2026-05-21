@@ -2230,6 +2230,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: audit.purpose,
         content: audit.content,
         contentPreview: audit.contentPreview,
+        missionAnswerPreview: audit.missionAnswerPreview,
         bodySha256: audit.bodySha256,
         adapterPacketSha256: audit.adapterPacketSha256,
         implementationGate: {
@@ -3569,6 +3570,7 @@ describe('Mira runtime UI boot', () => {
     expect(implementationReadinessText).toContain('activation implementation readiness review only · disabled by default · refusal/rollback/audit required · not sent');
     expect(implementationReadinessText).toContain('Pane target: oracle pane 3');
     expect(implementationReadinessText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(implementationReadinessText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(implementationReadinessText).toContain('Implementation gate: enabled: no; activation allowed: no; live hm-send: no');
     expect(implementationReadinessText).toContain('Refusal: live_activation_still_refused · Implementation readiness is review-only and remains disabled until a separate activation implementation gate exists.');
     expect(implementationReadinessText).toContain('Rollback: rollback_requirements_ready · snapshot: required · failure audit: required');
