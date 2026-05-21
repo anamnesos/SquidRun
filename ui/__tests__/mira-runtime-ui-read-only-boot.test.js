@@ -3173,6 +3173,10 @@ describe('Mira runtime UI boot', () => {
     expect(activationDesignText).toContain('Missing or unknown internal-send dry-run tokens must return 400 without writing.');
     expect(activationDesignText).toContain('Future activation must snapshot the dry-run token, target, body checksum, and adapter checksum before any execution.');
     expect(activationDesignText).toContain('design/proof only; durable audit, refusal, and rollback requirements are visible; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.elements.routeInternalSendDryRunList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendDryRunList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeInternalSendActivationDesignList.children[0].className).toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationDesignList.children[0].attributes.id).toBe('mission-control-manual-step-activation-design-mission-send-activation-design-test');
     const activationRequestCallsBeforeClick = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests');
     expect(activationRequestCallsBeforeClick).toEqual([
       expect.objectContaining({ method: 'GET' }),
@@ -3187,6 +3191,28 @@ describe('Mira runtime UI boot', () => {
     const activationRequestButton = harness.elements.routeInternalSendActivationDesignList.children[0].children
       .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Preview activation request');
     expect(activationRequestButton.textContent).toBe('Preview activation request');
+    expect(activationRequestButton.className).toContain('selected-manual-action');
+    expect(activationRequestButton.attributes['aria-label']).toBe('Selected Mission Control action: Preview activation request');
+    const postActivationDesignPipelineCard = harness.elements.routeActivationPipelineStatus.children[0];
+    const postActivationDesignStepHeader = postActivationDesignPipelineCard.children.find((child) => child.dataset?.missionManualStepHeader === 'true');
+    expect(postActivationDesignStepHeader.textContent).toBe('Next manual step: Preview activation request on Activation design. Manual-only. Use the existing highlighted card/button; this status card does not submit.');
+    expect(postActivationDesignStepHeader.children).toHaveLength(1);
+    expect(postActivationDesignStepHeader.children[0].attributes.href).toBe('#mission-control-manual-step-activation-design-mission-send-activation-design-test');
+    const postActivationDesignPipelineText = postActivationDesignPipelineCard.children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(postActivationDesignPipelineText).toContain('Current stage: Activation design: activation design review only; token mission-send-activation-design-test.');
+    expect(postActivationDesignPipelineText).toContain('Last saved: Activation design: activation_design_review_only; token mission-send-activation-design-test');
+    expect(postActivationDesignPipelineText).toContain('Current evidence: token mission-send-activation-design-test; status saved; path mission-control/internal-send-activation-designs/mission-send-activation-design-test.json; relation internal_send_dry_run -> activation_design; source token mission-send-dry-run-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postActivationDesignPipelineText).toContain('Advance selector: advance available: Activation design -> Activation request. Activation design is the latest available stage before the first missing stage, Activation request.');
+    expect(postActivationDesignPipelineText).toContain('Manual action preflight: ready: Preview activation request · Preview activation request is the next manual internal action because Activation design is selected and Activation request is the first missing stage. Use the selected token as internalSendActivationDesignToken; this preflight does not perform the action.');
+    expect(postActivationDesignPipelineText).toContain('Manual action input: internalSendActivationDesignToken=mission-send-activation-design-test; source mission-control/internal-send-activation-designs/mission-send-activation-design-test.json; next Activation request');
+    expect(postActivationDesignPipelineText).toContain('Selected artifact: token mission-send-activation-design-test; path mission-control/internal-send-activation-designs/mission-send-activation-design-test.json; source mission-send-dry-run-test; body body-sha256-test; adapter adapter-packet-sha256');
+    expect(postActivationDesignPipelineText).toContain('Workbench focus: Highlight the existing Activation design card at mission-control/internal-send-activation-designs/mission-send-activation-design-test.json and use its existing Preview activation request action.');
+    expect(postActivationDesignPipelineText).toContain('Manual selector summary: ready: Preview activation request on Activation design; internalSendActivationDesignToken=mission-send-activation-design-test; POST /mission-control/internal-send-activation-requests; manual-only because this status card does not submit.');
+    expect(postActivationDesignPipelineText).toContain('Payload preview: ready: POST /mission-control/internal-send-activation-requests · This is the exact workbench payload preview for Preview activation request; it is not submitted by the status surface.');
+    expect(postActivationDesignPipelineText).toContain('Payload body: {"internalSendActivationDesignToken":"mission-send-activation-design-test"}');
+    expect(postActivationDesignPipelineText).toContain('Handler drift check: matched: createInternalSendActivationRequest · createInternalSendActivationRequest expects POST /mission-control/internal-send-activation-requests with internalSendActivationDesignToken; payload preview matches that workbench handler contract.');
     await activationRequestButton.listeners.click();
 
     const activationRequestCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-activation-requests');
