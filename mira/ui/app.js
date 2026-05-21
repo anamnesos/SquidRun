@@ -248,6 +248,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlProofSummaryQuestion(text)
     || isMissionControlMissingStageQuestion(text)
     || isMissionControlCurrentStageQuestion(text)
+    || isMissionControlPayloadPreviewQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -317,6 +318,15 @@ function isMissionControlCurrentStageQuestion(text) {
       || /\bwhat\s+is\s+the\s+(current|loaded)\s+(mission\s*control|new\s+mira)\s+(stage|status)\b/i.test(normalized)
       || /\bwhere\s+is\s+(mission\s*control|new\s+mira)\s+(now|in\s+the\s+(chain|pipeline))\b/i.test(normalized)
       || /\bwhich\s+(mission\s*control|new\s+mira)\s+(stage|status)\s+is\s+(current|loaded)\b/i.test(normalized));
+}
+
+function isMissionControlPayloadPreviewQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+(payload|body|endpoint|token\s+field)\s+(would|will|does)\s+(mission\s*control|new\s+mira)\b/i.test(normalized)
+      || /\bwhich\s+(endpoint|payload|body|token\s+field)\s+(would|will|does)\s+(mission\s*control|new\s+mira)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(payload|payload\s+preview|endpoint|handler\s+drift)\b/i.test(normalized)
+      || /\b(is|does)\s+the\s+(mission\s*control|new\s+mira)\s+(payload|endpoint|handler)\s+.*\b(ready|matched|valid)\b/i.test(normalized));
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -418,6 +428,10 @@ function currentMissionControlAnswer(text = '') {
     const currentStageAnswer = buildMissionControlCurrentStageAnswer();
     if (currentStageAnswer) return currentStageAnswer;
   }
+  if (isMissionControlPayloadPreviewQuestion(text)) {
+    const payloadPreviewAnswer = buildMissionControlPayloadPreviewAnswer();
+    if (payloadPreviewAnswer) return payloadPreviewAnswer;
+  }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
@@ -507,6 +521,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
   }
   if (state.missionControlActivationPipelineStatus) {
     available.push('current stage/status');
+    available.push('payload/endpoint preview');
   }
   if (Array.isArray(mission?.coordinationDrafts) && mission.coordinationDrafts.length > 0) {
     available.push('coordination draft preview');
@@ -743,6 +758,43 @@ function buildMissionControlCurrentStageAnswer(status = state.missionControlActi
     `Next boundary: ${status.nextBoundary?.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline status/current-stage trace from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlPayloadPreviewAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object' ? status.payloadPreview : {};
+  const preflight = status.manualActionPreflight && typeof status.manualActionPreflight === 'object' ? status.manualActionPreflight : {};
+  const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : {};
+  const validationChecks = Array.isArray(payloadPreview.validationChecks)
+    ? payloadPreview.validationChecks
+    : [];
+  const checksSummary = validationChecks.length > 0
+    ? validationChecks.map((check) => `${check.id || check.label || 'check'}:${check.ok === true ? 'ok' : 'blocked'}`).join(' / ')
+    : 'No payload validation checks are loaded.';
+  const previewBody = payloadPreview.payload && typeof payloadPreview.payload === 'object'
+    ? JSON.stringify(payloadPreview.payload)
+    : 'not available';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control payload-preview inspection; no setup or live action is needed.');
+  return [
+    `Payload preview status: ${String(payloadPreview.status || 'blocked').replace(/_/g, ' ')}`,
+    `Action label: ${payloadPreview.actionLabel || preflight.manualActionLabel || 'No manual action payload is ready.'}`,
+    `Method/endpoint: ${payloadPreview.method || 'no method'} ${payloadPreview.endpoint || 'no endpoint'}`,
+    `Token field/value: ${preflight.tokenField || 'no token'}=${preflight.tokenValue || 'not ready'}`,
+    `Selected artifact: ${payloadPreview.selectedStageId || preflight.selectedStageId || 'none'} · ${payloadPreview.selectedArtifactToken || preflight.selectedArtifactToken || 'not available'}`,
+    `Payload body: ${previewBody}`,
+    `Handler drift: ${driftCheck.status || 'not available'} · ${driftCheck.handlerName || 'no handler'}`,
+    `Validation checks: ${checksSummary}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline payload preview/manual preflight/handler drift from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, submit, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
