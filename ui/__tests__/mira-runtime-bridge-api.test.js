@@ -393,6 +393,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-requests'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-decision-audits'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-activation-implementation-readiness'");
+    expect(appJs).toContain("fetch('/mission-control/internal-send-live-activation-gate-contracts'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
@@ -408,6 +409,7 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(indexHtml).toContain('id="routeInternalSendActivationRequestList"');
     expect(indexHtml).toContain('id="routeInternalSendActivationAuditList"');
     expect(indexHtml).toContain('id="routeInternalSendActivationReadinessList"');
+    expect(indexHtml).toContain('id="routeInternalSendLiveGateList"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1142,6 +1144,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     const emptyActivationDecisionAuditPayload = await emptyActivationDecisionAuditResponse.json();
     const emptyActivationImplementationReadinessResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-implementation-readiness`);
     const emptyActivationImplementationReadinessPayload = await emptyActivationImplementationReadinessResponse.json();
+    const emptyLiveActivationGateResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`);
+    const emptyLiveActivationGatePayload = await emptyLiveActivationGateResponse.json();
     const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1373,6 +1377,27 @@ describe('Mira runtime bridge manual-plan API', () => {
       protocol: 'mira.mission_control_internal_send_activation_implementation_readiness_list.v0',
       readinessCount: 0,
       readiness: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(emptyLiveActivationGateResponse.status).toBe(200);
+    expect(emptyLiveActivationGatePayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_live_activation_gate_contract_list.v0',
+      contractCount: 0,
+      contracts: [],
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -3237,6 +3262,256 @@ describe('Mira runtime bridge manual-plan API', () => {
         code: 'mission_control_internal_send_activation_implementation_readiness_command_not_allowed',
       }));
       expect(fs.readdirSync(activationImplementationReadinessDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    const liveActivationGateContractDir = path.join(tempStateRoot, 'mission-control', 'internal-send-live-activation-gate-contracts');
+    const missingLiveGateTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingLiveGateTokenPayload = await missingLiveGateTokenResponse.json();
+    const badLiveGateTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationImplementationReadinessToken: 'mission-send-activation-ready-not-saved' }),
+    });
+    const badLiveGateTokenPayload = await badLiveGateTokenResponse.json();
+    expect(missingLiveGateTokenResponse.status).toBe(400);
+    expect(missingLiveGateTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_implementation_readiness_token_required',
+    }));
+    expect(fs.existsSync(liveActivationGateContractDir)).toBe(false);
+    expect(badLiveGateTokenResponse.status).toBe(400);
+    expect(badLiveGateTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_implementation_readiness_not_found',
+    }));
+    expect(fs.existsSync(liveActivationGateContractDir)).toBe(false);
+    const liveGateResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken }),
+    });
+    const liveGatePayload = await liveGateResponse.json();
+    const duplicateLiveGateResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ readinessToken: implementationReadinessPayload.readiness.actionToken }),
+    });
+    const duplicateLiveGatePayload = await duplicateLiveGateResponse.json();
+    const listLiveGateResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts?includeInternal=1`);
+    const listLiveGatePayload = await listLiveGateResponse.json();
+    expect(liveGateResponse.status).toBe(200);
+    expect(liveGatePayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_live_activation_gate_contract_write.v0',
+      created: true,
+      relativePath: expect.stringMatching(/^mission-control\/internal-send-live-activation-gate-contracts\/mission-send-live-gate-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(liveGatePayload.contract).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_live_activation_gate_contract.v0',
+      status: 'live_activation_gate_hard_stop',
+      sourceInternalSendActivationImplementationReadinessId: implementationReadinessPayload.readiness.id,
+      sourceInternalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken,
+      sourceInternalSendActivationDecisionAuditToken: decisionAuditPayload.audit.actionToken,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      targetLabel: 'oracle pane 3',
+      content: 'Edited internal continuation for Oracle review.',
+      bodySha256: implementationReadinessPayload.readiness.bodySha256,
+      adapterPacketSha256: implementationReadinessPayload.readiness.adapterPacketSha256,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(liveGatePayload.contract.hardStop).toEqual({
+      protocol: 'mira.mission_control_internal_send_live_activation_hard_stop.v0',
+      contractOnly: true,
+      liveActivationAllowed: false,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+      implementationEnabled: false,
+      separateActivationLaneRequired: true,
+      jamesSetupRequiredBeforeLiveSend: true,
+    });
+    expect(liveGatePayload.contract.jamesRequirements.map((item) => item.id)).toEqual([
+      'james_explicit_request_required',
+      'target_pane_confirmation_required',
+      'separate_activation_lane_required',
+    ]);
+    expect(liveGatePayload.contract.setupRequirements.map((item) => item.id)).toEqual([
+      'implementation_readiness_token_required',
+      'implementation_readiness_checksum_required',
+      'transport_dry_run_replay_required',
+    ]);
+    expect(liveGatePayload.contract.rollbackRequirements.map((item) => item.id)).toEqual([
+      'rollback_and_audit_review_required',
+    ]);
+    expect(liveGatePayload.contract.audit).toEqual(expect.objectContaining({
+      reviewStatus: 'live_activation_gate_contract_ready',
+      contractOnly: true,
+      hardStop: true,
+      manualExecutionRequired: true,
+      sourceImplementationReadinessChecksumMatched: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(liveGatePayload.contract).not.toHaveProperty('command');
+    expect(liveGatePayload.contract).not.toHaveProperty('args');
+    expect(liveGatePayload.contract).not.toHaveProperty('delivery');
+    const storedLiveGate = JSON.parse(fs.readFileSync(liveGatePayload.absolutePath, 'utf8'));
+    expect(storedLiveGate).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_live_activation_gate_contract.v0',
+      status: 'live_activation_gate_hard_stop',
+      sourceInternalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken,
+      targetLabel: 'oracle pane 3',
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedLiveGate).not.toHaveProperty('command');
+    expect(storedLiveGate).not.toHaveProperty('args');
+    expect(storedLiveGate).not.toHaveProperty('delivery');
+    expect(duplicateLiveGateResponse.status).toBe(200);
+    expect(duplicateLiveGatePayload.created).toBe(false);
+    expect(duplicateLiveGatePayload.relativePath).toBe(liveGatePayload.relativePath);
+    expect(listLiveGateResponse.status).toBe(200);
+    expect(listLiveGatePayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_live_activation_gate_contract_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      contractCount: 1,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(listLiveGatePayload.contracts[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-send-live-gate-/),
+      relativePath: liveGatePayload.relativePath,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    fs.writeFileSync(implementationReadinessPayload.absolutePath, `${JSON.stringify({
+      ...storedImplementationReadiness,
+      bodySha256: 'bad-body-sha256',
+    }, null, 2)}\n`, 'utf8');
+    const mismatchedLiveGateResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken }),
+    });
+    const mismatchedLiveGatePayload = await mismatchedLiveGateResponse.json();
+    fs.writeFileSync(implementationReadinessPayload.absolutePath, `${JSON.stringify(storedImplementationReadiness, null, 2)}\n`, 'utf8');
+    expect(mismatchedLiveGateResponse.status).toBe(400);
+    expect(mismatchedLiveGatePayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_live_activation_gate_contract_checksum_mismatch',
+    }));
+    expect(fs.readdirSync(liveActivationGateContractDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    for (const input of [
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, liveHmSend: true },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, liveActivationAllowed: true },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, liveActivationGate: { activationAllowed: true } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, liveActivationGate: { liveActivationAllowed: true } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, gate: { target: { telegramSend: true } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, hardStop: { body: { liveHmSendExecutionAllowed: true } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, hardStop: { body: { liveActivationAllowed: true } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, jamesRequirements: { realSendAllowed: true } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, setupRequirements: { target: { routeFlip: true } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, activation: { body: { implementationEnabled: true } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, readiness: { externalSend: true } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, audit: { body: { accountOrTokenAccess: true } } },
+    ]) {
+      const blockedLiveGateResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedLiveGatePayload = await blockedLiveGateResponse.json();
+      expect(blockedLiveGateResponse.status).toBe(400);
+      expect(blockedLiveGatePayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_live_activation_gate_contract_has_live_effect',
+      }));
+      expect(fs.readdirSync(liveActivationGateContractDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    for (const input of [
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, command: 'hm-send oracle' },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, liveActivationGate: { command: 'hm-send oracle' } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, gate: { body: { command: 'hm-send oracle' } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, hardStop: { target: { args: ['hm-send', 'oracle'] } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, setupRequirements: { args: ['hm-send', 'oracle'] } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, activation: { target: { command: 'hm-send oracle' } } },
+      { internalSendActivationImplementationReadinessToken: implementationReadinessPayload.readiness.actionToken, audit: { body: { command: 'hm-send oracle' } } },
+    ]) {
+      const blockedCommandLiveGateResponse = await fetch(`${baseUrl}/mission-control/internal-send-live-activation-gate-contracts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandLiveGatePayload = await blockedCommandLiveGateResponse.json();
+      expect(blockedCommandLiveGateResponse.status).toBe(400);
+      expect(blockedCommandLiveGatePayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_live_activation_gate_contract_command_not_allowed',
+      }));
+      expect(fs.readdirSync(liveActivationGateContractDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
     }
     fs.writeFileSync(deliveryPreviewPayload.absolutePath, `${JSON.stringify({
       ...storedDeliveryPreview,

@@ -23,6 +23,7 @@ const state = {
   missionControlInternalSendActivationRequestCount: 0,
   missionControlInternalSendActivationAuditCount: 0,
   missionControlInternalSendActivationReadinessCount: 0,
+  missionControlInternalSendLiveGateCount: 0,
   selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -61,6 +62,7 @@ const elements = {
   routeInternalSendActivationRequestList: document.getElementById('routeInternalSendActivationRequestList'),
   routeInternalSendActivationAuditList: document.getElementById('routeInternalSendActivationAuditList'),
   routeInternalSendActivationReadinessList: document.getElementById('routeInternalSendActivationReadinessList'),
+  routeInternalSendLiveGateList: document.getElementById('routeInternalSendLiveGateList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -393,7 +395,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.missionControlInternalSendActivationDesignCount} activation designs / ${state.missionControlInternalSendActivationRequestCount} activation requests / ${state.missionControlInternalSendActivationAuditCount} activation audits / ${state.missionControlInternalSendActivationReadinessCount} activation readiness / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.missionControlInternalSendActivationDesignCount} activation designs / ${state.missionControlInternalSendActivationRequestCount} activation requests / ${state.missionControlInternalSendActivationAuditCount} activation audits / ${state.missionControlInternalSendActivationReadinessCount} activation readiness / ${state.missionControlInternalSendLiveGateCount} live gates / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -804,6 +806,7 @@ function updateRoutePreviewHistoryList(payload) {
         await refreshInternalSendActivationRequests();
         await refreshInternalSendActivationDecisionAudits();
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -912,6 +915,7 @@ function renderRouteContinuationPanel(request) {
         await refreshInternalSendActivationRequests();
         await refreshInternalSendActivationDecisionAudits();
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
       } finally {
@@ -997,6 +1001,7 @@ function updateRouteFollowThroughList(payload) {
           await refreshInternalSendActivationRequests();
           await refreshInternalSendActivationDecisionAudits();
           await refreshInternalSendActivationImplementationReadiness();
+          await refreshInternalSendLiveActivationGateContracts();
         } catch (error) {
           appendMessage('mira', error.message, 'error');
           action.disabled = false;
@@ -1057,6 +1062,7 @@ function updateRouteDeliveryPreviewList(payload) {
         await refreshInternalSendActivationRequests();
         await refreshInternalSendActivationDecisionAudits();
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         readiness.disabled = false;
@@ -1111,6 +1117,7 @@ function updateDispatchReadinessList(payload) {
         await refreshInternalSendActivationRequests();
         await refreshInternalSendActivationDecisionAudits();
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         dryRun.disabled = false;
@@ -1159,6 +1166,7 @@ function updateInternalSendDryRunList(payload) {
         await refreshInternalSendActivationRequests();
         await refreshInternalSendActivationDecisionAudits();
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         design.disabled = false;
@@ -1207,6 +1215,7 @@ function updateInternalSendActivationDesignList(payload) {
         await refreshInternalSendActivationRequests();
         await refreshInternalSendActivationDecisionAudits();
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         request.disabled = false;
@@ -1255,6 +1264,7 @@ function updateInternalSendActivationRequestList(payload) {
         appendMessage('mira', 'Activation decision audit saved locally. Nothing was sent or executed.');
         await refreshInternalSendActivationDecisionAudits();
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         audit.disabled = false;
@@ -1302,6 +1312,7 @@ function updateInternalSendActivationDecisionAuditList(payload) {
         readiness.textContent = 'Readiness recorded';
         appendMessage('mira', 'Activation implementation readiness saved locally. Nothing was sent or executed.');
         await refreshInternalSendActivationImplementationReadiness();
+        await refreshInternalSendLiveActivationGateContracts();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         readiness.disabled = false;
@@ -1336,6 +1347,51 @@ function updateInternalSendActivationImplementationReadinessList(payload) {
     appendPreviewLine(card, 'Refusal', `${record.refusal?.status || 'live_activation_still_refused'} · ${record.refusal?.reason || 'live activation remains refused'}`);
     appendPreviewLine(card, 'Rollback', `${record.rollback?.status || 'rollback_requirements_ready'} · snapshot: ${record.rollback?.preActivationSnapshotRequired === true ? 'required' : 'missing'} · failure audit: ${record.rollback?.failureAuditRequired === true ? 'required' : 'missing'}`);
     appendPreviewLine(card, 'Audit', 'implementation readiness only; disabled by default; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
+    const gate = document.createElement('button');
+    gate.type = 'button';
+    gate.className = 'subtle-button';
+    gate.textContent = 'Define live gate contract';
+    gate.addEventListener('click', async () => {
+      gate.disabled = true;
+      gate.textContent = 'Defining gate';
+      try {
+        await createInternalSendLiveActivationGateContract(record);
+        gate.textContent = 'Gate contract recorded';
+        appendMessage('mira', 'Live activation gate contract saved locally. Nothing was sent or executed.');
+        await refreshInternalSendLiveActivationGateContracts();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        gate.disabled = false;
+        gate.textContent = 'Define live gate contract';
+      }
+    });
+    card.append(gate);
+    return card;
+  }));
+}
+
+function updateInternalSendLiveActivationGateContractList(payload) {
+  const contracts = Array.isArray(payload?.contracts) ? payload.contracts : [];
+  state.missionControlInternalSendLiveGateCount = Number(payload?.contractCount || contracts.length || 0);
+  renderWorkSummary();
+  if (contracts.length === 0) {
+    setText(elements.routeInternalSendLiveGateList, 'no live activation gate contracts yet');
+    return;
+  }
+
+  elements.routeInternalSendLiveGateList.replaceChildren(...contracts.slice(0, 5).map((contract) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-internal-send-live-gate';
+    const title = document.createElement('strong');
+    title.textContent = `${contract.targetRole || 'team'} · live activation hard-stop contract`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(contract.status || 'live_activation_gate_hard_stop').replace(/_/g, ' ')} · James setup required before live send · not sent · ${formatReadyStamp(contract.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Pane target', contract.targetLabel || `${contract.targetRole || 'team'} pane ${contract.targetPaneId || '?'}`);
+    appendPreviewLine(card, 'Body', contract.contentPreview || contract.content);
+    appendPreviewLine(card, 'Hard stop', `live activation: ${contract.hardStop?.liveActivationAllowed === true ? 'yes' : 'no'}; implementation enabled: ${contract.hardStop?.implementationEnabled === true ? 'yes' : 'no'}; James setup required: ${contract.hardStop?.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}`);
+    appendPreviewLine(card, 'James/setup', (contract.jamesRequirements || []).map((item) => item.label).join(' / '));
+    appendPreviewLine(card, 'Audit', 'hard-stop contract only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     return card;
   }));
 }
@@ -1663,6 +1719,13 @@ async function refreshInternalSendActivationImplementationReadiness() {
   const payload = await response.json();
   if (!response.ok || payload?.ok !== true) return;
   updateInternalSendActivationImplementationReadinessList(payload);
+}
+
+async function refreshInternalSendLiveActivationGateContracts() {
+  const response = await fetch('/mission-control/internal-send-live-activation-gate-contracts');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateInternalSendLiveActivationGateContractList(payload);
 }
 
 async function refreshAutonomy() {
@@ -2001,6 +2064,21 @@ async function createInternalSendActivationImplementationReadiness(audit) {
   return payload;
 }
 
+async function createInternalSendLiveActivationGateContract(readiness) {
+  const response = await fetch('/mission-control/internal-send-live-activation-gate-contracts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      internalSendActivationImplementationReadinessToken: readiness?.actionToken || '',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control live activation gate contract save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -2090,6 +2168,7 @@ async function primeReadOnlyWorkbench() {
     await refreshInternalSendActivationRequests();
     await refreshInternalSendActivationDecisionAudits();
     await refreshInternalSendActivationImplementationReadiness();
+    await refreshInternalSendLiveActivationGateContracts();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -2122,6 +2201,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshInternalSendActivationRequests();
     await refreshInternalSendActivationDecisionAudits();
     await refreshInternalSendActivationImplementationReadiness();
+    await refreshInternalSendLiveActivationGateContracts();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -2217,6 +2297,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     await refreshInternalSendActivationRequests();
     await refreshInternalSendActivationDecisionAudits();
     await refreshInternalSendActivationImplementationReadiness();
+    await refreshInternalSendLiveActivationGateContracts();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {

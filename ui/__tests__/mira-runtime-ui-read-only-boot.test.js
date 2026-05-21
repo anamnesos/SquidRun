@@ -508,6 +508,26 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       accountOrTokenAccess: false,
       liveHmSend: false,
     },
+    '/mission-control/internal-send-live-activation-gate-contracts': {
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_live_activation_gate_contract_list.v0',
+      contractCount: 0,
+      contracts: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
     '/autonomy/status': {
       ok: true,
       queueCount: 0,
@@ -1670,6 +1690,128 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         liveHmSend: false,
       });
     }
+    if (pathname === '/mission-control/internal-send-live-activation-gate-contracts' && method === 'POST') {
+      const readiness = payloads['/mission-control/internal-send-activation-implementation-readiness'].readiness
+        .find((candidate) => candidate.actionToken === body?.internalSendActivationImplementationReadinessToken);
+      if (!readiness) {
+        return response({ ok: false, error: { message: 'Mission Control internal-send activation implementation readiness was not found.' } }, false);
+      }
+      const contract = {
+        protocol: 'mira.mission_control_internal_send_live_activation_gate_contract.v0',
+        id: 'mission-send-live-gate-test',
+        actionToken: 'mission-send-live-gate-test',
+        status: 'live_activation_gate_hard_stop',
+        createdAt: '2026-05-21T00:00:10.000Z',
+        sourceInternalSendActivationImplementationReadinessId: readiness.id,
+        sourceInternalSendActivationImplementationReadinessToken: readiness.actionToken,
+        sourceInternalSendActivationDecisionAuditId: readiness.sourceInternalSendActivationDecisionAuditId,
+        sourceInternalSendActivationDecisionAuditToken: readiness.sourceInternalSendActivationDecisionAuditToken,
+        sourceInternalSendActivationRequestId: readiness.sourceInternalSendActivationRequestId,
+        sourceInternalSendActivationRequestToken: readiness.sourceInternalSendActivationRequestToken,
+        sourceInternalSendActivationDesignId: readiness.sourceInternalSendActivationDesignId,
+        sourceInternalSendActivationDesignToken: readiness.sourceInternalSendActivationDesignToken,
+        sourceInternalSendDryRunId: readiness.sourceInternalSendDryRunId,
+        sourceInternalSendDryRunToken: readiness.sourceInternalSendDryRunToken,
+        sourceDispatchReadinessId: readiness.sourceDispatchReadinessId,
+        sourceDispatchReadinessToken: readiness.sourceDispatchReadinessToken,
+        sourceDeliveryPreviewId: readiness.sourceDeliveryPreviewId,
+        sourceDeliveryPreviewToken: readiness.sourceDeliveryPreviewToken,
+        sourceRecommendationId: readiness.sourceRecommendationId,
+        sourceContinuationId: readiness.sourceContinuationId,
+        sourceRequestId: readiness.sourceRequestId,
+        sourcePreviewId: readiness.sourcePreviewId,
+        targetRole: readiness.targetRole,
+        targetPaneId: readiness.targetPaneId,
+        targetLabel: readiness.targetLabel,
+        purpose: readiness.purpose,
+        content: readiness.content,
+        contentPreview: readiness.contentPreview,
+        bodySha256: readiness.bodySha256,
+        adapterPacketSha256: readiness.adapterPacketSha256,
+        hardStop: {
+          protocol: 'mira.mission_control_internal_send_live_activation_hard_stop.v0',
+          contractOnly: true,
+          liveActivationAllowed: false,
+          liveHmSendExecutionAllowed: false,
+          realSendAllowed: false,
+          implementationEnabled: false,
+          separateActivationLaneRequired: true,
+          jamesSetupRequiredBeforeLiveSend: true,
+        },
+        jamesRequirements: [
+          { id: 'james_explicit_request_required', label: 'James must explicitly request a later live internal-send activation for this exact target and body.', ok: true },
+          { id: 'target_pane_confirmation_required', label: 'James-visible setup must confirm oracle pane 3 is the intended live pane target.', ok: true },
+          { id: 'separate_activation_lane_required', label: 'A later activation lane must be reviewed separately before any live hm-send execution exists.', ok: true },
+        ],
+        setupRequirements: [
+          { id: 'implementation_readiness_token_required', label: 'Missing or unknown implementation-readiness tokens must return 400 without writing.', ok: true },
+          { id: 'implementation_readiness_checksum_required', label: 'Implementation-readiness body checksum must match before a live gate contract is written.', ok: true },
+          { id: 'transport_dry_run_replay_required', label: 'A later activation lane must replay the dry-run envelope and compare target/body checksums before execution.', ok: true },
+        ],
+        rollbackRequirements: [
+          { id: 'rollback_and_audit_review_required', label: 'Rollback and transport-outcome audit review must be accepted in a later lane before execution.', ok: true },
+        ],
+        audit: {
+          reviewStatus: 'live_activation_gate_contract_ready',
+          contractOnly: true,
+          hardStop: true,
+          manualExecutionRequired: true,
+          sourceImplementationReadinessChecksumMatched: true,
+          notSent: true,
+          commandStored: false,
+          sendPerformed: false,
+          runtimeExecutes: false,
+          externalSend: false,
+          telegramSend: false,
+          routeFlip: false,
+          providerInvoked: false,
+          accountOrTokenAccess: false,
+          liveHmSend: false,
+        },
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      };
+      payloads['/mission-control/internal-send-live-activation-gate-contracts'] = {
+        ...payloads['/mission-control/internal-send-live-activation-gate-contracts'],
+        contractCount: 1,
+        contracts: [contract],
+      };
+      return response({
+        ok: true,
+        protocol: 'mira.mission_control_internal_send_live_activation_gate_contract_write.v0',
+        created: true,
+        stateRootPath: 'D:/projects/squidrun/mira/.state-dev',
+        relativePath: 'mission-control/internal-send-live-activation-gate-contracts/mission-send-live-gate-test.json',
+        absolutePath: 'D:/projects/squidrun/mira/.state-dev/mission-control/internal-send-live-activation-gate-contracts/mission-send-live-gate-test.json',
+        contract,
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      });
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -1776,6 +1918,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/mission-control/internal-send-activation-requests', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-send-activation-decision-audits', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-send-activation-implementation-readiness', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/internal-send-live-activation-gate-contracts', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -1804,6 +1947,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.routeInternalSendActivationRequestList.textContent).toBe('no activation requests yet');
     expect(harness.elements.routeInternalSendActivationAuditList.textContent).toBe('no activation decision audits yet');
     expect(harness.elements.routeInternalSendActivationReadinessList.textContent).toBe('no activation implementation readiness yet');
+    expect(harness.elements.routeInternalSendLiveGateList.textContent).toBe('no live activation gate contracts yet');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -1824,6 +1968,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.workSummary.textContent).toContain('0 activation requests');
     expect(harness.elements.workSummary.textContent).toContain('0 activation audits');
     expect(harness.elements.workSummary.textContent).toContain('0 activation readiness');
+    expect(harness.elements.workSummary.textContent).toContain('0 live gates');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
   });
 
@@ -2340,6 +2485,37 @@ describe('Mira runtime UI boot', () => {
     expect(implementationReadinessText).toContain('Refusal: live_activation_still_refused · Implementation readiness is review-only and remains disabled until a separate activation implementation gate exists.');
     expect(implementationReadinessText).toContain('Rollback: rollback_requirements_ready · snapshot: required · failure audit: required');
     expect(implementationReadinessText).toContain('implementation readiness only; disabled by default; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    const liveGateCallsBeforeClick = harness.calls.filter((call) => call.url === '/mission-control/internal-send-live-activation-gate-contracts');
+    expect(liveGateCallsBeforeClick.every((call) => call.method === 'GET')).toBe(true);
+    expect(liveGateCallsBeforeClick).toHaveLength(11);
+    const liveGateButton = harness.elements.routeInternalSendActivationReadinessList.children[0].children
+      .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Define live gate contract');
+    expect(liveGateButton.textContent).toBe('Define live gate contract');
+    await liveGateButton.listeners.click();
+
+    const liveGateCalls = harness.calls.filter((call) => call.url === '/mission-control/internal-send-live-activation-gate-contracts');
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(11);
+    expect(liveGateCalls).toEqual([
+      ...Array.from({ length: 11 }, () => expect.objectContaining({ method: 'GET' })),
+      expect.objectContaining({
+        method: 'POST',
+        body: {
+          internalSendActivationImplementationReadinessToken: 'mission-send-activation-ready-test',
+        },
+      }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.elements.routeInternalSendLiveGateList.children).toHaveLength(1);
+    const liveGateText = harness.elements.routeInternalSendLiveGateList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(liveGateText).toContain('oracle · live activation hard-stop contract');
+    expect(liveGateText).toContain('live activation gate hard stop · James setup required before live send · not sent');
+    expect(liveGateText).toContain('Pane target: oracle pane 3');
+    expect(liveGateText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(liveGateText).toContain('Hard stop: live activation: no; implementation enabled: no; James setup required: yes');
+    expect(liveGateText).toContain('James/setup: James must explicitly request a later live internal-send activation for this exact target and body.');
+    expect(liveGateText).toContain('hard-stop contract only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal delivery preview saved locally. Nothing was sent or executed.');
@@ -2349,6 +2525,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Activation request preview saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Activation decision audit saved locally. Nothing was sent or executed.');
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Activation implementation readiness saved locally. Nothing was sent or executed.');
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Live activation gate contract saved locally. Nothing was sent or executed.');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {

@@ -1263,6 +1263,146 @@ export type MissionControlInternalSendActivationImplementationReadinessListResul
   liveHmSend: false;
 };
 
+export type MissionControlInternalSendLiveActivationGateContractRequirement = {
+  id:
+    | "implementation_readiness_token_required"
+    | "implementation_readiness_checksum_required"
+    | "james_explicit_request_required"
+    | "target_pane_confirmation_required"
+    | "transport_dry_run_replay_required"
+    | "rollback_and_audit_review_required"
+    | "separate_activation_lane_required";
+  label: string;
+  ok: true;
+};
+
+export type MissionControlInternalSendLiveActivationGateContractRecord = {
+  protocol: "mira.mission_control_internal_send_live_activation_gate_contract.v0";
+  id: string;
+  status: "live_activation_gate_hard_stop";
+  createdAt: string;
+  sourceInternalSendActivationImplementationReadinessId: string;
+  sourceInternalSendActivationImplementationReadinessToken: string;
+  sourceInternalSendActivationDecisionAuditId: string;
+  sourceInternalSendActivationDecisionAuditToken: string;
+  sourceInternalSendActivationRequestId: string;
+  sourceInternalSendActivationRequestToken: string;
+  sourceInternalSendActivationDesignId: string;
+  sourceInternalSendActivationDesignToken: string;
+  sourceInternalSendDryRunId: string;
+  sourceInternalSendDryRunToken: string;
+  sourceDispatchReadinessId: string;
+  sourceDispatchReadinessToken: string;
+  sourceDeliveryPreviewId: string;
+  sourceDeliveryPreviewToken: string;
+  sourceRecommendationId: string;
+  sourceContinuationId: string;
+  sourceRequestId: string;
+  sourcePreviewId: string;
+  targetRole: "architect" | "builder" | "oracle";
+  targetPaneId: "1" | "2" | "3";
+  targetLabel: string;
+  purpose: string;
+  content: string;
+  contentPreview: string;
+  bodySha256: string;
+  adapterPacketSha256: string;
+  hardStop: {
+    protocol: "mira.mission_control_internal_send_live_activation_hard_stop.v0";
+    contractOnly: true;
+    liveActivationAllowed: false;
+    liveHmSendExecutionAllowed: false;
+    realSendAllowed: false;
+    implementationEnabled: false;
+    separateActivationLaneRequired: true;
+    jamesSetupRequiredBeforeLiveSend: true;
+  };
+  jamesRequirements: MissionControlInternalSendLiveActivationGateContractRequirement[];
+  setupRequirements: MissionControlInternalSendLiveActivationGateContractRequirement[];
+  rollbackRequirements: MissionControlInternalSendLiveActivationGateContractRequirement[];
+  audit: {
+    reviewStatus: "live_activation_gate_contract_ready";
+    contractOnly: true;
+    hardStop: true;
+    manualExecutionRequired: true;
+    sourceImplementationReadinessChecksumMatched: true;
+    notSent: true;
+    commandStored: false;
+    sendPerformed: false;
+    runtimeExecutes: false;
+    externalSend: false;
+    telegramSend: false;
+    routeFlip: false;
+    providerInvoked: false;
+    accountOrTokenAccess: false;
+    liveHmSend: false;
+  };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlInternalSendLiveActivationGateContractWriteResult = {
+  ok: true;
+  protocol: "mira.mission_control_internal_send_live_activation_gate_contract_write.v0";
+  created: boolean;
+  stateRootPath: string;
+  relativePath: string;
+  absolutePath: string;
+  contract: MissionControlInternalSendLiveActivationGateContractRecord & { actionToken: string };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlInternalSendLiveActivationGateContractListResult = {
+  ok: true;
+  protocol: "mira.mission_control_internal_send_live_activation_gate_contract_list.v0";
+  stateRootPath: string | null;
+  contractCount: number;
+  contracts: Array<MissionControlInternalSendLiveActivationGateContractRecord & {
+    actionToken: string;
+    relativePath?: string;
+    absolutePath?: string;
+  }>;
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
 const allowedRoles = new Set(["architect", "builder", "oracle"]);
 
 function isInside(rootPath: string, candidatePath: string): boolean {
@@ -1308,6 +1448,10 @@ function internalSendActivationDecisionAuditsDir(rootPath: string): string {
 
 function internalSendActivationImplementationReadinessDir(rootPath: string): string {
   return path.resolve(rootPath, "mission-control", "internal-send-activation-implementation-readiness");
+}
+
+function internalSendLiveActivationGateContractsDir(rootPath: string): string {
+  return path.resolve(rootPath, "mission-control", "internal-send-live-activation-gate-contracts");
 }
 
 function asObject(value: unknown, label: string): JsonObject {
@@ -1427,6 +1571,14 @@ function rejectInternalSendActivationImplementationReadinessLiveEffect(value: un
   }
 }
 
+function rejectInternalSendLiveActivationGateContractLiveEffect(value: unknown, label: string): void {
+  if (value === true) {
+    throw Object.assign(new Error(`${label} cannot be true for an internal-send live activation gate contract.`), {
+      code: "mission_control_internal_send_live_activation_gate_contract_has_live_effect",
+    });
+  }
+}
+
 function optionalObject(value: unknown): JsonObject | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as JsonObject;
@@ -1519,6 +1671,10 @@ function buildInternalSendActivationImplementationReadinessActionToken(id: strin
   return `mission-send-activation-ready-${crypto.createHash("sha256").update(`mira.mission_control_internal_send_activation_implementation_readiness.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
+function buildInternalSendLiveActivationGateContractActionToken(id: string): string {
+  return `mission-send-live-gate-${crypto.createHash("sha256").update(`mira.mission_control_internal_send_live_activation_gate_contract.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
 function sha256Text(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -1594,6 +1750,13 @@ function toPublicInternalSendActivationImplementationReadiness(record: MissionCo
   return {
     ...record,
     actionToken: buildInternalSendActivationImplementationReadinessActionToken(record.id),
+  };
+}
+
+function toPublicInternalSendLiveActivationGateContract(record: MissionControlInternalSendLiveActivationGateContractRecord): MissionControlInternalSendLiveActivationGateContractRecord & { actionToken: string } {
+  return {
+    ...record,
+    actionToken: buildInternalSendLiveActivationGateContractActionToken(record.id),
   };
 }
 
@@ -1848,6 +2011,31 @@ function parseInternalSendActivationImplementationReadinessRecord(value: string)
   }
 }
 
+function parseInternalSendLiveActivationGateContractRecord(value: string): MissionControlInternalSendLiveActivationGateContractRecord | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<MissionControlInternalSendLiveActivationGateContractRecord>;
+    if (parsed.protocol !== "mira.mission_control_internal_send_live_activation_gate_contract.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "live_activation_gate_hard_stop") return null;
+    if (parsed.manualExecutionRequired !== true || parsed.reviewRequired !== true || parsed.internalOnly !== true) return null;
+    if (parsed.reviewableOwnedWork !== true || parsed.notSent !== true || parsed.commandStored !== false) return null;
+    if (
+      parsed.sendPerformed !== false
+      || parsed.runtimeExecutes !== false
+      || parsed.externalSend !== false
+      || parsed.telegramSend !== false
+      || parsed.routeFlip !== false
+      || parsed.providerInvoked !== false
+      || parsed.accountOrTokenAccess !== false
+      || parsed.liveHmSend !== false
+    ) return null;
+    if (!allowedRoles.has(String(parsed.targetRole))) return null;
+    if ("command" in parsed || "args" in parsed) return null;
+    return parsed as MissionControlInternalSendLiveActivationGateContractRecord;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeRoutePreview(input: MissionControlRoutePreviewInput): MissionControlRoutePreviewRecord {
   const preview = asObject(input.routePreview ?? input.preview, "routePreview");
   if (preview.status !== "reviewed_preview_only") {
@@ -2067,6 +2255,20 @@ function readInternalSendActivationImplementationReadinessRecords(rootPath: stri
       return parseInternalSendActivationImplementationReadinessRecord(fs.readFileSync(absolutePath, "utf8"));
     })
     .filter((record): record is MissionControlInternalSendActivationImplementationReadinessRecord => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function readInternalSendLiveActivationGateContractRecords(rootPath: string): MissionControlInternalSendLiveActivationGateContractRecord[] {
+  const dir = internalSendLiveActivationGateContractsDir(rootPath);
+  if (!isInside(rootPath, dir) || !fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(dir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseInternalSendLiveActivationGateContractRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is MissionControlInternalSendLiveActivationGateContractRecord => Boolean(record))
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 }
 
@@ -2597,6 +2799,90 @@ function rejectInternalSendActivationImplementationReadinessInput(input: JsonObj
   }
 }
 
+function rejectInternalSendLiveActivationGateContractInput(input: JsonObject): void {
+  const liveActivationGate = optionalObject(input.liveActivationGate);
+  const liveActivationGateTarget = optionalObject(liveActivationGate?.target);
+  const liveActivationGateBody = optionalObject(liveActivationGate?.body);
+  const gate = optionalObject(input.gate);
+  const gateTarget = optionalObject(gate?.target);
+  const gateBody = optionalObject(gate?.body);
+  const hardStop = optionalObject(input.hardStop);
+  const hardStopTarget = optionalObject(hardStop?.target);
+  const hardStopBody = optionalObject(hardStop?.body);
+  const jamesRequirements = optionalObject(input.jamesRequirements);
+  const jamesRequirementsTarget = optionalObject(jamesRequirements?.target);
+  const jamesRequirementsBody = optionalObject(jamesRequirements?.body);
+  const setupRequirements = optionalObject(input.setupRequirements);
+  const setupRequirementsTarget = optionalObject(setupRequirements?.target);
+  const setupRequirementsBody = optionalObject(setupRequirements?.body);
+  const activation = optionalObject(input.activation);
+  const activationTarget = optionalObject(activation?.target);
+  const activationBody = optionalObject(activation?.body);
+  const readiness = optionalObject(input.readiness);
+  const readinessTarget = optionalObject(readiness?.target);
+  const readinessBody = optionalObject(readiness?.body);
+  const audit = optionalObject(input.audit);
+  const auditTarget = optionalObject(audit?.target);
+  const auditBody = optionalObject(audit?.body);
+  for (const [containerLabel, container] of [
+    ["liveActivationGate", input],
+    ["liveActivationGate", liveActivationGate],
+    ["liveActivationGate.target", liveActivationGateTarget],
+    ["liveActivationGate.body", liveActivationGateBody],
+    ["gate", gate],
+    ["gate.target", gateTarget],
+    ["gate.body", gateBody],
+    ["hardStop", hardStop],
+    ["hardStop.target", hardStopTarget],
+    ["hardStop.body", hardStopBody],
+    ["jamesRequirements", jamesRequirements],
+    ["jamesRequirements.target", jamesRequirementsTarget],
+    ["jamesRequirements.body", jamesRequirementsBody],
+    ["setupRequirements", setupRequirements],
+    ["setupRequirements.target", setupRequirementsTarget],
+    ["setupRequirements.body", setupRequirementsBody],
+    ["activation", activation],
+    ["activation.target", activationTarget],
+    ["activation.body", activationBody],
+    ["readiness", readiness],
+    ["readiness.target", readinessTarget],
+    ["readiness.body", readinessBody],
+    ["audit", audit],
+    ["audit.target", auditTarget],
+    ["audit.body", auditBody],
+  ] as const) {
+    if (!container) continue;
+    if ("command" in container || "args" in container) {
+      throw Object.assign(new Error(`Mission Control internal-send live activation gate contracts do not accept command or args fields in ${containerLabel}.`), {
+        code: "mission_control_internal_send_live_activation_gate_contract_command_not_allowed",
+      });
+    }
+    for (const flag of [
+      "sendPerformed",
+      "runtimeExecutes",
+      "externalSend",
+      "telegramSend",
+      "routeFlip",
+      "providerInvoked",
+      "accountOrTokenAccess",
+      "liveHmSend",
+      "realSendAllowed",
+      "liveActivationAllowed",
+      "liveHmSendExecutionAllowed",
+      "activationAllowed",
+      "implementationEnabled",
+      "execute",
+      "executed",
+      "sendNow",
+      "activate",
+      "deliveryPerformed",
+      "bridgeDelivery",
+    ]) {
+      rejectInternalSendLiveActivationGateContractLiveEffect(container[flag], `${containerLabel}.${flag}`);
+    }
+  }
+}
+
 function resolveRouteRequest(input: { requestToken?: unknown }, rootPath: string): MissionControlInternalRouteRequestRecord {
   const requestToken = optionalPreview(input.requestToken, 220);
   if (!requestToken) {
@@ -2890,6 +3176,27 @@ function resolveInternalSendActivationDecisionAudit(
   if (!record) {
     throw Object.assign(new Error("Mission Control internal-send activation decision audit was not found."), {
       code: "mission_control_internal_send_activation_decision_audit_not_found",
+    });
+  }
+  return record;
+}
+
+function resolveInternalSendActivationImplementationReadiness(
+  input: { internalSendActivationImplementationReadinessToken?: unknown; activationImplementationReadinessToken?: unknown; implementationReadinessToken?: unknown; readinessToken?: unknown },
+  rootPath: string,
+): MissionControlInternalSendActivationImplementationReadinessRecord {
+  const readinessToken = optionalPreview(input.internalSendActivationImplementationReadinessToken ?? input.activationImplementationReadinessToken ?? input.implementationReadinessToken ?? input.readinessToken, 380);
+  if (!readinessToken) {
+    throw Object.assign(new Error("Mission Control internal-send activation implementation readiness token is required."), {
+      code: "mission_control_internal_send_activation_implementation_readiness_token_required",
+    });
+  }
+  const record = readInternalSendActivationImplementationReadinessRecords(rootPath).find((candidate) => {
+    return buildInternalSendActivationImplementationReadinessActionToken(candidate.id) === readinessToken;
+  });
+  if (!record) {
+    throw Object.assign(new Error("Mission Control internal-send activation implementation readiness was not found."), {
+      code: "mission_control_internal_send_activation_implementation_readiness_not_found",
     });
   }
   return record;
@@ -3575,6 +3882,145 @@ function activationImplementationReadinessFromDecisionAudit(
       implementationEnabled: false,
       manualExecutionRequired: true,
       sourceDecisionAuditChecksumMatched: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+function liveActivationGateContractFromImplementationReadiness(
+  readiness: MissionControlInternalSendActivationImplementationReadinessRecord,
+): MissionControlInternalSendLiveActivationGateContractRecord {
+  const bodySha256 = sha256Text(readiness.content);
+  if (bodySha256 !== readiness.bodySha256) {
+    throw Object.assign(new Error("Mission Control activation implementation readiness checksum does not match the live-activation gate source."), {
+      code: "mission_control_internal_send_live_activation_gate_contract_checksum_mismatch",
+    });
+  }
+  if (
+    readiness.implementationGate?.implementationEnabled !== false
+    || readiness.implementationGate?.activationAllowed !== false
+    || readiness.implementationGate?.liveHmSendExecutionAllowed !== false
+  ) {
+    throw Object.assign(new Error("Mission Control live activation gate contract requires a disabled implementation-readiness source."), {
+      code: "mission_control_internal_send_live_activation_gate_contract_source_not_disabled",
+    });
+  }
+  const id = `mission-send-live-gate-${crypto.createHash("sha256")
+    .update(`mira.mission_control_internal_send_live_activation_gate_contract.v0:${readiness.id}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+
+  return {
+    protocol: "mira.mission_control_internal_send_live_activation_gate_contract.v0",
+    id,
+    status: "live_activation_gate_hard_stop",
+    createdAt: new Date().toISOString(),
+    sourceInternalSendActivationImplementationReadinessId: readiness.id,
+    sourceInternalSendActivationImplementationReadinessToken: buildInternalSendActivationImplementationReadinessActionToken(readiness.id),
+    sourceInternalSendActivationDecisionAuditId: readiness.sourceInternalSendActivationDecisionAuditId,
+    sourceInternalSendActivationDecisionAuditToken: readiness.sourceInternalSendActivationDecisionAuditToken,
+    sourceInternalSendActivationRequestId: readiness.sourceInternalSendActivationRequestId,
+    sourceInternalSendActivationRequestToken: readiness.sourceInternalSendActivationRequestToken,
+    sourceInternalSendActivationDesignId: readiness.sourceInternalSendActivationDesignId,
+    sourceInternalSendActivationDesignToken: readiness.sourceInternalSendActivationDesignToken,
+    sourceInternalSendDryRunId: readiness.sourceInternalSendDryRunId,
+    sourceInternalSendDryRunToken: readiness.sourceInternalSendDryRunToken,
+    sourceDispatchReadinessId: readiness.sourceDispatchReadinessId,
+    sourceDispatchReadinessToken: readiness.sourceDispatchReadinessToken,
+    sourceDeliveryPreviewId: readiness.sourceDeliveryPreviewId,
+    sourceDeliveryPreviewToken: readiness.sourceDeliveryPreviewToken,
+    sourceRecommendationId: readiness.sourceRecommendationId,
+    sourceContinuationId: readiness.sourceContinuationId,
+    sourceRequestId: readiness.sourceRequestId,
+    sourcePreviewId: readiness.sourcePreviewId,
+    targetRole: readiness.targetRole,
+    targetPaneId: readiness.targetPaneId,
+    targetLabel: readiness.targetLabel,
+    purpose: readiness.purpose,
+    content: readiness.content,
+    contentPreview: readiness.contentPreview,
+    bodySha256,
+    adapterPacketSha256: readiness.adapterPacketSha256,
+    hardStop: {
+      protocol: "mira.mission_control_internal_send_live_activation_hard_stop.v0",
+      contractOnly: true,
+      liveActivationAllowed: false,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+      implementationEnabled: false,
+      separateActivationLaneRequired: true,
+      jamesSetupRequiredBeforeLiveSend: true,
+    },
+    jamesRequirements: [
+      {
+        id: "james_explicit_request_required",
+        label: "James must explicitly request a later live internal-send activation for this exact target and body.",
+        ok: true,
+      },
+      {
+        id: "target_pane_confirmation_required",
+        label: `James-visible setup must confirm ${readiness.targetLabel} is the intended live pane target.`,
+        ok: true,
+      },
+      {
+        id: "separate_activation_lane_required",
+        label: "A later activation lane must be reviewed separately before any live hm-send execution exists.",
+        ok: true,
+      },
+    ],
+    setupRequirements: [
+      {
+        id: "implementation_readiness_token_required",
+        label: "Missing or unknown implementation-readiness tokens must return 400 without writing.",
+        ok: true,
+      },
+      {
+        id: "implementation_readiness_checksum_required",
+        label: "Implementation-readiness body checksum must match before a live gate contract is written.",
+        ok: true,
+      },
+      {
+        id: "transport_dry_run_replay_required",
+        label: "A later activation lane must replay the dry-run envelope and compare target/body checksums before execution.",
+        ok: true,
+      },
+    ],
+    rollbackRequirements: [
+      {
+        id: "rollback_and_audit_review_required",
+        label: "Rollback and transport-outcome audit review must be accepted in a later lane before execution.",
+        ok: true,
+      },
+    ],
+    audit: {
+      reviewStatus: "live_activation_gate_contract_ready",
+      contractOnly: true,
+      hardStop: true,
+      manualExecutionRequired: true,
+      sourceImplementationReadinessChecksumMatched: true,
       notSent: true,
       commandStored: false,
       sendPerformed: false,
@@ -4533,6 +4979,76 @@ export function createMissionControlInternalSendActivationImplementationReadines
   };
 }
 
+export function createMissionControlInternalSendLiveActivationGateContract(
+  input: { internalSendActivationImplementationReadinessToken?: unknown; activationImplementationReadinessToken?: unknown; implementationReadinessToken?: unknown; readinessToken?: unknown } & JsonObject,
+  env: NodeJS.ProcessEnv = process.env,
+): MissionControlInternalSendLiveActivationGateContractWriteResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before Mission Control internal-send live activation gate contracts can be saved."), {
+      code: "state_root_not_ready",
+    });
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  rejectInternalSendLiveActivationGateContractInput(input);
+  const readiness = resolveInternalSendActivationImplementationReadiness(input, rootPath);
+  const dir = internalSendLiveActivationGateContractsDir(rootPath);
+  if (!isInside(rootPath, dir)) {
+    throw Object.assign(new Error("Mission Control internal-send live activation gate contract destination escaped Mira state root."), {
+      code: "unsafe_mission_control_internal_send_live_activation_gate_contract_path",
+    });
+  }
+
+  const record = liveActivationGateContractFromImplementationReadiness(readiness);
+  const absolutePath = path.resolve(dir, `${record.id}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Mission Control internal-send live activation gate contract file escaped Mira state root."), {
+      code: "unsafe_mission_control_internal_send_live_activation_gate_contract_path",
+    });
+  }
+
+  fs.mkdirSync(dir, { recursive: true });
+  let created = false;
+  let stored = record;
+  if (fs.existsSync(absolutePath)) {
+    const parsed = parseInternalSendLiveActivationGateContractRecord(fs.readFileSync(absolutePath, "utf8"));
+    if (parsed) stored = parsed;
+  } else {
+    const handle = fs.openSync(absolutePath, "wx");
+    try {
+      fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      created = true;
+    } finally {
+      fs.closeSync(handle);
+    }
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_internal_send_live_activation_gate_contract_write.v0",
+    created,
+    stateRootPath: rootPath,
+    relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+    absolutePath,
+    contract: toPublicInternalSendLiveActivationGateContract(stored),
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
 export function listMissionControlOwnedWorkContinuations(
   env: NodeJS.ProcessEnv = process.env,
   options: { includeInternal?: boolean } = {},
@@ -5028,6 +5544,70 @@ export function listMissionControlInternalSendActivationImplementationReadiness(
     stateRootPath: options.includeInternal ? rootPath : null,
     readinessCount: readiness.length,
     readiness,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function listMissionControlInternalSendLiveActivationGateContracts(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { includeInternal?: boolean } = {},
+): MissionControlInternalSendLiveActivationGateContractListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.mission_control_internal_send_live_activation_gate_contract_list.v0",
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
+      contractCount: 0,
+      contracts: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    };
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  const contracts = readInternalSendLiveActivationGateContractRecords(rootPath).map((record) => {
+    const publicRecord = toPublicInternalSendLiveActivationGateContract(record);
+    if (!options.includeInternal) return publicRecord;
+    const absolutePath = path.resolve(internalSendLiveActivationGateContractsDir(rootPath), `${record.id}.json`);
+    return {
+      ...publicRecord,
+      relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+      absolutePath,
+    };
+  });
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_internal_send_live_activation_gate_contract_list.v0",
+    stateRootPath: options.includeInternal ? rootPath : null,
+    contractCount: contracts.length,
+    contracts,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,

@@ -12,6 +12,7 @@ import {
   createMissionControlInternalSendActivationImplementationReadiness,
   createMissionControlInternalSendActivationRequest,
   createMissionControlInternalSendDryRun,
+  createMissionControlInternalSendLiveActivationGateContract,
   createMissionControlInternalRouteRequest,
   createMissionControlInternalDeliveryPreview,
   createMissionControlOwnedWorkContinuation,
@@ -25,6 +26,7 @@ import {
   listMissionControlInternalSendActivationImplementationReadiness,
   listMissionControlInternalSendActivationRequests,
   listMissionControlInternalSendDryRuns,
+  listMissionControlInternalSendLiveActivationGateContracts,
   listMissionControlOwnedWorkContinuations,
   listMissionControlRoutePreviewRecords,
 } from "./mission-control-route-preview.js";
@@ -640,6 +642,17 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/mission-control/internal-send-live-activation-gate-contracts") {
+    try {
+      const body = await readJsonBody(request);
+      const contract = createMissionControlInternalSendLiveActivationGateContract(body);
+      sendJson(response, 200, contract);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method === "POST" && requestUrl.pathname === "/autonomy/tick") {
     try {
       sendJson(response, 200, runAutonomyTick());
@@ -836,6 +849,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/mission-control/internal-send-activation-implementation-readiness") {
     sendJson(response, 200, listMissionControlInternalSendActivationImplementationReadiness(process.env, { includeInternal: includeInternalFields(requestUrl) }));
+    return;
+  }
+
+  if (requestUrl.pathname === "/mission-control/internal-send-live-activation-gate-contracts") {
+    sendJson(response, 200, listMissionControlInternalSendLiveActivationGateContracts(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 
