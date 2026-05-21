@@ -193,6 +193,10 @@ function buildContent(
   const asksContext = /\b(know|context|memory|remember|loaded|right now|ground|status)\b/.test(lowerText);
   const asksRecentQuality = /\b(bad|dumb|wrong|recent|last answer|remember|memory|quality|why.*answer)\b/.test(lowerText);
 
+  if (asksJamesActionStatusQuestion(inputText)) {
+    return "Nothing from you right now. I should make the next answer useful: say the next move, keep it short, and bring back the comparison before anything changes live.\n\nJAMES ACTION: NONE";
+  }
+
   if (asksRecentQuality && recentMemory?.summary) {
     const topics = recentMemory.topics;
     if (topics.includes("answer quality") || recentMemory.quality_notes.length > 0) {
@@ -222,6 +226,13 @@ function buildContent(
   }
 
   return `${personaCore.name}. I'm here. Say it a little more directly and I'll work with it.`;
+}
+
+function asksJamesActionStatusQuestion(inputText: string): boolean {
+  return /\b(?:ok\s+so\s+)?(?:now\s+what|what\s+now)\b/i.test(inputText)
+    || /\bwhat\s+do\s+i\s+need\s+to\s+do\b/i.test(inputText)
+    || /\bwhat\s+should\s+i\s+do\b/i.test(inputText)
+    || /\bwhat(?:'s| is)\s+next\b/i.test(inputText);
 }
 
 function preview(value: string | null | undefined, maxLength = 180): string | null {
@@ -418,6 +429,7 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
   const voiceSeed = input.messageId || input.requestId || null;
   const voiceLab = matchVoiceLabTurn(text, { seed: voiceSeed });
   const memoryPrompt = /\b(bad|dumb|wrong|recent|last answer|remember|memory|quality|why.*answer)\b/i.test(text);
+  const jamesActionStatusPrompt = asksJamesActionStatusQuestion(text);
   let responseContent = memoryPrompt && recentMemorySummary
     ? buildContent(text, session, loadedCoreSummary, operatorContext, personaCore, recentTurns, recentMemorySummary)
     : voiceLab?.content || buildContent(text, session, loadedCoreSummary, operatorContext, personaCore, recentTurns, recentMemorySummary);
@@ -446,7 +458,7 @@ export async function runRuntimeTurn(input: RuntimeTurnInput = {}): Promise<Runt
     modelResponseId = modelResult.responseId;
   }
   const visibleReply = applyRuntimeVisibleReplyGate(
-    `${responseContent}${input.useModel === true || memoryPrompt ? "" : memoryContextLine(recentMemorySummary)}`.trim(),
+    `${responseContent}${input.useModel === true || memoryPrompt || jamesActionStatusPrompt ? "" : memoryContextLine(recentMemorySummary)}`.trim(),
   );
   let suggestedTeamPlan: ManualBridgeRequestPlan | null = null;
   if (input.suggestTeamPlanFor) {

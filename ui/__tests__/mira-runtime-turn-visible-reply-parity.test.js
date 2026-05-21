@@ -50,6 +50,17 @@ describe('New Mira runtime turn visible reply parity', () => {
     }));
   }
 
+  function statusAnswerShape(text) {
+    const lines = String(text || '').trim().split(/\r?\n/).filter(Boolean);
+    const actionLines = lines.filter((line) => /^JAMES ACTION:/.test(line));
+    return {
+      lineCount: lines.length,
+      wordCount: String(text || '').trim().split(/\s+/).filter(Boolean).length,
+      actionLineCount: actionLines.length,
+      actionLine: actionLines[0] || null,
+    };
+  }
+
   test.each([
     ['I understand. The local turn is ready.', 'preamble'],
     ['Here is the local runtime answer.', 'preamble'],
@@ -159,6 +170,39 @@ describe('New Mira runtime turn visible reply parity', () => {
     });
     expect(evaluateMiraVisibleReply(result.response.content).ok).toBe(true);
     expect(visibleReplyLeakageViolation(result.response.content)).toBe(null);
+  });
+
+  test('answers ordinary James status question with a useful dry-run candidate shape', () => {
+    const result = runRuntimeSnippet(`
+      import { runRuntimeTurn } from ${JSON.stringify(compiledTurnUrl)};
+      const result = await runRuntimeTurn({
+        text: 'ok so now what?',
+        sessionId: 'app-session-useful-answer',
+        useModel: false,
+      });
+      console.log(JSON.stringify(result));
+    `);
+
+    const currentAnswerShape = {
+      lineCount: 2,
+      wordCount: 31,
+      actionLineCount: 1,
+      actionLine: 'JAMES ACTION: NONE',
+    };
+
+    expect(result.response).toEqual({
+      role: 'mira',
+      content: 'Nothing from you right now. I should make the next answer useful: say the next move, keep it short, and bring back the comparison before anything changes live.\n\nJAMES ACTION: NONE',
+    });
+    expect(statusAnswerShape(result.response.content)).toEqual(currentAnswerShape);
+    expect(result.visibleReplyGate).toEqual(expect.objectContaining({
+      ok: true,
+      checked: true,
+      held: false,
+    }));
+    expect(evaluateMiraVisibleReply(result.response.content).ok).toBe(true);
+    expect(visibleReplyLeakageViolation(result.response.content)).toBe(null);
+    expect(result.modelInvoked).toBe(false);
   });
 
   test('records held reply audit metadata in the runtime journal without rejected generated text', () => {
