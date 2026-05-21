@@ -19,6 +19,7 @@ const state = {
   missionControlDeliveryPreviewCount: 0,
   missionControlDispatchReadinessCount: 0,
   missionControlInternalSendDryRunCount: 0,
+  missionControlInternalSendActivationDesignCount: 0,
   selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -53,6 +54,7 @@ const elements = {
   routeDeliveryPreviewList: document.getElementById('routeDeliveryPreviewList'),
   routeDispatchReadinessList: document.getElementById('routeDispatchReadinessList'),
   routeInternalSendDryRunList: document.getElementById('routeInternalSendDryRunList'),
+  routeInternalSendActivationDesignList: document.getElementById('routeInternalSendActivationDesignList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -385,7 +387,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.missionControlInternalSendDryRunCount} send dry runs / ${state.missionControlInternalSendActivationDesignCount} activation designs / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -792,6 +794,7 @@ function updateRoutePreviewHistoryList(payload) {
         await refreshRouteDeliveryPreviews();
         await refreshDispatchReadiness();
         await refreshInternalSendDryRuns();
+        await refreshInternalSendActivationDesigns();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -896,6 +899,7 @@ function renderRouteContinuationPanel(request) {
         await refreshRouteDeliveryPreviews();
         await refreshDispatchReadiness();
         await refreshInternalSendDryRuns();
+        await refreshInternalSendActivationDesigns();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
       } finally {
@@ -977,6 +981,7 @@ function updateRouteFollowThroughList(payload) {
           await refreshRouteDeliveryPreviews();
           await refreshDispatchReadiness();
           await refreshInternalSendDryRuns();
+          await refreshInternalSendActivationDesigns();
         } catch (error) {
           appendMessage('mira', error.message, 'error');
           action.disabled = false;
@@ -1033,6 +1038,7 @@ function updateRouteDeliveryPreviewList(payload) {
         appendMessage('mira', 'Dispatch-readiness checklist saved locally. Nothing was sent or executed.');
         await refreshDispatchReadiness();
         await refreshInternalSendDryRuns();
+        await refreshInternalSendActivationDesigns();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         readiness.disabled = false;
@@ -1083,6 +1089,7 @@ function updateDispatchReadinessList(payload) {
         dryRun.textContent = 'Dry run saved';
         appendMessage('mira', 'Internal-send dry-run audit saved locally. Nothing was sent or executed.');
         await refreshInternalSendDryRuns();
+        await refreshInternalSendActivationDesigns();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         dryRun.disabled = false;
@@ -1116,6 +1123,52 @@ function updateInternalSendDryRunList(payload) {
     appendPreviewLine(card, 'Adapter', `${dryRun.adapterDryRun?.channel || 'hm-send'} dry-run via ${dryRun.adapterDryRun?.transport || 'ui/scripts/hm-send.js'}`);
     appendPreviewLine(card, 'Activation gate', dryRun.activationGate?.requiredReview || 'separate reviewed activation');
     appendPreviewLine(card, 'Audit', 'dry-run adapter/audit only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
+    const design = document.createElement('button');
+    design.type = 'button';
+    design.className = 'subtle-button';
+    design.textContent = 'Design activation proof';
+    design.addEventListener('click', async () => {
+      design.disabled = true;
+      design.textContent = 'Designing activation';
+      try {
+        await createInternalSendActivationDesign(dryRun);
+        design.textContent = 'Activation design saved';
+        appendMessage('mira', 'Activation-design proof saved locally. Nothing was sent or executed.');
+        await refreshInternalSendActivationDesigns();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        design.disabled = false;
+        design.textContent = 'Design activation proof';
+      }
+    });
+    card.append(design);
+    return card;
+  }));
+}
+
+function updateInternalSendActivationDesignList(payload) {
+  const designs = Array.isArray(payload?.designs) ? payload.designs : [];
+  state.missionControlInternalSendActivationDesignCount = Number(payload?.designCount || designs.length || 0);
+  renderWorkSummary();
+  if (designs.length === 0) {
+    setText(elements.routeInternalSendActivationDesignList, 'no activation designs yet');
+    return;
+  }
+
+  elements.routeInternalSendActivationDesignList.replaceChildren(...designs.slice(0, 5).map((design) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-internal-send-activation-design';
+    const title = document.createElement('strong');
+    title.textContent = `${design.targetRole || 'team'} · activation design`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(design.status || 'activation_design_review_only').replace(/_/g, ' ')} · refusal/rollback/audit required · manual execution required · not sent · ${formatReadyStamp(design.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Pane target', design.targetLabel || `${design.targetRole || 'team'} pane ${design.targetPaneId || '?'}`);
+    appendPreviewLine(card, 'Body', design.contentPreview || design.content);
+    appendPreviewLine(card, 'Activation gate', `${design.activationDesign?.requiredReview || 'separate_reviewed_activation'}; activation allowed: ${design.activationDesign?.activationAllowed === true ? 'yes' : 'no'}`);
+    appendPreviewLine(card, 'Refusal', (design.refusalRequirements || []).map((item) => item.label).join(' / '));
+    appendPreviewLine(card, 'Rollback', (design.rollbackRequirements || []).map((item) => item.label).join(' / '));
+    appendPreviewLine(card, 'Audit', 'design/proof only; durable audit, refusal, and rollback requirements are visible; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     return card;
   }));
 }
@@ -1417,6 +1470,13 @@ async function refreshInternalSendDryRuns() {
   updateInternalSendDryRunList(payload);
 }
 
+async function refreshInternalSendActivationDesigns() {
+  const response = await fetch('/mission-control/internal-send-activation-designs');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateInternalSendActivationDesignList(payload);
+}
+
 async function refreshAutonomy() {
   const response = await fetch('/autonomy/status');
   const payload = await response.json();
@@ -1693,6 +1753,21 @@ async function createInternalSendDryRun(readiness) {
   return payload;
 }
 
+async function createInternalSendActivationDesign(dryRun) {
+  const response = await fetch('/mission-control/internal-send-activation-designs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      internalSendDryRunToken: dryRun?.actionToken || '',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control activation-design proof save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1778,6 +1853,7 @@ async function primeReadOnlyWorkbench() {
     await refreshRouteDeliveryPreviews();
     await refreshDispatchReadiness();
     await refreshInternalSendDryRuns();
+    await refreshInternalSendActivationDesigns();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1806,6 +1882,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshRouteDeliveryPreviews();
     await refreshDispatchReadiness();
     await refreshInternalSendDryRuns();
+    await refreshInternalSendActivationDesigns();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1897,6 +1974,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     await refreshRouteDeliveryPreviews();
     await refreshDispatchReadiness();
     await refreshInternalSendDryRuns();
+    await refreshInternalSendActivationDesigns();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {

@@ -389,16 +389,19 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/internal-delivery-previews'");
     expect(appJs).toContain("fetch('/mission-control/dispatch-readiness'");
     expect(appJs).toContain("fetch('/mission-control/internal-send-dry-runs'");
+    expect(appJs).toContain("fetch('/mission-control/internal-send-activation-designs'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
     expect(appJs).toContain('Preview delivery packet');
     expect(appJs).toContain('Review dispatch readiness');
     expect(appJs).toContain('Create send dry run');
+    expect(appJs).toContain('Design activation proof');
     expect(indexHtml).toContain('id="routeFollowThroughList"');
     expect(indexHtml).toContain('id="routeDeliveryPreviewList"');
     expect(indexHtml).toContain('id="routeDispatchReadinessList"');
     expect(indexHtml).toContain('id="routeInternalSendDryRunList"');
+    expect(indexHtml).toContain('id="routeInternalSendActivationDesignList"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1125,6 +1128,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     const emptyDispatchReadinessPayload = await emptyDispatchReadinessResponse.json();
     const emptyInternalSendDryRunResponse = await fetch(`${baseUrl}/mission-control/internal-send-dry-runs`);
     const emptyInternalSendDryRunPayload = await emptyInternalSendDryRunResponse.json();
+    const emptyActivationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`);
+    const emptyActivationDesignPayload = await emptyActivationDesignResponse.json();
     const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1272,6 +1277,27 @@ describe('Mira runtime bridge manual-plan API', () => {
       protocol: 'mira.mission_control_internal_send_dry_run_list.v0',
       dryRunCount: 0,
       dryRuns: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(emptyActivationDesignResponse.status).toBe(200);
+    expect(emptyActivationDesignPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_design_list.v0',
+      designCount: 0,
+      designs: [],
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -2123,6 +2149,257 @@ describe('Mira runtime bridge manual-plan API', () => {
         code: 'mission_control_internal_send_dry_run_command_not_allowed',
       }));
       expect(fs.readdirSync(internalSendDryRunDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+
+    const activationDesignDir = path.join(tempStateRoot, 'mission-control', 'internal-send-activation-designs');
+    const missingActivationDesignTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingActivationDesignTokenPayload = await missingActivationDesignTokenResponse.json();
+    const badActivationDesignTokenResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendDryRunToken: 'mission-send-dry-run-not-saved' }),
+    });
+    const badActivationDesignTokenPayload = await badActivationDesignTokenResponse.json();
+    expect(missingActivationDesignTokenResponse.status).toBe(400);
+    expect(missingActivationDesignTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_dry_run_token_required',
+    }));
+    expect(fs.existsSync(activationDesignDir)).toBe(false);
+    expect(badActivationDesignTokenResponse.status).toBe(400);
+    expect(badActivationDesignTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_dry_run_not_found',
+    }));
+    expect(fs.existsSync(activationDesignDir)).toBe(false);
+
+    const activationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken }),
+    });
+    const activationDesignPayload = await activationDesignResponse.json();
+    const duplicateActivationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken }),
+    });
+    const duplicateActivationDesignPayload = await duplicateActivationDesignResponse.json();
+    const listActivationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs?includeInternal=1`);
+    const listActivationDesignPayload = await listActivationDesignResponse.json();
+    const expectedAdapterPacketSha256 = crypto.createHash('sha256')
+      .update(JSON.stringify(internalSendDryRunPayload.dryRun.adapterDryRun))
+      .digest('hex');
+
+    expect(activationDesignResponse.status).toBe(200);
+    expect(activationDesignPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_design_write.v0',
+      created: true,
+      stateRootPath: path.resolve(tempStateRoot),
+      relativePath: expect.stringMatching(/^mission-control\/internal-send-activation-designs\/mission-send-activation-design-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(activationDesignPayload.design).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_activation_design.v0',
+      status: 'activation_design_review_only',
+      sourceInternalSendDryRunId: internalSendDryRunPayload.dryRun.id,
+      sourceInternalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      targetLabel: 'oracle pane 3',
+      content: 'Edited internal continuation for Oracle review.',
+      bodySha256: expectedDeliveryBodySha256,
+      adapterPacketSha256: expectedAdapterPacketSha256,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(activationDesignPayload.design.activationDesign).toEqual({
+      protocol: 'mira.mission_control_internal_send_activation_design_gate.v0',
+      designOnly: true,
+      activationAllowed: false,
+      requiredReview: 'separate_reviewed_activation',
+      refusalRollbackAuditRequired: true,
+      liveHmSendExecutionAllowed: false,
+      realSendAllowed: false,
+    });
+    expect(activationDesignPayload.design.refusalRequirements.map((item) => item.id)).toEqual([
+      'missing_or_bad_token_refuses',
+      'live_effect_input_refuses',
+      'command_input_refuses',
+      'separate_review_required',
+    ]);
+    expect(activationDesignPayload.design.rollbackRequirements.map((item) => item.id)).toEqual([
+      'pre_activation_snapshot_required',
+      'failure_audit_required',
+    ]);
+    expect(activationDesignPayload.design.auditRequirements.map((item) => item.id)).toEqual([
+      'durable_activation_audit_required',
+      'transport_result_audit_required',
+      'no_command_storage_required',
+    ]);
+    expect(activationDesignPayload.design.audit).toEqual(expect.objectContaining({
+      reviewStatus: 'activation_design_ready',
+      dryRunOnly: true,
+      designOnly: true,
+      manualExecutionRequired: true,
+      realSendRequiresSeparateActivation: true,
+      sourceDryRunChecksumMatched: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(activationDesignPayload.design).not.toHaveProperty('command');
+    expect(activationDesignPayload.design).not.toHaveProperty('args');
+    expect(activationDesignPayload.design).not.toHaveProperty('delivery');
+    const storedActivationDesign = JSON.parse(fs.readFileSync(activationDesignPayload.absolutePath, 'utf8'));
+    expect(storedActivationDesign).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_internal_send_activation_design.v0',
+      status: 'activation_design_review_only',
+      sourceInternalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken,
+      targetLabel: 'oracle pane 3',
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedActivationDesign).not.toHaveProperty('command');
+    expect(storedActivationDesign).not.toHaveProperty('args');
+    expect(storedActivationDesign).not.toHaveProperty('delivery');
+    expect(duplicateActivationDesignResponse.status).toBe(200);
+    expect(duplicateActivationDesignPayload.created).toBe(false);
+    expect(duplicateActivationDesignPayload.relativePath).toBe(activationDesignPayload.relativePath);
+    expect(listActivationDesignResponse.status).toBe(200);
+    expect(listActivationDesignPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_internal_send_activation_design_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      designCount: 1,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(listActivationDesignPayload.designs[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-send-activation-design-/),
+      relativePath: activationDesignPayload.relativePath,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    fs.writeFileSync(internalSendDryRunPayload.absolutePath, `${JSON.stringify({
+      ...storedInternalSendDryRun,
+      bodySha256: 'bad-body-sha256',
+    }, null, 2)}\n`, 'utf8');
+    const mismatchedActivationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken }),
+    });
+    const mismatchedActivationDesignPayload = await mismatchedActivationDesignResponse.json();
+    fs.writeFileSync(internalSendDryRunPayload.absolutePath, `${JSON.stringify(storedInternalSendDryRun, null, 2)}\n`, 'utf8');
+    expect(mismatchedActivationDesignResponse.status).toBe(400);
+    expect(mismatchedActivationDesignPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_internal_send_activation_design_checksum_mismatch',
+    }));
+    expect(fs.readdirSync(activationDesignDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    for (const input of [
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, liveHmSend: true },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, activationDesign: { activationAllowed: true } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, activationDesign: { liveHmSendExecutionAllowed: true } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, audit: { sendPerformed: true } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, activationGate: { activationAllowed: true } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, activationRequest: { execute: true } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, adapterDryRun: { target: { telegramSend: true } } },
+    ]) {
+      const blockedActivationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedActivationDesignPayload = await blockedActivationDesignResponse.json();
+      expect(blockedActivationDesignResponse.status).toBe(400);
+      expect(blockedActivationDesignPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_activation_design_has_live_effect',
+      }));
+      expect(fs.readdirSync(activationDesignDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    for (const input of [
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, command: 'hm-send oracle' },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, activationDesign: { command: 'hm-send oracle' } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, activationRequest: { command: 'hm-send oracle' } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, rollbackPlan: { args: ['hm-send', 'oracle'] } },
+      { internalSendDryRunToken: internalSendDryRunPayload.dryRun.actionToken, adapterDryRun: { body: { command: 'hm-send oracle' } } },
+    ]) {
+      const blockedCommandActivationDesignResponse = await fetch(`${baseUrl}/mission-control/internal-send-activation-designs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandActivationDesignPayload = await blockedCommandActivationDesignResponse.json();
+      expect(blockedCommandActivationDesignResponse.status).toBe(400);
+      expect(blockedCommandActivationDesignPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_internal_send_activation_design_command_not_allowed',
+      }));
+      expect(fs.readdirSync(activationDesignDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
     }
     fs.writeFileSync(deliveryPreviewPayload.absolutePath, `${JSON.stringify({
       ...storedDeliveryPreview,
