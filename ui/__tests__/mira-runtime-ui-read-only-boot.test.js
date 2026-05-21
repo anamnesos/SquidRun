@@ -3421,6 +3421,25 @@ describe('Mira runtime UI boot', () => {
     expect(liveGateText).toContain('Hard stop: live activation: no; implementation enabled: no; James setup required: yes');
     expect(liveGateText).toContain('James/setup: James must explicitly request a later live internal-send activation for this exact target and body.');
     expect(liveGateText).toContain('hard-stop contract only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.elements.routeInternalSendActivationReadinessList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendActivationReadinessList.children[0].attributes.id || '').toBe('');
+    expect(harness.elements.routeInternalSendLiveGateList.children[0].className).not.toContain('selected-manual-source');
+    expect(harness.elements.routeInternalSendLiveGateList.children[0].attributes.id || '').toBe('');
+    const selectedManualButtonsAfterHardStop = [
+      ...harness.elements.routePreviewHistoryList.children,
+      ...harness.elements.routeRequestList.children,
+      ...harness.elements.routeContinuationList.children,
+      ...harness.elements.routeDeliveryPreviewList.children,
+      ...harness.elements.routeDispatchReadinessList.children,
+      ...harness.elements.routeInternalSendDryRunList.children,
+      ...harness.elements.routeInternalSendActivationDesignList.children,
+      ...harness.elements.routeInternalSendActivationRequestList.children,
+      ...harness.elements.routeInternalSendActivationAuditList.children,
+      ...harness.elements.routeInternalSendActivationReadinessList.children,
+      ...harness.elements.routeInternalSendLiveGateList.children,
+    ].flatMap((card) => card.children || [])
+      .filter((child) => child.tagName === 'BUTTON' && String(child.className || '').includes('selected-manual-action'));
+    expect(selectedManualButtonsAfterHardStop).toHaveLength(0);
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal delivery preview saved locally. Nothing was sent or executed.');

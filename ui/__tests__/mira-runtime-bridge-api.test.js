@@ -4341,6 +4341,8 @@ describe('Mira runtime bridge manual-plan API', () => {
       noEffectSummary: expect.stringContaining('does not persist a selection'),
     }));
     expect(pipelineStatusPayload.advanceSelection.reason).toContain('no next artifact to advance');
+    expect(pipelineStatusPayload.advanceSelection.status).toBe('hard_stop_reached');
+    expect(pipelineStatusPayload.advanceSelection.nextStageId).toBeNull();
     expect(pipelineStatusPayload.advanceSelection.candidates).toHaveLength(12);
     expect(pipelineStatusPayload.advanceSelection.candidates.find((candidate) => candidate.stageId === 'live_activation_gate_contract')).toEqual(expect.objectContaining({
       selected: true,
@@ -4363,6 +4365,8 @@ describe('Mira runtime bridge manual-plan API', () => {
       noEffectSummary: expect.stringContaining('Read-only preflight only'),
     }));
     expect(pipelineStatusPayload.manualActionPreflight.explanation).toContain('No manual advancement is available');
+    expect(pipelineStatusPayload.manualActionPreflight.tokenField).toBeNull();
+    expect(pipelineStatusPayload.manualActionPreflight.tokenValue).toBeNull();
     expect(pipelineStatusPayload.manualActionPreflight.evidenceChecks).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'selected_artifact_token_present', ok: true }),
       expect.objectContaining({ id: 'selected_artifact_path_present', ok: true }),
@@ -4390,6 +4394,9 @@ describe('Mira runtime bridge manual-plan API', () => {
       expect.objectContaining({ id: 'selected_token_present', ok: false }),
       expect.objectContaining({ id: 'payload_preview_read_only', ok: true }),
     ]));
+    expect(pipelineStatusPayload.payloadPreview.method).toBeNull();
+    expect(pipelineStatusPayload.payloadPreview.endpoint).toBeNull();
+    expect(pipelineStatusPayload.payloadPreview.payload).toBeNull();
     expect(pipelineStatusPayload.payloadPreview.handlerDriftCheck).toEqual(expect.objectContaining({
       protocol: 'mira.mission_control_workbench_handler_drift_check.v0',
       status: 'blocked',
