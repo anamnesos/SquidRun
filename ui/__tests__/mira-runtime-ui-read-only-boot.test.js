@@ -3989,6 +3989,44 @@ describe('Mira runtime UI boot', () => {
     }
   });
 
+  test('answers roadmap questions from existing Mission Control context without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['what is the north star?', 'when do we stop or pivot?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('North star: Name: Mira Mission Control v0.'),
+      ]);
+      const roadmapReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(roadmapReply).toContain('Hard truth: Current New Mira is not holy-shit amazing.');
+      expect(roadmapReply).toContain('Stop/pivot: Stop or pivot if Mission Control cannot answer from local evidence.');
+      expect(roadmapReply).toContain('Next gate: Build Mission Control v0.');
+      expect(roadmapReply).toContain('Source: docs/mira-north-star-roadmap.md / docs/mira-system-map.md');
+      expect(roadmapReply).toContain('Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
+      expect(roadmapReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((roadmapReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
   test('answers route-preview questions from existing Mission Control context without a turn POST', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
@@ -4277,6 +4315,41 @@ describe('Mira runtime UI boot', () => {
     }));
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
       'please finish the pending work with the runtime fixture',
+      'Mira. Deterministic local turn.',
+    ]);
+    expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
+  test('does not hijack generic roadmap instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    harness.elements.turnText.value = 'please update the roadmap with the runtime fixture';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+    const postCalls = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCalls).toHaveLength(1);
+    expect(turnCalls).toHaveLength(1);
+    expect(turnCalls[0].body).toEqual(expect.objectContaining({
+      text: 'please update the roadmap with the runtime fixture',
+      useModel: false,
+      modelProvider: 'openai_responses',
+      modelName: 'gpt-5.5',
+    }));
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
+      'please update the roadmap with the runtime fixture',
       'Mira. Deterministic local turn.',
     ]);
     expect(harness.elements.lastTurn.textContent).toBe('deterministic');

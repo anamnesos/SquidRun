@@ -411,6 +411,8 @@ Product-facing coordination prompts such as `what should I tell Oracle?` now ans
 
 Product-facing recent-team-context prompts such as `what did Oracle say?` and `what is the Oracle benchmark?` now answer from the already-loaded `/squidrun/context` recent comms, roadmap, and map context, without posting `/turn`, adding fetches, persisting, or sending externally.
 
+Product-facing roadmap/north-star prompts such as `what is the north star?` and `when do we stop or pivot?` now answer from the already-loaded `/squidrun/context` roadmap and system-map fields, without posting `/turn`, adding fetches, persisting, or sending externally.
+
 Product-facing route-preview prompts now answer from the already-loaded local `internalRoutePreview` as a preview of the existing Mission Control route plan, without posting `/turn`, adding fetches, persisting, or sending externally.
 
 Product-facing evidence/source prompts now answer from the already-loaded `/squidrun/context` evidence list and read flags, without posting `/turn`, adding fetches, persisting, or sending externally.

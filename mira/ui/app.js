@@ -246,6 +246,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlEvidenceQuestion(text)
     || isMissionControlJamesActionQuestion(text)
     || isMissionControlRecentCommsQuestion(text)
+    || isMissionControlRoadmapQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
 }
@@ -278,6 +279,13 @@ function isMissionControlJamesActionQuestion(text) {
 function isMissionControlRecentCommsQuestion(text) {
   const normalized = String(text || '');
   return /\b(oracle\s+benchmark|benchmark\s+from\s+oracle|what\s+did\s+oracle\s+(say|find|report)|what\s+did\s+architect\s+(say|ask|assign)|latest\s+(architect|oracle)\s+(instruction|benchmark|note))\b/i.test(normalized);
+}
+
+function isMissionControlRoadmapQuestion(text) {
+  const normalized = String(text || '');
+  if (/\b(north[-\s]?star|stop\s+or\s+pivot|stop\/pivot|pivot\s+criteria)\b/i.test(normalized)) return true;
+  return /\b(roadmap|product\s+plan|next\s+gate|first\s+demo)\b/i.test(normalized)
+    && /\b(mission\s*control|mira|squidrun|local|new\s+mira)\b/i.test(normalized);
 }
 
 function isMissionControlCoordinationQuestion(text) {
@@ -314,6 +322,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlRecentCommsQuestion(text)) {
     const recentCommsAnswer = buildMissionControlRecentCommsAnswer();
     if (recentCommsAnswer) return recentCommsAnswer;
+  }
+  if (isMissionControlRoadmapQuestion(text)) {
+    const roadmapAnswer = buildMissionControlRoadmapAnswer();
+    if (roadmapAnswer) return roadmapAnswer;
   }
   if (isMissionControlCoordinationQuestion(text)) {
     const coordinationAnswer = buildMissionControlCoordinationAnswer(text);
@@ -488,6 +500,27 @@ function buildMissionControlRecentCommsAnswer(context = state.missionControlCont
     `Latest Architect instruction: ${architect.sourceRef || 'unknown'} - ${architect.excerpt || 'No Architect instruction excerpt loaded.'}`,
     `Hard truth: ${roadmap.hardTruth || systemMap.truth || 'No hard-truth text loaded.'}`,
     `Stop/pivot: ${roadmap.stopPivot || 'No stop/pivot text loaded.'}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlRoadmapAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const roadmap = context.roadmap || {};
+  const systemMap = context.systemMap || {};
+  if (roadmap.loaded !== true && systemMap.loaded !== true) return '';
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control roadmap answer; no send or setup is needed.');
+  return [
+    `North star: ${roadmap.firstDemo || 'No first-demo text loaded.'}`,
+    `Hard truth: ${roadmap.hardTruth || systemMap.truth || 'No hard-truth text loaded.'}`,
+    `Stop/pivot: ${roadmap.stopPivot || 'No stop/pivot text loaded.'}`,
+    `Next gate: ${systemMap.nextGate || 'No next-gate text loaded.'}`,
+    `Source: ${roadmap.relativePath || 'roadmap not loaded'} / ${systemMap.relativePath || 'system map not loaded'}`,
     'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
