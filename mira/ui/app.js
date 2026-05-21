@@ -239,7 +239,13 @@ function renderCoordinationDrafts(drafts) {
 
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
+    || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
+}
+
+function isMissionControlCoordinationQuestion(text) {
+  return /\b(architect|builder|oracle|team)\b/i.test(text)
+    && /\b(tell|say|ask|message|draft|coordinate|coordination|send)\b/i.test(text);
 }
 
 function isMissionControlDemoInspectionQuestion(text) {
@@ -248,6 +254,10 @@ function isMissionControlDemoInspectionQuestion(text) {
 }
 
 function currentMissionControlAnswer(text = '') {
+  if (isMissionControlCoordinationQuestion(text)) {
+    const coordinationAnswer = buildMissionControlCoordinationAnswer(text);
+    if (coordinationAnswer) return coordinationAnswer;
+  }
   if (isMissionControlDemoInspectionQuestion(text) && state.missionControlDemoInspectionAnswer) {
     return state.missionControlDemoInspectionAnswer;
   }
@@ -260,6 +270,38 @@ function answerMissionControlQuestion(text = '') {
   appendMessage('mira', answer, 'mira mission-answer');
   setText(elements.lastTurn, 'mission control local');
   return true;
+}
+
+function targetFromMissionControlCoordinationQuestion(text) {
+  const normalized = String(text || '').toLowerCase();
+  if (/\boracle\b/.test(normalized)) return 'oracle';
+  if (/\bbuilder\b/.test(normalized)) return 'builder';
+  if (/\barchitect\b/.test(normalized)) return 'architect';
+  return null;
+}
+
+function buildMissionControlCoordinationAnswer(text, mission = state.missionControl) {
+  const drafts = Array.isArray(mission?.coordinationDrafts) ? mission.coordinationDrafts : [];
+  if (drafts.length === 0) return '';
+  const requestedTarget = targetFromMissionControlCoordinationQuestion(text);
+  const draft = (requestedTarget ? drafts.find((candidate) => candidate?.target === requestedTarget) : null)
+    || drafts[0];
+  if (!draft) return '';
+  const target = draft.target || requestedTarget || 'team';
+  const purpose = draft.purpose || 'next move';
+  const message = draft.message || 'No local coordination draft text is loaded yet.';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control coordination draft; no send or setup is needed.');
+  return [
+    `Coordination target: ${target} · ${purpose}`,
+    `Message preview: ${message}`,
+    'Source: already-loaded Mission Control coordination draft from local SquidRun context.',
+    'Boundary: local preview only; no Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
 }
 
 function buildMissionControlDemoInspectionAnswer(endToEndReadout, mission = state.missionControl) {
