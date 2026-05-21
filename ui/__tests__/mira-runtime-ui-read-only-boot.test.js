@@ -1526,6 +1526,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         content: recommendation.contentPreview,
         contentPreview: recommendation.contentPreview,
         nextTeamMove: recommendation.nextTeamMove,
+        missionAnswerPreview: recommendation.missionAnswerPreview,
         selectorReason: recommendation.selectorReason,
         deliveryPacket: {
           protocol: 'mira.mission_control_internal_delivery_preview_packet.v0',
@@ -3162,6 +3163,7 @@ describe('Mira runtime UI boot', () => {
     expect(deliveryText).toContain('reviewed preview only · preview/audit only · manual execution required · not sent');
     expect(deliveryText).toContain('Pane target: oracle pane 3');
     expect(deliveryText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(deliveryText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(deliveryText).toContain('Checksum: packet-sha256-test');
     expect(deliveryText).toContain('Review: Manual copy only: paste this body into oracle pane 3 after review.');
     expect(deliveryText).toContain('no command stored, runtime execution, external send, route flip, provider/model call, account or token access, Telegram, or live hm-send');

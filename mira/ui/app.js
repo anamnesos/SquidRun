@@ -1242,6 +1242,7 @@ function updateRouteDeliveryPreviewList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', `${preview.targetRole || 'team'} pane ${preview.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', preview.deliveryPacket?.body?.content || preview.contentPreview || preview.content);
+    appendPreviewLine(card, 'Mission answer', preview.missionAnswerPreview || 'No originating Mission Control answer is attached to this delivery preview.');
     appendPreviewLine(card, 'Checksum', preview.reviewDetails?.packetSha256);
     appendPreviewLine(card, 'Review', preview.reviewDetails?.copyInstruction);
     appendPreviewLine(card, 'Next move', preview.nextTeamMove);

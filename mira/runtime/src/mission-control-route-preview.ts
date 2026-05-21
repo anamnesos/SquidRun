@@ -341,6 +341,7 @@ export type MissionControlInternalDeliveryPreviewRecord = {
   content: string;
   contentPreview: string;
   nextTeamMove: string;
+  missionAnswerPreview: string | null;
   selectorReason: string;
   deliveryPacket: {
     protocol: "mira.mission_control_internal_delivery_preview_packet.v0";
@@ -4413,6 +4414,7 @@ function deliveryPreviewFromRecommendation(
     content,
     contentPreview: content.length > 260 ? `${content.slice(0, 259)}...` : content,
     nextTeamMove: recommendation.nextTeamMove,
+    missionAnswerPreview: recommendation.missionAnswerPreview,
     selectorReason: recommendation.selectorReason,
     deliveryPacket,
     reviewDetails: {

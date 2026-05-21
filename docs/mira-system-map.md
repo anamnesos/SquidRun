@@ -410,6 +410,7 @@ This proves `GET /mission-control/activation-pipeline-status` and the local UI s
 The existing `Make review item` promotion proof now pins that the internal-route request/review-item record carries the same `missionAnswerPreview`, and the review-item card displays it as compact review context before the next manual continuation step.
 The existing `Review continuation` manual-input proof now pins that the owned-work continuation record carries the originating `missionAnswerPreview`, and the continuation panel/history card display it as compact review context before follow-through.
 The existing follow-through recommendation selector now carries the same originating `missionAnswerPreview` from the selected continuation and displays it on the existing recommendation card before the delivery-preview step.
+The existing `Preview delivery packet` proof now pins that the internal delivery-preview record carries the same originating `missionAnswerPreview`, and the delivery-preview card displays it as compact review context before dispatch-readiness review.
 
 New Mira runtime-turn export/replay projection proof, without live provider calls, fixed-port runtime, Telegram, or route changes:
 

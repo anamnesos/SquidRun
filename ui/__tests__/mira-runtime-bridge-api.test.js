@@ -1946,6 +1946,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       purpose: 'benchmark review',
       content: 'Edited internal continuation for Oracle review.',
       nextTeamMove: 'Ask oracle to review the edit benchmark review continuation: Edited internal continuation for Oracle review.',
+      missionAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -2086,6 +2087,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       sourceRecommendationToken: followThroughPayload.selectedRecommendation.actionToken,
       targetRole: 'oracle',
       targetPaneId: '3',
+      missionAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
       reviewDetails: expect.objectContaining({
         targetLabel: 'oracle pane 3',
         packetSha256: expectedDeliveryPacketSha256,
@@ -2138,6 +2140,7 @@ describe('Mira runtime bridge manual-plan API', () => {
       relativePath: deliveryPreviewPayload.relativePath,
       targetRole: 'oracle',
       targetPaneId: '3',
+      missionAnswerPreview: 'Project/lane: squidrun / architect#298. JAMES ACTION: NONE - local request promotion.',
       commandStored: false,
       sendPerformed: false,
       runtimeExecutes: false,
