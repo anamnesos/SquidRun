@@ -243,6 +243,7 @@ function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlAvailableAnswersQuestion(text)
     || isMissionControlLiveBoundaryQuestion(text)
+    || isMissionControlManualActionQuestion(text)
     || isMissionControlRoutePreviewQuestion(text)
     || isMissionControlProjectQuestion(text)
     || isMissionControlLaneQuestion(text)
@@ -271,6 +272,14 @@ function isMissionControlLiveBoundaryQuestion(text) {
   const hasMissionControlContext = /\b(mission\s*control|new\s+mira)\b/i.test(normalized);
   return /\b(live[-\s]+send|real[-\s]+send|live\s+activation)\b/i.test(normalized)
     || (hasMissionControlContext && /\b(send\s+boundary|activation\s+boundary|send\s+available)\b/i.test(normalized));
+}
+
+function isMissionControlManualActionQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bwhat\s+manual\s+action\s+is\s+next\b/i.test(normalized)
+      || /\bwhich\s+mission\s*control\s+button\s+is\s+highlighted\b/i.test(normalized)
+      || /\bwhat\s+(button|workbench\s+action)\s+should\s+i\s+use\s+next\b/i.test(normalized));
 }
 
 function isMissionControlRoutePreviewQuestion(text) {
@@ -350,6 +359,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlLiveBoundaryQuestion(text)) {
     const liveBoundaryAnswer = buildMissionControlLiveBoundaryAnswer();
     if (liveBoundaryAnswer) return liveBoundaryAnswer;
+  }
+  if (isMissionControlManualActionQuestion(text)) {
+    const manualActionAnswer = buildMissionControlManualActionAnswer();
+    if (manualActionAnswer) return manualActionAnswer;
   }
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
@@ -498,6 +511,41 @@ function buildMissionControlLiveBoundaryAnswer(status = state.missionControlActi
     `Future gate: ${nextBoundary.futureJamesVisibleGate || 'Future real send would require a separate James-visible setup/activation lane.'}`,
     'Source: already-loaded Mission Control activation pipeline status from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlManualActionAnswer(
+  status = state.missionControlActivationPipelineStatus,
+  focus = state.missionControlActionFocus,
+  mission = state.missionControl,
+) {
+  if (!status || typeof status !== 'object') return '';
+  const preflight = status.manualActionPreflight && typeof status.manualActionPreflight === 'object'
+    ? status.manualActionPreflight
+    : {};
+  const payloadPreview = status.payloadPreview && typeof status.payloadPreview === 'object'
+    ? status.payloadPreview
+    : {};
+  const driftCheck = payloadPreview.handlerDriftCheck && typeof payloadPreview.handlerDriftCheck === 'object'
+    ? payloadPreview.handlerDriftCheck
+    : {};
+  const actionReady = preflight.status === 'ready' && Boolean(preflight.tokenValue) && Boolean(focus);
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control manual-action inspection; no setup or live action is needed.');
+  return [
+    `Manual action ready: ${actionReady ? 'yes' : 'no'}`,
+    `Selected action: ${preflight.manualActionLabel || focus?.actionLabel || 'No manual action is ready.'}`,
+    `Selected source: ${preflight.selectedStageLabel || focus?.stageLabel || 'No highlighted Mission Control source is ready.'}`,
+    `Source path: ${preflight.selectedRelativePath || focus?.relativePath || 'No saved source path is ready.'}`,
+    `Payload preview: ${payloadPreview.method || 'no method'} ${payloadPreview.endpoint || 'no endpoint'}; ${preflight.tokenField || 'no token'}=${preflight.tokenValue || 'not ready'}`,
+    `Handler drift: ${driftCheck.status || 'not available'} · ${driftCheck.handlerName || 'no handler'}`,
+    `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is not available from this surface.'}`,
+    'Source: already-loaded Mission Control activation pipeline status/focus from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, button click, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }
