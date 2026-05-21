@@ -303,6 +303,11 @@ James must stop/test/choose when the slice would activate or change live voice, 
 
 Pause rule: the team pauses only for an explicit review gate, commit gate, concrete blocker, James choice, or live-effect risk. If none of those exists, the team continues to the next map-backed step and reports why no James action is needed.
 
+Every Mira/New Mira status report must include exactly one James-action line:
+
+- `JAMES ACTION: NONE` for internal proof, build, doc, guard, inventory, and no-side-effect parity work where the team can continue.
+- `JAMES ACTION: DO THIS: <specific concrete action>` only for real-world setup, testing, permission, route switch, account, token, device, or channel actions James must personally perform or approve.
+
 Checkpoint reports must say, in plain English:
 
 - Which map row or capability changed.
