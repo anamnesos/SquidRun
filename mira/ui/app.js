@@ -1529,6 +1529,7 @@ function updateInternalSendActivationDecisionAuditList(payload) {
     card.append(title, meta);
     appendPreviewLine(card, 'Pane target', audit.targetLabel || `${audit.targetRole || 'team'} pane ${audit.targetPaneId || '?'}`);
     appendPreviewLine(card, 'Body', audit.contentPreview || audit.content);
+    appendPreviewLine(card, 'Mission answer', audit.missionAnswerPreview || 'No originating Mission Control answer is attached to this decision-audit record.');
     appendPreviewLine(card, 'Reviewer', `${audit.reviewer?.reviewerRole || 'architect_or_oracle'} · ${String(audit.reviewer?.status || 'pending_review').replace(/_/g, ' ')}`);
     appendPreviewLine(card, 'Decision', `${String(audit.decision?.decision || 'refuse_live_activation_until_separate_gate').replace(/_/g, ' ')}; activation allowed: ${audit.decision?.activationAllowed === true ? 'yes' : 'no'}`);
     appendPreviewLine(card, 'Refusal', `${audit.refusal?.status || 'refused_for_live_execution'} · ${audit.refusal?.reason || 'live execution remains refused'}`);

@@ -2100,6 +2100,7 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         purpose: request.purpose,
         content: request.content,
         contentPreview: request.contentPreview,
+        missionAnswerPreview: request.missionAnswerPreview,
         bodySha256: request.bodySha256,
         adapterPacketSha256: request.adapterPacketSha256,
         reviewer: {
@@ -3508,6 +3509,7 @@ describe('Mira runtime UI boot', () => {
     expect(activationAuditText).toContain('activation decision audit review only · refusal/rollback audit · manual execution required · not sent');
     expect(activationAuditText).toContain('Pane target: oracle pane 3');
     expect(activationAuditText).toContain('Body: Edited internal continuation for Oracle review.');
+    expect(activationAuditText).toContain('Mission answer: Project/lane: squidrun / architect#253.');
     expect(activationAuditText).toContain('Reviewer: architect_or_oracle · pending review');
     expect(activationAuditText).toContain('Decision: refuse live activation until separate gate; activation allowed: no');
     expect(activationAuditText).toContain('Refusal: refused_for_live_execution · No live hm-send execution is allowed from this review-only audit artifact.');

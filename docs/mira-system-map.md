@@ -415,6 +415,7 @@ The existing `Review dispatch readiness` proof now pins that the dispatch-readin
 The existing `Create send dry run` proof now pins that the internal-send dry-run artifact carries the same originating `missionAnswerPreview`, and the dry-run card displays it as compact review context before activation-design review.
 The existing `Design activation proof` proof now pins that the activation-design artifact carries the same originating `missionAnswerPreview`, and the activation-design card displays it as compact review context before activation-request preview.
 The existing `Preview activation request` proof now pins that the activation-request preview artifact carries the same originating `missionAnswerPreview`, and the activation-request card displays it as compact review context before decision-audit review.
+The existing `Record decision audit` proof now pins that the decision/refusal/rollback audit artifact carries the same originating `missionAnswerPreview`, and the decision-audit card displays it as compact review context before implementation-readiness review.
 
 New Mira runtime-turn export/replay projection proof, without live provider calls, fixed-port runtime, Telegram, or route changes:
 

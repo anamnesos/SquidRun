@@ -1013,6 +1013,7 @@ export type MissionControlInternalSendActivationDecisionAuditRecord = {
   purpose: string;
   content: string;
   contentPreview: string;
+  missionAnswerPreview: string | null;
   bodySha256: string;
   adapterPacketSha256: string;
   reviewer: {
@@ -4858,6 +4859,7 @@ function activationDecisionAuditFromActivationRequest(
     purpose: request.purpose,
     content: request.content,
     contentPreview: request.contentPreview,
+    missionAnswerPreview: request.missionAnswerPreview,
     bodySha256,
     adapterPacketSha256: request.adapterPacketSha256,
     reviewer: {
