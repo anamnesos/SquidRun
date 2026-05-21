@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyLoopOnce, runAutonomyTick } from "./autonomy.js";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
+import {
+  createMissionControlRoutePreviewRecord,
+  listMissionControlRoutePreviewRecords,
+} from "./mission-control-route-preview.js";
 import { getCapabilities, getHealth, getSessionSkeleton, getStateRootStatus } from "./runtime.js";
 import { getSquidRunContext } from "./squidrun-context.js";
 import { runRuntimeTurn, type RuntimeTurnInput, type RuntimeTurnResponse } from "./turn.js";
@@ -503,6 +507,21 @@ export async function route(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  if (request.method === "POST" && requestUrl.pathname === "/mission-control/route-previews") {
+    try {
+      const body = await readJsonBody(request);
+      const saved = createMissionControlRoutePreviewRecord({
+        preview: body.preview || body.routePreview,
+        missionAnswer: body.missionAnswer,
+        source: typeof body.source === "string" ? body.source : "runtime-ui",
+      });
+      sendJson(response, 200, saved);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
+
   if (request.method === "POST" && requestUrl.pathname === "/autonomy/tick") {
     try {
       sendJson(response, 200, runAutonomyTick());
@@ -644,6 +663,11 @@ export async function route(request: IncomingMessage, response: ServerResponse):
       return;
     }
     sendJson(response, 200, listWorkSendChecks());
+    return;
+  }
+
+  if (requestUrl.pathname === "/mission-control/route-previews") {
+    sendJson(response, 200, listMissionControlRoutePreviewRecords(process.env, { includeInternal: includeInternalFields(requestUrl) }));
     return;
   }
 

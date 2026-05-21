@@ -379,6 +379,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/work/send-packets'");
     expect(appJs).toContain("fetch('/work/send-confirmations'");
     expect(appJs).toContain("fetch('/work/send-checks'");
+    expect(appJs).toContain("fetch('/mission-control/route-previews'");
+    expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -640,6 +642,207 @@ describe('Mira runtime bridge manual-plan API', () => {
       followThroughCount: 3,
     }));
     expect(typeof timerStatus.loop.nextRunAt).toBe('string');
+  });
+
+  test('saves Mission Control route previews as local review history only', async () => {
+    tempStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-runtime-mission-route-preview-'));
+    await startServer({ MIRA_STATE_ROOT: tempStateRoot });
+
+    const preview = {
+      status: 'reviewed_preview_only',
+      selectedDraftTarget: 'oracle',
+      selectedDraftPurpose: 'benchmark review',
+      plan: {
+        ok: true,
+        protocol: 'mira.runtime_bridge_request_plan.v0',
+        manualExecutionRequired: true,
+        runtimeExecutes: false,
+        target: {
+          role: 'oracle',
+          paneId: '3',
+        },
+        envelope: {
+          protocol: 'mira.hm_send_adapter.v0',
+          request_id: 'req-mission-route-preview-test',
+          message_id: 'mission-route-preview-test',
+          session_id: null,
+          source: {
+            service: 'mira-runtime',
+            surface: 'runtime-manual-bridge-planner',
+          },
+          target: {
+            system: 'squidrun',
+            role: 'oracle',
+            pane_id: '3',
+          },
+          evidence: [{
+            kind: 'file',
+            path: 'docs/mira-system-map.md',
+            summary: 'Mission Control route-preview persistence proof.',
+          }],
+          body: {
+            content: 'Challenge the saved Mission Control route preview against the benchmark.',
+          },
+        },
+        command: {
+          executable: process.execPath,
+          args: ['mira/bridge/send-pane-message.js', '--target', 'oracle'],
+          cwd: repoRoot,
+        },
+      },
+      audit: {
+        reviewStatus: 'preview_ready',
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        note: 'Preview only; no send invoked.',
+      },
+    };
+
+    const emptyResponse = await fetch(`${baseUrl}/mission-control/route-previews`);
+    const emptyPayload = await emptyResponse.json();
+    const saveResponse = await fetch(`${baseUrl}/mission-control/route-previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        preview,
+        missionAnswer: 'Project/lane: squidrun / architect#280.\nJAMES ACTION: NONE - local preview persistence.',
+        source: 'runtime-ui-test',
+      }),
+    });
+    const savePayload = await saveResponse.json();
+    const duplicateResponse = await fetch(`${baseUrl}/mission-control/route-previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        preview,
+        missionAnswer: 'Project/lane: squidrun / architect#280.\nJAMES ACTION: NONE - local preview persistence.',
+        source: 'runtime-ui-test',
+      }),
+    });
+    const duplicatePayload = await duplicateResponse.json();
+    const listResponse = await fetch(`${baseUrl}/mission-control/route-previews?includeInternal=1`);
+    const listPayload = await listResponse.json();
+
+    expect(emptyResponse.status).toBe(200);
+    expect(emptyPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_route_preview_list.v0',
+      previewCount: 0,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(saveResponse.status).toBe(200);
+    expect(savePayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_route_preview_write.v0',
+      created: true,
+      stateRootPath: path.resolve(tempStateRoot),
+      relativePath: expect.stringMatching(/^mission-control\/route-previews\/mission-route-preview-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(savePayload.record).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_route_preview.v0',
+      status: 'pending_internal_review',
+      source: 'runtime-ui-test',
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      purpose: 'benchmark review',
+      contentPreview: 'Challenge the saved Mission Control route preview against the benchmark.',
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(savePayload.record).not.toHaveProperty('command');
+    expect(savePayload.record).not.toHaveProperty('args');
+    expect(savePayload.record.content).toContain('Challenge the saved Mission Control route preview');
+    expect(savePayload.record.missionAnswerPreview).toContain('Project/lane: squidrun / architect#280.');
+    expect(fs.existsSync(savePayload.absolutePath)).toBe(true);
+    const savedRecord = JSON.parse(fs.readFileSync(savePayload.absolutePath, 'utf8'));
+    expect(savedRecord).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_route_preview.v0',
+      status: 'pending_internal_review',
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(savedRecord).not.toHaveProperty('command');
+    expect(savedRecord).not.toHaveProperty('args');
+    expect(duplicateResponse.status).toBe(200);
+    expect(duplicatePayload.created).toBe(false);
+    expect(duplicatePayload.relativePath).toBe(savePayload.relativePath);
+    for (const flag of ['telegramSend', 'accountOrTokenAccess', 'liveHmSend']) {
+      const blockedPreview = JSON.parse(JSON.stringify(preview));
+      blockedPreview.audit[flag] = true;
+      blockedPreview.plan.envelope.message_id = `mission-route-preview-blocked-${flag}`;
+      blockedPreview.plan.envelope.request_id = `req-mission-route-preview-blocked-${flag}`;
+      blockedPreview.plan.envelope.body.content = `This preview tries to set ${flag} true.`;
+      const blockedResponse = await fetch(`${baseUrl}/mission-control/route-previews`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          preview: blockedPreview,
+          missionAnswer: 'Project/lane: squidrun / architect#295.\nJAMES ACTION: NONE - blocked preview regression.',
+          source: 'runtime-ui-test',
+        }),
+      });
+      const blockedPayload = await blockedResponse.json();
+      expect(blockedResponse.status).toBe(400);
+      expect(blockedPayload.error).toEqual(expect.objectContaining({
+        code: 'route_preview_has_live_effect',
+        message: expect.stringContaining(`audit.${flag}`),
+      }));
+      expect(fs.readdirSync(path.join(tempStateRoot, 'mission-control', 'route-previews')).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    expect(listResponse.status).toBe(200);
+    expect(listPayload.previewCount).toBe(1);
+    expect(listPayload.previews[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-route-/),
+      status: 'pending_internal_review',
+      relativePath: savePayload.relativePath,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+    }));
+    expect(fs.readdirSync(path.join(tempStateRoot, 'mission-control', 'route-previews')).filter((file) => file.endsWith('.json'))).toHaveLength(1);
   });
 
   test('creates and lists pending-review customer work drafts without external send', async () => {

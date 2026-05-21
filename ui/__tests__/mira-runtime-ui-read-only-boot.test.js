@@ -291,6 +291,24 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       checkCount: 0,
       checks: [],
     },
+    '/mission-control/route-previews': {
+      ok: true,
+      previewCount: 0,
+      previews: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
     '/autonomy/status': {
       ok: true,
       queueCount: 0,
@@ -406,6 +424,63 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       };
       return response(typeof turnPayload === 'function' ? turnPayload(body, defaultTurnPayload) : (turnPayload || defaultTurnPayload));
     }
+    if (pathname === '/mission-control/route-previews' && method === 'POST') {
+      const record = {
+        protocol: 'mira.mission_control_route_preview.v0',
+        id: 'mission-route-preview-test',
+        actionToken: 'mission-route-test',
+        status: 'pending_internal_review',
+        createdAt: '2026-05-21T00:00:00.000Z',
+        source: body?.source || 'runtime-ui',
+        targetRole: body?.preview?.selectedDraftTarget || 'oracle',
+        targetPaneId: body?.preview?.plan?.target?.paneId || '3',
+        purpose: body?.preview?.selectedDraftPurpose || 'benchmark review',
+        content: body?.preview?.plan?.envelope?.body?.content || '',
+        contentPreview: body?.preview?.plan?.envelope?.body?.content || '',
+        missionAnswerPreview: body?.missionAnswer || '',
+        evidence: body?.preview?.plan?.envelope?.evidence || [],
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      };
+      payloads['/mission-control/route-previews'] = {
+        ...payloads['/mission-control/route-previews'],
+        previewCount: 1,
+        previews: [record],
+      };
+      return response({
+        ok: true,
+        protocol: 'mira.mission_control_route_preview_write.v0',
+        created: true,
+        stateRootPath: 'D:/projects/squidrun/mira/.state-dev',
+        relativePath: 'mission-control/route-previews/mission-route-preview-test.json',
+        absolutePath: 'D:/projects/squidrun/mira/.state-dev/mission-control/route-previews/mission-route-preview-test.json',
+        record,
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      });
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -423,6 +498,8 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
 
   elements.useModel = document.getElementById('useModel');
   elements.useModel.checked = true;
+  elements.saveRoutePreviewButton = document.getElementById('saveRoutePreviewButton');
+  elements.saveRoutePreviewButton.textContent = 'Save preview for review';
 
   return {
     calls,
@@ -499,6 +576,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/work/send-packets', method: 'GET' }),
       expect.objectContaining({ url: '/work/send-confirmations', method: 'GET' }),
       expect.objectContaining({ url: '/work/send-checks', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/route-previews', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -514,6 +592,8 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.coordinationDraftList.children).toHaveLength(2);
     expect(harness.elements.coordinationDraftList.children[0].children[0].textContent).toBe('builder · implementation');
     expect(harness.elements.routePreviewSummary.textContent).toBe('Route preview: oracle · benchmark review · reviewed preview only · manual execution required · no runtime execution · no external send · no route flip · no provider.');
+    expect(harness.elements.saveRoutePreviewButton.textContent).toBe('Save preview for review');
+    expect(harness.elements.routePreviewHistoryList.textContent).toBe('no saved route previews yet');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -523,7 +603,71 @@ describe('Mira runtime UI boot', () => {
     expect((collectMissionControlText(harness.elements).match(/JAMES ACTION:/g) || [])).toHaveLength(1);
     expect(harness.elements.lastTurn.textContent).toBe('no turn yet');
     expect(harness.elements.workSummary.textContent).toContain('0 drafts / 0 pending');
+    expect(harness.elements.workSummary.textContent).toContain('0 route previews');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
+  });
+
+  test('saves the Mission Control route preview only after explicit user action', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/route-previews')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+
+    await harness.elements.saveRoutePreviewButton.listeners.click();
+
+    const routePreviewCalls = harness.calls.filter((call) => call.url === '/mission-control/route-previews');
+    const postCalls = harness.calls.filter((call) => call.method === 'POST');
+    expect(postCalls).toHaveLength(1);
+    expect(routePreviewCalls).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({
+          source: 'runtime-ui',
+          missionAnswer: expect.stringContaining('Project/lane: squidrun / architect#253.'),
+          preview: expect.objectContaining({
+            status: 'reviewed_preview_only',
+            selectedDraftTarget: 'oracle',
+            selectedDraftPurpose: 'benchmark review',
+            plan: expect.objectContaining({
+              manualExecutionRequired: true,
+              runtimeExecutes: false,
+            }),
+            audit: expect.objectContaining({
+              reviewStatus: 'preview_ready',
+              sendPerformed: false,
+              runtimeExecutes: false,
+              externalSend: false,
+              routeFlip: false,
+              providerInvoked: false,
+            }),
+          }),
+        }),
+      }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
+    expect(harness.fetchImpl).not.toHaveBeenCalledWith(expect.stringContaining('hm-send'), expect.anything());
+    expect(harness.elements.routePreviewHistoryList.children).toHaveLength(1);
+    const historyText = harness.elements.routePreviewHistoryList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(historyText).toContain('oracle · benchmark review');
+    expect(historyText).toContain('pending internal review · manual execution required · not sent');
+    expect(historyText).toContain('no runtime execution, external send, route flip, provider, account or token access, or live hm-send');
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Route preview saved for internal review. Nothing was sent or executed.');
+    expect(harness.elements.saveRoutePreviewButton.disabled).toBe(false);
+    expect(harness.elements.saveRoutePreviewButton.textContent).toBe('Save preview for review');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {
