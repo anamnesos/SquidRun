@@ -241,6 +241,7 @@ function renderCoordinationDrafts(drafts) {
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlRoutePreviewQuestion(text)
+    || isMissionControlOwnedWorkQuestion(text)
     || isMissionControlDirtyWorkQuestion(text)
     || isMissionControlEvidenceQuestion(text)
     || isMissionControlJamesActionQuestion(text)
@@ -250,6 +251,13 @@ function isMissionControlQuestion(text) {
 
 function isMissionControlRoutePreviewQuestion(text) {
   return /\b(internal\s+route|route\s+preview)\b/i.test(text);
+}
+
+function isMissionControlOwnedWorkQuestion(text) {
+  const normalized = String(text || '');
+  if (/\bowned[-\s]?work\b/i.test(normalized)) return true;
+  return /\b(work\s+queue|pending\s+work|pending\s+tasks?|active\s+work|queued\s+work)\b/i.test(normalized)
+    && /\b(mission\s*control|mira|squidrun|local)\b/i.test(normalized);
 }
 
 function isMissionControlDirtyWorkQuestion(text) {
@@ -280,6 +288,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlRoutePreviewQuestion(text)) {
     const routePreviewAnswer = buildMissionControlRoutePreviewAnswer();
     if (routePreviewAnswer) return routePreviewAnswer;
+  }
+  if (isMissionControlOwnedWorkQuestion(text)) {
+    const ownedWorkAnswer = buildMissionControlOwnedWorkAnswer();
+    if (ownedWorkAnswer) return ownedWorkAnswer;
   }
   if (isMissionControlDirtyWorkQuestion(text)) {
     const dirtyWorkAnswer = buildMissionControlDirtyWorkAnswer();
@@ -327,6 +339,47 @@ function buildMissionControlRoutePreviewAnswer(mission = state.missionControl) {
     `Message preview: ${message}`,
     'Source: already-loaded Mission Control internal route preview from local SquidRun context.',
     'Boundary: local preview only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function formatOwnedWorkItem(item) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return String(item || '');
+  const label = item.title || item.label || item.name || item.id || item.kind || 'owned work item';
+  const status = item.status || item.state || '';
+  return [label, status].filter(Boolean).join(' - ');
+}
+
+function buildMissionControlOwnedWorkAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const ownedWork = context.ownedWork || {};
+  if (ownedWork.loaded !== true) return '';
+  const project = context.project?.name || 'current project';
+  const active = Array.isArray(ownedWork.active) ? ownedWork.active : [];
+  const pendingCount = Number.isFinite(Number(ownedWork.pendingCount))
+    ? Number(ownedWork.pendingCount)
+    : active.length;
+  const activeSummary = active.length > 0
+    ? active.slice(0, 4).map(formatOwnedWorkItem).filter(Boolean).join(' / ')
+    : 'No active owned-work items loaded.';
+  const lane = context.lane || {};
+  const laneSummary = lane.sourceRef
+    ? `${lane.sourceRef}: ${lane.objective || lane.status || 'active'}`
+    : context.summary?.happening || 'No current lane summary loaded.';
+  const nextStep = context.summary?.nextStep || mission?.nextTeamMove || lane.nextAction || 'No local next step is loaded yet.';
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control owned-work answer; no send or setup is needed.');
+  return [
+    `Owned work: ${project}`,
+    `Pending count: ${pendingCount}`,
+    `Active items: ${activeSummary}`,
+    `Current lane: ${laneSummary}`,
+    `Next step: ${nextStep}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }

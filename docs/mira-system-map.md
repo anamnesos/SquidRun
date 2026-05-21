@@ -413,6 +413,8 @@ Product-facing route-preview prompts now answer from the already-loaded local `i
 
 Product-facing evidence/source prompts now answer from the already-loaded `/squidrun/context` evidence list and read flags, without posting `/turn`, adding fetches, persisting, or sending externally.
 
+Product-facing owned-work/work-queue prompts such as `what owned work is pending?` and `what is in the Mission Control work queue?` now answer from the already-loaded `/squidrun/context` owned-work, lane, and summary fields, without posting `/turn`, adding fetches, persisting, or sending externally.
+
 Product-facing dirty-work prompts such as `what changed here?` and `what files are dirty?` now answer from the already-loaded `/squidrun/context` git/dirty-work evidence and current Mission Control dirty-work line, without posting `/turn`, adding fetches, persisting, or sending externally.
 
 Product-facing James-needed prompts such as `is James needed?` and `do you need me for this?` now answer from the already-loaded `/squidrun/context` summary action fields and current Mission Control action reason, without posting `/turn`, adding fetches, persisting, or sending externally.
