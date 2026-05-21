@@ -1,3 +1,5 @@
+/* global afterEach, beforeEach, describe, expect, jest, test */
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -108,6 +110,131 @@ describe('owned-work-continue-broker', () => {
     expect(result.held[0]).toEqual(expect.objectContaining({
       riskClass: 'approval_required',
       dispatchReady: false,
+    }));
+  });
+
+  test('turns JAMES ACTION NONE into auto-continue after internal gates', () => {
+    const nowMs = Date.parse('2026-05-21T15:10:00Z');
+    queue.writeQueue({
+      agents: {
+        builder: {
+          pending: [
+            {
+              taskId: 'builder-next-product-1',
+              owner: 'builder',
+              state: 'queued',
+              riskClass: 'safe',
+              title: 'Next product lane',
+              message: 'Continue the next product lane.',
+              nextStep: 'Patch the smallest workflow continuation seam.',
+              wakeTrigger: 'post-commit',
+              lastAdvancedAt: nowMs - 1000,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+      },
+    }, queuePath);
+
+    const continueCard = broker.buildOwnedWorkContinueCard({
+      queuePath,
+      nowMs,
+      wakeTrigger: 'post-commit',
+    });
+    const decision = broker.buildWorkflowContinuationDecision({
+      reportText: [
+        'Internal gate: Oracle review before commit.',
+        'JAMES ACTION: NONE',
+      ].join('\n'),
+      continueCard,
+      trigger: 'post-commit',
+      generatedAtMs: nowMs,
+    });
+
+    expect(decision).toEqual(expect.objectContaining({
+      ok: true,
+      decision: 'auto_continue_after_internal_gate',
+      autoContinue: true,
+      jamesActionRequired: false,
+      jamesActionLine: 'JAMES ACTION: NONE',
+      internalReviewGateStopsJames: false,
+      internalCommitGateStopsJames: false,
+    }));
+    expect(decision.nextAction).toEqual(expect.objectContaining({
+      action: 'continue_owned_work',
+      taskId: 'builder-next-product-1',
+      nextStep: 'Patch the smallest workflow continuation seam.',
+    }));
+  });
+
+  test('stops for James only when the action line says DO THIS', () => {
+    const decision = broker.buildWorkflowContinuationDecision({
+      reportText: [
+        'Internal gate is clear.',
+        'JAMES ACTION: DO THIS: test the new channel on your phone',
+      ].join('\n'),
+      generatedAtMs: Date.parse('2026-05-21T15:15:00Z'),
+    });
+
+    expect(decision).toEqual(expect.objectContaining({
+      ok: true,
+      decision: 'james_action_required',
+      autoContinue: false,
+      jamesActionRequired: true,
+      jamesActionLine: 'JAMES ACTION: DO THIS: test the new channel on your phone',
+      requiredAction: 'test the new channel on your phone',
+    }));
+    expect(decision.nextAction).toBeUndefined();
+  });
+
+  test('uses the map-backed next step when no owned-work card is due', () => {
+    const decision = broker.buildWorkflowContinuationDecision({
+      reportText: 'JAMES ACTION: NONE',
+      continueCard: { hasNextAction: false, counts: { due: 0 } },
+      nextMapBackedStep: 'Open the next product-usefulness lane.',
+      trigger: 'post-commit',
+    });
+
+    expect(decision).toEqual(expect.objectContaining({
+      ok: true,
+      decision: 'auto_continue_after_internal_gate',
+      autoContinue: true,
+      jamesActionRequired: false,
+    }));
+    expect(decision.nextAction).toEqual({
+      action: 'continue_map_backed_step',
+      title: 'Next map-backed step',
+      nextStep: 'Open the next product-usefulness lane.',
+      wakeTrigger: 'post-commit',
+      source: 'mira-system-map',
+    });
+  });
+
+  test('treats missing or duplicate action lines as an internal report fix', () => {
+    const missing = broker.buildWorkflowContinuationDecision({
+      reportText: 'Internal gate is clear.',
+    });
+    const duplicate = broker.buildWorkflowContinuationDecision({
+      reportText: [
+        'JAMES ACTION: NONE',
+        'JAMES ACTION: NONE',
+      ].join('\n'),
+    });
+
+    expect(missing).toEqual(expect.objectContaining({
+      ok: false,
+      decision: 'internal_report_needs_action_line_fix',
+      autoContinue: false,
+      jamesActionRequired: false,
+      reason: 'missing_james_action_line',
+    }));
+    expect(duplicate).toEqual(expect.objectContaining({
+      ok: false,
+      decision: 'internal_report_needs_action_line_fix',
+      autoContinue: false,
+      jamesActionRequired: false,
+      reason: 'multiple_james_action_lines',
     }));
   });
 });

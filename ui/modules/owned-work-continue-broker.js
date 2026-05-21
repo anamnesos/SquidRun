@@ -10,6 +10,52 @@ function toNonEmptyString(value) {
   return trimmed ? trimmed : null;
 }
 
+function extractJamesActionLines(text = '') {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^JAMES ACTION:/i.test(line));
+}
+
+function classifyJamesActionLine(line = '') {
+  const match = String(line || '').trim().match(/^JAMES ACTION:\s*(.+)$/i);
+  if (!match) {
+    return {
+      ok: false,
+      kind: 'invalid',
+      reason: 'missing_james_action_line',
+    };
+  }
+
+  const value = match[1].trim();
+  if (/^NONE$/i.test(value)) {
+    return {
+      ok: true,
+      kind: 'none',
+      line: 'JAMES ACTION: NONE',
+      requiredAction: null,
+    };
+  }
+
+  const doThisMatch = value.match(/^DO THIS:\s*(.+)$/i);
+  if (doThisMatch && doThisMatch[1].trim()) {
+    const requiredAction = doThisMatch[1].trim();
+    return {
+      ok: true,
+      kind: 'do_this',
+      line: `JAMES ACTION: DO THIS: ${requiredAction}`,
+      requiredAction,
+    };
+  }
+
+  return {
+    ok: false,
+    kind: 'invalid',
+    reason: 'unknown_james_action',
+    line: String(line || '').trim(),
+  };
+}
+
 function isCandidateActionable(candidate = {}) {
   return candidate.dispatchReady !== false
     && ['safe', 'caution'].includes(String(candidate.riskClass || '').toLowerCase());
@@ -105,9 +151,85 @@ function buildOwnedWorkContinueCard(options = {}) {
   };
 }
 
+function buildMapBackedNextAction(nextStep, trigger) {
+  return {
+    action: 'continue_map_backed_step',
+    title: 'Next map-backed step',
+    nextStep: toNonEmptyString(nextStep) || 'Continue to the next map-backed product step.',
+    wakeTrigger: toNonEmptyString(trigger) || 'post-commit',
+    source: 'mira-system-map',
+  };
+}
+
+function buildWorkflowContinuationDecision(options = {}) {
+  const reportText = toNonEmptyString(options.reportText || options.message || options.text) || '';
+  const actionLines = extractJamesActionLines(reportText);
+  const trigger = toNonEmptyString(options.trigger) || 'post-commit';
+  const generatedAtMs = options.generatedAtMs || Date.now();
+
+  if (actionLines.length !== 1) {
+    return {
+      ok: false,
+      decision: 'internal_report_needs_action_line_fix',
+      autoContinue: false,
+      jamesActionRequired: false,
+      reason: actionLines.length === 0 ? 'missing_james_action_line' : 'multiple_james_action_lines',
+      generatedAtMs,
+    };
+  }
+
+  const action = classifyJamesActionLine(actionLines[0]);
+  if (!action.ok) {
+    return {
+      ok: false,
+      decision: 'internal_report_needs_action_line_fix',
+      autoContinue: false,
+      jamesActionRequired: false,
+      reason: action.reason,
+      jamesActionLine: action.line || actionLines[0],
+      generatedAtMs,
+    };
+  }
+
+  if (action.kind === 'do_this') {
+    return {
+      ok: true,
+      decision: 'james_action_required',
+      autoContinue: false,
+      jamesActionRequired: true,
+      jamesActionLine: action.line,
+      requiredAction: action.requiredAction,
+      generatedAtMs,
+    };
+  }
+
+  const continueCard = options.continueCard && typeof options.continueCard === 'object'
+    ? options.continueCard
+    : null;
+  const nextAction = continueCard?.hasNextAction
+    ? continueCard.nextAction
+    : buildMapBackedNextAction(options.nextMapBackedStep, trigger);
+
+  return {
+    ok: true,
+    decision: 'auto_continue_after_internal_gate',
+    autoContinue: true,
+    jamesActionRequired: false,
+    jamesActionLine: action.line,
+    internalReviewGateStopsJames: false,
+    internalCommitGateStopsJames: false,
+    nextAction,
+    counts: continueCard?.counts || null,
+    generatedAtMs,
+  };
+}
+
 module.exports = {
+  buildWorkflowContinuationDecision,
   buildNextActionCard,
   buildOwnedWorkContinueCard,
   buildResumeCommand,
+  classifyJamesActionLine,
+  extractJamesActionLines,
   selectNextCandidate,
 };

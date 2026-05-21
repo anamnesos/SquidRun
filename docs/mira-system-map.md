@@ -206,6 +206,15 @@ npm test -- mira-runtime-turn-visible-reply-parity.test.js -t "answers ordinary 
 
 This adds one normal question, `ok so now what?`, and expects a short useful answer with exactly one `JAMES ACTION:` line, compared against the current checkpoint answer shape.
 
+Workflow continuation checkpoint:
+
+```powershell
+cd ui
+npm test -- owned-work-continue-broker.test.js
+```
+
+This uses the existing owned-work continuation broker: after an internal PASS/commit report, `JAMES ACTION: NONE` becomes an auto-continue decision for the next queued or map-backed step. Only `JAMES ACTION: DO THIS: <specific action>` stops for James.
+
 New Mira held-reply endpoint/UI projection proof, without live provider calls, fixed-port runtime, Telegram, or route changes:
 
 ```powershell
@@ -340,6 +349,7 @@ Every Mira/New Mira status report must include exactly one James-action line:
 - `JAMES ACTION: DO THIS: <specific concrete action>` only for real-world setup, testing, permission, route switch, account, token, device, or channel actions James must personally perform or approve.
 
 `JAMES ACTION: NONE` means the team continues after internal review/commit gates; those gates are not James stops.
+The continuation broker is the code seam for that rule: it classifies checkpoint reports into auto-continue, James-action-required, or internal report-fix decisions.
 
 Checkpoint reports must say, in plain English:
 
