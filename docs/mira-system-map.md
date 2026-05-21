@@ -441,6 +441,8 @@ Product-facing source/provenance prompts such as `where did this Mission Control
 
 Product-facing artifact/evidence-path prompts such as `where is the current Mission Control artifact?` and `what is the Mission Control evidence path?` now answer from the already-loaded activation pipeline status/trace state, without posting `/turn`, adding fetches, reading files, persisting, or sending externally.
 
+Product-facing Mission-answer continuity prompts such as `does the Mission Control answer carry through?` and `what is the Mission Control answer continuity?` now answer from the already-loaded activation pipeline end-to-end readout Mission-answer continuity fields, without posting `/turn`, adding fetches, carrying, copying, fixing, updating, changing, creating context-carry artifacts/stages, persisting, clicking, or sending externally.
+
 Product-facing proof-summary prompts such as `what did Mission Control prove?` and `what proof summary is loaded in Mission Control?` now answer from the already-loaded activation pipeline status/readout fields, without posting `/turn`, adding fetches, persisting, clicking, or sending externally.
 
 Product-facing missing-stage/status-gap prompts such as `what is missing in Mission Control?` and `which Mission Control stage is blocked?` now answer from the already-loaded activation pipeline status/selection fields, without posting `/turn`, adding fetches, creating artifacts, persisting, clicking, or sending externally.

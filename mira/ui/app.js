@@ -247,6 +247,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlChecksumEvidenceQuestion(text)
     || isMissionControlSourceProvenanceQuestion(text)
     || isMissionControlArtifactEvidenceQuestion(text)
+    || isMissionControlAnswerContinuityQuestion(text)
     || isMissionControlProofSummaryQuestion(text)
     || isMissionControlNoEffectBoundaryQuestion(text)
     || isMissionControlAdvanceSelectionQuestion(text)
@@ -277,7 +278,9 @@ function isMissionControlAvailableAnswersQuestion(text) {
   const asksMissionControl = /\bwhat\s+can\s+i\s+ask\s+(mission\s*control|mira)\b/i.test(normalized);
   const asksAvailablePreviews = /\b(what|which)\s+(local\s+)?(previews?|answers?|questions?)\s+(are\s+)?available\b/i.test(normalized)
     && /\b(mission\s*control|mira|local|preview)\b/i.test(normalized);
-  const asksQuestionList = /\bmission\s*control\s+(local\s+)?(answers?|previews?|question\s+list)\b/i.test(normalized);
+  const asksQuestionList = /\bmission\s*control\s+(local\s+)?(previews?|question\s+list)\b/i.test(normalized)
+    || /\bmission\s*control\s+(local\s+)?answers?\s+(are\s+)?available\b/i.test(normalized)
+    || /\b(what|which)\s+mission\s*control\s+(local\s+)?answers?\b/i.test(normalized);
   return asksMissionControl || asksAvailablePreviews || asksQuestionList;
 }
 
@@ -322,6 +325,14 @@ function isMissionControlArtifactEvidenceQuestion(text) {
     && (/\b(where|what)\s+(is|are)\s+.*\b(artifact|evidence)\b/i.test(normalized)
       || /\b(where|what|which)\s+.*\b(artifact|evidence)\s+(path|token|trace)\b/i.test(normalized)
       || /\bwhere\s+is\s+the\s+proof\s+artifact\b/i.test(normalized));
+}
+
+function isMissionControlAnswerContinuityQuestion(text) {
+  const normalized = String(text || '');
+  return /\b(mission\s*control|new\s+mira)\b/i.test(normalized)
+    && (/\bdoes\s+.*\b(answer|mission\s+answer)\s+.*\b(carry|continue|match|stay)\s+(through|across)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(answer|mission\s+answer)\s+continuity\b/i.test(normalized)
+      || /\b(is|are)\s+.*\b(mission\s*control|new\s+mira)\s+(answer|mission\s+answer)\s+.*\b(continuous|consistent|matching)\b/i.test(normalized));
 }
 
 function isMissionControlProofSummaryQuestion(text) {
@@ -516,6 +527,10 @@ function currentMissionControlAnswer(text = '') {
     const artifactEvidenceAnswer = buildMissionControlArtifactEvidenceAnswer();
     if (artifactEvidenceAnswer) return artifactEvidenceAnswer;
   }
+  if (isMissionControlAnswerContinuityQuestion(text)) {
+    const answerContinuityAnswer = buildMissionControlAnswerContinuityAnswer();
+    if (answerContinuityAnswer) return answerContinuityAnswer;
+  }
   if (isMissionControlProofSummaryQuestion(text)) {
     const proofSummaryAnswer = buildMissionControlProofSummaryAnswer();
     if (proofSummaryAnswer) return proofSummaryAnswer;
@@ -656,6 +671,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('validation checks');
     available.push('checksum/evidence integrity');
     available.push('source/provenance trail');
+    available.push('Mission answer continuity');
     available.push('blocked reason');
     available.push('no-effect boundary');
     available.push('manual input requirements');
@@ -885,6 +901,57 @@ function buildMissionControlSourceProvenanceAnswer(status = state.missionControl
     `Next boundary: ${status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
     'Source: already-loaded Mission Control activation pipeline current-stage trace/source relation fields from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, trace run, file read, open, fix, update, submit, endpoint call, handler call, click, artifact creation, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlAnswerContinuityAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object'
+    ? status.endToEndReadout
+    : {};
+  const continuity = endToEndReadout.missionAnswerContinuity && typeof endToEndReadout.missionAnswerContinuity === 'object'
+    ? endToEndReadout.missionAnswerContinuity
+    : {};
+  const stageTrail = Array.isArray(continuity.stageTrail) ? continuity.stageTrail : [];
+  const compactTrail = stageTrail.length > 0
+    ? stageTrail.slice(0, 12).map((entry) => {
+      const label = entry.label || entry.stageId || 'stage';
+      const answerState = entry.missionAnswerPreview
+        ? (entry.matchesOriginatingAnswer === true ? 'matching' : 'mismatched')
+        : 'missing answer';
+      return `${label}:${answerState}`;
+    }).join(' / ')
+    : 'none loaded';
+  const availableStageCount = Number.isFinite(Number(continuity.availableStageCount))
+    ? Number(continuity.availableStageCount)
+    : 0;
+  const matchingStageCount = Number.isFinite(Number(continuity.matchingStageCount))
+    ? Number(continuity.matchingStageCount)
+    : 0;
+  const carriedStageCount = Number.isFinite(Number(continuity.carriedStageCount))
+    ? Number(continuity.carriedStageCount)
+    : 0;
+  const missingLabels = Array.isArray(continuity.missingStageLabels) ? continuity.missingStageLabels : [];
+  const mismatchedLabels = Array.isArray(continuity.mismatchedStageLabels) ? continuity.mismatchedStageLabels : [];
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control answer-continuity inspection; no setup or live action is needed.');
+  return [
+    `Answer continuity status: ${String(continuity.status || 'empty').replace(/_/g, ' ')}`,
+    `Origin answer: ${continuity.originatingAnswerPreview || 'No originating Mission Control answer is loaded.'}`,
+    `Current answer: ${continuity.currentAnswerPreview || 'No current Mission Control answer is loaded.'}`,
+    `Matching stages: ${matchingStageCount}/${availableStageCount} available; ${carriedStageCount} carried.`,
+    `Missing answer stages: ${missingLabels.length > 0 ? missingLabels.join(' / ') : 'none'}`,
+    `Mismatched answer stages: ${mismatchedLabels.length > 0 ? mismatchedLabels.join(' / ') : 'none'}`,
+    `Continuity trail: ${compactTrail}`,
+    `Summary: ${continuity.summary || 'No Mission answer continuity summary is loaded.'}`,
+    `No-effect: ${continuity.noEffectSummary || 'No Mission answer continuity no-effect summary is loaded.'}`,
+    `Next boundary: ${endToEndReadout.nextBoundary || status.nextBoundary?.currentNextStep || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control end-to-end readout Mission answer continuity from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, carry, copy, fix, update, change, submit, endpoint call, handler call, click, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }

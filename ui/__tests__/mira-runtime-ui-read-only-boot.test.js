@@ -3993,6 +3993,7 @@ describe('Mira runtime UI boot', () => {
       expect(availableReply).toContain('validation checks');
       expect(availableReply).toContain('checksum/evidence integrity');
       expect(availableReply).toContain('source/provenance trail');
+      expect(availableReply).toContain('Mission answer continuity');
       expect(availableReply).toContain('Example prompts: what now? / what project is loaded? / what lane are we on? / what changed here? / what did Oracle say? / is James needed?');
       expect(availableReply).toContain('Source: already-loaded Mission Control UI state and /squidrun/context; this only names existing local answers.');
       expect(availableReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
@@ -4210,6 +4211,50 @@ describe('Mira runtime UI boot', () => {
       expect(artifactReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, file read, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
       expect(artifactReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
       expect((artifactReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
+  test('answers Mission-answer continuity questions from existing Mission Control status without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['does the Mission Control answer carry through?', 'what is the Mission Control answer continuity?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Answer continuity status: empty'),
+      ]);
+      const continuityReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(continuityReply).toContain('Origin answer: No originating Mission Control answer is loaded.');
+      expect(continuityReply).toContain('Current answer: No current Mission Control answer is loaded.');
+      expect(continuityReply).toContain('Matching stages: 0/0 available; 0 carried.');
+      expect(continuityReply).toContain('Missing answer stages: none');
+      expect(continuityReply).toContain('Mismatched answer stages: none');
+      expect(continuityReply).toContain('Continuity trail: none loaded');
+      expect(continuityReply).toContain('Summary: No originating Mission Control answer is attached to the saved activation pipeline yet.');
+      expect(continuityReply).toContain('No-effect: Read-only Mission answer continuity proof only; it derives from existing saved Mission Control artifacts/status and does not persist, submit, execute, send, deliver, call a provider/model, access accounts/tokens, flip routes, or start runtime work.');
+      expect(continuityReply).toContain('Next boundary: Next inspectable step is local review; live send is still unavailable.');
+      expect(continuityReply).toContain('Source: already-loaded Mission Control end-to-end readout Mission answer continuity from local SquidRun context.');
+      expect(continuityReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, carry, copy, fix, update, change, submit, endpoint call, handler call, click, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
+      expect(continuityReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((continuityReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
       expect(harness.elements.lastTurn.textContent).toBe('mission control local');
       expect(harness.elements.sendButton.disabled).toBe(false);
       expect(harness.elements.sendButton.textContent).toBe('Send');
@@ -5520,6 +5565,49 @@ describe('Mira runtime UI boot', () => {
       'open the New Mira source relation with the runtime fixture',
       'fix the Mission Control source trail with the runtime fixture',
       'update Mission Control provenance with the runtime fixture',
+    ]) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+      const postCalls = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCalls).toHaveLength(turnCalls.length);
+      expect(turnCalls[turnCalls.length - 1].body).toEqual(expect.objectContaining({
+        text: question,
+        useModel: false,
+        modelProvider: 'openai_responses',
+        modelName: 'gpt-5.5',
+      }));
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        'Mira. Deterministic local turn.',
+      ]);
+      expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+    expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(5);
+  });
+
+  test('does not hijack generic Mission-answer continuity instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    for (const question of [
+      'carry the Mission Control answer with the runtime fixture',
+      'copy the Mission Control answer continuity with the runtime fixture',
+      'fix the Mission Control answer continuity with the runtime fixture',
+      'update the New Mira answer continuity with the runtime fixture',
+      'change the Mission Control answer trail with the runtime fixture',
     ]) {
       harness.elements.turnText.value = question;
       const submitEvent = { preventDefault: jest.fn() };
