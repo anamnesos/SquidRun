@@ -388,6 +388,26 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       accountOrTokenAccess: false,
       liveHmSend: false,
     },
+    '/mission-control/dispatch-readiness': {
+      ok: true,
+      protocol: 'mira.mission_control_dispatch_readiness_list.v0',
+      readinessCount: 0,
+      readiness: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    },
     '/autonomy/status': {
       ok: true,
       queueCount: 0,
@@ -841,6 +861,112 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
         liveHmSend: false,
       });
     }
+    if (pathname === '/mission-control/dispatch-readiness' && method === 'POST') {
+      const preview = payloads['/mission-control/internal-delivery-previews'].previews
+        .find((candidate) => candidate.actionToken === body?.deliveryPreviewToken);
+      if (!preview) {
+        return response({ ok: false, error: { message: 'Mission Control delivery preview was not found.' } }, false);
+      }
+      const readiness = {
+        protocol: 'mira.mission_control_dispatch_readiness.v0',
+        id: 'mission-dispatch-readiness-test',
+        actionToken: 'mission-dispatch-readiness-test',
+        status: 'ready_for_manual_dispatch_review',
+        createdAt: '2026-05-21T00:00:04.000Z',
+        sourceDeliveryPreviewId: preview.id,
+        sourceDeliveryPreviewToken: preview.actionToken,
+        sourceRecommendationId: preview.sourceRecommendationId,
+        sourceContinuationId: preview.sourceContinuationId,
+        sourceRequestId: preview.sourceRequestId,
+        sourcePreviewId: preview.sourcePreviewId,
+        targetRole: preview.targetRole,
+        targetPaneId: preview.targetPaneId,
+        targetLabel: preview.reviewDetails.targetLabel,
+        purpose: preview.purpose,
+        content: preview.content,
+        contentPreview: preview.contentPreview,
+        packetSha256: preview.reviewDetails.packetSha256,
+        bodySha256: preview.reviewDetails.bodySha256,
+        copyTextSha256: preview.reviewDetails.bodySha256,
+        checksumMatched: true,
+        copiedPaneMessage: {
+          targetRole: preview.targetRole,
+          targetPaneId: preview.targetPaneId,
+          body: preview.reviewDetails.copyText,
+          bodySha256: preview.reviewDetails.bodySha256,
+          bodyCharCount: preview.reviewDetails.copyText.length,
+        },
+        checklist: [
+          { id: 'pane_target_matches', label: `Pane target is ${preview.reviewDetails.targetLabel}`, ok: true },
+          { id: 'copied_body_checksum_matches', label: 'Copied pane body checksum matches the saved delivery preview body.', ok: true },
+          { id: 'manual_review_required', label: 'Manual pane review is required before dispatch.', ok: true },
+          { id: 'no_delivery_path', label: 'Checklist is review-only: no hm-send, Telegram, route flip, provider/model, runtime execution, or external delivery.', ok: true },
+        ],
+        audit: {
+          reviewStatus: 'dispatch_readiness_ready',
+          manualExecutionRequired: true,
+          notSent: true,
+          commandStored: false,
+          sendPerformed: false,
+          runtimeExecutes: false,
+          externalSend: false,
+          telegramSend: false,
+          routeFlip: false,
+          providerInvoked: false,
+          accountOrTokenAccess: false,
+          liveHmSend: false,
+          checksumMatched: true,
+          noHmSendExecution: true,
+          noTelegramSend: true,
+          noRouteFlip: true,
+          noProviderCall: true,
+          noRuntimeExecution: true,
+          noExternalDelivery: true,
+        },
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      };
+      payloads['/mission-control/dispatch-readiness'] = {
+        ...payloads['/mission-control/dispatch-readiness'],
+        readinessCount: 1,
+        readiness: [readiness],
+      };
+      return response({
+        ok: true,
+        protocol: 'mira.mission_control_dispatch_readiness_write.v0',
+        created: true,
+        stateRootPath: 'D:/projects/squidrun/mira/.state-dev',
+        relativePath: 'mission-control/dispatch-readiness/mission-dispatch-readiness-test.json',
+        absolutePath: 'D:/projects/squidrun/mira/.state-dev/mission-control/dispatch-readiness/mission-dispatch-readiness-test.json',
+        readiness,
+        manualExecutionRequired: true,
+        reviewRequired: true,
+        internalOnly: true,
+        reviewableOwnedWork: true,
+        notSent: true,
+        commandStored: false,
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        telegramSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+        accountOrTokenAccess: false,
+        liveHmSend: false,
+      });
+    }
     if (!Object.prototype.hasOwnProperty.call(payloads, pathname)) {
       return response({ ok: false, error: { message: `unexpected endpoint: ${pathname}` } }, false);
     }
@@ -941,6 +1067,7 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ url: '/mission-control/owned-work-continuations', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/follow-through-recommendations', method: 'GET' }),
       expect.objectContaining({ url: '/mission-control/internal-delivery-previews', method: 'GET' }),
+      expect.objectContaining({ url: '/mission-control/dispatch-readiness', method: 'GET' }),
       expect.objectContaining({ url: '/autonomy/status', method: 'GET' }),
     ]));
     expect(harness.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -963,6 +1090,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.routeContinuationList.textContent).toBe('no owned-work continuations yet');
     expect(harness.elements.routeFollowThroughList.textContent).toBe('no follow-through recommendation yet');
     expect(harness.elements.routeDeliveryPreviewList.textContent).toBe('no internal delivery previews yet');
+    expect(harness.elements.routeDispatchReadinessList.textContent).toBe('no dispatch-readiness checklists yet');
     expect(harness.elements.foundationSummary.textContent).toBe('Foundation vs product: SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James\'s AI team.');
     expect(harness.elements.laneSummary.textContent).toBe('What is happening: Working in squidrun on architect#253: Build Mission Control from actual local SquidRun evidence.');
     expect(harness.elements.nextStepSummary.textContent).toBe('Next here: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
@@ -977,6 +1105,7 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.workSummary.textContent).toContain('0 continuations');
     expect(harness.elements.workSummary.textContent).toContain('0 team recommendations');
     expect(harness.elements.workSummary.textContent).toContain('0 delivery previews');
+    expect(harness.elements.workSummary.textContent).toContain('0 dispatch checklists');
     expect(harness.elements.workSummary.textContent).toContain('2 queued');
   });
 
@@ -1004,6 +1133,9 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-delivery-previews')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/dispatch-readiness')).toEqual([
       expect.objectContaining({ method: 'GET' }),
     ]);
 
@@ -1053,6 +1185,10 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
     ]);
     expect(harness.calls.filter((call) => call.url === '/mission-control/internal-delivery-previews')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/dispatch-readiness')).toEqual([
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
@@ -1147,6 +1283,12 @@ describe('Mira runtime UI boot', () => {
       expect.objectContaining({ method: 'GET' }),
       expect.objectContaining({ method: 'GET' }),
     ]);
+    expect(harness.calls.filter((call) => call.url === '/mission-control/dispatch-readiness')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
     expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
     expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.routeContinuationList.children).toHaveLength(1);
@@ -1202,12 +1344,49 @@ describe('Mira runtime UI boot', () => {
     expect(deliveryText).toContain('Review: Manual copy only: paste this body into oracle pane 3 after review.');
     expect(deliveryText).toContain('no command stored, runtime execution, external send, route flip, provider/model call, account or token access, Telegram, or live hm-send');
     const copyButton = harness.elements.routeDeliveryPreviewList.children[0].children
-      .find((child) => child.tagName === 'BUTTON');
+      .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Copy packet body');
     expect(copyButton.textContent).toBe('Copy packet body');
     await copyButton.listeners.click();
     expect(harness.context.navigator.clipboard.writeText).toHaveBeenCalledWith('Edited internal continuation for Oracle review.');
     expect(copyButton.textContent).toBe('Copied body');
+    const readinessButton = harness.elements.routeDeliveryPreviewList.children[0].children
+      .find((child) => child.tagName === 'BUTTON' && child.textContent === 'Review dispatch readiness');
+    expect(readinessButton.textContent).toBe('Review dispatch readiness');
+    await readinessButton.listeners.click();
+
+    const dispatchReadinessCalls = harness.calls.filter((call) => call.url === '/mission-control/dispatch-readiness');
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(5);
+    expect(dispatchReadinessCalls).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: {
+          deliveryPreviewToken: 'mission-delivery-preview-test',
+        },
+      }),
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(harness.elements.routeDispatchReadinessList.children).toHaveLength(1);
+    const readinessText = harness.elements.routeDispatchReadinessList.children[0].children
+      .map((child) => child.textContent)
+      .join('\n');
+    expect(readinessText).toContain('oracle · dispatch readiness');
+    expect(readinessText).toContain('ready for manual dispatch review · review/checklist only · manual execution required · not sent');
+    expect(readinessText).toContain('Pane target: oracle pane 3');
+    expect(readinessText).toContain('Copied body: Edited internal continuation for Oracle review.');
+    expect(readinessText).toContain('Body checksum: body-sha256-test');
+    expect(readinessText).toContain('Packet checksum: packet-sha256-test');
+    expect(readinessText).toContain('Checksum match: yes');
+    expect(readinessText).toContain('Copied pane body checksum matches the saved delivery preview body.');
+    expect(readinessText).toContain('no command stored, hm-send execution, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery');
+    expect(harness.calls.some((call) => call.url === '/bridge/manual-plan')).toBe(false);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Internal delivery preview saved locally. Nothing was sent or executed.');
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toContain('Dispatch-readiness checklist saved locally. Nothing was sent or executed.');
   });
 
   test('answers the Mission Control question locally from SquidRun evidence without a turn POST', async () => {

@@ -387,12 +387,15 @@ describe('Mira runtime bridge manual-plan API', () => {
     expect(appJs).toContain("fetch('/mission-control/owned-work-continuations'");
     expect(appJs).toContain("fetch('/mission-control/follow-through-recommendations'");
     expect(appJs).toContain("fetch('/mission-control/internal-delivery-previews'");
+    expect(appJs).toContain("fetch('/mission-control/dispatch-readiness'");
     expect(appJs).toContain('Save preview for review');
     expect(appJs).toContain('Make review item');
     expect(appJs).toContain('review continuation');
     expect(appJs).toContain('Preview delivery packet');
+    expect(appJs).toContain('Review dispatch readiness');
     expect(indexHtml).toContain('id="routeFollowThroughList"');
     expect(indexHtml).toContain('id="routeDeliveryPreviewList"');
+    expect(indexHtml).toContain('id="routeDispatchReadinessList"');
     expect(appJs).toContain("fetch('/autonomy/status'");
     expect(appJs).toContain("fetch('/autonomy/tick'");
     expect(appJs).toContain("fetch('/autonomy/follow-through'");
@@ -1115,6 +1118,8 @@ describe('Mira runtime bridge manual-plan API', () => {
     const emptyRecommendationPayload = await emptyRecommendationResponse.json();
     const emptyDeliveryPreviewResponse = await fetch(`${baseUrl}/mission-control/internal-delivery-previews`);
     const emptyDeliveryPreviewPayload = await emptyDeliveryPreviewResponse.json();
+    const emptyDispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`);
+    const emptyDispatchReadinessPayload = await emptyDispatchReadinessResponse.json();
     const missingContinuationTokenResponse = await fetch(`${baseUrl}/mission-control/owned-work-continuations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1220,6 +1225,27 @@ describe('Mira runtime bridge manual-plan API', () => {
       protocol: 'mira.mission_control_internal_delivery_preview_list.v0',
       previewCount: 0,
       previews: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(emptyDispatchReadinessResponse.status).toBe(200);
+    expect(emptyDispatchReadinessPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_dispatch_readiness_list.v0',
+      readinessCount: 0,
+      readiness: [],
       manualExecutionRequired: true,
       reviewRequired: true,
       internalOnly: true,
@@ -1638,6 +1664,252 @@ describe('Mira runtime bridge manual-plan API', () => {
       accountOrTokenAccess: false,
       liveHmSend: false,
     }));
+
+    const dispatchReadinessDir = path.join(tempStateRoot, 'mission-control', 'dispatch-readiness');
+    const missingDispatchTokenResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const missingDispatchTokenPayload = await missingDispatchTokenResponse.json();
+    const badDispatchTokenResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deliveryPreviewToken: 'mission-delivery-preview-not-saved' }),
+    });
+    const badDispatchTokenPayload = await badDispatchTokenResponse.json();
+    expect(missingDispatchTokenResponse.status).toBe(400);
+    expect(missingDispatchTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_delivery_preview_token_required',
+    }));
+    expect(fs.existsSync(dispatchReadinessDir)).toBe(false);
+    expect(badDispatchTokenResponse.status).toBe(400);
+    expect(badDispatchTokenPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_delivery_preview_not_found',
+    }));
+    expect(fs.existsSync(dispatchReadinessDir)).toBe(false);
+    const dispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken }),
+    });
+    const dispatchReadinessPayload = await dispatchReadinessResponse.json();
+    const duplicateDispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken }),
+    });
+    const duplicateDispatchReadinessPayload = await duplicateDispatchReadinessResponse.json();
+    const listDispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness?includeInternal=1`);
+    const listDispatchReadinessPayload = await listDispatchReadinessResponse.json();
+    expect(dispatchReadinessResponse.status).toBe(200);
+    expect(dispatchReadinessPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_dispatch_readiness_write.v0',
+      created: true,
+      stateRootPath: path.resolve(tempStateRoot),
+      relativePath: expect.stringMatching(/^mission-control\/dispatch-readiness\/mission-dispatch-readiness-.*\.json$/),
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(dispatchReadinessPayload.readiness).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_dispatch_readiness.v0',
+      status: 'ready_for_manual_dispatch_review',
+      sourceDeliveryPreviewId: deliveryPreviewPayload.preview.id,
+      sourceDeliveryPreviewToken: deliveryPreviewPayload.preview.actionToken,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      targetLabel: 'oracle pane 3',
+      content: 'Edited internal continuation for Oracle review.',
+      packetSha256: expectedDeliveryPacketSha256,
+      bodySha256: expectedDeliveryBodySha256,
+      copyTextSha256: expectedDeliveryBodySha256,
+      checksumMatched: true,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(dispatchReadinessPayload.readiness.copiedPaneMessage).toEqual({
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      body: 'Edited internal continuation for Oracle review.',
+      bodySha256: expectedDeliveryBodySha256,
+      bodyCharCount: 'Edited internal continuation for Oracle review.'.length,
+    });
+    expect(dispatchReadinessPayload.readiness.checklist).toEqual([
+      expect.objectContaining({ id: 'pane_target_matches', ok: true }),
+      expect.objectContaining({ id: 'copied_body_checksum_matches', ok: true }),
+      expect.objectContaining({ id: 'manual_review_required', ok: true }),
+      expect.objectContaining({ id: 'no_delivery_path', ok: true }),
+    ]);
+    expect(dispatchReadinessPayload.readiness.audit).toEqual(expect.objectContaining({
+      reviewStatus: 'dispatch_readiness_ready',
+      manualExecutionRequired: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+      checksumMatched: true,
+      noHmSendExecution: true,
+      noTelegramSend: true,
+      noRouteFlip: true,
+      noProviderCall: true,
+      noRuntimeExecution: true,
+      noExternalDelivery: true,
+    }));
+    expect(dispatchReadinessPayload.readiness).not.toHaveProperty('command');
+    expect(dispatchReadinessPayload.readiness).not.toHaveProperty('args');
+    expect(dispatchReadinessPayload.readiness.copiedPaneMessage).not.toHaveProperty('command');
+    expect(dispatchReadinessPayload.readiness.copiedPaneMessage).not.toHaveProperty('args');
+    const storedDispatchReadiness = JSON.parse(fs.readFileSync(dispatchReadinessPayload.absolutePath, 'utf8'));
+    expect(storedDispatchReadiness).toEqual(expect.objectContaining({
+      protocol: 'mira.mission_control_dispatch_readiness.v0',
+      status: 'ready_for_manual_dispatch_review',
+      sourceDeliveryPreviewToken: deliveryPreviewPayload.preview.actionToken,
+      targetLabel: 'oracle pane 3',
+      checksumMatched: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(storedDispatchReadiness).not.toHaveProperty('command');
+    expect(storedDispatchReadiness).not.toHaveProperty('args');
+    expect(storedDispatchReadiness.copiedPaneMessage).not.toHaveProperty('command');
+    expect(storedDispatchReadiness.copiedPaneMessage).not.toHaveProperty('args');
+    expect(duplicateDispatchReadinessResponse.status).toBe(200);
+    expect(duplicateDispatchReadinessPayload.created).toBe(false);
+    expect(duplicateDispatchReadinessPayload.relativePath).toBe(dispatchReadinessPayload.relativePath);
+    expect(listDispatchReadinessResponse.status).toBe(200);
+    expect(listDispatchReadinessPayload).toEqual(expect.objectContaining({
+      ok: true,
+      protocol: 'mira.mission_control_dispatch_readiness_list.v0',
+      stateRootPath: path.resolve(tempStateRoot),
+      readinessCount: 1,
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    expect(listDispatchReadinessPayload.readiness[0]).toEqual(expect.objectContaining({
+      actionToken: expect.stringMatching(/^mission-dispatch-readiness-/),
+      relativePath: dispatchReadinessPayload.relativePath,
+      targetRole: 'oracle',
+      targetPaneId: '3',
+      targetLabel: 'oracle pane 3',
+      checksumMatched: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    }));
+    fs.writeFileSync(deliveryPreviewPayload.absolutePath, `${JSON.stringify({
+      ...storedDeliveryPreview,
+      reviewDetails: {
+        ...storedDeliveryPreview.reviewDetails,
+        bodySha256: 'bad-body-sha256',
+      },
+    }, null, 2)}\n`, 'utf8');
+    const mismatchedDispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken }),
+    });
+    const mismatchedDispatchReadinessPayload = await mismatchedDispatchReadinessResponse.json();
+    fs.writeFileSync(deliveryPreviewPayload.absolutePath, `${JSON.stringify(storedDeliveryPreview, null, 2)}\n`, 'utf8');
+    expect(mismatchedDispatchReadinessResponse.status).toBe(400);
+    expect(mismatchedDispatchReadinessPayload.error).toEqual(expect.objectContaining({
+      code: 'mission_control_dispatch_readiness_checksum_mismatch',
+    }));
+    expect(fs.readdirSync(dispatchReadinessDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    for (const input of [
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, telegramSend: true },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, audit: { liveHmSend: true } },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, deliveryPacket: { body: { routeFlip: true } } },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, copiedPaneMessage: { externalSend: true } },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, copiedPaneMessage: { body: { telegramSend: true } } },
+    ]) {
+      const blockedDispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedDispatchReadinessPayload = await blockedDispatchReadinessResponse.json();
+      expect(blockedDispatchReadinessResponse.status).toBe(400);
+      expect(blockedDispatchReadinessPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_dispatch_readiness_has_live_effect',
+      }));
+      expect(fs.readdirSync(dispatchReadinessDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
+    for (const input of [
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, command: 'hm-send oracle' },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, packet: { args: ['hm-send', 'oracle'] } },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, deliveryPacket: { body: { command: 'hm-send oracle' } } },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, copiedPaneMessage: { command: 'hm-send oracle' } },
+      { deliveryPreviewToken: deliveryPreviewPayload.preview.actionToken, copiedPaneMessage: { body: { command: 'hm-send oracle' } } },
+    ]) {
+      const blockedCommandDispatchReadinessResponse = await fetch(`${baseUrl}/mission-control/dispatch-readiness`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const blockedCommandDispatchReadinessPayload = await blockedCommandDispatchReadinessResponse.json();
+      expect(blockedCommandDispatchReadinessResponse.status).toBe(400);
+      expect(blockedCommandDispatchReadinessPayload.error).toEqual(expect.objectContaining({
+        code: 'mission_control_dispatch_readiness_command_not_allowed',
+      }));
+      expect(fs.readdirSync(dispatchReadinessDir).filter((file) => file.endsWith('.json'))).toHaveLength(1);
+    }
     for (const input of [
       { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, telegramSend: true },
       { recommendationToken: followThroughPayload.selectedRecommendation.actionToken, audit: { providerInvoked: true } },

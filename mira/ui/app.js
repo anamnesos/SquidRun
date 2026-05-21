@@ -17,6 +17,7 @@ const state = {
   missionControlContinuationCount: 0,
   missionControlFollowThroughCount: 0,
   missionControlDeliveryPreviewCount: 0,
+  missionControlDispatchReadinessCount: 0,
   selectedRouteRequestToken: null,
   queuedOwnedWorkCount: 0,
   missionControl: null,
@@ -49,6 +50,7 @@ const elements = {
   routeContinuationList: document.getElementById('routeContinuationList'),
   routeFollowThroughList: document.getElementById('routeFollowThroughList'),
   routeDeliveryPreviewList: document.getElementById('routeDeliveryPreviewList'),
+  routeDispatchReadinessList: document.getElementById('routeDispatchReadinessList'),
   foundationSummary: document.getElementById('foundationSummary'),
   laneSummary: document.getElementById('laneSummary'),
   nextStepSummary: document.getElementById('nextStepSummary'),
@@ -381,7 +383,7 @@ function appendPreviewLine(container, label, value) {
 
 function renderWorkSummary() {
   const queued = state.queuedOwnedWorkCount > 0 ? ` / ${state.queuedOwnedWorkCount} queued` : '';
-  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
+  setText(elements.workSummary, `${state.workDraftCount} drafts / ${state.workPendingCount} pending / ${state.workReviewedCount} reviewed / ${state.workReadyCount} ready / ${state.workSendPacketCount} not sent / ${state.workSendConfirmationCount} confirmed / ${state.workSendCheckCount} checked / ${state.missionControlRoutePreviewCount} route previews / ${state.missionControlRouteRequestCount} route review items / ${state.missionControlContinuationCount} continuations / ${state.missionControlFollowThroughCount} team recommendations / ${state.missionControlDeliveryPreviewCount} delivery previews / ${state.missionControlDispatchReadinessCount} dispatch checklists / ${state.autonomyQueueCount} next moves / ${state.autonomyFollowThroughCount} followed${queued}`);
 }
 
 function updateDraftList(payload) {
@@ -786,6 +788,7 @@ function updateRoutePreviewHistoryList(payload) {
         await refreshRouteContinuations();
         await refreshRouteFollowThroughRecommendations();
         await refreshRouteDeliveryPreviews();
+        await refreshDispatchReadiness();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
         promote.disabled = false;
@@ -888,6 +891,7 @@ function renderRouteContinuationPanel(request) {
         await refreshRouteContinuations();
         await refreshRouteFollowThroughRecommendations();
         await refreshRouteDeliveryPreviews();
+        await refreshDispatchReadiness();
       } catch (error) {
         appendMessage('mira', error.message, 'error');
       } finally {
@@ -967,6 +971,7 @@ function updateRouteFollowThroughList(payload) {
           action.textContent = 'Preview saved';
           appendMessage('mira', 'Internal delivery preview saved locally. Nothing was sent or executed.');
           await refreshRouteDeliveryPreviews();
+          await refreshDispatchReadiness();
         } catch (error) {
           appendMessage('mira', error.message, 'error');
           action.disabled = false;
@@ -1010,7 +1015,56 @@ function updateRouteDeliveryPreviewList(payload) {
       await copyTextToClipboard(preview.reviewDetails?.copyText || preview.deliveryPacket?.body?.content || preview.content || '');
       copy.textContent = 'Copied body';
     });
-    card.append(copy);
+    const readiness = document.createElement('button');
+    readiness.type = 'button';
+    readiness.className = 'subtle-button';
+    readiness.textContent = 'Review dispatch readiness';
+    readiness.addEventListener('click', async () => {
+      readiness.disabled = true;
+      readiness.textContent = 'Checking readiness';
+      try {
+        await createDispatchReadiness(preview);
+        readiness.textContent = 'Readiness saved';
+        appendMessage('mira', 'Dispatch-readiness checklist saved locally. Nothing was sent or executed.');
+        await refreshDispatchReadiness();
+      } catch (error) {
+        appendMessage('mira', error.message, 'error');
+        readiness.disabled = false;
+        readiness.textContent = 'Review dispatch readiness';
+      }
+    });
+    card.append(copy, readiness);
+    return card;
+  }));
+}
+
+function updateDispatchReadinessList(payload) {
+  const readiness = Array.isArray(payload?.readiness) ? payload.readiness : [];
+  state.missionControlDispatchReadinessCount = Number(payload?.readinessCount || readiness.length || 0);
+  renderWorkSummary();
+  if (readiness.length === 0) {
+    setText(elements.routeDispatchReadinessList, 'no dispatch-readiness checklists yet');
+    return;
+  }
+
+  elements.routeDispatchReadinessList.replaceChildren(...readiness.slice(0, 5).map((item) => {
+    const card = document.createElement('article');
+    card.className = 'draft-item route-dispatch-readiness';
+    const title = document.createElement('strong');
+    title.textContent = `${item.targetRole || 'team'} · dispatch readiness`;
+    const meta = document.createElement('span');
+    meta.textContent = `${String(item.status || 'ready_for_manual_dispatch_review').replace(/_/g, ' ')} · review/checklist only · manual execution required · not sent · ${formatReadyStamp(item.createdAt)}`;
+    card.append(title, meta);
+    appendPreviewLine(card, 'Pane target', item.targetLabel || `${item.targetRole || 'team'} pane ${item.targetPaneId || '?'}`);
+    appendPreviewLine(card, 'Copied body', item.copiedPaneMessage?.body || item.contentPreview || item.content);
+    appendPreviewLine(card, 'Body checksum', item.bodySha256);
+    appendPreviewLine(card, 'Packet checksum', item.packetSha256);
+    appendPreviewLine(card, 'Checksum match', item.checksumMatched === true ? 'yes' : 'no');
+    const checklist = Array.isArray(item.checklist)
+      ? item.checklist.filter((entry) => entry?.ok === true).map((entry) => entry.label).join(' / ')
+      : '';
+    appendPreviewLine(card, 'Checklist', checklist);
+    appendPreviewLine(card, 'Audit', 'readiness checklist only; no command stored, hm-send execution, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.');
     return card;
   }));
 }
@@ -1298,6 +1352,13 @@ async function refreshRouteDeliveryPreviews() {
   updateRouteDeliveryPreviewList(payload);
 }
 
+async function refreshDispatchReadiness() {
+  const response = await fetch('/mission-control/dispatch-readiness');
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) return;
+  updateDispatchReadinessList(payload);
+}
+
 async function refreshAutonomy() {
   const response = await fetch('/autonomy/status');
   const payload = await response.json();
@@ -1544,6 +1605,21 @@ async function createInternalDeliveryPreview(recommendation) {
   return payload;
 }
 
+async function createDispatchReadiness(preview) {
+  const response = await fetch('/mission-control/dispatch-readiness', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      deliveryPreviewToken: preview?.actionToken || '',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error?.message || 'Mission Control dispatch-readiness save failed.');
+  }
+  return payload;
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1627,6 +1703,7 @@ async function primeReadOnlyWorkbench() {
     await refreshRouteContinuations();
     await refreshRouteFollowThroughRecommendations();
     await refreshRouteDeliveryPreviews();
+    await refreshDispatchReadiness();
     await refreshAutonomy();
   } catch (error) {
     renderChips([{ label: 'runtime needs key/state', kind: 'warn' }]);
@@ -1653,6 +1730,7 @@ elements.contextToggle.addEventListener('click', async () => {
     await refreshRouteContinuations();
     await refreshRouteFollowThroughRecommendations();
     await refreshRouteDeliveryPreviews();
+    await refreshDispatchReadiness();
     await refreshAutonomy();
     await refreshRecentTurns();
   }
@@ -1742,6 +1820,7 @@ elements.saveRoutePreviewButton.addEventListener('click', async () => {
     await refreshRouteContinuations();
     await refreshRouteFollowThroughRecommendations();
     await refreshRouteDeliveryPreviews();
+    await refreshDispatchReadiness();
   } catch (error) {
     appendMessage('mira', error.message, 'error');
   } finally {

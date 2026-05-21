@@ -443,6 +443,132 @@ export type MissionControlInternalDeliveryPreviewListResult = {
   liveHmSend: false;
 };
 
+export type MissionControlDispatchReadinessChecklistItem = {
+  id:
+    | "pane_target_matches"
+    | "copied_body_checksum_matches"
+    | "manual_review_required"
+    | "no_delivery_path";
+  label: string;
+  ok: true;
+};
+
+export type MissionControlDispatchReadinessRecord = {
+  protocol: "mira.mission_control_dispatch_readiness.v0";
+  id: string;
+  status: "ready_for_manual_dispatch_review";
+  createdAt: string;
+  sourceDeliveryPreviewId: string;
+  sourceDeliveryPreviewToken: string;
+  sourceRecommendationId: string;
+  sourceContinuationId: string;
+  sourceRequestId: string;
+  sourcePreviewId: string;
+  targetRole: "architect" | "builder" | "oracle";
+  targetPaneId: "1" | "2" | "3";
+  targetLabel: string;
+  purpose: string;
+  content: string;
+  contentPreview: string;
+  packetSha256: string;
+  bodySha256: string;
+  copyTextSha256: string;
+  checksumMatched: true;
+  copiedPaneMessage: {
+    targetRole: "architect" | "builder" | "oracle";
+    targetPaneId: "1" | "2" | "3";
+    body: string;
+    bodySha256: string;
+    bodyCharCount: number;
+  };
+  checklist: MissionControlDispatchReadinessChecklistItem[];
+  audit: {
+    reviewStatus: "dispatch_readiness_ready";
+    manualExecutionRequired: true;
+    notSent: true;
+    commandStored: false;
+    sendPerformed: false;
+    runtimeExecutes: false;
+    externalSend: false;
+    telegramSend: false;
+    routeFlip: false;
+    providerInvoked: false;
+    accountOrTokenAccess: false;
+    liveHmSend: false;
+    checksumMatched: true;
+    noHmSendExecution: true;
+    noTelegramSend: true;
+    noRouteFlip: true;
+    noProviderCall: true;
+    noRuntimeExecution: true;
+    noExternalDelivery: true;
+  };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlDispatchReadinessWriteResult = {
+  ok: true;
+  protocol: "mira.mission_control_dispatch_readiness_write.v0";
+  created: boolean;
+  stateRootPath: string;
+  relativePath: string;
+  absolutePath: string;
+  readiness: MissionControlDispatchReadinessRecord & { actionToken: string };
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
+export type MissionControlDispatchReadinessListResult = {
+  ok: true;
+  protocol: "mira.mission_control_dispatch_readiness_list.v0";
+  stateRootPath: string | null;
+  readinessCount: number;
+  readiness: Array<MissionControlDispatchReadinessRecord & {
+    actionToken: string;
+    relativePath?: string;
+    absolutePath?: string;
+  }>;
+  manualExecutionRequired: true;
+  reviewRequired: true;
+  internalOnly: true;
+  reviewableOwnedWork: true;
+  notSent: true;
+  commandStored: false;
+  sendPerformed: false;
+  runtimeExecutes: false;
+  externalSend: false;
+  telegramSend: false;
+  routeFlip: false;
+  providerInvoked: false;
+  accountOrTokenAccess: false;
+  liveHmSend: false;
+};
+
 const allowedRoles = new Set(["architect", "builder", "oracle"]);
 
 function isInside(rootPath: string, candidatePath: string): boolean {
@@ -464,6 +590,10 @@ function continuationsDir(rootPath: string): string {
 
 function deliveryPreviewsDir(rootPath: string): string {
   return path.resolve(rootPath, "mission-control", "internal-delivery-previews");
+}
+
+function dispatchReadinessDir(rootPath: string): string {
+  return path.resolve(rootPath, "mission-control", "dispatch-readiness");
 }
 
 function asObject(value: unknown, label: string): JsonObject {
@@ -531,6 +661,14 @@ function rejectDeliveryPreviewLiveEffect(value: unknown, label: string): void {
   if (value === true) {
     throw Object.assign(new Error(`${label} cannot be true for an internal delivery preview.`), {
       code: "mission_control_delivery_preview_has_live_effect",
+    });
+  }
+}
+
+function rejectDispatchReadinessLiveEffect(value: unknown, label: string): void {
+  if (value === true) {
+    throw Object.assign(new Error(`${label} cannot be true for a dispatch-readiness checklist.`), {
+      code: "mission_control_dispatch_readiness_has_live_effect",
     });
   }
 }
@@ -603,6 +741,10 @@ function buildDeliveryPreviewActionToken(id: string): string {
   return `mission-delivery-preview-${crypto.createHash("sha256").update(`mira.mission_control_internal_delivery_preview.v0:${id}`).digest("base64url").slice(0, 18)}`;
 }
 
+function buildDispatchReadinessActionToken(id: string): string {
+  return `mission-dispatch-readiness-${crypto.createHash("sha256").update(`mira.mission_control_dispatch_readiness.v0:${id}`).digest("base64url").slice(0, 18)}`;
+}
+
 function sha256Text(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -636,6 +778,13 @@ function toPublicDeliveryPreview(record: MissionControlInternalDeliveryPreviewRe
   return {
     ...record,
     actionToken: buildDeliveryPreviewActionToken(record.id),
+  };
+}
+
+function toPublicDispatchReadiness(record: MissionControlDispatchReadinessRecord): MissionControlDispatchReadinessRecord & { actionToken: string } {
+  return {
+    ...record,
+    actionToken: buildDispatchReadinessActionToken(record.id),
   };
 }
 
@@ -734,6 +883,32 @@ function parseDeliveryPreviewRecord(value: string): MissionControlInternalDelive
     if (!allowedRoles.has(String(parsed.targetRole))) return null;
     if ("command" in parsed || "args" in parsed) return null;
     return parsed as MissionControlInternalDeliveryPreviewRecord;
+  } catch {
+    return null;
+  }
+}
+
+function parseDispatchReadinessRecord(value: string): MissionControlDispatchReadinessRecord | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<MissionControlDispatchReadinessRecord>;
+    if (parsed.protocol !== "mira.mission_control_dispatch_readiness.v0" || typeof parsed.id !== "string") return null;
+    if (parsed.status !== "ready_for_manual_dispatch_review") return null;
+    if (parsed.manualExecutionRequired !== true || parsed.reviewRequired !== true || parsed.internalOnly !== true) return null;
+    if (parsed.reviewableOwnedWork !== true || parsed.notSent !== true || parsed.commandStored !== false) return null;
+    if (parsed.checksumMatched !== true) return null;
+    if (
+      parsed.sendPerformed !== false
+      || parsed.runtimeExecutes !== false
+      || parsed.externalSend !== false
+      || parsed.telegramSend !== false
+      || parsed.routeFlip !== false
+      || parsed.providerInvoked !== false
+      || parsed.accountOrTokenAccess !== false
+      || parsed.liveHmSend !== false
+    ) return null;
+    if (!allowedRoles.has(String(parsed.targetRole))) return null;
+    if ("command" in parsed || "args" in parsed) return null;
+    return parsed as MissionControlDispatchReadinessRecord;
   } catch {
     return null;
   }
@@ -877,6 +1052,20 @@ function readDeliveryPreviewRecords(rootPath: string): MissionControlInternalDel
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 }
 
+function readDispatchReadinessRecords(rootPath: string): MissionControlDispatchReadinessRecord[] {
+  const dir = dispatchReadinessDir(rootPath);
+  if (!isInside(rootPath, dir) || !fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => {
+      const absolutePath = path.resolve(dir, fileName);
+      if (!isInside(rootPath, absolutePath)) return null;
+      return parseDispatchReadinessRecord(fs.readFileSync(absolutePath, "utf8"));
+    })
+    .filter((record): record is MissionControlDispatchReadinessRecord => Boolean(record))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
 function resolvePreviewRecord(input: { previewToken?: unknown }, rootPath: string): MissionControlRoutePreviewRecord {
   const previewToken = optionalPreview(input.previewToken, 200);
   if (!previewToken) {
@@ -1003,6 +1192,59 @@ function rejectDeliveryPreviewInput(input: JsonObject): void {
       "liveHmSend",
     ]) {
       rejectDeliveryPreviewLiveEffect(container[flag], `${containerLabel}.${flag}`);
+    }
+  }
+}
+
+function rejectDispatchReadinessInput(input: JsonObject): void {
+  const audit = optionalObject(input.audit);
+  const plan = optionalObject(input.plan);
+  const packet = optionalObject(input.packet);
+  const readinessPacket = optionalObject(input.readinessPacket);
+  const deliveryPacket = optionalObject(input.deliveryPacket);
+  const dispatchPacket = optionalObject(input.dispatchPacket);
+  const copiedPaneMessage = optionalObject(input.copiedPaneMessage);
+  const readinessPacketTarget = optionalObject(readinessPacket?.target);
+  const readinessPacketBody = optionalObject(readinessPacket?.body);
+  const deliveryPacketTarget = optionalObject(deliveryPacket?.target);
+  const deliveryPacketBody = optionalObject(deliveryPacket?.body);
+  const dispatchPacketTarget = optionalObject(dispatchPacket?.target);
+  const dispatchPacketBody = optionalObject(dispatchPacket?.body);
+  const copiedPaneMessageBody = optionalObject(copiedPaneMessage?.body);
+  for (const [containerLabel, container] of [
+    ["readiness", input],
+    ["audit", audit],
+    ["plan", plan],
+    ["packet", packet],
+    ["readinessPacket", readinessPacket],
+    ["readinessPacket.target", readinessPacketTarget],
+    ["readinessPacket.body", readinessPacketBody],
+    ["deliveryPacket", deliveryPacket],
+    ["deliveryPacket.target", deliveryPacketTarget],
+    ["deliveryPacket.body", deliveryPacketBody],
+    ["dispatchPacket", dispatchPacket],
+    ["dispatchPacket.target", dispatchPacketTarget],
+    ["dispatchPacket.body", dispatchPacketBody],
+    ["copiedPaneMessage", copiedPaneMessage],
+    ["copiedPaneMessage.body", copiedPaneMessageBody],
+  ] as const) {
+    if (!container) continue;
+    if ("command" in container || "args" in container) {
+      throw Object.assign(new Error(`Mission Control dispatch readiness does not accept command or args fields in ${containerLabel}.`), {
+        code: "mission_control_dispatch_readiness_command_not_allowed",
+      });
+    }
+    for (const flag of [
+      "sendPerformed",
+      "runtimeExecutes",
+      "externalSend",
+      "telegramSend",
+      "routeFlip",
+      "providerInvoked",
+      "accountOrTokenAccess",
+      "liveHmSend",
+    ]) {
+      rejectDispatchReadinessLiveEffect(container[flag], `${containerLabel}.${flag}`);
     }
   }
 }
@@ -1179,6 +1421,27 @@ function resolveSelectedRecommendation(
   };
 }
 
+function resolveDeliveryPreview(
+  input: { deliveryPreviewToken?: unknown },
+  rootPath: string,
+): MissionControlInternalDeliveryPreviewRecord {
+  const deliveryPreviewToken = optionalPreview(input.deliveryPreviewToken, 260);
+  if (!deliveryPreviewToken) {
+    throw Object.assign(new Error("Mission Control delivery preview token is required."), {
+      code: "mission_control_delivery_preview_token_required",
+    });
+  }
+  const record = readDeliveryPreviewRecords(rootPath).find((candidate) => {
+    return buildDeliveryPreviewActionToken(candidate.id) === deliveryPreviewToken;
+  });
+  if (!record) {
+    throw Object.assign(new Error("Mission Control delivery preview was not found."), {
+      code: "mission_control_delivery_preview_not_found",
+    });
+  }
+  return record;
+}
+
 function deliveryPreviewFromRecommendation(
   recommendation: MissionControlFollowThroughRecommendation,
   continuation: MissionControlOwnedWorkContinuationRecord,
@@ -1245,6 +1508,114 @@ function deliveryPreviewFromRecommendation(
       providerInvoked: false,
       accountOrTokenAccess: false,
       liveHmSend: false,
+    },
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+function dispatchReadinessFromDeliveryPreview(preview: MissionControlInternalDeliveryPreviewRecord): MissionControlDispatchReadinessRecord {
+  const id = `mission-dispatch-readiness-${crypto.createHash("sha256")
+    .update(`mira.mission_control_dispatch_readiness.v0:${preview.id}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+  const copyText = preview.reviewDetails.copyText;
+  const copyTextSha256 = sha256Text(copyText);
+  const packetSha256 = checksumPayload(preview.deliveryPacket);
+  const bodySha256 = sha256Text(preview.deliveryPacket.body.content);
+  if (
+    packetSha256 !== preview.reviewDetails.packetSha256
+    || bodySha256 !== preview.reviewDetails.bodySha256
+    || copyTextSha256 !== preview.reviewDetails.bodySha256
+  ) {
+    throw Object.assign(new Error("Mission Control delivery preview checksum does not match the copied pane body."), {
+      code: "mission_control_dispatch_readiness_checksum_mismatch",
+    });
+  }
+  const checklist: MissionControlDispatchReadinessChecklistItem[] = [
+    {
+      id: "pane_target_matches",
+      label: `Pane target is ${preview.reviewDetails.targetLabel}`,
+      ok: true,
+    },
+    {
+      id: "copied_body_checksum_matches",
+      label: "Copied pane body checksum matches the saved delivery preview body.",
+      ok: true,
+    },
+    {
+      id: "manual_review_required",
+      label: "Manual pane review is required before dispatch.",
+      ok: true,
+    },
+    {
+      id: "no_delivery_path",
+      label: "Checklist is review-only: no hm-send, Telegram, route flip, provider/model, runtime execution, or external delivery.",
+      ok: true,
+    },
+  ];
+
+  return {
+    protocol: "mira.mission_control_dispatch_readiness.v0",
+    id,
+    status: "ready_for_manual_dispatch_review",
+    createdAt: new Date().toISOString(),
+    sourceDeliveryPreviewId: preview.id,
+    sourceDeliveryPreviewToken: buildDeliveryPreviewActionToken(preview.id),
+    sourceRecommendationId: preview.sourceRecommendationId,
+    sourceContinuationId: preview.sourceContinuationId,
+    sourceRequestId: preview.sourceRequestId,
+    sourcePreviewId: preview.sourcePreviewId,
+    targetRole: preview.targetRole,
+    targetPaneId: preview.targetPaneId,
+    targetLabel: preview.reviewDetails.targetLabel,
+    purpose: preview.purpose,
+    content: preview.content,
+    contentPreview: preview.contentPreview,
+    packetSha256,
+    bodySha256,
+    copyTextSha256,
+    checksumMatched: true,
+    copiedPaneMessage: {
+      targetRole: preview.targetRole,
+      targetPaneId: preview.targetPaneId,
+      body: copyText,
+      bodySha256: copyTextSha256,
+      bodyCharCount: copyText.length,
+    },
+    checklist,
+    audit: {
+      reviewStatus: "dispatch_readiness_ready",
+      manualExecutionRequired: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+      checksumMatched: true,
+      noHmSendExecution: true,
+      noTelegramSend: true,
+      noRouteFlip: true,
+      noProviderCall: true,
+      noRuntimeExecution: true,
+      noExternalDelivery: true,
     },
     manualExecutionRequired: true,
     reviewRequired: true,
@@ -1665,6 +2036,76 @@ export function createMissionControlInternalDeliveryPreview(
   };
 }
 
+export function createMissionControlDispatchReadiness(
+  input: { deliveryPreviewToken?: unknown } & JsonObject,
+  env: NodeJS.ProcessEnv = process.env,
+): MissionControlDispatchReadinessWriteResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    throw Object.assign(new Error(stateRoot.error || "MIRA_STATE_ROOT is required before Mission Control dispatch readiness can be saved."), {
+      code: "state_root_not_ready",
+    });
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  rejectDispatchReadinessInput(input);
+  const preview = resolveDeliveryPreview(input, rootPath);
+  const dir = dispatchReadinessDir(rootPath);
+  if (!isInside(rootPath, dir)) {
+    throw Object.assign(new Error("Mission Control dispatch readiness destination escaped Mira state root."), {
+      code: "unsafe_mission_control_dispatch_readiness_path",
+    });
+  }
+
+  const record = dispatchReadinessFromDeliveryPreview(preview);
+  const absolutePath = path.resolve(dir, `${record.id}.json`);
+  if (!isInside(rootPath, absolutePath)) {
+    throw Object.assign(new Error("Mission Control dispatch readiness file escaped Mira state root."), {
+      code: "unsafe_mission_control_dispatch_readiness_path",
+    });
+  }
+
+  fs.mkdirSync(dir, { recursive: true });
+  let created = false;
+  let stored = record;
+  if (fs.existsSync(absolutePath)) {
+    const parsed = parseDispatchReadinessRecord(fs.readFileSync(absolutePath, "utf8"));
+    if (parsed) stored = parsed;
+  } else {
+    const handle = fs.openSync(absolutePath, "wx");
+    try {
+      fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      created = true;
+    } finally {
+      fs.closeSync(handle);
+    }
+  }
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_dispatch_readiness_write.v0",
+    created,
+    stateRootPath: rootPath,
+    relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+    absolutePath,
+    readiness: toPublicDispatchReadiness(stored),
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
 export function listMissionControlOwnedWorkContinuations(
   env: NodeJS.ProcessEnv = process.env,
   options: { includeInternal?: boolean } = {},
@@ -1776,6 +2217,70 @@ export function listMissionControlInternalDeliveryPreviews(
     stateRootPath: options.includeInternal ? rootPath : null,
     previewCount: previews.length,
     previews,
+    manualExecutionRequired: true,
+    reviewRequired: true,
+    internalOnly: true,
+    reviewableOwnedWork: true,
+    notSent: true,
+    commandStored: false,
+    sendPerformed: false,
+    runtimeExecutes: false,
+    externalSend: false,
+    telegramSend: false,
+    routeFlip: false,
+    providerInvoked: false,
+    accountOrTokenAccess: false,
+    liveHmSend: false,
+  };
+}
+
+export function listMissionControlDispatchReadiness(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { includeInternal?: boolean } = {},
+): MissionControlDispatchReadinessListResult {
+  const stateRoot = getStateRootReadiness(env);
+  if (!stateRoot.ready || !stateRoot.path) {
+    return {
+      ok: true,
+      protocol: "mira.mission_control_dispatch_readiness_list.v0",
+      stateRootPath: options.includeInternal ? stateRoot.path : null,
+      readinessCount: 0,
+      readiness: [],
+      manualExecutionRequired: true,
+      reviewRequired: true,
+      internalOnly: true,
+      reviewableOwnedWork: true,
+      notSent: true,
+      commandStored: false,
+      sendPerformed: false,
+      runtimeExecutes: false,
+      externalSend: false,
+      telegramSend: false,
+      routeFlip: false,
+      providerInvoked: false,
+      accountOrTokenAccess: false,
+      liveHmSend: false,
+    };
+  }
+
+  const rootPath = path.resolve(stateRoot.path);
+  const readiness = readDispatchReadinessRecords(rootPath).map((record) => {
+    const publicRecord = toPublicDispatchReadiness(record);
+    if (!options.includeInternal) return publicRecord;
+    const absolutePath = path.resolve(dispatchReadinessDir(rootPath), `${record.id}.json`);
+    return {
+      ...publicRecord,
+      relativePath: path.relative(rootPath, absolutePath).replace(/\\/g, "/"),
+      absolutePath,
+    };
+  });
+
+  return {
+    ok: true,
+    protocol: "mira.mission_control_dispatch_readiness_list.v0",
+    stateRootPath: options.includeInternal ? rootPath : null,
+    readinessCount: readiness.length,
+    readiness,
     manualExecutionRequired: true,
     reviewRequired: true,
     internalOnly: true,
