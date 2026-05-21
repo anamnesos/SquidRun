@@ -249,6 +249,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlJamesActionQuestion(text)
     || isMissionControlRecentCommsQuestion(text)
     || isMissionControlRoadmapQuestion(text)
+    || isMissionControlProductFramingQuestion(text)
     || isMissionControlCoordinationQuestion(text)
     || isMissionControlDemoInspectionQuestion(text);
 }
@@ -304,6 +305,14 @@ function isMissionControlRoadmapQuestion(text) {
     && /\b(mission\s*control|mira|squidrun|local|new\s+mira)\b/i.test(normalized);
 }
 
+function isMissionControlProductFramingQuestion(text) {
+  const normalized = String(text || '');
+  if (/\bfoundation\s+(vs|versus)\s+product\b/i.test(normalized)) return true;
+  if (/\bis\s+this\s+(foundation|context)\s+or\s+product\b/i.test(normalized)) return true;
+  return /\b(product\s+test|product\s+claim|product\s+bar|why\s+useful)\b/i.test(normalized)
+    && /\b(mission\s*control|mira|squidrun|new\s+mira|this)\b/i.test(normalized);
+}
+
 function isMissionControlCoordinationQuestion(text) {
   return /\b(architect|builder|oracle|team)\b/i.test(text)
     && /\b(tell|say|ask|message|draft|coordinate|coordination|send)\b/i.test(text);
@@ -350,6 +359,10 @@ function currentMissionControlAnswer(text = '') {
   if (isMissionControlRoadmapQuestion(text)) {
     const roadmapAnswer = buildMissionControlRoadmapAnswer();
     if (roadmapAnswer) return roadmapAnswer;
+  }
+  if (isMissionControlProductFramingQuestion(text)) {
+    const productFramingAnswer = buildMissionControlProductFramingAnswer();
+    if (productFramingAnswer) return productFramingAnswer;
   }
   if (isMissionControlCoordinationQuestion(text)) {
     const coordinationAnswer = buildMissionControlCoordinationAnswer(text);
@@ -589,6 +602,27 @@ function buildMissionControlRoadmapAnswer(context = state.missionControlContext,
     `Stop/pivot: ${roadmap.stopPivot || 'No stop/pivot text loaded.'}`,
     `Next gate: ${systemMap.nextGate || 'No next-gate text loaded.'}`,
     `Source: ${roadmap.relativePath || 'roadmap not loaded'} / ${systemMap.relativePath || 'system map not loaded'}`,
+    'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlProductFramingAnswer(context = state.missionControlContext, mission = state.missionControl) {
+  if (!context || context.ok !== true) return '';
+  const missionContext = context.missionControl || {};
+  const roadmap = context.roadmap || {};
+  const foundationVsProduct = missionContext.foundationVsProduct || '';
+  if (!foundationVsProduct && roadmap.loaded !== true) return '';
+  const jamesAction = context.summary?.jamesAction === 'DO THIS' || mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = context.summary?.jamesActionReason || mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control product-framing answer; no send or setup is needed.');
+  return [
+    `Foundation vs product: ${foundationVsProduct || 'No foundation-vs-product text loaded.'}`,
+    `First demo: ${roadmap.firstDemo || 'No first-demo text loaded.'}`,
+    `Hard truth: ${roadmap.hardTruth || context.systemMap?.truth || 'No hard-truth text loaded.'}`,
+    `Next move: ${context.summary?.nextStep || mission?.nextTeamMove || 'No local next move loaded.'}`,
     'Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');

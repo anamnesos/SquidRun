@@ -4027,6 +4027,44 @@ describe('Mira runtime UI boot', () => {
     }
   });
 
+  test('answers product-framing questions from existing Mission Control context without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['is this foundation or product?', 'what is the Mission Control product test?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Foundation vs product: SquidRun context is foundation.'),
+      ]);
+      const productReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(productReply).toContain('The product test is whether Mira can operate as Mission Control for James\'s AI team.');
+      expect(productReply).toContain('First demo: Name: Mira Mission Control v0.');
+      expect(productReply).toContain('Hard truth: Current New Mira is not holy-shit amazing.');
+      expect(productReply).toContain('Next move: Builder implements Mission Control v0; Oracle reviews it against the benchmark before commit.');
+      expect(productReply).toContain('Boundary: local answer only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, or external send.');
+      expect(productReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((productReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
   test('answers route-preview questions from existing Mission Control context without a turn POST', async () => {
     const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
     const appJs = fs.readFileSync(appJsPath, 'utf8');
@@ -4495,6 +4533,41 @@ describe('Mira runtime UI boot', () => {
     }));
     expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
       'please describe the project with the runtime fixture',
+      'Mira. Deterministic local turn.',
+    ]);
+    expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+    expect(harness.elements.sendButton.disabled).toBe(false);
+    expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
+  test('does not hijack generic product instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    harness.elements.turnText.value = 'please describe the product with the runtime fixture';
+    const submitEvent = { preventDefault: jest.fn() };
+    await harness.elements.turnForm.listeners.submit(submitEvent);
+
+    const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+    const postCalls = harness.calls.filter((call) => call.method === 'POST');
+    expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(postCalls).toHaveLength(1);
+    expect(turnCalls).toHaveLength(1);
+    expect(turnCalls[0].body).toEqual(expect.objectContaining({
+      text: 'please describe the product with the runtime fixture',
+      useModel: false,
+      modelProvider: 'openai_responses',
+      modelName: 'gpt-5.5',
+    }));
+    expect(harness.elements.thread.children.map((node) => node.children[0].textContent)).toEqual([
+      'please describe the product with the runtime fixture',
       'Mira. Deterministic local turn.',
     ]);
     expect(harness.elements.lastTurn.textContent).toBe('deterministic');

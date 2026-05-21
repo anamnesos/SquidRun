@@ -413,6 +413,8 @@ Product-facing recent-team-context prompts such as `what did Oracle say?` and `w
 
 Product-facing roadmap/north-star prompts such as `what is the north star?` and `when do we stop or pivot?` now answer from the already-loaded `/squidrun/context` roadmap and system-map fields, without posting `/turn`, adding fetches, persisting, or sending externally.
 
+Product-facing product-framing prompts such as `is this foundation or product?` and `what is the Mission Control product test?` now answer from the already-loaded `/squidrun/context` Mission Control foundation-vs-product and roadmap fields, without posting `/turn`, adding fetches, persisting, or sending externally.
+
 Product-facing route-preview prompts now answer from the already-loaded local `internalRoutePreview` as a preview of the existing Mission Control route plan, without posting `/turn`, adding fetches, persisting, or sending externally.
 
 Product-facing project/workspace identity prompts such as `what project is loaded?` and `what workspace is this?` now answer from the already-loaded `/squidrun/context` project and read-flag fields, without posting `/turn`, adding fetches, persisting, or sending externally.
