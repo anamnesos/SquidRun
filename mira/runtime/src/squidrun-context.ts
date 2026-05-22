@@ -14,6 +14,7 @@ const continuityMemoryBoundaryCommitHash = "bf82cea4";
 const continuityMemoryProofCommitHash = "d0bffd58";
 const cleanContextSelectionCommitHash = "13c90817";
 const demoWorkbenchProofCommitHash = "48e419b4";
+const workbenchSurfaceProofCommitHash = "c301c1ac";
 const commsHistoryEvidenceLimit = 500;
 
 export type SquidRunProjectContext = {
@@ -207,6 +208,18 @@ export type SquidRunProjectContext = {
       timestampMs: number | null;
       commitHash: string | null;
     } | null;
+    latestWorkbenchSurfaceProofCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestWorkbenchSurfaceProofOracleAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
     oracleBenchmark: {
       sourceRef: string | null;
       excerpt: string | null;
@@ -361,6 +374,64 @@ export type SquidRunProjectContext = {
         tradingTouched: false;
       };
     };
+    commandCardAcceptance: null | {
+      id: "mission-control-v0-command-card-acceptance";
+      status: "acceptance_planning_only";
+      owner: "Builder";
+      sourceEvidence: Array<{
+        kind: "file" | "comms" | "completed_context" | "summary";
+        path?: string;
+        sourceRef?: string;
+        commitHash?: string;
+        summary: string;
+      }>;
+      completedContext: {
+        toolAppActionPlanId: "mission-control-tool-app-action-plan-v0";
+        continuityMemoryProofId: "mission-control-continuity-memory-proof-v0";
+        demoWorkbenchProofId: "mission-control-demo-workbench-proof-v0";
+      };
+      cardFields: {
+        currentLaneWhyItMatters: string;
+        whatChangedRecently: string;
+        builderNextMove: string;
+        oracleNextMove: string;
+        contextCardStatus: string;
+        jamesActionLine: "JAMES ACTION: NONE";
+        dryRunRoutePlan: {
+          target: "oracle";
+          purpose: "command-card no-effect review";
+          manualExecutionRequired: true;
+          sendPerformed: false;
+          summary: string;
+        };
+      };
+      jamesControlPoint: string;
+      preconditions: string[];
+      refusalNoGoConditions: string[];
+      audit: {
+        acceptanceOnly: true;
+        planningOnly: true;
+        runtimeStarted: false;
+        browserOpened: false;
+        workbenchOpened: false;
+        uiActionPerformed: false;
+        fetched: false;
+        posted: false;
+        routed: false;
+        sent: false;
+        providerInvoked: false;
+        modelInvoked: false;
+        accountAccessed: false;
+        tokenAccessed: false;
+        credentialAccessed: false;
+        deviceTouched: false;
+        userTargeted: false;
+        externalTargeted: false;
+        deployed: false;
+        moneyMovement: false;
+        tradingTouched: false;
+      };
+    };
     internalRoutePreview: {
       status: "reviewed_preview_only";
       selectedDraftTarget: "architect" | "builder" | "oracle";
@@ -393,6 +464,7 @@ export type SquidRunProjectContext = {
     toolAppActionPlan: string | null;
     continuityMemoryProof: string | null;
     demoWorkbenchProof: string | null;
+    commandCardAcceptance: string | null;
     jamesAction: "NONE" | "DO THIS";
     jamesActionReason: string;
   };
@@ -723,7 +795,7 @@ function isReportShapedCommsBody(rawBody: string | null): boolean {
 function isMissionControlContinuationDelegationBody(rawBody: string | null): boolean {
   const body = rawBody || "";
   const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|new tiny follow-up slice)/i.test(body);
-  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|demo\/workbench|demoWorkbenchProof|surface-alignment|workbench\/surface|workbench surface|post-48e419b4|48e419b4|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
+  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|command-card|command card|post-c301c1ac|c301c1ac|demo\/workbench|demoWorkbenchProof|surface-alignment|workbench\/surface|workbench surface|post-48e419b4|48e419b4|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
   return instructionShaped && continuationTarget && !isReportShapedCommsBody(body);
 }
 
@@ -840,6 +912,21 @@ function isDemoWorkbenchProofOracleAckBody(rawBody: string | null): boolean {
     && /missionControl\.demoWorkbenchProof present/i.test(body);
 }
 
+function isWorkbenchSurfaceProofCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*committed #188 post-48e419b4 workbench surface proof slice as [`'"]?c301c1ac Render Mission Control workbench proof surface/i.test(body)
+    && /UI renders proof id\/question\/completed contexts\/next step\/control point/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isWorkbenchSurfaceProofOracleAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(ORACLE\s+#\d+\):\s*Received [`'"]?c301c1ac checkpoint/i.test(body)
+    && /#188 workbench surface proof slice/i.test(body)
+    && /zero \/turn POST/i.test(body)
+    && /one JAMES ACTION line/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -866,6 +953,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestCleanContextSelectionOracleAck: null,
       latestDemoWorkbenchProofCheckpoint: null,
       latestDemoWorkbenchProofOracleAck: null,
+      latestWorkbenchSurfaceProofCheckpoint: null,
+      latestWorkbenchSurfaceProofOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -998,6 +1087,17 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "oracle"
         && isDemoWorkbenchProofOracleAckBody(body);
     });
+    const workbenchSurfaceProofCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && trimText(row.target) === "builder"
+        && isWorkbenchSurfaceProofCheckpointBody(body);
+    });
+    const workbenchSurfaceProofOracleAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "oracle"
+        && isWorkbenchSurfaceProofOracleAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -1026,6 +1126,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestCleanContextSelectionOracleAck: commsSummary(cleanContextSelectionOracleAck || null, 260, cleanContextSelectionCommitHash),
       latestDemoWorkbenchProofCheckpoint: commsSummary(demoWorkbenchProofCheckpoint || null, 260, demoWorkbenchProofCommitHash),
       latestDemoWorkbenchProofOracleAck: commsSummary(demoWorkbenchProofOracleAck || null, 260, demoWorkbenchProofCommitHash),
+      latestWorkbenchSurfaceProofCheckpoint: commsSummary(workbenchSurfaceProofCheckpoint || null, 260, workbenchSurfaceProofCommitHash),
+      latestWorkbenchSurfaceProofOracleAck: commsSummary(workbenchSurfaceProofOracleAck || null, 260, workbenchSurfaceProofCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -1052,6 +1154,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestCleanContextSelectionOracleAck: null,
       latestDemoWorkbenchProofCheckpoint: null,
       latestDemoWorkbenchProofOracleAck: null,
+      latestWorkbenchSurfaceProofCheckpoint: null,
+      latestWorkbenchSurfaceProofOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1153,6 +1257,9 @@ function buildMissionControl(input: {
   const workbenchSurfaceProofReady = demoWorkbenchProofReady
     && input.recentComms.latestDemoWorkbenchProofCheckpoint?.commitHash === demoWorkbenchProofCommitHash
     && input.recentComms.latestDemoWorkbenchProofOracleAck?.commitHash === demoWorkbenchProofCommitHash;
+  const commandCardAcceptanceReady = workbenchSurfaceProofReady
+    && input.recentComms.latestWorkbenchSurfaceProofCheckpoint?.commitHash === workbenchSurfaceProofCommitHash
+    && input.recentComms.latestWorkbenchSurfaceProofOracleAck?.commitHash === workbenchSurfaceProofCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -1160,7 +1267,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? workbenchSurfaceProofReady
+    ? commandCardAcceptanceReady
+      ? "Mission Control v0 command-card acceptance is the active next boundary: the local answer/surface must expose a concise command card with current lane, why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, exactly one James-action line, and one dry-run route plan; no runtime, browser, workbench, UI/status action, POST, route, send, or provider action happens here."
+      : workbenchSurfaceProofReady
       ? "Mission Control workbench surface proof is the active next boundary: the local New Mira Mission Control section must render mission-control-demo-workbench-proof-v0 from /squidrun/context, including the answer/surface question, completed proof contexts, next step, James control point, and exactly one JAMES ACTION line; no runtime, browser, workbench, UI/status action, write, POST, route, send, or provider action happens here."
       : demoWorkbenchProofReady
       ? "Mission Control demo/workbench proof is inspectable as mission-control-demo-workbench-proof-v0: James can review the local Mission Control answer/surface target for what is happening here and what should happen next from local evidence; no runtime, browser, workbench, UI, status, write, POST, route, send, or provider action happens here."
@@ -1185,7 +1294,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? workbenchSurfaceProofReady
+    ? commandCardAcceptanceReady
+      ? "Builder should accept Mission Control v0 by pinning a concise local command card with current lane/why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, one James-action line, and one dry-run route plan; Oracle should review the card remains local/no-effect and does not rely on terminal logs."
+      : workbenchSurfaceProofReady
       ? "Builder should prove the local New Mira workbench Mission Control section renders mission-control-demo-workbench-proof-v0 from /squidrun/context with the proof id, answer/surface question, completed toolAppActionPlan and continuityMemoryProof context, next step, and James control point; Oracle should review that the surface proof is read-only and performs no /turn POST or live action."
       : demoWorkbenchProofReady
       ? "Builder should review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface, keep completed toolAppActionPlan and continuityMemoryProof as context, and wait for James approval before any runtime, browser, workbench, UI, write, POST, route, send, or execution."
@@ -1203,6 +1314,8 @@ function buildMissionControl(input: {
     : "Builder should finish the Mission Control v0 proof packet; Oracle should challenge it against the benchmark; after commit, the team should auto-open the next operator-like capability slice.";
   const jamesActionReason = "This is local, inspectable, dry-run Mission Control work; no bot, channel, account, token, external send, or route switch is needed.";
   const foundationVsProduct = "SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James's AI team.";
+  const commandCardBuilderNextMove = "Pin the Mission Control v0 command card from local evidence: current lane/why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, one James-action line, and a dry-run route plan.";
+  const commandCardOracleNextMove = "Review the command card for local evidence, no terminal-log dependency, dirty-context clarity, exactly one James-action line, and no runtime/browser/workbench/UI/status action, POST, route, send, provider/model, credential, deploy, money, or trading effect.";
   const toolAppActionPlan: SquidRunProjectContext["missionControl"]["toolAppActionPlan"] = toolAppActionPlanningReady
     ? {
         id: "mission-control-tool-app-action-plan-v0",
@@ -1226,7 +1339,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: workbenchSurfaceProofReady
+            summary: commandCardAcceptanceReady
+              ? "Current Architect delegation treats the completed proof context as ready for Mission Control v0 command-card acceptance."
+              : workbenchSurfaceProofReady
               ? "Current Architect delegation asks Mission Control to keep completed proof context and prove the local workbench surface rendering."
               : demoWorkbenchPlanningReady
               ? "Current Architect delegation asks Mission Control to keep the completed proof context and advance to demo/workbench planning."
@@ -1465,7 +1580,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: "Current Architect delegation asks for one inspectable demo/workbench proof record, not a live workbench action.",
+            summary: commandCardAcceptanceReady
+              ? "Current Architect delegation treats this demo/workbench proof as completed context for command-card acceptance, not a live workbench action."
+              : "Current Architect delegation asks for one inspectable demo/workbench proof record, not a live workbench action.",
           },
         ],
         completedContext: {
@@ -1519,6 +1636,116 @@ function buildMissionControl(input: {
         },
       }
     : null;
+  const commandCardAcceptance: SquidRunProjectContext["missionControl"]["commandCardAcceptance"] = commandCardAcceptanceReady && toolAppActionPlan && continuityMemoryProof && demoWorkbenchProof
+    ? {
+        id: "mission-control-v0-command-card-acceptance",
+        status: "acceptance_planning_only",
+        owner: "Builder",
+        sourceEvidence: [
+          {
+            kind: "file",
+            path: "docs/mira-north-star-roadmap.md",
+            summary: "Roadmap acceptance requires a first inspectable Mission Control demo surface James can read without terminal logs.",
+          },
+          {
+            kind: "file",
+            path: "docs/mira-system-map.md",
+            summary: "System map keeps command-card acceptance local/read-only and blocks runtime, workbench, UI/status, route, send, provider, credential, deploy, money, and trading effects.",
+          },
+          {
+            kind: "file",
+            path: "mira/runtime/src/squidrun-context.ts",
+            summary: "SquidRun context source builds the command-card acceptance record, answer text, drafts, and reviewed route preview from local evidence.",
+          },
+          {
+            kind: "completed_context",
+            summary: `Completed context retained: ${toolAppActionPlan.id} remains ${toolAppActionPlan.status}.`,
+          },
+          {
+            kind: "completed_context",
+            summary: `Completed context retained: ${continuityMemoryProof.id} remains ${continuityMemoryProof.status}.`,
+          },
+          {
+            kind: "completed_context",
+            summary: `Completed context retained: ${demoWorkbenchProof.id} remains ${demoWorkbenchProof.status}.`,
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestWorkbenchSurfaceProofCheckpoint?.sourceRef || "not found",
+            commitHash: workbenchSurfaceProofCommitHash,
+            summary: "Workbench surface proof is source-specific and committed before command-card acceptance can advance.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestWorkbenchSurfaceProofOracleAck?.sourceRef || "not found",
+            commitHash: workbenchSurfaceProofCommitHash,
+            summary: "Oracle acknowledged the committed workbench surface proof before command-card acceptance.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
+            summary: "Current Architect delegation asks for Mission Control v0 command-card acceptance without live effects.",
+          },
+        ],
+        completedContext: {
+          toolAppActionPlanId: "mission-control-tool-app-action-plan-v0",
+          continuityMemoryProofId: "mission-control-continuity-memory-proof-v0",
+          demoWorkbenchProofId: "mission-control-demo-workbench-proof-v0",
+        },
+        cardFields: {
+          currentLaneWhyItMatters: `Current lane ${continuationDecision.preferredSourceRef || "current continuation"} matters because Mission Control must turn local SquidRun evidence into a James-inspectable command card instead of terminal-log spelunking.`,
+          whatChangedRecently: `Committed ${workbenchSurfaceProofCommitHash} workbench surface proof evidence (${input.recentComms.latestWorkbenchSurfaceProofCheckpoint?.sourceRef || "not found"} plus Oracle ACK ${input.recentComms.latestWorkbenchSurfaceProofOracleAck?.sourceRef || "not found"}) makes surface rendering completed context; the next acceptance is the command card.`,
+          builderNextMove: commandCardBuilderNextMove,
+          oracleNextMove: commandCardOracleNextMove,
+          contextCardStatus: `Context-card/current dirty-context status: ${input.dirtyWork.summary}`,
+          jamesActionLine: "JAMES ACTION: NONE",
+          dryRunRoutePlan: {
+            target: "oracle",
+            purpose: "command-card no-effect review",
+            manualExecutionRequired: true,
+            sendPerformed: false,
+            summary: "Dry-run route plan asks Oracle to review Mission Control v0 command-card fields from local context only; no hm-send, route flip, POST, provider/model call, or external send is performed.",
+          },
+        },
+        jamesControlPoint: "James can inspect the local command card before any future runtime, browser, workbench, UI/status, route, send, provider/model, credential, deploy, money, or trading action is proposed.",
+        preconditions: [
+          "Worktree is clean.",
+          "Stale architect#11 is visible but has no active authority.",
+          "Completed toolAppActionPlan, continuityMemoryProof, and demoWorkbenchProof are present as context.",
+          "Workbench surface proof checkpoint and Oracle ACK are source-specific for c301c1ac.",
+          "The command card is built from local Mission Control answer/surface evidence only.",
+        ],
+        refusalNoGoConditions: [
+          "Dirty worktree or missing completed context records.",
+          "Missing source-specific c301c1ac checkpoint or Oracle ACK.",
+          "Any request to start runtime, open a browser/workbench, perform UI/status actions, POST, route, send, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.",
+          "Any command card that requires terminal logs instead of local surface/context evidence.",
+        ],
+        audit: {
+          acceptanceOnly: true,
+          planningOnly: true,
+          runtimeStarted: false,
+          browserOpened: false,
+          workbenchOpened: false,
+          uiActionPerformed: false,
+          fetched: false,
+          posted: false,
+          routed: false,
+          sent: false,
+          providerInvoked: false,
+          modelInvoked: false,
+          accountAccessed: false,
+          tokenAccessed: false,
+          credentialAccessed: false,
+          deviceTouched: false,
+          userTargeted: false,
+          externalTargeted: false,
+          deployed: false,
+          moneyMovement: false,
+          tradingTouched: false,
+        },
+      }
+    : null;
   const oracleLine = input.recentComms.oracleBenchmark?.sourceRef
     ? `Benchmark gate: ${input.recentComms.oracleBenchmark.sourceRef} says current New Mira is not impressive yet; the demo must prove command-layer usefulness.`
     : `Benchmark gate: ${hardTruth} ${firstDemo}`;
@@ -1541,7 +1768,12 @@ function buildMissionControl(input: {
                   ? [`Demo/workbench proof: ${demoWorkbenchProof.id}; owner ${demoWorkbenchProof.owner}; target ${demoWorkbenchProof.target.surface} asks "${demoWorkbenchProof.target.question}"; completed contexts ${demoWorkbenchProof.completedContext.toolAppActionPlanId} and ${demoWorkbenchProof.completedContext.continuityMemoryProofId}; James control point: ${demoWorkbenchProof.jamesControlPoint}; audit proofOnly=${demoWorkbenchProof.audit.proofOnly}, planningOnly=${demoWorkbenchProof.audit.planningOnly}, runtimeStarted=${demoWorkbenchProof.audit.runtimeStarted}, browserOpened=${demoWorkbenchProof.audit.browserOpened}, workbenchOpened=${demoWorkbenchProof.audit.workbenchOpened}, uiActionPerformed=${demoWorkbenchProof.audit.uiActionPerformed}, fetched=${demoWorkbenchProof.audit.fetched}, posted=${demoWorkbenchProof.audit.posted}, routed=${demoWorkbenchProof.audit.routed}, sent=${demoWorkbenchProof.audit.sent}, providerInvoked=${demoWorkbenchProof.audit.providerInvoked}, modelInvoked=${demoWorkbenchProof.audit.modelInvoked}, accountAccessed=${demoWorkbenchProof.audit.accountAccessed}, tokenAccessed=${demoWorkbenchProof.audit.tokenAccessed}, credentialAccessed=${demoWorkbenchProof.audit.credentialAccessed}, deviceTouched=${demoWorkbenchProof.audit.deviceTouched}, userTargeted=${demoWorkbenchProof.audit.userTargeted}, externalTargeted=${demoWorkbenchProof.audit.externalTargeted}, deployed=${demoWorkbenchProof.audit.deployed}, moneyMovement=${demoWorkbenchProof.audit.moneyMovement}, tradingTouched=${demoWorkbenchProof.audit.tradingTouched}.`]
                   : []),
                 ...(workbenchSurfaceProofReady
-                  ? [`Workbench surface proof evidence: checkpoint ${input.recentComms.latestDemoWorkbenchProofCheckpoint?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash} and Oracle ACK ${input.recentComms.latestDemoWorkbenchProofOracleAck?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash}; demoWorkbenchProof is completed context and the active next boundary is read-only local surface rendering from /squidrun/context.`]
+                  ? commandCardAcceptanceReady
+                    ? [`Workbench surface proof evidence: checkpoint ${input.recentComms.latestDemoWorkbenchProofCheckpoint?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash} and Oracle ACK ${input.recentComms.latestDemoWorkbenchProofOracleAck?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash}; demoWorkbenchProof and the c301c1ac surface render proof are completed context for command-card acceptance.`]
+                    : [`Workbench surface proof evidence: checkpoint ${input.recentComms.latestDemoWorkbenchProofCheckpoint?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash} and Oracle ACK ${input.recentComms.latestDemoWorkbenchProofOracleAck?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash}; demoWorkbenchProof is completed context and the active next boundary is read-only local surface rendering from /squidrun/context.`]
+                  : []),
+                ...(commandCardAcceptance
+                  ? [`Command-card acceptance: ${commandCardAcceptance.id}; current lane/why it matters=${commandCardAcceptance.cardFields.currentLaneWhyItMatters}; what changed recently=${commandCardAcceptance.cardFields.whatChangedRecently}; Builder next move=${commandCardAcceptance.cardFields.builderNextMove}; Oracle next move=${commandCardAcceptance.cardFields.oracleNextMove}; ${commandCardAcceptance.cardFields.contextCardStatus}; ${commandCardAcceptance.cardFields.jamesActionLine}; dry-run route plan=${commandCardAcceptance.cardFields.dryRunRoutePlan.summary}; audit acceptanceOnly=${commandCardAcceptance.audit.acceptanceOnly}, planningOnly=${commandCardAcceptance.audit.planningOnly}, runtimeStarted=${commandCardAcceptance.audit.runtimeStarted}, browserOpened=${commandCardAcceptance.audit.browserOpened}, workbenchOpened=${commandCardAcceptance.audit.workbenchOpened}, uiActionPerformed=${commandCardAcceptance.audit.uiActionPerformed}, fetched=${commandCardAcceptance.audit.fetched}, posted=${commandCardAcceptance.audit.posted}, routed=${commandCardAcceptance.audit.routed}, sent=${commandCardAcceptance.audit.sent}, providerInvoked=${commandCardAcceptance.audit.providerInvoked}, modelInvoked=${commandCardAcceptance.audit.modelInvoked}, accountAccessed=${commandCardAcceptance.audit.accountAccessed}, tokenAccessed=${commandCardAcceptance.audit.tokenAccessed}, credentialAccessed=${commandCardAcceptance.audit.credentialAccessed}, deviceTouched=${commandCardAcceptance.audit.deviceTouched}, userTargeted=${commandCardAcceptance.audit.userTargeted}, externalTargeted=${commandCardAcceptance.audit.externalTargeted}, deployed=${commandCardAcceptance.audit.deployed}, moneyMovement=${commandCardAcceptance.audit.moneyMovement}, tradingTouched=${commandCardAcceptance.audit.tradingTouched}.`]
                   : []),
                 ...(continuityMemoryProof
                   ? [`Continuity/memory proof: ${continuityMemoryProof.id}; owner ${continuityMemoryProof.owner}; current-lane truth ${continuityMemoryProof.currentLaneTruth.sourceRef || "not found"} is ${continuityMemoryProof.currentLaneTruth.authority}; stale-only summary refused=${continuityMemoryProof.staleOnlySummaryRefusal.refused}; James control point: ${continuityMemoryProof.jamesControlPoint}; audit proofOnly=${continuityMemoryProof.audit.proofOnly}, imported=${continuityMemoryProof.audit.imported}, copied=${continuityMemoryProof.audit.copied}, wrote=${continuityMemoryProof.audit.wrote}, restarted=${continuityMemoryProof.audit.restarted}, processStarted=${continuityMemoryProof.audit.processStarted}, browsed=${continuityMemoryProof.audit.browsed}, sent=${continuityMemoryProof.audit.sent}, routed=${continuityMemoryProof.audit.routed}, posted=${continuityMemoryProof.audit.posted}, runtimeStarted=${continuityMemoryProof.audit.runtimeStarted}, providerInvoked=${continuityMemoryProof.audit.providerInvoked}, modelInvoked=${continuityMemoryProof.audit.modelInvoked}, accountAccessed=${continuityMemoryProof.audit.accountAccessed}, tokenAccessed=${continuityMemoryProof.audit.tokenAccessed}, credentialAccessed=${continuityMemoryProof.audit.credentialAccessed}, deviceTouched=${continuityMemoryProof.audit.deviceTouched}, userTargeted=${continuityMemoryProof.audit.userTargeted}, externalTargeted=${continuityMemoryProof.audit.externalTargeted}, deployed=${continuityMemoryProof.audit.deployed}, moneyMovement=${continuityMemoryProof.audit.moneyMovement}, tradingTouched=${continuityMemoryProof.audit.tradingTouched}.`]
@@ -1569,7 +1801,9 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: workbenchSurfaceProofReady
+      purpose: commandCardAcceptanceReady
+        ? "command-card acceptance"
+        : workbenchSurfaceProofReady
         ? "workbench surface proof"
         : demoWorkbenchProofReady
         ? "demo/workbench proof record"
@@ -1582,7 +1816,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
-      message: workbenchSurfaceProofReady
+      message: commandCardAcceptanceReady
+        ? commandCardBuilderNextMove
+        : workbenchSurfaceProofReady
         ? "Prove the local New Mira workbench Mission Control section renders mission-control-demo-workbench-proof-v0 from /squidrun/context with proof id, answer/surface question, completed toolAppActionPlan and continuityMemoryProof context, next step, James control point, and exactly one JAMES ACTION line. Use read-only UI boot coverage only; do not start runtime, open browser/workbench, perform UI/status actions, fetch beyond mocked local GET, POST, route, send, write, or execute."
         : demoWorkbenchProofReady
         ? "Review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface. Keep completed toolAppActionPlan and continuityMemoryProof as context; do not start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, write, or execute."
@@ -1600,7 +1836,9 @@ function buildMissionControl(input: {
     },
     {
       target: "oracle",
-      purpose: workbenchSurfaceProofReady
+      purpose: commandCardAcceptanceReady
+        ? "command-card no-effect review"
+        : workbenchSurfaceProofReady
         ? "workbench surface no-effect review"
         : demoWorkbenchProofReady
         ? "demo/workbench proof no-effect review"
@@ -1613,7 +1851,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
-      message: workbenchSurfaceProofReady
+      message: commandCardAcceptanceReady
+        ? commandCardOracleNextMove
+        : workbenchSurfaceProofReady
         ? "Review that the local Mission Control workbench surface displays mission-control-demo-workbench-proof-v0 from mocked /squidrun/context, keeps completed proof records as context, shows the next step/control point and exactly one JAMES ACTION line, and performs no /turn POST, runtime start, browser/workbench open, live UI/status action, route, send, provider/model, credential, deploy, money, or trading effect."
         : demoWorkbenchProofReady
         ? "Review that mission-control-demo-workbench-proof-v0 is inspectable from the local Mission Control answer/surface, names expected James-visible checks, keeps completed proof records as context, and claims no runtime start, browser/workbench open, UI/status execution, fetch, POST, route, send, write, provider/model, credential, deploy, money, or trading effect."
@@ -1694,6 +1934,7 @@ function buildMissionControl(input: {
     toolAppActionPlan,
     continuityMemoryProof,
     demoWorkbenchProof,
+    commandCardAcceptance,
     internalRoutePreview: {
       status: "reviewed_preview_only",
       selectedDraftTarget: selectedDraft.target,
@@ -1797,6 +2038,9 @@ export function getSquidRunContext(
         : null,
       demoWorkbenchProof: missionControl.demoWorkbenchProof
         ? `${missionControl.demoWorkbenchProof.id}: ${missionControl.demoWorkbenchProof.target.surface} asks "${missionControl.demoWorkbenchProof.target.question}"; owner ${missionControl.demoWorkbenchProof.owner}; ${missionControl.demoWorkbenchProof.jamesControlPoint}`
+        : null,
+      commandCardAcceptance: missionControl.commandCardAcceptance
+        ? `${missionControl.commandCardAcceptance.id}: current lane card, recent changes, Builder/Oracle next moves, dirty-context status, one James-action line, and dry-run route plan are acceptance-planning only; owner ${missionControl.commandCardAcceptance.owner}; ${missionControl.commandCardAcceptance.jamesControlPoint}`
         : null,
       jamesAction: "NONE",
       jamesActionReason: missionControl.jamesActionReason,
