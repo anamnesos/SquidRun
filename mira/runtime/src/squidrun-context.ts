@@ -154,6 +154,38 @@ export type SquidRunProjectContext = {
       purpose: string;
       message: string;
     }>;
+    toolAppActionPlan: null | {
+      id: "mission-control-tool-app-action-plan-v0";
+      status: "planning_only";
+      owner: "Builder";
+      target: {
+        actionCategory: "local_squidrun_evidence_review";
+        action: string;
+      };
+      sourceEvidence: Array<{
+        kind: "file" | "comms" | "summary";
+        path?: string;
+        sourceRef?: string;
+        commitHash?: string;
+        summary: string;
+      }>;
+      jamesControlPoint: string;
+      preconditions: string[];
+      refusalNoGoConditions: string[];
+      audit: {
+        planningOnly: true;
+        executed: false;
+        browsed: false;
+        appToolCalled: false;
+        posted: false;
+        routed: false;
+        sent: false;
+        runtimeStarted: false;
+        credentialAccessed: false;
+        deployed: false;
+        moneyMovement: false;
+      };
+    };
     internalRoutePreview: {
       status: "reviewed_preview_only";
       selectedDraftTarget: "architect" | "builder" | "oracle";
@@ -183,6 +215,7 @@ export type SquidRunProjectContext = {
     headline: string;
     happening: string;
     nextStep: string;
+    toolAppActionPlan: string | null;
     jamesAction: "NONE" | "DO THIS";
     jamesActionReason: string;
   };
@@ -795,6 +828,72 @@ function buildMissionControl(input: {
     : "Builder should finish the Mission Control v0 proof packet; Oracle should challenge it against the benchmark; after commit, the team should auto-open the next operator-like capability slice.";
   const jamesActionReason = "This is local, inspectable, dry-run Mission Control work; no bot, channel, account, token, external send, or route switch is needed.";
   const foundationVsProduct = "SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James's AI team.";
+  const toolAppActionPlan: SquidRunProjectContext["missionControl"]["toolAppActionPlan"] = toolAppActionPlanningReady
+    ? {
+        id: "mission-control-tool-app-action-plan-v0",
+        status: "planning_only",
+        owner: "Builder",
+        target: {
+          actionCategory: "local_squidrun_evidence_review",
+          action: "Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.",
+        },
+        sourceEvidence: [
+          {
+            kind: "file",
+            path: "docs/mira-north-star-roadmap.md",
+            summary: "Roadmap says tool/app action planning must show one local tool/action plan with a clear owner and James-control point.",
+          },
+          {
+            kind: "file",
+            path: "docs/mira-system-map.md",
+            summary: "System map keeps this lane read-only/no-execution and requires real local evidence before any tool/app action planning.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
+            summary: "Current Architect delegation asks Mission Control to advance from completed readiness alignment into local tool/app action planning.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestDirectChannelReadinessCheckpoint?.sourceRef || "not found",
+            commitHash: directChannelReadinessContractCommitHash,
+            summary: "Direct-channel readiness alignment is already committed, so this plan does not create or configure a channel.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestDirectChannelReadinessAck?.sourceRef || "not found",
+            commitHash: directChannelReadinessContractCommitHash,
+            summary: "Builder acknowledged the completed readiness contract before this planning boundary.",
+          },
+        ],
+        jamesControlPoint: "James must explicitly review and approve a separate future request before any real app/tool execution.",
+        preconditions: [
+          "Worktree is clean.",
+          "Stale architect#11 handoff is visible but superseded by the committed Mission Control evidence chain.",
+          "Direct-channel readiness checkpoint and Builder ACK are source-specific for 22e876dc.",
+          "The plan remains a local Mission Control inspection record, not an execution request.",
+        ],
+        refusalNoGoConditions: [
+          "Dirty worktree or missing committed evidence chain.",
+          "Any attempt to browse, call an app/tool, POST, route, send, start runtime, touch credentials, deploy, or move money.",
+          "Any target that is not a local SquidRun evidence-planning record for Builder review.",
+          "Any request to skip James's explicit approval before real execution.",
+        ],
+        audit: {
+          planningOnly: true,
+          executed: false,
+          browsed: false,
+          appToolCalled: false,
+          posted: false,
+          routed: false,
+          sent: false,
+          runtimeStarted: false,
+          credentialAccessed: false,
+          deployed: false,
+          moneyMovement: false,
+        },
+      }
+    : null;
   const oracleLine = input.recentComms.oracleBenchmark?.sourceRef
     ? `Benchmark gate: ${input.recentComms.oracleBenchmark.sourceRef} says current New Mira is not impressive yet; the demo must prove command-layer usefulness.`
     : `Benchmark gate: ${hardTruth} ${firstDemo}`;
@@ -807,6 +906,9 @@ function buildMissionControl(input: {
             ? toolAppActionPlanningReady
               ? [
                 `Completed direct-channel readiness evidence: checkpoint ${input.recentComms.latestDirectChannelReadinessCheckpoint?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash} and Builder ACK ${input.recentComms.latestDirectChannelReadinessAck?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash}; the next boundary is tool/app action planning from the roadmap, not execution.`,
+                toolAppActionPlan
+                  ? `Tool/app action plan: ${toolAppActionPlan.target.actionCategory} -> ${toolAppActionPlan.target.action}; owner ${toolAppActionPlan.owner}; James control point: ${toolAppActionPlan.jamesControlPoint}; audit planningOnly=${toolAppActionPlan.audit.planningOnly}, executed=${toolAppActionPlan.audit.executed}, browsed=${toolAppActionPlan.audit.browsed}, appToolCalled=${toolAppActionPlan.audit.appToolCalled}, routed=${toolAppActionPlan.audit.routed}, sent=${toolAppActionPlan.audit.sent}, runtimeStarted=${toolAppActionPlan.audit.runtimeStarted}, credentialAccessed=${toolAppActionPlan.audit.credentialAccessed}, deployed=${toolAppActionPlan.audit.deployed}, moneyMovement=${toolAppActionPlan.audit.moneyMovement}.`
+                  : "",
               ]
               : [
                 `Stabilized v1 evidence: delegation ${input.recentComms.latestV1AlignmentDelegation?.sourceRef || "not found"}, alignment checkpoint ${input.recentComms.latestV1AlignmentCheckpoint?.sourceRef || "not found"} ${v1RoutePreviewAlignmentCommitHash}, evidence-window checkpoint ${input.recentComms.latestEvidenceWindowCheckpoint?.sourceRef || "not found"} ${commsEvidenceWindowCommitHash}; the next boundary is separate direct-channel readiness/dry-run planning behind Telegram guard truth.`,
@@ -897,6 +999,7 @@ function buildMissionControl(input: {
     jamesAction: "NONE",
     jamesActionReason,
     coordinationDrafts,
+    toolAppActionPlan,
     internalRoutePreview: {
       status: "reviewed_preview_only",
       selectedDraftTarget: selectedDraft.target,
@@ -992,6 +1095,9 @@ export function getSquidRunContext(
       headline: `${projectName}: Mission Control local evidence loaded`,
       happening,
       nextStep: missionControl.nextTeamMove,
+      toolAppActionPlan: missionControl.toolAppActionPlan
+        ? `${missionControl.toolAppActionPlan.id}: ${missionControl.toolAppActionPlan.target.actionCategory} -> ${missionControl.toolAppActionPlan.target.action}; owner ${missionControl.toolAppActionPlan.owner}; ${missionControl.toolAppActionPlan.jamesControlPoint}`
+        : null,
       jamesAction: "NONE",
       jamesActionReason: missionControl.jamesActionReason,
     },

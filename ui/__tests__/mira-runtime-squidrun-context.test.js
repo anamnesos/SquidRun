@@ -318,6 +318,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('nothing executes here');
     expect(answer).toContain('Completed direct-channel readiness evidence: checkpoint architect#114 22e876dc and Builder ACK builder#43 22e876dc');
     expect(answer).toContain('next boundary is tool/app action planning from the roadmap, not execution');
+    expect(answer).toContain('Tool/app action plan: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.');
+    expect(answer).toContain('audit planningOnly=true, executed=false, browsed=false, appToolCalled=false, routed=false, sent=false, runtimeStarted=false, credentialAccessed=false, deployed=false, moneyMovement=false');
     expect(answer).not.toContain('Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step');
     expect(answer).not.toContain('Builder should advance Mission Control v1 dry-run coordination/follow-through route planning');
     expect(answer).not.toContain('Advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only');
@@ -338,6 +340,71 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.summary.nextStep).not.toContain('align Mission Control to the existing direct-channel readiness contract');
     expect(context.summary.nextStep).toContain('tool/app action plan');
     expect(context.summary.nextStep).toContain('James control point');
+    expect(context.summary.toolAppActionPlan).toBe('mission-control-tool-app-action-plan-v0: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.; owner Builder; James must explicitly review and approve a separate future request before any real app/tool execution.');
+    expect(context.missionControl.toolAppActionPlan).toEqual({
+      id: 'mission-control-tool-app-action-plan-v0',
+      status: 'planning_only',
+      owner: 'Builder',
+      target: {
+        actionCategory: 'local_squidrun_evidence_review',
+        action: 'Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.',
+      },
+      sourceEvidence: [
+        {
+          kind: 'file',
+          path: 'docs/mira-north-star-roadmap.md',
+          summary: 'Roadmap says tool/app action planning must show one local tool/action plan with a clear owner and James-control point.',
+        },
+        {
+          kind: 'file',
+          path: 'docs/mira-system-map.md',
+          summary: 'System map keeps this lane read-only/no-execution and requires real local evidence before any tool/app action planning.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'architect#116',
+          summary: 'Current Architect delegation asks Mission Control to advance from completed readiness alignment into local tool/app action planning.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'architect#114',
+          commitHash: '22e876dc',
+          summary: 'Direct-channel readiness alignment is already committed, so this plan does not create or configure a channel.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'builder#43',
+          commitHash: '22e876dc',
+          summary: 'Builder acknowledged the completed readiness contract before this planning boundary.',
+        },
+      ],
+      jamesControlPoint: 'James must explicitly review and approve a separate future request before any real app/tool execution.',
+      preconditions: [
+        'Worktree is clean.',
+        'Stale architect#11 handoff is visible but superseded by the committed Mission Control evidence chain.',
+        'Direct-channel readiness checkpoint and Builder ACK are source-specific for 22e876dc.',
+        'The plan remains a local Mission Control inspection record, not an execution request.',
+      ],
+      refusalNoGoConditions: [
+        'Dirty worktree or missing committed evidence chain.',
+        'Any attempt to browse, call an app/tool, POST, route, send, start runtime, touch credentials, deploy, or move money.',
+        'Any target that is not a local SquidRun evidence-planning record for Builder review.',
+        "Any request to skip James's explicit approval before real execution.",
+      ],
+      audit: {
+        planningOnly: true,
+        executed: false,
+        browsed: false,
+        appToolCalled: false,
+        posted: false,
+        routed: false,
+        sent: false,
+        runtimeStarted: false,
+        credentialAccessed: false,
+        deployed: false,
+        moneyMovement: false,
+      },
+    });
     expect(context.missionControl.evidence).toEqual(expect.arrayContaining([
       'docs/mira-north-star-roadmap.md',
       'ui/modules/mira-direct-channel-readiness.js',
@@ -430,7 +497,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.lane.staleHandoff).toBeNull();
     expect(context.summary.happening).toContain('finish the existing 3-file review/no-send gate dirty slice');
     expect(context.summary.nextStep).not.toContain('tool/app action plan');
+    expect(context.summary.toolAppActionPlan).toBeNull();
+    expect(context.missionControl.toolAppActionPlan).toBeNull();
     expect(answer).toContain('Dirty work: 1 changed file(s)');
+    expect(answer).not.toContain('Tool/app action plan: local_squidrun_evidence_review');
     expect(answer).not.toContain('Stale handoff: architect#11');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
   });
