@@ -151,7 +151,7 @@ const rows = [
     sender: 'architect',
     target: 'builder',
     timestampMs: 1779453404228,
-    rawBody: '(ARCHITECT #186): Checkpoint: committed #178 Mission Control demo/workbench first-proof slice as 48e419b4 Add Mission Control demo workbench proof. Oracle #61 PASS accepted; pre-commit passed, including focused context PASS 2/2 and Mira system map guard PASS. Clean-head proof: worktree clean, HEAD 48e419b4, live compiled getSquidRunContext() reports missionControl.demoWorkbenchProof present and exactly one JAMES ACTION line. JAMES ACTION: NONE.'
+    rawBody: '(ARCHITECT #186): Checkpoint: committed #178 Mission Control demo/workbench first-proof slice as 48e419b4 Add Mission Control demo workbench proof. Oracle #61 PASS accepted; pre-commit passed, including focused context PASS 2/2 and Mira system map guard PASS. Clean-head proof: worktree clean, HEAD 48e419b4, live compiled getSquidRunContext() reports \\u0060missionControl.demoWorkbenchProof\\u0060 present and exactly one JAMES ACTION line. JAMES ACTION: NONE.'
   },
   {
     sender: 'architect',

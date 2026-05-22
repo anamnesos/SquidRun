@@ -901,7 +901,7 @@ function isCleanContextSelectionOracleAckBody(rawBody: string | null): boolean {
 function isDemoWorkbenchProofCheckpointBody(rawBody: string | null): boolean {
   const body = rawBody || "";
   return /Checkpoint:\s*committed #178 Mission Control demo\/workbench first-proof slice as [`'"]?48e419b4 Add Mission Control demo workbench proof/i.test(body)
-    && /missionControl\.demoWorkbenchProof present/i.test(body)
+    && /[`'"]?missionControl\.demoWorkbenchProof[`'"]?\s+present/i.test(body)
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
