@@ -4,6 +4,7 @@ import path from "node:path";
 import { planManualBridgeRequest, type ManualBridgeRequestPlan } from "./bridge-request-plan.js";
 
 type JsonObject = Record<string, unknown>;
+const internalPaneActivationSeamCommitHash = "7ff9fe8d";
 
 export type SquidRunProjectContext = {
   ok: true;
@@ -19,10 +20,20 @@ export type SquidRunProjectContext = {
     loaded: boolean;
     status: string | null;
     sourceRef: string | null;
+    sourceTimestampMs: number | null;
     targetRole: string | null;
     objective: string | null;
     nextAction: string | null;
     generatedAt: string | null;
+    staleHandoff: {
+      status: "stale_superseded";
+      sourceRef: string;
+      sourceTimestampMs: number | null;
+      objective: string | null;
+      supersededBySourceRef: string;
+      supersededByCommit: string;
+      reason: string;
+    } | null;
   };
   ownedWork: {
     loaded: boolean;
@@ -64,10 +75,29 @@ export type SquidRunProjectContext = {
     latestBuilderInstruction: {
       sourceRef: string | null;
       excerpt: string | null;
+      timestampMs: number | null;
+    } | null;
+    latestCommitCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestBuilderAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestContinuationDelegation: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
     } | null;
     oracleBenchmark: {
       sourceRef: string | null;
       excerpt: string | null;
+      timestampMs: number | null;
     } | null;
   };
   missionControl: {
@@ -98,6 +128,14 @@ export type SquidRunProjectContext = {
       };
     };
     evidence: string[];
+    continuationDecision: {
+      status: "current_handoff" | "stale_handoff_superseded";
+      preferredSourceRef: string | null;
+      committedSeam: string | null;
+      staleSourceRef: string | null;
+      staleObjective: string | null;
+      reason: string;
+    };
   };
   summary: {
     headline: string;
@@ -127,6 +165,11 @@ function preview(value: unknown, maxLength = 190): string | null {
   const text = trimText(value);
   if (!text) return null;
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
+function numberValue(value: unknown): number | null {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function safeCommsPreview(value: unknown, maxLength = 260): string | null {
@@ -206,10 +249,12 @@ function summarizeLane(currentLane: JsonObject | null): SquidRunProjectContext["
     loaded: Boolean(currentLane),
     status: trimText(currentLane?.status),
     sourceRef: trimText(activeLane?.sourceRef),
+    sourceTimestampMs: numberValue(activeLane?.sourceTimestampMs),
     targetRole: trimText(activeLane?.targetRole),
     objective: preview(activeLane?.objective),
     nextAction: preview(continuity?.next_action),
     generatedAt: trimText(currentLane?.generatedAt),
+    staleHandoff: null,
   };
 }
 
@@ -375,12 +420,54 @@ function sourceRefFromBody(rawBody: string | null, sender: string | null): strin
   return `${match[1]?.toLowerCase()}#${match[2]}`;
 }
 
+function sourceRefNumber(sourceRef: string | null): number | null {
+  const match = String(sourceRef || "").match(/#(\d+)$/);
+  return match ? numberValue(match[1]) : null;
+}
+
+function sourceRefRole(sourceRef: string | null): string | null {
+  const match = String(sourceRef || "").match(/^([a-z]+)#\d+$/i);
+  return match?.[1]?.toLowerCase() || null;
+}
+
+function extractCommitHash(rawBody: string | null): string | null {
+  const text = rawBody || "";
+  const commitMatch = text.match(/\b[0-9a-f]{7,40}\b/i);
+  return commitMatch?.[0]?.toLowerCase() || null;
+}
+
+function containsCommitHash(rawBody: string | null, commitHash: string): boolean {
+  const escaped = commitHash.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(rawBody || "");
+}
+
+function commsSummary(row: JsonObject | null, maxLength = 260): {
+  sourceRef: string | null;
+  excerpt: string | null;
+  timestampMs: number | null;
+  commitHash: string | null;
+} | null {
+  if (!row) return null;
+  const rawBody = trimText(row.rawBody);
+  return {
+    sourceRef: sourceRefFromBody(rawBody, trimText(row.sender)),
+    excerpt: safeCommsPreview(rawBody, maxLength),
+    timestampMs: numberValue(row.timestampMs),
+    commitHash: containsCommitHash(rawBody, internalPaneActivationSeamCommitHash)
+      ? internalPaneActivationSeamCommitHash
+      : extractCommitHash(rawBody),
+  };
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
     return {
       loaded: false,
       latestBuilderInstruction: null,
+      latestCommitCheckpoint: null,
+      latestBuilderAck: null,
+      latestContinuationDelegation: null,
       oracleBenchmark: null,
     };
   }
@@ -390,7 +477,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       scriptPath,
       "history",
       "--last",
-      "30",
+      "80",
       "--json",
     ], {
       cwd: squidrunRoot,
@@ -409,6 +496,29 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return /Mission Control|north-star|holy-shit|first inspectable demo|operator surface/i.test(body)
         && !/status ping|status check/i.test(body);
     }) || builderRows[0];
+    const commitCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && containsCommitHash(body, internalPaneActivationSeamCommitHash)
+        && /committed|commit checkpoint|commit already landed|internal-pane activation attempt seam/i.test(body)
+        && /PASS|proof|pre-commit|working tree clean|tree clean/i.test(body)
+        && /JAMES ACTION:\s*NONE/i.test(body);
+    });
+    const commitHash = containsCommitHash(trimText(commitCheckpoint?.rawBody), internalPaneActivationSeamCommitHash)
+      ? internalPaneActivationSeamCommitHash
+      : null;
+    const builderAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "builder"
+        && /ACK|PASS|MODIFY resolved/i.test(body)
+        && (commitHash ? containsCommitHash(body, commitHash) : containsCommitHash(body, internalPaneActivationSeamCommitHash))
+        && /JAMES ACTION:\s*NONE/i.test(body);
+    });
+    const continuationDelegation = builderRows.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return /Current-session delegation|next Mira map-backed slice|continuation-aware Mission Control command context|next map-backed/i.test(body)
+        && /JAMES ACTION:\s*NONE/i.test(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -416,22 +526,82 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
 
     return {
       loaded: true,
-      latestBuilderInstruction: builderInstruction ? {
-        sourceRef: sourceRefFromBody(trimText(builderInstruction.rawBody), trimText(builderInstruction.sender)),
-        excerpt: safeCommsPreview(builderInstruction.rawBody, 260),
-      } : null,
-      oracleBenchmark: oracleBenchmark ? {
-        sourceRef: sourceRefFromBody(trimText(oracleBenchmark.rawBody), trimText(oracleBenchmark.sender)),
-        excerpt: safeCommsPreview(oracleBenchmark.rawBody, 260),
-      } : null,
+      latestBuilderInstruction: commsSummary(builderInstruction || null),
+      latestCommitCheckpoint: commsSummary(commitCheckpoint || null),
+      latestBuilderAck: commsSummary(builderAck || null),
+      latestContinuationDelegation: commsSummary(continuationDelegation || null),
+      oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
     return {
       loaded: false,
       latestBuilderInstruction: null,
+      latestCommitCheckpoint: null,
+      latestBuilderAck: null,
+      latestContinuationDelegation: null,
       oracleBenchmark: null,
     };
   }
+}
+
+function hasLaterEvidence(
+  lane: SquidRunProjectContext["lane"],
+  evidence: { sourceRef: string | null; timestampMs: number | null } | null,
+): boolean {
+  if (!evidence?.sourceRef || evidence.sourceRef === lane.sourceRef) return false;
+  const laneNumber = sourceRefNumber(lane.sourceRef);
+  const evidenceNumber = sourceRefNumber(evidence.sourceRef);
+  const sameRole = sourceRefRole(lane.sourceRef) !== null && sourceRefRole(lane.sourceRef) === sourceRefRole(evidence.sourceRef);
+  if (sameRole && laneNumber !== null && evidenceNumber !== null && evidenceNumber > laneNumber) return true;
+  return lane.sourceTimestampMs !== null && evidence.timestampMs !== null && evidence.timestampMs > lane.sourceTimestampMs;
+}
+
+function buildContinuationDecision(input: {
+  lane: SquidRunProjectContext["lane"];
+  dirtyWork: SquidRunProjectContext["dirtyWork"];
+  recentComms: SquidRunProjectContext["recentComms"];
+}): SquidRunProjectContext["missionControl"]["continuationDecision"] {
+  const commit = input.recentComms.latestCommitCheckpoint;
+  const builderAck = input.recentComms.latestBuilderAck;
+  const delegation = input.recentComms.latestContinuationDelegation;
+  const commitHash = commit?.commitHash || builderAck?.commitHash || null;
+  const cleanTree = input.dirtyWork.loaded === true && input.dirtyWork.files.length === 0;
+  const hasRequiredCommit = commitHash === internalPaneActivationSeamCommitHash;
+  const hasArchitectCheckpoint = Boolean(commit?.sourceRef && hasLaterEvidence(input.lane, commit));
+  const hasBuilderAck = Boolean(builderAck?.sourceRef && hasLaterEvidence(input.lane, builderAck));
+  const hasCurrentDelegation = Boolean(delegation?.sourceRef && hasLaterEvidence(input.lane, delegation));
+  const oldObjective = input.lane.objective || "";
+  const oldReviewNoSendSlice = /3-file|review\/no-send|review-no-send|no-send gate/i.test(oldObjective);
+  const continuationCommandContext = /continuation-aware Mission Control command context|current-session delegation|next Mira map-backed slice/i.test(delegation?.excerpt || "");
+
+  if (
+    input.lane.sourceRef
+    && oldReviewNoSendSlice
+    && cleanTree
+    && hasRequiredCommit
+    && hasArchitectCheckpoint
+    && hasBuilderAck
+    && hasCurrentDelegation
+    && continuationCommandContext
+  ) {
+    return {
+      status: "stale_handoff_superseded",
+      preferredSourceRef: delegation?.sourceRef || commit?.sourceRef || builderAck?.sourceRef || null,
+      committedSeam: `${internalPaneActivationSeamCommitHash} Add Mira internal pane activation attempt seam`,
+      staleSourceRef: input.lane.sourceRef,
+      staleObjective: input.lane.objective,
+      reason: "The current-lane handoff still names the old review/no-send dirty slice, but later local evidence shows the internal-pane activation seam committed, Builder acknowledged the clean committed HEAD, and Architect delegated the continuation-aware command-context lane.",
+    };
+  }
+
+  return {
+    status: "current_handoff",
+    preferredSourceRef: input.recentComms.latestBuilderInstruction?.sourceRef || input.lane.sourceRef || null,
+    committedSeam: null,
+    staleSourceRef: null,
+    staleObjective: null,
+    reason: "No complete later commit/checkpoint/ack/delegation chain supersedes the current handoff.",
+  };
 }
 
 function buildMissionControl(input: {
@@ -443,18 +613,28 @@ function buildMissionControl(input: {
   recentComms: SquidRunProjectContext["recentComms"];
   fallbackNextStep: string;
 }): SquidRunProjectContext["missionControl"] {
-  const laneLabel = input.recentComms.latestBuilderInstruction?.sourceRef
+  const continuationDecision = buildContinuationDecision(input);
+  const continuationIsStaleSuperseded = continuationDecision.status === "stale_handoff_superseded";
+  const laneLabel = continuationIsStaleSuperseded
+    ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
+    : input.recentComms.latestBuilderInstruction?.sourceRef
     || input.lane.sourceRef
     || input.lane.status
     || "local lane";
-  const laneText = input.recentComms.latestBuilderInstruction?.excerpt
+  const laneText = continuationIsStaleSuperseded
+    ? input.recentComms.latestContinuationDelegation?.excerpt
+      || input.recentComms.latestBuilderInstruction?.excerpt
+      || "Continue the current Mission Control command-context lane."
+    : input.recentComms.latestBuilderInstruction?.excerpt
     || input.lane.objective
     || "No current lane objective found.";
   const hardTruth = input.roadmap.hardTruth
     || "Current New Mira is not holy-shit amazing.";
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
-  const nextTeamMove = "Builder should finish the Mission Control v0 proof packet; Oracle should challenge it against the benchmark; after commit, the team should auto-open the next operator-like capability slice.";
+  const nextTeamMove = continuationIsStaleSuperseded
+    ? "Builder should finish the continuation-aware Mission Control command-context proof; Oracle should challenge stale-handoff visibility-without-authority; after commit, the team should continue to the next map-backed Mira slice."
+    : "Builder should finish the Mission Control v0 proof packet; Oracle should challenge it against the benchmark; after commit, the team should auto-open the next operator-like capability slice.";
   const jamesActionReason = "This is local, inspectable, dry-run Mission Control work; no bot, channel, account, token, external send, or route switch is needed.";
   const foundationVsProduct = "SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James's AI team.";
   const oracleLine = input.recentComms.oracleBenchmark?.sourceRef
@@ -462,6 +642,12 @@ function buildMissionControl(input: {
     : `Benchmark gate: ${hardTruth} ${firstDemo}`;
   const answerLines = [
     `Project/lane: ${input.projectName} / ${laneLabel}. ${laneText}`,
+    ...(continuationIsStaleSuperseded
+      ? [
+          `Committed seam: ${continuationDecision.committedSeam}; checkpoint ${input.recentComms.latestCommitCheckpoint?.sourceRef || "not found"} and Builder ACK ${input.recentComms.latestBuilderAck?.sourceRef || "not found"} supersede the old handoff.`,
+          `Stale handoff: ${continuationDecision.staleSourceRef} "${continuationDecision.staleObjective || "old lane"}" is stale/superseded evidence only; it has no active authority.`,
+        ]
+      : []),
     `Dirty work: ${input.dirtyWork.summary}`,
     oracleLine,
     `Foundation vs product: ${foundationVsProduct}`,
@@ -488,8 +674,8 @@ function buildMissionControl(input: {
     "git status --short",
     "docs/mira-system-map.md",
     "docs/mira-north-star-roadmap.md",
-    "hm-comms history --last 30 --json",
-    input.fallbackNextStep,
+    "hm-comms history --last 80 --json",
+    continuationIsStaleSuperseded ? continuationDecision.reason : input.fallbackNextStep,
   ].filter(Boolean);
   const routePlan = planManualBridgeRequest({
     targetRole: selectedDraft.target,
@@ -531,6 +717,7 @@ function buildMissionControl(input: {
       },
     },
     evidence,
+    continuationDecision,
   };
 }
 
@@ -564,10 +751,28 @@ export function getSquidRunContext(
     recentComms,
     fallbackNextStep,
   });
-  const laneLabel = lane.sourceRef ? `${lane.sourceRef}` : lane.status || "local context";
-  const happening = lane.objective
-    ? `Working in ${projectName} on ${laneLabel}: ${lane.objective}`
-    : `${projectName} local project context is loaded.`;
+  const staleHandoff = missionControl.continuationDecision.status === "stale_handoff_superseded"
+    && missionControl.continuationDecision.staleSourceRef
+    ? {
+        status: "stale_superseded" as const,
+        sourceRef: missionControl.continuationDecision.staleSourceRef,
+        sourceTimestampMs: lane.sourceTimestampMs,
+        objective: missionControl.continuationDecision.staleObjective,
+        supersededBySourceRef: missionControl.continuationDecision.preferredSourceRef || "latest continuation",
+        supersededByCommit: missionControl.continuationDecision.committedSeam || "latest committed Mission Control seam",
+        reason: missionControl.continuationDecision.reason,
+      }
+    : null;
+  const laneWithStale = {
+    ...lane,
+    staleHandoff,
+  };
+  const laneLabel = missionControl.continuationDecision.preferredSourceRef || lane.sourceRef || lane.status || "local context";
+  const happening = missionControl.continuationDecision.status === "stale_handoff_superseded"
+    ? `Working in ${projectName} on ${laneLabel}: continuation-aware Mission Control command context; stale ${missionControl.continuationDecision.staleSourceRef} has no active authority after ${missionControl.continuationDecision.committedSeam}.`
+    : lane.objective
+      ? `Working in ${projectName} on ${laneLabel}: ${lane.objective}`
+      : `${projectName} local project context is loaded.`;
 
   return {
     ok: true,
@@ -579,7 +784,7 @@ export function getSquidRunContext(
       squidrunRoot,
       sessionId: trimText(link?.session_id),
     },
-    lane,
+    lane: laneWithStale,
     ownedWork,
     git: gitStatus,
     dirtyWork,
