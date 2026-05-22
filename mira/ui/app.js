@@ -54,6 +54,7 @@ const elements = {
   projectSummary: document.getElementById('projectSummary'),
   missionAnswer: document.getElementById('missionAnswer'),
   demoWorkbenchProofSummary: document.getElementById('demoWorkbenchProofSummary'),
+  commandCardAcceptanceSummary: document.getElementById('commandCardAcceptanceSummary'),
   coordinationDraftList: document.getElementById('coordinationDraftList'),
   routePreviewSummary: document.getElementById('routePreviewSummary'),
   saveRoutePreviewButton: document.getElementById('saveRoutePreviewButton'),
@@ -1875,12 +1876,46 @@ function describeDemoWorkbenchProof(mission, summary) {
   ].join(' · ');
 }
 
+function describeCommandCardAcceptance(mission) {
+  const acceptance = mission?.commandCardAcceptance;
+  if (!acceptance || typeof acceptance !== 'object') {
+    return 'Command card acceptance: not loaded yet.';
+  }
+  const fields = acceptance.cardFields && typeof acceptance.cardFields === 'object' ? acceptance.cardFields : {};
+  const completed = acceptance.completedContext && typeof acceptance.completedContext === 'object'
+    ? [
+        acceptance.completedContext.toolAppActionPlanId,
+        acceptance.completedContext.continuityMemoryProofId,
+        acceptance.completedContext.demoWorkbenchProofId,
+      ].filter(Boolean).join(' + ')
+    : 'completed contexts not listed';
+  const routePlan = fields.dryRunRoutePlan && typeof fields.dryRunRoutePlan === 'object'
+    ? fields.dryRunRoutePlan
+    : {};
+  const rawJamesAction = String(fields.jamesActionLine || 'JAMES ACTION: NONE').trim();
+  const jamesActionLine = /^JAMES ACTION:/i.test(rawJamesAction)
+    ? rawJamesAction
+    : `JAMES ACTION: ${rawJamesAction || 'NONE'}`;
+  return [
+    `Command card acceptance: ${acceptance.id || 'unknown command card'}`,
+    `Completed contexts: ${completed}`,
+    `Current lane/why: ${fields.currentLaneWhyItMatters || 'not loaded'}`,
+    `Recent changes: ${fields.whatChangedRecently || 'not loaded'}`,
+    `Builder next: ${fields.builderNextMove || 'not loaded'}`,
+    `Oracle next: ${fields.oracleNextMove || 'not loaded'}`,
+    fields.contextCardStatus || 'Context-card/current dirty-context status: not loaded',
+    jamesActionLine,
+    `Dry-run route plan: ${routePlan.summary || 'not loaded'}`,
+  ].join(' · ');
+}
+
 function updateSquidRunContext(payload) {
   if (!payload || payload.ok !== true) {
     state.missionControlContext = null;
     setText(elements.projectSummary, 'SquidRun context unavailable');
     setText(elements.missionAnswer, 'Mission Control is waiting for local SquidRun evidence.');
     setText(elements.demoWorkbenchProofSummary, 'Demo/workbench proof: not loaded yet.');
+    setText(elements.commandCardAcceptanceSummary, 'Command card acceptance: not loaded yet.');
     renderCoordinationDrafts([]);
     setText(elements.routePreviewSummary, 'Route preview: not prepared yet.');
     setText(elements.foundationSummary, 'No foundation evidence loaded.');
@@ -1912,6 +1947,7 @@ function updateSquidRunContext(payload) {
   setText(elements.projectSummary, `${projectName} · ${laneLabel}`);
   setText(elements.missionAnswer, mission.answer || 'Mission Control has no local answer yet.');
   setText(elements.demoWorkbenchProofSummary, describeDemoWorkbenchProof(mission, summary));
+  setText(elements.commandCardAcceptanceSummary, describeCommandCardAcceptance(mission));
   renderCoordinationDrafts(mission.coordinationDrafts);
   setText(elements.routePreviewSummary, describeRoutePreview(mission.internalRoutePreview));
   setText(elements.foundationSummary, `Foundation vs product: ${mission.foundationVsProduct || 'Local context is foundation; Mission Control is the product test.'}`);

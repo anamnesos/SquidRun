@@ -2567,6 +2567,7 @@ function collectMissionControlText(elements) {
   return [
     elements.missionAnswer.textContent,
     elements.demoWorkbenchProofSummary.textContent,
+    elements.commandCardAcceptanceSummary.textContent,
     draftText,
     elements.routePreviewSummary.textContent,
     elements.foundationSummary.textContent,
@@ -3929,6 +3930,114 @@ describe('Mira runtime UI boot', () => {
     expect(missionSurfaceText).toContain('Question: what is happening here, and what should happen next?');
     expect(missionSurfaceText).toContain('Completed contexts: mission-control-tool-app-action-plan-v0 + mission-control-continuity-memory-proof-v0');
     expect(missionSurfaceText).toContain('JAMES ACTION: NONE');
+  });
+
+  test('renders command card acceptance from mocked SquidRun context without turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const commandCardId = 'mission-control-v0-command-card-acceptance';
+    const currentLane = 'Current lane architect#230 matters because Mission Control must show James the local command card instead of terminal logs.';
+    const recentChanges = 'Committed c301c1ac workbench surface proof evidence (architect#201 plus Oracle ACK oracle#66) makes surface rendering completed context; 844b49c2 keeps demo proof checkpoint matching live.';
+    const builderNext = 'Render the Mission Control v0 command card from already-loaded /squidrun/context only.';
+    const oracleNext = 'Review the command-card surface for local evidence, no terminal-log dependency, and no live effects.';
+    const dirtyStatus = 'Context-card/current dirty-context status: Worktree is clean.';
+    const dryRunRoutePlan = 'Dry-run route plan asks Oracle to review Mission Control v0 command-card fields from local context only; no hm-send, route flip, POST, provider/model call, or external send is performed.';
+    const harness = createRuntimeBootHarness({
+      customizeSquidRunContext(context) {
+        context.lane.sourceRef = 'architect#230';
+        context.git.dirtyCount = 0;
+        context.git.statusPreview = [];
+        context.dirtyWork.summary = 'Worktree is clean.';
+        context.dirtyWork.files = [];
+        context.missionControl.answer = [
+          'Project/lane: squidrun / architect#230. Mission Control command-card surface acceptance is the active display slice.',
+          `Next team move: ${builderNext}`,
+          'JAMES ACTION: NONE - Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.',
+        ].join('\n');
+        context.missionControl.nextTeamMove = builderNext;
+        context.missionControl.commandCardAcceptance = {
+          id: commandCardId,
+          status: 'acceptance_planning_only',
+          owner: 'Builder',
+          completedContext: {
+            toolAppActionPlanId: 'mission-control-tool-app-action-plan-v0',
+            continuityMemoryProofId: 'mission-control-continuity-memory-proof-v0',
+            demoWorkbenchProofId: 'mission-control-demo-workbench-proof-v0',
+          },
+          cardFields: {
+            currentLaneWhyItMatters: currentLane,
+            whatChangedRecently: recentChanges,
+            builderNextMove: builderNext,
+            oracleNextMove: oracleNext,
+            contextCardStatus: dirtyStatus,
+            jamesActionLine: 'JAMES ACTION: NONE',
+            dryRunRoutePlan: {
+              target: 'oracle',
+              purpose: 'command-card no-effect review',
+              manualExecutionRequired: true,
+              sendPerformed: false,
+              summary: dryRunRoutePlan,
+            },
+          },
+          jamesControlPoint: 'James can inspect the local command card before any future runtime, browser, workbench, UI/status, route, send, provider/model, credential, deploy, money, or trading action is proposed.',
+          audit: {
+            acceptanceOnly: true,
+            planningOnly: true,
+            runtimeStarted: false,
+            browserOpened: false,
+            workbenchOpened: false,
+            uiActionPerformed: false,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+            providerInvoked: false,
+            modelInvoked: false,
+            accountAccessed: false,
+            tokenAccessed: false,
+            credentialAccessed: false,
+            deviceTouched: false,
+            userTargeted: false,
+            externalTargeted: false,
+            deployed: false,
+            moneyMovement: false,
+            tradingTouched: false,
+          },
+        };
+        context.summary.happening = 'Working in squidrun on architect#230: Mission Control command-card surface acceptance.';
+        context.summary.nextStep = builderNext;
+        context.summary.commandCardAcceptance = `${commandCardId}: current lane, recent changes, Builder/Oracle next moves, dirty-context status, one James-action line, and dry-run route plan.`;
+        context.summary.jamesAction = 'NONE';
+        context.summary.jamesActionReason = 'Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.';
+        return context;
+      },
+    });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const commandCardText = harness.elements.commandCardAcceptanceSummary.textContent;
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls.filter((call) => call.url === '/squidrun/context')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(commandCardText).toContain(`Command card acceptance: ${commandCardId}`);
+    expect(commandCardText).toContain(`Current lane/why: ${currentLane}`);
+    expect(commandCardText).toContain(`Recent changes: ${recentChanges}`);
+    expect(commandCardText).toContain(`Builder next: ${builderNext}`);
+    expect(commandCardText).toContain(`Oracle next: ${oracleNext}`);
+    expect(commandCardText).toContain(dirtyStatus);
+    expect(commandCardText).toContain('JAMES ACTION: NONE');
+    expect(commandCardText).toContain(`Dry-run route plan: ${dryRunRoutePlan}`);
+    expect((commandCardText.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    const missionSurfaceText = collectMissionControlText(harness.elements);
+    expect(missionSurfaceText).toContain(commandCardId);
+    expect(missionSurfaceText).toContain('mission-control-tool-app-action-plan-v0');
+    expect(missionSurfaceText).toContain('mission-control-continuity-memory-proof-v0');
+    expect(missionSurfaceText).toContain('mission-control-demo-workbench-proof-v0');
   });
 
   test('shows the same status-backed what-now answer in the panel, status card, and typed reply', async () => {
