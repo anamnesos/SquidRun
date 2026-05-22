@@ -6,6 +6,7 @@ import { planManualBridgeRequest, type ManualBridgeRequestPlan } from "./bridge-
 type JsonObject = Record<string, unknown>;
 const internalPaneActivationSeamCommitHash = "7ff9fe8d";
 const continuationSelectorCommitHash = "6092a28a";
+const commsHistoryEvidenceLimit = 200;
 
 export type SquidRunProjectContext = {
   ok: true;
@@ -505,7 +506,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       scriptPath,
       "history",
       "--last",
-      "80",
+      String(commsHistoryEvidenceLimit),
       "--json",
     ], {
       cwd: squidrunRoot,
@@ -721,7 +722,7 @@ function buildMissionControl(input: {
     "git status --short",
     "docs/mira-system-map.md",
     "docs/mira-north-star-roadmap.md",
-    "hm-comms history --last 80 --json",
+    `hm-comms history --last ${commsHistoryEvidenceLimit} --json`,
     continuationIsStaleSuperseded ? continuationDecision.reason : input.fallbackNextStep,
   ].filter(Boolean);
   const routePlan = planManualBridgeRequest({

@@ -86,7 +86,19 @@ describe('Mira SquidRun command context', () => {
       'Stop or pivot if Mission Control cannot answer from local evidence.',
     ].join('\n'));
     writeFile(path.join(root, 'ui', 'scripts', 'hm-comms.js'), `#!/usr/bin/env node
+const staleCheckpointSpacerRows = Array.from({ length: 90 }, (_, index) => ({
+  sender: 'architect',
+  target: 'builder',
+  timestampMs: 1779443380000 + index,
+  rawBody: \`(ARCHITECT #\${1000 + index}): Status check: unrelated checkpoint chatter \${index}; proof PASS; JAMES ACTION: NONE.\`
+}));
 const rows = [
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779445700000,
+    rawBody: '(ARCHITECT #87): Current-session delegation: next Mira map-backed slice is Mission Control v1 dry-run coordination plan alignment. Clean context after 1b6b841c advances summary.nextStep to Mission Control v1 dry-run coordination/follow-through route planning. Build the smallest no-side-effect slice so coordination drafts/preview align with v1. JAMES ACTION: NONE.'
+  },
   {
     sender: 'architect',
     target: 'oracle',
@@ -135,6 +147,7 @@ const rows = [
     timestampMs: 1779443341518,
     rawBody: '(BUILDER #14): ACK on \`7ff9fe8d Add Mira internal pane activation attempt seam\`. Local check matches: HEAD is 7ff9fe8d and working tree is clean. Standing by for the next map-backed Mira delegation; JAMES ACTION: NONE.'
   },
+  ...staleCheckpointSpacerRows,
   {
     sender: 'architect',
     target: 'builder',
@@ -148,7 +161,9 @@ const rows = [
     rawBody: '(ARCHITECT #11): TASK Current-session Mira lane. Objective: finish the existing 3-file review/no-send gate dirty slice without broadening it. JAMES ACTION: NONE'
   }
 ];
-process.stdout.write(JSON.stringify({ ok: true, rows }));
+const lastIndex = process.argv.indexOf('--last');
+const last = lastIndex >= 0 ? Number(process.argv[lastIndex + 1]) : rows.length;
+process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
 `);
     execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 'mira-test@example.invalid'], { cwd: root, stdio: 'ignore' });
@@ -190,13 +205,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#75',
+        supersededBySourceRef: 'architect#87',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#75',
+      preferredSourceRef: 'architect#87',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -205,14 +220,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#75',
-      commitHash: '6092a28a',
+      sourceRef: 'architect#87',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
       commitHash: '6092a28a',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#75.');
+    expect(answer).toContain('Project/lane: squidrun / architect#87.');
     expect(answer).toContain('Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step');
     expect(answer).not.toContain('Builder should finish the continuation-aware Mission Control command-context proof');
     expect(answer).not.toContain('finish the continuation-aware command-context proof');
@@ -278,14 +292,14 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#75',
+      sourceRef: 'architect#87',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#75',
+      preferredSourceRef: 'architect#87',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
