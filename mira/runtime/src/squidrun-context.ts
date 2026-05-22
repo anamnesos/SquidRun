@@ -1266,8 +1266,10 @@ function isPostAuditPlanningSelectorBuilderAckBody(rawBody: string | null): bool
 
 function isPostAuditPlanningSelectorOracleAckBody(rawBody: string | null): boolean {
   const body = rawBody || "";
-  return /^\(ORACLE\s+#\d+\):\s*(?:Received [`'"]?582ef1c6 checkpoint|Checkpoint received\.\s*#300\s*\/\s*582ef1c6 closure recorded)/i.test(body)
-    && /post-c1a05e07 selector hardening|WIP sanity\/status\/containment\/closure-nudge|Mission Control post audit planning selector/i.test(body)
+  const reviewAck = /^\(ORACLE\s+#\d+\):\s*(?:Received [`'"]?582ef1c6 checkpoint|Checkpoint received\.\s*#300\s*\/\s*582ef1c6 closure recorded)/i.test(body)
+    && /post-c1a05e07 selector hardening|WIP sanity\/status\/containment\/closure-nudge|Mission Control post audit planning selector/i.test(body);
+  const liveCleanHeadAck = /^\(ORACLE\s+#\d+\):\s*Checkpoint received\.\s*582ef1c6 selector hardening recorded clean-head\b/i.test(body);
+  return (reviewAck || liveCleanHeadAck)
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 

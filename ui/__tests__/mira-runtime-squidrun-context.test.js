@@ -109,7 +109,7 @@ const rows = [
     sender: 'oracle',
     target: 'architect',
     timestampMs: 1779460198000,
-    rawBody: '(ORACLE #102): Received cafe582 checkpoint while mentioning prior 582ef1c6 Harden Mission Control post audit planning selector. This newer name-drop chatter must not become the post-audit selector Oracle ACK. JAMES ACTION: NONE.'
+    rawBody: '(ORACLE #102): Checkpoint received. cafe582 selector hardening recorded clean-head while mentioning prior 582ef1c6 Harden Mission Control post audit planning selector. This newer name-drop chatter must not become the post-audit selector Oracle ACK. JAMES ACTION: NONE.'
   },
   {
     sender: 'architect',
@@ -133,7 +133,7 @@ const rows = [
     sender: 'oracle',
     target: 'architect',
     timestampMs: 1779460194000,
-    rawBody: '(ORACLE #101): Received 582ef1c6 checkpoint. Oracle records post-c1a05e07 selector hardening / Mission Control post audit planning selector as committed clean-head context: WIP sanity/status/containment/closure-nudge rows are diagnostic only, nextStep remains internal route/audit planning from the visible plan only, and exactly one JAMES ACTION line remains. JAMES ACTION: NONE.'
+    rawBody: '(ORACLE #101): Checkpoint received. 582ef1c6 selector hardening recorded clean-head. Clean context keeps internal route/audit planning unchanged and exactly one JAMES ACTION line remains. JAMES ACTION: NONE.'
   },
   {
     sender: 'architect',
