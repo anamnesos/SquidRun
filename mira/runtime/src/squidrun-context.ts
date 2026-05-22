@@ -12,7 +12,7 @@ const directChannelReadinessContractCommitHash = "22e876dc";
 const toolAppActionPlanProofCommitHash = "5b3e0386";
 const continuityMemoryBoundaryCommitHash = "bf82cea4";
 const continuityMemoryProofCommitHash = "d0bffd58";
-const commsHistoryEvidenceLimit = 200;
+const commsHistoryEvidenceLimit = 500;
 
 export type SquidRunProjectContext = {
   ok: true;
@@ -639,13 +639,23 @@ function commsSummary(row: JsonObject | null, maxLength = 260, preferredCommitHa
   };
 }
 
+function isReportShapedCommsBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\([A-Z]+\s+#\d+\):\s*(?:Committed|Checkpoint|PASS\b|MODIFY resolved|ACK\b|Status check|Status pulse|Oracle .* PASS|Builder .* PASS|Received [0-9a-f]{7,40} checkpoint)/i.test(body)
+    || /\b(?:Proof|Post-commit proof|Committed-HEAD proof|Clean-head proof|pre-commit all checks passed)\s*:/i.test(body);
+}
+
 function isMissionControlContinuationDelegationBody(rawBody: string | null): boolean {
   const body = rawBody || "";
   const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|new tiny follow-up slice)/i.test(body);
-  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|stale[- ]handoff|current-lane handoff/i.test(body);
-  const checkpointOrReport = /^\([A-Z]+\s+#\d+\):\s*(?:Committed|Checkpoint|PASS\b|MODIFY resolved|ACK\b|Status check|Oracle .* PASS|Builder .* PASS)/i.test(body)
-    || /\b(?:Proof|Post-commit proof|Committed-HEAD proof|pre-commit all checks passed)\s*:/i.test(body);
-  return instructionShaped && continuationTarget && !checkpointOrReport;
+  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|demo\/workbench|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
+  return instructionShaped && continuationTarget && !isReportShapedCommsBody(body);
+}
+
+function isInternalPaneActivationSeamBuilderAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(BUILDER\s+#\d+\):\s*ACK (?:on|checkpoint)?\s*[`'"]?7ff9fe8d Add Mira internal pane activation attempt seam/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
 function isContinuationSelectorCheckpointBody(rawBody: string | null): boolean {
@@ -724,7 +734,7 @@ function isContinuityMemoryProofAckBody(rawBody: string | null): boolean {
 function isContinuityMemoryProofOracleAckBody(rawBody: string | null): boolean {
   const body = rawBody || "";
   return /^\(ORACLE\s+#\d+\):\s*Received [`'"]?d0bffd58 checkpoint/i.test(body)
-    && /Mission Control continuity memory proof|Add Mission Control continuity memory proof/i.test(body)
+    && /Mission Control continuity\/memory first proof|Mission Control continuity memory proof|Add Mission Control continuity memory proof/i.test(body)
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
@@ -775,9 +785,10 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
     const builderRows = mapped.filter((row) => trimText(row.sender) === "architect" && trimText(row.target) === "builder");
     const builderInstruction = builderRows.find((row) => {
       const body = trimText(row.rawBody) || "";
-      return /Mission Control|north-star|holy-shit|first inspectable demo|operator surface/i.test(body)
+      return /Mission Control|north-star|holy-shit|first inspectable demo|operator surface|demo\/workbench|clean-context regression|getSquidRunContext|208d7ad7/i.test(body)
+        && !isReportShapedCommsBody(body)
         && !/status ping|status check/i.test(body);
-    }) || builderRows[0];
+    }) || null;
     const commitCheckpoint = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "architect"
@@ -786,15 +797,10 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
         && /PASS|proof|pre-commit|working tree clean|tree clean/i.test(body)
         && /JAMES ACTION:\s*NONE/i.test(body);
     });
-    const commitHash = containsCommitHash(trimText(commitCheckpoint?.rawBody), internalPaneActivationSeamCommitHash)
-      ? internalPaneActivationSeamCommitHash
-      : null;
     const builderAck = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "builder"
-        && /ACK|PASS|MODIFY resolved/i.test(body)
-        && (commitHash ? containsCommitHash(body, commitHash) : containsCommitHash(body, internalPaneActivationSeamCommitHash))
-        && /JAMES ACTION:\s*NONE/i.test(body);
+        && isInternalPaneActivationSeamBuilderAckBody(body);
     });
     const continuationDelegation = builderRows.find((row) => {
       const body = trimText(row.rawBody) || "";
@@ -873,7 +879,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       loaded: true,
       latestBuilderInstruction: commsSummary(builderInstruction || null),
       latestCommitCheckpoint: commsSummary(commitCheckpoint || null),
-      latestBuilderAck: commsSummary(builderAck || null),
+      latestBuilderAck: commsSummary(builderAck || null, 260, internalPaneActivationSeamCommitHash),
       latestContinuationDelegation: commsSummary(continuationDelegation || null),
       latestContinuationSelectorCheckpoint: commsSummary(continuationSelectorCheckpoint || null, 260, continuationSelectorCommitHash),
       latestV1AlignmentDelegation: commsSummary(v1AlignmentDelegation || null),

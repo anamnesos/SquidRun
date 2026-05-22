@@ -86,13 +86,25 @@ describe('Mira SquidRun command context', () => {
       'Stop or pivot if Mission Control cannot answer from local evidence.',
     ].join('\n'));
     writeFile(path.join(root, 'ui', 'scripts', 'hm-comms.js'), `#!/usr/bin/env node
-const staleCheckpointSpacerRows = Array.from({ length: 90 }, (_, index) => ({
+const staleCheckpointSpacerRows = Array.from({ length: 240 }, (_, index) => ({
   sender: 'architect',
   target: 'builder',
   timestampMs: 1779443380000 + index,
   rawBody: \`(ARCHITECT #\${1000 + index}): Status check: unrelated checkpoint chatter \${index}; proof PASS; JAMES ACTION: NONE.\`
 }));
 const rows = [
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779449400000,
+    rawBody: '(ARCHITECT #167): Checkpoint: Mission Control demo/workbench boundary advancement committed as 208d7ad7 Advance Mission Control demo workbench boundary. Oracle #52 PASS accepted; pre-commit checks passed. Clean-head proof: worktree clean, context test PASS 2/2, runtime TypeScript noEmit PASS. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779449380000,
+    rawBody: '(ARCHITECT #169): Current-session delegation: post-208d7ad7 clean-context regression. Clean HEAD is 208d7ad7 and the demo/workbench boundary is committed, but live getSquidRunContext() now regresses. Fix the smallest read-only/no-side-effect slice: reject checkpoint/PASS/proof/status/report-shaped rows from latestBuilderInstruction and delegation authority, preserve prior 7ff9fe8d seam evidence despite the old 200-row read miss, accept Oracle #50 continuity/memory first-proof ACK wording, and keep demo/workbench planning. JAMES ACTION: NONE.'
+  },
   {
     sender: 'architect',
     target: 'builder',
@@ -133,7 +145,7 @@ const rows = [
     sender: 'oracle',
     target: 'architect',
     timestampMs: 1779449160000,
-    rawBody: '(ORACLE #50): Received d0bffd58 checkpoint for Add Mission Control continuity memory proof. PASS: continuityMemoryProof provenance and no-live-effect flags are accepted for this completed proof. JAMES ACTION: NONE.'
+    rawBody: '(ORACLE #50): Received d0bffd58 checkpoint. Oracle records Mission Control continuity/memory first proof as committed clean-head context shaping, with continuityMemoryProof provenance and no-live-effect flags accepted for this completed proof. JAMES ACTION: NONE.'
   },
   {
     sender: 'architect',
@@ -373,13 +385,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#158',
+        supersededBySourceRef: 'architect#169',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#158',
+      preferredSourceRef: 'architect#169',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -387,8 +399,15 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'architect#46',
       commitHash: '7ff9fe8d',
     }));
+    expect(context.recentComms.latestBuilderAck).toEqual(expect.objectContaining({
+      sourceRef: 'builder#14',
+      commitHash: '7ff9fe8d',
+    }));
+    expect(context.recentComms.latestBuilderInstruction).toEqual(expect.objectContaining({
+      sourceRef: 'architect#169',
+    }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#158',
+      sourceRef: 'architect#169',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -441,7 +460,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'oracle#50',
       commitHash: 'd0bffd58',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#158.');
+    expect(answer).toContain('Project/lane: squidrun / architect#169.');
     expect(answer).toContain('First inspectable Mission Control demo/workbench proof planning is the next map boundary');
     expect(answer).toContain('local Mission Control answer/surface for what is happening here and what should happen next from local evidence');
     expect(answer).toContain('Completed direct-channel readiness evidence: checkpoint architect#114 22e876dc and Builder ACK builder#43 22e876dc');
@@ -509,7 +528,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#158',
+          sourceRef: 'architect#169',
           summary: 'Current Architect delegation asks Mission Control to keep the completed proof context and advance to demo/workbench planning.',
         },
         {
@@ -690,6 +709,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
       'ui/modules/mira-core/mira-presence-runtime-state-v0.js',
       'mira/runtime/src/status.ts',
+      'hm-comms history --last 500 --json',
     ]));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
@@ -754,7 +774,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#158',
+      sourceRef: 'architect#169',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -804,7 +824,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#158',
+      preferredSourceRef: 'architect#169',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
