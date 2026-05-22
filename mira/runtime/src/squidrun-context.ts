@@ -459,6 +459,15 @@ function commsSummary(row: JsonObject | null, maxLength = 260): {
   };
 }
 
+function isMissionControlContinuationDelegationBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|new tiny follow-up slice)/i.test(body);
+  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|stale[- ]handoff|current-lane handoff/i.test(body);
+  const checkpointOrReport = /^\([A-Z]+\s+#\d+\):\s*(?:Committed|Checkpoint|PASS\b|MODIFY resolved|ACK\b|Status check|Oracle .* PASS|Builder .* PASS)/i.test(body)
+    || /\b(?:Proof|Post-commit proof|Committed-HEAD proof|pre-commit all checks passed)\s*:/i.test(body);
+  return instructionShaped && continuationTarget && !checkpointOrReport;
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -500,7 +509,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "architect"
         && containsCommitHash(body, internalPaneActivationSeamCommitHash)
-        && /committed|commit checkpoint|commit already landed|internal-pane activation attempt seam/i.test(body)
+        && /Committed the internal-pane activation attempt seam|Checkpoint: internal-pane activation attempt seam committed|Commit already landed as [`'"]?7ff9fe8d/i.test(body)
         && /PASS|proof|pre-commit|working tree clean|tree clean/i.test(body)
         && /JAMES ACTION:\s*NONE/i.test(body);
     });
@@ -516,8 +525,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
     });
     const continuationDelegation = builderRows.find((row) => {
       const body = trimText(row.rawBody) || "";
-      return /Current-session delegation|next Mira map-backed slice|continuation-aware Mission Control command context|next map-backed/i.test(body)
-        && /JAMES ACTION:\s*NONE/i.test(body);
+      return isMissionControlContinuationDelegationBody(body);
     });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
@@ -572,7 +580,7 @@ function buildContinuationDecision(input: {
   const hasCurrentDelegation = Boolean(delegation?.sourceRef && hasLaterEvidence(input.lane, delegation));
   const oldObjective = input.lane.objective || "";
   const oldReviewNoSendSlice = /3-file|review\/no-send|review-no-send|no-send gate/i.test(oldObjective);
-  const continuationCommandContext = /continuation-aware Mission Control command context|current-session delegation|next Mira map-backed slice/i.test(delegation?.excerpt || "");
+  const continuationCommandContext = Boolean(delegation?.sourceRef);
 
   if (
     input.lane.sourceRef

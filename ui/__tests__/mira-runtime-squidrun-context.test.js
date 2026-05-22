@@ -42,7 +42,7 @@ describe('Mira SquidRun command context', () => {
     fs.writeFileSync(filePath, value, 'utf8');
   }
 
-  function createTempSquidRunProject() {
+  function createTempSquidRunProject(options = {}) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-squidrun-context-'));
     tempRoots.push(root);
     writeJson(path.join(root, '.squidrun', 'link.json'), {
@@ -90,8 +90,20 @@ const rows = [
   {
     sender: 'architect',
     target: 'builder',
+    timestampMs: 1779444600000,
+    rawBody: '(ARCHITECT #61): MODIFY / new tiny follow-up slice, caused by post-commit live evidence. Fix the continuation-aware Mission Control command context selector, not the handoff state: latestContinuationDelegation should select real delegation/request/task messages and exclude commit/checkpoint/PASS/proof/review/status reports like Architect #59/#60.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779444100000,
+    rawBody: '(ARCHITECT #59): Committed the continuation-aware Mission Control context slice as \`361acec4 Add continuation-aware Mission Control context\`. Post-commit proof says summary.happening is continuation-aware Mission Control command context. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
     timestampMs: 1779443999000,
-    rawBody: '(ARCHITECT #60): Committed this context slice as \`abc1234 Follow-up continuation context checkpoint\`. Proof PASS; working tree clean; pre-commit all checks passed. JAMES ACTION: NONE.'
+    rawBody: '(ARCHITECT #60): Committed this context slice as \`abc1234 Follow-up continuation context checkpoint\`. Post-commit proof says the visible answer is continuation-aware Mission Control command context. Proof PASS; working tree clean; pre-commit all checks passed. JAMES ACTION: NONE.'
   },
   {
     sender: 'architect',
@@ -125,6 +137,9 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
     execFileSync('git', ['config', 'user.name', 'Mira Test'], { cwd: root, stdio: 'ignore' });
     execFileSync('git', ['add', '.'], { cwd: root, stdio: 'ignore' });
     execFileSync('git', ['commit', '-m', 'fixture clean state'], { cwd: root, stdio: 'ignore' });
+    if (options.dirty) {
+      writeFile(path.join(root, 'notes', 'uncommitted-context-work.txt'), 'local continuation work remains open\n');
+    }
     return root;
   }
 
@@ -157,13 +172,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#48',
+        supersededBySourceRef: 'architect#61',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#48',
+      preferredSourceRef: 'architect#61',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -171,7 +186,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
       sourceRef: 'architect#46',
       commitHash: '7ff9fe8d',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#48.');
+    expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
+      sourceRef: 'architect#61',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#61.');
     expect(answer).toContain('continuation-aware Mission Control command context');
     expect(answer).toContain('Committed seam: 7ff9fe8d Add Mira internal pane activation attempt seam');
     expect(answer).toContain('Builder ACK builder#14');
@@ -182,5 +200,30 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
     expect(context.summary.happening).not.toContain('finish the existing 3-file review/no-send gate dirty slice');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
     expect(context.summary.jamesAction).toBe('NONE');
+  });
+
+  test('keeps a stale current-lane handoff authoritative while the worktree is dirty', () => {
+    const root = createTempSquidRunProject({ dirty: true });
+    const context = readContext(root);
+    const answer = context.missionControl.answer;
+
+    expect(context.git).toEqual(expect.objectContaining({
+      loaded: true,
+      dirtyCount: 1,
+    }));
+    expect(context.dirtyWork.summary).toContain('1 changed file(s)');
+    expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
+      sourceRef: 'architect#61',
+    }));
+    expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
+      status: 'current_handoff',
+      preferredSourceRef: 'architect#61',
+      staleSourceRef: null,
+    }));
+    expect(context.lane.staleHandoff).toBeNull();
+    expect(context.summary.happening).toContain('finish the existing 3-file review/no-send gate dirty slice');
+    expect(answer).toContain('Dirty work: 1 changed file(s)');
+    expect(answer).not.toContain('Stale handoff: architect#11');
+    expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
   });
 });
